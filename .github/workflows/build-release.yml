@@ -1,0 +1,41 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.8)'
+        required: false
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Build Release (Universal Binary)
+        run: |
+          VERSION=${VERSION:-${GITHUB_REF#refs/tags/v}}
+          ./build-release.sh "$VERSION"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MPXPrime
+          path: macOS/dist/MPX Prime-*.dmg
+          retention-days: 90
+
+      - name: Upload App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: MPXPrime.app
+          path: macOS/dist/MPX Prime.app
+          retention-days: 90

@@ -1,0 +1,191 @@
+import CoreAudio
+import Foundation
+
+struct AudioDevice: Identifiable {
+    let id: AudioDeviceID
+    let uid: String
+    let name: String
+    let inputChannels: Int
+    let outputChannels: Int
+
+    var hasInput: Bool { inputChannels > 0 }
+    var hasOutput: Bool { outputChannels > 0 }
+}
+
+enum AudioDeviceError: Error {
+    case propertyQueryFailed(OSStatus)
+}
+
+enum AudioDevices {
+    static func list() throws -> [AudioDevice] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        let sysObj = AudioObjectID(kAudioObjectSystemObject)
+        var status = AudioObjectGetPropertyDataSize(sysObj, &addr, 0, nil, &dataSize)
+        guard status == noErr else {
+            throw AudioDeviceError.propertyQueryFailed(status)
+        }
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = Array(repeating: AudioDeviceID(0), count: count)
+        status = AudioObjectGetPropertyData(sysObj, &addr, 0, nil, &dataSize, &ids)
+        guard status == noErr else {
+            throw AudioDeviceError.propertyQueryFailed(status)
+        }
+        return ids.compactMap { id in
+            let name =
+                readCFString(
+                    objectID: id,
+                    selector: kAudioObjectPropertyName,
+                    scope: kAudioObjectPropertyScopeGlobal
+                ) ?? "AudioDevice \(id)"
+            let uid =
+                readCFString(
+                    objectID: id,
+                    selector: kAudioDevicePropertyDeviceUID,
+                    scope: kAudioObjectPropertyScopeGlobal
+                ) ?? "\(id)"
+            let inputChannels = readChannelCount(
+                deviceID: id, scope: kAudioDevicePropertyScopeInput)
+            let outputChannels = readChannelCount(
+                deviceID: id, scope: kAudioDevicePropertyScopeOutput)
+            if inputChannels <= 0 && outputChannels <= 0 {
+                return nil
+            }
+            return AudioDevice(
+                id: id,
+                uid: uid,
+                name: name,
+                inputChannels: inputChannels,
+                outputChannels: outputChannels
+            )
+        }
+    }
+
+    static func inputDevices() throws -> [AudioDevice] {
+        try list().filter { $0.hasInput }
+    }
+
+    static func outputDevices() throws -> [AudioDevice] {
+        try list().filter { $0.hasOutput }
+    }
+
+    private static func readCFString(
+        objectID: AudioObjectID,
+        selector: AudioObjectPropertySelector,
+        scope: AudioObjectPropertyScope
+    ) -> String? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value: Unmanaged<CFString>?
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(
+            objectID,
+            &addr,
+            0,
+            nil,
+            &dataSize,
+            &value
+        )
+        guard status == noErr, let value else {
+            return nil
+        }
+        return value.takeUnretainedValue() as String
+    }
+
+    private static func readChannelCount(deviceID: AudioDeviceID, scope: AudioObjectPropertyScope)
+        -> Int
+    {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        let statusSize = AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &dataSize)
+        if statusSize != noErr || dataSize == 0 {
+            return 0
+        }
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(dataSize),
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { raw.deallocate() }
+        var mutableSize = dataSize
+        let statusData = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &mutableSize, raw)
+        if statusData != noErr {
+            return 0
+        }
+        let abl = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        let buffers = UnsafeMutableAudioBufferListPointer(abl)
+        var channels = 0
+        for buffer in buffers {
+            channels += Int(buffer.mNumberChannels)
+        }
+        return channels
+    }
+
+    /// Reads the device's allowed `kAudioDevicePropertyBufferFrameSize`
+    /// range. Returns `nil` if the property isn't available (some virtual
+    /// devices). Used to clamp our requested HAL buffer size before setting.
+    static func bufferFrameSizeRange(deviceID: AudioDeviceID) -> (min: UInt32, max: UInt32)? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSizeRange,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var range = AudioValueRange()
+        var size = UInt32(MemoryLayout<AudioValueRange>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &range)
+        guard status == noErr else { return nil }
+        return (UInt32(range.mMinimum), UInt32(range.mMaximum))
+    }
+
+    /// Reads the current `kAudioDevicePropertyBufferFrameSize`. Returns
+    /// `nil` on error.
+    static func currentBufferFrameSize(deviceID: AudioDeviceID) -> UInt32? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var frames: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &frames)
+        guard status == noErr else { return nil }
+        return frames
+    }
+
+    /// Set the device's HAL buffer frame size, clamped to the device's
+    /// reported allowed range. Returns the value the device ended up at
+    /// (which may differ from `requested` if the device clamped or
+    /// rejected). Returns `nil` if neither the range query nor the set
+    /// succeeded — caller should treat that as "device kept its default".
+    @discardableResult
+    static func setBufferFrameSize(deviceID: AudioDeviceID, requested: UInt32) -> UInt32? {
+        let clamped: UInt32
+        if let range = bufferFrameSizeRange(deviceID: deviceID) {
+            clamped = max(range.min, min(range.max, requested))
+        } else {
+            clamped = requested
+        }
+        var value = clamped
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, &value)
+        guard status == noErr else {
+            return currentBufferFrameSize(deviceID: deviceID)
+        }
+        return currentBufferFrameSize(deviceID: deviceID) ?? clamped
+    }
+}

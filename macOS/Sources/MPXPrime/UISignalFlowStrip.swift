@@ -1,0 +1,143 @@
+import SwiftUI
+
+/// Compact "block-diagram chip strip" header for the Processing section.
+/// Renders the audio chain as a horizontal row of clickable chips — input
+/// on the left, output on the right, current stage highlighted. Tapping
+/// a chip selects that stage in the sidebar (drives `model.selectedStage`).
+///
+/// Each chip is a thin pill: stage label + small leading dot when bypassed.
+/// Strip is read-only signal flow; it doesn't model branches or returns.
+/// Wheatstone-style draggable block-diagram editing is explicitly out of
+/// scope (signal flow is fixed in MPXGenerator.swift).
+struct SignalFlowStrip: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    /// Stages shown in the strip, in chain order.
+    private static let chainStages: [Stage] = [
+        .processingCore,
+        .processingAGC,
+        .processingParametricEQ,
+        .processingOrbass,
+        .processingWidener,
+        .processingMultiband,
+        .processingMBLimiter,
+        .processingExpander,
+        .processingBassClipper,
+        .processingDCClipper,
+        .processingLimiter,
+        .processingBS412,
+        .processingCompositeClipper,
+    ]
+
+    /// Compact label for each stage in the chip — chain order is
+    /// dense; full-length labels won't fit at typical window widths.
+    private static let chipLabels: [Stage: String] = [
+        .processingCore: "Core",
+        .processingAGC: "AGC",
+        .processingParametricEQ: "PEQ",
+        .processingOrbass: "Orbass",
+        .processingWidener: "Width",
+        .processingMultiband: "MB",
+        .processingMBLimiter: "MB-Lim",
+        .processingExpander: "Exp",
+        .processingBassClipper: "BassClip",
+        .processingDCClipper: "DC-Clip",
+        .processingLimiter: "Lim",
+        .processingBS412: "BS.412",
+        .processingCompositeClipper: "MPX-Clip",
+    ]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            chip(text: "IN", kind: .terminal)
+            connector
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(Array(Self.chainStages.enumerated()), id: \.element) { idx, stage in
+                        chip(
+                            text: Self.chipLabels[stage] ?? stage.label,
+                            kind: stage == model.selectedStage ? .active : .stage,
+                            stage: stage
+                        )
+                        if idx < Self.chainStages.count - 1 {
+                            connector
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(maxWidth: .infinity)
+            connector
+            chip(text: "OUT", kind: .terminal)
+        }
+        .padding(.horizontal, 22)
+        .padding(.bottom, 12)
+    }
+
+    private enum ChipKind {
+        case stage
+        case active
+        case terminal
+    }
+
+    @ViewBuilder
+    private func chip(text: String, kind: ChipKind, stage: Stage? = nil) -> some View {
+        let label = Text(text)
+            .font(.caption.monospaced().weight(kind == .active ? .semibold : .regular))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+
+        switch kind {
+        case .stage:
+            Button {
+                if let stage { model.selectedStage = stage }
+            } label: {
+                label
+                    .foregroundStyle(.secondary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(.quaternary.opacity(0.4))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help((stage?.label ?? "") + " — \(stage?.detailSubtitle ?? "")")
+
+        case .active:
+            Button {
+                if let stage { model.selectedStage = stage }
+            } label: {
+                label
+                    .foregroundStyle(.primary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(BroadcastStyle.accent.opacity(0.20))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(BroadcastStyle.accent.opacity(0.85), lineWidth: 1.0)
+                    )
+            }
+            .buttonStyle(.plain)
+
+        case .terminal:
+            label
+                .foregroundStyle(.secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(.tertiary.opacity(0.18))
+                )
+        }
+    }
+
+    private var connector: some View {
+        Rectangle()
+            .fill(.tertiary.opacity(0.5))
+            .frame(width: 6, height: 1)
+    }
+}

@@ -4011,58 +4011,65 @@ private struct StageContentView: View {
 /// Content for a Processing stage selection. Hosts the existing per-tab
 /// view plus the per-tab reset button. The legacy segmented Picker is
 /// gone — sidebar selection drives `selectedProcessingTab` via the
-/// `selectedStage.didSet` sync.
+/// `selectedStage.didSet` sync. A read-only signal-flow chip strip sits
+/// at the top as alternate navigation (Wheatstone-style block-diagram
+/// hint without the editor cost).
 private struct StageProcessingContent: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                switch model.selectedProcessingTab {
-                case .overview:
-                    ProcessingOverviewGrid(model: model)
-                case .core:
-                    ProcessingCoreTab(model: model)
-                case .agc:
-                    ProcessingAGCTab(model: model)
-                case .phaseRotator:
-                    ProcessingPhaseRotatorTab(model: model)
-                case .parametricEQ:
-                    ProcessingParametricEQTab(model: model)
-                case .orbass:
-                    ProcessingOrbassTab(model: model)
-                case .multiband:
-                    ProcessingMultibandTab(model: model)
-                case .mbLimiter:
-                    ProcessingMultibandLimiterTab(model: model)
-                case .expander:
-                    ProcessingExpanderTab(model: model)
-                case .bassClipper:
-                    ProcessingBassClipperTab(model: model)
-                case .dcClipper:
-                    ProcessingDCClipperTab(model: model)
-                case .widener:
-                    ProcessingWidenerTab(model: model)
-                case .limiter:
-                    ProcessingLimiterTab(model: model)
-                case .bs412:
-                    ProcessingBS412Tab(model: model)
-                case .compositeClipper:
-                    ProcessingCompositeClipperTab(model: model)
-                }
+        VStack(spacing: 0) {
+            if model.selectedStage != .processingOverview {
+                SignalFlowStrip(model: model)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    switch model.selectedProcessingTab {
+                    case .overview:
+                        ProcessingOverviewGrid(model: model)
+                    case .core:
+                        ProcessingCoreTab(model: model)
+                    case .agc:
+                        ProcessingAGCTab(model: model)
+                    case .phaseRotator:
+                        ProcessingPhaseRotatorTab(model: model)
+                    case .parametricEQ:
+                        ProcessingParametricEQTab(model: model)
+                    case .orbass:
+                        ProcessingOrbassTab(model: model)
+                    case .multiband:
+                        ProcessingMultibandTab(model: model)
+                    case .mbLimiter:
+                        ProcessingMultibandLimiterTab(model: model)
+                    case .expander:
+                        ProcessingExpanderTab(model: model)
+                    case .bassClipper:
+                        ProcessingBassClipperTab(model: model)
+                    case .dcClipper:
+                        ProcessingDCClipperTab(model: model)
+                    case .widener:
+                        ProcessingWidenerTab(model: model)
+                    case .limiter:
+                        ProcessingLimiterTab(model: model)
+                    case .bs412:
+                        ProcessingBS412Tab(model: model)
+                    case .compositeClipper:
+                        ProcessingCompositeClipperTab(model: model)
+                    }
 
-                if model.selectedProcessingTab != .overview {
-                    HStack {
-                        Spacer()
-                        Button(model.selectedProcessingTab.resetButtonTitle) {
-                            model.resetCurrentProcessingTabToDefaults()
+                    if model.selectedProcessingTab != .overview {
+                        HStack {
+                            Spacer()
+                            Button(model.selectedProcessingTab.resetButtonTitle) {
+                                model.resetCurrentProcessingTabToDefaults()
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
+                .padding(20)
+                .frame(maxWidth: 1120, alignment: .topLeading)
             }
-            .padding(20)
-            .frame(maxWidth: 1120, alignment: .topLeading)
         }
     }
 }

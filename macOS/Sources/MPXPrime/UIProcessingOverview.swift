@@ -91,8 +91,7 @@ struct ProcessingOverviewGrid: View {
                     .compositeClipper,
                     title: "Composite Clipper",
                     subtitle: compositeClipperSubtitle,
-                    enabledPath: \.compositeClipperEnabled,
-                    heroValue: compositeClipperHero
+                    enabledPath: \.compositeClipperEnabled
                 )
                 stageCard(
                     .bs412,
@@ -244,9 +243,4 @@ struct ProcessingOverviewGrid: View {
             model.config.finalDriveDB)
     }
 
-    /// Live peak-attenuation readout shown as the hero value on the
-    /// composite clipper card.
-    private var compositeClipperHero: String {
-        String(format: "%.1f dB", Double(model.compositeClipperGainReductionDBValue))
-    }
 }

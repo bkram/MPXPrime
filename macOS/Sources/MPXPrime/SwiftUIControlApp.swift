@@ -4298,8 +4298,6 @@ private struct MonitoringDashboardView: View {
                 Card(title: "RDS") {
                     MonitoringRDSSnapshotSectionView(model: model)
                 }
-
-                VisualizerRail(model: model)
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)

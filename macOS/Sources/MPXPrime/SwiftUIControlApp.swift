@@ -4263,6 +4263,8 @@ private struct MonitoringDashboardView: View {
                 Card(title: "RDS") {
                     MonitoringRDSSnapshotSectionView(model: model)
                 }
+
+                VisualizerRail(model: model)
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -5341,7 +5343,7 @@ private struct RDSAdvancedCardView: View {
     }
 }
 
-private struct LevelsCardView: View {
+struct LevelsCardView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
@@ -5590,7 +5592,7 @@ private struct DSPStatusCardView: View {
     }
 }
 
-private struct ScopeView: View {
+struct ScopeView: View {
     let samples: [Float]
     var secondarySamples: [Float]? = nil
 
@@ -5664,7 +5666,7 @@ private struct MonitoringWindowHeader: View {
     }
 }
 
-private struct MPXSpectrumView: View {
+struct MPXSpectrumView: View {
     let dbBins: [Float]
     let maxHz: Double
     let nyquistHz: Double

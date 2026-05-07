@@ -2304,7 +2304,12 @@ final class BasicRDSCoder {
     private var bitBufferIndex: Int = 0
 
     private var scheduleIndex: Int = 0
-    private var scheduleGenerateCounter: Int = 0
+    /// Pre-computed RDS group schedules — cached so the audio thread
+    /// doesn't allocate a fresh `[RDSGroupSpec]` on every `nextGroupBits`
+    /// call (~11×/sec). Rebuilt at init and on `applyRDSRuntimeConfig`
+    /// when any of `rtMode2B` / `rtPlusEnabled` change.
+    private var cachedAutoSchedule: [RDSGroupSpec] = []
+    private var cachedStandardSchedule: [RDSGroupSpec] = []
     private var afPointer: Int = 0
     private var ctMinuteLock: Int = -1
     private var psSegment: Int = 0
@@ -2497,6 +2502,7 @@ final class BasicRDSCoder {
         updateDerivedRates()
         updateShapingFilters()
         startClockCacheIfNeeded()
+        rebuildScheduleCaches()
     }
 
     deinit {
@@ -2561,6 +2567,8 @@ final class BasicRDSCoder {
         rtBufferEnabled =
             Array(config.rtBufferEnabled.prefix(4))
             + Array(repeating: false, count: max(0, 4 - config.rtBufferEnabled.count))
+        let previousRTMode2B = rtMode2B
+        let previousRTPlusEnabled = rtPlusEnabled
         rtCR = config.rtCR
         rtCentered = config.rtCentered
         rtMode2B = config.rtMode2B
@@ -2571,6 +2579,9 @@ final class BasicRDSCoder {
         rtPlusFormatA = config.rtPlusFormatA
         rtPlusFormatB = config.rtPlusFormatB
         nowPlayingEnabled = config.nowPlayingEnabled
+        if rtMode2B != previousRTMode2B || rtPlusEnabled != previousRTPlusEnabled {
+            rebuildScheduleCaches()
+        }
 
         let width = rtMode2B ? 32 : 64
         rtFrames = Self.parseTimedFrames(
@@ -2868,9 +2879,9 @@ final class BasicRDSCoder {
 
         let activeSchedule: [RDSGroupSpec]
         if schedulerStandard {
-            activeSchedule = generateStandardSchedule()
+            activeSchedule = cachedStandardSchedule
         } else if schedulerAuto {
-            activeSchedule = generateAutoSchedule()
+            activeSchedule = cachedAutoSchedule
         } else {
             activeSchedule = schedule
         }
@@ -3198,8 +3209,17 @@ final class BasicRDSCoder {
             seq.append(RDSGroupSpec(type: 3, versionB: false))
             seq.append(RDSGroupSpec(type: 11, versionB: false))
         }
-        scheduleGenerateCounter += 1
         return seq
+    }
+
+    /// Recompute both auto and standard schedule caches. Must be called
+    /// from a non-audio context (init or live-apply path) — never from
+    /// `nextGroupBits`. The cached arrays are read-only from the audio
+    /// thread thereafter, so allocation pressure stays at zero in steady
+    /// state.
+    private func rebuildScheduleCaches() {
+        cachedAutoSchedule = generateAutoSchedule()
+        cachedStandardSchedule = generateStandardSchedule()
     }
 
     private func generateStandardSchedule() -> [RDSGroupSpec] {

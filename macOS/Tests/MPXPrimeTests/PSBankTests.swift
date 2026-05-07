@@ -64,7 +64,8 @@ struct PSBankTests {
             nowPlayingEnabled: false,
             psBanks: psBanks ?? [cfg.rdsPSA, cfg.rdsPSB, cfg.rdsPSC, cfg.rdsPSD],
             psActiveBank: psActive ?? cfg.rdsPSActiveBank,
-            psCentered: psCentered ?? cfg.rdsPSCentered
+            psCentered: psCentered ?? cfg.rdsPSCentered,
+            psFrameSeconds: cfg.rdsPSFrameSeconds
         )
     }
 

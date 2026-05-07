@@ -1,5 +1,6 @@
 import Accelerate
 import AppKit
+import AVFoundation
 import Combine
 import CoreAudio
 import Darwin
@@ -736,7 +737,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         vm.startMonitoringTimer()
         if vm.autoStartEnabled {
-            vm.startOrStopTransport(forceStart: true)
+            // WORKAROUND (auto-start input stall): AVAudioEngine has an
+            // observed issue where the FIRST start() in a process with a
+            // non-default input device fails to deliver tap callbacks —
+            // engine.start() returns success, capture.isRunning is true,
+            // ring stays at 0/N forever. Manual Stop+Start always recovers
+            // because the second AVAudioEngine in the process is fine.
+            //
+            // What we tried that did NOT fix it:
+            //   - 1 s asyncAfter delay (gives runloop time to settle)
+            //   - throwaway warmup AVAudioEngine that touches inputNode +
+            //     start()/stop()/reset() before the real engine starts
+            //   - permission gate via AVCaptureDevice.requestAccess
+            //
+            // What this workaround does: kick off auto-start, then 1.5 s
+            // later check whether the input ring has any samples. If not,
+            // run a real Stop+Start cycle (matches what the user does
+            // manually, which deterministically fixes it). Adds 0.25 s
+            // visible "stall + recover" flash on launch in the failure
+            // case; no-op when auto-start succeeds first try.
+            //
+            // PROPER FIX (future): replace the AVAudioEngine-based capture
+            // path in AudioOutputEngine.setupInputCapture with a direct
+            // AUHAL audio unit (kAudioUnitSubType_HALOutput, EnableIO on
+            // input scope, manual render callback). AUHAL is the
+            // Apple-documented capture-from-specific-device path and
+            // doesn't have AVAudioEngine's input-binding quirks. Tracked
+            // in plan.md "Auto-start input stall workaround".
+            DispatchQueue.main.async { [weak vm] in
+                vm?.startOrStopTransport(forceStart: true)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak vm] in
+                guard let vm, vm.isRunning, vm.transportInputStalled else { return }
+                vm.statusText = "Auto-start input stall detected; cycling engine."
+                vm.cycleEngineForRecovery()
+            }
         }
 
         if let secs = runSeconds {
@@ -1243,11 +1278,6 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var agcOutputRText: String = "-inf dBFS"
     @Published var outputText: String = "-inf dBFS"
     @Published var modulationText: String = "0.0 kHz"
-    @Published var loudnessAvailable: Bool = false
-    @Published var loudnessMomentaryText: String = "—"
-    @Published var loudnessShortTermText: String = "—"
-    @Published var loudnessIntegratedText: String = "—"
-    @Published var loudnessStatusText: String = "Enable Monitor Output to measure decoded-program loudness."
 
     @Published var limiterStateText: String = "Off"
     @Published var limiterDetailText: String = "Drive 0.0 dB • GR 0.0 dB • Safe 0.0 dB • Peak -inf dBFS"
@@ -2097,6 +2127,26 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// True when the transport reports running but the input ring has
+    /// received zero samples — the AVAudioEngine first-start input-stall
+    /// signature. Used by the auto-start watchdog to decide whether to
+    /// trigger an automatic engine cycle.
+    var transportInputStalled: Bool {
+        guard isRunning, sourceMode.lowercased() == "input" else { return false }
+        guard let engine = runningEngine, let snap = engine.transportSnapshot else { return false }
+        return snap.bufferedFrames == 0
+    }
+
+    /// Cycle the engine: stop, then start again on the next runloop tick.
+    /// The auto-start watchdog uses this to recover from a stalled first
+    /// start without requiring user interaction.
+    func cycleEngineForRecovery() {
+        stopEngine()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.startEngine()
+        }
+    }
+
     func toggleBypass() {
         processingBypass.toggle()
         persistBasicConfig()
@@ -2243,6 +2293,12 @@ final class MPXPrimeViewModel: ObservableObject {
             }
             statusText = line
             refreshMonitoringSnapshot()
+        } catch AudioEngineError.inputPermissionDenied {
+            statusText =
+                "Microphone access denied. Open System Settings > Privacy & Security > Microphone "
+                + "and enable MPX Prime, then press Start again."
+            runningEngine = nil
+            isRunning = false
         } catch {
             statusText = "Start failed: \(error)"
             runningEngine = nil
@@ -2312,10 +2368,6 @@ final class MPXPrimeViewModel: ObservableObject {
         var compositeBudgetMarginDB: Float = 0.0
         var outputStereoCorrelation: Float = 1.0
         var outputSideToMidRatio: Float = 0.0
-        var loudnessAvailable: Bool = false
-        var loudnessMomentaryLUFS: Float = -120.0
-        var loudnessShortTermLUFS: Float = -120.0
-        var loudnessIntegratedLUFS: Float = -120.0
         var health = MonitoringStreamHealth.stopped
 
         if let engine = runningEngine {
@@ -2431,10 +2483,6 @@ final class MPXPrimeViewModel: ObservableObject {
             compositeBudgetMarginDB = meters.compositeBudgetMarginDB
             outputStereoCorrelation = meters.outputStereoCorrelation
             outputSideToMidRatio = meters.outputSideToMidRatio
-            loudnessAvailable = meters.loudnessAvailable
-            loudnessMomentaryLUFS = meters.loudnessMomentaryLUFS
-            loudnessShortTermLUFS = meters.loudnessShortTermLUFS
-            loudnessIntegratedLUFS = meters.loudnessIntegratedLUFS
 
             if engineStartReference == nil {
                 engineStartReference = now
@@ -2486,10 +2534,6 @@ final class MPXPrimeViewModel: ObservableObject {
             vuOutput = 0.0
             vuModulation = 0.0
             clearPeakHolds()
-            loudnessAvailable = false
-            loudnessMomentaryLUFS = -120.0
-            loudnessShortTermLUFS = -120.0
-            loudnessIntegratedLUFS = -120.0
             limiterDetailText = String(
                 format: "Drive %.1f dB • GR 0.0 dB • Max 0.0 dB • Safe 0.0 dB • Peak %@",
                 config.finalDriveDB,
@@ -2512,22 +2556,6 @@ final class MPXPrimeViewModel: ObservableObject {
             lastUnderflowTotal = 0
         }
         streamHealth = health
-
-        self.loudnessAvailable = monitorEnabled && loudnessAvailable
-        if self.loudnessAvailable {
-            loudnessMomentaryText = Self.lufsString(loudnessMomentaryLUFS)
-            loudnessShortTermText = Self.lufsString(loudnessShortTermLUFS)
-            loudnessIntegratedText = Self.lufsString(loudnessIntegratedLUFS)
-            loudnessStatusText = "Decoded monitor loudness in EBU-style M / S / I windows."
-        } else {
-            loudnessMomentaryText = "—"
-            loudnessShortTermText = "—"
-            loudnessIntegratedText = "—"
-            loudnessStatusText =
-                monitorEnabled
-                ? "Waiting for decoded monitor audio to accumulate loudness windows."
-                : "Enable Monitor Output to measure decoded-program loudness."
-        }
 
         let modulationNorm = max(0.0, min(1.0, deviationKHz / 100.0))
         let inputLTarget = Self.levelMeterScale(currentInputLeftPeak)
@@ -2702,14 +2730,11 @@ final class MPXPrimeViewModel: ObservableObject {
         let scopesVisible = selectedSection == .monitoring || scopesWindowVisible
         let inputHistoryVisible = scopesVisible || preMPXSpectrumWindowVisible
         let outputHistoryVisible = scopesVisible || spectrumWindowVisible
-        let loudnessVisible =
-            monitorEnabled && (selectedSection == .monitoring || levelsWindowVisible)
         engine.setAnalysisCapture(
             inputScope: inputHistoryVisible,
             outputHistory: outputHistoryVisible,
             preMPXHistory: preMPXSpectrumWindowVisible,
-            outputImageMetrics: selectedSection == .monitoring,
-            loudness: loudnessVisible
+            outputImageMetrics: selectedSection == .monitoring
         )
     }
 
@@ -3683,6 +3708,16 @@ extension String {
     fileprivate func ifEmpty(_ fallback: String) -> String {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    /// Strip the trailing "   N.N pk" suffix produced by `peakMeterString`
+    /// so the vertical meter strip only renders the current value. The
+    /// peak-hold position is already shown as the white tick on the strip,
+    /// so duplicating it as text only adds clutter and overflows the
+    /// 58 pt column.
+    fileprivate var meterCurrentOnly: String {
+        if let r = range(of: "   ") { return String(self[..<r.lowerBound]) }
+        return self
     }
 }
 
@@ -4952,35 +4987,35 @@ private struct LevelsCardView: View {
             HStack(alignment: .center, spacing: 12) {
                 VerticalMeterStrip(
                     label: "IN L",
-                    valueText: model.inputLText,
+                    valueText: model.inputLText.meterCurrentOnly,
                     level: model.inputLLevel,
                     peakLevel: model.inputLPeakHoldLevel,
                     scale: .dbfs
                 )
                 VerticalMeterStrip(
                     label: "IN R",
-                    valueText: model.inputRText,
+                    valueText: model.inputRText.meterCurrentOnly,
                     level: model.inputRLevel,
                     peakLevel: model.inputRPeakHoldLevel,
                     scale: .dbfs
                 )
                 VerticalMeterStrip(
                     label: "AGC L",
-                    valueText: model.agcOutputLText,
+                    valueText: model.agcOutputLText.meterCurrentOnly,
                     level: model.agcOutputLLevel,
                     peakLevel: model.agcOutputLPeakHoldLevel,
                     scale: .dbfs
                 )
                 VerticalMeterStrip(
                     label: "AGC R",
-                    valueText: model.agcOutputRText,
+                    valueText: model.agcOutputRText.meterCurrentOnly,
                     level: model.agcOutputRLevel,
                     peakLevel: model.agcOutputRPeakHoldLevel,
                     scale: .dbfs
                 )
                 VerticalMeterStrip(
                     label: "MPX",
-                    valueText: model.outputText,
+                    valueText: model.outputText.meterCurrentOnly,
                     level: model.outputLevel,
                     peakLevel: model.outputPeakHoldLevel,
                     scale: .dbfs
@@ -5009,26 +5044,6 @@ private struct LevelsCardView: View {
                 Spacer(minLength: 0)
             }
             .frame(height: 340)
-        }
-    }
-}
-
-private struct LoudnessCardView: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "Loudness") {
-            VStack(alignment: .leading, spacing: 12) {
-                KeyValueGrid(rows: [
-                    ("Momentary", model.loudnessMomentaryText),
-                    ("Short-term", model.loudnessShortTermText),
-                    ("Integrated", model.loudnessIntegratedText),
-                ])
-
-                Text(model.loudnessStatusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 }
@@ -6001,7 +6016,6 @@ private struct LevelsOnlyView: View {
                     subtitle: "Input, post-AGC, and output meters."
                 )
                 LevelsCardView(model: model)
-                LoudnessCardView(model: model)
             }
             .padding(20)
         }
@@ -6200,6 +6214,12 @@ private struct RDSProgramTab: View {
             PSBankRow(letter: "C", model: model, path: \.rdsPSC)
             PSBankRow(letter: "D", model: model, path: \.rdsPSD)
             Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered))
+            DoubleSliderRow(
+                title: "PS Frame",
+                value: model.configBinding(\.rdsPSFrameSeconds),
+                range: 0.5...10.0,
+                format: "%.1f s")
+            .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
             LabeledContent("PI Code") {
                 HexCodeField(text: model.piBinding(), placeholder: "0000", width: 72)
             }
@@ -6651,7 +6671,7 @@ private struct HelpInputLevelsView: View {
                 Text("• Wideband AGC is a platform leveler, not the final loudness stage")
                 Text("• Final Drive is the main loudness control before the composite clipper")
                 Text("• MPX Output Level is for final exciter or interface calibration")
-                Text("• Levels are peak safety meters; use Loudness only when Monitor Output is enabled")
+                Text("• Levels are peak safety meters — judge loudness on a real receiver, not on the screen")
                 Text("If you hit 0 dBFS, reduce input gain or Final Drive and re-check pre-emphasis behavior.")
             }
             .foregroundStyle(.secondary)

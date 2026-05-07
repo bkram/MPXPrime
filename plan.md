@@ -91,6 +91,7 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 2. Refine calibration workflow only where real operator friction exists.
 3. Build a small set of named presets (`clean`, `loud`, `community-radio`, `lpfm-conservative`) — INI fragments shipped alongside the binary.
 4. Document the amateur-operator getting-started flow in README — what to plug where, what the meters mean, how to pick a preset, common pitfalls.
+5. **Auto-start input stall — proper fix.** Currently mitigated by a watchdog in `applicationDidFinishLaunching`: kick auto-start, wait 1.5 s, if the input ring is still at 0, run a Stop+Start cycle. The cycle deterministically recovers, but the underlying issue is in `AudioOutputEngine.setupInputCapture` — AVAudioEngine's first start() in a process with a non-default input device fails to deliver tap callbacks even though every API call returns success (`capture.isRunning == true`, `inputFormat` correct, `kAudioOutputUnitProperty_CurrentDevice` set ok, permission `.authorized`). Replace the AVAudioEngine-based capture path with a direct AUHAL audio unit (`kAudioUnitSubType_HALOutput`, `EnableIO` on input scope element 1, manual render callback into the existing `StereoInputRingBuffer`). AUHAL is Apple's documented capture-from-specific-device path (TN2091) and doesn't have AVAudioEngine's input-node binding quirks.
 
 ### Medium-term
 1. Reduce duplicated filter configuration logic in biquad/crossover helpers.

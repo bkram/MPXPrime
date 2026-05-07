@@ -80,12 +80,17 @@ struct VerticalMeterStrip: View {
                 )
             }
             .frame(width: 22)
-            // Scale labels column (right of the bar).
+            // Scale labels column (right of the bar). The text is constrained
+            // to the column width and shrinks if needed — without this, long
+            // strings (e.g. "-6.4 dBFS   -1.5 pk") spill into adjacent meter
+            // columns and read as one illegible row of overlapping labels.
             Text(valueText)
                 .font(BroadcastStyle.valueReadout)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .fixedSize()
+                .minimumScaleFactor(0.6)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity)
         }
         .frame(width: 58)
     }

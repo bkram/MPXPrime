@@ -2239,6 +2239,7 @@ final class BasicRDSCoder {
     // Live-apply — switching the active bank rebuilds psSequence/psFrames.
     private var psBanks: [String]
     private var psActiveBankIndex: Int
+    private var psFrameSeconds: Double
     private let rtManualBuffers: Bool
     private var rtCycleAB: Bool
     private var rtRawText: String
@@ -2413,6 +2414,7 @@ final class BasicRDSCoder {
         self.psCentered = config.rdsPSCentered
         self.psBanks = [config.rdsPSA, config.rdsPSB, config.rdsPSC, config.rdsPSD]
         self.psActiveBankIndex = Self.psBankIndex(config.rdsPSActiveBank)
+        self.psFrameSeconds = max(0.1, config.rdsPSFrameSeconds)
         self.rtManualBuffers = config.rdsRTManualBuffers
         self.rtCycleAB = config.rdsRTCycleAB
         self.rtRawText = config.rdsRTText
@@ -2441,7 +2443,8 @@ final class BasicRDSCoder {
         self.schedulerStandardLPS = config.rdsSchedulerStandardLPS
         let initialPSText = psBanks[psActiveBankIndex]
         self.psFrames = Self.parseTimedFrames(
-            initialPSText, width: 8, uppercase: true, center: psCentered, allowScroll: true)
+            initialPSText, width: 8, uppercase: true, center: psCentered,
+            allowScroll: true, defaultDuration: self.psFrameSeconds)
         self.psFrameBytes = psFrames.map(Self.rdsBytes)
         self.rtFrames = Self.parseTimedFrames(
             config.rdsRTText,
@@ -2450,7 +2453,8 @@ final class BasicRDSCoder {
             center: rtCentered
         )
         self.psSequence = Self.parseTimedSequence(
-            initialPSText, width: 8, uppercase: true, center: psCentered, allowScroll: true)
+            initialPSText, width: 8, uppercase: true, center: psCentered,
+            allowScroll: true, defaultDuration: self.psFrameSeconds)
         self.rtSequence = Self.parseTimedSequence(
             config.rdsRTText,
             width: rtMode2B ? 32 : 64,
@@ -2518,10 +2522,12 @@ final class BasicRDSCoder {
     private func rebuildPSSequence() {
         let text = psBanks[psActiveBankIndex]
         psFrames = Self.parseTimedFrames(
-            text, width: 8, uppercase: true, center: psCentered, allowScroll: true)
+            text, width: 8, uppercase: true, center: psCentered,
+            allowScroll: true, defaultDuration: psFrameSeconds)
         psFrameBytes = psFrames.map(Self.rdsBytes)
         psSequence = Self.parseTimedSequence(
-            text, width: 8, uppercase: true, center: psCentered, allowScroll: true)
+            text, width: 8, uppercase: true, center: psCentered,
+            allowScroll: true, defaultDuration: psFrameSeconds)
         psSeqIndex = 0
         psSeqStart = Date().timeIntervalSinceReferenceDate
         psSeqTransmits = 0
@@ -2532,15 +2538,18 @@ final class BasicRDSCoder {
         let previousBanks = psBanks
         let previousActive = psActiveBankIndex
         let previousCentered = psCentered
+        let previousPSFrameSeconds = psFrameSeconds
         if !config.psBanks.isEmpty {
             psBanks = Array(config.psBanks.prefix(4))
                 + Array(repeating: "", count: max(0, 4 - config.psBanks.count))
         }
         psActiveBankIndex = Self.psBankIndex(config.psActiveBank)
         psCentered = config.psCentered
+        psFrameSeconds = max(0.1, config.psFrameSeconds)
         if psBanks != previousBanks
             || psActiveBankIndex != previousActive
             || psCentered != previousCentered
+            || psFrameSeconds != previousPSFrameSeconds
         {
             rebuildPSSequence()
         }
@@ -2883,7 +2892,14 @@ final class BasicRDSCoder {
         case 10:
             return ptynEnabled ? buildGroup10A() : buildGroup0(versionB: false)
         case 11:
-            return rtPlusEnabled ? buildGroup11A() : buildGroup0(versionB: false)
+            // Skip 11A when no usable tags extracted from current RT — an
+            // all-zero-content-type 11A reads as "RT+ withdrawn" on several
+            // receivers (Pioneer / Sony car radios) and causes the RT+
+            // display to flicker on / off. Substitute 0A so the group rate
+            // stays constant; the next valid tag set will resume RT+.
+            return (rtPlusEnabled && !rtPlusTags.isEmpty)
+                ? buildGroup11A()
+                : buildGroup0(versionB: false)
         case 15:
             return lpsEnabled ? buildGroup15A() : buildGroup0(versionB: false)
         case 1:
@@ -3174,9 +3190,12 @@ final class BasicRDSCoder {
             seq.append(RDSGroupSpec(type: 1, versionB: false))
         }
         if rtPlusEnabled {
-            if (scheduleGenerateCounter % 2) == 0 {
-                seq.append(RDSGroupSpec(type: 3, versionB: false))
-            }
+            // Emit 3A AID registration every cycle (was every other cycle).
+            // Several receivers require seeing 3A within ~5-10 s of tune-in
+            // to keep treating subsequent 11A groups as RT+; the prior
+            // every-other-cycle cadence (~4.5 s) was on the edge and could
+            // miss the receiver's window depending on tune-in timing.
+            seq.append(RDSGroupSpec(type: 3, versionB: false))
             seq.append(RDSGroupSpec(type: 11, versionB: false))
         }
         scheduleGenerateCounter += 1
@@ -3730,10 +3749,12 @@ final class BasicRDSCoder {
         width: Int,
         uppercase: Bool,
         center: Bool,
-        allowScroll: Bool = false
+        allowScroll: Bool = false,
+        defaultDuration: Double = 2.5
     ) -> [String] {
         return parseTimedSequence(
-            raw, width: width, uppercase: uppercase, center: center, allowScroll: allowScroll
+            raw, width: width, uppercase: uppercase, center: center,
+            allowScroll: allowScroll, defaultDuration: defaultDuration
         ).map(\.text)
     }
 
@@ -3770,7 +3791,8 @@ final class BasicRDSCoder {
         width: Int,
         uppercase: Bool,
         center: Bool,
-        allowScroll: Bool = false
+        allowScroll: Bool = false,
+        defaultDuration: Double = 2.5
     ) -> [TimedTextFrame] {
         let resolved = resolveTextMarkers(raw) ?? raw
         let trimmed = resolved.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3837,29 +3859,29 @@ final class BasicRDSCoder {
             if slashParts.count > 1 {
                 for part in slashParts {
                     let (timing, body) = RDSTextParser.parseTimingPrefix(
-                        part, defaultDuration: 2.5)
-                    emit(timing: timing, body: body, fallbackDuration: 2.5)
+                        part, defaultDuration: defaultDuration)
+                    emit(timing: timing, body: body, fallbackDuration: defaultDuration)
                 }
             } else {
                 // Single top-level segment that may contain inline
                 // `1s:A 2t:B` whitespace-separated timed tokens.
                 let inline = RDSTextParser.extractInlineSegments(
-                    stripped, defaultDuration: 2.5)
+                    stripped, defaultDuration: defaultDuration)
                 if inline.count > 1 {
                     for seg in inline {
-                        emit(timing: seg.timing, body: seg.body, fallbackDuration: 2.5)
+                        emit(timing: seg.timing, body: seg.body, fallbackDuration: defaultDuration)
                     }
                 } else {
                     let part = slashParts.first ?? stripped
                     let (timing, body) = RDSTextParser.parseTimingPrefix(
-                        part, defaultDuration: 2.5)
-                    emit(timing: timing, body: body, fallbackDuration: 2.5)
+                        part, defaultDuration: defaultDuration)
+                    emit(timing: timing, body: body, fallbackDuration: defaultDuration)
                 }
             }
         } else {
             // No timing prefix — treat the whole thing as one body. Untimed
             // single-chunk content holds for 10s; untimed multi-chunk content
-            // rotates at 2.5s per chunk (historical behavior).
+            // rotates at the configured default duration per chunk.
             let trimmedEncoded = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedEncoded.isEmpty {
                 return [TimedTextFrame(duration: 10.0, text: String(repeating: " ", count: width))]
@@ -3885,7 +3907,7 @@ final class BasicRDSCoder {
                     out.append(TimedTextFrame(duration: 10.0, text: single))
                 } else {
                     for chunk in chunks {
-                        out.append(TimedTextFrame(duration: 2.5, text: chunk))
+                        out.append(TimedTextFrame(duration: defaultDuration, text: chunk))
                     }
                 }
             }
@@ -4520,6 +4542,7 @@ final class MPXGenerator {
         let psBanks: [String]        // 4 PS text banks (A, B, C, D)
         let psActiveBank: String     // "A" / "B" / "C" / "D"
         let psCentered: Bool
+        let psFrameSeconds: Double   // fallback per-segment duration when no Ns: marker
     }
 
     private var sampleRate: Float

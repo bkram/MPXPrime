@@ -3,12 +3,16 @@ import AudioToolbox
 import Foundation
 import Accelerate
 import Atomics
+import os
+
+private let captureLog = Logger(subsystem: "com.mpxprime.app", category: "input-capture")
 
 enum AudioEngineError: Error {
     case sourceNodeFormatUnavailable
     case engineStartFailed(String)
     case inputFormatUnavailable
     case deviceSelectionFailed(String)
+    case inputPermissionDenied
 }
 
 enum AudioOutputMode {
@@ -65,171 +69,6 @@ final class AudioOutputEngine {
         var compositeBudgetMarginDB: Float
         var outputStereoCorrelation: Float
         var outputSideToMidRatio: Float
-        var loudnessAvailable: Bool
-        var loudnessMomentaryLUFS: Float
-        var loudnessShortTermLUFS: Float
-        var loudnessIntegratedLUFS: Float
-    }
-
-    private struct LoudnessSnapshot {
-        var available: Bool = false
-        var momentaryLUFS: Float = -120.0
-        var shortTermLUFS: Float = -120.0
-        var integratedLUFS: Float = -120.0
-    }
-
-    private final class MonitorLoudnessAnalyzer {
-        private static let blockDurationSeconds: Double = 0.1
-        private static let momentaryBlockCount = 4
-        private static let shortTermBlockCount = 30
-        private static let silenceGateLUFS: Float = -70.0
-        private static let relativeGateOffsetLU: Float = -10.0
-        private static let maxHistoryBlocks = 600  // 60s of 100ms blocks
-
-        private let sampleRate: Float
-        private let blockFrameTarget: Int
-        private var kWeightHP = StereoBiquad()
-        private var kWeightShelf = StereoBiquad()
-        private var partialBlockEnergy: Double = 0.0
-        private var partialBlockFrames: Int = 0
-
-        // Fixed-size ring buffer — allocated once in init(), never resized.
-        // Audio thread writes via process(), UI thread reads via snapshot().
-        private var ring: [Double]
-        private var ringHead: Int = 0
-        private var ringCount: Int = 0
-        // Atomic cursor packs (ringHead << 32 | ringCount) for lock-free
-        // audio→UI handoff. Audio thread stores with .releasing after each
-        // block write; UI thread loads with .acquiring before reading ring.
-        private let ringCursor = ManagedAtomic<UInt64>(0)
-
-        init(sampleRate: Float) {
-            self.sampleRate = max(8_000.0, sampleRate)
-            self.blockFrameTarget = max(
-                1,
-                Int((Self.blockDurationSeconds * Double(self.sampleRate)).rounded())
-            )
-            self.ring = Array(repeating: 0.0, count: Self.maxHistoryBlocks)
-            reset()
-        }
-
-        func reset() {
-            partialBlockEnergy = 0.0
-            partialBlockFrames = 0
-            ringHead = 0
-            ringCount = 0
-            ringCursor.store(0, ordering: .releasing)
-            for i in 0..<ring.count { ring[i] = 0.0 }
-            kWeightHP.configureHighpass(cutoffHz: 38.0, sampleRate: sampleRate)
-            kWeightShelf.configureHighShelf(gainDB: 4.0, cutoffHz: 1_680.0, sampleRate: sampleRate)
-        }
-
-        // Called from audio render thread — MUST be lock-free and allocation-free.
-        func process(left: UnsafePointer<Float>, right: UnsafePointer<Float>, frameCount: Int) {
-            guard frameCount > 0 else { return }
-            for i in 0..<frameCount {
-                let highPassed = kWeightHP.process(left: left[i], right: right[i])
-                let weighted = kWeightShelf.process(left: highPassed.0, right: highPassed.1)
-                partialBlockEnergy += Double((weighted.0 * weighted.0) + (weighted.1 * weighted.1))
-                partialBlockFrames += 1
-                if partialBlockFrames >= blockFrameTarget {
-                    ring[ringHead] = partialBlockEnergy / Double(partialBlockFrames)
-                    ringHead = (ringHead + 1) % Self.maxHistoryBlocks
-                    if ringCount < Self.maxHistoryBlocks {
-                        ringCount += 1
-                    }
-                    let packed = (UInt64(ringHead) << 32) | UInt64(ringCount)
-                    ringCursor.store(packed, ordering: .releasing)
-                    partialBlockEnergy = 0.0
-                    partialBlockFrames = 0
-                }
-            }
-        }
-
-        // Called from UI thread (under meterLock).
-        func snapshot() -> LoudnessSnapshot {
-            let packed = ringCursor.load(ordering: .acquiring)
-            let head = Int(packed >> 32)
-            let count = Int(packed & 0xFFFF_FFFF)
-            guard count >= Self.momentaryBlockCount else {
-                return LoudnessSnapshot()
-            }
-            let momentary = rollingLufs(head: head, count: count, lastBlocks: Self.momentaryBlockCount)
-            let shortTerm = rollingLufs(head: head, count: count, lastBlocks: Self.shortTermBlockCount)
-            let integrated = integratedLufs(head: head, count: count)
-            return LoudnessSnapshot(
-                available: true,
-                momentaryLUFS: momentary,
-                shortTermLUFS: shortTerm,
-                integratedLUFS: integrated
-            )
-        }
-
-        @inline(__always)
-        private func blockAt(logicalIndex: Int, head: Int, count: Int) -> Double {
-            let start = (head - count + Self.maxHistoryBlocks) % Self.maxHistoryBlocks
-            return ring[(start + logicalIndex) % Self.maxHistoryBlocks]
-        }
-
-        private func rollingLufs(head: Int, count: Int, lastBlocks: Int) -> Float {
-            let blocks = min(lastBlocks, count)
-            guard blocks > 0 else { return -120.0 }
-            var sum = 0.0
-            let offset = count - blocks
-            for i in 0..<blocks {
-                sum += blockAt(logicalIndex: offset + i, head: head, count: count)
-            }
-            return Self.lufs(meanSquare: sum / Double(blocks))
-        }
-
-        private func integratedLufs(head: Int, count: Int) -> Float {
-            guard count >= Self.momentaryBlockCount else { return -120.0 }
-            let windowCount = count - Self.momentaryBlockCount + 1
-
-            // First pass: absolute gate at -70 LUFS
-            var absoluteGatedSum = 0.0
-            var absoluteGatedCount = 0
-            for start in 0..<windowCount {
-                var windowSum = 0.0
-                for j in 0..<Self.momentaryBlockCount {
-                    windowSum += blockAt(logicalIndex: start + j, head: head, count: count)
-                }
-                let windowMean = windowSum / Double(Self.momentaryBlockCount)
-                if Self.lufs(meanSquare: windowMean) >= Self.silenceGateLUFS {
-                    absoluteGatedSum += windowMean
-                    absoluteGatedCount += 1
-                }
-            }
-            guard absoluteGatedCount > 0 else { return -120.0 }
-
-            let absoluteMeanSquare = absoluteGatedSum / Double(absoluteGatedCount)
-            let absoluteLufs = Self.lufs(meanSquare: absoluteMeanSquare)
-            let relativeGate = absoluteLufs + Self.relativeGateOffsetLU
-
-            // Second pass: relative gate
-            var relativeGatedSum = 0.0
-            var relativeGatedCount = 0
-            for start in 0..<windowCount {
-                var windowSum = 0.0
-                for j in 0..<Self.momentaryBlockCount {
-                    windowSum += blockAt(logicalIndex: start + j, head: head, count: count)
-                }
-                let windowMean = windowSum / Double(Self.momentaryBlockCount)
-                if Self.lufs(meanSquare: windowMean) >= Self.silenceGateLUFS,
-                   Self.lufs(meanSquare: windowMean) >= relativeGate
-                {
-                    relativeGatedSum += windowMean
-                    relativeGatedCount += 1
-                }
-            }
-            guard relativeGatedCount > 0 else { return absoluteLufs }
-            return Self.lufs(meanSquare: relativeGatedSum / Double(relativeGatedCount))
-        }
-
-        private static func lufs(meanSquare: Double) -> Float {
-            guard meanSquare.isFinite, meanSquare > 1e-12 else { return -120.0 }
-            return Float(-0.691 + (10.0 * log10(meanSquare)))
-        }
     }
 
     private let engine = AVAudioEngine()
@@ -293,13 +132,8 @@ final class AudioOutputEngine {
         audioCompositePeak: 0.0,
         compositeBudgetMarginDB: 0.0,
         outputStereoCorrelation: 1.0,
-        outputSideToMidRatio: 0.0,
-        loudnessAvailable: false,
-        loudnessMomentaryLUFS: -120.0,
-        loudnessShortTermLUFS: -120.0,
-        loudnessIntegratedLUFS: -120.0
+        outputSideToMidRatio: 0.0
     )
-    private var loudnessAnalyzer: MonitorLoudnessAnalyzer?
     private var pendingInputPeak: Float = 0.0
     private var pendingInputLeftPeak: Float = 0.0
     private var pendingInputRightPeak: Float = 0.0
@@ -340,7 +174,6 @@ final class AudioOutputEngine {
     private let outputHistoryCaptureEnabled = ManagedAtomic<Bool>(true)
     private let preMPXHistoryCaptureEnabled = ManagedAtomic<Bool>(true)
     private let outputImageMetricsEnabled = ManagedAtomic<Bool>(true)
-    private let loudnessMeasurementEnabled = ManagedAtomic<Bool>(true)
     private let runtimeConfigApplyCount = ManagedAtomic<UInt64>(0)
     private let runtimeConfigSkipCount = ManagedAtomic<UInt64>(0)
 
@@ -374,6 +207,7 @@ final class AudioOutputEngine {
         let requestedRate = max(8_000.0, requestedSampleRate)
         let renderRate = (outputMode == .monitorAudio) ? requestedRate : outputRate
         if useInputSource {
+            try ensureMicrophoneAuthorization()
             try setupInputCapture(targetSampleRate: renderRate)
         }
         if outputMode == .mpxComposite, outputRate < 110_000.0 {
@@ -397,7 +231,6 @@ final class AudioOutputEngine {
         // transient smear / inter-band pumping that makes IIR-LR4
         // multiband sound worse than single-band on percussive content.
         generator.setMultibandFIREnabled(outputMode == .mpxComposite && multibandFIREnabled)
-        loudnessAnalyzer = MonitorLoudnessAnalyzer(sampleRate: Float(renderRate))
         configureScopeHistory(renderRate: renderRate, inputRate: configuredInputSampleRate)
         preAllocateBuffers(maxFrames: Int(max(renderRate, 192000.0) * 0.1))
 
@@ -434,7 +267,6 @@ final class AudioOutputEngine {
                 throttled && self.preMPXHistoryCaptureEnabled.load(ordering: .relaxed)
             let captureOutputImageMetrics =
                 throttled && self.outputImageMetricsEnabled.load(ordering: .relaxed)
-            let shouldMeasureLoudness = self.loudnessMeasurementEnabled.load(ordering: .relaxed)
             let needsAnalysisBuffers = throttled || capturePreMPXHistory
             if buffers.count >= 2,
                 let leftData = buffers[0].mData?.assumingMemoryBound(to: Float.self),
@@ -477,9 +309,6 @@ final class AudioOutputEngine {
                                     right: rightData,
                                     analysis: analysis
                                 )
-                                if shouldMeasureLoudness {
-                                    self.updateMonitorLoudness(left: leftData, right: rightData, frameCount: frames)
-                                }
                                 if throttled {
                                     self.updateThrottledRenderAnalysis(
                                         outputLeft: leftData,
@@ -506,9 +335,6 @@ final class AudioOutputEngine {
                                             mpxRight: mpxRight,
                                             analysis: analysis
                                         )
-                                        if shouldMeasureLoudness {
-                                            self.updateMonitorLoudness(left: leftData, right: rightData, frameCount: frames)
-                                        }
                                         if throttled {
                                             self.updateThrottledRenderAnalysis(
                                                 outputLeft: mpxLeft,
@@ -557,9 +383,6 @@ final class AudioOutputEngine {
                                     right: rightData,
                                     analysis: analysis
                                 )
-                                if shouldMeasureLoudness {
-                                    self.updateMonitorLoudness(left: leftData, right: rightData, frameCount: frames)
-                                }
                                 if throttled {
                                     self.updateThrottledRenderAnalysis(
                                         outputLeft: leftData,
@@ -586,9 +409,6 @@ final class AudioOutputEngine {
                                             mpxRight: mpxRight,
                                             analysis: analysis
                                         )
-                                        if shouldMeasureLoudness {
-                                            self.updateMonitorLoudness(left: leftData, right: rightData, frameCount: frames)
-                                        }
                                         if throttled {
                                             self.updateThrottledRenderAnalysis(
                                                 outputLeft: mpxLeft,
@@ -729,11 +549,6 @@ final class AudioOutputEngine {
         meterSnapshot.livePostAGCRightPeak = 0.0
         meterSnapshot.liveOutputPeak = 0.0
         meterSnapshot.liveDeviationKHzPeak = 0.0
-        meterSnapshot.loudnessAvailable = false
-        meterSnapshot.loudnessMomentaryLUFS = -120.0
-        meterSnapshot.loudnessShortTermLUFS = -120.0
-        meterSnapshot.loudnessIntegratedLUFS = -120.0
-        loudnessAnalyzer?.reset()
         inputScopeLeftHistory = []
         inputScopeRightHistory = []
         outputScopeHistory = []
@@ -793,13 +608,19 @@ final class AudioOutputEngine {
     }
 
     private func setupInputCapture(targetSampleRate: Double) throws {
+        captureLog.info("setupInputCapture: requestedInputDeviceID=\(self.requestedInputDeviceID.map { String($0) } ?? "nil", privacy: .public) targetSampleRate=\(targetSampleRate, privacy: .public)")
         let capture = AVAudioEngine()
         if let inputID = requestedInputDeviceID {
             try setCurrentDevice(inputID, for: capture.inputNode, role: "input")
             applyHALBufferSize(deviceID: inputID, role: "input")
+            captureLog.info("setupInputCapture: setCurrentDevice ok deviceID=\(inputID, privacy: .public)")
+        } else {
+            captureLog.info("setupInputCapture: no requestedInputDeviceID; using AVAudioEngine default input")
         }
         let inFormat = capture.inputNode.inputFormat(forBus: 0)
+        captureLog.info("setupInputCapture: inputFormat sampleRate=\(inFormat.sampleRate, privacy: .public) channels=\(inFormat.channelCount, privacy: .public)")
         if inFormat.channelCount < 1 {
+            captureLog.error("setupInputCapture: input format has no channels — throwing inputFormatUnavailable")
             throw AudioEngineError.inputFormatUnavailable
         }
         configuredInputSampleRate = inFormat.sampleRate
@@ -831,22 +652,75 @@ final class AudioOutputEngine {
         )
         inputPrimed = false
         let tapFormat = inFormat
+        let firstTapLogged = ManagedAtomic<Bool>(false)
         capture.inputNode.installTap(
             onBus: 0,
             bufferSize: AVAudioFrameCount(captureBlockFrames),
             format: tapFormat
         ) { [weak self] buffer, _ in
             guard let self, let activeRing = self.inputRing else { return }
+            if firstTapLogged.compareExchange(
+                expected: false, desired: true,
+                ordering: .acquiringAndReleasing).exchanged
+            {
+                let frames = Int(buffer.frameLength)
+                var peak: Float = 0
+                if let ch = buffer.floatChannelData?[0] {
+                    for i in 0..<frames { peak = max(peak, fabsf(ch[i])) }
+                }
+                captureLog.info("first tap callback frames=\(frames, privacy: .public) peak=\(peak, privacy: .public)")
+            }
             self.pushInputBufferToRing(buffer, ring: activeRing)
         }
         captureTapInstalled = true
+        captureLog.info("tap installed bufferSize=\(captureBlockFrames, privacy: .public) ringCapacity=\(ringFrames, privacy: .public)")
         do {
             try capture.start()
         } catch {
+            captureLog.error("capture.start threw: \(error.localizedDescription, privacy: .public)")
             throw AudioEngineError.engineStartFailed(
                 "input capture start failed: \(error.localizedDescription)")
         }
         captureEngine = capture
+        captureLog.info("capture.start ok isRunning=\(capture.isRunning, privacy: .public)")
+        // One-shot diagnostic: warn (don't fail) if the tap hasn't fired
+        // within 2s of capture.start. Surfaces "Transport: Running but ring
+        // stays at 0" silent stalls in Console.app for diagnosis without
+        // breaking workflows where the source genuinely takes longer to
+        // produce (BlackHole waiting for an upstream producer, sleeping mics).
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) {
+            if !firstTapLogged.load(ordering: .acquiring) {
+                captureLog.warning("2s after start, tap has NOT fired. Likely causes: virtual-device with no upstream producer (BlackHole), sleeping mic, sandboxed-input mismatch.")
+            } else {
+                captureLog.info("2s after start, tap is delivering normally.")
+            }
+        }
+    }
+
+    private func ensureMicrophoneAuthorization() throws {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        captureLog.info("microphone authorization status=\(String(describing: status), privacy: .public)")
+        switch status {
+        case .authorized:
+            return
+        case .denied, .restricted:
+            throw AudioEngineError.inputPermissionDenied
+        case .notDetermined:
+            let semaphore = DispatchSemaphore(value: 0)
+            let granted = ManagedAtomic<Bool>(false)
+            AVCaptureDevice.requestAccess(for: .audio) { ok in
+                granted.store(ok, ordering: .releasing)
+                semaphore.signal()
+            }
+            semaphore.wait()
+            let ok = granted.load(ordering: .acquiring)
+            captureLog.info("microphone authorization request returned granted=\(ok, privacy: .public)")
+            if !ok {
+                throw AudioEngineError.inputPermissionDenied
+            }
+        @unknown default:
+            throw AudioEngineError.inputPermissionDenied
+        }
     }
 
     private func ensureMonitorScratchCapacity(frames: Int) {
@@ -1462,17 +1336,12 @@ final class AudioOutputEngine {
         inputScope: Bool,
         outputHistory: Bool,
         preMPXHistory: Bool,
-        outputImageMetrics: Bool,
-        loudness: Bool
+        outputImageMetrics: Bool
     ) {
         inputScopeCaptureEnabled.store(inputScope, ordering: .relaxed)
         outputHistoryCaptureEnabled.store(outputHistory, ordering: .relaxed)
         preMPXHistoryCaptureEnabled.store(preMPXHistory, ordering: .relaxed)
         outputImageMetricsEnabled.store(outputImageMetrics, ordering: .relaxed)
-        let previousLoudness = loudnessMeasurementEnabled.exchange(loudness, ordering: .relaxed)
-        if previousLoudness != loudness {
-            loudnessAnalyzer?.reset()
-        }
     }
 
     func applyRuntimeConfig(_ config: AppConfig) {
@@ -1604,7 +1473,8 @@ final class AudioOutputEngine {
             nowPlayingEnabled: config.rdsNowPlayingEnabled,
             psBanks: [config.rdsPSA, config.rdsPSB, config.rdsPSC, config.rdsPSD],
             psActiveBank: config.rdsPSActiveBank,
-            psCentered: config.rdsPSCentered
+            psCentered: config.rdsPSCentered,
+            psFrameSeconds: config.rdsPSFrameSeconds
         )
         runtimeConfigLock.lock()
         if lastQueuedRDSRuntimeConfig == runtime {
@@ -1683,19 +1553,6 @@ final class AudioOutputEngine {
         meterSnapshot.livePostAGCRightPeak = pendingPostAGCRight
         meterSnapshot.liveOutputPeak = pendingOutput
         meterSnapshot.liveDeviationKHzPeak = pendingOutput * targetDeviationKHz
-        if loudnessMeasurementEnabled.load(ordering: .relaxed),
-            let loudness = loudnessAnalyzer?.snapshot()
-        {
-            meterSnapshot.loudnessAvailable = loudness.available
-            meterSnapshot.loudnessMomentaryLUFS = loudness.momentaryLUFS
-            meterSnapshot.loudnessShortTermLUFS = loudness.shortTermLUFS
-            meterSnapshot.loudnessIntegratedLUFS = loudness.integratedLUFS
-        } else {
-            meterSnapshot.loudnessAvailable = false
-            meterSnapshot.loudnessMomentaryLUFS = -120.0
-            meterSnapshot.loudnessShortTermLUFS = -120.0
-            meterSnapshot.loudnessIntegratedLUFS = -120.0
-        }
         pendingInputPeak = 0.0
         pendingInputLeftPeak = 0.0
         pendingInputRightPeak = 0.0
@@ -1869,11 +1726,6 @@ final class AudioOutputEngine {
             compositeBudgetMarginDB: calibration.budgetMarginDB,
             outputStereoCorrelation: 1.0,
             outputSideToMidRatio: 0.0
-            ,
-            loudnessAvailable: false,
-            loudnessMomentaryLUFS: -120.0,
-            loudnessShortTermLUFS: -120.0,
-            loudnessIntegratedLUFS: -120.0
         )
     }
 
@@ -2000,14 +1852,6 @@ final class AudioOutputEngine {
         if outputPeak > pendingOutputPeak {
             pendingOutputPeak = outputPeak
         }
-    }
-
-    private func updateMonitorLoudness(
-        left: UnsafePointer<Float>,
-        right: UnsafePointer<Float>,
-        frameCount: Int
-    ) {
-        loudnessAnalyzer?.process(left: left, right: right, frameCount: frameCount)
     }
 
     private func applyPendingRuntimeConfigIfNeeded() {

@@ -254,6 +254,10 @@ struct AppConfig {
     var rdsPSD: String = ""
     var rdsPSActiveBank: String = "A"
     var rdsPSCentered: Bool = true
+    /// Default duration in seconds for each PS segment when the source text
+    /// has no explicit `Ns:` / `Nt:` timing marker. Typical professional
+    /// rotation cadence is 3 seconds per 8-character chunk.
+    var rdsPSFrameSeconds: Double = 3.0
 
     /// Returns the raw text of the currently active PS bank. Empty string if
     /// the active bank is empty or the selector is invalid.
@@ -545,6 +549,7 @@ struct AppConfig {
         cfg.rdsPSD = rds.string("ps_d", defaultValue: cfg.rdsPSD)
         cfg.rdsPSActiveBank = rds.string("ps_active_bank", defaultValue: cfg.rdsPSActiveBank)
         cfg.rdsPSCentered = rds.bool("ps_centered", defaultValue: cfg.rdsPSCentered)
+        cfg.rdsPSFrameSeconds = rds.double("ps_frame_seconds", defaultValue: cfg.rdsPSFrameSeconds)
         cfg.rdsRTText = rds.string("rt_text", defaultValue: cfg.rdsRTText)
         cfg.rdsRTManualBuffers = rds.bool("rt_manual_buffers", defaultValue: cfg.rdsRTManualBuffers)
         cfg.rdsRTCycleAB = rds.bool("rt_cycle_ab", defaultValue: cfg.rdsRTCycleAB)
@@ -909,6 +914,7 @@ struct AppConfig {
             "ps_active_bank = \(rdsPSActiveBank)",
             "ps_dynamic = \(activePSBankText)",
             "ps_centered = \(Self.boolString(rdsPSCentered))",
+            "ps_frame_seconds = \(String(format: "%.2f", rdsPSFrameSeconds))",
             "rt_text = \(rdsRTText)",
             "rt_manual_buffers = \(Self.boolString(rdsRTManualBuffers))",
             "rt_cycle_ab = \(Self.boolString(rdsRTCycleAB))",

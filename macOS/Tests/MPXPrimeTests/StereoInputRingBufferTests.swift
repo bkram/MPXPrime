@@ -351,4 +351,164 @@ struct StereoInputRingBufferTests {
         }
         return sqrt(sum / Float(count))
     }
+
+    // MARK: - Clock-drift simulation
+    //
+    // These three tests model the operational case where the input
+    // device's clock drifts relative to the render clock — both
+    // nominally the same rate (so the call site computes
+    // nominalConsume == frameCount and would pick the fast path) but
+    // the writer produces a slightly different number of frames per
+    // render callback than the reader consumes. Without drift
+    // correction, bufferedFrames grows or shrinks without bound; over
+    // hours, the user observes input-to-output latency increasing
+    // toward ring capacity.
+
+    /// Drive a sustained drift loop and return final buffered depth.
+    /// `writeFramesPerCallback` controls drift direction: > frameCount
+    /// means input rate > render rate (latency creep up); < frameCount
+    /// is the inverse. `transitionAfter` (optional) switches to exact
+    /// matched-rate writes after that many callbacks.
+    private static func runDriftLoop(
+        ring: StereoInputRingBuffer,
+        callbacks: Int,
+        frameCount: Int,
+        nominalConsume: Int,
+        targetBuffered: Int,
+        deadband: Int,
+        writeFramesPerCallback: Int,
+        transitionAfter: Int? = nil,
+        matchedRateAfterTransition: Int = 0
+    ) -> Int {
+        var leftOut = [Float](repeating: 0, count: frameCount)
+        var rightOut = [Float](repeating: 0, count: frameCount)
+        var phase: Float = 0
+        for cb in 0..<callbacks {
+            let writeCount: Int
+            if let cutoff = transitionAfter, cb >= cutoff {
+                writeCount = matchedRateAfterTransition
+            } else {
+                writeCount = writeFramesPerCallback
+            }
+            // Push a low-amplitude sine so cubic interpolation has real
+            // signal to work with (zero-fill paths short-circuit some
+            // logic and would mask drift behaviour).
+            if writeCount > 0 {
+                var writeBuf = [Float](repeating: 0, count: writeCount)
+                for i in 0..<writeCount {
+                    writeBuf[i] = sin(phase) * 0.1
+                    phase += 0.01
+                }
+                writeBuf.withUnsafeBufferPointer { ptr in
+                    ring.write(left: ptr.baseAddress!, right: ptr.baseAddress!, frameCount: writeCount)
+                }
+            }
+            _ = leftOut.withUnsafeMutableBufferPointer { l in
+                rightOut.withUnsafeMutableBufferPointer { r in
+                    ring.readAdaptive(
+                        intoLeft: l.baseAddress!,
+                        outRight: r.baseAddress!,
+                        frameCount: frameCount,
+                        nominalConsume: nominalConsume,
+                        targetBuffered: targetBuffered,
+                        deadband: deadband
+                    )
+                }
+            }
+        }
+        return ring.bufferedFrames()
+    }
+
+    @Test func sustainedPositiveDriftKeepsBufferNearTarget() {
+        // Writer pushes 257 frames per 256-frame render callback (~0.4%
+        // drift). Without correction the ring fills monotonically until
+        // capacity. With the deadband-gated fast path, the slow path
+        // engages once drift exceeds the deadband and trims back toward
+        // target.
+        let frameCount = 256
+        let target = 4096
+        let deadband = 1024
+        let ring = StereoInputRingBuffer(capacityFrames: 32_768)
+        // Pre-fill to target so we start in steady state.
+        let prefill = [Float](repeating: 0, count: target)
+        prefill.withUnsafeBufferPointer { ptr in
+            ring.write(left: ptr.baseAddress!, right: ptr.baseAddress!, frameCount: target)
+        }
+        let final = Self.runDriftLoop(
+            ring: ring,
+            callbacks: 5_000,
+            frameCount: frameCount,
+            nominalConsume: frameCount,  // ratio == 1.0 — fast path candidate
+            targetBuffered: target,
+            deadband: deadband,
+            writeFramesPerCallback: 257
+        )
+        // After 5000 callbacks at +1 frame/callback drift, an
+        // uncorrected fast path would have grown the ring by ~5000
+        // frames (clamped at capacity 32768). Correction must keep us
+        // within a few deadbands of target.
+        let driftFromTarget = abs(final - target)
+        #expect(driftFromTarget < deadband * 4,
+            "Sustained positive drift must stay within 4×deadband of target; ended at \(final), target \(target), deadband \(deadband)")
+    }
+
+    @Test func sustainedNegativeDriftKeepsBufferNearTarget() {
+        // Inverse: writer pushes 255 frames per 256-frame callback.
+        // Buffer would drain toward zero without correction.
+        let frameCount = 256
+        let target = 4096
+        let deadband = 1024
+        let ring = StereoInputRingBuffer(capacityFrames: 32_768)
+        let prefill = [Float](repeating: 0, count: target)
+        prefill.withUnsafeBufferPointer { ptr in
+            ring.write(left: ptr.baseAddress!, right: ptr.baseAddress!, frameCount: target)
+        }
+        let final = Self.runDriftLoop(
+            ring: ring,
+            callbacks: 5_000,
+            frameCount: frameCount,
+            nominalConsume: frameCount,
+            targetBuffered: target,
+            deadband: deadband,
+            writeFramesPerCallback: 255
+        )
+        let driftFromTarget = abs(final - target)
+        #expect(driftFromTarget < deadband * 4,
+            "Sustained negative drift must stay within 4×deadband of target; ended at \(final), target \(target), deadband \(deadband)")
+    }
+
+    @Test func transitionFromDriftToMatchedRatePreservesTrimState() {
+        // Drift for 2000 callbacks then switch to exact matched rate
+        // for 2000 more. The trim state accumulated during drift must
+        // not be clobbered by intermediate fast-path entries; the
+        // ring depth must remain bounded throughout and converge back
+        // toward target after the drift stops.
+        let frameCount = 256
+        let target = 4096
+        let deadband = 1024
+        let ring = StereoInputRingBuffer(capacityFrames: 32_768)
+        let prefill = [Float](repeating: 0, count: target)
+        prefill.withUnsafeBufferPointer { ptr in
+            ring.write(left: ptr.baseAddress!, right: ptr.baseAddress!, frameCount: target)
+        }
+        let final = Self.runDriftLoop(
+            ring: ring,
+            callbacks: 4_000,
+            frameCount: frameCount,
+            nominalConsume: frameCount,
+            targetBuffered: target,
+            deadband: deadband,
+            writeFramesPerCallback: 257,
+            transitionAfter: 2_000,
+            matchedRateAfterTransition: frameCount
+        )
+        // After drift halts, depth should converge back toward target.
+        // Without the fix, the matched-rate phase has no correction
+        // and depth stays ~2000 frames above target (the accumulated
+        // drift). With the fix, the slow path's trim drives depth
+        // back to within the deadband.
+        let driftFromTarget = abs(final - target)
+        #expect(driftFromTarget < deadband,
+            "After drift→matched-rate transition, depth must converge to within 1×deadband of target; ended at \(final), target \(target), deadband \(deadband)")
+    }
 }

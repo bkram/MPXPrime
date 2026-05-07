@@ -150,7 +150,20 @@ final class StereoInputRingBuffer {
         }
 
         let nominal = max(1, nominalConsume)
-        if nominal == frameCount {
+        // Fast path: nominal sample rates match (1:1 read) AND the
+        // ring is within deadband of target. The deadband guard is
+        // load-bearing — without it, hardware-clock drift between two
+        // nominally-same-rate devices (input 192 kHz vs render 192
+        // kHz, say 50 ppm apart) accumulates as monotonic ring fill
+        // creep over hours. With the guard, drift > deadband falls
+        // through to the slow path's trim logic, which interpolates
+        // step ∈ [0.994, 1.006] to drive depth back toward target.
+        // resampleRatioTrim is intentionally NOT reset here so trim
+        // state survives transient slow→fast→slow path transitions.
+        let targetForGuard = max(1, targetBuffered)
+        let deadbandForGuard = max(0, deadband)
+        let driftFromTarget = abs(available - targetForGuard)
+        if nominal == frameCount && driftFromTarget <= deadbandForGuard {
             let availableFrames = min(frameCount, available)
             if availableFrames > 0 {
                 copyRingFrames(
@@ -180,8 +193,7 @@ final class StereoInputRingBuffer {
             }
 
             resamplePhase = 0.0
-            resampleRatioTrim = 0.0
-            updateTransportState(mode: 1, ratioTrim: 0.0, sampleStep: 1.0)
+            updateTransportState(mode: 1, ratioTrim: resampleRatioTrim, sampleStep: 1.0)
             readCursor.store(
                 startCursor &+ UInt64(availableFrames),
                 ordering: .releasing

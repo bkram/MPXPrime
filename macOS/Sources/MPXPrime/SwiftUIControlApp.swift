@@ -218,7 +218,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .widener:
             return "Reset Widener Tab"
         case .limiter:
-            return "Reset Limiter Tab"
+            return "Reset Final Stage Tab"
         case .bs412:
             return "Reset BS.412 Tab"
         case .compositeClipper:
@@ -253,7 +253,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .widener:
             return "Reset Widener tab to defaults"
         case .limiter:
-            return "Reset Limiter tab to defaults"
+            return "Reset Final Stage tab to defaults"
         case .bs412:
             return "Reset BS.412 tab to defaults"
         case .compositeClipper:
@@ -372,7 +372,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "DC Clipper"
-        case .processingLimiter: return "Limiter"
+        case .processingLimiter: return "Final Stage"
         case .processingBS412: return "BS.412"
         case .processingCompositeClipper: return "Composite Clipper"
         case .rdsProgram: return "Program"
@@ -429,7 +429,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
         case .processingDCClipper: return "Distortion-cancelled audio clipper"
-        case .processingLimiter: return "Pre-encode L/R true-peak limiter"
+        case .processingLimiter: return "Broadcast preset, final drive, deviation, pre-encode limiter"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
         case .rdsProgram: return "PS banks, PI, ECC, PTY, PTYN"
@@ -4781,16 +4781,6 @@ private struct RuntimeCardView: View {
     }
 }
 
-private struct RDSSnapshotCardView: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "RDS Snapshot", style: .meter) {
-            RDSLivePreviewPlate(model: model)
-        }
-    }
-}
-
 /// Terminal-style monospaced plate showing what's actually going out on
 /// the air right now — PS window, Radiotext, PTYN, Long PS, plus the PI
 /// / PTY / AID chips. Reads from `model.rdsRows`, which is sourced from
@@ -5381,9 +5371,6 @@ private struct ProcessingCoreTab: View {
                 format: "%.1f dB"
             )
             Text("Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Use Monitoring > Calibration to align pilot, RDS, deviation peak, composite margin, and safety-limiter headroom.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz")

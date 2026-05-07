@@ -87,35 +87,13 @@ EOF
 # Embed entitlements in the app bundle
 cp "$ENTITLEMENTS" "$APP_DIR/Contents/Resources/MPXPrime.entitlements"
 
-# Create default config
-cat > "$OUTPUT_DIR/$CONFIG_NAME" << 'EOF'
-[ mpxprime ]
-input_gain_db = 0.0
-output_gain_db = 0.0
-preemphasis_us = 75
-
-[pilot ]
-pilot_level = 0.09
-
-[ stereo ]
-sum_level = 1.0
-diff_level = 1.0
-
-[rds ]
-en_rds = 1
-rds_level = 2
-rds_pi = FFFF
-
-[mpx ]
-mpx_deviation_khz = 75.0
-
-[orbass ]
-orbass_enabled = 0
-orbass_amount = 0.35
-orbass_freq_hz = 95.0
-orbass_harmonics = 0.35
-orbass_drive = 1.0
-EOF
+# Ship the canonical sample INI as the bundled default config. The
+# previous heredoc template used the wrong section names ([ mpxprime ],
+# [pilot ], etc.) — the parser only recognizes [MPX] / [RDS] /
+# [INTERFACES], so every key in those sections silently fell back to
+# defaults. Copying macOS/MPXPrime.ini directly fixes that and also
+# means anything tested by SampleINIRoundTripTests is what ships.
+cp "macOS/MPXPrime.ini" "$OUTPUT_DIR/$CONFIG_NAME"
 
 # Copy default config to app resources
 cp "$OUTPUT_DIR/$CONFIG_NAME" "$APP_DIR/Contents/Resources/"

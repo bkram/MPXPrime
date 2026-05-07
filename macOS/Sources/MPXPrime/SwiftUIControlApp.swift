@@ -4257,6 +4257,12 @@ private struct MonitoringDashboardView: View {
                     ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75)),
                 ])
 
+                // Input levels — visible here so the operator can
+                // adjust source gain without leaving the dashboard.
+                // Same data the BroadcastStatusBar shows numerically,
+                // but rendered as proper L/R meter bars with peak hold.
+                inputLevelsTile
+
                 HStack(alignment: .top, spacing: 12) {
                     streamTile
                     bufferTile
@@ -4264,6 +4270,42 @@ private struct MonitoringDashboardView: View {
                 }
             }
         }
+    }
+
+    private var inputLevelsTile: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Input")
+                    .font(BroadcastStyle.chipLabel)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Spacer()
+                Text("Adjust source level so peaks sit between -6 and -3 dBFS")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            MeterRow(
+                label: "L",
+                valueText: model.inputLText.meterCurrentOnly,
+                level: model.inputLLevel,
+                peakLevel: model.inputLPeakHoldLevel,
+                scaleStyle: .dbfs
+            )
+            MeterRow(
+                label: "R",
+                valueText: model.inputRText.meterCurrentOnly,
+                level: model.inputRLevel,
+                peakLevel: model.inputRPeakHoldLevel,
+                scaleStyle: .dbfs
+            )
+        }
+        .padding(10)
+        .background(BroadcastStyle.meterSurface.opacity(0.65))
+        .overlay(
+            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
+                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
     }
 
     private var streamTile: some View {

@@ -3991,17 +3991,52 @@ private struct StageSidebar: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        List(selection: $model.selectedStage) {
-            ForEach(Stage.Group.allCases, id: \.rawValue) { group in
-                Section(group.rawValue) {
-                    ForEach(Stage.allCases.filter { $0.group == group }) { stage in
-                        Label(stage.label, systemImage: stage.icon)
-                            .tag(stage)
+        VStack(spacing: 0) {
+            List(selection: $model.selectedStage) {
+                ForEach(Stage.Group.allCases, id: \.rawValue) { group in
+                    Section(group.rawValue) {
+                        ForEach(Stage.allCases.filter { $0.group == group }) { stage in
+                            Label(stage.label, systemImage: stage.icon)
+                                .tag(stage)
+                        }
                     }
                 }
             }
+            .listStyle(.sidebar)
+
+            SidebarFooter(model: model)
         }
-        .listStyle(.sidebar)
+    }
+}
+
+/// Persistent global controls that apply across every stage. Single
+/// source of truth for Mono Mode — the duplicate toggles previously
+/// scattered across Processing → Core and Settings → Audio Engine
+/// were removed in this phase. Sits at the bottom of the sidebar so
+/// it's always reachable regardless of which stage the user is on.
+private struct SidebarFooter: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider()
+            Toggle(isOn: model.configBinding(\.monoMode)) {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.dashed")
+                        .imageScale(.small)
+                        .foregroundStyle(.secondary)
+                    Text("Mono")
+                        .font(.callout)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .help(
+                "Mono Mode transmits true mono composite. Pilot, 38 kHz stereo subcarrier, and RDS are suppressed while enabled."
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 }
 
@@ -5858,10 +5893,8 @@ private struct ProcessingCoreTab: View {
                 get: { model.processingBypass },
                 set: { _ in model.toggleBypass() }
             ))
-            Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
-            Text("Mono Mode disables the stereo pilot, 38 kHz stereo subcarrier, and RDS so the transmitted composite is true mono.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            // Mono Mode lives in the sidebar footer (single source of
+            // truth across the whole window) — not duplicated here.
             Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
                 Text("Off").tag(0)
                 Text("50 us").tag(50)
@@ -6378,11 +6411,9 @@ private struct SystemSettingsSectionContent: View {
                 "Auto Start at Launch",
                 isOn: model.configBinding(\.rdsAutoStart, runtimeDisposition: .none))
 
-            Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
-            Text("Mono Mode transmits true mono composite only. Pilot and RDS are suppressed while it is enabled.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
+            // Mono Mode lives in the sidebar footer (single source of
+            // truth across the whole window). Pilot / Sum / Diff stay
+            // here because they're encoder-structure parameters.
             DoubleSliderRow(
                 title: "Pilot Level", value: model.configBinding(\.pilotLevel),
                 range: 0...0.2, format: "%.3f")

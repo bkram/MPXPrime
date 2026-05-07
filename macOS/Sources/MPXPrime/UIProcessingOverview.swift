@@ -16,6 +16,11 @@ import SwiftUI
 
 struct ProcessingOverviewGrid: View {
     @ObservedObject var model: MPXPrimeViewModel
+    /// When true, the grid renders without its own ScrollView so it can
+    /// be embedded inside another scrolling container (e.g. the
+    /// Monitoring dashboard). Default false preserves the existing
+    /// behaviour for the Processing → Overview stage host.
+    var embedded: Bool = false
 
     // 4-up grid. Minimum card width kept tight enough to fit four per row
     // on the default window width without horizontal scroll; cards grow
@@ -25,7 +30,17 @@ struct ProcessingOverviewGrid: View {
     ]
 
     var body: some View {
-        ScrollView {
+        if embedded {
+            grid
+        } else {
+            ScrollView {
+                grid
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var grid: some View {
             LazyVGrid(columns: columns, spacing: 12) {
                 stageCard(
                     .phaseRotator,
@@ -99,10 +114,9 @@ struct ProcessingOverviewGrid: View {
                     subtitle: bs412Subtitle,
                     enabledPath: \.bs412Enabled
                 )
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 4)
         }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Card builder

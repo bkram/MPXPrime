@@ -4209,65 +4209,191 @@ private struct MonitoringDashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Card(title: "Status") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        MonitoringHealthSummaryRow(health: model.streamHealth)
-
-                        HStack(spacing: 12) {
-                            Button {
-                                model.startOrStopTransport()
-                            } label: {
-                                HStack {
-                                    Image(systemName: model.isRunning ? "stop.fill" : "play.fill")
-                                    Text(model.isRunning ? "Stop" : "Start")
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.isBusy)
-                            .keyboardShortcut(.return, modifiers: [.command])
-
-                            Button {
-                                model.toggleBypass()
-                            } label: {
-                                HStack {
-                                    Image(systemName: model.processingBypass ? "bolt.slash.fill" : "bolt.fill")
-                                    Text(model.processingBypass ? "Bypass On" : "Bypass Off")
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(model.isBusy)
-                            .keyboardShortcut("b", modifiers: [.command])
-                        }
-                    }
-                }
-
-                Card(title: "Interfaces") {
-                    MonitoringInterfacesPanel(
-                        inputName: inputName,
-                        outputName: outputName,
-                        monitorEnabled: model.monitorEnabled,
-                        monitorName: monitorName
-                    )
-                }
-
-                Card(title: "DSP") {
-                    MonitoringDSPStatusSectionView(model: model)
-                }
-
-                Card(title: "Calibration") {
-                    MonitoringCalibrationSectionView(model: model)
-                }
-
-                Card(title: "RDS") {
-                    MonitoringRDSSnapshotSectionView(model: model)
-                }
+                transportPanel
+                chainPanel
+                rdsPanel
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
+
+    // MARK: - Panel A: Transport + Devices
+
+    private var transportPanel: some View {
+        Card(title: "Transport") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Button {
+                        model.startOrStopTransport()
+                    } label: {
+                        HStack {
+                            Image(systemName: model.isRunning ? "stop.fill" : "play.fill")
+                            Text(model.isRunning ? "Stop" : "Start")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isBusy)
+                    .keyboardShortcut(.return, modifiers: [.command])
+
+                    Button {
+                        model.toggleBypass()
+                    } label: {
+                        HStack {
+                            Image(systemName: model.processingBypass ? "bolt.slash.fill" : "bolt.fill")
+                            Text(model.processingBypass ? "Bypass On" : "Bypass Off")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
+                    .keyboardShortcut("b", modifiers: [.command])
+                }
+
+                FlowStatusRow(items: [
+                    ("Source", inputName, model.isRunning ? .green : .secondary.opacity(0.75)),
+                    ("Output", outputName, model.isRunning ? .green : .secondary.opacity(0.75)),
+                    ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75)),
+                ])
+
+                HStack(alignment: .top, spacing: 12) {
+                    streamTile
+                    bufferTile
+                    dropoutsTile
+                }
+            }
+        }
+    }
+
+    private var streamTile: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Stream")
+                .font(BroadcastStyle.chipLabel)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(streamRateText)
+                .font(BroadcastStyle.valueReadout)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(BroadcastStyle.meterSurface.opacity(0.65))
+        .overlay(
+            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
+                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+    }
+
+    private var bufferTile: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Buffer")
+                    .font(BroadcastStyle.chipLabel)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Spacer()
+                Text(delayText)
+                    .font(BroadcastStyle.valueReadout)
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView(value: bufferFill)
+                .progressViewStyle(.linear)
+                .tint(bufferTint)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(BroadcastStyle.meterSurface.opacity(0.65))
+        .overlay(
+            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
+                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+    }
+
+    private var dropoutsTile: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Dropouts (10 s)")
+                .font(BroadcastStyle.chipLabel)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            HStack(spacing: 12) {
+                dropoutPill(label: "OVR", count: model.streamHealth.overflowsRecent)
+                dropoutPill(label: "UND", count: model.streamHealth.underflowsRecent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(BroadcastStyle.meterSurface.opacity(0.65))
+        .overlay(
+            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
+                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+        .help("Cumulative totals: \(model.streamHealth.overflowsTotal) overflows / \(model.streamHealth.underflowsTotal) underflows since engine start.")
+    }
+
+    private func dropoutPill(label: String, count: Int) -> some View {
+        let tint: Color = count == 0 ? .green : (count < 3 ? .orange : .red)
+        return HStack(spacing: 4) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(BroadcastStyle.scaleLabel)
+                .foregroundStyle(.secondary)
+            Text("\(count)")
+                .font(BroadcastStyle.valueReadout)
+        }
+    }
+
+    // MARK: - Panel B: DSP chain (3-pill context strip + 14-stage grid)
+
+    private var chainPanel: some View {
+        Card(title: "Signal Chain") {
+            VStack(alignment: .leading, spacing: 12) {
+                FlowStatusRow(items: [
+                    ("AGC", agcPillText, agcDotColor),
+                    ("Stereo", stereoPillText, .secondary.opacity(0.75)),
+                    ("Pre-Lim GR", preLimText, preLimDotColor),
+                ])
+
+                ProcessingOverviewGrid(model: model, embedded: true)
+            }
+        }
+    }
+
+    // MARK: - Panel C: RDS
+
+    private var rdsPanel: some View {
+        Card(title: "RDS") {
+            VStack(alignment: .leading, spacing: 10) {
+                FlowStatusRow(items: [
+                    ("PS", model.rdsPS.ifEmpty("—"), .secondary.opacity(0.75)),
+                    ("PI", model.rdsPI.ifEmpty("—"), .secondary.opacity(0.75)),
+                    ("PTY", model.rdsPTY.ifEmpty("—"), .secondary.opacity(0.75)),
+                ])
+
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    ForEach(rdsRowsFiltered, id: \.0) { row in
+                        GridRow {
+                            Text(row.0)
+                                .font(BroadcastStyle.scaleLabel)
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                            Text(row.1)
+                                .font(BroadcastStyle.valueReadout)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Computed values
 
     private var inputName: String {
         guard !model.selectedInputUID.isEmpty else { return "—" }
@@ -4282,6 +4408,98 @@ private struct MonitoringDashboardView: View {
     private var monitorName: String {
         guard model.monitorEnabled, !model.selectedMonitorUID.isEmpty else { return "—" }
         return model.outputDevices.first(where: { $0.uid == model.selectedMonitorUID })?.name ?? "—"
+    }
+
+    private var monitorChipText: String {
+        if !model.monitorEnabled { return "Off" }
+        return monitorName
+    }
+
+    private var streamRateText: String {
+        let h = model.streamHealth
+        if h.inputHz > 0, h.renderHz > 0, h.inputHz != h.renderHz {
+            return "\(h.inputHz) → \(h.renderHz) Hz · block \(h.blockFrames)"
+        }
+        let effective = max(h.renderHz, h.inputHz)
+        if effective > 0 {
+            return "\(effective) Hz · block \(h.blockFrames)"
+        }
+        return "—"
+    }
+
+    private var bufferFill: Double {
+        max(0.0, min(1.0, model.streamHealth.ringFill))
+    }
+
+    private var bufferTint: Color {
+        guard model.streamHealth.isRunning else { return .secondary }
+        switch model.streamHealth.bufferHealth {
+        case .ok: return .green
+        case .warn: return .orange
+        case .bad: return .red
+        }
+    }
+
+    private var delayText: String {
+        guard let delayMS = model.streamHealth.estimatedDelayMS else { return "—" }
+        if delayMS >= 100.0 { return String(format: "%.0f ms", delayMS) }
+        if delayMS >= 10.0 { return String(format: "%.1f ms", delayMS) }
+        return String(format: "%.2f ms", delayMS)
+    }
+
+    private var agcPillText: String {
+        // Detector + gain on one line, parsed from the existing
+        // `agcDetailText` ("Detector X dB • Gain Y dB").
+        let detector = parseDetail(model.agcDetailText, key: "Detector") ?? "—"
+        let gain = parseDetail(model.agcDetailText, key: "Gain") ?? "—"
+        return "\(detector) → \(gain)"
+    }
+
+    private var agcDotColor: Color {
+        switch model.agcStateText.lowercased() {
+        case "off": return .secondary.opacity(0.75)
+        case "gate": return .orange
+        default: return .green
+        }
+    }
+
+    private var stereoPillText: String {
+        // "Corr +X.XX • Side Y.YYx" from stereoImageText.
+        let corr = parseDetail(model.stereoImageText, key: "Corr") ?? "—"
+        let side = parseDetail(model.stereoImageText, key: "Side") ?? "—"
+        return "\(corr) · \(side)"
+    }
+
+    private var preLimText: String {
+        String(format: "%.1f dB", Double(model.preEncodeLimiterGainReductionDBValue))
+    }
+
+    private var preLimDotColor: Color {
+        let gr = Double(model.preEncodeLimiterGainReductionDBValue)
+        if gr < 0.5 { return .green }
+        if gr < 3.0 { return .orange }
+        return .red
+    }
+
+    /// Drop empty / placeholder RDS rows so the table doesn't render
+    /// "PTYN: —" or "Long PS: —" lines that just clutter the panel.
+    private var rdsRowsFiltered: [(String, String)] {
+        model.rdsRows.filter { _, value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty && trimmed != "—"
+        }
+    }
+
+    /// Pull a single value out of a "Key1 V1 • Key2 V2" detail string.
+    private func parseDetail(_ text: String, key: String) -> String? {
+        let parts = text.split(separator: "•")
+        for p in parts {
+            let trimmed = p.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix(key) {
+                return trimmed.replacingOccurrences(of: "\(key) ", with: "")
+            }
+        }
+        return nil
     }
 }
 

@@ -22,6 +22,23 @@ not decimals. 0.11 is newer than 0.10, which is newer than 0.9 and 0.85
 
 ### Removed
 - **Loudness meter + `MonitorLoudnessAnalyzer` DSP path.** Dropped the Loudness card from the Levels window plus its entire backing DSP plumbing (K-weighting biquads, energy ring buffer, momentary / short-term / integrated LUFS gating, `setAnalysisCapture(loudness:)` parameter, ~200 lines total). Operator feedback was that the on-screen LUFS readouts were noise — broadcast loudness is judged on the receiver, not in the GUI. The audio thread no longer runs the per-sample K-weighting on the monitor path.
+- **Dead `HelpSectionView` struct (~40 lines).** Defined but never instantiated — leftover from an earlier Help layout that was superseded by `HelpInputLevelsView` / `HelpRDSTextView`.
+
+### DSP audit (perf / correctness, output bit-identical)
+- **Cached RDS auto / standard schedules.** `generateAutoSchedule` / `generateStandardSchedule` were called from `nextGroupBits` on every group (~11×/sec at the RDS bitstream rate), each call allocating a fresh `[RDSGroupSpec]`. After the post-0.11 RT+ fix the schedules became pure functions of feature flags, so they can be cached. Schedules now rebuild only on init and when `rtMode2B` / `rtPlusEnabled` toggle in `applyRDSRuntimeConfig`. Removed the dead `scheduleGenerateCounter` (still incremented but never read after the RT+ change). Output verified bit-identical via `--verify --baseline-strict`.
+- **Reused 104-byte `bitBuffer` in `buildGroupBits`.** Each `buildGroupBits` call previously allocated a fresh `[UInt8]` of capacity 104, plus an inner 4-element `[block1..block4]` array literal — both ~11×/sec on the audio thread. `bitBuffer` is now pre-allocated once and subscript-assigned in place; CoW gives test callers their own logical array on retention. The block iteration uses an unrolled `writeBlockBits` helper with explicit offsets. Output verified bit-identical via `--verify --baseline-strict`.
+
+### Tooling / docs
+- **DMG bundled INI now matches the canonical sample.** `build-release.sh` previously hand-authored a stub config with lowercase / spaced section headers (`[ mpxprime ]`, `[pilot ]`, etc.). The parser only recognises canonical uppercase `[MPX]` / `[RDS]` / `[INTERFACES]`, so every value in those mismatched sections silently fell back to AppConfig defaults — most visibly `preemphasis_us = 75` in the template was being ignored, so US-region operators got 50 µs pre-emphasis after a fresh install. Replaced the heredoc with `cp macOS/MPXPrime.ini` so the DMG ships the same canonical INI that `SampleINIRoundTripTests` already validates.
+- **Help window updated for the post-0.11 PS frame seconds.** The "Untimed plain text" help line now distinguishes single-chunk (10 s hold) from multi-chunk (configurable PS Frame default for PS, 2.5 s for RT / PTYN / Long PS).
+
+### Tests
+- **+38 tests across 5 new suites** — 166 → 204 across 18 → 25 suites:
+  - `PSFrameSecondsTests` (6) — locks in marker-precedence semantics for the new configurable default.
+  - `AppConfigInvalidInputTests` (8) — type coercion robustness (garbage numerics, bool synonyms, empty values, inline comments, unknown sections).
+  - `RDSSchedulerCadenceTests` (8) — auto / standard scheduler cadences including the 3A-every-cycle regression guard.
+  - `RDSBitBufferReuseTests` (5) — alloc-free `buildGroupBits` correctness (first-call validity, CoW, no cross-call leakage).
+  - `FilterPrimitiveTests` (11) — direct coverage for `Lagrange4Interp`, `LinkwitzRiley4`, `BiquadCascade6`.
 
 ## 0.11 — 2026-05-06
 

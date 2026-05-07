@@ -302,6 +302,192 @@ enum RDSTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// Unified flat selection used by the new NavigationSplitView sidebar.
+/// One case per top-level + sub-tab from the legacy AppSection / ProcessingTab
+/// / RDSTab enums. The view model derives the legacy enums from `selectedStage`
+/// so existing per-tab views (which still bind to selectedProcessingTab /
+/// selectedRDSTab internally for their reset buttons) keep working during the
+/// phased migration. Eventually those legacy enums become removable.
+enum Stage: String, CaseIterable, Identifiable {
+    // Monitoring
+    case monitoring
+
+    // Processing
+    case processingOverview
+    case processingCore
+    case processingAGC
+    case processingPhaseRotator
+    case processingParametricEQ
+    case processingOrbass
+    case processingWidener
+    case processingMultiband
+    case processingMBLimiter
+    case processingExpander
+    case processingBassClipper
+    case processingDCClipper
+    case processingLimiter
+    case processingBS412
+    case processingCompositeClipper
+
+    // RDS
+    case rdsProgram
+    case rdsRadiotext
+    case rdsLongPS
+    case rdsFlags
+    case rdsCarrier
+
+    var id: String { rawValue }
+
+    /// Sidebar group this stage belongs to.
+    enum Group: String, CaseIterable {
+        case monitoring = "Monitoring"
+        case processing = "Processing"
+        case rds = "RDS"
+    }
+
+    var group: Group {
+        switch self {
+        case .monitoring:
+            return .monitoring
+        case .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsFlags, .rdsCarrier:
+            return .rds
+        default:
+            return .processing
+        }
+    }
+
+    /// Sidebar row label.
+    var label: String {
+        switch self {
+        case .monitoring: return "Monitoring"
+        case .processingOverview: return "Overview"
+        case .processingCore: return "Core"
+        case .processingAGC: return "AGC"
+        case .processingPhaseRotator: return "Phase Rotator"
+        case .processingParametricEQ: return "Parametric EQ"
+        case .processingOrbass: return "Orbass"
+        case .processingWidener: return "Stereo Widener"
+        case .processingMultiband: return "Multiband"
+        case .processingMBLimiter: return "MB Limiter"
+        case .processingExpander: return "Expander"
+        case .processingBassClipper: return "Bass Clipper"
+        case .processingDCClipper: return "DC Clipper"
+        case .processingLimiter: return "Limiter"
+        case .processingBS412: return "BS.412"
+        case .processingCompositeClipper: return "Composite Clipper"
+        case .rdsProgram: return "Program"
+        case .rdsRadiotext: return "Radiotext"
+        case .rdsLongPS: return "Long PS"
+        case .rdsFlags: return "Flags"
+        case .rdsCarrier: return "Carrier"
+        }
+    }
+
+    /// SF Symbols icon used in the sidebar row.
+    var icon: String {
+        switch self {
+        case .monitoring: return "waveform"
+        case .processingOverview: return "square.grid.2x2"
+        case .processingCore: return "slider.horizontal.3"
+        case .processingAGC: return "gauge.with.needle"
+        case .processingPhaseRotator: return "arrow.triangle.2.circlepath"
+        case .processingParametricEQ: return "dial.high"
+        case .processingOrbass: return "waveform.path"
+        case .processingWidener: return "rectangle.expand.vertical"
+        case .processingMultiband: return "chart.bar.xaxis"
+        case .processingMBLimiter: return "chart.bar.fill"
+        case .processingExpander: return "arrow.up.right.and.arrow.down.left"
+        case .processingBassClipper: return "speaker.wave.1"
+        case .processingDCClipper: return "scissors"
+        case .processingLimiter: return "rectangle.compress.vertical"
+        case .processingBS412: return "doc.badge.gearshape"
+        case .processingCompositeClipper: return "rectangle.stack"
+        case .rdsProgram: return "dot.radiowaves.left.and.right"
+        case .rdsRadiotext: return "text.bubble"
+        case .rdsLongPS: return "text.alignleft"
+        case .rdsFlags: return "flag"
+        case .rdsCarrier: return "antenna.radiowaves.left.and.right"
+        }
+    }
+
+    /// Detail title shown in the content header (was `AppSection.detailTitle`).
+    var detailTitle: String { label }
+
+    /// Detail subtitle shown beneath the title.
+    var detailSubtitle: String {
+        switch self {
+        case .monitoring: return "Overview and live status"
+        case .processingOverview: return "DSP chain status at a glance"
+        case .processingCore: return "Bypass, mono, pre-emphasis, gains, lowpass"
+        case .processingAGC: return "Wideband AGC with K-weighting"
+        case .processingPhaseRotator: return "Allpass phase rotator"
+        case .processingParametricEQ: return "4-band parametric EQ"
+        case .processingOrbass: return "Adaptive low-band enhancement"
+        case .processingWidener: return "Mono bass + stereo widener"
+        case .processingMultiband: return "3 / 5-band multiband compressor"
+        case .processingMBLimiter: return "Per-band fast peak limiter"
+        case .processingExpander: return "Per-band downward expander"
+        case .processingBassClipper: return "Pre-clip the low band before the chain"
+        case .processingDCClipper: return "Distortion-cancelled audio clipper"
+        case .processingLimiter: return "Pre-encode L/R true-peak limiter"
+        case .processingBS412: return "ITU-R BS.412 MPX power limiter"
+        case .processingCompositeClipper: return "8x oversampled composite clipper"
+        case .rdsProgram: return "PS banks, PI, ECC, PTY, PTYN"
+        case .rdsRadiotext: return "Radiotext + RT+ tagging"
+        case .rdsLongPS: return "32-character Long PS"
+        case .rdsFlags: return "TP / TA / MS / DI flags"
+        case .rdsCarrier: return "Carrier injection + frequency"
+        }
+    }
+
+    /// Maps to the legacy AppSection enum so existing `selectedSection`-gated
+    /// code (engine analysis capture, monitoring spectrum updates) keeps
+    /// working without touching the audio path. Removable once the
+    /// audio-thread side is decoupled.
+    var legacySection: AppSection {
+        switch group {
+        case .monitoring: return .monitoring
+        case .processing: return .processing
+        case .rds: return .rds
+        }
+    }
+
+    /// Maps to the legacy ProcessingTab enum (nil for non-processing stages).
+    /// Used to drive the existing per-tab views and their reset buttons.
+    var legacyProcessingTab: ProcessingTab? {
+        switch self {
+        case .processingOverview: return .overview
+        case .processingCore: return .core
+        case .processingAGC: return .agc
+        case .processingPhaseRotator: return .phaseRotator
+        case .processingParametricEQ: return .parametricEQ
+        case .processingOrbass: return .orbass
+        case .processingWidener: return .widener
+        case .processingMultiband: return .multiband
+        case .processingMBLimiter: return .mbLimiter
+        case .processingExpander: return .expander
+        case .processingBassClipper: return .bassClipper
+        case .processingDCClipper: return .dcClipper
+        case .processingLimiter: return .limiter
+        case .processingBS412: return .bs412
+        case .processingCompositeClipper: return .compositeClipper
+        default: return nil
+        }
+    }
+
+    /// Maps to the legacy RDSTab enum (nil for non-RDS stages).
+    var legacyRDSTab: RDSTab? {
+        switch self {
+        case .rdsProgram: return .program
+        case .rdsRadiotext: return .radiotext
+        case .rdsLongPS: return .longPS
+        case .rdsFlags: return .flags
+        case .rdsCarrier: return .carrier
+        default: return nil
+        }
+    }
+}
+
 struct PresetChoice: Identifiable {
     let id: String
     let title: String
@@ -1232,6 +1418,26 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var selectedSection: AppSection = .monitoring
     @Published var selectedProcessingTab: ProcessingTab = .overview
     @Published var selectedRDSTab: RDSTab = .program
+    /// Phase 1 sidebar selection. `didSet` keeps the legacy enums in sync so
+    /// the existing per-tab views (and any code branching on
+    /// `selectedSection`) keep working without modification.
+    @Published var selectedStage: Stage = .monitoring {
+        didSet {
+            if selectedSection != selectedStage.legacySection {
+                selectedSection = selectedStage.legacySection
+            }
+            if let pt = selectedStage.legacyProcessingTab,
+               selectedProcessingTab != pt
+            {
+                selectedProcessingTab = pt
+            }
+            if let rt = selectedStage.legacyRDSTab,
+               selectedRDSTab != rt
+            {
+                selectedRDSTab = rt
+            }
+        }
+    }
     @Published var statusText: String = "Idle"
     @Published var pendingRuntimeApply: Bool = false
 
@@ -3727,57 +3933,170 @@ private struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Always-visible broadcast status header — transport / peaks /
-            // deviation / GR / budget / injections. Present across all
-            // sections so operators never lose sight of safety metrics.
+            // deviation / GR / budget / injections. Pinned above the
+            // NavigationSplitView so it spans every stage.
             BroadcastStatusBar(model: model)
 
-            HSplitView {
-                VStack(spacing: 0) {
-                    List(selection: $model.selectedSection) {
-                        Section {
-                            ForEach(AppSection.allCases) { section in
-                                Label(section.rawValue, systemImage: section.icon)
-                                    .tag(section)
-                            }
-                        }
-                    }
-                    .listStyle(.sidebar)
-                    .scrollDisabled(true)
-
-                    Spacer()
-                }
-                .frame(minWidth: 200, idealWidth: 220, maxWidth: 260)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text(model.selectedSection.detailTitle)
-                            .font(.title2.weight(.semibold))
-                        Spacer()
-                    }
-                    .padding(.top, 16)
-                    .padding(.horizontal, 22)
-                    .padding(.bottom, 8)
-
-                    Text(model.selectedSection.detailSubtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 22)
-                        .padding(.bottom, 16)
-
-                    Group {
-                        switch model.selectedSection {
-                        case .monitoring:
-                            MonitoringDashboardView(model: model)
-                        case .processing:
-                            ProcessingSectionView(model: model)
-                        case .rds:
-                            RDSSectionView(model: model)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            NavigationSplitView {
+                StageSidebar(model: model)
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
+            } detail: {
+                StageContentView(model: model)
             }
+        }
+    }
+}
+
+/// Sidebar grouping every stage by its top-level group (Monitoring,
+/// Processing, RDS). Selecting a row updates `model.selectedStage`, which
+/// propagates to the legacy enums so existing per-tab content code keeps
+/// working unchanged.
+private struct StageSidebar: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        List(selection: $model.selectedStage) {
+            ForEach(Stage.Group.allCases, id: \.rawValue) { group in
+                Section(group.rawValue) {
+                    ForEach(Stage.allCases.filter { $0.group == group }) { stage in
+                        Label(stage.label, systemImage: stage.icon)
+                            .tag(stage)
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+}
+
+/// Content column for the currently-selected stage. Each stage renders its
+/// own scroll view + content; for Processing and RDS stages the per-tab view
+/// is the same one the legacy segmented-picker section used, plus the
+/// per-tab reset button. Monitoring stays as a single dashboard.
+private struct StageContentView: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(model.selectedStage.detailTitle)
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            .padding(.top, 16)
+            .padding(.horizontal, 22)
+            .padding(.bottom, 8)
+
+            Text(model.selectedStage.detailSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 16)
+
+            Group {
+                if model.selectedStage == .monitoring {
+                    MonitoringDashboardView(model: model)
+                } else if let _ = model.selectedStage.legacyProcessingTab {
+                    StageProcessingContent(model: model)
+                } else if let _ = model.selectedStage.legacyRDSTab {
+                    StageRDSContent(model: model)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// Content for a Processing stage selection. Hosts the existing per-tab
+/// view plus the per-tab reset button. The legacy segmented Picker is
+/// gone — sidebar selection drives `selectedProcessingTab` via the
+/// `selectedStage.didSet` sync.
+private struct StageProcessingContent: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                switch model.selectedProcessingTab {
+                case .overview:
+                    ProcessingOverviewGrid(model: model)
+                case .core:
+                    ProcessingCoreTab(model: model)
+                case .agc:
+                    ProcessingAGCTab(model: model)
+                case .phaseRotator:
+                    ProcessingPhaseRotatorTab(model: model)
+                case .parametricEQ:
+                    ProcessingParametricEQTab(model: model)
+                case .orbass:
+                    ProcessingOrbassTab(model: model)
+                case .multiband:
+                    ProcessingMultibandTab(model: model)
+                case .mbLimiter:
+                    ProcessingMultibandLimiterTab(model: model)
+                case .expander:
+                    ProcessingExpanderTab(model: model)
+                case .bassClipper:
+                    ProcessingBassClipperTab(model: model)
+                case .dcClipper:
+                    ProcessingDCClipperTab(model: model)
+                case .widener:
+                    ProcessingWidenerTab(model: model)
+                case .limiter:
+                    ProcessingLimiterTab(model: model)
+                case .bs412:
+                    ProcessingBS412Tab(model: model)
+                case .compositeClipper:
+                    ProcessingCompositeClipperTab(model: model)
+                }
+
+                if model.selectedProcessingTab != .overview {
+                    HStack {
+                        Spacer()
+                        Button(model.selectedProcessingTab.resetButtonTitle) {
+                            model.resetCurrentProcessingTabToDefaults()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 1120, alignment: .topLeading)
+        }
+    }
+}
+
+/// Content for an RDS stage selection.
+private struct StageRDSContent: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                switch model.selectedRDSTab {
+                case .program:
+                    RDSProgramTab(model: model)
+                case .radiotext:
+                    RDSRadiotextTab(model: model)
+                case .longPS:
+                    RDSLongPSTab(model: model)
+                case .flags:
+                    RDSFlagsTab(model: model)
+                case .carrier:
+                    RDSCarrierTab(model: model)
+                }
+
+                HStack {
+                    Spacer()
+                    Button(model.selectedRDSTab.resetButtonTitle) {
+                        model.resetCurrentRDSTabToDefaults()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 1120, alignment: .topLeading)
         }
     }
 }
@@ -5485,73 +5804,6 @@ private struct KeyValueGrid: View {
     }
 }
 
-private struct ProcessingSectionView: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $model.selectedProcessingTab) {
-                ForEach(ProcessingTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    switch model.selectedProcessingTab {
-                    case .overview:
-                        ProcessingOverviewGrid(model: model)
-                    case .core:
-                        ProcessingCoreTab(model: model)
-                    case .agc:
-                        ProcessingAGCTab(model: model)
-                    case .phaseRotator:
-                        ProcessingPhaseRotatorTab(model: model)
-                    case .parametricEQ:
-                        ProcessingParametricEQTab(model: model)
-                    case .orbass:
-                        ProcessingOrbassTab(model: model)
-                    case .multiband:
-                        ProcessingMultibandTab(model: model)
-                    case .mbLimiter:
-                        ProcessingMultibandLimiterTab(model: model)
-                    case .expander:
-                        ProcessingExpanderTab(model: model)
-                    case .bassClipper:
-                        ProcessingBassClipperTab(model: model)
-                    case .dcClipper:
-                        ProcessingDCClipperTab(model: model)
-                    case .widener:
-                        ProcessingWidenerTab(model: model)
-                    case .limiter:
-                        ProcessingLimiterTab(model: model)
-                    case .bs412:
-                        ProcessingBS412Tab(model: model)
-                    case .compositeClipper:
-                        ProcessingCompositeClipperTab(model: model)
-                    }
-
-                    // Overview has no per-tab reset action.
-                    if model.selectedProcessingTab != .overview {
-                        HStack {
-                            Spacer()
-                            Button(model.selectedProcessingTab.resetButtonTitle) {
-                                model.resetCurrentProcessingTabToDefaults()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                }
-                .padding(20)
-                .frame(maxWidth: 1120, alignment: .topLeading)
-            }
-        }
-    }
-}
-
 private struct ProcessingCoreTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
@@ -6155,50 +6407,6 @@ private struct InterfacesSettingsSectionContent: View {
             InlineRestartRequiredNote(
                 text: "Source mode, monitor output routing, and input/output/monitor device changes."
             )
-        }
-    }
-}
-
-private struct RDSSectionView: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $model.selectedRDSTab) {
-                ForEach(RDSTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    switch model.selectedRDSTab {
-                    case .program:
-                        RDSProgramTab(model: model)
-                    case .radiotext:
-                        RDSRadiotextTab(model: model)
-                    case .longPS:
-                        RDSLongPSTab(model: model)
-                    case .flags:
-                        RDSFlagsTab(model: model)
-                    case .carrier:
-                        RDSCarrierTab(model: model)
-                    }
-
-                    HStack {
-                        Spacer()
-                        Button(model.selectedRDSTab.resetButtonTitle) {
-                            model.resetCurrentRDSTabToDefaults()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-                .padding(20)
-                .frame(maxWidth: 1120, alignment: .topLeading)
-            }
         }
     }
 }

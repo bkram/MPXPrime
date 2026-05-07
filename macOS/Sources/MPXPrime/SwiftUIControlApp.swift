@@ -6715,7 +6715,8 @@ private struct HelpRDSTextView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("• `Ns:Text` — show `Text` for `N` seconds. Fractional accepted: `1.5s:Text`")
                 Text("• `Nt:Text` — transmit-count. Show `Text` for `N` full transmissions of the field, then advance. Useful when you want the receiver to see the message a known number of times rather than for a fixed wall-clock duration.")
-                Text("• Untimed plain text holds for 10 s before repeating.")
+                Text("• Untimed text that fits in one chunk holds for 10 s before repeating.")
+                Text("• Untimed text that splits into multiple chunks rotates at a default per-chunk duration. For PS, the default is the **PS Frame** slider in the RDS tab (default 3 s); for Radiotext / PTYN / Long PS, the default is 2.5 s.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
@@ -6842,49 +6843,6 @@ Now: {now_playing}
             Spacer(minLength: 0)
         }
         .frame(maxWidth: 860, alignment: .leading)
-    }
-}
-
-private struct HelpSectionView: View {
-    var body: some View {
-        Form {
-            Section("Input Levels") {
-                Text("Target levels for FM broadcast:")
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Peak").font(.caption).foregroundStyle(.secondary)
-                        Text("-18 to -6 dBFS").font(.callout.monospaced())
-                    }
-                    Spacer()
-                    VStack(alignment: .leading) {
-                        Text("Average RMS").font(.caption).foregroundStyle(.secondary)
-                        Text("-24 to -20 dBFS").font(.callout.monospaced())
-                    }
-                }
-                Text("US: -20 dBFS nominal | Europe (EBU R68): -18 dBFS | Hot: -6 dBFS peak")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Keep average around -24 dB with peaks between -18 and -6 dBFS. If hitting 0 dBFS, reduce input gain.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("RDS Text Format") {
-                Text("PS Dynamic and RT support timed text segments:")
-                Text("10s:First/10s:Second").font(.callout.monospaced()).foregroundStyle(.blue)
-                Text("Shows 'First' for 10 seconds, then 'Second' for 10 seconds, then repeats.")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Text("Examples:").font(.caption.bold())
-                    Spacer()
-                }
-                Text("5s:MPX Prime - 5s:FM Coder").font(.caption.monospaced())
-                Text("20s:Station Name/10s:Now Playing").font(.caption.monospaced())
-                Text("8s:Tune to 88.5/8s:My Frequency").font(.caption.monospaced())
-            }
-        }
-        .formStyle(.grouped)
-        .controlSize(.small)
     }
 }
 

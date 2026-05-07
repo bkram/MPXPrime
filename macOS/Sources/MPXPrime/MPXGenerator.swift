@@ -2300,8 +2300,20 @@ final class BasicRDSCoder {
     private var pilotStepForRDS: Float = 0.0
     private var bitPhase: Float = 0.0
     private var differentialBit: Int = 0
-    private var bitBuffer: [UInt8] = []
-    private var bitBufferIndex: Int = 0
+    /// Pre-allocated 104-byte buffer (4 RDS blocks × 26 bits) reused
+    /// for every `buildGroupBits` call. The audio thread's `dequeueBit`
+    /// path consumes via `self.bitBuffer[i]` and refills via subscript
+    /// assignment in `buildGroupBits` — Swift Array's CoW keeps storage
+    /// allocation at zero in steady state, since the only reference to
+    /// the underlying buffer is `self.bitBuffer` itself. External
+    /// callers (tests) that retain the returned `[UInt8]` trigger CoW
+    /// on the next refill, paying for one allocation per held reference
+    /// — paid by the test, not the audio thread.
+    private var bitBuffer: [UInt8] = Array(repeating: 0, count: 104)
+    /// Start past the end so the first `dequeueBit` triggers a refill —
+    /// avoids returning the zero-initialized buffer as 104 phantom bits
+    /// before any group is actually built.
+    private var bitBufferIndex: Int = 104
 
     private var scheduleIndex: Int = 0
     /// Pre-computed RDS group schedules — cached so the audio thread
@@ -3665,14 +3677,23 @@ final class BasicRDSCoder {
         let block3 = Self.withCheckword(word: b3Value & 0xFFFF, offset: b3Offset)
         let block4 = Self.withCheckword(word: b4Value & 0xFFFF, offset: Self.offsetD)
 
-        var out: [UInt8] = []
-        out.reserveCapacity(104)
-        for block in [block1, block2, block3, block4] {
-            for shift in stride(from: 25, through: 0, by: -1) {
-                out.append(UInt8((block >> shift) & 1))
-            }
+        // Subscript-assign into the pre-allocated 104-byte bitBuffer.
+        // Avoids the per-call [UInt8] allocation (~11x/sec on the audio
+        // thread) and the inner 4-element [block1..block4] array
+        // allocation. Unrolled four block writes — each writes 26 bits
+        // MSB-first starting at offsets 0, 26, 52, 78.
+        Self.writeBlockBits(block1, into: &bitBuffer, atOffset: 0)
+        Self.writeBlockBits(block2, into: &bitBuffer, atOffset: 26)
+        Self.writeBlockBits(block3, into: &bitBuffer, atOffset: 52)
+        Self.writeBlockBits(block4, into: &bitBuffer, atOffset: 78)
+        return bitBuffer
+    }
+
+    @inline(__always)
+    private static func writeBlockBits(_ block: Int, into out: inout [UInt8], atOffset offset: Int) {
+        for i in 0..<26 {
+            out[offset + i] = UInt8((block >> (25 - i)) & 1)
         }
-        return out
     }
 
     private static func withCheckword(word: Int, offset: Int) -> Int {

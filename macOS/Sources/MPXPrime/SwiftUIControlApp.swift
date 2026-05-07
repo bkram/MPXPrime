@@ -1466,6 +1466,10 @@ final class MPXPrimeViewModel: ObservableObject {
     /// users who don't need the advanced cancel toggles or per-band
     /// detail panels never see the column.
     @Published var inspectorVisible: Bool = false
+    /// Phase 4 active-band selector for the new Multiband editor —
+    /// controls which band the per-band Threshold / Ratio / Attack /
+    /// Release sliders re-target. 0 = Low, 1 = Mid, 2 = High.
+    @Published var activeMultibandBand: Int = 1
     @Published var statusText: String = "Idle"
     @Published var pendingRuntimeApply: Bool = false
 
@@ -5956,6 +5960,7 @@ private struct ProcessingMultibandTab: View {
 
     var body: some View {
         Card(title: "Multiband Dynamics") {
+            // Preset / intensity / enable / mode — common to all bands.
             Picker("Preset", selection: Binding(
                 get: { self.model.config.multibandPresetID },
                 set: { newValue in
@@ -5986,45 +5991,76 @@ private struct ProcessingMultibandTab: View {
                 Text("3-band").tag(3)
                 Text("5-band").tag(5)
             }
+
+            Divider().padding(.vertical, 6)
+
+            // Per-band detail editor — replaces the previous 12-slider
+            // Low/Mid/High wall with an active-band picker that
+            // re-targets a single set of controls. Visible widget count
+            // drops from 12 to 4 (plus the picker). The non-active
+            // bands' values aren't lost — switching the picker just
+            // re-binds the controls.
+            Picker("Active Band", selection: $model.activeMultibandBand) {
+                Text("Low").tag(0)
+                Text("Mid").tag(1)
+                Text("High").tag(2)
+            }
+            .pickerStyle(.segmented)
+
+            switch model.activeMultibandBand {
+            case 0:
+                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.multibandLowThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
+                    tooltip: "Low band compression threshold. Material above this level is attenuated by the ratio.")
+                DoubleSliderRow(title: "Ratio", value: model.configBinding(\.multibandLowRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
+                    tooltip: "Low band compression ratio. 1:1 = no compression; higher ratios flatten dynamics more aggressively.")
+                DoubleSliderRow(title: "Attack", value: model.configBinding(\.multibandLowAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f ms",
+                    tooltip: "Low band attack time. Slow attacks preserve transients; fast attacks tighten the low end.")
+                DoubleSliderRow(title: "Release", value: model.configBinding(\.multibandLowReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f ms",
+                    tooltip: "Low band release time. Longer release prevents bass pumping at the cost of average-level recovery speed.")
+            case 2:
+                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.multibandHighThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
+                    tooltip: "High band compression threshold. Material above this level is attenuated by the ratio.")
+                DoubleSliderRow(title: "Ratio", value: model.configBinding(\.multibandHighRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
+                    tooltip: "High band compression ratio. Controls sibilance and cymbal energy.")
+                DoubleSliderRow(title: "Attack", value: model.configBinding(\.multibandHighAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f ms",
+                    tooltip: "High band attack time. Fast attack tames sibilance; slow attack preserves air.")
+                DoubleSliderRow(title: "Release", value: model.configBinding(\.multibandHighReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f ms",
+                    tooltip: "High band release time. Shorter release brightens; longer release keeps the top smooth.")
+            default:
+                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.multibandMidThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
+                    tooltip: "Mid band compression threshold. Material above this level is attenuated by the ratio.")
+                DoubleSliderRow(title: "Ratio", value: model.configBinding(\.multibandMidRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
+                    tooltip: "Mid band compression ratio. Vocals and leads live here — moderate values (2:1 - 4:1) are typical.")
+                DoubleSliderRow(title: "Attack", value: model.configBinding(\.multibandMidAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f ms",
+                    tooltip: "Mid band attack time. Slower values preserve vocal consonants; faster values increase density.")
+                DoubleSliderRow(title: "Release", value: model.configBinding(\.multibandMidReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f ms",
+                    tooltip: "Mid band release time. Typical vocal release; shorter = more density, longer = more transparent.")
+            }
+
+            Divider().padding(.vertical, 6)
+
+            // Output / common — apply across all bands.
+            DoubleSliderRow(title: "Makeup", value: model.configBinding(\.multibandMakeupDB, runtimeDisposition: .live), range: -12...18, format: "%.1f dB",
+                tooltip: "Overall gain applied after multiband processing. Set to offset average level loss from compression; not a loudness control.")
             DoubleSliderRow(title: "Knee", value: model.configBinding(\.multibandKneeDB, runtimeDisposition: .live), range: 0...12, format: "%.1f dB",
                 tooltip: "Width of the soft transition around each band's threshold. Larger knee = gentler onset of compression.")
             DoubleSliderRow(title: "Link", value: model.configBinding(\.multibandLinkStrength, runtimeDisposition: .live), range: 0...1, format: "%.2f",
                 tooltip: "How much gain reduction is shared across bands. 0 = independent (dense), 1 = linked (preserves spectral balance).")
             Toggle("Program-dependent Release", isOn: model.configBinding(\.multibandReleaseProgramDependent, runtimeDisposition: .live))
-            DoubleSliderRow(title: "X1", value: model.configBinding(\.multibandX1Hz, runtimeDisposition: .live), range: 30...300, format: "%.0f Hz",
-                tooltip: "Low / Low-Mid crossover frequency. Separates kick/bass from low-mid body.")
-            DoubleSliderRow(title: "X2", value: model.configBinding(\.multibandX2Hz, runtimeDisposition: .live), range: 120...1200, format: "%.0f Hz",
-                tooltip: "Low-Mid / Mid crossover frequency. Separates body from upper-vocal and presence region.")
-            DoubleSliderRow(title: "X3", value: model.configBinding(\.multibandX3Hz, runtimeDisposition: .live), range: 600...4000, format: "%.0f Hz",
-                tooltip: "Mid / High-Mid crossover frequency. Separates vocal presence from upper consonants and sibilance.")
-            DoubleSliderRow(title: "X4", value: model.configBinding(\.multibandX4Hz, runtimeDisposition: .live), range: 2500...12000, format: "%.0f Hz",
-                tooltip: "High-Mid / High crossover frequency. Separates sibilance region from air / top-end.")
-            DoubleSliderRow(title: "Low Threshold", value: model.configBinding(\.multibandLowThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
-                tooltip: "Low band compression threshold. Material above this level is attenuated by the low ratio.")
-            DoubleSliderRow(title: "Mid Threshold", value: model.configBinding(\.multibandMidThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
-                tooltip: "Mid band compression threshold. Material above this level is attenuated by the mid ratio.")
-            DoubleSliderRow(title: "High Threshold", value: model.configBinding(\.multibandHighThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
-                tooltip: "High band compression threshold. Material above this level is attenuated by the high ratio.")
-            DoubleSliderRow(title: "Low Ratio", value: model.configBinding(\.multibandLowRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
-                tooltip: "Low band compression ratio. 1:1 = no compression; higher ratios flatten dynamics more aggressively.")
-            DoubleSliderRow(title: "Mid Ratio", value: model.configBinding(\.multibandMidRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
-                tooltip: "Mid band compression ratio. Vocals and leads live here — moderate values (2:1–4:1) are typical.")
-            DoubleSliderRow(title: "High Ratio", value: model.configBinding(\.multibandHighRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
-                tooltip: "High band compression ratio. Controls sibilance and cymbal energy.")
-            DoubleSliderRow(title: "Low Attack", value: model.configBinding(\.multibandLowAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f",
-                tooltip: "Low band attack time in ms. Slow attacks preserve transients; fast attacks tighten the low end.")
-            DoubleSliderRow(title: "Mid Attack", value: model.configBinding(\.multibandMidAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f",
-                tooltip: "Mid band attack time in ms. Slower values preserve vocal consonants; faster values increase density.")
-            DoubleSliderRow(title: "High Attack", value: model.configBinding(\.multibandHighAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f",
-                tooltip: "High band attack time in ms. Fast attack tames sibilance; slow attack preserves air.")
-            DoubleSliderRow(title: "Low Release", value: model.configBinding(\.multibandLowReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f",
-                tooltip: "Low band release time in ms. Longer release prevents bass pumping at the cost of average level recovery speed.")
-            DoubleSliderRow(title: "Mid Release", value: model.configBinding(\.multibandMidReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f",
-                tooltip: "Mid band release time in ms. Typical vocal release; shorter = more density, longer = more transparent.")
-            DoubleSliderRow(title: "High Release", value: model.configBinding(\.multibandHighReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f",
-                tooltip: "High band release time in ms. Shorter release brightens; longer release keeps the top smooth.")
-            DoubleSliderRow(title: "Makeup", value: model.configBinding(\.multibandMakeupDB, runtimeDisposition: .live), range: -12...18, format: "%.1f dB",
-                tooltip: "Overall gain applied after multiband processing. Set to offset average level loss from compression; not a loudness control.")
+
+            // Crossovers — operator-rare; collapsed by default. Once
+            // the FabFilter-style spectrum-with-drag-handles editor
+            // ships, this group disappears entirely.
+            DisclosureGroup("Crossovers") {
+                DoubleSliderRow(title: "X1 (Low / Low-Mid)", value: model.configBinding(\.multibandX1Hz, runtimeDisposition: .live), range: 30...300, format: "%.0f Hz",
+                    tooltip: "Low / Low-Mid crossover frequency. Separates kick/bass from low-mid body.")
+                DoubleSliderRow(title: "X2 (Low-Mid / Mid)", value: model.configBinding(\.multibandX2Hz, runtimeDisposition: .live), range: 120...1200, format: "%.0f Hz",
+                    tooltip: "Low-Mid / Mid crossover frequency. Separates body from upper-vocal and presence region.")
+                DoubleSliderRow(title: "X3 (Mid / High-Mid)", value: model.configBinding(\.multibandX3Hz, runtimeDisposition: .live), range: 600...4000, format: "%.0f Hz",
+                    tooltip: "Mid / High-Mid crossover frequency. Separates vocal presence from upper consonants and sibilance.")
+                DoubleSliderRow(title: "X4 (High-Mid / High)", value: model.configBinding(\.multibandX4Hz, runtimeDisposition: .live), range: 2500...12000, format: "%.0f Hz",
+                    tooltip: "High-Mid / High crossover frequency. Separates sibilance region from air / top-end.")
+            }
         }
     }
 }

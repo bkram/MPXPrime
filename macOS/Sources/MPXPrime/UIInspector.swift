@@ -1,0 +1,102 @@
+import SwiftUI
+
+/// Stage-aware right-pane Inspector content. Modeled on Pages / Keynote /
+/// Logic Pro inspectors — surfaces the advanced parameters and contextual
+/// metering for the currently-selected sidebar stage. Default state for
+/// stages without dedicated inspector content is a brief tip + the stage
+/// description, so the inspector never feels empty.
+///
+/// Phase 3 only wires the infrastructure + composite-clipper cancellation
+/// toggles (currently an "advanced operator-only" group with no UI prior
+/// to this commit). Phase 4 wires the Multiband per-band advanced params.
+struct StageInspector: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                Divider()
+                content
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Inspector")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(model.selectedStage.label)
+                .font(.headline)
+            Text(model.selectedStage.detailSubtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.selectedStage {
+        case .processingCompositeClipper:
+            CompositeClipperInspector(model: model)
+        default:
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Advanced parameters and contextual metering for this stage will appear here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Composite-clipper inspector content: the four cancellation flags
+/// that were previously config-only (no UI). Operator-targeted —
+/// unchecking any of these has receiver-visible audible / RDS-quality
+/// consequences. The clipper enable / threshold / ceiling stay on the
+/// main editor; this inspector is for the per-band cancellation
+/// toggles that 95% of users never need to touch.
+private struct CompositeClipperInspector: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Per-band IM cancellation")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            Toggle(
+                "Cancel audio band (0–15 kHz)",
+                isOn: model.configBinding(\.compositeClipperCancelAudio, runtimeDisposition: .live)
+            )
+            .help("Subtract the clipper's audio-band IM via LR4 LP at 15 kHz. Costs loudness; off by default for full clipper drive. Inspired by Orban US 5,168,526.")
+
+            Toggle(
+                "Cancel pilot guard (17–21 kHz)",
+                isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live)
+            )
+            .help("Removes clipper IM under the cleanly-injected 19 kHz pilot. Required for reliable stereo decoding — leave on.")
+
+            Toggle(
+                "Cancel stereo subcarrier (22–53 kHz)",
+                isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live)
+            )
+            .help("Cancels M²·S cross-products that would otherwise demodulate as (L−R) breathing.")
+
+            Toggle(
+                "Cancel RDS guard (55–59 kHz)",
+                isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live)
+            )
+            .help("Removes clipper energy under the RDS subcarrier. Leave on or BCH error rate climbs as the clipper drives.")
+
+            Text("These flags subtract bandpass-isolated clipper residual back into the protected guard bands so the receiver doesn't see clipper noise vector-summed with the cleanly-injected pilot, stereo, and RDS subcarriers.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+        }
+    }
+}

@@ -980,6 +980,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             menuItem.title = model?.runtimeApplyButtonTitle ?? "Apply Restart"
             return model?.runtimeApplyPending ?? false
         }
+        if menuItem.action == #selector(toggleInspector) {
+            menuItem.state = (model?.inspectorVisible ?? false) ? .on : .off
+            return true
+        }
         return true
     }
 
@@ -1069,6 +1073,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         emojiItem.keyEquivalentModifierMask = [.control, .command]
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
+
+        // View Menu — toggles for the right-pane Inspector and other
+        // workspace-level visibility states. Standard ⌥⌘I shortcut for
+        // inspector matches Pages, Keynote, Logic Pro, Final Cut.
+        let viewItem = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
+        let viewMenu = NSMenu(title: "View")
+        let inspectorItem = viewMenu.addItem(
+            withTitle: "Inspector",
+            action: #selector(toggleInspector),
+            keyEquivalent: "i")
+        inspectorItem.target = self
+        inspectorItem.keyEquivalentModifierMask = [.command, .option]
+        viewItem.submenu = viewMenu
+        mainMenu.addItem(viewItem)
 
         // Control Menu
         let transportItem = NSMenuItem(title: "Control", action: nil, keyEquivalent: "")
@@ -1212,6 +1230,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         w.makeKeyAndOrderFront(nil)
         settingsWindow = w
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func toggleInspector() {
+        guard let vm = model else { return }
+        vm.inspectorVisible.toggle()
     }
 
     @objc private func toggleTransport() {
@@ -1438,6 +1461,11 @@ final class MPXPrimeViewModel: ObservableObject {
             }
         }
     }
+    /// Phase 3 inspector visibility. Toggleable from View > Inspector.
+    /// Defaults off so the redesign progressively reveals features —
+    /// users who don't need the advanced cancel toggles or per-band
+    /// detail panels never see the column.
+    @Published var inspectorVisible: Bool = false
     @Published var statusText: String = "Idle"
     @Published var pendingRuntimeApply: Bool = false
 
@@ -3942,6 +3970,10 @@ private struct RootView: View {
                     .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
             } detail: {
                 StageContentView(model: model)
+                    .inspector(isPresented: $model.inspectorVisible) {
+                        StageInspector(model: model)
+                            .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+                    }
             }
         }
     }

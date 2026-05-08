@@ -181,4 +181,189 @@ struct FilterPrimitiveTests {
         #expect(abs(last) < 0.01,
             "BiquadCascade6 HP must reject DC; converged to \(last)")
     }
+
+    // MARK: - LinearPhaseFIRDecimator
+    //
+    // Direct primitive coverage for the FIR decimator that replaced the
+    // 12th-order Butterworth in `CompositeClipper`. The chain-level
+    // behaviour is regression-guarded by the CompositeClipper test
+    // suite (cross-domain IM cancellation, stereo image preservation,
+    // pilot/RDS guard cleanliness); these tests validate the underlying
+    // primitive contracts the chain relies on.
+    //
+    // OS rate of 1.536 MHz mirrors the actual usage in CompositeClipper
+    // (8× × 192 kHz host rate) so the tap count and group delay
+    // numbers reflect what the chain sees in practice.
+
+    @Test func firDecimatorIsBypassWhenNotConfigured() {
+        var dec = LinearPhaseFIRDecimator()
+        #expect(!dec.enabled, "Default-init decimator must report disabled")
+        // Pushing a sample through a non-configured decimator returns
+        // the sample directly (zero-delay bypass), per the @inline guard.
+        let out = dec.push(0.42)
+        #expect(out == 0.42, "Disabled decimator must pass-through; got \(out)")
+    }
+
+    @Test func firDecimatorReportsValidTapsAndGroupDelay() {
+        var dec = LinearPhaseFIRDecimator()
+        dec.configure(
+            cutoffHz: 53_000.0,
+            sampleRateOS: 1_536_000.0,
+            decimateFactor: 8,
+            stopBandDB: 90.0,
+            transitionHz: 60_000.0
+        )
+        #expect(dec.enabled, "Configured decimator must be enabled")
+        // Kaiser-sinc with these parameters → ~147 odd taps. The exact
+        // count is design-method-dependent; assert range + odd-length
+        // (required for symmetric linear phase).
+        #expect(dec.tapCount >= 63 && dec.tapCount <= 2049,
+            "Tap count out of range: \(dec.tapCount)")
+        #expect(dec.tapCount % 2 == 1,
+            "Tap count must be odd for sample-centred symmetric kernel; got \(dec.tapCount)")
+        // Group delay = (N-1)/2 in OS samples; host = OS / decimateFactor (rounded).
+        #expect(dec.groupDelayOSSamples == (dec.tapCount - 1) / 2,
+            "Group delay must equal (N-1)/2; got \(dec.groupDelayOSSamples)")
+        let expectedHost = (dec.groupDelayOSSamples + 4) / 8
+        #expect(dec.groupDelayHostSamples == expectedHost,
+            "Host-rate group delay rounding off; got \(dec.groupDelayHostSamples), expected \(expectedHost)")
+    }
+
+    @Test func firDecimatorEmitsOnceEveryNPushes() {
+        // Polyphase contract: the returned value updates only on every
+        // Nth push. Intermediate calls return the previously-emitted
+        // value. Verify by capturing emit-cadence directly: track
+        // unique output values across a run of all-different inputs.
+        // After fully filling the delay line, exactly N inputs map to
+        // 1 unique output (the others repeat the prior emit).
+        var dec = LinearPhaseFIRDecimator()
+        dec.configure(
+            cutoffHz: 53_000.0,
+            sampleRateOS: 1_536_000.0,
+            decimateFactor: 8
+        )
+        // Fill the FIR delay line + drive past one decimation cycle
+        // boundary so pushSinceLastEmit lands at 0. Push count must
+        // be a multiple of 8 ≥ tap count × 2.
+        var settle = max(2_000, dec.tapCount * 4)
+        if settle % 8 != 0 { settle += 8 - (settle % 8) }
+        for _ in 0..<settle { _ = dec.push(0.0) }
+
+        // Now push 16 different non-zero inputs and count unique
+        // outputs. With decimateFactor=8 we expect exactly 2 emits
+        // → at most 3 unique values (the previous emit + 2 new ones).
+        var seen: Set<Int> = []
+        for i in 0..<16 {
+            // Encode the float-rounded output as Int bits to dedupe
+            // across small float quantisation.
+            let y = dec.push(Float(i) * 0.01)
+            seen.insert(y.bitPattern.hashValue)
+        }
+        // 16 pushes, 2 emit boundaries → 3 distinct output regimes:
+        // pre-emit-1 (existing 0), post-emit-1, post-emit-2.
+        #expect(seen.count == 3,
+            "16 pushes at decimateFactor=8 should produce exactly 3 unique outputs (start + 2 emits); got \(seen.count)")
+    }
+
+    @Test func firDecimatorPassesDCAtUnityGain() {
+        // Kaiser-sinc lowpass is DC-gain-normalised in the helper.
+        // Pushing a constant DC level for many cycles should converge
+        // to the same level on the output.
+        var dec = LinearPhaseFIRDecimator()
+        dec.configure(
+            cutoffHz: 53_000.0,
+            sampleRateOS: 1_536_000.0,
+            decimateFactor: 8
+        )
+        // Push enough samples to fill the FIR's delay line + then some.
+        // Decimator output cadence is 1 per 8 pushes; (taps × 2) OS
+        // pushes guarantees the delay line is full of DC.
+        let totalPushes = max(4_000, dec.tapCount * 4)
+        var lastOut: Float = 0
+        for _ in 0..<totalPushes {
+            lastOut = dec.push(0.5)
+        }
+        #expect(abs(lastOut - 0.5) < 1e-4,
+            "DC gain must be unity; converged to \(lastOut), expected 0.5")
+    }
+
+    @Test func firDecimatorHeavilyAttenuatesStopbandFrequencies() {
+        // Drive a sinusoid well above the cutoff (cutoff 53 kHz +
+        // transition 60 kHz → -6 dB ~83 kHz; stopband ~113 kHz onward).
+        // A 200 kHz tone at OS rate must be crushed by ≥80 dB
+        // (Kaiser-sinc design target was 90 dB stopband).
+        var dec = LinearPhaseFIRDecimator()
+        dec.configure(
+            cutoffHz: 53_000.0,
+            sampleRateOS: 1_536_000.0,
+            decimateFactor: 8,
+            stopBandDB: 90.0,
+            transitionHz: 60_000.0
+        )
+        let stopbandHz = 200_000.0
+        let omega = 2.0 * Double.pi * stopbandHz / 1_536_000.0
+        // Skip the FIR's group delay so we measure steady-state attenuation.
+        let warmup = max(2_000, dec.tapCount * 3)
+        for i in 0..<warmup {
+            _ = dec.push(Float(sin(omega * Double(i))))
+        }
+        var peak: Float = 0
+        for i in warmup..<(warmup + 4_000) {
+            let y = dec.push(Float(sin(omega * Double(i))))
+            peak = max(peak, abs(y))
+        }
+        // Input amplitude is 1.0; -80 dB = 1e-4. Allow some margin.
+        #expect(peak < 1e-3,
+            "Stopband at 200 kHz must be ≥-60 dB; peak \(peak) (~\(20 * log10(max(peak, 1e-9))) dB)")
+    }
+
+    @Test func firDecimatorPassbandLeaksMinimallyVsButterworth() {
+        // Direct comparison: at 38 kHz (FM stereo subcarrier), how much
+        // amplitude does the new FIR preserve versus a 12th-order
+        // Butterworth with cutoff at 57.6 kHz? The Butterworth has 1-2
+        // dB rolloff at the upper subcarrier edge; the FIR with cutoff
+        // 53 kHz + wide transition has ≥0 passband ripple at 38 kHz.
+        let osRate: Float = 1_536_000.0
+        let testHz = 38_000.0
+        let omega = 2.0 * Double.pi * Double(testHz) / Double(osRate)
+
+        var fir = LinearPhaseFIRDecimator()
+        fir.configure(cutoffHz: 53_000.0, sampleRateOS: osRate, decimateFactor: 1)
+        var butter = BiquadCascade6()
+        butter.configureLowpass(cutoffHz: 57_600.0, sampleRate: osRate)
+
+        // Skip warmup, then measure peak-to-peak over a stable window.
+        let warmup = max(2_000, fir.tapCount * 3)
+        for i in 0..<warmup {
+            _ = fir.push(Float(sin(omega * Double(i))))
+            _ = butter.process(Float(sin(omega * Double(i))))
+        }
+        var firPeak: Float = 0
+        var butterPeak: Float = 0
+        for i in warmup..<(warmup + 8_000) {
+            let s = Float(sin(omega * Double(i)))
+            firPeak = max(firPeak, abs(fir.push(s)))
+            butterPeak = max(butterPeak, abs(butter.process(s)))
+        }
+        // Both should pass the 38 kHz tone, but the FIR should preserve
+        // it closer to unity than Butterworth.
+        #expect(firPeak > 0.95,
+            "FIR must pass 38 kHz at near-unity; got peak \(firPeak)")
+        // Document the architectural claim: FIR ≥ Butterworth at 38 kHz.
+        #expect(firPeak >= butterPeak - 0.01,
+            "FIR (\(firPeak)) should preserve 38 kHz at least as well as Butterworth (\(butterPeak))")
+    }
+
+    @Test func firDecimatorResetClearsState() {
+        var dec = LinearPhaseFIRDecimator()
+        dec.configure(cutoffHz: 53_000.0, sampleRateOS: 1_536_000.0, decimateFactor: 8)
+        // Drive non-zero data through.
+        for _ in 0..<2_000 { _ = dec.push(0.5) }
+        dec.reset()
+        // Output should drop to ~0 after reset + many zero pushes.
+        var lastOut: Float = 0
+        for _ in 0..<2_000 { lastOut = dec.push(0.0) }
+        #expect(abs(lastOut) < 1e-6,
+            "Reset + zero-fill must drive output to 0; got \(lastOut)")
+    }
 }

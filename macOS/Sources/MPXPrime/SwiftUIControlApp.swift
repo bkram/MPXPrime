@@ -646,6 +646,17 @@ private final class MPXSpectrumAnalyzer: @unchecked Sendable {
                     }
                 }
                 vDSP_fft_zrip(fftSetup, &split, 1, fftLog2, FFTDirection(FFT_FORWARD))
+                // Apple's real-input FFT packs DC into split.realp[0]
+                // and Nyquist into split.imagp[0] to save one slot.
+                // Without untangling them, vDSP_zvmags would compute
+                // magnitudesSq[0] = DC² + Nyquist² and the leftmost
+                // display bin would render Nyquist energy (because we
+                // already remove DC pre-FFT via vDSP_meanv + vDSP_vsadd).
+                // Zero the Nyquist slot before the magnitude pass so
+                // bin 0 holds clean DC². Nyquist is ignored for display
+                // — the highest visible bin is at index n/2-1, just
+                // below Nyquist.
+                imagBP[0] = 0
                 vDSP_zvmags(&split, 1, &magnitudesSq, 1, vDSP_Length(n / 2))
             }
         }

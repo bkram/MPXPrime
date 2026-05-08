@@ -661,14 +661,23 @@ private final class MPXSpectrumAnalyzer: @unchecked Sendable {
             }
         }
 
+        // Calibrated amplitude: divide by N (FFT length) to undo the
+        // un-normalised forward transform, then divide by the window's
+        // coherent gain so a 0 dBFS sine through a Hann window reads as
+        // 0 dB on the display. vDSP_HANN_NORM produces a normalised
+        // Hann window with sum = N/2, i.e. coherent gain = 0.5. The
+        // factor of 2 on non-DC bins accounts for the one-sided
+        // spectrum (energy from the conjugate bin).
         let invN = 1.0 / Float(n)
+        let hannCG: Float = 0.5
+        let cgScale = invN / hannCG
         if !magnitudesSq.isEmpty {
-            let dcAmp = sqrtf(max(0.0, magnitudesSq[0])) * invN
+            let dcAmp = sqrtf(max(0.0, magnitudesSq[0])) * cgScale
             spectrumDB[0] = max(-100.0, min(0.0, 20.0 * log10f(max(1e-9, dcAmp))))
         }
         if magnitudesSq.count > 1 {
             for k in 1..<magnitudesSq.count {
-                let amp = (2.0 * sqrtf(max(0.0, magnitudesSq[k]))) * invN
+                let amp = (2.0 * sqrtf(max(0.0, magnitudesSq[k]))) * cgScale
                 spectrumDB[k] = max(-100.0, min(0.0, 20.0 * log10f(max(1e-9, amp))))
             }
         }

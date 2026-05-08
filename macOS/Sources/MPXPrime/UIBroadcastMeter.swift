@@ -36,54 +36,76 @@ struct VerticalMeterStrip: View {
                 .textCase(.uppercase)
                 .lineLimit(1)
                 .fixedSize()
-            GeometryReader { geo in
-                ZStack {
-                    // Body + tinted fill.
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(BroadcastStyle.meterSurface)
-                    VStack(spacing: 0) {
-                        Spacer(minLength: 0)
+            // Bar + scale-label column side by side. Bar stays 22pt
+            // wide; label column gets the rest of the strip width
+            // (~36pt) so dB / kHz labels render outside the bar
+            // alongside their tick marks.
+            HStack(alignment: .top, spacing: 4) {
+                GeometryReader { geo in
+                    ZStack {
+                        // Body + tinted fill.
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(tint.opacity(0.80))
-                            .frame(height: geo.size.height * CGFloat(clamp(level)))
+                            .fill(BroadcastStyle.meterSurface)
+                        VStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(tint.opacity(0.80))
+                                .frame(height: geo.size.height * CGFloat(clamp(level)))
+                        }
+                        // Scale tick marks pinned to the bar's right edge.
+                        ForEach(scaleTicks) { tick in
+                            Rectangle()
+                                .fill(Color.primary.opacity(0.32))
+                                .frame(width: 6, height: 1)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .offset(
+                                    x: 0,
+                                    y: (0.5 - tick.position) * geo.size.height
+                                )
+                        }
+                        // Target line for modulation deviation.
+                        if let targetNorm {
+                            Rectangle()
+                                .fill(BroadcastStyle.accent.opacity(0.85))
+                                .frame(height: 1.5)
+                                .offset(x: 0, y: (0.5 - targetNorm) * geo.size.height)
+                        }
+                        // Peak-hold dot.
+                        if let peak = peakLevel {
+                            let y = (0.5 - clamp(peak)) * geo.size.height
+                            Rectangle()
+                                .fill(Color.primary.opacity(0.95))
+                                .frame(height: 2)
+                                .offset(x: 0, y: y)
+                        }
                     }
-                    // Scale ticks (right edge).
-                    ForEach(scaleTicks) { tick in
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.22))
-                            .frame(width: 6, height: 1)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .offset(
-                                x: 0,
-                                y: (0.5 - tick.position) * geo.size.height
-                            )
-                    }
-                    // Target line for modulation deviation.
-                    if let targetNorm {
-                        Rectangle()
-                            .fill(BroadcastStyle.accent.opacity(0.85))
-                            .frame(height: 1.5)
-                            .offset(x: 0, y: (0.5 - targetNorm) * geo.size.height)
-                    }
-                    // Peak-hold dot.
-                    if let peak = peakLevel {
-                        let y = (0.5 - clamp(peak)) * geo.size.height
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.95))
-                            .frame(height: 2)
-                            .offset(x: 0, y: y)
-                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
+                    )
                 }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-                )
+                .frame(width: 22)
+
+                // Scale labels rendered alongside their tick marks via
+                // y-offset positioning. Top-aligned with the bar so the
+                // tick → label vertical mapping is exact.
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        ForEach(scaleTicks) { tick in
+                            Text(tick.label)
+                                .font(BroadcastStyle.scaleLabel)
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                                .offset(
+                                    x: 0,
+                                    y: ((1.0 - tick.position) * geo.size.height) - 6
+                                )
+                        }
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                }
+                .frame(width: 22)
             }
-            .frame(width: 22)
-            // Scale labels column (right of the bar). The text is constrained
-            // to the column width and shrinks if needed — without this, long
-            // strings (e.g. "-6.4 dBFS   -1.5 pk") spill into adjacent meter
-            // columns and read as one illegible row of overlapping labels.
             Text(valueText)
                 .font(BroadcastStyle.valueReadout)
                 .foregroundStyle(.primary)
@@ -92,7 +114,7 @@ struct VerticalMeterStrip: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity)
         }
-        .frame(width: 58)
+        .frame(width: 64)
     }
 
     // MARK: - Scale helpers

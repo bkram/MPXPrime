@@ -182,6 +182,8 @@ L/R domain audio clipper implementing Orban's distortion-cancellation principle:
 ### BS.412 MPX Power Limiter
 ITU-R BS.412 rolling average power measurement with slow gain reduction for European regulatory compliance (required in DE, AT, CH, SE, CZ, SI, and others). Measures decimated RMS power over a configurable sliding window (default 60 seconds) and applies slow gain reduction when average power exceeds the threshold. Operates on the audio composite before the safety limiter.
 
+Structurally a **dual-integrator power AGC**: power-detect (square sample) → first integrator (per-block sum + 60-s rolling window) → sample-and-hold (per-64-sample boundary flush) → second integrator (gain smoothing with 1 s attack / 5 s release) → feedback gain ride. Functionally equivalent to the topology described in US 6,618,486 (CRL Systems / Harman, expired 2015-09-09). We use a flat rolling-average window instead of the patent's leaky-integrator first stage — gives a harder, more compliance-predictable boundary at the 60-s mark, generally preferred for type-approval testing.
+
 ### Composite Clipper (with delta-based per-band substitution)
 8× oversampled tanh soft-clipper on the audio composite, sitting after the pre-encode audio limiter and before BS.412 / final-MPX safety limiter. As of 0.11 this is the **only** non-linearity on the audio composite — the prior `CompositeTruePeakLimiter` (memoryless tanh on `|composite|` peak detection) was deleted because its IM bled into the 38 kHz stereo sidebands and demodulated as `(L−R)` cancellation. The clipper does double duty: peak control plus loudness, the same role Orban's "Half-Cosine" / "Smart Clipper" stages play in the 8500/8600 line.
 

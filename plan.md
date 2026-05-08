@@ -28,23 +28,41 @@ When evaluating a new feature, the test is "does this make MPX Prime sound or fe
 
 ## Patent-backed improvements backlog
 
-Expired Orban patents (public domain) that map onto specific stages of
-the chain. Listed in priority order by expected impact on the
-verifier-flagged stress scenarios (`hf_edge_12k` >67k IM, side
-retention; `bright_dense` rms drift). Caveat: the verifier scenarios
-run with `mpx_clipper_enabled = False`, so improvements to the
+Expired patents (public domain) that map onto specific stages of the
+chain. Listed in priority order by expected impact on the verifier-
+flagged stress scenarios (`hf_edge_12k` >67k IM, side retention;
+`bright_dense` rms drift). Caveat: the verifier scenarios run with
+`mpx_clipper_enabled = False`, so improvements to the
 `CompositeClipper` itself do not move the verifier numbers — they
 land on the user-facing audio path only when the clipper is
 explicitly enabled.
 
+### Active backlog
+
 | Priority | Patent | Title | Expires | Stage | Why |
 |---|---|---|---|---|---|
 | **P0** | [US 6,937,912](https://patents.google.com/patent/US6937912B1/en) | Anti-aliased clipping with band-limited step functions | 2025-09 | `OversampledPeakLimiter` (pre-encode L/R) + `audioCompositeSoftClipEnabled` shaper | Replaces the inner clip kernel: when a peak crosses threshold, substitute a band-limited polyBLEP-style step matched to the host filter's group delay. Stops IM from being generated rather than relying on decimation to remove it. Both stages are engaged in the verifier scenarios — this is the patent that moves the `>67k/in` and `>60k/in` numbers. |
-| **P1** | [US 6,434,241](https://patents.google.com/patent/US6434241B1/en) | Half-cosine signal peak control | 2020-08 (expired) | Same stages as P0, alternative kernel | Continuous-first-derivative half-cosine peak; overshoot drops from ~10 % to 0.1–0.2 %. Less effective than US 6,937,912 for IM rejection but lower CPU. Useful as a selectable kernel or fallback. |
+| **P1** | [US 6,434,241](https://patents.google.com/patent/US6434241B1/en) | Half-cosine signal peak control | 2014-08 (lapsed) | Same stages as P0, alternative kernel | Continuous-first-derivative half-cosine peak; overshoot drops from ~10 % to 0.1–0.2 %. Less effective than US 6,937,912 for IM rejection but lower CPU. Useful as a selectable kernel or fallback. |
 | **P2** | [US 5,737,434](https://patents.google.com/patent/US5737434A/en) | Multi-band audio compressor with cross-band coupling | Expired | `MonoCompressor` per-band logic in multiband stage | Inter-band gain coupling — "loud bass softens highs", the Optimod 8500/8600 multiband behaviour we don't have. Already in plan.md item 4 of multiband DSP modernisation; named here for the patent reference. |
 | **P3** | [US 5,892,833](https://patents.google.com/patent/US5892833A/en) | Gain calibration for audio compressors | Expired | `MonoCompressor` makeup-gain stage | Algorithmic gain-staging that tracks compressor's average GR to keep makeup gain roughly compensating. Polish item — low priority. |
-| **Skip** | [US 4,412,100](https://patents.google.com/patent/US4412100A/en) | Audio limiter using FET attenuator | Expired | n/a | Analog circuit patent (1981, JFET as voltage-controlled resistor). Pre-DSP era; not implementable in this codebase. |
-| **Skip (not yet expired)** | [US 7,587,254](https://patents.google.com/patent/US7587254B2/en) | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029 | n/a | Filed 2004; revisit post-2029. |
+
+### Already implemented or structurally equivalent (do not re-implement)
+
+| Patent | Title | Where in code | Note |
+|---|---|---|---|
+| [US 6,337,999](https://patents.google.com/patent/US6337999B1/en) | Oversampled differential clipper | `CompositeClipper` (commit `d1d8180`, post-0.11) | Differential topology now standard; only the clipping residual goes through decimation. |
+| [US 6,618,486](https://patents.google.com/patent/US6618486B2/en) (= [US 2003/0142840](https://patents.google.com/patent/US20030142840A1/en)) | BS.412 dual-integrator MPX power controller | `BS412PowerLimiter` ([`MPXGenerator.swift:1167`](macOS/Sources/MPXPrime/MPXGenerator.swift)) | Functionally equivalent: power-detect → first integrator (rolling 60-s window) → sample-and-hold (per-block flush) → second integrator (currentGain attack/release smoothing) → feedback gain ride. We use a flat rolling-average window instead of a leaky integrator (gives a harder, more compliance-predictable boundary). Lapsed 2015-09-09. |
+| [US 5,913,152](https://patents.google.com/patent/US5913152A/en) | FM composite signal processor with pilot extract / re-sum | Different architecture, same end-state | We achieve pilot protection through (1) post-clipper subcarrier injection (the project invariant — pilot is never IN the audio composite when the clipper sees it) and (2) RBJ bandpass cancellation in the 17-21 kHz pilot guard inside `CompositeClipper`. Both end-results: clipper IM does not corrupt the pilot. Adopting the patent's extract/re-sum path on top would be redundant. Expired 2015-12-29. |
+| [US 4,737,725](https://patents.google.com/patent/US4737725A/en) | Pre-LPF overshoot compensation (Inovonics analog circuit) | `OversampledPeakLimiter` (4× oversampled) | The patent's analog technique (clip → phase-lag → re-clip → recover clippings → re-inject) is what modern oversampled true-peak limiters achieve digitally. We have one. Expired 1996-04-17. |
+
+### Skipped (evaluated and rejected)
+
+| Patent | Title | Status | Reason |
+|---|---|---|---|
+| [US 7,295,628](https://patents.google.com/patent/US7295628B2/en) | DSP MPX with sample-frequency-aligned vestigial sideband | Expired 2024-07-30 (full term) | Requires `fs = 2 × fmod` (76 kHz chain rate) so the DAC reconstruction filter does half the SSB shaping for free. Our chain runs at 192 kHz throughout; adopting this means a complete chain-rate refactor or a dedicated SRC + secondary path just for the stereo subcarrier. Niche AM/SSB-broadcast technique; FM stereo's DSB-SC is what receivers expect and what IEC 62106 mandates. |
+| [WO 2017/186756](https://patents.google.com/patent/WO2017186756A1/en) | Frequency-domain L+R/L−R protector | PCT ceased; **CA3021918 potentially enforceable until 2037** | Dual blockers. Legal: Canadian national-phase application may still be enforceable through 2037 (verify before any CA distribution). Technical: OLA-block FFT both M and S each block is CPU-expensive on the audio thread and adds OLA-block latency; M/S domain dynamic L−R limiter (Stereotool style) achieves similar mono-compatibility without FFTs. |
+| [US 4,412,100](https://patents.google.com/patent/US4412100A/en) | Audio limiter using FET attenuator | Expired | Analog circuit patent (1981, JFET as voltage-controlled resistor). Pre-DSP era; the modern DSP equivalent (envelope-driven gain reduction with attack/release) is how every compressor in this codebase already works. |
+| [US 7,587,254](https://patents.google.com/patent/US7587254B2/en) | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029 | Filed 2004; not yet expired. Revisit post-2029. |
 
 ## Recently landed (post-0.11, unreleased)
 

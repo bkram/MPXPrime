@@ -3969,9 +3969,16 @@ private struct RootView: View {
             // NavigationSplitView so it spans every stage.
             BroadcastStatusBar(model: model)
 
-            NavigationSplitView {
+            // Pinned-open sidebar: bind columnVisibility to `.constant(.all)`
+            // so the user can't toggle the sidebar away, and remove the
+            // toolbar's sidebarToggle button so there's no UI affordance to
+            // collapse it. Stage navigation is the primary surface — losing
+            // it would strand the user on whichever stage they last had
+            // selected.
+            NavigationSplitView(columnVisibility: .constant(.all)) {
                 StageSidebar(model: model)
                     .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
+                    .toolbar(removing: .sidebarToggle)
             } detail: {
                 StageContentView(model: model)
                     .inspector(isPresented: $model.inspectorVisible) {

@@ -48,27 +48,21 @@ struct SignalFlowStrip: View {
     ]
 
     var body: some View {
-        HStack(spacing: 4) {
-            chip(text: "IN", kind: .terminal)
-            connector
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(Array(Self.chainStages.enumerated()), id: \.element) { idx, stage in
-                        chip(
-                            text: Self.chipLabels[stage] ?? stage.label,
-                            kind: stage == model.selectedStage ? .active : .stage,
-                            stage: stage
-                        )
-                        if idx < Self.chainStages.count - 1 {
-                            connector
-                        }
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                chip(text: "IN", kind: .terminal)
+                connector
+                ForEach(Array(Self.chainStages.enumerated()), id: \.element) { _, stage in
+                    chip(
+                        text: Self.chipLabels[stage] ?? stage.label,
+                        kind: stage == model.selectedStage ? .active : .stage,
+                        stage: stage
+                    )
+                    connector
                 }
-                .padding(.vertical, 2)
+                chip(text: "OUT", kind: .terminal)
             }
-            .frame(maxWidth: .infinity)
-            connector
-            chip(text: "OUT", kind: .terminal)
+            .padding(.vertical, 2)
         }
         .padding(.horizontal, 22)
         .padding(.bottom, 12)

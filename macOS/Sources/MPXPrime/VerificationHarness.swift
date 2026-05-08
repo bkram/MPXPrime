@@ -302,7 +302,7 @@ private func verificationScenarios() -> [VerificationScenario] {
         },
         VerificationScenario(
             name: "transient_push",
-            description: "Transient-heavy program to stress AGC, Orbass hold, and limiter feel",
+            description: "Transient-heavy program to stress AGC, PrimeBass hold, and limiter feel",
             quality: QualityExpectations(
                 maxCorrelationDelta: 0.15,
                 maxOutputCorrelation: 0.88,

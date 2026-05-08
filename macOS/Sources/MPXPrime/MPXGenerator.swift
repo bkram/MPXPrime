@@ -5011,14 +5011,14 @@ final class MPXGenerator {
         let widebandAGCReleaseProgramDependent: Bool
         let preEncodeAudioLimiterEnabled: Bool
         let mpxDeviationKHz: Float
-        let orbassEnabled: Bool
-        let orbassAmount: Float
-        let orbassHarmonics: Float
-        let orbassDrive: Float
-        let orbassDensity: Float
-        let orbassSubharmonicsEnabled: Bool
-        let orbassSubharmonicsAmount: Float
-        let orbassFreqHz: Float
+        let primeBassEnabled: Bool
+        let primeBassAmount: Float
+        let primeBassHarmonics: Float
+        let primeBassDrive: Float
+        let primeBassDensity: Float
+        let primeBassSubharmonicsEnabled: Bool
+        let primeBassSubharmonicsAmount: Float
+        let primeBassFreqHz: Float
         let stereoWidenEnabled: Bool
         let monoBassEnabled: Bool
         let monoBassFreqHz: Float
@@ -5280,18 +5280,18 @@ final class MPXGenerator {
     private let audioCompositeSmootherRequested: Bool
     private let finalMPXSoftClipEnabled: Bool
 
-    private var orbassEnabled: Bool
-    private var orbassAmount: Float
-    private var orbassHarmonics: Float
-    private var orbassDrive: Float
-    private var orbassDensity: Float
-    private var orbassSubharmonicsEnabled: Bool
-    private var orbassSubharmonicsAmount: Float
-    private var orbassFreqHz: Float
-    private var orbassLP = OnePoleLP()
-    private var orbassSubLP = OnePoleLP()
-    private var orbassHarmHPF = Biquad()
-    private var orbassHarmLPF = Biquad()
+    private var primeBassEnabled: Bool
+    private var primeBassAmount: Float
+    private var primeBassHarmonics: Float
+    private var primeBassDrive: Float
+    private var primeBassDensity: Float
+    private var primeBassSubharmonicsEnabled: Bool
+    private var primeBassSubharmonicsAmount: Float
+    private var primeBassFreqHz: Float
+    private var primeBassLP = OnePoleLP()
+    private var primeBassSubLP = OnePoleLP()
+    private var primeBassHarmHPF = Biquad()
+    private var primeBassHarmLPF = Biquad()
     // Allpass at F0 — Aphex US 4,150,253 "HP-then-clip" topology
     // adapted for bass enhancement: instead of a HPF (which would
     // attenuate F0 itself), use an allpass that preserves amplitude
@@ -5299,25 +5299,25 @@ final class MPXGenerator {
     // downstream are then phase-decorrelated from the direct
     // lowboost path, preventing comb-filter summing at the bass
     // clipper's input.
-    private var orbassSideAP = Biquad()
-    private var orbassSubPrevSample: Float = 0.0
-    private var orbassSubPhase: Int = 0
-    private let orbassTargetRatio: Float = 0.42
-    private let orbassRatioDeadband: Float = 0.05
-    private var orbassRatioEst: Float = 0.42
-    private var orbassAdaptiveTarget: Float = 0.0
-    private var orbassAdaptiveGain: Float = 0.0
-    private var orbassLevelEst: Float = 1e-3
-    private let orbassHoldSeconds: Float = 0.12
-    private var orbassHoldRemaining: Float = 0.0
-    private var orbassMakeupGain: Float = 1.0
-    private var orbassSampleDuration: Float = 1.0 / 48_000.0
-    private var orbassRatioAlpha: Float = 0.0
-    private var orbassLevelAlpha: Float = 0.0
-    private var orbassAdaptiveAttackAlpha: Float = 0.0
-    private var orbassAdaptiveReleaseAlpha: Float = 0.0
-    private var orbassMakeupAttackCoeff: Float = 0.0
-    private var orbassMakeupReleaseCoeff: Float = 0.0
+    private var primeBassSideAP = Biquad()
+    private var primeBassSubPrevSample: Float = 0.0
+    private var primeBassSubPhase: Int = 0
+    private let primeBassTargetRatio: Float = 0.42
+    private let primeBassRatioDeadband: Float = 0.05
+    private var primeBassRatioEst: Float = 0.42
+    private var primeBassAdaptiveTarget: Float = 0.0
+    private var primeBassAdaptiveGain: Float = 0.0
+    private var primeBassLevelEst: Float = 1e-3
+    private let primeBassHoldSeconds: Float = 0.12
+    private var primeBassHoldRemaining: Float = 0.0
+    private var primeBassMakeupGain: Float = 1.0
+    private var primeBassSampleDuration: Float = 1.0 / 48_000.0
+    private var primeBassRatioAlpha: Float = 0.0
+    private var primeBassLevelAlpha: Float = 0.0
+    private var primeBassAdaptiveAttackAlpha: Float = 0.0
+    private var primeBassAdaptiveReleaseAlpha: Float = 0.0
+    private var primeBassMakeupAttackCoeff: Float = 0.0
+    private var primeBassMakeupReleaseCoeff: Float = 0.0
     // MaxxBass-style equal-loudness weighting (US 5,930,373, expired
     // 2017): per-harmonic-order gain derived from an ISO 226 phon-curve
     // approximation evaluated at 2..5 x F0 at configure time.
@@ -5325,14 +5325,14 @@ final class MPXGenerator {
     // generator's output; odd-harmonic weight applies to the soft-clip
     // difference generator's output. Precomputing avoids per-sample
     // log/exp.
-    private var orbassHarmEvenWeight: Float = 0.55
-    private var orbassHarmOddWeight: Float = 0.65
+    private var primeBassHarmEvenWeight: Float = 0.55
+    private var primeBassHarmOddWeight: Float = 0.65
     // MaxxBass: when harmonic synthesis is active, the direct LF gain
     // is reduced — the perceived bass is carried more by the
     // weighted harmonics, less by the LF amplitude itself. This buys
     // headroom in the bass clipper and pre-encode limiter while
     // preserving subjective bass weight.
-    private let orbassDirectGainReduction: Float = 0.62
+    private let primeBassDirectGainReduction: Float = 0.62
 
     private var multibandEnabled: Bool
     private var multibandMode: Int
@@ -5612,14 +5612,14 @@ final class MPXGenerator {
         self.audioCompositeSmootherRequested = config.audioCompositeSmootherEnabled
         self.finalMPXSoftClipEnabled = config.finalMPXSoftClipEnabled
 
-        self.orbassEnabled = config.orbassEnabled
-        self.orbassAmount = clampf(Float(config.orbassAmount), 0.0, 1.0)
-        self.orbassHarmonics = clampf(Float(config.orbassHarmonics), 0.0, 1.0)
-        self.orbassDrive = clampf(Float(config.orbassDrive), 0.0, 2.5)
-        self.orbassDensity = clampf(Float(config.orbassDensity), 0.0, 1.0)
-        self.orbassSubharmonicsEnabled = config.orbassSubharmonicsEnabled
-        self.orbassSubharmonicsAmount = clampf(Float(config.orbassSubharmonicsAmount), 0.0, 1.0)
-        self.orbassFreqHz = clampf(Float(config.orbassFreqHz), 45.0, 220.0)
+        self.primeBassEnabled = config.primeBassEnabled
+        self.primeBassAmount = clampf(Float(config.primeBassAmount), 0.0, 1.0)
+        self.primeBassHarmonics = clampf(Float(config.primeBassHarmonics), 0.0, 1.0)
+        self.primeBassDrive = clampf(Float(config.primeBassDrive), 0.0, 2.5)
+        self.primeBassDensity = clampf(Float(config.primeBassDensity), 0.0, 1.0)
+        self.primeBassSubharmonicsEnabled = config.primeBassSubharmonicsEnabled
+        self.primeBassSubharmonicsAmount = clampf(Float(config.primeBassSubharmonicsAmount), 0.0, 1.0)
+        self.primeBassFreqHz = clampf(Float(config.primeBassFreqHz), 45.0, 220.0)
 
         self.multibandEnabled = config.multibandEnabled
         self.multibandMode = (config.multibandMode == 5) ? 5 : 3
@@ -5714,7 +5714,7 @@ final class MPXGenerator {
         hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: self.sampleRate)
         phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: self.sampleRate)
         configureParametricEQ()
-        configureOrbassFilters()
+        configurePrimeBassFilters()
         configureMultibandFilters()
         configureMultibandCompressors()
         configureMultibandLimiters()
@@ -5815,7 +5815,7 @@ final class MPXGenerator {
         hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: sampleRate)
         phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: sampleRate)
         configureParametricEQ()
-        configureOrbassFilters()
+        configurePrimeBassFilters()
         configureMultibandFilters()
         configureMultibandCompressors()
         configureMultibandLimiters()
@@ -5899,19 +5899,19 @@ final class MPXGenerator {
             )
         }
 
-        let orbassFiltersChanged =
-            orbassEnabled != config.orbassEnabled
-            || fabsf(orbassFreqHz - config.orbassFreqHz) > 0.0001
-        orbassEnabled = config.orbassEnabled
-        orbassAmount = clampf(config.orbassAmount, 0.0, 1.0)
-        orbassHarmonics = clampf(config.orbassHarmonics, 0.0, 1.0)
-        orbassDrive = clampf(config.orbassDrive, 0.0, 2.5)
-        orbassDensity = clampf(config.orbassDensity, 0.0, 1.0)
-        orbassSubharmonicsEnabled = config.orbassSubharmonicsEnabled
-        orbassSubharmonicsAmount = clampf(config.orbassSubharmonicsAmount, 0.0, 1.0)
-        orbassFreqHz = clampf(config.orbassFreqHz, 45.0, 220.0)
-        if orbassFiltersChanged {
-            configureOrbassFilters()
+        let primeBassFiltersChanged =
+            primeBassEnabled != config.primeBassEnabled
+            || fabsf(primeBassFreqHz - config.primeBassFreqHz) > 0.0001
+        primeBassEnabled = config.primeBassEnabled
+        primeBassAmount = clampf(config.primeBassAmount, 0.0, 1.0)
+        primeBassHarmonics = clampf(config.primeBassHarmonics, 0.0, 1.0)
+        primeBassDrive = clampf(config.primeBassDrive, 0.0, 2.5)
+        primeBassDensity = clampf(config.primeBassDensity, 0.0, 1.0)
+        primeBassSubharmonicsEnabled = config.primeBassSubharmonicsEnabled
+        primeBassSubharmonicsAmount = clampf(config.primeBassSubharmonicsAmount, 0.0, 1.0)
+        primeBassFreqHz = clampf(config.primeBassFreqHz, 45.0, 220.0)
+        if primeBassFiltersChanged {
+            configurePrimeBassFilters()
         }
 
         let stereoImageChanged =
@@ -6236,7 +6236,7 @@ final class MPXGenerator {
         rdsSupported = nyquist > 57_100.0
 
         updateMonitorRecoveryRates()
-        updateOrbassDynamicRates()
+        updatePrimeBassDynamicRates()
     }
 
     private func updateMonitorRecoveryRates() {
@@ -6253,16 +6253,16 @@ final class MPXGenerator {
         monitorCollapseCooldownResetSamples = max(1, Int((sr * 2.0).rounded()))
     }
 
-    private func updateOrbassDynamicRates() {
+    private func updatePrimeBassDynamicRates() {
         let sr = max(8_000.0, sampleRate)
         let dt = 1.0 / sr
-        orbassSampleDuration = dt
-        orbassRatioAlpha = 1.0 - expf(-dt / 0.45)
-        orbassLevelAlpha = 1.0 - expf(-dt / 1.1)
-        orbassAdaptiveAttackAlpha = 1.0 - expf(-dt / 1.2)
-        orbassAdaptiveReleaseAlpha = 1.0 - expf(-dt / 2.8)
-        orbassMakeupAttackCoeff = expf(-1.0 / ((45.0 * 0.001) * sr))
-        orbassMakeupReleaseCoeff = expf(-1.0 / ((220.0 * 0.001) * sr))
+        primeBassSampleDuration = dt
+        primeBassRatioAlpha = 1.0 - expf(-dt / 0.45)
+        primeBassLevelAlpha = 1.0 - expf(-dt / 1.1)
+        primeBassAdaptiveAttackAlpha = 1.0 - expf(-dt / 1.2)
+        primeBassAdaptiveReleaseAlpha = 1.0 - expf(-dt / 2.8)
+        primeBassMakeupAttackCoeff = expf(-1.0 / ((45.0 * 0.001) * sr))
+        primeBassMakeupReleaseCoeff = expf(-1.0 / ((220.0 * 0.001) * sr))
     }
 
     private func configureStereoWidener() {
@@ -6398,39 +6398,39 @@ final class MPXGenerator {
         return (clampf(left, -1.0, 1.0), clampf(right, -1.0, 1.0))
     }
 
-    private func configureOrbassFilters() {
+    private func configurePrimeBassFilters() {
         let nyquist = max(200.0, (sampleRate * 0.5) - 200.0)
-        let bassCutoff = clampf(orbassFreqHz, 45.0, nyquist)
-        orbassLP.configure(cutoffHz: bassCutoff, sampleRate: sampleRate)
-        let subCutoff = clampf(max(45.0, orbassFreqHz * 0.8), 45.0, nyquist)
-        orbassSubLP.configure(cutoffHz: subCutoff, sampleRate: sampleRate)
-        let harmHPFCutoff = clampf(max(120.0, orbassFreqHz * 1.6), 45.0, nyquist)
+        let bassCutoff = clampf(primeBassFreqHz, 45.0, nyquist)
+        primeBassLP.configure(cutoffHz: bassCutoff, sampleRate: sampleRate)
+        let subCutoff = clampf(max(45.0, primeBassFreqHz * 0.8), 45.0, nyquist)
+        primeBassSubLP.configure(cutoffHz: subCutoff, sampleRate: sampleRate)
+        let harmHPFCutoff = clampf(max(120.0, primeBassFreqHz * 1.6), 45.0, nyquist)
         let harmLPFMin = min(nyquist - 20.0, max(harmHPFCutoff + 20.0, 280.0))
-        let harmLPFCutoff = clampf(max(280.0, orbassFreqHz * 5.0), harmLPFMin, nyquist)
-        orbassHarmHPF.configureHighpass(cutoffHz: harmHPFCutoff, sampleRate: sampleRate)
-        orbassHarmLPF.configureLowpass(cutoffHz: harmLPFCutoff, sampleRate: sampleRate)
+        let harmLPFCutoff = clampf(max(280.0, primeBassFreqHz * 5.0), harmLPFMin, nyquist)
+        primeBassHarmHPF.configureHighpass(cutoffHz: harmHPFCutoff, sampleRate: sampleRate)
+        primeBassHarmLPF.configureLowpass(cutoffHz: harmLPFCutoff, sampleRate: sampleRate)
 
         // Aphex-style phase-shifting allpass at F0 (Q=0.7 for ~180°
         // shift across F0 with unit magnitude). The waveshaper sees a
         // phase-rotated copy of the LF, so the synthesized harmonics
         // are phase-decorrelated from the direct lowboost path.
-        orbassSideAP.configureAllpass(freqHz: bassCutoff, sampleRate: sampleRate)
+        primeBassSideAP.configureAllpass(freqHz: bassCutoff, sampleRate: sampleRate)
 
         // MaxxBass equal-loudness weighting (US 5,930,373). Compute
         // per-order perceptual weights at the harmonic frequencies of
-        // the configured Orbass cutoff and combine into two scalars:
+        // the configured PrimeBass cutoff and combine into two scalars:
         // one for the even-harmonic generator (2nd + 4th) and one for
         // the odd-harmonic generator (3rd + 5th). Weights are biased
         // by the relative perceptual contribution of each harmonic
         // order to "missing-fundamental" reconstruction (3rd > 2nd >
         // 4th > 5th in the 80-300 Hz warmth band).
-        let f0 = clampf(orbassFreqHz, 45.0, 200.0)
-        let w2 = Self.orbassEqualLoudnessWeight(2.0 * f0)
-        let w3 = Self.orbassEqualLoudnessWeight(3.0 * f0)
-        let w4 = Self.orbassEqualLoudnessWeight(4.0 * f0)
-        let w5 = Self.orbassEqualLoudnessWeight(5.0 * f0)
-        orbassHarmEvenWeight = 0.5 * (w2 + (0.4 * w4))
-        orbassHarmOddWeight = 0.5 * (w3 + (0.4 * w5))
+        let f0 = clampf(primeBassFreqHz, 45.0, 200.0)
+        let w2 = Self.primeBassEqualLoudnessWeight(2.0 * f0)
+        let w3 = Self.primeBassEqualLoudnessWeight(3.0 * f0)
+        let w4 = Self.primeBassEqualLoudnessWeight(4.0 * f0)
+        let w5 = Self.primeBassEqualLoudnessWeight(5.0 * f0)
+        primeBassHarmEvenWeight = 0.5 * (w2 + (0.4 * w4))
+        primeBassHarmOddWeight = 0.5 * (w3 + (0.4 * w5))
     }
 
     /// Approximation of the ISO 226 (40 phon) inverse-threshold
@@ -6441,7 +6441,7 @@ final class MPXGenerator {
     /// 500 Hz (no longer in the bass-extension band). Used to weight
     /// the synthesized harmonics in MaxxBass-style bass enhancement.
     @inline(__always)
-    private static func orbassEqualLoudnessWeight(_ f: Float) -> Float {
+    private static func primeBassEqualLoudnessWeight(_ f: Float) -> Float {
         let logF = log10f(max(20.0, f))
         // Bell curve centered at log10(150) ≈ 2.176.
         let center: Float = 2.176
@@ -6939,10 +6939,10 @@ final class MPXGenerator {
                 right = eqd.1
             }
 
-            if orbassEnabled {
-                let orbassOut = processOrbass(left: left, right: right)
-                left = orbassOut.0
-                right = orbassOut.1
+            if primeBassEnabled {
+                let primeBassOut = processPrimeBass(left: left, right: right)
+                left = primeBassOut.0
+                right = primeBassOut.1
             }
 
             let stereoImage = processStereoImageStage(left: left, right: right)
@@ -7403,14 +7403,14 @@ final class MPXGenerator {
         widebandAGC.reset()
         configureStereoWidener()
 
-        orbassAdaptiveTarget = 0.0
-        orbassAdaptiveGain = 0.0
-        orbassRatioEst = orbassTargetRatio
-        orbassLevelEst = 1e-3
-        orbassHoldRemaining = 0.0
-        orbassSubPrevSample = 0.0
-        orbassSubPhase = 0
-        orbassMakeupGain = 1.0
+        primeBassAdaptiveTarget = 0.0
+        primeBassAdaptiveGain = 0.0
+        primeBassRatioEst = primeBassTargetRatio
+        primeBassLevelEst = 1e-3
+        primeBassHoldRemaining = 0.0
+        primeBassSubPrevSample = 0.0
+        primeBassSubPhase = 0
+        primeBassMakeupGain = 1.0
 
         mbLowCompL.detector.value = 0.0
         mbLowCompR.detector.value = 0.0
@@ -7430,54 +7430,54 @@ final class MPXGenerator {
         mb5Comp5R.detector.value = 0.0
     }
 
-    private func processOrbass(left: Float, right: Float) -> (Float, Float) {
+    private func processPrimeBass(left: Float, right: Float) -> (Float, Float) {
         let mid = (left + right) * 0.5
         let side = (left - right) * 0.5
-        let low = orbassLP.process(mid)
+        let low = primeBassLP.process(mid)
 
-        let drive = clampf(orbassDrive, 0.0, 2.5)
-        let density = clampf(orbassDensity, 0.0, 1.0)
-        let amount = clampf(orbassAmount, 0.0, 1.0)
-        let harmonics = clampf(orbassHarmonics, 0.0, 1.0)
-        let subAmount = (orbassSubharmonicsEnabled ? orbassSubharmonicsAmount : 0.0)
+        let drive = clampf(primeBassDrive, 0.0, 2.5)
+        let density = clampf(primeBassDensity, 0.0, 1.0)
+        let amount = clampf(primeBassAmount, 0.0, 1.0)
+        let harmonics = clampf(primeBassHarmonics, 0.0, 1.0)
+        let subAmount = (primeBassSubharmonicsEnabled ? primeBassSubharmonicsAmount : 0.0)
         if amount <= 1e-4, harmonics <= 1e-4, subAmount <= 1e-4 {
             return (left, right)
         }
 
-        let dt = orbassSampleDuration
+        let dt = primeBassSampleDuration
         let midAbs = max(1e-6, fabsf(mid))
         let bassAbs = fabsf(low)
-        let gateFloor = max(0.012, orbassLevelEst * 0.18)
+        let gateFloor = max(0.012, primeBassLevelEst * 0.18)
         if midAbs < gateFloor, bassAbs < gateFloor {
             return (left, right)
         }
 
-        let lowRatio = bassAbs / max(midAbs, orbassLevelEst * 0.7, 0.02)
-        orbassRatioEst += (lowRatio - orbassRatioEst) * orbassRatioAlpha
-        let targetRatio = orbassTargetRatio + (0.06 * density)
-        let deadband = max(0.03, orbassRatioDeadband - (0.015 * density))
+        let lowRatio = bassAbs / max(midAbs, primeBassLevelEst * 0.7, 0.02)
+        primeBassRatioEst += (lowRatio - primeBassRatioEst) * primeBassRatioAlpha
+        let targetRatio = primeBassTargetRatio + (0.06 * density)
+        let deadband = max(0.03, primeBassRatioDeadband - (0.015 * density))
         let lowEnter = max(0.05, targetRatio - deadband)
         let highExit = min(0.9, targetRatio + deadband)
-        if orbassRatioEst < lowEnter {
-            let deficit = (lowEnter - orbassRatioEst) / lowEnter
-            orbassAdaptiveTarget = clampf(deficit, 0.0, 1.0)
-        } else if orbassRatioEst > highExit {
-            orbassAdaptiveTarget = 0.0
+        if primeBassRatioEst < lowEnter {
+            let deficit = (lowEnter - primeBassRatioEst) / lowEnter
+            primeBassAdaptiveTarget = clampf(deficit, 0.0, 1.0)
+        } else if primeBassRatioEst > highExit {
+            primeBassAdaptiveTarget = 0.0
         }
 
-        orbassLevelEst += (midAbs - orbassLevelEst) * orbassLevelAlpha
-        let transientFactor = midAbs / max(1e-6, orbassLevelEst)
+        primeBassLevelEst += (midAbs - primeBassLevelEst) * primeBassLevelAlpha
+        let transientFactor = midAbs / max(1e-6, primeBassLevelEst)
         if transientFactor > 3.5 {
-            orbassHoldRemaining = orbassHoldSeconds
+            primeBassHoldRemaining = primeBassHoldSeconds
         }
-        orbassHoldRemaining = max(0.0, orbassHoldRemaining - dt)
-        if orbassHoldRemaining <= 0.0 {
+        primeBassHoldRemaining = max(0.0, primeBassHoldRemaining - dt)
+        if primeBassHoldRemaining <= 0.0 {
             let adaptAlpha =
-                orbassAdaptiveTarget > orbassAdaptiveGain
-                ? orbassAdaptiveAttackAlpha : orbassAdaptiveReleaseAlpha
-            orbassAdaptiveGain += (orbassAdaptiveTarget - orbassAdaptiveGain) * adaptAlpha
+                primeBassAdaptiveTarget > primeBassAdaptiveGain
+                ? primeBassAdaptiveAttackAlpha : primeBassAdaptiveReleaseAlpha
+            primeBassAdaptiveGain += (primeBassAdaptiveTarget - primeBassAdaptiveGain) * adaptAlpha
         }
-        let adaptive = clampf(orbassAdaptiveGain, 0.0, 1.0)
+        let adaptive = clampf(primeBassAdaptiveGain, 0.0, 1.0)
 
         let driveFactor = 0.55 + (0.42 * drive)
         let densityFactor = 0.50 + (0.42 * density)
@@ -7487,7 +7487,7 @@ final class MPXGenerator {
         // of the perceived bass weight that the LF amplitude carried
         // before. Buys headroom in the bass clipper / pre-encode
         // limiter without sacrificing subjective bass.
-        let directScale = 1.0 - ((1.0 - orbassDirectGainReduction) * harmonics)
+        let directScale = 1.0 - ((1.0 - primeBassDirectGainReduction) * harmonics)
         let lowBoost = low * boostGain * directScale
 
         // Aphex-style phase decorrelation (US 4,150,253, expired 1996):
@@ -7500,7 +7500,7 @@ final class MPXGenerator {
         // a HP at F0×1.6 would also kill the F0 amplitude entering
         // the waveshaper — an allpass preserves amplitude while
         // achieving the same phase decorrelation.)
-        let lowSide = orbassSideAP.process(low)
+        let lowSide = primeBassSideAP.process(low)
 
         let nlDrive = 1.0 + (drive * (1.0 + (amount * 1.8) + (harmonics * 1.4)))
         let driven = lowSide * nlDrive
@@ -7513,24 +7513,24 @@ final class MPXGenerator {
         // weights precomputed at configure time from an ISO 226
         // approximation evaluated at 2..5 x F0.
         let weighted =
-            (oddSrc * orbassHarmOddWeight) + (evenSrc * orbassHarmEvenWeight)
+            (oddSrc * primeBassHarmOddWeight) + (evenSrc * primeBassHarmEvenWeight)
         // Band-limit the harmonics: HP above F0 to remove the residual
         // fundamental that the waveshaper passes through, then LP at
         // ~5×F0 to keep harmonic energy out of the upper audio band.
-        let harmonicBand = orbassHarmLPF.process(orbassHarmHPF.process(weighted))
+        let harmonicBand = primeBassHarmLPF.process(primeBassHarmHPF.process(weighted))
         let harmonicGain = harmonics * (0.32 + (0.34 * density)) * (0.62 + (0.36 * adaptive))
         var enhancement = lowBoost + (harmonicBand * harmonicGain)
 
         if subAmount > 1e-4 {
-            let prev = orbassSubPrevSample
+            let prev = primeBassSubPrevSample
             if prev <= 0.0, low > 0.0 {
-                orbassSubPhase ^= 1
+                primeBassSubPhase ^= 1
             }
-            orbassSubPrevSample = low
-            let square: Float = orbassSubPhase == 0 ? -1.0 : 1.0
+            primeBassSubPrevSample = low
+            let square: Float = primeBassSubPhase == 0 ? -1.0 : 1.0
             let envelope = sqrtf(max(0.0, fabsf(low)))
             let subRaw = square * envelope
-            let subWave = orbassSubLP.process(subRaw)
+            let subWave = primeBassSubLP.process(subRaw)
             let subGain = subAmount * (0.22 + (0.24 * density)) * (0.55 + (0.24 * drive))
             enhancement += subWave * subGain
         }
@@ -7547,13 +7547,13 @@ final class MPXGenerator {
             0.94,
             1.06 + (0.06 * density)
         )
-        orbassMakeupGain = smoothOrbassGain(
-            current: orbassMakeupGain,
+        primeBassMakeupGain = smoothPrimeBassGain(
+            current: primeBassMakeupGain,
             target: targetMakeup,
-            attackCoeff: orbassMakeupAttackCoeff,
-            releaseCoeff: orbassMakeupReleaseCoeff
+            attackCoeff: primeBassMakeupAttackCoeff,
+            releaseCoeff: primeBassMakeupReleaseCoeff
         )
-        midOut *= orbassMakeupGain
+        midOut *= primeBassMakeupGain
 
         let outL = midOut + side
         let outR = midOut - side
@@ -7566,7 +7566,7 @@ final class MPXGenerator {
         )
     }
 
-    private func smoothOrbassGain(
+    private func smoothPrimeBassGain(
         current: Float,
         target: Float,
         attackCoeff: Float,

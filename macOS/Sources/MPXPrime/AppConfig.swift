@@ -26,7 +26,7 @@ struct AppConfig {
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
-    //   orbassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
+    //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
     //   stereoWidenEnabled/Width/Center/Mix,
     //   multiband Enabled/Mode/X1-X4Hz/Thresholds/Ratios/Attack/Release/
@@ -138,15 +138,15 @@ struct AppConfig {
     /// program. Scales the effective release coefficient up to 3x
     /// based on a 0.5 s density estimate of the detector envelope.
     var widebandAGCReleaseProgramDependent: Bool = true
-    var orbassEnabled: Bool = false
-    var orbassPresetID: String = "ac"
-    var orbassAmount: Double = 0.22
-    var orbassFreqHz: Double = 95.0
-    var orbassHarmonics: Double = 0.18
-    var orbassDrive: Double = 0.78
-    var orbassDensity: Double = 0.45
-    var orbassSubharmonicsEnabled: Bool = false
-    var orbassSubharmonicsAmount: Double = 0.20
+    var primeBassEnabled: Bool = false
+    var primeBassPresetID: String = "ac"
+    var primeBassAmount: Double = 0.22
+    var primeBassFreqHz: Double = 95.0
+    var primeBassHarmonics: Double = 0.18
+    var primeBassDrive: Double = 0.78
+    var primeBassDensity: Double = 0.45
+    var primeBassSubharmonicsEnabled: Bool = false
+    var primeBassSubharmonicsAmount: Double = 0.20
     var stereoWidenEnabled: Bool = false
     var monoBassEnabled: Bool = true
     var monoBassFreqHz: Double = 125.0
@@ -410,21 +410,41 @@ struct AppConfig {
             "wideband_agc_max_gain_db", defaultValue: cfg.widebandAGCMaxGainDB)
         cfg.widebandAGCMinGainDB = mpx.double(
             "wideband_agc_min_gain_db", defaultValue: cfg.widebandAGCMinGainDB)
-        cfg.orbassEnabled = mpx.bool("orbass_enabled", defaultValue: cfg.orbassEnabled)
-        cfg.orbassPresetID = mpx.string("orbass_preset_id", defaultValue: cfg.orbassPresetID)
-        cfg.orbassAmount = mpx.double("orbass_amount", defaultValue: cfg.orbassAmount)
-        cfg.orbassFreqHz = mpx.double("orbass_freq_hz", defaultValue: cfg.orbassFreqHz)
-        cfg.orbassHarmonics = mpx.double("orbass_harmonics", defaultValue: cfg.orbassHarmonics)
-        cfg.orbassDrive = mpx.double("orbass_drive", defaultValue: cfg.orbassDrive)
-        cfg.orbassDensity = mpx.double("orbass_density", defaultValue: cfg.orbassDensity)
-        cfg.orbassSubharmonicsEnabled = mpx.bool(
-            "orbass_subharmonics_enabled",
-            defaultValue: cfg.orbassSubharmonicsEnabled
-        )
-        cfg.orbassSubharmonicsAmount = mpx.double(
-            "orbass_subharmonics_amount",
-            defaultValue: cfg.orbassSubharmonicsAmount
-        )
+        // PrimeBass keys (formerly `orbass_*` — renamed in 0.12 to remove
+        // the Orban-trademark adjacency). The legacy `orbass_*` keys are
+        // still read first as a fallback so existing user INIs keep
+        // working; they will be removed in a future release.
+        cfg.primeBassEnabled = mpx.bool(
+            "primebass_enabled",
+            defaultValue: mpx.bool("orbass_enabled", defaultValue: cfg.primeBassEnabled))
+        cfg.primeBassPresetID = mpx.string(
+            "primebass_preset_id",
+            defaultValue: mpx.string("orbass_preset_id", defaultValue: cfg.primeBassPresetID))
+        cfg.primeBassAmount = mpx.double(
+            "primebass_amount",
+            defaultValue: mpx.double("orbass_amount", defaultValue: cfg.primeBassAmount))
+        cfg.primeBassFreqHz = mpx.double(
+            "primebass_freq_hz",
+            defaultValue: mpx.double("orbass_freq_hz", defaultValue: cfg.primeBassFreqHz))
+        cfg.primeBassHarmonics = mpx.double(
+            "primebass_harmonics",
+            defaultValue: mpx.double("orbass_harmonics", defaultValue: cfg.primeBassHarmonics))
+        cfg.primeBassDrive = mpx.double(
+            "primebass_drive",
+            defaultValue: mpx.double("orbass_drive", defaultValue: cfg.primeBassDrive))
+        cfg.primeBassDensity = mpx.double(
+            "primebass_density",
+            defaultValue: mpx.double("orbass_density", defaultValue: cfg.primeBassDensity))
+        cfg.primeBassSubharmonicsEnabled = mpx.bool(
+            "primebass_subharmonics_enabled",
+            defaultValue: mpx.bool(
+                "orbass_subharmonics_enabled",
+                defaultValue: cfg.primeBassSubharmonicsEnabled))
+        cfg.primeBassSubharmonicsAmount = mpx.double(
+            "primebass_subharmonics_amount",
+            defaultValue: mpx.double(
+                "orbass_subharmonics_amount",
+                defaultValue: cfg.primeBassSubharmonicsAmount))
         cfg.stereoWidenEnabled = mpx.bool(
             "stereo_widen_enabled", defaultValue: cfg.stereoWidenEnabled)
         cfg.monoBassEnabled = mpx.bool("mono_bass_enabled", defaultValue: cfg.monoBassEnabled)
@@ -669,13 +689,13 @@ struct AppConfig {
             widebandAGCMinGainDB = -12.0
         }
 
-        // Orbass
-        orbassAmount = max(0.0, min(1.0, orbassAmount))
-        orbassFreqHz = max(45.0, min(220.0, orbassFreqHz))
-        orbassHarmonics = max(0.0, min(1.0, orbassHarmonics))
-        orbassDrive = max(0.0, min(2.5, orbassDrive))
-        orbassDensity = max(0.0, min(1.0, orbassDensity))
-        orbassSubharmonicsAmount = max(0.0, min(1.0, orbassSubharmonicsAmount))
+        // PrimeBass
+        primeBassAmount = max(0.0, min(1.0, primeBassAmount))
+        primeBassFreqHz = max(45.0, min(220.0, primeBassFreqHz))
+        primeBassHarmonics = max(0.0, min(1.0, primeBassHarmonics))
+        primeBassDrive = max(0.0, min(2.5, primeBassDrive))
+        primeBassDensity = max(0.0, min(1.0, primeBassDensity))
+        primeBassSubharmonicsAmount = max(0.0, min(1.0, primeBassSubharmonicsAmount))
 
         // Stereo widener
         stereoWidenWidth = max(0.0, min(1.0, stereoWidenWidth))
@@ -821,15 +841,15 @@ struct AppConfig {
             "wideband_agc_release_program_dependent = \(Self.boolString(widebandAGCReleaseProgramDependent))",
             "wideband_agc_max_gain_db = \(Self.formatFloat(widebandAGCMaxGainDB))",
             "wideband_agc_min_gain_db = \(Self.formatFloat(widebandAGCMinGainDB))",
-            "orbass_enabled = \(Self.boolString(orbassEnabled))",
-            "orbass_preset_id = \(orbassPresetID)",
-            "orbass_amount = \(Self.formatFloat(orbassAmount))",
-            "orbass_freq_hz = \(Self.formatFloat(orbassFreqHz))",
-            "orbass_harmonics = \(Self.formatFloat(orbassHarmonics))",
-            "orbass_drive = \(Self.formatFloat(orbassDrive))",
-            "orbass_density = \(Self.formatFloat(orbassDensity))",
-            "orbass_subharmonics_enabled = \(Self.boolString(orbassSubharmonicsEnabled))",
-            "orbass_subharmonics_amount = \(Self.formatFloat(orbassSubharmonicsAmount))",
+            "primebass_enabled = \(Self.boolString(primeBassEnabled))",
+            "primebass_preset_id = \(primeBassPresetID)",
+            "primebass_amount = \(Self.formatFloat(primeBassAmount))",
+            "primebass_freq_hz = \(Self.formatFloat(primeBassFreqHz))",
+            "primebass_harmonics = \(Self.formatFloat(primeBassHarmonics))",
+            "primebass_drive = \(Self.formatFloat(primeBassDrive))",
+            "primebass_density = \(Self.formatFloat(primeBassDensity))",
+            "primebass_subharmonics_enabled = \(Self.boolString(primeBassSubharmonicsEnabled))",
+            "primebass_subharmonics_amount = \(Self.formatFloat(primeBassSubharmonicsAmount))",
             "stereo_widen_enabled = \(Self.boolString(stereoWidenEnabled))",
             "mono_bass_enabled = \(Self.boolString(monoBassEnabled))",
             "mono_bass_freq_hz = \(Self.formatFloat(monoBassFreqHz))",

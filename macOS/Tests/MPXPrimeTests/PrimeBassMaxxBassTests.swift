@@ -2,39 +2,39 @@ import Testing
 import Foundation
 @testable import MPXPrime
 
-// Integration tests for the Phase 1 Orbass MaxxBass-style bass
+// Integration tests for the Phase 1 PrimeBass MaxxBass-style bass
 // enhancement (US 5,930,373, expired 2017) + HP-then-clip topology
 // (Aphex US 4,150,253, expired 1996). Both patents are public-domain;
-// the implementation lives in `processOrbass` and `configureOrbassFilters`
+// the implementation lives in `processPrimeBass` and `configurePrimeBassFilters`
 // in MPXGenerator.swift.
 //
-// Strategy: configure MPXGenerator with the post-Orbass chain reduced
+// Strategy: configure MPXGenerator with the post-PrimeBass chain reduced
 // to (near) transparent — mono mode (no pilot / stereo subcarrier /
 // RDS), no AGC / multiband / clippers / limiter / pre-emphasis /
 // BS.412 / encoder FIR. The composite output then carries the
-// baseband mono audio with Orbass's effect on it. Feed an LF sine at
+// baseband mono audio with PrimeBass's effect on it. Feed an LF sine at
 // 60 Hz, FFT the steady-state output, and compare:
 //
-// 1. Orbass off vs Orbass on with `harmonics` engaged — confirms
+// 1. PrimeBass off vs PrimeBass on with `harmonics` engaged — confirms
 //    harmonic content appears at integer multiples of 60 Hz.
-// 2. Orbass on with `harmonics` low vs `harmonics` high — confirms
-//    the direct LF gain reduction (`orbassDirectGainReduction`)
+// 2. PrimeBass on with `harmonics` low vs `harmonics` high — confirms
+//    the direct LF gain reduction (`primeBassDirectGainReduction`)
 //    actually attenuates the fundamental.
 // 3. Per-order spectral shape — confirms the equal-loudness weighting
 //    favours the warm mid-band harmonics (3rd > 5th near 60-100 Hz F0).
 
-@Suite("Orbass MaxxBass topology")
-struct OrbassMaxxBassTests {
+@Suite("PrimeBass MaxxBass topology")
+struct PrimeBassMaxxBassTests {
 
     private let sampleRate: Float = 192_000.0
     private let fftSize: Int = 16_384
     private let warmupFrames: Int = 4_096
 
     /// Build a config that passes audio mostly transparently except for
-    /// Orbass. Mono mode strips pilot / stereo subcarrier / RDS so the
+    /// PrimeBass. Mono mode strips pilot / stereo subcarrier / RDS so the
     /// composite output equals the baseband mono audio.
     private func makeMinimalChainConfig(
-        orbassEnabled: Bool,
+        primeBassEnabled: Bool,
         harmonics: Double,
         amount: Double = 0.6,
         drive: Double = 1.0,
@@ -69,13 +69,13 @@ struct OrbassMaxxBassTests {
         cfg.hfTrimDB = 0.0
         cfg.hpfHz = 20.0
         cfg.programLowpassHz = 19_000.0
-        cfg.orbassEnabled = orbassEnabled
-        cfg.orbassAmount = amount
-        cfg.orbassFreqHz = freqHz
-        cfg.orbassHarmonics = harmonics
-        cfg.orbassDrive = drive
-        cfg.orbassDensity = density
-        cfg.orbassSubharmonicsEnabled = false
+        cfg.primeBassEnabled = primeBassEnabled
+        cfg.primeBassAmount = amount
+        cfg.primeBassFreqHz = freqHz
+        cfg.primeBassHarmonics = harmonics
+        cfg.primeBassDrive = drive
+        cfg.primeBassDensity = density
+        cfg.primeBassSubharmonicsEnabled = false
         return cfg
     }
 
@@ -107,11 +107,11 @@ struct OrbassMaxxBassTests {
     }
 
     @Test func generatesHarmonicsAtIntegerMultiplesOfFundamental() {
-        // Orbass with non-zero `harmonics` should add measurable energy
-        // at 2..5 × F0 versus a clean pass-through (Orbass off).
+        // PrimeBass with non-zero `harmonics` should add measurable energy
+        // at 2..5 × F0 versus a clean pass-through (PrimeBass off).
         let f0: Float = 60.0
-        let off = makeMinimalChainConfig(orbassEnabled: false, harmonics: 0.0)
-        let on = makeMinimalChainConfig(orbassEnabled: true, harmonics: 0.85, amount: 0.7)
+        let off = makeMinimalChainConfig(primeBassEnabled: false, harmonics: 0.0)
+        let on = makeMinimalChainConfig(primeBassEnabled: true, harmonics: 0.85, amount: 0.7)
 
         let outOff = renderTone(config: off, toneHz: f0, amplitude: 0.3)
         let outOn = renderTone(config: on, toneHz: f0, amplitude: 0.3)
@@ -127,14 +127,14 @@ struct OrbassMaxxBassTests {
 
         let lift = harmOn - harmOff
         #expect(lift > 12.0,
-            "Orbass on should add ≥12 dB harmonic energy at 2..5×F0 vs Orbass off; got \(lift) dB (off \(harmOff), on \(harmOn))")
+            "PrimeBass on should add ≥12 dB harmonic energy at 2..5×F0 vs PrimeBass off; got \(lift) dB (off \(harmOff), on \(harmOn))")
     }
 
     @Test func harmonicsCarryMoreOfPerceivedBassWhenEngaged() {
         // MaxxBass principle: when harmonic synthesis is engaged, the
         // weighted harmonics should carry a larger fraction of the
         // perceived bass, while the direct LF amplitude is reduced
-        // (orbassDirectGainReduction tapers boostGain). Measure this
+        // (primeBassDirectGainReduction tapers boostGain). Measure this
         // as the ratio of harmonic energy (2..5×F0) to fundamental
         // energy: with high `harmonics`, the ratio should rise
         // significantly versus the harmonics-off baseline.
@@ -145,9 +145,9 @@ struct OrbassMaxxBassTests {
         // spectral balance, which is what this test measures.
         let f0: Float = 70.0
         let lowHarm = makeMinimalChainConfig(
-            orbassEnabled: true, harmonics: 0.02, amount: 0.7)
+            primeBassEnabled: true, harmonics: 0.02, amount: 0.7)
         let highHarm = makeMinimalChainConfig(
-            orbassEnabled: true, harmonics: 1.0, amount: 0.7)
+            primeBassEnabled: true, harmonics: 1.0, amount: 0.7)
 
         let outLow = renderTone(config: lowHarm, toneHz: f0, amplitude: 0.3)
         let outHigh = renderTone(config: highHarm, toneHz: f0, amplitude: 0.3)
@@ -182,7 +182,7 @@ struct OrbassMaxxBassTests {
         // Verify the 3rd harmonic carries more energy than the 5th.
         let f0: Float = 80.0
         let cfg = makeMinimalChainConfig(
-            orbassEnabled: true, harmonics: 1.0, amount: 0.7, freqHz: 80.0)
+            primeBassEnabled: true, harmonics: 1.0, amount: 0.7, freqHz: 80.0)
         let out = renderTone(config: cfg, toneHz: f0, amplitude: 0.3)
         let spec = FFTAnalyzer(fftSize: fftSize).analyze(out, sampleRate: sampleRate)
 
@@ -193,13 +193,13 @@ struct OrbassMaxxBassTests {
             "Equal-loudness weighting: 3rd harmonic (warm band) should exceed 5th (rolloff) by >3 dB; got 3rd \(third) dB, 5th \(fifth) dB")
     }
 
-    @Test func disabledOrbassPassesThroughTone() {
-        // Sanity check: with Orbass disabled and the rest of the chain
+    @Test func disabledPrimeBassPassesThroughTone() {
+        // Sanity check: with PrimeBass disabled and the rest of the chain
         // configured transparent, the composite output should contain
         // the input fundamental near its input amplitude with minimal
         // harmonic content.
         let f0: Float = 80.0
-        let cfg = makeMinimalChainConfig(orbassEnabled: false, harmonics: 0.0)
+        let cfg = makeMinimalChainConfig(primeBassEnabled: false, harmonics: 0.0)
         let out = renderTone(config: cfg, toneHz: f0, amplitude: 0.3)
         let spec = FFTAnalyzer(fftSize: fftSize).analyze(out, sampleRate: sampleRate)
 
@@ -210,7 +210,7 @@ struct OrbassMaxxBassTests {
             "Pass-through tone at F0 must be near input level; got \(f0Level) dBFS")
 
         // Harmonic energy should be very low — the chain isn't
-        // generating any when Orbass is off.
+        // generating any when PrimeBass is off.
         let harmFreqs: [Float] = [2 * f0, 3 * f0, 4 * f0]
         let harmEnergy = spec.sumEnergyDBFS(atBins: harmFreqs, toleranceHz: 5.0)
         #expect(harmEnergy < -55.0,

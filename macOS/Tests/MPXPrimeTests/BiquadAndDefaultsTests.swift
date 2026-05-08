@@ -106,12 +106,12 @@ struct AppConfigDefaultsTests {
     }
 
     @Test func coloringStagesDefaultOff() {
-        // Stereo widener and Orbass color the signal and degrade
+        // Stereo widener and PrimeBass color the signal and degrade
         // fringe-listener SNR on low-power TX. DC clipper is too
         // aggressive for default. BS.412 only EU stations need it.
         let cfg = AppConfig()
-        #expect(cfg.orbassEnabled == false,
-            "Orbass must be off by default — coloring stage")
+        #expect(cfg.primeBassEnabled == false,
+            "PrimeBass must be off by default — coloring stage")
         #expect(cfg.stereoWidenEnabled == false,
             "Stereo widener must be off by default — degrades fringe SNR")
         #expect(cfg.dcClipperEnabled == false,

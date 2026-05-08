@@ -28,11 +28,11 @@ The DSP core (MPXGenerator) is the "crown jewel" - the real-time FM MPX generati
 
 **Recommended: JUCE**
 
-| Framework | Pros | Cons |
-|----------|------|------|
-| **JUCE** | Built for audio, VST/AU export, cross-platform native | Less flexible UI |
-| **Qt** | Excellent cross-platform, flexible | Larger, more complex |
-| **ImGui** | Fast, simple | Not native-looking |
+| Framework | Pros                                                  | Cons                 |
+| --------- | ----------------------------------------------------- | -------------------- |
+| **JUCE**  | Built for audio, VST/AU export, cross-platform native | Less flexible UI     |
+| **Qt**    | Excellent cross-platform, flexible                    | Larger, more complex |
+| **ImGui** | Fast, simple                                          | Not native-looking   |
 
 **Recommendation: JUCE**
 - Built specifically for audio applications
@@ -98,7 +98,7 @@ Each platform has its own audio I/O layer calling into the shared C++ DSP core.
 - inter-band gain coupling (Optimod-style "loud bass softens highs")
 - broaden deterministic MPX verification and stereo/mono-compatibility checks
 - tighten pilot/RDS/deviation calibration workflow
-- stabilize presets for Orbass, widener, mono bass, and final-stage loudness
+- stabilize presets for PrimeBass, widener, mono bass, and final-stage loudness
 
 ## Composite peak-control follow-ups
 

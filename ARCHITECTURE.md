@@ -32,7 +32,7 @@ Audio Input (L/R) @ interface rate (typically 192 kHz)
 │        Low shelf + 2 peaking + high shelf, placed before dynamics
 │
 ├──► Dynamics and image shaping (audio domain, float)
-│    ├── Orbass bass enhancement (optional)
+│    ├── PrimeBass bass enhancement (optional)
 │    ├── Mono bass management (optional)
 │    ├── Stereo widener with image protection (optional)
 │    └── Multiband compressor (optional)
@@ -59,7 +59,7 @@ Audio Input (L/R) @ interface rate (typically 192 kHz)
 │        ~0.2 ms latency — keeps live monitor responsive
 │
 ├──► Stereo-image protection
-│    └── Limits side-channel expansion from Orbass/widener
+│    └── Limits side-channel expansion from PrimeBass/widener
 │
 ├──► Pre-encode audio limiter (L/R domain, stereo-linked)
 │    └── True-peak limiter on L/R before stereo encoding
@@ -129,7 +129,7 @@ Within the main audio path, MPX Prime runs:
 5. Program lowpass
 6. HF trim
 7. **Parametric EQ** (4-band: low shelf + 2 peaking + high shelf, optional)
-8. Orbass
+8. PrimeBass
 9. Mono bass + stereo widener
 10. Multiband compressor (3-band or 5-band)
     - **TX path**: linear-phase FIR splitters (sum-to-flat, ~5.3 ms latency at 192 kHz)
@@ -326,7 +326,7 @@ PDFs in `/documents/` for reference.
 
 ## General DSP notes
 
-- Orbass is intentionally conservative. It uses adaptive low-band enhancement with restrained harmonic and optional subharmonic support, plus gated makeup behavior to reduce bass pumping and low-level artifacts.
+- PrimeBass (formerly Orbass — renamed in 0.12 to avoid trademark adjacency) is intentionally conservative. It uses adaptive low-band enhancement with restrained harmonic and optional subharmonic support, plus gated makeup behavior to reduce bass pumping and low-level artifacts. The harmonic synth in 0.12 follows the MaxxBass principle (US 5,930,373, expired 2017): per-order equal-loudness weighting at configure time, separate even (asymmetric squarer) and odd (tanh difference) generators, and a pre-waveshaper allpass at F0 that phase-decorrelates synthesised harmonics from the direct lowboost path (Aphex US 4,150,253 topology, adapted for bass extension via allpass instead of HPF). The direct LF gain is tapered down with the harmonics knob so perceived bass is carried more by the weighted harmonics and less by raw LF amplitude — buying headroom in the bass clipper and pre-encode limiter while the makeup-gain stage compensates absolute level.
 - The multiband stage uses complementary Linkwitz-Riley 4th-order stereo crossover stages. This provides clean band separation and reduces recombination smear and tonal instability when adjacent bands compress differently.
 - The final MPX chain remains verification-backed. Structural cleanup there is intentionally done in small steps because even behavior-preserving refactors can change composite output measurably.
 - Verification covers both composite safety and decoded-audio quality signals. In addition to the base offline verifier, a focused preset sweep exists for the main 5-band preset family (`5B AC/Pop`, `5B CHR/EDM`, `5B Rock`, `5B Talk`, `5B News`, `5B Urban`, `5B Dance`).

@@ -55,20 +55,28 @@ explicitly enabled.
 | [US 5,913,152](https://patents.google.com/patent/US5913152A/en)                                                                              | FM composite signal processor with pilot extract / re-sum | Different architecture, same end-state                                                       | We achieve pilot protection through (1) post-clipper subcarrier injection (the project invariant — pilot is never IN the audio composite when the clipper sees it) and (2) RBJ bandpass cancellation in the 17-21 kHz pilot guard inside `CompositeClipper`. Both end-results: clipper IM does not corrupt the pilot. Adopting the patent's extract/re-sum path on top would be redundant. Expired 2015-12-29. |
 | [US 4,737,725](https://patents.google.com/patent/US4737725A/en)                                                                              | Pre-LPF overshoot compensation (Inovonics analog circuit) | `OversampledPeakLimiter` (4× oversampled)                                                    | The patent's analog technique (clip → phase-lag → re-clip → recover clippings → re-inject) is what modern oversampled true-peak limiters achieve digitally. We have one. Expired 1996-04-17.                                                                                                                                                                                                                   |
 
-### Bass enhancement (Orbass) — secondary backlog
+### Bass enhancement (PrimeBass) — secondary backlog
 
-Patents informing improvements to the `Orbass` adaptive low-band
-enhancer. Goal: enhance perceived bass while *reducing* true-peak LF
-amplitude (so downstream bass clipper / pre-encode limiter / composite
-clipper see less LF energy). Listed in priority order by
-implementation lift vs effort.
+Patents informing improvements to the `PrimeBass` adaptive low-band
+enhancer (renamed from `Orbass` in 0.12 to remove the Orban-trademark
+adjacency). Goal: enhance perceived bass while *reducing* true-peak
+LF amplitude (so downstream bass clipper / pre-encode limiter /
+composite clipper see less LF energy).
+
+**B1 + B4 landed in 0.12** (commit `4d4a70f` — see "Already
+implemented" subsection below). Remaining backlog:
 
 | Priority | Patent                                                          | Title                                                       | Expires              | Maps to                                             | Why                                                                                                                                                                                                                                                                                                          |
 | -------- | --------------------------------------------------------------- | ----------------------------------------------------------- | -------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **B1**   | [US 5,930,373](https://patents.google.com/patent/US5930373A/en) | Waves MaxxBass — equal-loudness-weighted harmonic synthesis | 2017-04-04 (expired) | `processOrbass` harmonic synth (line ~7426)         | Per-harmonic-order weighting from equal-loudness curves (3rd > 2nd > 4th by ISO 226 derivative). Fixes the wrong-by-construction uniform-amplitude harmonics in the current implementation. Same perceived bass at meaningfully lower true-peak LF — directly buys headroom in downstream clippers. ~2 days. |
-| **B2**   | [US 5,424,488](https://patents.google.com/patent/US5424488A/en) | Werrbach transient-discriminate harmonics (Aphex)           | 2013-06-08 (expired) | Same harmonic synth, layered on B1                  | High harmonic burst on attack, exponential decay during sustain. "Punchy not boomy" subjectively; reduces *average* HF content (helps verifier `>67k/in` indirectly). Half a day.                                                                                                                            |
-| **B3**   | [US 5,359,665](https://patents.google.com/patent/US5359665A/en) | Werrbach Big Bottom — dynamic bass extension (Aphex)        | 2012-07-31 (expired) | `orbassAdaptiveGain` envelope detector (line ~7394) | Replace spectral-ratio detector with level-detector + asymmetric attack/release. Net effect: bass *envelope* duration extension (long release on the boost) rather than amplitude growth. One day.                                                                                                           |
-| **B4**   | [US 4,150,253](https://patents.google.com/patent/US4150253A/en) | Aphex Aural Exciter — HP-then-clip topology                 | 1996-04-17 (expired) | Pre-waveshaper HP filter                            | HP filter on side path (~80 Hz) before the nonlinear waveshaper decorrelates harmonic phase from the fundamental. Without it, harmonics sum coherently with direct boost and burn peak headroom. Half a day, structural improvement. Slots cleanly into B1.                                                  |
+| **B2**   | [US 5,424,488](https://patents.google.com/patent/US5424488A/en) | Werrbach transient-discriminate harmonics (Aphex)           | 2013-06-08 (expired) | Same harmonic synth, layered onto the B1 generator    | High harmonic burst on attack, exponential decay during sustain. "Punchy not boomy" subjectively; reduces *average* HF content (helps verifier `>67k/in` indirectly). Half a day.                                                                                                                            |
+| **B3**   | [US 5,359,665](https://patents.google.com/patent/US5359665A/en) | Werrbach Big Bottom — dynamic bass extension (Aphex)        | 2012-07-31 (expired) | `primeBassAdaptiveGain` envelope detector (line ~7394) | Replace spectral-ratio detector with level-detector + asymmetric attack/release. Net effect: bass *envelope* duration extension (long release on the boost) rather than amplitude growth. One day.                                                                                                           |
+
+**Already implemented:**
+
+| Patent                                                          | Title                                                       | Where in code                                                       | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [US 5,930,373](https://patents.google.com/patent/US5930373A/en) | Waves MaxxBass — equal-loudness-weighted harmonic synthesis | `processPrimeBass` + `configurePrimeBassFilters` (commit `4d4a70f`) | Even (asymmetric squarer) + odd (tanh-difference) harmonic generators with separate per-order weights derived from an ISO 226 phon-curve approximation evaluated at 2..5×F0 at configure time. Direct LF gain tapered down with the harmonics knob (`primeBassDirectGainReduction = 0.62`) so perceived bass shifts onto the weighted harmonics — buys headroom in the downstream bass clipper / pre-encode limiter without changing subjective bass weight.        |
+| [US 4,150,253](https://patents.google.com/patent/US4150253A/en) | Aphex Aural Exciter — HP-then-clip topology                 | `processPrimeBass` (commit `4d4a70f`)                               | Adapted for bass extension: a pre-waveshaper *allpass* biquad at F0 (rather than a HPF, which would attenuate F0 itself) rotates phase ~180° without amplitude loss, decorrelating synthesised harmonics' phase from the direct lowboost path. Stops harmonics from summing coherently with the direct boost and comb-filtering at the bass clipper input.                                                                                                          |
 
 ### Bass-enhancement patents skipped (active or non-additive)
 
@@ -89,6 +97,22 @@ implementation lift vs effort.
 | [US 7,587,254](https://patents.google.com/patent/US7587254B2/en)      | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029                                                        | Filed 2004; not yet expired. Revisit post-2029.                                                                                                                                                                                                                                                                                                                                           |
 
 ## Recently landed (post-0.11, unreleased)
+
+- **PrimeBass bass enhancement modernised + renamed from Orbass**
+  (commit `4d4a70f`). Phase 1 of the bass-enhancement patent backlog:
+  Waves MaxxBass-style equal-loudness-weighted harmonics (US 5,930,373,
+  expired 2017) and Aphex-style pre-waveshaper allpass topology
+  (US 4,150,253, expired 1996, adapted for bass extension via allpass
+  instead of HPF). Direct LF gain tapered down with the harmonics
+  knob so perceived bass shifts onto the weighted harmonics — buys
+  headroom in the bass clipper / pre-encode limiter while makeup gain
+  compensates absolute level. New `PrimeBassMaxxBassTests` (4 tests)
+  via mono-mode minimal-chain `MPXGenerator` render. Default verifier
+  baseline (PrimeBass off) bit-identical to prior build. **Renamed**
+  from `Orbass` (which read as a portmanteau of Orban) to `PrimeBass`
+  across Swift identifiers, UI labels, INI keys (`primebass_*`), and
+  tests; legacy `orbass_*` INI keys still read as fallback for one
+  release.
 
 - **`CompositeClipper` linear-phase FIR decimation + differential
   topology** (Orban US 6,337,999, expired 2022). New
@@ -183,7 +207,7 @@ Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction
 
 1. **Calibration workflow** — monitoring card shows deviation/pilot/RDS/margin, but exciter-facing guidance and operational long-run use need more hardening.
 2. **AGC validation** — wideband AGC defaults and range need broader validation against the current final stage on real program. Pending: listening evaluation on real program to tune the density scaling and decide whether a lookahead path is worth the audio-path latency cost.
-3. **Stereo image validation** — mono bass, widener, Orbass, and multiband interactions need preset-level validation on difficult real program. Width behavior still needs broader validation now that the composite clipper preserves subcarrier sidebands properly.
+3. **Stereo image validation** — mono bass, widener, PrimeBass, and multiband interactions need preset-level validation on difficult real program. Width behavior still needs broader validation now that the composite clipper preserves subcarrier sidebands properly.
 4. **Live-apply smoke testing** — DSP and RDS live-apply paths both work; the RDS path was substantially expanded post-0.11 (every operationally-toggled setting now applies live). Still want a focused smoke-test pass on real material to verify no transient artifacts on toggle changes, particularly for TA-edge auto-injection and AF Method B switching. The bit-stream tests cover correctness; the smoke test covers operator perception.
 
 ## Phase 7 — remaining items
@@ -204,7 +228,7 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 2. Tune composite clipper defaults so a fresh install audibly outperforms `mpxgen` / PiFmRds with no operator tweaking.
 
 ### Sprint
-1. Validate Orbass, mono bass, widener, and multiband interaction on difficult real material.
+1. Validate PrimeBass, mono bass, widener, and multiband interaction on difficult real material.
 2. Refine calibration workflow only where real operator friction exists.
 3. Build a small set of named presets (`clean`, `loud`, `community-radio`, `lpfm-conservative`) — INI fragments shipped alongside the binary.
 4. Document the amateur-operator getting-started flow in README — what to plug where, what the meters mean, how to pick a preset, common pitfalls.

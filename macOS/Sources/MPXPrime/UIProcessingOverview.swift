@@ -61,10 +61,10 @@ struct ProcessingOverviewGrid: View {
                     enabledPath: \.parametricEQEnabled
                 )
                 stageCard(
-                    .orbass,
-                    title: "Orbass",
-                    subtitle: orbassSubtitle,
-                    enabledPath: \.orbassEnabled
+                    .primeBass,
+                    title: "PrimeBass",
+                    subtitle: primeBassSubtitle,
+                    enabledPath: \.primeBassEnabled
                 )
                 stageCard(
                     .widener,
@@ -199,11 +199,11 @@ struct ProcessingOverviewGrid: View {
         "4 bands · shelf+peak+peak+shelf"
     }
 
-    private var orbassSubtitle: String {
+    private var primeBassSubtitle: String {
         String(format: "Amt %.2f · f %.0f Hz · drv %.2f",
-            model.config.orbassAmount,
-            model.config.orbassFreqHz,
-            model.config.orbassDrive)
+            model.config.primeBassAmount,
+            model.config.primeBassFreqHz,
+            model.config.primeBassDrive)
     }
 
     private var widenerSubtitle: String {

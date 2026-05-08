@@ -44,7 +44,7 @@ struct DSPThroughputTests {
     // MARK: - Fixtures
 
     /// Config mirroring the user's real setup: AGC on, multiband 5-band with
-    /// heavy intensity, Orbass, stereo widener, bass clipper, DC clipper,
+    /// heavy intensity, PrimeBass, stereo widener, bass clipper, DC clipper,
     /// BS.412, composite limiter, pre-encode limiter, RDS on, pre-emphasis
     /// 50 µs, processing bypass OFF. This is the configuration that exposed
     /// the b806053 regression.
@@ -60,7 +60,7 @@ struct DSPThroughputTests {
         cfg.limitMPX = true
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = true
-        cfg.orbassEnabled = true
+        cfg.primeBassEnabled = true
         cfg.stereoWidenEnabled = true
         cfg.monoBassEnabled = true
         cfg.multibandEnabled = true
@@ -170,7 +170,7 @@ struct DSPThroughputTests {
 
     @Test func fullChainInsideRelativeBudget() {
         // The real regression canary: full DSP chain including both limiters,
-        // multiband, Orbass, widener, bass clipper, DC clipper, BS.412, RDS,
+        // multiband, PrimeBass, widener, bass clipper, DC clipper, BS.412, RDS,
         // pre-emphasis in M/S. If someone reintroduces b806053's L/R pre-
         // emphasis (or any stage costing equivalent CPU), the limiter runs
         // 2-3x heavier on HF-rich program and this ratio spikes.

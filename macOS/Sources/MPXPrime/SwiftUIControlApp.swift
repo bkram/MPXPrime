@@ -178,7 +178,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case agc = "AGC"
     case phaseRotator = "Phase Rot"
     case parametricEQ = "PEQ"
-    case orbass = "Orbass"
+    case primeBass = "PrimeBass"
     case widener = "Widener"
     case multiband = "Multiband"
     case mbLimiter = "MB Limiter"
@@ -203,8 +203,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset Phase Rotator Tab"
         case .parametricEQ:
             return "Reset PEQ Tab"
-        case .orbass:
-            return "Reset Orbass Tab"
+        case .primeBass:
+            return "Reset PrimeBass Tab"
         case .multiband:
             return "Reset Multiband Tab"
         case .mbLimiter:
@@ -238,8 +238,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset phase rotator tab to defaults"
         case .parametricEQ:
             return "Reset parametric EQ tab to defaults"
-        case .orbass:
-            return "Reset Orbass tab to defaults"
+        case .primeBass:
+            return "Reset PrimeBass tab to defaults"
         case .multiband:
             return "Reset Multiband tab to defaults"
         case .mbLimiter:
@@ -314,7 +314,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingAGC
     case processingPhaseRotator
     case processingParametricEQ
-    case processingOrbass
+    case processingPrimeBass
     case processingWidener
     case processingMultiband
     case processingMBLimiter
@@ -364,7 +364,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingAGC: return "AGC"
         case .processingPhaseRotator: return "Phase Rotator"
         case .processingParametricEQ: return "Parametric EQ"
-        case .processingOrbass: return "Orbass"
+        case .processingPrimeBass: return "PrimeBass"
         case .processingWidener: return "Stereo Widener"
         case .processingMultiband: return "Multiband"
         case .processingMBLimiter: return "MB Limiter"
@@ -393,7 +393,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingAGC: return "gauge.with.needle"
         case .processingPhaseRotator: return "arrow.triangle.2.circlepath"
         case .processingParametricEQ: return "dial.high"
-        case .processingOrbass: return "waveform.path"
+        case .processingPrimeBass: return "waveform.path"
         case .processingWidener: return "rectangle.expand.vertical"
         case .processingMultiband: return "chart.bar.xaxis"
         case .processingMBLimiter: return "chart.bar.fill"
@@ -425,7 +425,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingAGC: return "Wideband AGC with K-weighting"
         case .processingPhaseRotator: return "Allpass phase rotator"
         case .processingParametricEQ: return "4-band parametric EQ"
-        case .processingOrbass: return "Adaptive low-band enhancement"
+        case .processingPrimeBass: return "Adaptive low-band enhancement"
         case .processingWidener: return "Mono bass + stereo widener"
         case .processingMultiband: return "3 / 5-band multiband compressor"
         case .processingMBLimiter: return "Per-band fast peak limiter"
@@ -466,7 +466,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingAGC: return .agc
         case .processingPhaseRotator: return .phaseRotator
         case .processingParametricEQ: return .parametricEQ
-        case .processingOrbass: return .orbass
+        case .processingPrimeBass: return .primeBass
         case .processingWidener: return .widener
         case .processingMultiband: return .multiband
         case .processingMBLimiter: return .mbLimiter
@@ -739,7 +739,7 @@ private final class MPXSpectrumAnalyzer: @unchecked Sendable {
     }
 }
 
-private struct OrbassPreset {
+private struct PrimeBassPreset {
     let id: String
     let title: String
     let enabled: Bool
@@ -1560,7 +1560,7 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var agcStateText: String = "Off"
     @Published var agcDetailText: String = "Detector -inf dB • Gain 0.0 dB"
     @Published var multibandStateText: String = "Off"
-    @Published var orbassStateText: String = "Off"
+    @Published var primeBassStateText: String = "Off"
     @Published var widenerStateText: String = "Off"
 
     @Published var rdsPS: String = "-"
@@ -1697,8 +1697,8 @@ final class MPXPrimeViewModel: ObservableObject {
         Self.ptyNames.enumerated().map { ($0.offset, $0.element) }
     }
 
-    var orbassPresetChoices: [PresetChoice] {
-        Self.orbassPresets.map { PresetChoice(id: $0.id, title: $0.title) }
+    var primeBassPresetChoices: [PresetChoice] {
+        Self.primeBassPresets.map { PresetChoice(id: $0.id, title: $0.title) }
     }
 
     var widenerPresetChoices: [PresetChoice] {
@@ -1930,24 +1930,24 @@ final class MPXPrimeViewModel: ObservableObject {
         applyLiveRDSConfigIfRunning()
     }
 
-    func applyOrbassPreset(id: String) {
-        guard let preset = Self.orbassPresets.first(where: { $0.id == id }) else { return }
+    func applyPrimeBassPreset(id: String) {
+        guard let preset = Self.primeBassPresets.first(where: { $0.id == id }) else { return }
         publishConfigChange()
-        config.orbassEnabled = preset.enabled
-        config.orbassPresetID = id
-        config.orbassAmount = preset.amount
-        config.orbassFreqHz = preset.freqHz
-        config.orbassHarmonics = preset.harmonics
-        config.orbassDrive = preset.drive
-        config.orbassDensity = preset.density
-        config.orbassSubharmonicsEnabled = preset.subharmonicsEnabled
-        config.orbassSubharmonicsAmount = preset.subharmonicsAmount
+        config.primeBassEnabled = preset.enabled
+        config.primeBassPresetID = id
+        config.primeBassAmount = preset.amount
+        config.primeBassFreqHz = preset.freqHz
+        config.primeBassHarmonics = preset.harmonics
+        config.primeBassDrive = preset.drive
+        config.primeBassDensity = preset.density
+        config.primeBassSubharmonicsEnabled = preset.subharmonicsEnabled
+        config.primeBassSubharmonicsAmount = preset.subharmonicsAmount
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded Orbass preset \(preset.title) live."
-            : "Loaded Orbass preset \(preset.title)."
+            ? "Loaded PrimeBass preset \(preset.title) live."
+            : "Loaded PrimeBass preset \(preset.title)."
     }
 
     var currentWidenerPresetID: String {
@@ -2141,16 +2141,16 @@ final class MPXPrimeViewModel: ObservableObject {
             config.widebandAGCReleaseMS = defaults.widebandAGCReleaseMS
             config.widebandAGCMaxGainDB = defaults.widebandAGCMaxGainDB
             config.widebandAGCMinGainDB = defaults.widebandAGCMinGainDB
-        case .orbass:
-            config.orbassEnabled = defaults.orbassEnabled
-            config.orbassPresetID = defaults.orbassPresetID
-            config.orbassAmount = defaults.orbassAmount
-            config.orbassFreqHz = defaults.orbassFreqHz
-            config.orbassHarmonics = defaults.orbassHarmonics
-            config.orbassDrive = defaults.orbassDrive
-            config.orbassDensity = defaults.orbassDensity
-            config.orbassSubharmonicsEnabled = defaults.orbassSubharmonicsEnabled
-            config.orbassSubharmonicsAmount = defaults.orbassSubharmonicsAmount
+        case .primeBass:
+            config.primeBassEnabled = defaults.primeBassEnabled
+            config.primeBassPresetID = defaults.primeBassPresetID
+            config.primeBassAmount = defaults.primeBassAmount
+            config.primeBassFreqHz = defaults.primeBassFreqHz
+            config.primeBassHarmonics = defaults.primeBassHarmonics
+            config.primeBassDrive = defaults.primeBassDrive
+            config.primeBassDensity = defaults.primeBassDensity
+            config.primeBassSubharmonicsEnabled = defaults.primeBassSubharmonicsEnabled
+            config.primeBassSubharmonicsAmount = defaults.primeBassSubharmonicsAmount
         case .multiband:
             config.multibandEnabled = defaults.multibandEnabled
             config.multibandMode = defaults.multibandMode
@@ -2240,7 +2240,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .core:
             runtimeDisposition = .restart
         case .overview,
-             .agc, .orbass, .multiband, .widener, .limiter,
+             .agc, .primeBass, .multiband, .widener, .limiter,
              .phaseRotator, .parametricEQ, .mbLimiter, .expander,
              .bassClipper, .dcClipper, .bs412, .compositeClipper:
             runtimeDisposition = .live
@@ -2987,7 +2987,7 @@ final class MPXPrimeViewModel: ObservableObject {
             agcGainDB
         ) + (agcGateActive ? " • Gate" : "")
         multibandStateText = config.multibandEnabled ? "On" : "Off"
-        orbassStateText = config.orbassEnabled ? "On" : "Off"
+        primeBassStateText = config.primeBassEnabled ? "On" : "Off"
         if !config.stereoWidenEnabled || config.monoMode {
             widenerStateText = "Off"
         } else if outputStereoCorrelation < 0.0 || outputSideToMidRatio > 0.85 {
@@ -3364,7 +3364,7 @@ final class MPXPrimeViewModel: ObservableObject {
         "Alarm Test", "Alarm",
     ]
 
-    private static let orbassPresets: [OrbassPreset] = [
+    private static let primeBassPresets: [PrimeBassPreset] = [
         .init(
             id: "chr", title: "CHR/EDM", enabled: true, amount: 0.34, freqHz: 78, harmonics: 0.28,
             drive: 0.92, density: 0.56, subharmonicsEnabled: true, subharmonicsAmount: 0.16),
@@ -4122,8 +4122,8 @@ private struct StageProcessingContent: View {
                         ProcessingPhaseRotatorTab(model: model)
                     case .parametricEQ:
                         ProcessingParametricEQTab(model: model)
-                    case .orbass:
-                        ProcessingOrbassTab(model: model)
+                    case .primeBass:
+                        ProcessingPrimeBassTab(model: model)
                     case .multiband:
                         ProcessingMultibandTab(model: model)
                     case .mbLimiter:
@@ -5435,38 +5435,38 @@ private struct ProcessingAGCTab: View {
     }
 }
 
-private struct ProcessingOrbassTab: View {
+private struct ProcessingPrimeBassTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Orbass") {
+        Card(title: "PrimeBass") {
             Picker("Preset", selection: Binding(
-                get: { self.model.config.orbassPresetID },
+                get: { self.model.config.primeBassPresetID },
                 set: { newValue in
-                    self.model.config.orbassPresetID = newValue
-                    self.model.applyOrbassPreset(id: newValue)
+                    self.model.config.primeBassPresetID = newValue
+                    self.model.applyPrimeBassPreset(id: newValue)
                 }
             )) {
-                ForEach(model.orbassPresetChoices) { preset in
+                ForEach(model.primeBassPresetChoices) { preset in
                     Text(preset.title).tag(preset.id)
                 }
             }
             .pickerStyle(.menu)
-            Toggle("Enable Orbass", isOn: model.configBinding(\.orbassEnabled, runtimeDisposition: .live))
-            DoubleSliderRow(title: "Amount", value: model.configBinding(\.orbassAmount, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
+            Toggle("Enable PrimeBass", isOn: model.configBinding(\.primeBassEnabled, runtimeDisposition: .live))
+            DoubleSliderRow(title: "Amount", value: model.configBinding(\.primeBassAmount, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
                 tooltip: "Overall strength of the low-band enhancement. Higher values emphasize bass; too high introduces pumping and obvious low-frequency coloration.")
-            DoubleSliderRow(title: "Frequency", value: model.configBinding(\.orbassFreqHz, runtimeDisposition: .live), range: 40...180, format: "%.1f Hz",
+            DoubleSliderRow(title: "Frequency", value: model.configBinding(\.primeBassFreqHz, runtimeDisposition: .live), range: 40...180, format: "%.1f Hz",
                 tooltip: "Corner frequency of the low-band enhancement. Lower frequencies emphasize sub-bass, higher frequencies emphasize upper bass.")
-            DoubleSliderRow(title: "Harmonics", value: model.configBinding(\.orbassHarmonics, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
+            DoubleSliderRow(title: "Harmonics", value: model.configBinding(\.primeBassHarmonics, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
                 tooltip: "Adds restrained harmonic overtones so bass remains audible on small speakers that can't reproduce the fundamental.")
-            DoubleSliderRow(title: "Drive", value: model.configBinding(\.orbassDrive, runtimeDisposition: .live), range: 0.2...2.0, format: "%.2f",
+            DoubleSliderRow(title: "Drive", value: model.configBinding(\.primeBassDrive, runtimeDisposition: .live), range: 0.2...2.0, format: "%.2f",
                 tooltip: "Input level into the nonlinear enhancement stage. Higher drive increases harmonics intensity and perceived density.")
-            DoubleSliderRow(title: "Density", value: model.configBinding(\.orbassDensity, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
+            DoubleSliderRow(title: "Density", value: model.configBinding(\.primeBassDensity, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
                 tooltip: "Smoothing of the enhancement envelope. Higher density reduces attack transients in the low band for a more sustained feel.")
-            Toggle("Enable Subharmonics", isOn: model.configBinding(\.orbassSubharmonicsEnabled, runtimeDisposition: .live))
-            DoubleSliderRow(title: "Subharmonics", value: model.configBinding(\.orbassSubharmonicsAmount, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
+            Toggle("Enable Subharmonics", isOn: model.configBinding(\.primeBassSubharmonicsEnabled, runtimeDisposition: .live))
+            DoubleSliderRow(title: "Subharmonics", value: model.configBinding(\.primeBassSubharmonicsAmount, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
                 tooltip: "Synthesizes an octave-below reinforcement for fundamentals. Use sparingly — easily over-emphasizes sub-40 Hz content.")
-                .disabled(!model.config.orbassSubharmonicsEnabled)
+                .disabled(!model.config.primeBassSubharmonicsEnabled)
         }
     }
 }

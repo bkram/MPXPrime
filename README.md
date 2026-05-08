@@ -10,7 +10,7 @@ MPX Prime is experimental and not suitable for production broadcast use. It targ
 
 **Goal: be the best amateur-grade FM processor available** — for hobbyist LPFM, community radio, pirate, SDR-fed exciters, and DIY broadcast workflows. MPX Prime is *not* trying to be a $5–15k Optimod / Omnia / Stereo Tool replacement; it is trying to be the obvious choice where commercial processors are unaffordable or overkill. See [`plan.md`](plan.md) "Positioning" for the full scope-in / scope-out list.
 
-**Compared to open-source FM generators** (mpxgen, PiFmRds), MPX Prime runs a real processing chain in front of the encoder — phase rotator, wideband AGC with K-weighted detector + program-dependent release, 4-band parametric EQ, Orbass, mono bass, stereo widener, 3- or 5-band multiband compressor with per-band expander and limiter, linear-phase FIR multiband crossovers in TX path, bass clipper, audio-band distortion-cancelled clipper, pre-encode L/R true-peak limiter, BS.412, and an 8× oversampled composite clipper with delta-based per-band IM cancellation — and enforces the professional invariant that pilot and RDS bypass all peak control (post-clipper subcarrier injection). Add to that linear-phase Kaiser-windowed FIR encoder lowpass with ≥80 dB stop-band, 19 kHz pilot notch on the audio path, pilot-locked RDS with 301-tap biphase + optional Gaussian shaping, lock-free real-time DSP with vDSP/vForce SIMD acceleration on hot loops, and an offline verification harness with scenario / stereo / width tables. Open-source generators typically emit a valid MPX waveform without any of that.
+**Compared to open-source FM generators** (mpxgen, PiFmRds), MPX Prime runs a real processing chain in front of the encoder — phase rotator, wideband AGC with K-weighted detector + program-dependent release, 4-band parametric EQ, PrimeBass, mono bass, stereo widener, 3- or 5-band multiband compressor with per-band expander and limiter, linear-phase FIR multiband crossovers in TX path, bass clipper, audio-band distortion-cancelled clipper, pre-encode L/R true-peak limiter, BS.412, and an 8× oversampled composite clipper with delta-based per-band IM cancellation — and enforces the professional invariant that pilot and RDS bypass all peak control (post-clipper subcarrier injection). Add to that linear-phase Kaiser-windowed FIR encoder lowpass with ≥80 dB stop-band, 19 kHz pilot notch on the audio path, pilot-locked RDS with 301-tap biphase + optional Gaussian shaping, lock-free real-time DSP with vDSP/vForce SIMD acceleration on hot loops, and an offline verification harness with scenario / stereo / width tables. Open-source generators typically emit a valid MPX waveform without any of that.
 
 **Compared to commercial processors**, MPX Prime's topology matches what Orban / Omnia / Stereo Tool publish, and individual stages (phase rotator, multiband with linear-phase FIR crossovers and stereo linking, post-clipper subcarrier injection, BS.412, delta-based per-band IM cancellation in the composite clipper — public-domain Orban patents US 4,460,871 + US 5,737,434 inspired the cancellation primitive) are implemented at professional quality. What's deliberately *out of scope* for amateur-grade: MPX-over-AES3 / Baseband192 transport, studio automation (Livewire/Dante/Ravenna), multi-site clustering, ITU-R SM.1268 RF-mask feedback at production grade, multipath mitigation. Lower-priority polish items still pending: heavier (16–32×) oversampling on the clipping nonlinearities, dynamic pre-emphasis, input-side restoration (declipper, dehumfilter). See [`plan.md`](plan.md) "Next up" for the current roadmap.
 
@@ -19,7 +19,7 @@ In short: well past the hobbyist baseline, sized for amateur broadcast use. Use 
 ## Current app structure
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
-- `Processing`: core DSP, AGC, Orbass, multiband, widener, limiter
+- `Processing`: core DSP, AGC, PrimeBass, multiband, widener, limiter
 - `RDS`: control (master enable + injection + live status + runtime flags), identity (PI / PTY / PTYN / ECC + PS banks), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (physical layer)
 - `Settings`: configuration path, interfaces, audio engine, spectrum options
 - Separate windows: `Scopes`, `Spectrum`, `Levels`, `Help`
@@ -38,7 +38,7 @@ transport restart since they reconfigure the modulator.
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
 - Live input source or built-in test tone source
-- Optional wideband AGC, HPF, program lowpass, HF trim, Orbass, mono bass, stereo widener, and multiband processing
+- Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing
 - Broadcast-style final MPX stage with `Final Drive`, 8× oversampled composite clipper, and live clipper telemetry
 - Composite budget telemetry with pilot/RDS/audio visibility and safety-limiter readout
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
@@ -205,16 +205,16 @@ Recommended starting point:
 
 This keeps bass more mono-compatible while leaving the upper image open enough for FM.
 
-### Orbass and multiband
+### PrimeBass and multiband
 
 The current low-frequency enhancement and multiband stages are now tuned more conservatively than earlier builds.
 
-- `Orbass` uses adaptive low-band enhancement with restrained harmonics, optional subharmonics, and gated makeup behavior to avoid obvious bass pumping and synthetic overhang.
+- `PrimeBass` (formerly `Orbass`, renamed in 0.12) uses adaptive low-band enhancement with restrained harmonics, optional subharmonics, and gated makeup behavior to avoid obvious bass pumping and synthetic overhang. 0.12 modernised the harmonic synth with MaxxBass-style equal-loudness weighting (per-order ISO 226 phon-curve weights for 2nd–5th harmonics) and an Aphex-style pre-waveshaper allpass at F0 that decorrelates harmonic phase from the direct boost — the perceived bass weight shifts onto the weighted harmonics, which buys headroom downstream without changing subjective bass.
 - `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `−155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move — not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on).
 
 Recommended starting point:
 
-- `Orbass`: `AC/Pop` or `Rock` preset first
+- `PrimeBass`: `AC/Pop` or `Rock` preset first
 - `Multiband`: `5B AC/Pop` for general music, `5B Talk` for speech, `5B CHR/EDM` for a denser contemporary result, `5B Italo` / `3B Italo` for italo / disco / dance pumping character
 
 The current defaults are intentionally moderate and are meant to be tuned upward from a clean starting point, not downward from a hyped one.
@@ -385,7 +385,7 @@ Current post-build preset sweep status:
 - `5B Urban`: `OK`
 - `5B Dance`: `OK`
 
-Current verification is strongest for composite safety and budget behavior. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or Orbass character, so final tuning still requires real program listening.
+Current verification is strongest for composite safety and budget behavior. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
 
 Exit status:
 
@@ -410,7 +410,7 @@ Disabled by bypass:
 
 - Wideband AGC
 - HF trim
-- Orbass
+- PrimeBass
 - Mono bass
 - Multiband processing
 - Stereo widener

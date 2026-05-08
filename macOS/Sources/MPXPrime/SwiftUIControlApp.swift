@@ -921,6 +921,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return true
     }
 
+    // MARK: - Visibility-driven monitor refresh rate
+
+    @objc private func appBecameActive() {
+        model?.setAppActive(true)
+    }
+
+    @objc private func appResignedActive() {
+        model?.setAppActive(false)
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) {
+        guard (notification.object as AnyObject?) === window else { return }
+        model?.setMainWindowMinimized(true)
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        guard (notification.object as AnyObject?) === window else { return }
+        model?.setMainWindowMinimized(false)
+    }
+
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let w = notification.object as? NSWindow, w === window else { return }
+        let visible = w.occlusionState.contains(.visible)
+        model?.setMainWindowOccluded(!visible)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = makeMPXPrimeAppIcon()
         NSApp.activate(ignoringOtherApps: true)
@@ -949,6 +975,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window = w
 
         vm.startMonitoringTimer()
+
+        // Drop the meter / scope refresh rate when the app is inactive,
+        // minimized, or fully occluded. The on-screen rate is restored
+        // immediately when any of these flips back.
+        let nc = NotificationCenter.default
+        nc.addObserver(
+            self,
+            selector: #selector(appBecameActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        nc.addObserver(
+            self,
+            selector: #selector(appResignedActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+
         if vm.autoStartEnabled {
             // WORKAROUND (auto-start input stall): AVAudioEngine has an
             // observed issue where the FIRST start() in a process with a
@@ -1453,10 +1497,15 @@ final class MPXPrimeViewModel: ObservableObject {
         var selectedMonitorUID: String
     }
 
-    private static let monitoringRefreshHz: Double = 30.0
-    private static let inlineMPXSpectrumRefreshHz: Double = 12.0
-    private static let windowMPXSpectrumRefreshHz: Double = 24.0
-    private static let windowPreMPXSpectrumRefreshHz: Double = 24.0
+    // Active = main window foreground/key, not minimized, not fully
+    // occluded. Idle = app inactive / occluded / minimized. The idle
+    // rate stays > 0 so the meter ballistics state remains warm and the
+    // UI resumes immediately on bring-forward.
+    private static let monitoringRefreshHzActive: Double = 60.0
+    private static let monitoringRefreshHzIdle: Double = 5.0
+    private static let inlineMPXSpectrumRefreshHz: Double = 30.0
+    private static let windowMPXSpectrumRefreshHz: Double = 60.0
+    private static let windowPreMPXSpectrumRefreshHz: Double = 60.0
     private static let inlineMPXSpectrumBins: Int = 384
     private static let windowMPXSpectrumBins: Int = 512
     private static let preMPXSpectrumBins: Int = 128
@@ -1599,6 +1648,21 @@ final class MPXPrimeViewModel: ObservableObject {
     private var lastMonitorRefreshTime: TimeInterval?
     private var engineStartReference: TimeInterval?
 
+    // Visibility state — drives the adaptive `monitorTimer` rate. The
+    // timer fires at `monitoringRefreshHzActive` only when all three
+    // are in the on-screen position; otherwise drops to
+    // `monitoringRefreshHzIdle` so the smoothing state stays warm
+    // without burning cycles when no pixels are being drawn.
+    private var appIsActive: Bool = true
+    private var mainWindowIsOccluded: Bool = false
+    private var mainWindowIsMinimized: Bool = false
+    private var lastAppliedRefreshHz: Double = 0.0
+
+    private var desiredMonitoringRefreshHz: Double {
+        let onScreen = appIsActive && !mainWindowIsOccluded && !mainWindowIsMinimized
+        return onScreen ? Self.monitoringRefreshHzActive : Self.monitoringRefreshHzIdle
+    }
+
     private var vuInputL: Float = 0.0
     private var vuInputR: Float = 0.0
     private var vuAGCOutputL: Float = 0.0
@@ -1728,15 +1792,47 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func startMonitoringTimer() {
+        applyMonitoringRefreshRate()
+    }
+
+    /// Recreate `monitorTimer` at the rate dictated by current visibility
+    /// state. Called from `startMonitoringTimer()` and from each
+    /// visibility-change setter; early-returns when the desired rate
+    /// matches the currently-active rate to avoid timer-recreate churn
+    /// on no-op state transitions.
+    private func applyMonitoringRefreshRate() {
+        let target = desiredMonitoringRefreshHz
+        if target == lastAppliedRefreshHz, monitorTimer != nil {
+            return
+        }
         monitorTimer?.invalidate()
-        let timer = Timer(timeInterval: (1.0 / Self.monitoringRefreshHz), repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / target, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refreshMonitoringSnapshot()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         monitorTimer = timer
+        lastAppliedRefreshHz = target
         timer.fire()
+    }
+
+    func setAppActive(_ active: Bool) {
+        guard appIsActive != active else { return }
+        appIsActive = active
+        applyMonitoringRefreshRate()
+    }
+
+    func setMainWindowOccluded(_ occluded: Bool) {
+        guard mainWindowIsOccluded != occluded else { return }
+        mainWindowIsOccluded = occluded
+        applyMonitoringRefreshRate()
+    }
+
+    func setMainWindowMinimized(_ minimized: Bool) {
+        guard mainWindowIsMinimized != minimized else { return }
+        mainWindowIsMinimized = minimized
+        applyMonitoringRefreshRate()
     }
 
     func shutdown() {
@@ -2606,14 +2702,21 @@ final class MPXPrimeViewModel: ObservableObject {
 
     private func refreshMonitoringSnapshot() {
         let now = Date().timeIntervalSinceReferenceDate
-        let minRefreshInterval = 1.0 / Self.monitoringRefreshHz
+        let activeHz = desiredMonitoringRefreshHz
+        let minRefreshInterval = 1.0 / activeHz
         if let last = lastMonitorRefreshTime, (now - last) < minRefreshInterval {
             return
         }
 
+        // dt clamp for meter ballistics — independent of the active timer
+        // rate. Lower bound is 1/120 s (8.3 ms) so a hypothetical 120 Hz
+        // tick can't push smoothing below the per-step floor; upper bound
+        // is 250 ms so a long pause (e.g. app backgrounded) doesn't make
+        // the next on-screen tick look like an instantaneous jump.
+        let fallbackInterval = 1.0 / activeHz
         let dt = max(
-            1.0 / (Self.monitoringRefreshHz * 2.0),
-            min(0.25, now - (lastMonitorRefreshTime ?? (now - (1.0 / Self.monitoringRefreshHz))))
+            1.0 / 120.0,
+            min(0.25, now - (lastMonitorRefreshTime ?? (now - fallbackInterval)))
         )
         lastMonitorRefreshTime = now
 

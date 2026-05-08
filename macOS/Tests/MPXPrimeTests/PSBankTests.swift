@@ -48,25 +48,16 @@ struct PSBankTests {
         psBanks: [String]? = nil,
         psCentered: Bool? = nil
     ) -> MPXGenerator.RDSRuntimeConfig {
-        MPXGenerator.RDSRuntimeConfig(
-            rtText: cfg.rdsRTText,
-            rtBuffers: [cfg.rdsRTA, cfg.rdsRTB, cfg.rdsRTC, cfg.rdsRTD],
-            rtBufferEnabled: [false, false, false, false],
-            rtCR: cfg.rdsRTCR,
-            rtCentered: cfg.rdsRTCentered,
-            rtMode2B: cfg.rdsRTMode.uppercased() == "2B",
-            rtCycleTime: cfg.rdsRTCycleTime,
-            rtCycleAB: cfg.rdsRTCycleAB,
-            rtABCycleCount: cfg.rdsRTABCycleCount,
-            rtPlusEnabled: false,
-            rtPlusFormatA: "",
-            rtPlusFormatB: "",
-            nowPlayingEnabled: false,
-            psBanks: psBanks ?? [cfg.rdsPSA, cfg.rdsPSB, cfg.rdsPSC, cfg.rdsPSD],
-            psActiveBank: psActive ?? cfg.rdsPSActiveBank,
-            psCentered: psCentered ?? cfg.rdsPSCentered,
-            psFrameSeconds: cfg.rdsPSFrameSeconds
-        )
+        var override = cfg
+        if let psActive { override.rdsPSActiveBank = psActive }
+        if let psBanks {
+            override.rdsPSA = psBanks.indices.contains(0) ? psBanks[0] : ""
+            override.rdsPSB = psBanks.indices.contains(1) ? psBanks[1] : ""
+            override.rdsPSC = psBanks.indices.contains(2) ? psBanks[2] : ""
+            override.rdsPSD = psBanks.indices.contains(3) ? psBanks[3] : ""
+        }
+        if let psCentered { override.rdsPSCentered = psCentered }
+        return MPXGenerator.RDSRuntimeConfig.make(from: override)
     }
 
     @Test func initialActiveBankTransmitsBankA() {

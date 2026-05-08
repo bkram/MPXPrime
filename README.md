@@ -20,9 +20,17 @@ In short: well past the hobbyist baseline, sized for amateur broadcast use. Use 
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
 - `Processing`: core DSP, AGC, Orbass, multiband, widener, limiter
-- `RDS`: program, radiotext, long PS, flags, carrier
+- `RDS`: control (master enable + injection + live status + runtime flags), identity (PI / PTY / PTYN / ECC + PS banks), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (physical layer)
 - `Settings`: configuration path, interfaces, audio engine, spectrum options
 - Separate windows: `Scopes`, `Spectrum`, `Levels`, `Help`
+
+The RDS detail tabs are organised per UECP message-class taxonomy
+(AF is a peer of PS, RT+ lives under ODA, etc.). Every operationally
+toggled RDS setting applies live without restarting the transport —
+PI, PTY, PTYN, TP/TA/MS/DI flags, AF list, group sequence, CT
+enable, all RT/PS/Long PS text. Only physical-layer settings
+(`rds_level`, `rds_freq`, Gaussian shaping FIR taps/BW) require a
+transport restart since they reconfigure the modulator.
 
 ## Features
 
@@ -115,7 +123,7 @@ This is the minimum to hear MPX Prime processing your audio and feeding a transm
 
 Edit `~/Library/Application Support/MPX Prime/MPX Prime.ini`, set `preemphasis_us = 75` if you are in a 75 µs region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). EU operators required to comply with ITU-R BS.412 should also flip `bs412_enabled = True`.
 
-**3. Launch and Start.** Open MPX Prime, pick your input and output devices in `Settings`, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation, gain reduction, and budget — if those move with your audio, the chain is processing.
+**3. Launch and Start.** Open MPX Prime, pick your input and output devices in `Settings`, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
 
 **4. Calibrate composite output level.** On `Monitoring`, watch the `Composite Budget` chip:
 

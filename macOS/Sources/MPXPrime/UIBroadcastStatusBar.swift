@@ -39,6 +39,7 @@ struct BroadcastStatusBar: View {
             divider
             peakChip(label: "MPX", value: model.outputText, level: model.outputLevel, emphasized: true)
             deviationChip
+            modulationChip
             divider
             gainReductionChip(
                 label: "GR",
@@ -66,6 +67,7 @@ struct BroadcastStatusBar: View {
                 peakChip(label: "IN R", value: model.inputRText, level: model.inputRLevel)
                 peakChip(label: "MPX", value: model.outputText, level: model.outputLevel, emphasized: true)
                 deviationChip
+                modulationChip
                 Spacer(minLength: 0)
             }
             HStack(spacing: 12) {
@@ -94,6 +96,7 @@ struct BroadcastStatusBar: View {
         static let peak: CGFloat = 168   // "-99.9 dBFS   -99.9 pk"
         static let mpxPeak: CGFloat = 178  // heroReadout is a touch wider
         static let deviation: CGFloat = 108  // "-999.9 kHz"
+        static let modulation: CGFloat = 80  // "100.0%"
         static let grValue: CGFloat = 64   // "16.0 dB"
         static let budgetValue: CGFloat = 76  // "+99.9 dB"
         static let injectionValue: CGFloat = 56  // "99.9%"
@@ -133,6 +136,27 @@ struct BroadcastStatusBar: View {
             label: "DEV",
             value: String(format: "%.1f kHz", kHz),
             width: W.deviation,
+            valueFont: BroadcastStyle.heroReadout,
+            tint: tint
+        )
+    }
+
+    /// Modulation as a percentage of the configured deviation target.
+    /// Stereotool/Omnia/Optimod all surface this — operators tune by %
+    /// even when the kHz figure is also visible. References the user's
+    /// configured `mpx_deviation_khz` (not the 75 kHz regulatory line),
+    /// so a custom-target setup reads "100%" at whatever kHz the
+    /// operator picked.
+    private var modulationChip: some View {
+        let peakKHz = Double(model.estimatedDeviationPeakKHz)
+        let limitKHz = max(1.0, model.config.mpxDeviationKHz)
+        let percent = (peakKHz / limitKHz) * 100.0
+        let norm = max(0.0, min(1.0, percent / 100.0))
+        let tint = BroadcastStyle.tint(forLevel: norm, limitNorm: 1.0)
+        return chipLabelledValue(
+            label: "MOD",
+            value: String(format: "%.1f%%", percent),
+            width: W.modulation,
             valueFont: BroadcastStyle.heroReadout,
             tint: tint
         )

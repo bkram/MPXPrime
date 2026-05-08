@@ -1452,30 +1452,7 @@ final class AudioOutputEngine {
     }
 
     func applyRDSRuntimeConfig(_ config: AppConfig) {
-        let runtime = MPXGenerator.RDSRuntimeConfig(
-            rtText: config.rdsRTText,
-            rtBuffers: [config.rdsRTA, config.rdsRTB, config.rdsRTC, config.rdsRTD],
-            rtBufferEnabled: [
-                config.rdsRTBufferAEnabled,
-                config.rdsRTBufferBEnabled,
-                config.rdsRTBufferCEnabled,
-                config.rdsRTBufferDEnabled,
-            ],
-            rtCR: config.rdsRTCR,
-            rtCentered: config.rdsRTCentered,
-            rtMode2B: config.rdsRTMode.uppercased() == "2B",
-            rtCycleTime: config.rdsRTCycleTime,
-            rtCycleAB: config.rdsRTCycleAB,
-            rtABCycleCount: config.rdsRTABCycleCount,
-            rtPlusEnabled: config.rdsEnableRTPlus,
-            rtPlusFormatA: config.rdsRTPlusFormatA,
-            rtPlusFormatB: config.rdsRTPlusFormatB,
-            nowPlayingEnabled: config.rdsNowPlayingEnabled,
-            psBanks: [config.rdsPSA, config.rdsPSB, config.rdsPSC, config.rdsPSD],
-            psActiveBank: config.rdsPSActiveBank,
-            psCentered: config.rdsPSCentered,
-            psFrameSeconds: config.rdsPSFrameSeconds
-        )
+        let runtime = MPXGenerator.RDSRuntimeConfig.make(from: config)
         runtimeConfigLock.lock()
         if lastQueuedRDSRuntimeConfig == runtime {
             runtimeConfigLock.unlock()

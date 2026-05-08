@@ -263,41 +263,37 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
 }
 
 enum RDSTab: String, CaseIterable, Identifiable {
+    case control = "Control"
     case program = "Program"
     case radiotext = "Radiotext"
     case longPS = "Long PS"
-    case flags = "Flags"
+    case af = "AF"
+    case schedule = "Schedule"
     case carrier = "Carrier"
 
     var id: String { rawValue }
 
     var resetButtonTitle: String {
         switch self {
-        case .program:
-            return "Reset Program Tab"
-        case .radiotext:
-            return "Reset Radiotext Tab"
-        case .longPS:
-            return "Reset Long PS Tab"
-        case .flags:
-            return "Reset Flags Tab"
-        case .carrier:
-            return "Reset Carrier Tab"
+        case .control: return "Reset Control Tab"
+        case .program: return "Reset Program Tab"
+        case .radiotext: return "Reset Radiotext Tab"
+        case .longPS: return "Reset Long PS Tab"
+        case .af: return "Reset AF Tab"
+        case .schedule: return "Reset Schedule Tab"
+        case .carrier: return "Reset Carrier Tab"
         }
     }
 
     var resetStatusText: String {
         switch self {
-        case .program:
-            return "Reset RDS program tab to defaults"
-        case .radiotext:
-            return "Reset RDS radiotext tab to defaults"
-        case .longPS:
-            return "Reset RDS long PS tab to defaults"
-        case .flags:
-            return "Reset RDS flags tab to defaults"
-        case .carrier:
-            return "Reset RDS carrier tab to defaults"
+        case .control: return "Reset RDS control tab to defaults"
+        case .program: return "Reset RDS program tab to defaults"
+        case .radiotext: return "Reset RDS radiotext tab to defaults"
+        case .longPS: return "Reset RDS long PS tab to defaults"
+        case .af: return "Reset RDS AF tab to defaults"
+        case .schedule: return "Reset RDS schedule tab to defaults"
+        case .carrier: return "Reset RDS carrier tab to defaults"
         }
     }
 }
@@ -329,11 +325,13 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingBS412
     case processingCompositeClipper
 
-    // RDS
+    // RDS — Control is the primary landing; the rest are detail tabs.
+    case rdsControl
     case rdsProgram
     case rdsRadiotext
     case rdsLongPS
-    case rdsFlags
+    case rdsAF
+    case rdsSchedule
     case rdsCarrier
 
     var id: String { rawValue }
@@ -349,7 +347,8 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring:
             return .monitoring
-        case .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsFlags, .rdsCarrier:
+        case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
+             .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
         default:
             return .processing
@@ -375,11 +374,13 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingLimiter: return "Final Stage"
         case .processingBS412: return "BS.412"
         case .processingCompositeClipper: return "Composite Clipper"
-        case .rdsProgram: return "Program"
+        case .rdsControl: return "Control"
+        case .rdsProgram: return "Identity"
         case .rdsRadiotext: return "Radiotext"
         case .rdsLongPS: return "Long PS"
-        case .rdsFlags: return "Flags"
-        case .rdsCarrier: return "Carrier"
+        case .rdsAF: return "Alt. Frequencies"
+        case .rdsSchedule: return "Schedule"
+        case .rdsCarrier: return "Subcarrier"
         }
     }
 
@@ -402,10 +403,12 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingLimiter: return "rectangle.compress.vertical"
         case .processingBS412: return "doc.badge.gearshape"
         case .processingCompositeClipper: return "rectangle.stack"
+        case .rdsControl: return "switch.2"
         case .rdsProgram: return "dot.radiowaves.left.and.right"
         case .rdsRadiotext: return "text.bubble"
         case .rdsLongPS: return "text.alignleft"
-        case .rdsFlags: return "flag"
+        case .rdsAF: return "list.dash"
+        case .rdsSchedule: return "calendar.badge.clock"
         case .rdsCarrier: return "antenna.radiowaves.left.and.right"
         }
     }
@@ -432,11 +435,13 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingLimiter: return "Broadcast preset, final drive, deviation, pre-encode limiter"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
-        case .rdsProgram: return "PS banks, PI, ECC, PTY, PTYN"
+        case .rdsControl: return "Live status, master enable, injection, runtime flags"
+        case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks"
         case .rdsRadiotext: return "Radiotext + RT+ tagging"
-        case .rdsLongPS: return "32-character Long PS"
-        case .rdsFlags: return "TP / TA / MS / DI flags"
-        case .rdsCarrier: return "Carrier injection + frequency"
+        case .rdsLongPS: return "32-character Long PS (15A)"
+        case .rdsAF: return "Alternative frequencies (AF)"
+        case .rdsSchedule: return "Group sequence, scheduler policy, clock"
+        case .rdsCarrier: return "Subcarrier frequency, Gaussian shaping"
         }
     }
 
@@ -478,10 +483,12 @@ enum Stage: String, CaseIterable, Identifiable {
     /// Maps to the legacy RDSTab enum (nil for non-RDS stages).
     var legacyRDSTab: RDSTab? {
         switch self {
+        case .rdsControl: return .control
         case .rdsProgram: return .program
         case .rdsRadiotext: return .radiotext
         case .rdsLongPS: return .longPS
-        case .rdsFlags: return .flags
+        case .rdsAF: return .af
+        case .rdsSchedule: return .schedule
         case .rdsCarrier: return .carrier
         default: return nil
         }
@@ -1460,7 +1467,7 @@ final class MPXPrimeViewModel: ObservableObject {
 
     @Published var selectedSection: AppSection = .monitoring
     @Published var selectedProcessingTab: ProcessingTab = .overview
-    @Published var selectedRDSTab: RDSTab = .program
+    @Published var selectedRDSTab: RDSTab = .control
     /// Phase 1 sidebar selection. `didSet` keeps the legacy enums in sync so
     /// the existing per-tab views (and any code branching on
     /// `selectedSection`) keep working without modification.
@@ -1788,8 +1795,13 @@ final class MPXPrimeViewModel: ObservableObject {
         publishConfigChange()
         config[keyPath: keyPath] = value
         saveConfig(restartRequired: runtimeDisposition == .restart)
-        if runtimeDisposition == .live {
+        switch runtimeDisposition {
+        case .live:
             applyLiveRuntimeConfigIfRunning()
+        case .liveRDS:
+            applyLiveRDSConfigIfRunning()
+        case .restart, .none:
+            break
         }
         updateNowPlayingRunner()
     }
@@ -1807,7 +1819,7 @@ final class MPXPrimeViewModel: ObservableObject {
     func ptyBinding() -> Binding<Int> {
         Binding(
             get: { self.config.rdsPTY },
-            set: { self.setConfigValue(\.rdsPTY, max(0, min(31, $0)), runtimeDisposition: .restart) }
+            set: { self.setConfigValue(\.rdsPTY, max(0, min(31, $0)), runtimeDisposition: .liveRDS) }
         )
     }
 
@@ -1815,7 +1827,7 @@ final class MPXPrimeViewModel: ObservableObject {
         Binding(
             get: { self.config.rdsPI },
             set: {
-                self.setConfigValue(\.rdsPI, Self.sanitizeHex($0, width: 4), runtimeDisposition: .restart)
+                self.setConfigValue(\.rdsPI, Self.sanitizeHex($0, width: 4), runtimeDisposition: .liveRDS)
             }
         )
     }
@@ -1824,7 +1836,7 @@ final class MPXPrimeViewModel: ObservableObject {
         Binding(
             get: { self.config[keyPath: keyPath] },
             set: {
-                self.setConfigValue(keyPath, Self.sanitizeHex($0, width: 2), runtimeDisposition: .restart)
+                self.setConfigValue(keyPath, Self.sanitizeHex($0, width: 2), runtimeDisposition: .liveRDS)
             }
         )
     }
@@ -1895,7 +1907,8 @@ final class MPXPrimeViewModel: ObservableObject {
         case 3: config.rdsRTD = text
         default: break
         }
-        saveConfig(restartRequired: true)
+        saveConfig(restartRequired: false)
+        applyLiveRDSConfigIfRunning()
     }
 
     private func setRTBufferEnabled(at index: Int, enabled: Bool) {
@@ -2247,8 +2260,19 @@ final class MPXPrimeViewModel: ObservableObject {
         let defaults = AppConfig()
 
         switch selectedRDSTab {
-        case .program:
+        case .control:
+            // Control tab — operationally toggled state. Reset puts
+            // master + flags back to library defaults.
             config.enRDS = defaults.enRDS
+            config.rdsTP = defaults.rdsTP
+            config.rdsTA = defaults.rdsTA
+            config.rdsMS = defaults.rdsMS
+            config.rdsDI_STEREO = defaults.rdsDI_STEREO
+            config.rdsDI_HEAD = defaults.rdsDI_HEAD
+            config.rdsDI_COMP = defaults.rdsDI_COMP
+            config.rdsDI_DYN = defaults.rdsDI_DYN
+        case .program:
+            // enRDS lives on the Control tab; not reset here.
             config.rdsPI = defaults.rdsPI
             config.rdsECC = defaults.rdsECC
             config.rdsPTY = defaults.rdsPTY
@@ -2292,20 +2316,11 @@ final class MPXPrimeViewModel: ObservableObject {
             config.rdsEnableLPS = defaults.rdsEnableLPS
             config.rdsLPSCentered = defaults.rdsLPSCentered
             config.rdsLPSCR = defaults.rdsLPSCR
-        case .flags:
-            config.rdsTP = defaults.rdsTP
-            config.rdsTA = defaults.rdsTA
-            config.rdsMS = defaults.rdsMS
-            config.rdsDI_STEREO = defaults.rdsDI_STEREO
-            config.rdsDI_HEAD = defaults.rdsDI_HEAD
-            config.rdsDI_COMP = defaults.rdsDI_COMP
-            config.rdsDI_DYN = defaults.rdsDI_DYN
+        case .af:
             config.rdsEnableAF = defaults.rdsEnableAF
             config.rdsAFList = defaults.rdsAFList
             config.rdsAFMethod = defaults.rdsAFMethod
-            config.rdsLIC = defaults.rdsLIC
-        case .carrier:
-            config.rdsLevel = defaults.rdsLevel
+        case .schedule:
             config.rdsGroupSequence = defaults.rdsGroupSequence
             config.rdsSchedulerAuto = defaults.rdsSchedulerAuto
             config.rdsSchedulerStandard = defaults.rdsSchedulerStandard
@@ -2313,6 +2328,9 @@ final class MPXPrimeViewModel: ObservableObject {
             config.rdsEnableCT = defaults.rdsEnableCT
             config.rdsEnableID = defaults.rdsEnableID
             config.rdsTZOffset = defaults.rdsTZOffset
+            config.rdsLIC = defaults.rdsLIC
+        case .carrier:
+            config.rdsLevel = defaults.rdsLevel
             config.rdsFreq = defaults.rdsFreq
             config.rdsGaussianEnabled = defaults.rdsGaussianEnabled
             config.rdsGaussianBWHZ = defaults.rdsGaussianBWHZ
@@ -3655,8 +3673,14 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     enum RuntimeChangeDisposition {
+        /// Setting requires the engine to be stopped and restarted to take effect.
         case restart
+        /// Setting flows through the DSP runtime config and applies live.
         case live
+        /// Setting flows through the RDS runtime config and applies live.
+        case liveRDS
+        /// Setting takes effect via a side channel (e.g. Now Playing
+        /// script reload) that doesn't need either runtime apply.
         case none
     }
 
@@ -4145,14 +4169,18 @@ private struct StageRDSContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 switch model.selectedRDSTab {
+                case .control:
+                    RDSControlTab(model: model)
                 case .program:
                     RDSProgramTab(model: model)
                 case .radiotext:
                     RDSRadiotextTab(model: model)
                 case .longPS:
                     RDSLongPSTab(model: model)
-                case .flags:
-                    RDSFlagsTab(model: model)
+                case .af:
+                    RDSAFTab(model: model)
+                case .schedule:
+                    RDSScheduleTab(model: model)
                 case .carrier:
                     RDSCarrierTab(model: model)
                 }
@@ -4837,34 +4865,6 @@ private struct RDSLivePreviewPlate: View {
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 }
-            }
-        }
-    }
-}
-
-private struct RDSAdvancedCardView: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "Scheduler & Advanced") {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("Group Sequence", text: model.configBinding(\.rdsGroupSequence))
-                Toggle("Scheduler Auto", isOn: model.configBinding(\.rdsSchedulerAuto))
-                Toggle("Use Standard Schedule", isOn: model.configBinding(\.rdsSchedulerStandard))
-                Toggle(
-                    "Include LPS in Standard",
-                    isOn: model.configBinding(\.rdsSchedulerStandardLPS))
-                Toggle("Enable CT (4A)", isOn: model.configBinding(\.rdsEnableCT))
-                Toggle("Enable ID (1A)", isOn: model.configBinding(\.rdsEnableID))
-
-                Divider()
-
-                LabeledContent("LIC") {
-                    HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
-                }
-                DoubleSliderRow(
-                    title: "Clock Offset", value: model.configBinding(\.rdsTZOffset),
-                    range: -12...14, format: "%.1f h")
             }
         }
     }
@@ -6005,15 +6005,14 @@ private struct RDSProgramTab: View {
 
     var body: some View {
         Card(title: "Program Service") {
-            Toggle("Enable RDS", isOn: model.configBinding(\.enRDS))
             PSBankRow(letter: "A", model: model, path: \.rdsPSA)
             PSBankRow(letter: "B", model: model, path: \.rdsPSB)
             PSBankRow(letter: "C", model: model, path: \.rdsPSC)
             PSBankRow(letter: "D", model: model, path: \.rdsPSD)
-            Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered))
+            Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered, runtimeDisposition: .liveRDS))
             DoubleSliderRow(
                 title: "PS Frame",
-                value: model.configBinding(\.rdsPSFrameSeconds),
+                value: model.configBinding(\.rdsPSFrameSeconds, runtimeDisposition: .liveRDS),
                 range: 0.5...10.0,
                 format: "%.1f s")
             .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
@@ -6028,13 +6027,9 @@ private struct RDSProgramTab: View {
                     Text("\(pty.0) · \(pty.1)").tag(pty.0)
                 }
             }
-            Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN))
-            TextField("PTYN", text: model.configBinding(\.rdsPTYN))
-            Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered))
-        }
-
-        Card(title: "Snapshot", style: .meter) {
-            RDSLivePreviewPlate(model: model)
+            Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN, runtimeDisposition: .liveRDS))
+            TextField("PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS))
+            Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
         }
     }
 }
@@ -6048,7 +6043,7 @@ private struct PSBankRow: View {
         let isActive = model.config.rdsPSActiveBank.uppercased() == letter
         HStack(spacing: 10) {
             Button(action: {
-                model.config.rdsPSActiveBank = letter
+                model.setConfigValue(\.rdsPSActiveBank, letter, runtimeDisposition: .liveRDS)
             }) {
                 Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
@@ -6063,7 +6058,7 @@ private struct PSBankRow: View {
                 .font(.callout.monospaced())
                 .foregroundStyle(isActive ? Color.primary : Color.secondary)
 
-            TextField("", text: model.configBinding(path))
+            TextField("", text: model.configBinding(path, runtimeDisposition: .liveRDS))
                 .textFieldStyle(.roundedBorder)
                 .disabled(false)
         }
@@ -6098,7 +6093,7 @@ private struct RDSRadiotextTab: View {
 
     var body: some View {
         Card(title: "Radiotext & RT+") {
-            TextField("Single Radiotext", text: model.configBinding(\.rdsRTText))
+            TextField("Single Radiotext", text: model.configBinding(\.rdsRTText, runtimeDisposition: .liveRDS))
             Text("Used when no RT buffer entries are checked.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -6132,17 +6127,17 @@ private struct RDSRadiotextTab: View {
                 }
             }
             .padding(.top, 4)
-            Picker("RT Mode", selection: model.configBinding(\.rdsRTMode)) {
+            Picker("RT Mode", selection: model.configBinding(\.rdsRTMode, runtimeDisposition: .liveRDS)) {
                 Text("2A (64 chars)").tag("2A")
                 Text("2B (32 chars)").tag("2B")
             }
             .pickerStyle(.segmented)
             DoubleSliderRow(
-                title: "Cycle Time", value: model.configBinding(\.rdsRTCycleTime),
+                title: "Cycle Time", value: model.configBinding(\.rdsRTCycleTime, runtimeDisposition: .liveRDS),
                 range: 1...20, format: "%.1f s")
-            Toggle("Center RT", isOn: model.configBinding(\.rdsRTCentered))
-            Toggle("Append CR", isOn: model.configBinding(\.rdsRTCR))
-            Toggle("Enable RT+", isOn: model.configBinding(\.rdsEnableRTPlus))
+            Toggle("Center RT", isOn: model.configBinding(\.rdsRTCentered, runtimeDisposition: .liveRDS))
+            Toggle("Append CR", isOn: model.configBinding(\.rdsRTCR, runtimeDisposition: .liveRDS))
+            Toggle("Enable RT+", isOn: model.configBinding(\.rdsEnableRTPlus, runtimeDisposition: .liveRDS))
             Divider()
             Toggle(
                 "Enable Now Playing Script",
@@ -6179,8 +6174,8 @@ private struct RDSRadiotextTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                TextField("RT+ Format A", text: model.configBinding(\.rdsRTPlusFormatA))
-                TextField("RT+ Format B", text: model.configBinding(\.rdsRTPlusFormatB))
+                TextField("RT+ Format A", text: model.configBinding(\.rdsRTPlusFormatA, runtimeDisposition: .liveRDS))
+                TextField("RT+ Format B", text: model.configBinding(\.rdsRTPlusFormatB, runtimeDisposition: .liveRDS))
             }
             Text(model.rdsNowPlayingStatus)
                 .font(.caption)
@@ -6194,44 +6189,10 @@ private struct RDSLongPSTab: View {
 
     var body: some View {
         Card(title: "Long PS") {
-            Toggle("Enable Long PS (15A)", isOn: model.configBinding(\.rdsEnableLPS))
-            TextField("Long PS Text", text: model.configBinding(\.rdsLongPS32))
-            Toggle("Center Long PS", isOn: model.configBinding(\.rdsLPSCentered))
-            Toggle("Append CR", isOn: model.configBinding(\.rdsLPSCR))
-        }
-    }
-}
-
-private struct RDSFlagsTab: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "Flags") {
-            LazyVGrid(columns: [
-                GridItem(.flexible(minimum: 100)),
-                GridItem(.flexible(minimum: 100)),
-                GridItem(.flexible(minimum: 100))
-            ], alignment: .leading, spacing: 8) {
-                Toggle("TP", isOn: model.configBinding(\.rdsTP))
-                Toggle("TA", isOn: model.configBinding(\.rdsTA))
-                Toggle("MS", isOn: model.configBinding(\.rdsMS))
-                Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO))
-                Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD))
-                Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP))
-                Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN))
-            }
-            .toggleStyle(.switch)
-
-            Toggle("Enable AF", isOn: model.configBinding(\.rdsEnableAF))
-            HStack(spacing: 12) {
-                Picker("AF Method", selection: model.configBinding(\.rdsAFMethod)) {
-                    Text("Method A").tag("A")
-                    Text("Method B").tag("B")
-                }
-                .frame(width: 100)
-                TextField("AF List", text: model.configBinding(\.rdsAFList))
-                    .textFieldStyle(.roundedBorder)
-            }
+            Toggle("Enable Long PS (15A)", isOn: model.configBinding(\.rdsEnableLPS, runtimeDisposition: .liveRDS))
+            TextField("Long PS Text", text: model.configBinding(\.rdsLongPS32, runtimeDisposition: .liveRDS))
+            Toggle("Center Long PS", isOn: model.configBinding(\.rdsLPSCentered, runtimeDisposition: .liveRDS))
+            Toggle("Append CR", isOn: model.configBinding(\.rdsLPSCR, runtimeDisposition: .liveRDS))
         }
     }
 }
@@ -6240,10 +6201,10 @@ private struct RDSCarrierTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "RDS Carrier") {
-            DoubleSliderRow(
-                title: "RDS Level", value: model.configBinding(\.rdsLevel),
-                range: 0...7.5, format: "%.2f kHz")
+        // Subcarrier physical layer only. Injection level lives on
+        // the Control tab next to the master Enable; freq + Gaussian
+        // shaping are tuning controls that almost never change.
+        Card(title: "Subcarrier") {
             DoubleSliderRow(
                 title: "Subcarrier Frequency", value: model.configBinding(\.rdsFreq),
                 range: 40_000...80_000, format: "%.0f Hz")
@@ -6254,45 +6215,136 @@ private struct RDSCarrierTab: View {
             IntStepperRow(
                 title: "Gaussian Taps", value: model.oddTapBinding(), range: 9...401,
                 step: 2, format: "%d")
-        }
-
-        Card(title: "Scheduler & Advanced") {
-            TextField("Group Sequence", text: model.configBinding(\.rdsGroupSequence))
-            Toggle("Scheduler Auto", isOn: model.configBinding(\.rdsSchedulerAuto))
-            Toggle("Use Standard Schedule", isOn: model.configBinding(\.rdsSchedulerStandard))
-            Toggle(
-                "Include LPS in Standard",
-                isOn: model.configBinding(\.rdsSchedulerStandardLPS))
-            Toggle("Enable CT (4A)", isOn: model.configBinding(\.rdsEnableCT))
-            Toggle("Enable ID (1A)", isOn: model.configBinding(\.rdsEnableID))
-            LabeledContent("LIC") {
-                HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
-            }
-            DoubleSliderRow(
-                title: "Clock Offset", value: model.configBinding(\.rdsTZOffset),
-                range: -12...14, format: "%.1f h")
+            Text("These settings reconfigure the RDS modulator FIR and require a transport restart to take effect.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
 
-private struct RDSAdvancedTab: View {
+/// Group scheduling, scheduler policy, clock-time (4A) settings.
+/// Splits out from the legacy Carrier tab so physical-layer (which
+/// requires restart) and group-sequence policy (live-applied via
+/// RDSRuntimeConfig) are clearly separated.
+private struct RDSScheduleTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "RDS Carrier") {
+        Card(title: "Group Schedule") {
+            TextField(
+                "Group Sequence",
+                text: model.configBinding(\.rdsGroupSequence, runtimeDisposition: .liveRDS))
+            Toggle(
+                "Scheduler Auto",
+                isOn: model.configBinding(\.rdsSchedulerAuto, runtimeDisposition: .liveRDS))
+            Toggle(
+                "Use Standard Schedule",
+                isOn: model.configBinding(\.rdsSchedulerStandard, runtimeDisposition: .liveRDS))
+            Toggle(
+                "Include LPS in Standard",
+                isOn: model.configBinding(\.rdsSchedulerStandardLPS, runtimeDisposition: .liveRDS))
+            Text("Custom sequence is used when Scheduler Auto and Use Standard are both off. Standard schedule covers IEC 62106 Table 14 group rates.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Card(title: "Clock Time (4A)") {
+            Toggle("Enable CT (4A)", isOn: model.configBinding(\.rdsEnableCT, runtimeDisposition: .liveRDS))
+            Toggle("Enable ID (1A)", isOn: model.configBinding(\.rdsEnableID, runtimeDisposition: .liveRDS))
             DoubleSliderRow(
-                title: "RDS Level", value: model.configBinding(\.rdsLevel),
+                title: "Clock Offset",
+                value: model.configBinding(\.rdsTZOffset, runtimeDisposition: .liveRDS),
+                range: -12...14, format: "%.1f h")
+            LabeledContent("LIC") {
+                HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
+            }
+        }
+    }
+}
+
+/// Alternative Frequencies (AF). Split out from the legacy Flags tab
+/// because UECP makes AF a peer of PS (its own MEC), not a Flags
+/// sibling. Method A vs B + comma-separated frequency list.
+private struct RDSAFTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Alternative Frequencies") {
+            Toggle(
+                "Enable AF",
+                isOn: model.configBinding(\.rdsEnableAF, runtimeDisposition: .liveRDS))
+            HStack(spacing: 12) {
+                Picker(
+                    "AF Method",
+                    selection: model.configBinding(\.rdsAFMethod, runtimeDisposition: .liveRDS)
+                ) {
+                    Text("Method A").tag("A")
+                    Text("Method B").tag("B")
+                }
+                .frame(width: 130)
+                TextField(
+                    "AF List",
+                    text: model.configBinding(\.rdsAFList, runtimeDisposition: .liveRDS)
+                )
+                .textFieldStyle(.roundedBorder)
+            }
+            Text("Method A: up to 25 frequencies as a flat list. Method B: paired (tuned + alternative) — used for stations sharing AF lists across regions.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Status-first dashboard for the RDS subsystem. Operationally the
+/// landing page: master Enable, current modulation %, live PI / PS /
+/// RT readout, and operator toggles for TP / TA / MS / DI flags +
+/// RT+ Item Toggle / Item Running. Detail tabs handle setup; this
+/// tab handles "is it working right now".
+private struct RDSControlTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Master") {
+            Toggle(
+                "Enable RDS",
+                isOn: model.configBinding(\.enRDS, runtimeDisposition: .liveRDS))
+            DoubleSliderRow(
+                title: "Injection Level",
+                value: model.configBinding(\.rdsLevel),
                 range: 0...7.5, format: "%.2f kHz")
-            DoubleSliderRow(
-                title: "Subcarrier Frequency", value: model.configBinding(\.rdsFreq),
-                range: 40_000...80_000, format: "%.0f Hz")
-            Toggle("Gaussian Shaping", isOn: model.configBinding(\.rdsGaussianEnabled))
-            DoubleSliderRow(
-                title: "Gaussian BW", value: model.configBinding(\.rdsGaussianBWHZ),
-                range: 600...6_000, format: "%.0f Hz")
-            IntStepperRow(
-                title: "Gaussian Taps", value: model.oddTapBinding(), range: 9...401,
-                step: 2, format: "%d")
+            Text("Injection level is set at engine start and requires transport restart to take effect — every other RDS setting on this page applies live.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Card(title: "Runtime Flags") {
+            // Operationally toggled flags. TA in particular is meant
+            // to flip live during a traffic announcement — UECP MEC
+            // 0x0E, group 14B / 15B auto-injection.
+            LazyVGrid(columns: [
+                GridItem(.flexible(minimum: 100)),
+                GridItem(.flexible(minimum: 100)),
+                GridItem(.flexible(minimum: 100))
+            ], alignment: .leading, spacing: 8) {
+                Toggle("TP", isOn: model.configBinding(\.rdsTP, runtimeDisposition: .liveRDS))
+                Toggle("TA", isOn: model.configBinding(\.rdsTA, runtimeDisposition: .liveRDS))
+                Toggle("MS", isOn: model.configBinding(\.rdsMS, runtimeDisposition: .liveRDS))
+                Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
+                Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
+                Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
+                Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
+            }
+            .toggleStyle(.switch)
+            Text("These flags are set per-program and apply live. Detailed setup and AF list live on their own tabs.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        // Live preview of what's actually on air. Same data the
+        // Snapshot card on the legacy Identity tab used to show; the
+        // duplicate is gone, this is the canonical home now.
+        Card(title: "Snapshot", style: .meter) {
+            RDSLivePreviewPlate(model: model)
         }
     }
 }

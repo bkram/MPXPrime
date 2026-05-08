@@ -26,17 +26,50 @@ yes
 
 When evaluating a new feature, the test is "does this make MPX Prime sound or feel better for an amateur operator?" Features that only matter to a station with a $3M tower stack are out.
 
+## Recently landed (post-0.11, unreleased)
+
+- **RDS live-apply expansion** — every operationally-toggled RDS setting applies without transport restart. Single `RDSRuntimeConfig.make(from:)` factory; `.liveRDS` runtime disposition; 38-field runtime config; PI / PTY / PTYN / ECC / LIC / TP / TA / MS / DI / AF / group sequence / scheduler / CT all flip without restart. Restart-only set is now just `rds_level`, `rds_freq`, `rds_gaussian_*` (physical-layer / modulator FIR).
+- **RDS GUI restructure** — Control tab as the new primary landing (master enable + injection + live status + runtime flags); detail tabs reorganised per UECP message-class taxonomy: Identity, Radiotext, Long PS, Alt. Frequencies, Schedule, Subcarrier. Old Flags tab removed. MOD chip added to broadcast status bar.
+- **AF Method B** — IEC 62106-2 §7.5.3 / EN 50067 §3.2.1.6.4 paired-frequency encoding now correctly emitted when `rds_af_method = B`.
+- **TA-flag auto-injection** — UECP §2.5.1.1 forced 0A on TA edge; receivers see flag flips within one group time regardless of schedule cadence.
+- **`Date()` deferred from audio thread** — replaced with `BasicRDSCoder.monotonicSeconds()` (`ProcessInfo.systemUptime`, commpage-backed). RT `{time}/{date}` macro path retained (needs wall clock; DateFormatter cost dwarfs the `Date()` call there).
+- **Test count: 204 → 227 across 25 → 26 suites.** New `RDSLiveApplyTests` covers PI/PTY/PTYN/Long PS/AF/CT round-trips, master-enable disengage, AF Method B encoding, TA-edge auto-injection.
+
 ## Next up
 
 1. **Preset tuning — make it sound great out of the box.** Composite clipper now ships clean (delta-based per-band substitution; (L-R) subcarrier sidebands within ~1 dB across the audio band). Time to push it. Tune `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, AGC density curve, and stereo widener defaults so a fresh install with no operator knowledge already sounds noticeably better than `mpxgen` / PiFmRds. Probably also: a small set of named presets (e.g. `clean`, `loud`, `community-radio`, `lpfm-conservative`) as INI fragments. Estimated scope: a focused listening session + tuning pass.
 
-2. **Smoke-test pass.** Validate live-apply vs restart-required settings on difficult real material. Catch any transients / clicks / dropouts on toggle changes. Pre-release blocking item.
+2. **Smoke-test pass.** Validate live-apply vs restart-required settings on difficult real material. Catch any transients / clicks / dropouts on toggle changes. Pre-release blocking item. The new RDS live-apply paths (PI / PTY / flags / AF / scheduler) need particular attention — most are tested at the bit-stream level but not against real receivers.
 
 3. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema, different scenario sets. Once preset tuning lands the verify presets become more meaningful.
 
 4. **Operator getting-started README pass.** Plug-in flow, what the meters mean, how to pick a preset, common pitfalls. The polished macOS UX is the project's edge over headless open-source alternatives; the README should reflect that.
 
 5. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. **Must preserve M/S-domain pre-emphasis placement** (see "Pre-emphasis placement" note below) — if a sidechain-only HF-boost feed into the pre-encode limiter is needed, build it as a dedicated sidechain path, not by moving pre-emphasis upstream. Lower priority for amateur-grade — current pre-emphasis behaviour is fine for the target audience; this is a polish item.
+
+## RDS roadmap toward enterprise tier
+
+These are the items that would close the gap from "broadcast-station-grade
+with comprehensive live-apply" to "enterprise-grade encoder that drops into
+a station-automation rack". Stretch goals — they only matter if the project
+direction shifts toward network-broadcaster / multi-station deployment,
+which is not the current amateur-grade focus. Listed in priority order;
+see audit notes from the current session for source citations.
+
+1. **UECP SPB 490 minimal subset over TCP/IP.** Single biggest enterprise-tier unlock. Without UECP, the encoder cannot integrate into a station automation chain. Minimum viable: TCP server (port 5570 conventional), DLE-stuffed framing, MEC parsing for PI/PS/PTY/RT/AF/TA/scheduler/master-enable, Site/Encoder/DSN/PSN address fields parsed even if multi-PSN is not yet honoured. Hooks into the existing `applyRDSRuntimeConfig` so wire commands share live-apply infrastructure. Estimated scope: 1–2 weeks. New file `UECPServer.swift` (~400 lines).
+2. **EON (Group 14A + 14B).** Linked-network station references: PI / PS / AF / TP / TA mirroring across multiple PSNs. Required for any group broadcaster. Add `RDSRuntimeConfig.eonLinks: [EONLink]`, build 14A / 14B group builders, wire into the scheduler, persist to AppConfig. New EON detail tab in the RDS sidebar. Estimated scope: 3–5 days.
+3. **Multi-PSN / Data Sets.** Refactor `RDSRuntimeConfig` to be per-PSN keyed by Data Set Number + PSN. Boundary-switchover logic (no PI flap, no AF collapse, no RT garbage). Required for day-parting and regional opt-outs. Builds on UECP. Estimated scope: 1 week.
+4. **Operations: SNMP + watchdog + scheduler + on-air loopback.** SNMP MIB exposing transport state and group-emission counters. Time-of-day scheduler for `RDSRuntimeConfig` switches. Optional FM-tuner loopback verification via the existing monitor output mode (compare modulated MPX → demod → expect known PI/PS). Estimated scope: 2–3 weeks.
+
+Standards-compliance items not yet addressed (deferred per current session
+direction; ASCII Long PS is correct for amateur-grade use):
+
+- **Group 15A UTF-8 toggle bit.** IEC 62106-2:2018 §6.8 extends Long PS
+  with a UTF-8 character-set indicator bit. The exact b2-tail bit position
+  is in the paywalled portion of the IEC PDF. Currently shipping ASCII
+  Long PS only (basic-RDS character set is ASCII for 0x20–0x7E, so the
+  output is correct for ASCII content even without the toggle bit).
+  Implement when full IEC 62106-2:2018 §6.8 / Figure 15 is acquired.
 
 ## Broadcast-tier follow-ups
 
@@ -67,7 +100,7 @@ Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction
 1. **Calibration workflow** — monitoring card shows deviation/pilot/RDS/margin, but exciter-facing guidance and operational long-run use need more hardening.
 2. **AGC validation** — wideband AGC defaults and range need broader validation against the current final stage on real program. Pending: listening evaluation on real program to tune the density scaling and decide whether a lookahead path is worth the audio-path latency cost.
 3. **Stereo image validation** — mono bass, widener, Orbass, and multiband interactions need preset-level validation on difficult real program. Width behavior still needs broader validation now that the composite clipper preserves subcarrier sidebands properly.
-4. **Live-apply boundaries** — live DSP updates work, but need a smoke-test pass to verify no transient artifacts and that restart-only boundaries stay obvious.
+4. **Live-apply smoke testing** — DSP and RDS live-apply paths both work; the RDS path was substantially expanded post-0.11 (every operationally-toggled setting now applies live). Still want a focused smoke-test pass on real material to verify no transient artifacts on toggle changes, particularly for TA-edge auto-injection and AF Method B switching. The bit-stream tests cover correctness; the smoke test covers operator perception.
 
 ## Phase 7 — remaining items
 

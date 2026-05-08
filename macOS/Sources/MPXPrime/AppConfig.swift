@@ -38,9 +38,20 @@ struct AppConfig {
     //   dcClipperEnabled/CeilingDB/CancelFreqHz,
     //   bs412Enabled/ThresholdDB/WindowSeconds
     //
-    // Live-apply RDS (via RDSRuntimeConfig):
-    //   rdsRT*/rdsPS*/rdsLongPS*/rdsPTYN* text and formatting,
-    //   rdsNowPlayingEnabled
+    // Live-apply RDS (via RDSRuntimeConfig — changes take effect immediately):
+    //   Master:    enRDS
+    //   Identity:  rdsPI, rdsPTY, rdsPTYN/Enable/Centered, rdsECC, rdsLIC
+    //   Flags:     rdsTP, rdsTA (TA-edge force-injects 0A per UECP §2.5.1.1),
+    //              rdsMS, rdsDI_STEREO/HEAD/COMP/DYN
+    //   PS:        rdsPSA/B/C/D, rdsPSActiveBank, rdsPSCentered, rdsPSFrameSeconds
+    //   Long PS:   rdsLongPS32, rdsEnableLPS, rdsLPSCentered, rdsLPSCR
+    //   RT:        rdsRTText, rdsRTA/B/C/D, rdsRT*BufferEnabled,
+    //              rdsRTMode, rdsRTCycleTime, rdsRTCycleAB, rdsRTABCycleCount,
+    //              rdsRTCR, rdsRTCentered, rdsEnableRTPlus,
+    //              rdsRTPlusFormatA/B, rdsNowPlayingEnabled
+    //   AF:        rdsEnableAF, rdsAFList, rdsAFMethod (Method A and Method B both supported)
+    //   Schedule:  rdsGroupSequence, rdsSchedulerAuto/Standard/StandardLPS,
+    //              rdsEnableCT, rdsEnableID, rdsTZOffset
     //
     // Restart-required (engine must be restarted):
     //   sampleRate, blockSize, sourceMode, device UIDs, monitorEnabled,
@@ -49,7 +60,9 @@ struct AppConfig {
     //   hpfHz, hfTrimDB/Hz, testToneMode/Freq,
     //   preEncodeThreshold, preEncodeReleaseMS,
     //   audioCompositeSoftClipEnabled, audioCompositeSmootherEnabled,
-    //   finalMPXSoftClipEnabled
+    //   finalMPXSoftClipEnabled,
+    //   RDS physical-layer: rdsLevel (injection kHz), rdsFreq (subcarrier),
+    //                       rdsGaussianEnabled/BWHZ/Taps (modulator FIR)
 
     var sampleRate: Double = 192_000.0
     var fftWindow96kHz: Bool = true

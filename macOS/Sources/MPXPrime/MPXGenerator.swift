@@ -2220,20 +2220,20 @@ final class BasicRDSCoder {
         let b4Value: Int
     }
 
-    private let enabled: Bool
+    private var enabled: Bool
     private let levelScale: Float
-    private let piCode: Int
-    private let pty: Int
-    private let tpFlag: Bool
-    private let taFlag: Bool
-    private let msFlag: Bool
-    private let diStereoFlag: Bool
-    private let diHeadFlag: Bool
-    private let diCompFlag: Bool
-    private let diDynFlag: Bool
-    private let afEnabled: Bool
-    private let afMethod: String
-    private let afCodes: [Int]
+    private var piCode: Int
+    private var pty: Int
+    private var tpFlag: Bool
+    private var taFlag: Bool
+    private var msFlag: Bool
+    private var diStereoFlag: Bool
+    private var diHeadFlag: Bool
+    private var diCompFlag: Bool
+    private var diDynFlag: Bool
+    private var afEnabled: Bool
+    private var afMethod: String
+    private var afCodes: [Int]
     private var psCentered: Bool
     // PS banks: 4 text banks (A/B/C/D) with a single active selector.
     // Live-apply — switching the active bank rebuilds psSequence/psFrames.
@@ -2257,36 +2257,38 @@ final class BasicRDSCoder {
     private let gaussianEnabled: Bool
     private let gaussianBWHZ: Float
     private let gaussianTaps: Int
-    private let schedule: [RDSGroupSpec]
-    private let schedulerAuto: Bool
-    private let schedulerStandard: Bool
-    private let schedulerStandardLPS: Bool
+    private var schedule: [RDSGroupSpec]
+    private var schedulerAuto: Bool
+    private var schedulerStandard: Bool
+    private var schedulerStandardLPS: Bool
     private var psFrames: [String]
     private var psFrameBytes: [[UInt8]]
     private var rtFrames: [String]
     private var psSequence: [TimedTextFrame]
     private var rtSequence: [TimedTextFrame]
-    private let ptynEnabled: Bool
-    private let ptynCentered: Bool
-    private let ptynFrames: [String]
-    private let ptynFrameBytes: [[UInt8]]
-    private let ptynSequence: [TimedTextFrame]
-    private let lpsEnabled: Bool
-    private let lpsCentered: Bool
-    private let lpsCR: Bool
-    private let lpsFrames: [String]
-    private let lpsPreparedFrameBytes: [[UInt8]]
-    private let lpsSequence: [TimedTextFrame]
+    private var ptynEnabled: Bool
+    private var ptynCentered: Bool
+    private var ptynRawText: String
+    private var ptynFrames: [String]
+    private var ptynFrameBytes: [[UInt8]]
+    private var ptynSequence: [TimedTextFrame]
+    private var lpsEnabled: Bool
+    private var lpsCentered: Bool
+    private var lpsCR: Bool
+    private var lpsRawText: String
+    private var lpsFrames: [String]
+    private var lpsPreparedFrameBytes: [[UInt8]]
+    private var lpsSequence: [TimedTextFrame]
     private var rtPlusEnabled: Bool
     private var rtPlusFormatA: String
     private var rtPlusFormatB: String
     private var nowPlayingEnabled: Bool
     private let nowPlayingState: NowPlayingState?
-    private let enCT: Bool
-    private let enID: Bool
-    private let eccCode: Int
-    private let licCode: Int
-    private let tzOffset: Double
+    private var enCT: Bool
+    private var enID: Bool
+    private var eccCode: Int
+    private var licCode: Int
+    private var tzOffset: Double
     private let cachedGroup1Variant = ManagedAtomic<Int>(0)
     private let cachedCTMinuteToken = ManagedAtomic<Int>(-1)
     private let cachedCTPacked = ManagedAtomic<UInt64>(0)
@@ -2322,6 +2324,26 @@ final class BasicRDSCoder {
     /// when any of `rtMode2B` / `rtPlusEnabled` change.
     private var cachedAutoSchedule: [RDSGroupSpec] = []
     private var cachedStandardSchedule: [RDSGroupSpec] = []
+    /// Flag set when the operator toggles TA. Per UECP §2.5.1.1 a TA
+    /// edge must produce an immediate "own TA flag change" group ahead
+    /// of the regular schedule so traffic-aware receivers see the flip
+    /// within one group time. We force the next emitted group to be 0A
+    /// (which carries TP/TA in block B) and clear the flag.
+    private var forceNextGroupForTAEdge: Bool = false
+
+    /// Monotonic elapsed-seconds clock for audio-thread elapsed-time
+    /// math (PS/RT/PTYN/LPS sequence advance, applyRDSRuntimeConfig
+    /// seq-start markers). `ProcessInfo.systemUptime` is real-time
+    /// safe — it reads `mach_continuous_time` via the commpage, no
+    /// syscall. `Date()` would also typically resolve via commpage on
+    /// modern Apple platforms but takes a slow path under some
+    /// configurations. Use this for elapsed math; use `Date()` only
+    /// where wall-clock time-of-day is genuinely needed (CT cache
+    /// refresh on the background queue, RT {time}/{date} macros).
+    @inline(__always)
+    private static func monotonicSeconds() -> Double {
+        ProcessInfo.processInfo.systemUptime
+    }
     private var afPointer: Int = 0
     private var ctMinuteLock: Int = -1
     private var psSegment: Int = 0
@@ -2480,6 +2502,7 @@ final class BasicRDSCoder {
         )
         self.ptynEnabled = config.rdsEnablePTYN
         self.ptynCentered = config.rdsPTYNCentered
+        self.ptynRawText = config.rdsPTYN
         self.ptynFrames = Self.parseTimedFrames(
             config.rdsPTYN, width: 8, uppercase: true, center: ptynCentered)
         self.ptynFrameBytes = ptynFrames.map(Self.rdsBytes)
@@ -2488,6 +2511,7 @@ final class BasicRDSCoder {
         self.lpsEnabled = config.rdsEnableLPS
         self.lpsCentered = config.rdsLPSCentered
         self.lpsCR = config.rdsLPSCR
+        self.lpsRawText = config.rdsLongPS32
         self.lpsFrames = Self.parseTimedFrames(
             config.rdsLongPS32, width: 32, uppercase: false, center: lpsCentered)
         self.lpsPreparedFrameBytes = lpsFrames.map {
@@ -2506,7 +2530,7 @@ final class BasicRDSCoder {
         self.licCode = Self.parseHexByte(config.rdsLIC)
         self.tzOffset = config.rdsTZOffset
         self.sampleRate = max(8_000.0, sampleRate)
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Self.monotonicSeconds()
         self.psSeqStart = now
         self.rtSeqStart = now
         self.ptynSeqStart = now
@@ -2547,12 +2571,65 @@ final class BasicRDSCoder {
             text, width: 8, uppercase: true, center: psCentered,
             allowScroll: true, defaultDuration: psFrameSeconds)
         psSeqIndex = 0
-        psSeqStart = Date().timeIntervalSinceReferenceDate
+        psSeqStart = Self.monotonicSeconds()
         psSeqTransmits = 0
         psSegment = 0
     }
 
     func applyRDSRuntimeConfig(_ config: MPXGenerator.RDSRuntimeConfig) {
+        // Master enable + identification ---------------------------------
+        let wasEnabled = enabled
+        enabled = config.enabled
+        if !wasEnabled && enabled {
+            // Re-engage cleanly: reset bit phase + scheduling so the
+            // first transmitted bits are aligned, not whatever was
+            // sitting in the disabled state.
+            bitPhase = 0.0
+            bitBufferIndex = bitBuffer.count
+            scheduleIndex = 0
+        }
+
+        piCode = config.pi
+        pty = max(0, min(31, config.pty))
+        eccCode = config.eccCode
+        licCode = config.licCode
+
+        // Flags ----------------------------------------------------------
+        // Detect TA-edge before the assignment so we can schedule a
+        // forced 0A. Per UECP §2.5.1.1, TA flag transitions trigger
+        // immediate emission ahead of the regular group sequence.
+        let previousTA = taFlag
+        tpFlag = config.tp
+        taFlag = config.ta
+        if previousTA != taFlag {
+            forceNextGroupForTAEdge = true
+        }
+        msFlag = config.ms
+        diStereoFlag = config.diStereo
+        diHeadFlag = config.diHead
+        diCompFlag = config.diComp
+        diDynFlag = config.diDyn
+
+        // Alternative Frequencies ----------------------------------------
+        afEnabled = config.afEnabled
+        afCodes = config.afCodes
+        afMethod = config.afMethod.uppercased()
+        afPointer = 0
+
+        // Clock ----------------------------------------------------------
+        let ctWas = enCT
+        let idWas = enID
+        enCT = config.enableCT
+        enID = config.enableID
+        tzOffset = config.tzOffset
+        // If CT or ID just turned on for the first time since init,
+        // make sure the clock-cache timer is running and pre-populate
+        // the cache so the next 4A/1A schedule entry has data ready.
+        if (!ctWas && enCT) || (!idWas && enID) {
+            startClockCacheIfNeeded()
+        }
+
+        // PS banks -------------------------------------------------------
         let previousBanks = psBanks
         let previousActive = psActiveBankIndex
         let previousCentered = psCentered
@@ -2572,6 +2649,49 @@ final class BasicRDSCoder {
             rebuildPSSequence()
         }
 
+        // PTYN -----------------------------------------------------------
+        let ptynChanged =
+            ptynEnabled != config.ptynEnabled
+            || ptynCentered != config.ptynCentered
+            || ptynRawText != config.ptynText
+        ptynEnabled = config.ptynEnabled
+        ptynCentered = config.ptynCentered
+        ptynRawText = config.ptynText
+        if ptynChanged {
+            ptynFrames = Self.parseTimedFrames(
+                config.ptynText, width: 8, uppercase: true, center: ptynCentered)
+            ptynFrameBytes = ptynFrames.map(Self.rdsBytes)
+            ptynSequence = Self.parseTimedSequence(
+                config.ptynText, width: 8, uppercase: true, center: ptynCentered)
+            ptynSeqIndex = 0
+            ptynSegment = 0
+            ptynFrameIndex = 0
+            ptynSeqTransmits = 0
+            ptynSeqStart = Self.monotonicSeconds()
+        }
+
+        // Long PS --------------------------------------------------------
+        let lpsChanged =
+            lpsEnabled != config.lpsEnabled
+            || lpsCentered != config.lpsCentered
+            || lpsCR != config.lpsCR
+            || lpsRawText != config.longPSText
+        lpsEnabled = config.lpsEnabled
+        lpsCentered = config.lpsCentered
+        lpsCR = config.lpsCR
+        lpsRawText = config.longPSText
+        if lpsChanged {
+            lpsFrames = Self.parseTimedFrames(
+                config.longPSText, width: 32, uppercase: false, center: lpsCentered)
+            lpsPreparedFrameBytes = lpsFrames.map {
+                Self.rdsBytes(lpsCR ? Self.prepareCRFrame($0, width: 32) : $0)
+            }
+            lpsSequence = Self.parseTimedSequence(
+                config.longPSText, width: 32, uppercase: false, center: lpsCentered)
+            lpsSeqStart = Self.monotonicSeconds()
+        }
+
+        // Radiotext ------------------------------------------------------
         rtRawText = config.rtText
         rtRawBuffers =
             Array(config.rtBuffers.prefix(4))
@@ -2591,7 +2711,31 @@ final class BasicRDSCoder {
         rtPlusFormatA = config.rtPlusFormatA
         rtPlusFormatB = config.rtPlusFormatB
         nowPlayingEnabled = config.nowPlayingEnabled
-        if rtMode2B != previousRTMode2B || rtPlusEnabled != previousRTPlusEnabled {
+
+        // Scheduler ------------------------------------------------------
+        let newSchedule = Self.parseGroupSequence(config.groupSequenceRaw)
+        let scheduleChanged =
+            newSchedule.count != schedule.count
+            || zip(newSchedule, schedule).contains { $0.type != $1.type || $0.versionB != $1.versionB }
+        let schedulerFlagsChanged =
+            schedulerAuto != config.schedulerAuto
+            || schedulerStandard != config.schedulerStandard
+            || schedulerStandardLPS != config.schedulerStandardLPS
+        schedule = newSchedule
+        schedulerAuto = config.schedulerAuto
+        schedulerStandard = config.schedulerStandard
+        schedulerStandardLPS = config.schedulerStandardLPS
+
+        if scheduleChanged || schedulerFlagsChanged {
+            scheduleIndex = 0
+        }
+
+        // Rebuild RT-derived caches if mode flipped or RT+ toggled, or
+        // if the schedule shape changed (different cached groups apply).
+        if rtMode2B != previousRTMode2B
+            || rtPlusEnabled != previousRTPlusEnabled
+            || scheduleChanged || schedulerFlagsChanged
+        {
             rebuildScheduleCaches()
         }
 
@@ -2609,7 +2753,7 @@ final class BasicRDSCoder {
             center: rtCentered
         )
 
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Self.monotonicSeconds()
         rtSeqStart = now
         rtSeqIndex = 0
         rtSegment = 0
@@ -2889,6 +3033,15 @@ final class BasicRDSCoder {
             return ctBits
         }
 
+        // TA-edge auto-injection (UECP §2.5.1.1). One forced 0A ahead
+        // of the schedule, then the schedule resumes from where it was.
+        // CT (above) takes priority — it's minute-aligned and cannot be
+        // deferred.
+        if forceNextGroupForTAEdge {
+            forceNextGroupForTAEdge = false
+            return buildGroup0(versionB: false)
+        }
+
         let activeSchedule: [RDSGroupSpec]
         if schedulerStandard {
             activeSchedule = cachedStandardSchedule
@@ -2949,7 +3102,9 @@ final class BasicRDSCoder {
         let b3Value: Int
         if versionB {
             b3Value = piCode
-        } else if afEnabled, afMethod == "A", !afCodes.isEmpty {
+        } else if afEnabled, !afCodes.isEmpty {
+            // Both Method A and Method B emit via the same dispatcher;
+            // it switches internally on `afMethod`.
             b3Value = nextAFBlockValue()
         } else {
             b3Value = 0xE0E0
@@ -3275,6 +3430,9 @@ final class BasicRDSCoder {
             // once-per-minute CT burst right after startup.
             ctMinuteLock = cached.minuteToken
         }
+        // Idempotent: if a timer is already running (e.g. from init or a
+        // prior live-toggle), keep it instead of leaking a second one.
+        guard clockUpdateTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: clockUpdateQueue)
         timer.schedule(deadline: .now() + .milliseconds(250), repeating: .seconds(1))
         timer.setEventHandler { [weak self] in
@@ -3364,6 +3522,20 @@ final class BasicRDSCoder {
 
     private func nextAFBlockValue() -> Int {
         guard !afCodes.isEmpty else { return 0xE0E0 }
+        if afMethod == "B" {
+            return nextAFBlockValueMethodB()
+        }
+        return nextAFBlockValueMethodA()
+    }
+
+    /// Method A (EN 50067 §3.2.1.6.4 / IEC 62106-2 §7.5.2): flat AF
+    /// list. First block carries `(count_code, freq[0])`; subsequent
+    /// blocks carry pairs `(freq[N], freq[N+1])`. Filler 0xCD (205)
+    /// pads odd-count tails. Receivers cannot tell Method A from B
+    /// from a single 0A — they deduce by tuned-frequency repetition
+    /// across many groups (Method B repeats the tuned frequency in
+    /// every pair; Method A does not).
+    private func nextAFBlockValueMethodA() -> Int {
         if afPointer == 0 {
             afPointer = 1
             let countCode = (224 + min(25, afCodes.count)) & 0xFF
@@ -3384,6 +3556,41 @@ final class BasicRDSCoder {
         return (f1 << 8) | f2
     }
 
+    /// Method B (EN 50067 §3.2.1.6.4 / IEC 62106-2 §7.5.3): tuned
+    /// frequency repeated in every pair so receivers can group AF
+    /// lists across regional variants. Convention: `afCodes[0]` is
+    /// the tuned frequency; `afCodes[1...]` are alternatives. Each
+    /// 0A block C carries:
+    ///   1st block:    (count_code, tuned)
+    ///   subsequent:   (tuned, alternative[N])
+    /// Method B caps lists at 12 pairs (EN 50067 §3.2.1.6.4); we
+    /// honour that by limiting the count code to 224+12=236 max
+    /// when the operator configures more frequencies.
+    /// Falls back to Method A semantics if afCodes has only the
+    /// tuned frequency (no alternatives to pair with).
+    private func nextAFBlockValueMethodB() -> Int {
+        guard afCodes.count >= 2 else {
+            return nextAFBlockValueMethodA()
+        }
+        let tuned = afCodes[0] & 0xFF
+        let altCount = afCodes.count - 1
+        if afPointer == 0 {
+            afPointer = 1
+            // Count = tuned + alternatives. EN 50067 caps Method B at
+            // 12 pairs; clamp accordingly.
+            let totalFreqs = min(13, 1 + altCount)
+            let countCode = (224 + totalFreqs) & 0xFF
+            return (countCode << 8) | tuned
+        }
+        let altIndex = afPointer
+        let alt = afCodes[min(altIndex, afCodes.count - 1)] & 0xFF
+        afPointer += 1
+        if afPointer >= afCodes.count {
+            afPointer = 0
+        }
+        return (tuned << 8) | alt
+    }
+
     static func shouldAdvanceSequence(
         _ frame: TimedTextFrame, seqStart: Double, transmits: Int, now: Double
     ) -> Bool {
@@ -3395,7 +3602,7 @@ final class BasicRDSCoder {
 
     private func updatePSSequenceIfNeeded() {
         guard !psSequence.isEmpty else { return }
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Self.monotonicSeconds()
         let current = psSequence[min(psSeqIndex, psSequence.count - 1)]
         if Self.shouldAdvanceSequence(
             current, seqStart: psSeqStart, transmits: psSeqTransmits, now: now
@@ -3409,7 +3616,7 @@ final class BasicRDSCoder {
 
     private func updatePTYNSequenceIfNeeded() {
         guard !ptynSequence.isEmpty else { return }
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Self.monotonicSeconds()
         let current = ptynSequence[min(ptynSeqIndex, ptynSequence.count - 1)]
         if Self.shouldAdvanceSequence(
             current, seqStart: ptynSeqStart, transmits: ptynSeqTransmits, now: now
@@ -3423,7 +3630,7 @@ final class BasicRDSCoder {
 
     private func updateLPSSequenceIfNeeded() {
         guard !lpsSequence.isEmpty else { return }
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Self.monotonicSeconds()
         let current = lpsSequence[min(lpsSeqIndex, lpsSequence.count - 1)]
         if Self.shouldAdvanceSequence(
             current, seqStart: lpsSeqStart, transmits: lpsSeqTransmits, now: now
@@ -3483,7 +3690,7 @@ final class BasicRDSCoder {
         }
 
         let total = sequence.reduce(0.0) { $0 + max(0.1, $1.duration) }
-        let elapsed = (Date().timeIntervalSinceReferenceDate - rtSeqStart).truncatingRemainder(
+        let elapsed = (Self.monotonicSeconds() - rtSeqStart).truncatingRemainder(
             dividingBy: max(0.1, total)
         )
         var acc = 0.0
@@ -3606,7 +3813,7 @@ final class BasicRDSCoder {
             return (frame, Self.rdsBytes(frame))
         }
 
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Self.monotonicSeconds()
         let current = rtSequence[min(rtSeqIndex, rtSequence.count - 1)]
         if Self.shouldAdvanceSequence(
             current, seqStart: rtSeqStart, transmits: rtSeqTransmits, now: now
@@ -3712,7 +3919,7 @@ final class BasicRDSCoder {
         return ((reg >> 16) & 0x03FF) ^ offset
     }
 
-    private static func parseHexWord(_ text: String) -> Int {
+    static func parseHexWord(_ text: String) -> Int {
         let upper = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         let cleaned = upper.filter { ch in
             switch ch {
@@ -4244,7 +4451,7 @@ final class BasicRDSCoder {
         return withCR + String(repeating: " ", count: width - withCR.count)
     }
 
-    private static func parseAFList(_ raw: String) -> [Int] {
+    static func parseAFList(_ raw: String) -> [Int] {
         let tokens = raw.split(separator: ",").map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -4258,7 +4465,7 @@ final class BasicRDSCoder {
         return out
     }
 
-    private static func parseHexByte(_ raw: String) -> Int {
+    static func parseHexByte(_ raw: String) -> Int {
         let cleaned =
             raw
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4566,7 +4773,46 @@ final class MPXGenerator {
         let compositeClipperCancelRDS: Bool
     }
 
+    /// Runtime-applicable RDS state. Anything an operator can change
+    /// without restarting transport flows through this struct. The
+    /// only RDS settings NOT here are physical-layer (subcarrier
+    /// frequency, Gaussian shaping FIR, RDS injection level) — those
+    /// touch DSP allocation and stay restart-only.
     struct RDSRuntimeConfig: Equatable {
+        // Master + injection
+        let enabled: Bool
+
+        // Identification
+        let pi: Int
+        let pty: Int
+        let ptynText: String
+        let ptynEnabled: Bool
+        let ptynCentered: Bool
+        let eccCode: Int
+        let licCode: Int
+
+        // Flags (operationally toggled)
+        let tp: Bool
+        let ta: Bool
+        let ms: Bool
+        let diStereo: Bool
+        let diHead: Bool
+        let diComp: Bool
+        let diDyn: Bool
+
+        // Program Service
+        let psBanks: [String]        // 4 PS text banks (A, B, C, D)
+        let psActiveBank: String     // "A" / "B" / "C" / "D"
+        let psCentered: Bool
+        let psFrameSeconds: Double   // fallback per-segment duration when no Ns: marker
+
+        // Long PS (15A)
+        let longPSText: String
+        let lpsEnabled: Bool
+        let lpsCentered: Bool
+        let lpsCR: Bool
+
+        // Radiotext + RT+
         let rtText: String
         let rtBuffers: [String]
         let rtBufferEnabled: [Bool]
@@ -4580,10 +4826,82 @@ final class MPXGenerator {
         let rtPlusFormatA: String
         let rtPlusFormatB: String
         let nowPlayingEnabled: Bool
-        let psBanks: [String]        // 4 PS text banks (A, B, C, D)
-        let psActiveBank: String     // "A" / "B" / "C" / "D"
-        let psCentered: Bool
-        let psFrameSeconds: Double   // fallback per-segment duration when no Ns: marker
+
+        // Alternative Frequencies
+        let afEnabled: Bool
+        let afCodes: [Int]
+        let afMethod: String
+
+        // Clock + scheduler
+        let enableCT: Bool
+        let enableID: Bool
+        let tzOffset: Double
+        /// Raw `0A 0A 2A 0A` group-sequence string. Parsed by the
+        /// consumer; keeps RDSRuntimeConfig free of file-private types.
+        let groupSequenceRaw: String
+        let schedulerAuto: Bool
+        let schedulerStandard: Bool
+        let schedulerStandardLPS: Bool
+
+        /// Build a runtime config snapshot from the current `AppConfig`.
+        /// Single source of truth for the AppConfig → RDS-runtime mapping
+        /// (used by both `AudioOutputEngine.applyRDSRuntimeConfig` and
+        /// the test suite).
+        static func make(from config: AppConfig) -> RDSRuntimeConfig {
+            RDSRuntimeConfig(
+                enabled: config.enRDS && config.rdsLevel > 0.0,
+                pi: BasicRDSCoder.parseHexWord(config.rdsPI),
+                pty: max(0, min(31, config.rdsPTY)),
+                ptynText: config.rdsPTYN,
+                ptynEnabled: config.rdsEnablePTYN,
+                ptynCentered: config.rdsPTYNCentered,
+                eccCode: BasicRDSCoder.parseHexByte(config.rdsECC),
+                licCode: BasicRDSCoder.parseHexByte(config.rdsLIC),
+                tp: config.rdsTP,
+                ta: config.rdsTA,
+                ms: config.rdsMS,
+                diStereo: config.rdsDI_STEREO,
+                diHead: config.rdsDI_HEAD,
+                diComp: config.rdsDI_COMP,
+                diDyn: config.rdsDI_DYN,
+                psBanks: [config.rdsPSA, config.rdsPSB, config.rdsPSC, config.rdsPSD],
+                psActiveBank: config.rdsPSActiveBank,
+                psCentered: config.rdsPSCentered,
+                psFrameSeconds: config.rdsPSFrameSeconds,
+                longPSText: config.rdsLongPS32,
+                lpsEnabled: config.rdsEnableLPS,
+                lpsCentered: config.rdsLPSCentered,
+                lpsCR: config.rdsLPSCR,
+                rtText: config.rdsRTText,
+                rtBuffers: [config.rdsRTA, config.rdsRTB, config.rdsRTC, config.rdsRTD],
+                rtBufferEnabled: [
+                    config.rdsRTBufferAEnabled,
+                    config.rdsRTBufferBEnabled,
+                    config.rdsRTBufferCEnabled,
+                    config.rdsRTBufferDEnabled,
+                ],
+                rtCR: config.rdsRTCR,
+                rtCentered: config.rdsRTCentered,
+                rtMode2B: config.rdsRTMode.uppercased() == "2B",
+                rtCycleTime: config.rdsRTCycleTime,
+                rtCycleAB: config.rdsRTCycleAB,
+                rtABCycleCount: config.rdsRTABCycleCount,
+                rtPlusEnabled: config.rdsEnableRTPlus,
+                rtPlusFormatA: config.rdsRTPlusFormatA,
+                rtPlusFormatB: config.rdsRTPlusFormatB,
+                nowPlayingEnabled: config.rdsNowPlayingEnabled,
+                afEnabled: config.rdsEnableAF,
+                afCodes: BasicRDSCoder.parseAFList(config.rdsAFList),
+                afMethod: config.rdsAFMethod,
+                enableCT: config.rdsEnableCT,
+                enableID: config.rdsEnableID,
+                tzOffset: config.rdsTZOffset,
+                groupSequenceRaw: config.rdsGroupSequence,
+                schedulerAuto: config.rdsSchedulerAuto,
+                schedulerStandard: config.rdsSchedulerStandard,
+                schedulerStandardLPS: config.rdsSchedulerStandardLPS
+            )
+        }
     }
 
     private var sampleRate: Float

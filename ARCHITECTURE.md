@@ -226,6 +226,102 @@ The choice is resolved once per engine start by `AudioOutputEngine.start()` via 
 
 `DSPThroughputTests.preEmphasisDoesNotExplodeFullChainCost` and `EncoderBandwidthTests` guard this stage: the former catches any regression in the combined limiter+encoder cost on HF-rich program, the latter characterises the FIR's stop-band depth directly and asserts a ≥20 dB gap over the Butterworth baseline.
 
+## RDS encoder (`BasicRDSCoder`)
+
+### Group repertoire
+
+| Group | Purpose | Builder |
+|---|---|---|
+| **0A** | PS + AF + flags | `buildGroup0(versionB: false)` |
+| **0B** | PS + PI repeat (no AF) | `buildGroup0(versionB: true)` |
+| **1A** | Slow Labelling — ECC + LIC variants | `buildGroup1A` |
+| **2A / 2B** | Radiotext (64-char / 32-char) | `buildGroup2(versionB:)` |
+| **3A** | ODA registration (RT+ AID 0x4BD7) | `buildGroup3A` |
+| **4A** | Clock Time — MJD + hour + minute + TZ | `buildClockTimeGroupImmediate` |
+| **10A** | PTYN (8-char Program Type Name) | `buildGroup10A` |
+| **11A** | RT+ tags via ODA | `buildGroup11A` |
+| **15A** | Long PS — 32-char (basic-RDS character set) | `buildGroup15A` |
+
+Not currently implemented: 14A/14B (EON), 8A (TMC), 9A (EWS), 6A (IH),
+5A/7A/13A (paging), 12A (other ODA). Multi-PSN / Data Sets — single PI only.
+
+### Bit-level correctness
+
+- 1187.5 bit/s (57000/48), differential coding, biphase impulse shaping,
+  Gaussian shaping FIR (configurable BW + taps).
+- CRC polynomial 0x5B9; offset words A=0x0FC, B=0x198, C=0x168,
+  Cp=0x1E0, D=0x1B4 per IEC 62106-2 Table 2.
+- 57 kHz subcarrier locked to 19 kHz pilot at 3:1 phase ratio
+  (`nextSampleWithPilotLock`).
+- AF Method A and Method B encoding both supported; Method B repeats
+  the tuned frequency per pair so receivers can group AF lists across
+  regional variants (EN 50067 §3.2.1.6.4 / IEC 62106-2 §7.5.3).
+
+### Live-apply pipeline
+
+`AppConfig` is the source-of-truth for every RDS setting. Edits flow
+through `RDSRuntimeConfig.make(from: AppConfig)` (single canonical
+factory used by both `AudioOutputEngine.applyRDSRuntimeConfig` and
+the test suite) into the audio thread, which calls
+`BasicRDSCoder.applyRDSRuntimeConfig(_:)` at the head of the next
+render block.
+
+The runtime-apply path rebuilds derived caches (PTYN frames, Long PS
+frames, `psSequence`, `rtSequence`, group schedule) only when the
+inputs that affect them change. Other fields (PI, PTY, flag bits,
+TZ offset, scheduler enables) are direct assignments.
+
+| Setting category | Disposition |
+|---|---|
+| Master enable, all flags (TP/TA/MS/DI) | Live |
+| Identification (PI, PTY, PTYN, ECC, LIC) | Live |
+| All text content (PS, RT, RT+, PTYN, Long PS) | Live |
+| Alternative frequencies + method | Live |
+| Group sequence + scheduler policy + CT/ID/TZ | Live |
+| RDS injection level (`rds_level`) | Restart-only |
+| Subcarrier frequency (`rds_freq`) | Restart-only |
+| Gaussian shaping (BW + taps) | Restart-only |
+
+The restart-only settings reconfigure the modulator FIR at engine
+start and cannot be live-applied without a render-thread allocation.
+
+### TA-edge auto-injection
+
+Per UECP §2.5.1.1, TA flag transitions force an immediate Group 0A
+ahead of the regular schedule so traffic-aware receivers see the
+flip within one group time. `applyRDSRuntimeConfig` detects the edge
+by diffing the previous flag value before assignment; `nextGroupBits`
+honours the resulting force flag (after CT, which keeps priority
+because it's minute-aligned).
+
+### Real-time safety
+
+- Pre-allocated 104-byte bit buffer (`bitBuffer`) reused across
+  `buildGroupBits` calls; subscript-assigned in place. Test callers
+  trigger Swift CoW for retained references — paid by the test, not
+  the audio thread.
+- Cached `cachedAutoSchedule` / `cachedStandardSchedule` — rebuilt
+  only when `rtMode2B` / `rtPlusEnabled` / `rdsGroupSequence` change.
+- Atomic CT cache (`cachedCTMinuteToken` + `cachedCTPacked`) updated
+  from the background `clockUpdateQueue` once per second.
+- Audio-thread elapsed-time math uses `BasicRDSCoder.monotonicSeconds()`
+  (`ProcessInfo.systemUptime`, commpage-backed `mach_continuous_time`,
+  no syscall) instead of `Date()`. `Date()` is retained only on the
+  background CT-refresh path and the RT `{time}/{date}` macro
+  expansion.
+
+### Standards references
+
+- EN 50067:1998 — original RDS standard. PI / PS / RT / AF / EON / CT
+  / TDC / IH / EWS / RP / TMC / ODA feature taxonomy.
+- IEC 62106-2:2018 — current RDS bit-level spec (extends Long PS
+  with UTF-8 character set; UTF-8 toggle not currently implemented).
+- IEC 62106-6:2023 — RT+ / ODA / eRT extensions.
+- UECP SPB 490 v7.05 — encoder control protocol (not currently
+  implemented; TA-edge behaviour follows the §2.5.1.1 pattern).
+
+PDFs in `/documents/` for reference.
+
 ## General DSP notes
 
 - Orbass is intentionally conservative. It uses adaptive low-band enhancement with restrained harmonic and optional subharmonic support, plus gated makeup behavior to reduce bass pumping and low-level artifacts.

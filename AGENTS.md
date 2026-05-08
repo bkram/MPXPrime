@@ -51,18 +51,23 @@ Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not XCTe
 ### Layout
 - `macOS/Sources/MPXPrime/` — all runtime code (no sub-modules)
   - `main.swift` — CLI entry, arg parsing, verify-mode dispatch
-  - `AppConfig.swift` — INI-backed config model + live-apply routing (`RuntimeConfig`)
+  - `AppConfig.swift` — INI-backed config model + live-apply routing (`RuntimeConfig`, `RDSRuntimeConfig`)
   - `INIParser.swift`, `AudioDevices.swift` — file and CoreAudio plumbing
   - `AudioOutputEngine.swift` — AVAudioEngine lifecycle, input tap, render callback
-  - `MPXGenerator.swift` (~6200 lines) — DSP core. All stages of the chain live here
+  - `MPXGenerator.swift` (~7100 lines) — DSP core + `BasicRDSCoder`. All stages of the chain live here
   - `StereoInputRingBuffer.swift` — lock-free input → render bridge
-  - `SwiftUIControlApp.swift` (~6800 lines) — SwiftUI views + view-model state
+  - `SwiftUIControlApp.swift` (~7000 lines) — SwiftUI views + view-model state
+  - `UIBroadcastStatusBar.swift` / `UIBroadcastMeter.swift` / `UIBroadcastStyle.swift` — pinned-top status header, vertical meter strips, shared style tokens
+  - `UISignalFlowStrip.swift` — read-only DSP-chain pill strip
+  - `UIInspector.swift` — stage-aware right-pane inspector
+  - `UIProcessingOverview.swift` — Processing-section landing grid (per-stage cards)
   - `VerificationHarness.swift` / `VerifierBaseline.swift` — offline scenario renderer + baseline compare
   - `NowPlayingSupport.swift` — external script polling for RDS RT metadata
-- `macOS/Tests/MPXPrimeTests/` — Swift Testing suite (DSP primitives, ring buffer, analysis helpers)
+- `macOS/Tests/MPXPrimeTests/` — Swift Testing suite (DSP primitives, ring buffer, analysis helpers, RDS bitstream + live-apply)
 - `macOS/verifier_baselines/` — JSON baselines + `ClipperAliasingBaseline.md` documenting pre-Phase-7.1 aliasing so post-refactor deltas are attributable
 - `macOS/{MPXPrime.ini,Verification.ini}` — sample configs; user config lives at `~/Library/Application Support/MPX Prime/MPX Prime.ini`
-- `documents/` — standards PDFs (EN 50067 / IEC 62106 etc.)
+- `documents/` — standards PDFs (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
+- `.vscode/settings.json` — sets `swift.searchSubfoldersForPackages: true` so sourcekit-lsp discovers `macOS/Package.swift` (workspace root is the repo root, package lives one level down)
 
 ### Signal chain (critical invariants)
 
@@ -87,15 +92,27 @@ RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. RDS ca
 
 ### Configuration + live-apply
 
-`AppConfig` maps INI keys to runtime settings. Many DSP params are **live-apply** via `RuntimeConfig` (no engine restart). A few are restart-only. When adding a setting, classify it explicitly — the README and `plan.md` track open smoke-test gaps here.
+`AppConfig` maps INI keys to runtime settings. Most DSP params and **every operationally-toggled RDS setting** are live-apply (no engine restart); a few are restart-only. When adding a setting, classify it explicitly via `runtimeDisposition:`.
+
+Three live-apply dispositions:
+
+- `.live` — DSP-domain setting. Routes through `applyLiveRuntimeConfigIfRunning` → `RuntimeConfig` → audio thread.
+- `.liveRDS` — RDS-domain setting. Routes through `applyLiveRDSConfigIfRunning` → `RDSRuntimeConfig` → `BasicRDSCoder.applyRDSRuntimeConfig`. The `RDSRuntimeConfig.make(from: AppConfig)` factory is the single canonical AppConfig→runtime mapping; both the engine builder and the test suite call it.
+- `.restart` — requires transport stop/start. Use this for physical-layer settings that reconfigure the modulator FIR / oversampler / sample-rate plumbing.
+- `.none` — handled via a side channel (e.g. now-playing script reload), no runtime apply needed.
+
+RDS settings that stay restart-only: `rds_level` (injection kHz), `rds_freq` (subcarrier frequency), `rds_gaussian_*` (FIR taps + BW). Everything else — master enable, PI, PTY, PTYN, ECC, LIC, TP/TA/MS/DI, AF list/method, group sequence, scheduler, CT/ID/TZ, all RT/PS/Long PS text — applies live.
+
+When toggling `rds_ta` live, `BasicRDSCoder.applyRDSRuntimeConfig` sets `forceNextGroupForTAEdge`. The next `nextGroupBits()` call honours it by emitting a forced 0A ahead of the schedule (UECP §2.5.1.1). CT (4A, minute-aligned) keeps higher priority than the TA-edge force flag.
 
 Verification.ini key name collisions are a known sharp edge — when adding a setting, grep `AppConfig.swift` for the exact config-key string before naming a new one. The composite clipper itself uses `mpx_clipper_*` keys; the legacy `composite_clipper_enabled` key (which used to control the now-removed composite limiter) was deleted in 0.11.
 
 ### Threading
 
-- **Audio render callback**: real-time thread. Lock-free, allocation-free. No blocking I/O, no dispatch, no `Task { ... }`, no string formatting, no `NSRegularExpression` compilation. Cache compiled regex as `static let`.
+- **Audio render callback**: real-time thread. Lock-free, allocation-free. No blocking I/O, no dispatch, no `Task { ... }`, no string formatting, no `NSRegularExpression` compilation. Cache compiled regex as `static let`. **Use `BasicRDSCoder.monotonicSeconds()` (`ProcessInfo.systemUptime`, commpage-backed) for elapsed-time math, not `Date()`** — the only `Date()` calls retained on a render-reachable path are the RT `{time}/{date}` macro substitution (justified — needs wall clock) and the CT cache refresh (runs on background queue). New code must follow the same pattern.
 - **Main thread**: SwiftUI UI. For timer callbacks into `@MainActor` state, use `MainActor.assumeIsolated {}`, **not** `Task { @MainActor in ... }` — the latter heap-allocates and accumulates pressure on long-running meters.
 - **Background metering**: `.userInteractive` QoS dispatch queue. Skip calculations when `meteringEnabled` is false (UI not visible).
+- **RDS clock cache**: `clockUpdateQueue` (utility QoS) refreshes the atomic CT cache once per second. `enCT` / `enID` toggling on at runtime calls `startClockCacheIfNeeded()` to prime + start the timer if it isn't already running (idempotent).
 
 Hot-path optimization: prefer `vDSP_*` (Accelerate) over Swift loops. Pre-allocate buffers at engine start. Use `@inline(__always)` on tiny hot helpers. CPU profiling: use Instruments (Time Profiler).
 

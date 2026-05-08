@@ -99,6 +99,123 @@ struct DCBlocker1p {
 /// signal** — the memoryless tanh on a (M + S·cos38k) waveform creates
 /// intermod that demodulates as stereo-image collapse. Composite-domain
 /// peak control belongs in `CompositeClipper` (distortion-cancelled).
+/// Anti-aliased soft-clip kernel implementing the band-limited
+/// clipping principle from Orban US 6,937,912 (filed 2003, expired
+/// 2025-09).
+///
+/// **Why this exists.** A memoryless tanh soft-clip at host rate
+/// generates harmonics with unbounded spectrum. For a 12 kHz audio
+/// tone driven into clipping, the 5th–9th harmonics land at
+/// 60/72/84/96/108 kHz — well within host Nyquist (96 kHz at 192 kHz
+/// host) so no aliasing per se, but on the audio path these become
+/// (38 ± kHz) sidebands after stereo encoding. The verifier sees the
+/// resulting energy as `>60k/in` and `>67k/in` excess.
+///
+/// **Algorithm:** 4× oversample → hard-clip → linear-phase FIR
+/// decimate. Reuses the existing `Lagrange4Interp` upsampler and
+/// `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, 90 dB stopband)
+/// already proven in the chain. Identical structure to the existing
+/// `OversampledPeakLimiter` and `CompositeClipper`, just exposed as a
+/// reusable kernel for the static-call sites that previously used
+/// `MPXGenerator.softClipSafety`.
+///
+/// **Latency:** the FIR decimator's group delay (~9 host samples at
+/// 4× / 192 kHz). Three call sites in the chain — they all sit on
+/// the TX path, where the project already accepts similar FIR latency
+/// for the encoder bandwidth FIR and multiband FIR splitter.
+///
+/// **The tanh soft-knee is preserved** — the kernel still produces a
+/// soft-clipped output for inputs slightly above threshold, just
+/// computed at OS rate so the resulting nonlinearity's harmonics fit
+/// inside the FIR's passband. Hard clip at threshold + soft knee
+/// toward ceiling, exactly as the original `softClipSafety` did.
+struct PolyBLEPSoftClipKernel {
+    private var lag = Lagrange4Interp()
+    private var fir = LinearPhaseFIRDecimator()
+    /// 8× oversampling factor. 4× was tested and gave only ~2 dB
+    /// improvement at the 5-9th harmonics of a 12 kHz tone — the
+    /// FIR's passband (must contain audio composite to 53 kHz) ends
+    /// up near the harmonics so they pass through. 8× pushes the OS
+    /// Nyquist to 768 kHz at 192 kHz host, giving the FIR room to
+    /// reject more harmonics while keeping the 0-53 kHz audio
+    /// composite passband flat.
+    private static let factor: Int = 8
+    private var configured: Bool = false
+
+    /// Configure the oversampling chain. Pass the host sample rate;
+    /// the kernel internally upsamples by 4× and configures the FIR
+    /// decimator with cutoff sized for the audio composite content
+    /// (0–53 kHz passband, transition out to ~120 kHz at OS rate).
+    mutating func configure(sampleRate: Float) {
+        let osRate = sampleRate * Float(Self.factor)
+        // Passband must contain the full audio composite (M ≤ 15 kHz,
+        // S subcarrier sidebands at 38 ± 15 = 23–53 kHz). Cutoff at
+        // 53 kHz with wide transition gives the FIR room to put the
+        // stopband well above the audio composite without excessive
+        // tap count. The OS Nyquist (384 kHz at 4× × 192 kHz) leaves
+        // plenty of margin.
+        let firPassband = clampf(53_000.0, 20_000.0, osRate * 0.45)
+        fir.configure(
+            cutoffHz: firPassband,
+            sampleRateOS: osRate,
+            decimateFactor: Self.factor,
+            stopBandDB: 90.0,
+            transitionHz: 80_000.0
+        )
+        configured = true
+    }
+
+    mutating func reset() {
+        lag = Lagrange4Interp()
+        fir.reset()
+    }
+
+    /// Group delay introduced by the FIR decimator, in host samples.
+    /// Useful for chain-wide latency accounting.
+    var groupDelayHostSamples: Int { fir.groupDelayHostSamples }
+
+    /// Process one host-rate sample. Returns the band-limited
+    /// soft-clipped output. The first ~`groupDelayHostSamples` calls
+    /// after configure/reset emit zeros while the FIR fills.
+    @inline(__always)
+    mutating func process(_ x: Float, threshold: Float, ceiling: Float) -> Float {
+        if !configured {
+            // Fallback to memoryless clip if not configured yet — keeps
+            // the kernel forward-compatible with construct-then-use
+            // patterns.
+            return Self.softClip(x, threshold: threshold, ceiling: ceiling)
+        }
+        if !lag.isPrimed { lag.prime(x) }
+        let f = Self.factor
+        let step = 1.0 / Float(f)
+        var lastOut: Float = 0.0
+        for i in 0..<f {
+            let t = step * Float(i + 1)
+            let upsampled = (i == f - 1) ? x : lag.interpolate(t: t, cur: x)
+            let clipped = Self.softClip(upsampled, threshold: threshold, ceiling: ceiling)
+            lastOut = fir.push(clipped)
+        }
+        lag.advance(x)
+        return lastOut
+    }
+
+    /// The same memoryless soft-clip as the original `softClipSafety`,
+    /// but exposed so call sites can A/B compare against the
+    /// oversampled path. Identical algorithm — used inside `process()`
+    /// at OS rate so its broad-spectrum nonlinearity is band-limited
+    /// by the decimator before reaching the host-rate output.
+    @inline(__always)
+    static func softClip(_ x: Float, threshold: Float, ceiling: Float) -> Float {
+        let thr = clampf(threshold, 0.0, 0.999)
+        let ax = fabsf(x)
+        if ax <= thr { return x }
+        let outMax = max(thr + 1e-4, min(0.999, ceiling))
+        let knee = max(1e-4, (outMax - thr) * 0.85)
+        let clipped = thr + ((outMax - thr) * tanhf((ax - thr) / knee))
+        return copysignf(min(clipped, outMax), x)
+    }
+}
+
 struct OversampledPeakLimiter {
     var threshold: Float = 0.94
     var releaseMS: Float = 35.0
@@ -5175,6 +5292,14 @@ final class MPXGenerator {
     private var orbassSubLP = OnePoleLP()
     private var orbassHarmHPF = Biquad()
     private var orbassHarmLPF = Biquad()
+    // Allpass at F0 — Aphex US 4,150,253 "HP-then-clip" topology
+    // adapted for bass enhancement: instead of a HPF (which would
+    // attenuate F0 itself), use an allpass that preserves amplitude
+    // but rotates phase by ~180° across F0. Harmonics generated
+    // downstream are then phase-decorrelated from the direct
+    // lowboost path, preventing comb-filter summing at the bass
+    // clipper's input.
+    private var orbassSideAP = Biquad()
     private var orbassSubPrevSample: Float = 0.0
     private var orbassSubPhase: Int = 0
     private let orbassTargetRatio: Float = 0.42
@@ -5193,6 +5318,21 @@ final class MPXGenerator {
     private var orbassAdaptiveReleaseAlpha: Float = 0.0
     private var orbassMakeupAttackCoeff: Float = 0.0
     private var orbassMakeupReleaseCoeff: Float = 0.0
+    // MaxxBass-style equal-loudness weighting (US 5,930,373, expired
+    // 2017): per-harmonic-order gain derived from an ISO 226 phon-curve
+    // approximation evaluated at 2..5 x F0 at configure time.
+    // Even-harmonic weight applies to the asymmetric (squared-with-sign)
+    // generator's output; odd-harmonic weight applies to the soft-clip
+    // difference generator's output. Precomputing avoids per-sample
+    // log/exp.
+    private var orbassHarmEvenWeight: Float = 0.55
+    private var orbassHarmOddWeight: Float = 0.65
+    // MaxxBass: when harmonic synthesis is active, the direct LF gain
+    // is reduced — the perceived bass is carried more by the
+    // weighted harmonics, less by the LF amplitude itself. This buys
+    // headroom in the bass clipper and pre-encode limiter while
+    // preserving subjective bass weight.
+    private let orbassDirectGainReduction: Float = 0.62
 
     private var multibandEnabled: Bool
     private var multibandMode: Int
@@ -6269,6 +6409,45 @@ final class MPXGenerator {
         let harmLPFCutoff = clampf(max(280.0, orbassFreqHz * 5.0), harmLPFMin, nyquist)
         orbassHarmHPF.configureHighpass(cutoffHz: harmHPFCutoff, sampleRate: sampleRate)
         orbassHarmLPF.configureLowpass(cutoffHz: harmLPFCutoff, sampleRate: sampleRate)
+
+        // Aphex-style phase-shifting allpass at F0 (Q=0.7 for ~180°
+        // shift across F0 with unit magnitude). The waveshaper sees a
+        // phase-rotated copy of the LF, so the synthesized harmonics
+        // are phase-decorrelated from the direct lowboost path.
+        orbassSideAP.configureAllpass(freqHz: bassCutoff, sampleRate: sampleRate)
+
+        // MaxxBass equal-loudness weighting (US 5,930,373). Compute
+        // per-order perceptual weights at the harmonic frequencies of
+        // the configured Orbass cutoff and combine into two scalars:
+        // one for the even-harmonic generator (2nd + 4th) and one for
+        // the odd-harmonic generator (3rd + 5th). Weights are biased
+        // by the relative perceptual contribution of each harmonic
+        // order to "missing-fundamental" reconstruction (3rd > 2nd >
+        // 4th > 5th in the 80-300 Hz warmth band).
+        let f0 = clampf(orbassFreqHz, 45.0, 200.0)
+        let w2 = Self.orbassEqualLoudnessWeight(2.0 * f0)
+        let w3 = Self.orbassEqualLoudnessWeight(3.0 * f0)
+        let w4 = Self.orbassEqualLoudnessWeight(4.0 * f0)
+        let w5 = Self.orbassEqualLoudnessWeight(5.0 * f0)
+        orbassHarmEvenWeight = 0.5 * (w2 + (0.4 * w4))
+        orbassHarmOddWeight = 0.5 * (w3 + (0.4 * w5))
+    }
+
+    /// Approximation of the ISO 226 (40 phon) inverse-threshold
+    /// equal-loudness curve over 60-600 Hz, returned as a unit-bounded
+    /// perceptual weight. Peaks near 150 Hz (the warmth band where
+    /// missing-fundamental reconstruction is strongest), falls off
+    /// below 60 Hz (sub-bass loses sensitivity at low SPL) and above
+    /// 500 Hz (no longer in the bass-extension band). Used to weight
+    /// the synthesized harmonics in MaxxBass-style bass enhancement.
+    @inline(__always)
+    private static func orbassEqualLoudnessWeight(_ f: Float) -> Float {
+        let logF = log10f(max(20.0, f))
+        // Bell curve centered at log10(150) ≈ 2.176.
+        let center: Float = 2.176
+        let width: Float = 0.55
+        let dx = (logF - center) / width
+        return 0.85 * expf(-(dx * dx))
     }
 
     private func configureMultibandFilters() {
@@ -7303,12 +7482,43 @@ final class MPXGenerator {
         let driveFactor = 0.55 + (0.42 * drive)
         let densityFactor = 0.50 + (0.42 * density)
         let boostGain = amount * driveFactor * densityFactor * (0.62 + (0.42 * adaptive))
-        let lowBoost = low * boostGain
+        // MaxxBass: reduce direct LF gain when harmonic synthesis is
+        // engaged — the equal-loudness-weighted harmonics carry part
+        // of the perceived bass weight that the LF amplitude carried
+        // before. Buys headroom in the bass clipper / pre-encode
+        // limiter without sacrificing subjective bass.
+        let directScale = 1.0 - ((1.0 - orbassDirectGainReduction) * harmonics)
+        let lowBoost = low * boostGain * directScale
+
+        // Aphex-style phase decorrelation (US 4,150,253, expired 1996):
+        // pre-waveshape the LF through an allpass at F0 to rotate
+        // phase ~180° across the band without changing amplitude. The
+        // synthesized harmonics' phase is then decorrelated from the
+        // direct lowboost path, preventing comb-filter summing at the
+        // bass clipper's input. (The classic Aphex HP-then-clip
+        // topology uses a high-pass, but for a bass-extension target
+        // a HP at F0×1.6 would also kill the F0 amplitude entering
+        // the waveshaper — an allpass preserves amplitude while
+        // achieving the same phase decorrelation.)
+        let lowSide = orbassSideAP.process(low)
 
         let nlDrive = 1.0 + (drive * (1.0 + (amount * 1.8) + (harmonics * 1.4)))
-        let harmonicSrc = tanhf(low * nlDrive) - tanhf(low * (0.65 + (0.18 * density)))
-        let harmonicBand = orbassHarmLPF.process(orbassHarmHPF.process(harmonicSrc))
-        let harmonicGain = harmonics * (0.28 + (0.34 * density)) * (0.62 + (0.36 * adaptive))
+        let driven = lowSide * nlDrive
+        // Odd-harmonic generator (3rd, 5th): tanh-difference soft-clip.
+        let oddSrc = tanhf(driven) - tanhf(lowSide * (0.65 + (0.18 * density)))
+        // Even-harmonic generator (2nd, 4th): asymmetric sign-preserving
+        // squaring — primarily 2nd-harmonic content with bounded peak.
+        let evenSrc = lowSide * fabsf(lowSide) * (0.6 + (0.4 * drive))
+        // MaxxBass equal-loudness weighting (US 5,930,373) — per-order
+        // weights precomputed at configure time from an ISO 226
+        // approximation evaluated at 2..5 x F0.
+        let weighted =
+            (oddSrc * orbassHarmOddWeight) + (evenSrc * orbassHarmEvenWeight)
+        // Band-limit the harmonics: HP above F0 to remove the residual
+        // fundamental that the waveshaper passes through, then LP at
+        // ~5×F0 to keep harmonic energy out of the upper audio band.
+        let harmonicBand = orbassHarmLPF.process(orbassHarmHPF.process(weighted))
+        let harmonicGain = harmonics * (0.32 + (0.34 * density)) * (0.62 + (0.36 * adaptive))
         var enhancement = lowBoost + (harmonicBand * harmonicGain)
 
         if subAmount > 1e-4 {

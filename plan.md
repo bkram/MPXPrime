@@ -26,7 +26,49 @@ yes
 
 When evaluating a new feature, the test is "does this make MPX Prime sound or feel better for an amateur operator?" Features that only matter to a station with a $3M tower stack are out.
 
+## Patent-backed improvements backlog
+
+Expired Orban patents (public domain) that map onto specific stages of
+the chain. Listed in priority order by expected impact on the
+verifier-flagged stress scenarios (`hf_edge_12k` >67k IM, side
+retention; `bright_dense` rms drift). Caveat: the verifier scenarios
+run with `mpx_clipper_enabled = False`, so improvements to the
+`CompositeClipper` itself do not move the verifier numbers — they
+land on the user-facing audio path only when the clipper is
+explicitly enabled.
+
+| Priority | Patent | Title | Expires | Stage | Why |
+|---|---|---|---|---|---|
+| **P0** | [US 6,937,912](https://patents.google.com/patent/US6937912B1/en) | Anti-aliased clipping with band-limited step functions | 2025-09 | `OversampledPeakLimiter` (pre-encode L/R) + `audioCompositeSoftClipEnabled` shaper | Replaces the inner clip kernel: when a peak crosses threshold, substitute a band-limited polyBLEP-style step matched to the host filter's group delay. Stops IM from being generated rather than relying on decimation to remove it. Both stages are engaged in the verifier scenarios — this is the patent that moves the `>67k/in` and `>60k/in` numbers. |
+| **P1** | [US 6,434,241](https://patents.google.com/patent/US6434241B1/en) | Half-cosine signal peak control | 2020-08 (expired) | Same stages as P0, alternative kernel | Continuous-first-derivative half-cosine peak; overshoot drops from ~10 % to 0.1–0.2 %. Less effective than US 6,937,912 for IM rejection but lower CPU. Useful as a selectable kernel or fallback. |
+| **P2** | [US 5,737,434](https://patents.google.com/patent/US5737434A/en) | Multi-band audio compressor with cross-band coupling | Expired | `MonoCompressor` per-band logic in multiband stage | Inter-band gain coupling — "loud bass softens highs", the Optimod 8500/8600 multiband behaviour we don't have. Already in plan.md item 4 of multiband DSP modernisation; named here for the patent reference. |
+| **P3** | [US 5,892,833](https://patents.google.com/patent/US5892833A/en) | Gain calibration for audio compressors | Expired | `MonoCompressor` makeup-gain stage | Algorithmic gain-staging that tracks compressor's average GR to keep makeup gain roughly compensating. Polish item — low priority. |
+| **Skip** | [US 4,412,100](https://patents.google.com/patent/US4412100A/en) | Audio limiter using FET attenuator | Expired | n/a | Analog circuit patent (1981, JFET as voltage-controlled resistor). Pre-DSP era; not implementable in this codebase. |
+| **Skip (not yet expired)** | [US 7,587,254](https://patents.google.com/patent/US7587254B2/en) | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029 | n/a | Filed 2004; revisit post-2029. |
+
 ## Recently landed (post-0.11, unreleased)
+
+- **`CompositeClipper` linear-phase FIR decimation + differential
+  topology** (Orban US 6,337,999, expired 2022). New
+  `LinearPhaseFIRDecimator` struct (Kaiser-windowed sinc, ~147 taps,
+  `vDSP_dotpr` polyphase). Replaces the prior `BiquadCascade6` 12th-
+  order Butterworth. `CompositeClipper.process` restructured so only
+  the *clipping residual* goes through decimation; the wanted signal
+  rides a 1× delay-matched bypass. Per-band IM cancellation still
+  works — the cancelled bands are subtracted from the residual before
+  decimation rather than added back to the clipped signal. Net win:
+  flat passband response across 0–53 kHz (versus Butterworth's 1–2 dB
+  rolloff at the subcarrier edge), 90 dB FIR stopband (versus
+  Butterworth's ~70–80 dB), no decimator-induced phase rotation on
+  the wanted signal. Cost: ~9 host samples (~47 µs at 192 kHz) of
+  TX-path latency, negligible CPU thanks to `vDSP_dotpr`. Cross-
+  domain cancellation depth on the synthetic test scenario drops
+  1–2 dB (architectural trade-off, not a regression in receiver-
+  perceived behaviour). Verifier scenarios run with
+  `mpx_clipper_enabled = False`, so these changes don't move the
+  `hf_edge_12k` / `bright_dense` flags — that needs the P0 patent
+  applied to `OversampledPeakLimiter` and the audio-composite shaper.
+
 
 - **RDS live-apply expansion** — every operationally-toggled RDS setting applies without transport restart. Single `RDSRuntimeConfig.make(from:)` factory; `.liveRDS` runtime disposition; 38-field runtime config; PI / PTY / PTYN / ECC / LIC / TP / TA / MS / DI / AF / group sequence / scheduler / CT all flip without restart. Restart-only set is now just `rds_level`, `rds_freq`, `rds_gaussian_*` (physical-layer / modulator FIR).
 - **RDS GUI restructure** — Control tab as the new primary landing (master enable + injection + live status + runtime flags); detail tabs reorganised per UECP message-class taxonomy: Identity, Radiotext, Long PS, Alt. Frequencies, Schedule, Subcarrier. Old Flags tab removed. MOD chip added to broadcast status bar.

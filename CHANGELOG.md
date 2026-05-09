@@ -1,10 +1,15 @@
 # Changelog
 
-Versions are sequential point releases (0.7 → 0.8 → 0.9 → 0.10 → 0.11),
-not decimals. 0.11 is newer than 0.10, which is newer than 0.9 and 0.85
-(which preceded the renumber to two-digit minor versions). Newest first.
+Versions are sequential point releases (0.7 → 0.8 → 0.9 → 0.10 → 0.11 → 0.20),
+not decimals. 0.20 is newer than 0.11; the jump from 0.11 to 0.20 marks
+the magnitude of the post-0.11 work — composite clipper differential
+topology with linear-phase FIR decimation, RDS live-apply for the full
+operationally-toggled surface, GUI restructure with status-first Control
+tab, PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
+patent-grade harmonic synthesis, adaptive on-screen FPS, and an
+optional deep DSP combination test suite. Newest first.
 
-## Unreleased
+## 0.20 — 2026-05-09
 
 ### Added
 - **Optional deep DSP combination test suite.** New `DeepDSPTests.swift` adds an opt-in test suite that catches stage-interaction bugs the existing per-stage tests miss. Five layers: (1) per-stage isolation smoke tests for the previously-unstested stages — Phase Rotator, Parametric EQ, Mono Bass, Stereo Widener, BS.412, Pre-encode limiter, DC clipper, 3-band multiband, multiband limiter, encoder FIR, final MPX safety limiter (12 tests). (2) Universal invariants on 200 deterministically-seeded random valid configs × 7 adversarial programs (HF-rich pop / sustained bass / percussive transients / pink noise / silence / DC offset / full-scale step) — asserts no NaN / inf, composite peak ≤ 1.05, pilot RMS within tolerance when stereo subcarriers are emitted, RDS energy present when active. (3) Pairwise enable/disable matrix on 11 high-impact stage flags (12 covering rows). (4) Counteract detection — for 10 suspect pairs (AGC × Multiband, PrimeBass × BassClipper, CompositeClipper × BS.412, Pre-encode × CompositeClipper, Widener × MonoBass, etc.) renders A-only / B-only / A∧B and asserts no amplitude conspiracy (combined peak ≤ max single × 1.10) and no cancellation conspiracy (combined 1 kHz energy ≥ min single − 6 dB). (5) Per-preset safety check on five 5-band presets (`5_ac`, `5_talk`, `5_chr`, `5_rock`, `5_dance`) × three programs. The whole suite is gated behind `MPXPRIME_DEEP=1` so the default `swift test` stays at ~10 s; running deep takes ~4 min on M1. Invocation: `MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS --filter Deep`.

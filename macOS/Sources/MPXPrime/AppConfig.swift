@@ -1,7 +1,7 @@
 import Foundation
 
 struct AppConfig {
-    static let appVersion: String = "0.11"
+    static let appVersion: String = "0.20"
 
     static var defaultINIPath: String {
         let fileManager = FileManager.default
@@ -410,7 +410,7 @@ struct AppConfig {
             "wideband_agc_max_gain_db", defaultValue: cfg.widebandAGCMaxGainDB)
         cfg.widebandAGCMinGainDB = mpx.double(
             "wideband_agc_min_gain_db", defaultValue: cfg.widebandAGCMinGainDB)
-        // PrimeBass keys (formerly `orbass_*` — renamed in 0.12 to remove
+        // PrimeBass keys (formerly `orbass_*` — renamed in 0.20 to remove
         // the Orban-trademark adjacency). The legacy `orbass_*` keys are
         // still read first as a fallback so existing user INIs keep
         // working; they will be removed in a future release.

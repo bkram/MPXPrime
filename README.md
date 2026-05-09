@@ -1,6 +1,6 @@
 # MPX Prime
 
-Version: 0.11
+Version: 0.20
 
 MPX Prime is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -209,7 +209,7 @@ This keeps bass more mono-compatible while leaving the upper image open enough f
 
 The current low-frequency enhancement and multiband stages are now tuned more conservatively than earlier builds.
 
-- `PrimeBass` (formerly `Orbass`, renamed in 0.12) uses adaptive low-band enhancement with restrained harmonics, optional subharmonics, and gated makeup behavior to avoid obvious bass pumping and synthetic overhang. 0.12 modernised the harmonic synth with MaxxBass-style equal-loudness weighting (per-order ISO 226 phon-curve weights for 2nd–5th harmonics) and an Aphex-style pre-waveshaper allpass at F0 that decorrelates harmonic phase from the direct boost — the perceived bass weight shifts onto the weighted harmonics, which buys headroom downstream without changing subjective bass.
+- `PrimeBass` (formerly `Orbass`, renamed in 0.20) uses adaptive low-band enhancement with restrained harmonics, optional subharmonics, and gated makeup behavior to avoid obvious bass pumping and synthetic overhang. 0.20 modernised the harmonic synth with MaxxBass-style equal-loudness weighting (per-order ISO 226 phon-curve weights for 2nd–5th harmonics), an Aphex-style pre-waveshaper allpass at F0 that decorrelates harmonic phase from the direct boost, and a Werrbach transient-discriminate gain modulator that briefly bursts harmonics on attacks and settles to a lower floor on sustained material — the perceived bass weight shifts onto the weighted harmonics, which buys headroom downstream without changing subjective bass.
 - `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `−155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move — not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on).
 
 Recommended starting point:
@@ -420,7 +420,7 @@ Disabled by bypass:
 Build a release app bundle / DMG:
 
 ```bash
-./build-release.sh 0.11
+./build-release.sh 0.20
 ```
 
 Artifacts are written to `macOS/dist/`.

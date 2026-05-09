@@ -58,12 +58,12 @@ explicitly enabled.
 ### Bass enhancement (PrimeBass) — secondary backlog
 
 Patents informing improvements to the `PrimeBass` adaptive low-band
-enhancer (renamed from `Orbass` in 0.12 to remove the Orban-trademark
+enhancer (renamed from `Orbass` in 0.20 to remove the Orban-trademark
 adjacency). Goal: enhance perceived bass while *reducing* true-peak
 LF amplitude (so downstream bass clipper / pre-encode limiter /
 composite clipper see less LF energy).
 
-**B1, B2, and B4 landed in 0.12** (commits `4d4a70f` + B2-commit —
+**B1, B2, and B4 landed in 0.20** (commits `4d4a70f` + `af7b883` —
 see "Already implemented" subsection below). Remaining backlog:
 
 | Priority | Patent                                                          | Title                                                       | Expires              | Maps to                                             | Why                                                                                                                                                                                                                                                                                                          |

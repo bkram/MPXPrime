@@ -1562,11 +1562,11 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var inputBufferMax: Double = 1.0
     @Published var inputBufferWarning: Double = 0.7
     @Published var inputBufferCritical: Double = 0.9
-    /// Low-passed (~1 s time constant) version of `inputBufferValue /
+    /// Low-passed (~10 s time constant) version of `inputBufferValue /
     /// inputBufferMax`. Used by the Monitoring buffer-fill bar so the
-    /// display stays stable instead of twitching on every meter tick;
-    /// raw `inputBufferValue` keeps its 30 Hz cadence for any logic
-    /// that needs the instantaneous reading.
+    /// display shows trend rather than tick-by-tick wobble; raw
+    /// `inputBufferValue` keeps its 30 Hz cadence for any logic that
+    /// needs the instantaneous reading.
     @Published var bufferFillSmoothed: Double = 0.0
     @Published var streamHealth: MonitoringStreamHealth = .stopped
 
@@ -2802,13 +2802,20 @@ final class MPXPrimeViewModel: ObservableObject {
                 inputBufferCritical = Double(target * 3 / 2)
                 inputBufferValue = Double(stats.bufferedFrames)
 
-                // Low-pass the displayed buffer fill (~1 s time
-                // constant) so the Monitoring bar stops twitching on
-                // every 30 Hz tick. Raw `inputBufferValue` is still
-                // updated above for any caller that needs the
-                // instantaneous reading.
+                // Low-pass the displayed buffer fill (~10 s time
+                // constant) so the Monitoring bar shows trend, not
+                // tick-by-tick jitter. The buffer normally sits within
+                // a few frames of target; operators care about
+                // "trending up / down / steady," not the millisecond-
+                // level wobble. Raw `inputBufferValue` is still
+                // updated above and the delay text (`delayText`)
+                // shows the instantaneous reading for any operator
+                // who needs it. Cost of the longer τ: a real buffer
+                // drop takes ~10 s to fully reflect on the bar; an
+                // underflow event would also show up in `Dropouts`
+                // tile much sooner, so this is OK.
                 let rawFill = Double(stats.bufferedFrames) / max(1.0, inputBufferMax)
-                let alpha = max(0.0, min(1.0, dt / (dt + 1.0)))
+                let alpha = max(0.0, min(1.0, dt / (dt + 10.0)))
                 bufferFillSmoothed =
                     (1.0 - alpha) * bufferFillSmoothed + alpha * rawFill
 
@@ -4769,11 +4776,12 @@ private struct MonitoringDashboardView: View {
     }
 
     private var bufferFill: Double {
-        // Display the low-passed buffer fill (~1 s time constant) so
-        // the bar doesn't twitch on every 30 Hz meter tick. The
+        // Display the low-passed buffer fill (~10 s time constant) so
+        // the bar shows trend rather than tick-by-tick wobble. The
         // underlying `streamHealth.ringFill` and `inputBufferValue`
         // still update at full rate for any caller that needs the
-        // instantaneous reading.
+        // instantaneous reading; a real underflow surfaces in the
+        // `Dropouts` tile within one tick.
         max(0.0, min(1.0, model.bufferFillSmoothed))
     }
 

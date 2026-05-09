@@ -5216,6 +5216,30 @@ final class MPXGenerator {
     // headroom in the bass clipper and pre-encode limiter while
     // preserving subjective bass weight.
     private let primeBassDirectGainReduction: Float = 0.62
+    // Werrbach transient-discriminate harmonic gain (US 5,424,488,
+    // Aphex Sound Enhancement System, expired 2013). The harmonic-band
+    // gain is modulated by a transient detector built from two
+    // envelopes — a fast follower (~5 ms attack) tracking the LF
+    // input and a slow follower (~50 ms attack) tracking its baseline.
+    // Their normalized difference is positive on real onsets (drum
+    // hits, plucked bass) and decays to zero as the slow follower
+    // catches up, ~50–150 ms post-attack. Mapped through a
+    // floor → peak range to give a brief harmonic burst on attacks
+    // and a lower sustain floor on continuous program — "punchy
+    // not boomy."
+    // `internal` access on these three so tests can verify the
+    // transient detector directly without relying on FFT spectral
+    // analysis, which is muddied by fundamental-bin leakage when
+    // input and harmonic frequencies are close.
+    var primeBassFastEnv: Float = 0.0
+    var primeBassSlowEnv: Float = 0.0
+    var primeBassTransientGainObserved: Float = primeBassTransientFloor
+    private var primeBassFastAttackCoeff: Float = 0.0
+    private var primeBassFastReleaseCoeff: Float = 0.0
+    private var primeBassSlowAttackCoeff: Float = 0.0
+    private var primeBassSlowReleaseCoeff: Float = 0.0
+    private static let primeBassTransientFloor: Float = 0.7
+    private static let primeBassTransientPeak: Float = 1.4
 
     private var multibandEnabled: Bool
     private var multibandMode: Int
@@ -6146,6 +6170,19 @@ final class MPXGenerator {
         primeBassAdaptiveReleaseAlpha = 1.0 - expf(-dt / 2.8)
         primeBassMakeupAttackCoeff = expf(-1.0 / ((45.0 * 0.001) * sr))
         primeBassMakeupReleaseCoeff = expf(-1.0 / ((220.0 * 0.001) * sr))
+        // Werrbach dual-envelope transient detector. Fast envelope
+        // follows the LF input quickly so its level reflects the
+        // *current* attack; slow envelope tracks the recent baseline.
+        // Their (fast − slow) / slow difference saturates positive on
+        // onsets and decays to zero as the slow follower catches up —
+        // ~50–150 ms post-attack. The asymmetric attack/release on
+        // each follower keeps the response sharp at the leading edge
+        // (fast attack) without letting it dip on cycle-by-cycle
+        // valleys of a sustained tone (slower release).
+        primeBassFastAttackCoeff = expf(-1.0 / ((5.0 * 0.001) * sr))
+        primeBassFastReleaseCoeff = expf(-1.0 / ((30.0 * 0.001) * sr))
+        primeBassSlowAttackCoeff = expf(-1.0 / ((50.0 * 0.001) * sr))
+        primeBassSlowReleaseCoeff = expf(-1.0 / ((250.0 * 0.001) * sr))
     }
 
     private func configureStereoWidener() {
@@ -7294,6 +7331,8 @@ final class MPXGenerator {
         primeBassSubPrevSample = 0.0
         primeBassSubPhase = 0
         primeBassMakeupGain = 1.0
+        primeBassFastEnv = 0.0
+        primeBassSlowEnv = 0.0
 
         mbLowCompL.detector.value = 0.0
         mbLowCompR.detector.value = 0.0
@@ -7401,7 +7440,40 @@ final class MPXGenerator {
         // fundamental that the waveshaper passes through, then LP at
         // ~5×F0 to keep harmonic energy out of the upper audio band.
         let harmonicBand = primeBassHarmLPF.process(primeBassHarmHPF.process(weighted))
-        let harmonicGain = harmonics * (0.32 + (0.34 * density)) * (0.62 + (0.36 * adaptive))
+
+        // Werrbach transient-discriminate gain (US 5,424,488). Two
+        // independent envelope followers on the LF input: fast (~5 ms
+        // attack / 30 ms release) reflects the current attack; slow
+        // (~50 ms attack / 250 ms release) tracks the recent baseline.
+        // The normalized difference (fast − slow) / slow saturates
+        // positive on real onsets (fast jumps above slow) and decays
+        // to zero as slow catches up. Mapped directly to the harmonic
+        // gain — no further smoothing — so the burst shape is set
+        // entirely by the input followers' time constants: fast
+        // attack within ~5 ms, return to floor within ~50–150 ms.
+        let fastCoeff =
+            midAbs > primeBassFastEnv
+            ? primeBassFastAttackCoeff : primeBassFastReleaseCoeff
+        primeBassFastEnv =
+            (fastCoeff * primeBassFastEnv) + ((1.0 - fastCoeff) * midAbs)
+        let slowCoeff =
+            midAbs > primeBassSlowEnv
+            ? primeBassSlowAttackCoeff : primeBassSlowReleaseCoeff
+        primeBassSlowEnv =
+            (slowCoeff * primeBassSlowEnv) + ((1.0 - slowCoeff) * midAbs)
+        let transientDrive = clampf(
+            (primeBassFastEnv - primeBassSlowEnv) / max(1e-3, primeBassSlowEnv),
+            0.0,
+            1.0
+        )
+        let transientPeak = Self.primeBassTransientPeak
+        let transientFloor = Self.primeBassTransientFloor
+        let transientGain = transientFloor + (transientDrive * (transientPeak - transientFloor))
+        primeBassTransientGainObserved = transientGain
+
+        let harmonicGain =
+            harmonics * (0.32 + (0.34 * density)) * (0.62 + (0.36 * adaptive))
+            * transientGain
         var enhancement = lowBoost + (harmonicBand * harmonicGain)
 
         if subAmount > 1e-4 {

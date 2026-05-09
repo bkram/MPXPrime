@@ -193,6 +193,86 @@ struct PrimeBassMaxxBassTests {
             "Equal-loudness weighting: 3rd harmonic (warm band) should exceed 5th (rolloff) by >3 dB; got 3rd \(third) dB, 5th \(fifth) dB")
     }
 
+    @Test func transientGainBurstsOnAttackAndDecaysOnSustain() {
+        // Werrbach transient-discriminate behaviour (US 5,424,488).
+        // Direct inspection of the modulator's internal gain factor:
+        // the dual-envelope (fast / slow) detector's output should
+        // saturate to ~peak (1.4×) shortly after a step onset, then
+        // decay back toward floor (~0.7×) as the slow envelope catches
+        // up to the fast one. Tested via internal `transientGainObserved`
+        // accessor rather than spectral analysis — FFT-based measurement
+        // of harmonics this close to the fundamental gets muddied by
+        // window leakage at FFT sizes practical for short bursts.
+        let cfg = makeMinimalChainConfig(
+            primeBassEnabled: true, harmonics: 1.0, amount: 0.7, freqHz: 80.0)
+        let gen = MPXGenerator(config: cfg, sampleRate: Double(sampleRate))
+
+        // 50 ms of silence to let the gate stay closed and the envelope
+        // followers stay at zero, then a sustained 70 Hz sine for
+        // 400 ms so the slow envelope has time to catch up.
+        let preStepFrames = Int(0.050 * Double(sampleRate))
+        let toneFrames = Int(0.400 * Double(sampleRate))
+        let totalFrames = preStepFrames + toneFrames
+        var left = [Float](repeating: 0.0, count: totalFrames)
+        var right = [Float](repeating: 0.0, count: totalFrames)
+        let omega = 2.0 * Double.pi * 70.0 / Double(sampleRate)
+        for i in preStepFrames..<totalFrames {
+            let s = Float(0.3 * sin(omega * Double(i - preStepFrames)))
+            left[i] = s
+            right[i] = s
+        }
+
+        // Tap the transient gain at three points: just before onset
+        // (gate closed → still at floor), shortly after onset (peak),
+        // and after the slow envelope has caught up (back to floor).
+        var gainPreOnset: Float = 0.0
+        var gainPostOnsetPeak: Float = 0.0
+        var gainSustained: Float = 0.0
+        let postOnsetSampleAbsolute = preStepFrames + Int(0.025 * Double(sampleRate))  // 25 ms in
+        let sustainedSampleAbsolute = preStepFrames + Int(0.350 * Double(sampleRate))  // 350 ms in
+
+        var leftBlock = [Float](repeating: 0.0, count: 1)
+        var rightBlock = [Float](repeating: 0.0, count: 1)
+        for i in 0..<totalFrames {
+            leftBlock[0] = left[i]
+            rightBlock[0] = right[i]
+            leftBlock.withUnsafeMutableBufferPointer { lBuf in
+                rightBlock.withUnsafeMutableBufferPointer { rBuf in
+                    gen.renderFromInputInPlace(
+                        frameCount: 1,
+                        left: lBuf.baseAddress!,
+                        right: rBuf.baseAddress!
+                    )
+                }
+            }
+            if i == preStepFrames - 1 { gainPreOnset = gen.primeBassTransientGainObserved }
+            if i == postOnsetSampleAbsolute { gainPostOnsetPeak = gen.primeBassTransientGainObserved }
+            if i == sustainedSampleAbsolute { gainSustained = gen.primeBassTransientGainObserved }
+        }
+
+        // Pre-onset: input is silence, gate keeps the modulator dormant
+        // → gain stays at floor.
+        #expect(abs(gainPreOnset - 0.7) < 0.05,
+            "Before onset, transient gain should be at floor 0.7; got \(gainPreOnset)")
+
+        // 25 ms after onset: fast envelope has caught up, slow has not
+        // → drive saturates near 1.0, gain near peak 1.4.
+        #expect(gainPostOnsetPeak > 1.25,
+            "25 ms after onset, transient gain should be near peak 1.4; got \(gainPostOnsetPeak)")
+
+        // 350 ms after onset: slow envelope has caught up, drive ≈ 0,
+        // gain back near floor.
+        #expect(gainSustained < 0.85,
+            "After 350 ms of sustained tone, transient gain should be back near floor 0.7; got \(gainSustained)")
+
+        // The burst-to-sustain envelope range is what gives Werrbach
+        // its "punchy not boomy" character: at least 0.4 absolute
+        // (0.85 vs 1.25 = 3.4 dB) between the two snapshots.
+        let burstRange = gainPostOnsetPeak - gainSustained
+        #expect(burstRange > 0.35,
+            "Transient burst should clearly exceed sustained gain; got peak \(gainPostOnsetPeak), sustained \(gainSustained), range \(burstRange)")
+    }
+
     @Test func disabledPrimeBassPassesThroughTone() {
         // Sanity check: with PrimeBass disabled and the rest of the chain
         // configured transparent, the composite output should contain

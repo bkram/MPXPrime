@@ -118,6 +118,7 @@ struct SignalFlowStrip: View {
                     )
             }
             .buttonStyle(.plain)
+            .help((stage?.label ?? "") + " — \(stage?.detailSubtitle ?? "")")
 
         case .terminal:
             label
@@ -130,8 +131,12 @@ struct SignalFlowStrip: View {
     }
 
     private var connector: some View {
+        // Decorative line between chips — hide from VoiceOver so the
+        // strip reads as "AGC, Multiband, Bass Clipper, …" instead
+        // of intermixed connector / chip / connector / chip noise.
         Rectangle()
             .fill(.tertiary.opacity(0.5))
             .frame(width: 6, height: 1)
+            .accessibilityHidden(true)
     }
 }

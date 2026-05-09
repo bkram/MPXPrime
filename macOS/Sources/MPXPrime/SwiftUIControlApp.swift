@@ -1248,7 +1248,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let hostingController = NSHostingController(rootView: helpView)
         let w = NSWindow(contentViewController: hostingController)
         w.title = "MPX Prime Help"
-        w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        // Utility/documentation windows should not minimize (macOS HIG —
+        // matches About / Settings styleMasks). Resizable so long help
+        // text remains usable on smaller displays.
+        w.styleMask = [.titled, .closable, .resizable]
         w.setContentSize(NSSize(width: 560, height: 560))
         w.minSize = NSSize(width: 520, height: 420)
         w.isReleasedWhenClosed = false

@@ -84,7 +84,7 @@ The audio path runs ~24 stages, ending with **post-clipper pilot + RDS injection
 
 Peak control:
 - **Pre-encode audio limiter** — L/R, stereo-linked, after pre-emphasis, before stereo encoding. Uses `OversampledPeakLimiter` per channel (4× oversampled true-peak with tanh ceiling).
-- **Composite clipper** — 8× oversampled tanh soft-clipper on the audio composite, with delta-based per-band substitution that protects audio (0–17 kHz, opt-in), pilot guard (17–21 kHz), stereo subcarrier (22–53 kHz), and RDS guard (55–59 kHz) bands. Replaces the old `CompositeTruePeakLimiter` (deleted in 0.11) which used `|composite|` peak detection + memoryless tanh and produced intermod that demodulated as `(L-R)` cancellation. Inspired by Orban US 4,460,871 / 5,737,434 (expired).
+- **Composite clipper** — 8× oversampled tanh soft-clipper on the audio composite, **differential topology** (only the clipping residual goes through decimation; wanted signal rides a 1× delay-matched bypass), with delta-based per-band substitution that protects audio (0–17 kHz, opt-in), pilot guard (17–21 kHz), stereo subcarrier (22–53 kHz), and RDS guard (55–59 kHz) bands. Decimation via `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband). Replaces the old `CompositeTruePeakLimiter` (deleted in 0.11) which used `|composite|` peak detection + memoryless tanh and produced intermod that demodulated as `(L-R)` cancellation. Inspired by Orban US 4,460,871 + US 5,737,434 (delta-cancellation primitive, expired) and US 6,337,999 (differential topology, expired 2022 — landed in 0.20).
 
 `Mono Mode` suppresses pilot, stereo subcarrier, and RDS — true mono composite.
 

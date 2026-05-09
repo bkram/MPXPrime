@@ -96,7 +96,7 @@ see "Already implemented" subsection below). Remaining backlog:
 | [US 4,412,100](https://patents.google.com/patent/US4412100A/en)       | Audio limiter using FET attenuator                                                                | Expired                                                      | Analog circuit patent (1981, JFET as voltage-controlled resistor). Pre-DSP era; the modern DSP equivalent (envelope-driven gain reduction with attack/release) is how every compressor in this codebase already works.                                                                                                                                                                    |
 | [US 7,587,254](https://patents.google.com/patent/US7587254B2/en)      | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029                                                        | Filed 2004; not yet expired. Revisit post-2029.                                                                                                                                                                                                                                                                                                                                           |
 
-## Recently landed (post-0.11, unreleased)
+## Recently landed (0.20 + 0.21 — released; later items unreleased on `develop/v.023`)
 
 - **Optional deep DSP combination test suite** (`DeepDSPTests.swift`).
   Five-layer opt-in coverage of stage interactions, gated by

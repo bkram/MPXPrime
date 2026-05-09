@@ -86,8 +86,8 @@ Each platform has its own audio I/O layer calling into the shared C++ DSP core.
 
 ## Current Status
 
-- macOS/SwiftUI version in active development
-- Current macOS chain (0.11) ships pre-encode L/R true-peak limiter, 8x oversampled composite clipper with delta-based per-band IM cancellation, linear-phase FIR multiband crossovers in TX path, vDSP/vForce SIMD on hot loops, italo / disco / dance presets, and mono bass + stereo-image handling
+- macOS/SwiftUI version in active development; latest release **0.21** (2026-05-09)
+- Current macOS chain ships pre-encode L/R true-peak limiter, 8× oversampled composite clipper with linear-phase FIR decimation + differential topology + delta-based per-band IM cancellation, linear-phase FIR multiband crossovers in TX path, PrimeBass adaptive LF enhancement (MaxxBass equal-loudness harmonics + Aphex pre-waveshaper allpass + Werrbach transient-discriminate gain), comprehensive RDS live-apply (PI/PTY/PTYN/ECC/LIC/TP/TA/MS/DI/AF/group-sequence/scheduler/CT all live without restart), AF Method B + TA-flag auto-injection, adaptive on-screen FPS for meters / scopes / spectrum, vDSP/vForce SIMD on hot loops, italo / disco / dance presets, mono bass + stereo-image handling, and an optional deep DSP combination test suite (`MPXPRIME_DEEP=1`)
 - C++ core - not started
 - JUCE GUI - not started
 - Linux/Windows ports - not started

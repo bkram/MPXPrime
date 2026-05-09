@@ -127,22 +127,6 @@ private func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     return image
 }
 
-private struct MonitoringStatusLine: View {
-    let isRunning: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(isRunning ? Color.green : Color.secondary)
-                .frame(width: 8, height: 8)
-            
-            Text(isRunning ? "Running" : "Stopped")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
 enum AppSection: String, CaseIterable, Identifiable {
     case monitoring = "Monitoring"
     case processing = "Processing"
@@ -4916,6 +4900,7 @@ private struct DSPStatusPill: View {
                     .textCase(.uppercase)
                 Text(value)
                     .font(BroadcastStyle.chipValue)
+                    .textSelection(.enabled)
             }
         }
         .padding(.horizontal, 10)
@@ -5382,7 +5367,7 @@ struct ScopeView: View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size)
             context.fill(
-                Path(roundedRect: rect, cornerRadius: 8), with: .color(.black.opacity(0.22)))
+                Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius), with: .color(.black.opacity(0.22)))
 
             var grid = Path()
             let midY = size.height * 0.5
@@ -5428,7 +5413,7 @@ struct ScopeView: View {
             )
         }
         .frame(minHeight: 130, idealHeight: 150)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
     }
 }
 
@@ -5461,7 +5446,7 @@ struct MPXSpectrumView: View {
             Canvas { context, size in
                 let rect = CGRect(origin: .zero, size: size)
                 context.fill(
-                    Path(roundedRect: rect, cornerRadius: 8), with: .color(.black.opacity(0.30)))
+                    Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius), with: .color(.black.opacity(0.30)))
                 let maxDisplayHz = max(1_000.0, maxHz)
                 let nyquist = max(0.0, min(maxDisplayHz, nyquistHz))
                 let leftAxisWidth: CGFloat = 42
@@ -5562,7 +5547,7 @@ struct MPXSpectrumView: View {
                 }
             }
             .frame(minHeight: 190, idealHeight: 220)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
 
             HStack(spacing: 14) {
                 let maxDisplayHz = max(1_000.0, maxHz)
@@ -6628,8 +6613,11 @@ private struct SettingsSectionView: View {
                 }
                 HStack(spacing: 10) {
                     Button("Reveal Config") { model.revealConfigInFinder() }
+                        .buttonStyle(.bordered)
                     Button("Reload Config") { model.reloadConfigFromDisk() }
+                        .buttonStyle(.bordered)
                     Button("Refresh Devices") { model.refreshDevices() }
+                        .buttonStyle(.bordered)
                 }
             }
 

@@ -9,6 +9,26 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
+## Unreleased (queued for 0.23)
+
+Work accumulating on `develop/v.023` past `v0.21`. No release cut yet — these will roll into 0.23 when the substantive work for that release lands.
+
+### UI
+- **About panel redesigned** macOS-native (app icon + name + version + copyright + prose disclaimer matching the README; replaces the previous orange-bordered "Disclaimer" box with warning-triangle header). Window 360×460.
+- **Sidebar** width `min: 200 → 220, ideal: 230 → 240, max: 280 → 320` so labels never truncate at first launch. Icons now use `.foregroundStyle(.tint)` + `.symbolRenderingMode(.hierarchical)` so they pick up the system accent (blue by default) with 3-level tonal layering — matches Apple's first-party sidebars (Music.app, Mail.app).
+- **Monitoring redesign — industry-aligned metric layout.** `BroadcastStatusBar` shrunk from 11 chips to 3 (TRANSPORT + SOURCE + RATE only — content-level numbers belong in the section, not multiplexed onto the chrome). Three new metric Cards in `MonitoringDashboardView`: **MPX** (output peak / audio composite / deviation / modulation %), **Headroom** (pre-encode GR / composite GR / safety GR / BS.412 budget), **Subcarriers** (pilot % / RDS % / stereo image). Side-by-side on wide windows, stacked on narrow via `ViewThatFits`. Matches the split Stereo Tool / Logic Pro / Apple Music use.
+- **Buffer-fill bar smoothing.** Previously twitched on every 30 Hz meter tick because the underlying frame count bounces ±a few each pull. Now low-passed with ~10 s time constant — bar shows trend, not noise. Instantaneous delay text (e.g., "92.2 ms") still updates at full rate next to the bar; real underflows still surface in the Dropouts tile within one tick.
+- **HIG audit fixes:** three Settings buttons (`Reveal Config`, `Reload Config`, `Refresh Devices`) now have `.buttonStyle(.bordered)`; `DSPStatusPill` values are `.textSelection(.enabled)` (PI / PTY / RDS App ID codes are operator-copyable); spectrum Canvas backgrounds use `BroadcastStyle.panelInsetCornerRadius` instead of hardcoded `8`; Help window styleMask matches Settings (no `.miniaturizable` on utility windows); `UISignalFlowStrip` `.active` chip now has the `.help()` modifier the other chip cases already had; decorative connector `Rectangle()` is `.accessibilityHidden(true)` so VoiceOver narrates clean chip names. Dead `MonitoringStatusLine` removed.
+
+### DSP
+- **Active meter timer reverted to 30 Hz.** The 60 Hz active rate from the adaptive-FPS work in 0.20 was real-time-capable on release builds but preempted the audio thread on debug builds, producing buffer underruns. Inline spectrum keeps the modest `12 → 24 Hz` lift (FFT runs off-main, cheap). Adaptive on-screen / off-screen behaviour (occlusion / minimize / inactive-app gates) stays in place.
+
+### Docs
+- **`main` is the default branch** (was per-release `develop/v.NN`); integration branches now use `develop/v.NNN` (three digits, leading zero, e.g. `develop/v.023`).
+- **Debug-build performance callout** added to README and AGENTS.md: `swift run` debug binaries can preempt the audio thread; for actual playback or on-air use a release build (`swift build -c release` or the DMG).
+- **Chain-order audit** documented in `plan.md` — three deviations from canonical Optimod / Omnia / Stereo Tool stage ordering noted (PrimeBass before multiband, widener before multiband, pre-emphasis in M/S after L/R limiter), each with audible cost / engineering effort / recommendation. Backlog rather than a near-term fix.
+- **`plan.md` stale TODO fixed** — composite-clipper improvement #1 (linear-phase FIR decimation) was still listed as future work; already shipped in 0.20.
+
 ## 0.21 — 2026-05-09
 
 ### Docs

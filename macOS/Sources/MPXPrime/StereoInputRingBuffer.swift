@@ -256,6 +256,24 @@ final class StereoInputRingBuffer {
         return min(capacity, max(0, Int(write &- read)))
     }
 
+    /// Snap the read cursor so the ring holds exactly `targetFrames`
+    /// of buffered content (clamped to what's actually available).
+    /// Used when switching the engine source from tone → input live —
+    /// the input tap kept filling the ring while tone was active, so
+    /// without this drain the ring would be at full capacity (red
+    /// state) the moment the input render path starts pulling. After
+    /// the drain the ring is at its prime depth and reads continue
+    /// normally.
+    func dropToTargetBufferedFrames(_ targetFrames: Int) {
+        let target = max(0, targetFrames)
+        let read = readCursor.load(ordering: .acquiring)
+        let write = writeCursor.load(ordering: .acquiring)
+        let buffered = min(capacity, max(0, Int(write &- read)))
+        guard buffered > target else { return }
+        let toAdvance = UInt64(buffered - target)
+        readCursor.store(read &+ toAdvance, ordering: .releasing)
+    }
+
     func stats() -> (overflows: UInt64, underflows: UInt64, bufferedFrames: Int) {
         let over = overflowCount.load(ordering: .relaxed)
         let under = underflowCount.load(ordering: .relaxed)

@@ -1856,7 +1856,19 @@ final class AudioOutputEngine {
             // Flip the source-mode branch live. The render callback
             // reads `useInputSource` at the start of each block; this
             // write lands within ~one block of the toggle on the GUI.
-            useInputSource = runtime.sourceMode.lowercased() == "input"
+            let nextUseInput = runtime.sourceMode.lowercased() == "input"
+            // On tone → input transition, drain the input ring back
+            // to its prime / target depth. The input tap kept writing
+            // to the ring while the tone source was active — without
+            // this drain the ring would be at full capacity (red
+            // state on the Monitoring buffer-fill bar) the moment the
+            // input render path starts pulling, with `targetFrames`
+            // worth of stale audio already queued. Snapping to prime
+            // depth restores normal ring behaviour immediately.
+            if nextUseInput, !useInputSource, let ring = inputRing {
+                ring.dropToTargetBufferedFrames(inputPrimeFrames)
+            }
+            useInputSource = nextUseInput
             runtimeConfigApplyCount.wrappingIncrement(by: 1, ordering: .relaxed)
         }
     }

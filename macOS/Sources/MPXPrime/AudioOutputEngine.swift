@@ -75,7 +75,11 @@ final class AudioOutputEngine {
     private var captureEngine: AVAudioEngine?
     private var sourceNode: AVAudioSourceNode?
     private let generator: MPXGenerator
-    private let useInputSource: Bool
+    /// Tracks whether the engine is currently rendering live input
+    /// (`true`) or the test tone (`false`). Mutable so the Test Tone
+    /// tab's Enable toggle can flip the source live via
+    /// `applyRuntimeConfig`. Render callback reads this each block.
+    private var useInputSource: Bool
     private let requestedSampleRate: Double
     private let requestedBlockSize: Int
     private let requestedInputDeviceID: AudioDeviceID?
@@ -1433,7 +1437,12 @@ final class AudioOutputEngine {
             compositeClipperCancelAudio: config.compositeClipperCancelAudio,
             compositeClipperCancelStereo: config.compositeClipperCancelStereo,
             compositeClipperCancelPilot: config.compositeClipperCancelPilot,
-            compositeClipperCancelRDS: config.compositeClipperCancelRDS
+            compositeClipperCancelRDS: config.compositeClipperCancelRDS,
+            sourceMode: config.sourceMode,
+            testToneType: config.testToneType,
+            testToneMode: config.testToneMode,
+            testToneFreq: Float(config.testToneFreq),
+            testToneLevelDB: Float(config.testToneLevelDB)
         )
         runtimeConfigLock.lock()
         if lastQueuedRuntimeConfig == runtime {
@@ -1844,6 +1853,10 @@ final class AudioOutputEngine {
         if let runtime {
             generator.applyRuntimeConfig(runtime)
             targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
+            // Flip the source-mode branch live. The render callback
+            // reads `useInputSource` at the start of each block; this
+            // write lands within ~one block of the toggle on the GUI.
+            useInputSource = runtime.sourceMode.lowercased() == "input"
             runtimeConfigApplyCount.wrappingIncrement(by: 1, ordering: .relaxed)
         }
     }

@@ -318,6 +318,9 @@ enum Stage: String, CaseIterable, Identifiable {
     case rdsSchedule
     case rdsCarrier
 
+    // Tools
+    case testTone
+
     var id: String { rawValue }
 
     /// Sidebar group this stage belongs to.
@@ -325,6 +328,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case monitoring = "Monitoring"
         case processing = "Processing"
         case rds = "RDS"
+        case tools = "Tools"
     }
 
     var group: Group {
@@ -334,6 +338,8 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
              .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
+        case .testTone:
+            return .tools
         default:
             return .processing
         }
@@ -365,6 +371,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsAF: return "Alt. Frequencies"
         case .rdsSchedule: return "Schedule"
         case .rdsCarrier: return "Subcarrier"
+        case .testTone: return "Test Tone"
         }
     }
 
@@ -394,6 +401,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsAF: return "list.dash"
         case .rdsSchedule: return "calendar.badge.clock"
         case .rdsCarrier: return "antenna.radiowaves.left.and.right"
+        case .testTone: return "waveform.badge.plus"
         }
     }
 
@@ -426,6 +434,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsAF: return "Alternative frequencies (AF)"
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
         case .rdsCarrier: return "Subcarrier frequency, Gaussian shaping"
+        case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
         }
     }
 
@@ -438,6 +447,11 @@ enum Stage: String, CaseIterable, Identifiable {
         case .monitoring: return .monitoring
         case .processing: return .processing
         case .rds: return .rds
+        // Test Tone reads as Monitoring for the legacy section gate so
+        // scope / spectrum analysis capture stays engaged while the
+        // operator tunes a tone — the use case is observation of the
+        // tone moving through the chain.
+        case .tools: return .monitoring
         }
     }
 
@@ -1140,6 +1154,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             keyEquivalent: "i")
         inspectorItem.target = self
         inspectorItem.keyEquivalentModifierMask = [.command, .option]
+
+        viewMenu.addItem(NSMenuItem.separator())
+        let testToneItem = viewMenu.addItem(
+            withTitle: "Test Tone…",
+            action: #selector(showTestToneTab),
+            keyEquivalent: "t")
+        testToneItem.target = self
+        testToneItem.keyEquivalentModifierMask = [.command]
+
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
@@ -1293,6 +1316,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc private func toggleInspector() {
         guard let vm = model else { return }
         vm.inspectorVisible.toggle()
+    }
+
+    @objc private func showTestToneTab() {
+        guard let vm = model else { return }
+        vm.selectedStage = .testTone
+        // Bring the main window forward so ⌘T from a detached
+        // visualizer still feels right (the new tab is the focus).
+        if let w = window { w.makeKeyAndOrderFront(nil) }
+        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
     @objc private func toggleTransport() {
@@ -4228,6 +4260,8 @@ private struct StageContentView: View {
             Group {
                 if model.selectedStage == .monitoring {
                     MonitoringDashboardView(model: model)
+                } else if model.selectedStage == .testTone {
+                    TestToneView(model: model)
                 } else if let _ = model.selectedStage.legacyProcessingTab {
                     StageProcessingContent(model: model)
                 } else if let _ = model.selectedStage.legacyRDSTab {
@@ -4399,6 +4433,228 @@ private struct Card<Content: View>: View {
         switch style {
         case .standard: return BroadcastStyle.cardPadding
         case .meter:    return BroadcastStyle.meterCardPadding
+        }
+    }
+}
+
+/// Test Tone tab — a first-class sidebar stage that drives the
+/// engine's tone source. Enable replaces the audio input live; the
+/// rest of the chain (AGC, multiband, clippers, encoder, BS.412)
+/// processes the tone normally so operators can observe response at
+/// calibrated input levels (default −20 dBFS, broadcast line
+/// reference). Three signal types — sine for level / separation /
+/// encoder-bandwidth tests, pink and white noise for broadband
+/// response checks. Stereo modes cover the operator's diagnostic
+/// needs (mono / L=−R / L-only / R-only).
+///
+/// All controls are live-applicable via the existing RuntimeConfig
+/// path; no engine restart required when toggling enable, type,
+/// mode, frequency, or level.
+private struct TestToneView: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    private static let frequencyPresets: [Double] = [
+        50, 100, 400, 1_000, 5_000, 10_000, 12_000, 15_000,
+    ]
+
+    private var isEnabled: Binding<Bool> {
+        Binding(
+            get: { model.config.sourceMode.lowercased() == "tone" },
+            set: { model.config.sourceMode = $0 ? "tone" : "input" }
+        )
+    }
+
+    private var typeBinding: Binding<String> {
+        Binding(
+            get: { model.config.testToneType.lowercased() },
+            set: { model.config.testToneType = $0 }
+        )
+    }
+
+    private var modeBinding: Binding<String> {
+        Binding(
+            get: { model.config.testToneMode.lowercased() },
+            set: { model.config.testToneMode = $0 }
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                enableCard
+                signalCard
+                if typeBinding.wrappedValue == "sine" {
+                    frequencyCard
+                }
+                levelCard
+                statusCard
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    // MARK: - Cards
+
+    private var enableCard: some View {
+        Card(title: "Test Tone Source") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: isEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable Test Tone").font(.body)
+                        Text(
+                            "Replaces the audio input. The rest of the chain "
+                            + "(AGC, multiband, clippers, BS.412, composite "
+                            + "clipper) processes the generated tone normally."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+        }
+    }
+
+    private var signalCard: some View {
+        Card(title: "Signal") {
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("Type") {
+                    Picker("Type", selection: typeBinding) {
+                        Text("Sine").tag("sine")
+                        Text("Pink").tag("pink")
+                        Text("White").tag("white")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 320)
+                }
+
+                LabeledContent("Stereo mode") {
+                    Picker("Stereo mode", selection: modeBinding) {
+                        Text("Mono").tag("mono")
+                        Text("L=−R").tag("stereo")
+                        Text("Left").tag("left")
+                        Text("Right").tag("right")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 380)
+                }
+            }
+        }
+    }
+
+    private var frequencyCard: some View {
+        Card(title: "Frequency") {
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("Frequency (Hz)") {
+                    TextField(
+                        "Frequency",
+                        value: $model.config.testToneFreq,
+                        format: .number.precision(.fractionLength(0...2))
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 120)
+                    .labelsHidden()
+                }
+
+                HStack(spacing: 8) {
+                    Text("Presets")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(Self.frequencyPresets, id: \.self) { freq in
+                        Button(presetLabel(for: freq)) {
+                            model.config.testToneFreq = freq
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+    }
+
+    private var levelCard: some View {
+        Card(title: "Output Level") {
+            VStack(alignment: .leading, spacing: 8) {
+                LabeledContent {
+                    Slider(
+                        value: $model.config.testToneLevelDB,
+                        in: -60.0 ... 0.0,
+                        step: 0.5
+                    )
+                } label: {
+                    Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB))
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 96, alignment: .leading)
+                }
+                Text(
+                    "Default −20 dBFS matches broadcast line-level reference. "
+                    + "Tone enters the chain pre-AGC, so the input meter on "
+                    + "the Monitoring tab will read the configured level "
+                    + "(modulo the chain's response to the signal)."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var statusCard: some View {
+        Card(title: "Status") {
+            VStack(alignment: .leading, spacing: 6) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                    GridRow {
+                        Text("Source").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
+                        Text(isEnabled.wrappedValue ? "Tone (active)" : "Input (test tone disabled)")
+                            .font(BroadcastStyle.valueReadout)
+                            .foregroundStyle(isEnabled.wrappedValue ? BroadcastStyle.safeGreen : .primary)
+                    }
+                    GridRow {
+                        Text("Type").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
+                        Text(typeBinding.wrappedValue.capitalized).font(BroadcastStyle.valueReadout)
+                    }
+                    GridRow {
+                        Text("Mode").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
+                        Text(modeLabel(modeBinding.wrappedValue)).font(BroadcastStyle.valueReadout)
+                    }
+                    if typeBinding.wrappedValue == "sine" {
+                        GridRow {
+                            Text("Frequency").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
+                            Text(String(format: "%.1f Hz", model.config.testToneFreq))
+                                .font(BroadcastStyle.valueReadout)
+                                .monospacedDigit()
+                        }
+                    }
+                    GridRow {
+                        Text("Level").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
+                        Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB))
+                            .font(BroadcastStyle.valueReadout)
+                            .monospacedDigit()
+                    }
+                }
+            }
+        }
+    }
+
+    private func presetLabel(for freq: Double) -> String {
+        if freq >= 1_000 {
+            let kHz = freq / 1_000.0
+            if kHz == kHz.rounded() {
+                return "\(Int(kHz))k"
+            } else {
+                return String(format: "%.1fk", kHz)
+            }
+        }
+        return "\(Int(freq))"
+    }
+
+    private func modeLabel(_ mode: String) -> String {
+        switch mode {
+        case "stereo": return "Stereo (L=−R)"
+        case "left":   return "Left only"
+        case "right":  return "Right only"
+        default:       return "Mono"
         }
     }
 }

@@ -55,7 +55,7 @@ transport restart since they reconfigure the modulator.
 
 - macOS 15+
 - Xcode command line tools / Swift 6 toolchain
-- Core Audio device capable of your chosen output rate; 192 kHz is recommended for full stereo MPX output
+- Core Audio device capable of your chosen output rate; 192 kHz required for the full composite with RDS (RDS at 57 kHz exceeds 96 kHz Nyquist), 96 kHz works for stereo-without-RDS
 - Input devices may run at lower rates; the app handles conversion internally
 
 ## Build
@@ -120,7 +120,7 @@ This is the minimum to hear MPX Prime processing your audio and feeding a transm
 - BlackHole 2ch (virtual loopback) input from a music player or DAW → soundcard output into an SDR transmitter or RF generator.
 - Test tone source (built-in) → output to verify metering and routing without external audio.
 
-192 kHz output is recommended — it is the rate at which the full FM stereo composite (M + 38 kHz DSB-SC + 19 kHz pilot + 57 kHz RDS) fits inside Nyquist with headroom for oversampled limiting. 96 kHz works (RDS sits near the band edge); below 96 kHz, the composite cannot represent RDS.
+192 kHz output is **required for the full composite with RDS.** RDS sits at 57 kHz, which exceeds the 48 kHz Nyquist of 96 kHz sample rates — the RDS subcarrier cannot be represented at 96 kHz or below. 96 kHz is just enough to carry the FM stereo composite alone (M + 19 kHz pilot + 38 kHz DSB-SC stereo subcarrier) provided the audio bandwidth is limited so the upper L−R sideband doesn't push past 48 kHz; pilot-locked stereo decoding works, but disable RDS at this rate. Below 96 kHz the stereo subcarrier itself doesn't fit. 192 kHz is the recommended rate for everything because it gives Nyquist headroom for the post-clipper pilot/RDS injection plus the oversampled peak-control stages the chain runs above the host rate.
 
 **2. Set your region.** Pre-emphasis differs by region:
 

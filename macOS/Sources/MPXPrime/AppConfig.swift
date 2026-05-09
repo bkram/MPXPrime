@@ -23,6 +23,8 @@ struct AppConfig {
     // Parameter apply behaviour:
     //
     // Live-apply (via RuntimeConfig — changes take effect immediately):
+    //   sourceMode (input ↔ tone — flips render branch live),
+    //   testToneMode/Freq/LevelDB/Type (tone-generator parameters),
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
@@ -54,10 +56,10 @@ struct AppConfig {
     //              rdsEnableCT, rdsEnableID, rdsTZOffset
     //
     // Restart-required (engine must be restarted):
-    //   sampleRate, blockSize, sourceMode, device UIDs, monitorEnabled,
+    //   sampleRate, blockSize, device UIDs, monitorEnabled,
     //   monoMode, preemphasisUS, pilotLevel, sumLevel, diffLevel,
     //   programLowpassHz, limitMPX/Threshold/Lookahead*, processingBypass,
-    //   hpfHz, hfTrimDB/Hz, testToneMode/Freq,
+    //   hpfHz, hfTrimDB/Hz,
     //   preEncodeThreshold, preEncodeReleaseMS,
     //   audioCompositeSoftClipEnabled, audioCompositeSmootherEnabled,
     //   finalMPXSoftClipEnabled,
@@ -75,6 +77,8 @@ struct AppConfig {
     var processingBypass: Bool = false
     var testToneMode: String = "mono"
     var testToneFreq: Double = 1000.0
+    var testToneLevelDB: Double = -20.0   // Broadcast line-reference default
+    var testToneType: String = "sine"     // "sine" | "pink" | "white"
     var pilotLevel: Double = 0.08
     var sumLevel: Double = 1.0
     var diffLevel: Double = 1.0
@@ -351,6 +355,9 @@ struct AppConfig {
         cfg.processingBypass = mpx.bool("processing_bypass", defaultValue: cfg.processingBypass)
         cfg.testToneMode = mpx.string("test_tone_mode", defaultValue: cfg.testToneMode)
         cfg.testToneFreq = mpx.double("test_tone_freq", defaultValue: cfg.testToneFreq)
+        cfg.testToneLevelDB = mpx.double(
+            "test_tone_level_db", defaultValue: cfg.testToneLevelDB)
+        cfg.testToneType = mpx.string("test_tone_type", defaultValue: cfg.testToneType)
         cfg.pilotLevel = mpx.double("pilot_level", defaultValue: cfg.pilotLevel)
         cfg.sumLevel = mpx.double("sum_level", defaultValue: cfg.sumLevel)
         cfg.diffLevel = mpx.double("diff_level", defaultValue: cfg.diffLevel)
@@ -657,6 +664,18 @@ struct AppConfig {
 
         // Test tone
         testToneFreq = max(20.0, min(20_000.0, testToneFreq))
+        testToneLevelDB = max(-60.0, min(0.0, testToneLevelDB))
+        // Validate type against the supported set; fall back to sine.
+        if !["sine", "pink", "white"].contains(testToneType.lowercased()) {
+            testToneType = "sine"
+        }
+        // Validate stereo mode against the supported set; fall back to mono.
+        if !["mono", "stereo", "left", "right"].contains(testToneMode.lowercased()) {
+            testToneMode = "mono"
+        }
+        // sourceMode lives outside this block (interfaces section); both
+        // "input" and "tone" are valid. The Test Tone tab toggles
+        // between them via live-apply.
 
         // Filter frequencies
         hpfHz = max(10.0, min(200.0, hpfHz))
@@ -923,6 +942,8 @@ struct AppConfig {
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
+            "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",
+            "test_tone_type = \(testToneType)",
         ]
         let rdsLines: [String] = [
             "[RDS]",

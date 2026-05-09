@@ -4970,6 +4970,15 @@ final class MPXGenerator {
         let compositeClipperCancelStereo: Bool
         let compositeClipperCancelPilot: Bool
         let compositeClipperCancelRDS: Bool
+
+        // Tone-generator parameters. Live-applicable so the Test Tone
+        // tab can toggle source / type / freq / mode / level without
+        // restarting the engine.
+        let sourceMode: String        // "input" | "tone"
+        let testToneType: String      // "sine" | "pink" | "white"
+        let testToneMode: String      // "mono" | "stereo" | "left" | "right"
+        let testToneFreq: Float
+        let testToneLevelDB: Float
     }
 
     /// Runtime-applicable RDS state. Anything an operator can change
@@ -5105,8 +5114,13 @@ final class MPXGenerator {
 
     private var sampleRate: Float
     private let preemphasisUS: Int
-    private let toneFreq: Float
-    private let toneMode: String
+    // Tone-generator parameters. All `var` for live-apply through
+    // `applyRuntimeConfig` — the Test Tone tab adjusts these on a
+    // running engine without restart.
+    private var toneFreq: Float
+    private var toneMode: String
+    private var toneType: String = "sine"
+    private var toneLevel: Float = 0.1   // 10^(-20/20) — −20 dBFS default
     private let monoMode: Bool
     private let processingBypass: Bool
     private let pilotLevel: Float
@@ -5379,6 +5393,22 @@ final class MPXGenerator {
 
     private var toneStep: Float
     private var tonePhase: Float = 0.0
+    /// Paul Kellet's 4-pole pink-noise IIR state. Cheap, well-known
+    /// approximation (~3 dB/octave from ~0.4 Hz upward). Cycle artefacts
+    /// above ~10 kHz aren't a concern at the test-tone level / use
+    /// case (broadband fill, not deterministic measurement).
+    private var pinkB0: Float = 0.0
+    private var pinkB1: Float = 0.0
+    private var pinkB2: Float = 0.0
+    private var pinkB3: Float = 0.0
+    private var pinkB4: Float = 0.0
+    private var pinkB5: Float = 0.0
+    private var pinkB6: Float = 0.0
+    /// xorshift64* seed for white noise. Initialised on engine start;
+    /// the audio thread mutates it without locks (xorshift is a pure
+    /// scalar update; the noise stream doesn't need to be reproducible
+    /// across runs).
+    private var toneNoiseRNG: UInt64 = 0xCAFE_BABE_DEAD_BEEF
     private var pilotOsc = SineCosOsc()
     private var pilotPhaseForRDS: Float = 0.0
     private var subPhase: Float = 0.0
@@ -5472,6 +5502,8 @@ final class MPXGenerator {
         self.preemphasisUS = config.preemphasisUS
         self.toneFreq = Float(config.testToneFreq)
         self.toneMode = config.testToneMode.lowercased()
+        self.toneType = config.testToneType.lowercased()
+        self.toneLevel = powf(10.0, Float(config.testToneLevelDB) / 20.0)
         self.monoMode = config.monoMode
         self.processingBypass = config.processingBypass
         self.pilotLevel = Float(config.pilotLevel)
@@ -6041,6 +6073,35 @@ final class MPXGenerator {
                 cancelRDS: compositeClipperCancelRDS
             )
         }
+
+        // Tone-generator parameters. Recompute `toneStep` when freq
+        // changes (preserving phase across a freq update — no zero-
+        // crossing artefacts on the change), `toneLevel` from dBFS.
+        // Reset noise-state on type change so a Pink ↔ White switch
+        // doesn't carry filter state across types.
+        let newToneFreq = clampf(config.testToneFreq, 20.0, 20_000.0)
+        if newToneFreq != toneFreq {
+            toneFreq = newToneFreq
+            toneStep = twoPi * toneFreq / sampleRate
+        }
+        let normalisedMode = config.testToneMode.lowercased()
+        if ["mono", "stereo", "left", "right"].contains(normalisedMode) {
+            toneMode = normalisedMode
+        }
+        let normalisedType = config.testToneType.lowercased()
+        let typeChanged = normalisedType != toneType
+        if ["sine", "pink", "white"].contains(normalisedType) {
+            toneType = normalisedType
+        }
+        if typeChanged {
+            // Clear pink filter state and re-prime the white-noise RNG
+            // so a type switch lands cleanly without DC offset or stuck
+            // pink filter values from the prior generator.
+            pinkB0 = 0; pinkB1 = 0; pinkB2 = 0; pinkB3 = 0
+            pinkB4 = 0; pinkB5 = 0; pinkB6 = 0
+            tonePhase = 0
+        }
+        toneLevel = powf(10.0, clampf(config.testToneLevelDB, -60.0, 0.0) / 20.0)
     }
 
     func currentRDSLiveSnapshot() -> BasicRDSCoder.LiveSnapshot? {
@@ -6575,6 +6636,62 @@ final class MPXGenerator {
         )
     }
 
+    /// Generate one tone-source sample. Switches between sine /
+    /// pink / white based on `toneType`. Sine advances `tonePhase` by
+    /// `toneStep` and wraps; noise paths use the engine's xorshift RNG
+    /// + Paul Kellet's pink IIR. Output is unscaled; callers multiply
+    /// by `toneLevel` for the final output amplitude.
+    @inline(__always)
+    private func nextToneRawSample() -> Float {
+        switch toneType {
+        case "white":
+            return nextWhiteSample()
+        case "pink":
+            return nextPinkSample()
+        default:
+            let s = sinf(tonePhase)
+            tonePhase += toneStep
+            if tonePhase >= twoPi { tonePhase -= twoPi }
+            return s
+        }
+    }
+
+    /// xorshift64* white noise → uniform [-1, +1]. Single scalar
+    /// state mutation per sample; cheap.
+    @inline(__always)
+    private func nextWhiteSample() -> Float {
+        var x = toneNoiseRNG
+        x ^= x >> 12
+        x ^= x << 25
+        x ^= x >> 27
+        toneNoiseRNG = x
+        let mixed = x &* 0x2545_F491_4F6C_DD1D
+        // Top 24 bits → float in [0, 1) → [-1, +1)
+        let u = Float(mixed >> 40) / Float(1 << 24)
+        return (u * 2.0) - 1.0
+    }
+
+    /// Paul Kellet's 4-pole pink-noise IIR (the well-known short
+    /// recipe). Produces ~3 dB/octave rolloff from white noise. Cycle
+    /// artefacts above ~10 kHz are acceptable for a test-tone source
+    /// — operators use pink for broadband response checks, not for
+    /// deterministic measurement.
+    @inline(__always)
+    private func nextPinkSample() -> Float {
+        let white = nextWhiteSample()
+        pinkB0 = 0.99886 * pinkB0 + white * 0.0555179
+        pinkB1 = 0.99332 * pinkB1 + white * 0.0750759
+        pinkB2 = 0.96900 * pinkB2 + white * 0.1538520
+        pinkB3 = 0.86650 * pinkB3 + white * 0.3104856
+        pinkB4 = 0.55000 * pinkB4 + white * 0.5329522
+        pinkB5 = -0.7616 * pinkB5 - white * 0.0168980
+        let pink = pinkB0 + pinkB1 + pinkB2 + pinkB3 + pinkB4 + pinkB5 + pinkB6 + white * 0.5362
+        pinkB6 = white * 0.115926
+        // The recipe yields peaks around ±3.5; scale to roughly ±1
+        // so `toneLevel` interpretation matches the sine path.
+        return pink * 0.11
+    }
+
     private static func resolveMultibandCrossovers(
         sampleRate: Float,
         x1: Float,
@@ -6607,7 +6724,12 @@ final class MPXGenerator {
     ) {
         guard frameCount > 0 else { return }
         for i in 0..<frameCount {
-            let tone = sinf(tonePhase)
+            // Tone source: sine / pink / white via `nextToneRawSample`,
+            // scaled by `toneLevel` (linear; default ≈ 0.1 = −20 dBFS).
+            // Pre-fix: this path used `sinf(tonePhase)` without
+            // advancing the phase, generating DC silence.
+            let raw = nextToneRawSample()
+            let tone = raw * toneLevel
             var l: Float
             var r: Float
             switch toneMode {
@@ -6701,7 +6823,10 @@ final class MPXGenerator {
     ) {
         guard frameCount > 0 else { return }
         for i in 0..<frameCount {
-            let tone = sinf(tonePhase)
+            // Phase advance is handled inside `nextToneRawSample` for
+            // the sine path; pink / white paths ignore phase.
+            let raw = nextToneRawSample()
+            let tone = raw * toneLevel
             var l: Float
             var r: Float
             switch toneMode {
@@ -6722,8 +6847,6 @@ final class MPXGenerator {
             writeAnalysisSample(index: i, postAGCLeft: direct.0, postAGCRight: direct.1, preMPXLeft: direct.0, preMPXRight: direct.1, analysis: analysis)
             left[i] = direct.0
             right[i] = direct.1
-            tonePhase += toneStep
-            if tonePhase >= twoPi { tonePhase -= twoPi }
         }
     }
 
@@ -6737,7 +6860,8 @@ final class MPXGenerator {
     ) {
         guard frameCount > 0 else { return }
         for i in 0..<frameCount {
-            let tone = sinf(tonePhase)
+            let raw = nextToneRawSample()
+            let tone = raw * toneLevel
             var srcL: Float
             var srcR: Float
             switch toneMode {
@@ -7019,8 +7143,11 @@ final class MPXGenerator {
         diff = preDiff.process(diff)
         lastProgramActivity = inputActivity
 
-        tonePhase += toneStep
-        if tonePhase >= twoPi { tonePhase -= twoPi }
+        // (Phase advance for the tone source moved into
+        // `nextToneRawSample` — was a side-effect here that only
+        // worked when the source was a tone going through
+        // `processSampleDetailed`. The render-time helper now owns
+        // phase advance for all three tone paths.)
 
         pilotOsc.step()
         pilotPhaseForRDS = pilotOsc.phase

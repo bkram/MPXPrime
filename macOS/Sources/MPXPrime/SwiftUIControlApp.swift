@@ -1578,6 +1578,12 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var inputBufferMax: Double = 1.0
     @Published var inputBufferWarning: Double = 0.7
     @Published var inputBufferCritical: Double = 0.9
+    /// Low-passed (~1 s time constant) version of `inputBufferValue /
+    /// inputBufferMax`. Used by the Monitoring buffer-fill bar so the
+    /// display stays stable instead of twitching on every meter tick;
+    /// raw `inputBufferValue` keeps its 30 Hz cadence for any logic
+    /// that needs the instantaneous reading.
+    @Published var bufferFillSmoothed: Double = 0.0
     @Published var streamHealth: MonitoringStreamHealth = .stopped
 
     @Published var inputLLevel: Double = 0.0
@@ -2812,6 +2818,16 @@ final class MPXPrimeViewModel: ObservableObject {
                 inputBufferCritical = Double(target * 3 / 2)
                 inputBufferValue = Double(stats.bufferedFrames)
 
+                // Low-pass the displayed buffer fill (~1 s time
+                // constant) so the Monitoring bar stops twitching on
+                // every 30 Hz tick. Raw `inputBufferValue` is still
+                // updated above for any caller that needs the
+                // instantaneous reading.
+                let rawFill = Double(stats.bufferedFrames) / max(1.0, inputBufferMax)
+                let alpha = max(0.0, min(1.0, dt / (dt + 1.0)))
+                bufferFillSmoothed =
+                    (1.0 - alpha) * bufferFillSmoothed + alpha * rawFill
+
                 let deltaOverflows =
                     stats.overflows >= lastOverflowTotal ? (stats.overflows - lastOverflowTotal) : 0
                 let deltaUnderflows =
@@ -2894,6 +2910,7 @@ final class MPXPrimeViewModel: ObservableObject {
             inputBufferMax = 1
             inputBufferWarning = 0.7
             inputBufferCritical = 0.9
+            bufferFillSmoothed = 0.0
             engineStartReference = nil
             lastMonitorRefreshTime = now
             inputScopeLeft = Array(repeating: 0.0, count: 128)
@@ -4399,12 +4416,121 @@ private struct MonitoringDashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 transportPanel
+                metricsPanels
                 chainPanel
                 rdsPanel
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+    }
+
+    /// Three side-by-side cards with the live broadcast metrics
+    /// (previously crammed into the persistent top status strip):
+    /// MPX peak / deviation / modulation, headroom across the peak-
+    /// control stages, and subcarrier injection levels. Card layout
+    /// matches the rdsPanel grid pattern (uppercase secondary label
+    /// in the left column, monospaced value on the right). Wraps to
+    /// stacked layout on narrow windows via `ViewThatFits`.
+    private var metricsPanels: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                mpxPanel.frame(maxWidth: .infinity)
+                headroomPanel.frame(maxWidth: .infinity)
+                subcarriersPanel.frame(maxWidth: .infinity)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                mpxPanel
+                headroomPanel
+                subcarriersPanel
+            }
+        }
+    }
+
+    private var mpxPanel: some View {
+        Card(title: "MPX") {
+            metricsGrid([
+                ("OUTPUT", model.outputText.ifEmpty("—")),
+                ("AUDIO COMPOSITE", audioCompositeText),
+                ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
+                ("MODULATION", modulationText),
+            ])
+        }
+    }
+
+    private var headroomPanel: some View {
+        Card(title: "Headroom") {
+            metricsGrid([
+                ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
+                ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
+                ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
+                ("BS.412 BUDGET", budgetText),
+            ])
+        }
+    }
+
+    private var subcarriersPanel: some View {
+        Card(title: "Subcarriers") {
+            metricsGrid([
+                ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
+                ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
+                ("STEREO IMAGE", model.stereoImageText),
+            ])
+        }
+    }
+
+    private func metricsGrid(_ rows: [(String, String)]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+            ForEach(rows, id: \.0) { row in
+                GridRow {
+                    Text(row.0)
+                        .font(BroadcastStyle.scaleLabel)
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Text(row.1)
+                        .font(BroadcastStyle.valueReadout)
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// Audio-composite peak in dBFS. Linear-to-dBFS with a -120 dBFS
+    /// floor so the readout settles to a fixed string when silent
+    /// rather than reading "-inf".
+    private var audioCompositeText: String {
+        let v = Double(model.audioCompositePeakLinear)
+        guard v > 1e-6 else { return "-120.0 dBFS" }
+        return String(format: "%.1f dBFS", 20.0 * log10(v))
+    }
+
+    /// Modulation percentage: peak deviation as a fraction of the
+    /// configured target. References `mpx_deviation_khz` from config
+    /// (not the 75 kHz regulatory line) — operators with custom
+    /// deviation targets read 100% at their chosen setpoint.
+    private var modulationText: String {
+        let peak = Double(model.estimatedDeviationPeakKHz)
+        let target = max(1.0, model.config.mpxDeviationKHz)
+        return String(format: "%.1f%%", (peak / target) * 100.0)
+    }
+
+    /// Budget margin + state. ON shown in tail when BS.412 is engaged;
+    /// otherwise the numeric value alone (so OFF reads "+0.0 dB" with
+    /// no implication that BS.412 is active).
+    private var budgetText: String {
+        let margin = Double(model.compositeBudgetMarginDBValue)
+        let state = model.compositeBudgetStateText
+        let core = String(format: "%+.1f dB", margin)
+        return state.isEmpty || state == "Off" ? core : "\(core) · \(state)"
+    }
+
+    private func grText(_ valueDB: Float) -> String {
+        let db = Double(valueDB)
+        return db < 0.05 ? "0.0 dB" : String(format: "%.1f dB", db)
     }
 
     // MARK: - Panel A: Transport + Devices
@@ -4659,7 +4785,12 @@ private struct MonitoringDashboardView: View {
     }
 
     private var bufferFill: Double {
-        max(0.0, min(1.0, model.streamHealth.ringFill))
+        // Display the low-passed buffer fill (~1 s time constant) so
+        // the bar doesn't twitch on every 30 Hz meter tick. The
+        // underlying `streamHealth.ringFill` and `inputBufferValue`
+        // still update at full rate for any caller that needs the
+        // instantaneous reading.
+        max(0.0, min(1.0, model.bufferFillSmoothed))
     }
 
     private var bufferTint: Color {

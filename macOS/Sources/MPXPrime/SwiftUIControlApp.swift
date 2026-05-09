@@ -1246,7 +1246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let w = NSWindow(contentViewController: hostingController)
         w.title = "About MPX Prime"
         w.styleMask = [.titled, .closable]
-        w.setContentSize(NSSize(width: 450, height: 500))
+        w.setContentSize(NSSize(width: 360, height: 460))
         w.isReleasedWhenClosed = false
         w.delegate = self
         restoreFrame(for: w, autosaveName: kAboutWindowAutosaveName)
@@ -6798,90 +6798,62 @@ Now: {now_playing}
     }
 }
 
+/// macOS-style About panel: app icon + name + version + copyright,
+/// stacked centered, with a brief description and disclaimer in plain
+/// prose. Matches the Apple HIG About-window pattern (cf. Music.app,
+/// Mail.app) rather than a settings-style framed card.
 private struct AboutSectionView: View {
-    var body: some View {
-        Form {
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("MPX Prime")
-                        .font(.title2.weight(.semibold))
-                    Text("Version \(AppConfig.appVersion)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Copyright © 2026 Bkram Developments")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Link("Project Repository", destination: URL(string: "https://github.com/bkram/MPXPrime")!)
-                        .font(.caption)
-                }
-                .padding(.vertical, 4)
-            }
-
-            Section {
-                DisclaimerBox()
-            }
+    private var appIcon: NSImage? {
+        if let icon = NSApp?.applicationIconImage, icon.size.width > 0 {
+            return icon
         }
-        .formStyle(.grouped)
-        .controlSize(.small)
+        return NSImage(named: NSImage.applicationIconName)
     }
-}
 
-private struct DisclaimerBox: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+        VStack(alignment: .center, spacing: 10) {
+            if let icon = appIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 96, height: 96)
                     .accessibilityHidden(true)
-                Text("Disclaimer")
-                    .font(.headline)
             }
-            
-            Text("MPX Prime is a native macOS FM composite (MPX) generator with stereo encoding, optional RDS, and decoded monitor output.")
-                .font(.caption)
 
-            Text("This software is provided for experimental and educational purposes only and is not suitable for production broadcast use.")
-                .font(.caption)
-            
-            Text("It may not conform to any applicable technical standards, regulatory requirements, or broadcast specifications related to:")
-                .font(.caption)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("• RDS (Radio Data System)")
-                Text("• FM composite (MPX) signal generation")
-                Text("• RDS multiplex (RDS-MX) generation")
-                Text("• Modulation accuracy, deviation limits, or spectral purity")
-                Text("• Regional standards (e.g. EN 50067, IEC 62106, NRSC, ITU-R)")
+            Text("MPX Prime")
+                .font(.title2.weight(.semibold))
+
+            Text("Version \(AppConfig.appVersion)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            Text("Copyright © 2026 Bkram Developments")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            Link("github.com/bkram/MPXPrime",
+                 destination: URL(string: "https://github.com/bkram/MPXPrime")!)
+                .font(.system(size: 11))
+
+            Divider()
+                .padding(.vertical, 4)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Experimental amateur-grade FM composite (MPX) generator with stereo encoding and optional RDS. Targets core behavior from EN 50067 / IEC 62106 and common FM stereo practice, but is not certified and no compliance warranty is implied.")
+
+                Text("Suitable for LPFM, community radio, prosumer broadcast-style encoding, and study of FM signal processing — not for certified production broadcast. The author assumes no liability for regulatory violations, equipment damage, interference, or any direct or indirect consequences arising from its use. Use at your own risk.")
+
+                Text("Released under GPL-3.0.")
+                    .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .padding(.leading, 8)
-            
-            Text("No warranty, guarantee, or representation is made that:")
-                .font(.caption)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("• The generated composite or RDS signal meets required specifications")
-                Text("• The output is suitable for on-air transmission")
-                Text("• The software complies with any national or international broadcast regulations")
-            }
-            .font(.caption)
-            .padding(.leading, 8)
-            
-            Text("Use of this software for transmission may require proper certification, measurement, and regulatory approval. The author assumes no liability for regulatory violations, equipment damage, interference, or any direct or indirect consequences arising from its use.")
-                .font(.caption)
-            
-            Text("Use at your own risk.")
-                .font(.caption.weight(.semibold))
+            .font(.system(size: 11))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-        )
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 

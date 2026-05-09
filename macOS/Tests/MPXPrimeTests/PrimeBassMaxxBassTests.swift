@@ -273,6 +273,85 @@ struct PrimeBassMaxxBassTests {
             "Transient burst should clearly exceed sustained gain; got peak \(gainPostOnsetPeak), sustained \(gainSustained), range \(burstRange)")
     }
 
+    @Test func bigBottomEnvelopeAttacksFastAndReleasesSlow() {
+        // Werrbach Big Bottom dynamic-bass-extension behaviour
+        // (US 5,359,665, Aphex, expired 2012). The LF level envelope
+        // follower drives `primeBassAdaptiveGain` with fast attack /
+        // slow release. Sustained LF should hold the boost near full
+        // engagement; after the LF goes silent the boost should
+        // release gradually rather than collapse instantly. Verified
+        // via internal `primeBassAdaptiveGain` accessor.
+        let cfg = makeMinimalChainConfig(
+            primeBassEnabled: true, harmonics: 0.5, amount: 0.7, freqHz: 80.0)
+        let gen = MPXGenerator(config: cfg, sampleRate: Double(sampleRate))
+
+        // 50 ms silence → 200 ms sustained 70 Hz sine → 200 ms silence.
+        // Tap adaptive gain at: pre-onset, mid-tone (~150 ms in,
+        // envelope settled at near-full), and 50 ms after the tone
+        // ends (release ~300 ms means env still well above zero).
+        let preFrames = Int(0.050 * Double(sampleRate))
+        let toneFrames = Int(0.200 * Double(sampleRate))
+        let postSilenceFrames = Int(0.200 * Double(sampleRate))
+        let totalFrames = preFrames + toneFrames + postSilenceFrames
+        var left = [Float](repeating: 0.0, count: totalFrames)
+        var right = [Float](repeating: 0.0, count: totalFrames)
+        let omega = 2.0 * Double.pi * 70.0 / Double(sampleRate)
+        for i in preFrames..<(preFrames + toneFrames) {
+            let s = Float(0.3 * sin(omega * Double(i - preFrames)))
+            left[i] = s
+            right[i] = s
+        }
+
+        var gainPreOnset: Float = 0.0
+        var gainSustained: Float = 0.0
+        var gainPostRelease: Float = 0.0
+        let sustainedSample = preFrames + Int(0.150 * Double(sampleRate))   // 150 ms into the tone
+        let postReleaseSample = preFrames + toneFrames + Int(0.050 * Double(sampleRate))  // 50 ms after tone ends
+
+        var leftBlock = [Float](repeating: 0.0, count: 1)
+        var rightBlock = [Float](repeating: 0.0, count: 1)
+        for i in 0..<totalFrames {
+            leftBlock[0] = left[i]
+            rightBlock[0] = right[i]
+            leftBlock.withUnsafeMutableBufferPointer { lBuf in
+                rightBlock.withUnsafeMutableBufferPointer { rBuf in
+                    gen.renderFromInputInPlace(
+                        frameCount: 1,
+                        left: lBuf.baseAddress!,
+                        right: rBuf.baseAddress!
+                    )
+                }
+            }
+            if i == preFrames - 1 { gainPreOnset = gen.primeBassAdaptiveGain }
+            if i == sustainedSample { gainSustained = gen.primeBassAdaptiveGain }
+            if i == postReleaseSample { gainPostRelease = gen.primeBassAdaptiveGain }
+        }
+
+        // Pre-onset silence: env at zero, gate also closed → adaptive 0.
+        #expect(gainPreOnset < 0.05,
+            "Before onset, adaptive gain should be ~0 (silence + closed gate); got \(gainPreOnset)")
+
+        // 150 ms sustained tone: 10 ms attack has long since saturated;
+        // env at near-full LF level → adaptive saturated near 1.0 via
+        // the ×4 normalisation.
+        #expect(gainSustained > 0.7,
+            "150 ms into sustained tone, adaptive gain should be near 1.0; got \(gainSustained)")
+
+        // 50 ms after the tone ends: 300 ms release means env has only
+        // decayed by ~17 % (1 − e^(−50/300) = 0.154). Adaptive should
+        // still be substantially above zero — that's the patent's
+        // "envelope duration extension" signature, the point of B3.
+        #expect(gainPostRelease > 0.3,
+            "50 ms after tone ends, adaptive gain should still be > 0.3 (slow release); got \(gainPostRelease)")
+
+        // Sustained > postRelease > preOnset — the dynamics are
+        // monotonic across the three phases.
+        #expect(gainSustained > gainPostRelease,
+            "Sustained gain (\(gainSustained)) should exceed post-release gain (\(gainPostRelease))")
+        #expect(gainPostRelease > gainPreOnset,
+            "Post-release gain (\(gainPostRelease)) should exceed pre-onset gain (\(gainPreOnset)) — release is slow, not instant")
+    }
+
     @Test func disabledPrimeBassPassesThroughTone() {
         // Sanity check: with PrimeBass disabled and the rest of the chain
         // configured transparent, the composite output should contain

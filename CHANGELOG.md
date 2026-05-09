@@ -13,6 +13,9 @@ optional deep DSP combination test suite. Newest first.
 
 Work accumulating on `develop/v.023` past `v0.21`. No release cut yet — these will roll into 0.23 when the substantive work for that release lands.
 
+### DSP
+- **PrimeBass Phase 3: Werrbach Big Bottom envelope follower** (Aphex US 5,359,665, expired 2012-07-31 — public domain; finishes the bass-enhancement patent backlog). Replaces the prior spectral-ratio detector + transient-hold machinery in `processPrimeBass` with a direct LF-level envelope follower: ~10 ms attack catches the leading edge of a kick / plucked-bass note, ~300 ms release lets the boost extend over the natural decay. Net effect per the patent: "envelope duration extension" — same peak boost as a static gain, just held longer through the note tail. Removes ~25 lines of spectral-ratio gating (`primeBassRatioEst`, `primeBassTargetRatio`, `primeBassRatioDeadband`, `primeBassHoldRemaining`, the 1.2 s / 2.8 s post-target smoother) that tracked compositional balance over seconds and so couldn't engage on a typical drum hit before the hit was over. New `bigBottomEnvelopeAttacksFastAndReleasesSlow` test verifies the envelope's behaviour at three phases (pre-onset / sustained / post-release) via the internal `primeBassAdaptiveGain` accessor.
+
 ### UI
 - **About panel redesigned** macOS-native (app icon + name + version + copyright + prose disclaimer matching the README; replaces the previous orange-bordered "Disclaimer" box with warning-triangle header). Window 360×460.
 - **Sidebar** width `min: 200 → 220, ideal: 230 → 240, max: 280 → 320` so labels never truncate at first launch. Icons now use `.foregroundStyle(.tint)` + `.symbolRenderingMode(.hierarchical)` so they pick up the system accent (blue by default) with 3-level tonal layering — matches Apple's first-party sidebars (Music.app, Mail.app).

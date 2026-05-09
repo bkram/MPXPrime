@@ -5185,20 +5185,24 @@ final class MPXGenerator {
     private var primeBassSideAP = Biquad()
     private var primeBassSubPrevSample: Float = 0.0
     private var primeBassSubPhase: Int = 0
-    private let primeBassTargetRatio: Float = 0.42
-    private let primeBassRatioDeadband: Float = 0.05
-    private var primeBassRatioEst: Float = 0.42
-    private var primeBassAdaptiveTarget: Float = 0.0
-    private var primeBassAdaptiveGain: Float = 0.0
+    // Werrbach Big Bottom dynamic-bass-extension envelope follower
+    // (US 5,359,665, Aphex, expired 2012-07-31). Drives `primeBassAdaptiveGain`
+    // directly via its asymmetric attack/release: fast attack (~10 ms)
+    // catches the leading edge of a kick / plucked-bass note; slow
+    // release (~300 ms) extends the boost over the natural decay.
+    // Net effect per the patent: "envelope duration extension" —
+    // perceived bass holds longer without growing the peak. Replaces
+    // the prior spectral-ratio detector + transient-hold machinery,
+    // which tracked compositional balance over seconds and so
+    // couldn't engage on a typical drum hit before the hit was over.
+    // `internal` access on env so tests can verify dynamics directly.
+    var primeBassBigBottomEnv: Float = 0.0
+    private var primeBassBigBottomAttackCoeff: Float = 0.0
+    private var primeBassBigBottomReleaseCoeff: Float = 0.0
+    var primeBassAdaptiveGain: Float = 0.0
     private var primeBassLevelEst: Float = 1e-3
-    private let primeBassHoldSeconds: Float = 0.12
-    private var primeBassHoldRemaining: Float = 0.0
     private var primeBassMakeupGain: Float = 1.0
-    private var primeBassSampleDuration: Float = 1.0 / 48_000.0
-    private var primeBassRatioAlpha: Float = 0.0
     private var primeBassLevelAlpha: Float = 0.0
-    private var primeBassAdaptiveAttackAlpha: Float = 0.0
-    private var primeBassAdaptiveReleaseAlpha: Float = 0.0
     private var primeBassMakeupAttackCoeff: Float = 0.0
     private var primeBassMakeupReleaseCoeff: Float = 0.0
     // MaxxBass-style equal-loudness weighting (US 5,930,373, expired
@@ -6163,13 +6167,19 @@ final class MPXGenerator {
     private func updatePrimeBassDynamicRates() {
         let sr = max(8_000.0, sampleRate)
         let dt = 1.0 / sr
-        primeBassSampleDuration = dt
-        primeBassRatioAlpha = 1.0 - expf(-dt / 0.45)
+        // Slow level estimate, used by the gate-floor calculation at
+        // function entry. ~1.1 s tracks the longer-term mid level for
+        // the gate threshold without flickering on per-note dynamics.
         primeBassLevelAlpha = 1.0 - expf(-dt / 1.1)
-        primeBassAdaptiveAttackAlpha = 1.0 - expf(-dt / 1.2)
-        primeBassAdaptiveReleaseAlpha = 1.0 - expf(-dt / 2.8)
         primeBassMakeupAttackCoeff = expf(-1.0 / ((45.0 * 0.001) * sr))
         primeBassMakeupReleaseCoeff = expf(-1.0 / ((220.0 * 0.001) * sr))
+        // Big Bottom envelope follower (US 5,359,665). Fast attack so
+        // the boost ramps up within the leading edge of a kick or
+        // plucked-bass note (~10 ms); slow release so it extends over
+        // the natural decay of the note (~300 ms) — that's the
+        // patent's "envelope duration extension" behaviour.
+        primeBassBigBottomAttackCoeff = expf(-1.0 / ((10.0 * 0.001) * sr))
+        primeBassBigBottomReleaseCoeff = expf(-1.0 / ((300.0 * 0.001) * sr))
         // Werrbach dual-envelope transient detector. Fast envelope
         // follows the LF input quickly so its level reflects the
         // *current* attack; slow envelope tracks the recent baseline.
@@ -7323,11 +7333,9 @@ final class MPXGenerator {
         widebandAGC.reset()
         configureStereoWidener()
 
-        primeBassAdaptiveTarget = 0.0
         primeBassAdaptiveGain = 0.0
-        primeBassRatioEst = primeBassTargetRatio
+        primeBassBigBottomEnv = 0.0
         primeBassLevelEst = 1e-3
-        primeBassHoldRemaining = 0.0
         primeBassSubPrevSample = 0.0
         primeBassSubPhase = 0
         primeBassMakeupGain = 1.0
@@ -7366,7 +7374,6 @@ final class MPXGenerator {
             return (left, right)
         }
 
-        let dt = primeBassSampleDuration
         let midAbs = max(1e-6, fabsf(mid))
         let bassAbs = fabsf(low)
         let gateFloor = max(0.012, primeBassLevelEst * 0.18)
@@ -7374,32 +7381,39 @@ final class MPXGenerator {
             return (left, right)
         }
 
-        let lowRatio = bassAbs / max(midAbs, primeBassLevelEst * 0.7, 0.02)
-        primeBassRatioEst += (lowRatio - primeBassRatioEst) * primeBassRatioAlpha
-        let targetRatio = primeBassTargetRatio + (0.06 * density)
-        let deadband = max(0.03, primeBassRatioDeadband - (0.015 * density))
-        let lowEnter = max(0.05, targetRatio - deadband)
-        let highExit = min(0.9, targetRatio + deadband)
-        if primeBassRatioEst < lowEnter {
-            let deficit = (lowEnter - primeBassRatioEst) / lowEnter
-            primeBassAdaptiveTarget = clampf(deficit, 0.0, 1.0)
-        } else if primeBassRatioEst > highExit {
-            primeBassAdaptiveTarget = 0.0
-        }
+        // Big Bottom dynamic-bass envelope follower (Werrbach US 5,359,665,
+        // Aphex, expired 2012-07-31). Track LF level with fast attack
+        // (~10 ms) and slow release (~300 ms): the boost ramps up
+        // within the leading edge of a kick / plucked-bass note and
+        // then extends over the natural decay. "Envelope duration
+        // extension" — same peak boost as a static gain, just held
+        // longer. Replaces the prior spectral-ratio detector +
+        // transient-hold machinery, which tracked compositional
+        // balance over seconds and so couldn't engage on a typical
+        // drum hit before the hit was already over.
+        let bigBottomCoeff =
+            bassAbs > primeBassBigBottomEnv
+            ? primeBassBigBottomAttackCoeff
+            : primeBassBigBottomReleaseCoeff
+        primeBassBigBottomEnv =
+            (bigBottomCoeff * primeBassBigBottomEnv)
+            + ((1.0 - bigBottomCoeff) * bassAbs)
 
+        // Map envelope to [0, 1]. The ×4 normalization brings typical
+        // program-level LF (~0.15-0.25 average) to roughly full
+        // engagement; loud bass clamps at 1.0. The user's `amount` /
+        // `drive` / `density` knobs upstream still scale how much that
+        // engagement actually contributes to `boostGain` and
+        // `harmonicGain`, so the follower's job here is just per-note
+        // envelope tracking — knob-mediated intensity stays a separate
+        // dimension.
+        let adaptive = clampf(primeBassBigBottomEnv * 4.0, 0.0, 1.0)
+        primeBassAdaptiveGain = adaptive
+
+        // Slow level estimate for the next-tick gate floor. Same role
+        // as before — gate uses last tick's value, this updates for
+        // the next call.
         primeBassLevelEst += (midAbs - primeBassLevelEst) * primeBassLevelAlpha
-        let transientFactor = midAbs / max(1e-6, primeBassLevelEst)
-        if transientFactor > 3.5 {
-            primeBassHoldRemaining = primeBassHoldSeconds
-        }
-        primeBassHoldRemaining = max(0.0, primeBassHoldRemaining - dt)
-        if primeBassHoldRemaining <= 0.0 {
-            let adaptAlpha =
-                primeBassAdaptiveTarget > primeBassAdaptiveGain
-                ? primeBassAdaptiveAttackAlpha : primeBassAdaptiveReleaseAlpha
-            primeBassAdaptiveGain += (primeBassAdaptiveTarget - primeBassAdaptiveGain) * adaptAlpha
-        }
-        let adaptive = clampf(primeBassAdaptiveGain, 0.0, 1.0)
 
         let driveFactor = 0.55 + (0.42 * drive)
         let densityFactor = 0.50 + (0.42 * density)

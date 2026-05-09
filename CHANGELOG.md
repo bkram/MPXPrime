@@ -1,13 +1,21 @@
 # Changelog
 
-Versions are sequential point releases (0.7 → 0.8 → 0.9 → 0.10 → 0.11 → 0.20),
-not decimals. 0.20 is newer than 0.11; the jump from 0.11 to 0.20 marks
-the magnitude of the post-0.11 work — composite clipper differential
-topology with linear-phase FIR decimation, RDS live-apply for the full
-operationally-toggled surface, GUI restructure with status-first Control
-tab, PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
+Versions are sequential point releases (0.7 → 0.8 → 0.9 → 0.10 → 0.11 → 0.20 → 0.21),
+not decimals. 0.20 was a deliberate jump from 0.11 to mark the magnitude
+of the post-0.11 work — composite clipper differential topology with
+linear-phase FIR decimation, RDS live-apply for the full operationally-
+toggled surface, GUI restructure with status-first Control tab,
+PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
+
+## 0.21 — 2026-05-09
+
+### Docs
+- **Patent-attribution list complete.** The "Compared to commercial processors" paragraph in README previously credited only `US 4,460,871` and `US 5,737,434` (the 0.11 references). Updated to list all six expired patents whose published claims are used as design references: those two (Orban distortion-cancelled composite clipping) plus `US 6,337,999` (Orban differential composite clipper topology, expired 2022), `US 5,930,373` (Waves MaxxBass equal-loudness harmonics, expired 2017), `US 4,150,253` (Aphex Aural Exciter pre-waveshaper topology adapted for bass via allpass, expired 1996), and `US 5,424,488` (Werrbach transient-discriminate harmonic gain, expired 2013). Each linked to Google Patents; framed as public-domain prior art, not licensed reproductions.
+- **Trademarks and affiliations** subsection added to README. Names referenced descriptively throughout the project (Orban, Optimod, Omnia, Stereo Tool / Stereotool, Aphex, Waves / MaxxBass, BBE, DTS, Music Tribe, Inovonics, DEVA, Audemat, BW, JUCE, Qt, Apple, macOS / AVFoundation / CoreAudio / vDSP / vForce, JACK, ALSA, AES3, DAB+, Livewire, Dante, Ravenna) are trademarks of their respective owners; MPX Prime is independent and not affiliated with any of them. The PrimeBass rename in 0.20 was specifically to remove the unintended trademark adjacency to Orban.
+
+No source changes vs 0.20. Audio path bit-identical; binary identical except for the `appVersion` string.
 
 ## 0.20 — 2026-05-09
 

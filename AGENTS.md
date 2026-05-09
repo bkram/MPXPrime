@@ -39,7 +39,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-pa
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS --filter BassClipperTests
 
 # Release bundle + DMG
-./build-release.sh 0.20
+./build-release.sh 0.21
 
 # Optional deep DSP combination test suite (~3 min; opt-in)
 MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
@@ -151,5 +151,5 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `swift build --package-path macOS -c release` is clean.
 - Manual smoke test with `--gui`: monitoring + processing tabs work.
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
-- Tag `v<version>` from the active long-lived branch (currently `develop/v.20` — there is no `main` branch on this remote) to trigger `.github/workflows/release.yml`. The workflow triggers on any tag matching `v*`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release.
+- Tag `v<version>` from the active long-lived branch (currently `develop/v.21` — there is no `main` branch on this remote) to trigger `.github/workflows/release.yml`. The workflow triggers on any tag matching `v*`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release.
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.

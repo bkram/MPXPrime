@@ -151,5 +151,5 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `swift build --package-path macOS -c release` is clean.
 - Manual smoke test with `--gui`: monitoring + processing tabs work.
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
-- Tag `v<version>` from the active long-lived branch (currently `develop/v.21` — there is no `main` branch on this remote) to trigger `.github/workflows/release.yml`. The workflow triggers on any tag matching `v*`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release.
+- Tag `v<version>` from `main` (the default branch) to trigger `.github/workflows/release.yml`. The workflow triggers on any tag matching `v*`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. (Pre-0.21 the long-lived branch was `develop/v.NN` per release; from 0.21 onward `main` is the canonical branch and feature work happens on short-lived branches off main.)
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.

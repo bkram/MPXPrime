@@ -98,6 +98,35 @@ see "Already implemented" subsection below). Remaining backlog:
 
 ## Recently landed (post-0.11, unreleased)
 
+- **Optional deep DSP combination test suite** (`DeepDSPTests.swift`).
+  Five-layer opt-in coverage of stage interactions, gated by
+  `MPXPRIME_DEEP=1`. (1) Per-stage isolation smoke tests for the
+  previously-unstested stages — Phase Rotator, Parametric EQ, Mono
+  Bass, Stereo Widener, BS.412, Pre-encode limiter, DC clipper,
+  3-band multiband, multiband limiter, encoder FIR, final MPX safety
+  limiter. (2) Universal invariants on 50 deterministically-seeded
+  random valid configs × 4 adversarial programs (HF-rich pop /
+  sustained bass / percussive transients / pink noise) — asserts no
+  NaN / inf, composite peak ≤ 1.05, pilot RMS within ±30% of
+  configured `pilotLevel` when stereo subcarriers are emitted, RDS
+  sideband energy present (>-75 dBFS in 55–59 kHz band) when active.
+  (3) Pairwise enable/disable matrix on 11 high-impact stage flags,
+  12 covering rows. (4) Counteract detection — for 10 suspect pairs
+  asserts no amplitude conspiracy (combined peak ≤ max single ×
+  1.10) and no cancellation conspiracy (combined 1 kHz energy ≥
+  min single − 6 dB). (5) Per-preset safety on five 5-band presets
+  × three programs. The suite stays out of the default `swift test`
+  invocation (still ~10 s); deep run takes ~3 min on M1.
+
+- **PrimeBass Phase 2 — Werrbach transient-discriminate harmonic
+  gain** (commit `af7b883`, US 5,424,488 expired 2013-06-08). Dual-
+  envelope detector — fast (5 ms / 30 ms) follower minus slow
+  (50 ms / 250 ms) baseline, normalized — modulates the harmonic-band
+  gain from a 0.7× sustain floor to a 1.4× peak on real onsets.
+  "Punchy not boomy" character: reduces continuous HF energy on
+  sustained material while preserving peak harmonic intensity on
+  attacks.
+
 - **PrimeBass bass enhancement modernised + renamed from Orbass**
   (commit `4d4a70f`). Phase 1 of the bass-enhancement patent backlog:
   Waves MaxxBass-style equal-loudness-weighted harmonics (US 5,930,373,

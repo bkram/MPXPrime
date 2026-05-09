@@ -122,6 +122,18 @@ This is the minimum to hear MPX Prime processing your audio and feeding a transm
 
 192 kHz output is **required for the full composite with RDS.** RDS sits at 57 kHz, which exceeds the 48 kHz Nyquist of 96 kHz sample rates — the RDS subcarrier cannot be represented at 96 kHz or below. 96 kHz is just enough to carry the FM stereo composite alone (M + 19 kHz pilot + 38 kHz DSB-SC stereo subcarrier) provided the audio bandwidth is limited so the upper L−R sideband doesn't push past 48 kHz; pilot-locked stereo decoding works, but disable RDS at this rate. Below 96 kHz the stereo subcarrier itself doesn't fit. 192 kHz is the recommended rate for everything because it gives Nyquist headroom for the post-clipper pilot/RDS injection plus the oversampled peak-control stages the chain runs above the host rate.
 
+### Audio MIDI Setup — required output configuration
+
+macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime tells the engine what rate it wants, but the device-side format and volume are owned by the OS — wrong values there silently corrupt the composite before it leaves the Mac.
+
+For the output device feeding your exciter / SDR / RF generator:
+
+1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly.
+2. **Bit depth**: **24-bit integer or 32-bit float**. Either is fine; 32-bit float is the AVAudioEngine native format. 16-bit also *works* for the composite (96 dB SNR is well above any FM receiver's noise floor and you cannot hear the difference at the listener), but 24/32-bit is best practice — no extra dither/truncation step at the chain output, and headroom for downstream tools that further process the composite (resamplers, SDR DSPs).
+3. **Volume / output gain**: **100 % (0 dB) on every channel**. This is the critical one. The macOS volume slider is post-mix — it scales the engine's already-finalised composite. If output volume is at, say, 75 %, the FM exciter receives a signal at 0.75× amplitude and your modulation undershoots by ~2.5 dB; the loudness target the chain just enforced is silently wrong. Audio MIDI Setup → device → "Master Stream" or per-channel volume sliders. Lock these at unity for any broadcast use.
+
+If your output device is BlackHole or a virtual loopback, the same rules apply — check both the loopback device's format and the receiving app's input format. Mismatch there is the #1 cause of "the chain looks right but the receiver sounds wrong" reports.
+
 **2. Set your region.** Pre-emphasis differs by region:
 
 - **USA / Canada / South Korea**: 75 µs

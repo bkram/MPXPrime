@@ -1501,11 +1501,21 @@ final class MPXPrimeViewModel: ObservableObject {
     // occluded. Idle = app inactive / occluded / minimized. The idle
     // rate stays > 0 so the meter ballistics state remains warm and the
     // UI resumes immediately on bring-forward.
-    private static let monitoringRefreshHzActive: Double = 60.0
+    //
+    // Active rate held at 30 Hz: per-tick work in
+    // `refreshMonitoringSnapshot` (5 String(format:) calls + 59
+    // @Published writes + SwiftUI re-renders) runs on the main thread.
+    // Pushing the timer to 60 Hz can preempt the audio render thread on
+    // busy machines and cause input-ring / output-buffer drops.
+    // Inline spectrum bumped 12 → 24 Hz for a visible smoothness win
+    // without doubling main-thread cost; windowed visualizers stay at
+    // 30 Hz which is comfortably smooth for the dedicated detached
+    // panels.
+    private static let monitoringRefreshHzActive: Double = 30.0
     private static let monitoringRefreshHzIdle: Double = 5.0
-    private static let inlineMPXSpectrumRefreshHz: Double = 30.0
-    private static let windowMPXSpectrumRefreshHz: Double = 60.0
-    private static let windowPreMPXSpectrumRefreshHz: Double = 60.0
+    private static let inlineMPXSpectrumRefreshHz: Double = 24.0
+    private static let windowMPXSpectrumRefreshHz: Double = 30.0
+    private static let windowPreMPXSpectrumRefreshHz: Double = 30.0
     private static let inlineMPXSpectrumBins: Int = 384
     private static let windowMPXSpectrumBins: Int = 512
     private static let preMPXSpectrumBins: Int = 128

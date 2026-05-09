@@ -4134,7 +4134,13 @@ private struct RootView: View {
             // selected.
             NavigationSplitView(columnVisibility: .constant(.all)) {
                 StageSidebar(model: model)
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
+                    // Minimum width sized to fit the longest label
+                    // ("Composite Clipper", 17 chars) plus icon and
+                    // padding. The previous 200 pt minimum let the OS
+                    // / autosaved state pin the sidebar narrow enough
+                    // to truncate "Composite Clipper" / "Alt. Frequencies"
+                    // on first launch of a fresh DMG.
+                    .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 320)
                     .toolbar(removing: .sidebarToggle)
             } detail: {
                 StageContentView(model: model)
@@ -4166,6 +4172,11 @@ private struct StageSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        // Hierarchical rendering picks up the system accent and gives
+        // SF Symbols a 3-level tonal layering (the blue-tinted look the
+        // Help sidebar already uses; matches Apple's own first-party
+        // sidebar styling — Music.app, Mail.app).
+        .symbolRenderingMode(.hierarchical)
     }
 }
 

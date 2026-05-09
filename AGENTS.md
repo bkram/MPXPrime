@@ -46,6 +46,8 @@ MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   swift test --package-path macOS --filter Deep
 ```
 
+**Debug builds are not real-time capable.** `swift build` / `swift run` produce a debug binary without optimizer pass; the meter / scope / spectrum work in `refreshMonitoringSnapshot` runs slow enough to preempt the audio thread on a debug build, producing clicks, buffer underruns, or input-ring overflows. Use debug for development, unit tests, and `--verify` (which doesn't touch real audio devices). For any test that involves live audio I/O — bug-reproducing on real hardware, listening tests, regression checks of the actual chain — build release first: `swift build --package-path macOS -c release` and run `macOS/.build/release/MPXPrime`, or use the `./build-release.sh` DMG. If a user reports buffer issues, ask whether they're on a debug or release build before chasing a DSP regression.
+
 Verifier exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN.
 
 Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not XCTest. Do not add XCTest-based tests.

@@ -64,6 +64,8 @@ transport restart since they reconfigure the modulator.
 swift build --package-path macOS
 ```
 
+> ⚠️ **Debug builds are not real-time capable.** `swift build` (no `-c release`) and `swift run` produce a debug binary without compiler optimizations. The audio render thread shares CPU with the main-thread UI loop, and on a debug build the meter / scope / spectrum work in `refreshMonitoringSnapshot` is slow enough to occasionally preempt the audio thread — you'll hear clicks, buffer underruns, or input ring overflows. Debug builds are fine for development / unit testing / `--verify` runs (which don't touch real audio devices), but **for actual on-air or monitor playback always use a release build**: either `swift build --package-path macOS -c release` followed by running `macOS/.build/release/MPXPrime`, or use the DMG produced by `./build-release.sh` / a GitHub Release.
+
 ## Run
 
 From repo root:

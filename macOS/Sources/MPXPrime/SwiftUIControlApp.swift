@@ -4165,18 +4165,28 @@ private struct StageSidebar: View {
             ForEach(Stage.Group.allCases, id: \.rawValue) { group in
                 Section(group.rawValue) {
                     ForEach(Stage.allCases.filter { $0.group == group }) { stage in
-                        Label(stage.label, systemImage: stage.icon)
-                            .tag(stage)
+                        Label {
+                            Text(stage.label)
+                        } icon: {
+                            Image(systemName: stage.icon)
+                                // Explicit `.tint` foreground on the
+                                // *icon only* — keeps text in the
+                                // default sidebar foreground (white in
+                                // dark mode) while making icons pick
+                                // up the system accent (blue by
+                                // default). Hierarchical layering on
+                                // top gives the 3-level tonal depth
+                                // Apple's first-party sidebars use
+                                // (Music.app, Mail.app).
+                                .foregroundStyle(.tint)
+                                .symbolRenderingMode(.hierarchical)
+                        }
+                        .tag(stage)
                     }
                 }
             }
         }
         .listStyle(.sidebar)
-        // Hierarchical rendering picks up the system accent and gives
-        // SF Symbols a 3-level tonal layering (the blue-tinted look the
-        // Help sidebar already uses; matches Apple's own first-party
-        // sidebar styling — Music.app, Mail.app).
-        .symbolRenderingMode(.hierarchical)
     }
 }
 

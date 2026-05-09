@@ -2574,6 +2574,20 @@ final class MPXPrimeViewModel: ObservableObject {
         applyLiveRuntimeConfigIfRunning()
     }
 
+    /// Push the current `config.testTone*` and `config.sourceMode`
+    /// values to the running engine via live-apply. Used by the Test
+    /// Tone tab's bindings — every control there mutates the underlying
+    /// AppConfig and then asks for the change to land on the running
+    /// engine without restart. The view-model's own `sourceMode`
+    /// mirror is updated first so `applyLiveRuntimeConfigIfRunning`'s
+    /// override at line 2580 doesn't snap the runtime config back to
+    /// the previous source.
+    func applyLiveTestToneIfRunning() {
+        sourceMode = config.sourceMode
+        saveConfig(restartRequired: false)
+        applyLiveRuntimeConfigIfRunning()
+    }
+
     private func applyLiveRuntimeConfigIfRunning() {
         guard isRunning, let runningEngine else { return }
         var runtimeConfig = config
@@ -4460,21 +4474,50 @@ private struct TestToneView: View {
     private var isEnabled: Binding<Bool> {
         Binding(
             get: { model.config.sourceMode.lowercased() == "tone" },
-            set: { model.config.sourceMode = $0 ? "tone" : "input" }
+            set: {
+                model.config.sourceMode = $0 ? "tone" : "input"
+                model.applyLiveTestToneIfRunning()
+            }
         )
     }
 
     private var typeBinding: Binding<String> {
         Binding(
             get: { model.config.testToneType.lowercased() },
-            set: { model.config.testToneType = $0 }
+            set: {
+                model.config.testToneType = $0
+                model.applyLiveTestToneIfRunning()
+            }
         )
     }
 
     private var modeBinding: Binding<String> {
         Binding(
             get: { model.config.testToneMode.lowercased() },
-            set: { model.config.testToneMode = $0 }
+            set: {
+                model.config.testToneMode = $0
+                model.applyLiveTestToneIfRunning()
+            }
+        )
+    }
+
+    private var freqBinding: Binding<Double> {
+        Binding(
+            get: { model.config.testToneFreq },
+            set: {
+                model.config.testToneFreq = $0
+                model.applyLiveTestToneIfRunning()
+            }
+        )
+    }
+
+    private var levelBinding: Binding<Double> {
+        Binding(
+            get: { model.config.testToneLevelDB },
+            set: {
+                model.config.testToneLevelDB = $0
+                model.applyLiveTestToneIfRunning()
+            }
         )
     }
 
@@ -4551,7 +4594,7 @@ private struct TestToneView: View {
                 LabeledContent("Frequency (Hz)") {
                     TextField(
                         "Frequency",
-                        value: $model.config.testToneFreq,
+                        value: freqBinding,
                         format: .number.precision(.fractionLength(0...2))
                     )
                     .textFieldStyle(.roundedBorder)
@@ -4565,7 +4608,7 @@ private struct TestToneView: View {
                         .foregroundStyle(.secondary)
                     ForEach(Self.frequencyPresets, id: \.self) { freq in
                         Button(presetLabel(for: freq)) {
-                            model.config.testToneFreq = freq
+                            freqBinding.wrappedValue = freq
                         }
                         .buttonStyle(.bordered)
                     }
@@ -4579,7 +4622,7 @@ private struct TestToneView: View {
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent {
                     Slider(
-                        value: $model.config.testToneLevelDB,
+                        value: levelBinding,
                         in: -60.0 ... 0.0,
                         step: 0.5
                     )

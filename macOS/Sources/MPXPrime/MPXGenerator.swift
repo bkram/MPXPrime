@@ -5087,6 +5087,10 @@ final class MPXGenerator {
         let gainReductionDB: Float
         let preEncodeGainReductionDB: Float
         let safetyGainReductionDB: Float
+        /// Composite-clipper look-ahead gain reduction in dB. Reported
+        /// separately from `gainReductionDB` so operators can distinguish
+        /// predictive shaving (clean) from soft-clip shaving (distortion).
+        let compositeLookaheadGainReductionDB: Float
     }
 
     struct CompositeCalibrationStatus {
@@ -6411,7 +6415,9 @@ final class MPXGenerator {
             gainReductionDB: compositeClipperEnabled ? compositeClipper.gainReductionDB : 0.0,
             preEncodeGainReductionDB: preEncodeAudioLimiter.gainReductionDB,
             safetyGainReductionDB: (limitEnabled && !processingBypass)
-                ? lookaheadLimiter.gainReductionDB : 0.0
+                ? lookaheadLimiter.gainReductionDB : 0.0,
+            compositeLookaheadGainReductionDB: compositeClipperEnabled
+                ? compositeClipper.lookaheadGainReductionDB : 0.0
         )
     }
 

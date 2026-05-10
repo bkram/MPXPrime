@@ -1622,6 +1622,7 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var audioCompositePeakLinear: Float = 0.0
     @Published var compositeBudgetMarginDBValue: Float = 0.0
     @Published var compositeClipperGainReductionDBValue: Float = 0.0
+    @Published var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
     @Published var preEncodeLimiterGainReductionDBValue: Float = 0.0
     @Published var safetyLimiterGainReductionDBValue: Float = 0.0
     @Published var stereoImageText: String = "Corr +1.00 • Side 0.00x"
@@ -2754,6 +2755,7 @@ final class MPXPrimeViewModel: ObservableObject {
         var agcGainDB: Float = 0.0
         var agcGateActive: Bool = false
         var compositeClipperGainReductionDB: Float = 0.0
+        var compositeClipperLookaheadGainReductionDB: Float = 0.0
         var preEncodeAudioLimiterGainReductionDB: Float = 0.0
         var mpxSafetyLimiterGainReductionDB: Float = 0.0
         var pilotInjectionPercent: Float = 0.0
@@ -2886,6 +2888,7 @@ final class MPXPrimeViewModel: ObservableObject {
             agcGainDB = meters.agcGainDB
             agcGateActive = meters.agcGateActive
             compositeClipperGainReductionDB = meters.compositeClipperGainReductionDB
+            compositeClipperLookaheadGainReductionDB = meters.compositeClipperLookaheadGainReductionDB
             preEncodeAudioLimiterGainReductionDB = meters.preEncodeAudioLimiterGainReductionDB
             mpxSafetyLimiterGainReductionDB = meters.mpxSafetyLimiterGainReductionDB
             pilotInjectionPercent = meters.pilotInjectionPercent
@@ -2959,6 +2962,7 @@ final class MPXPrimeViewModel: ObservableObject {
             audioCompositePeakLinear = 0.0
             compositeBudgetMarginDBValue = 0.0
             compositeClipperGainReductionDBValue = 0.0
+            compositeClipperLookaheadGainReductionDBValue = 0.0
             preEncodeLimiterGainReductionDBValue = 0.0
             safetyLimiterGainReductionDBValue = 0.0
             stereoImageText = "Corr +1.00 • Side 0.00x"
@@ -3075,6 +3079,7 @@ final class MPXPrimeViewModel: ObservableObject {
         audioCompositePeakLinear = audioCompositePeak
         compositeBudgetMarginDBValue = compositeBudgetMarginDB
         compositeClipperGainReductionDBValue = compositeClipperGainReductionDB
+        compositeClipperLookaheadGainReductionDBValue = compositeClipperLookaheadGainReductionDB
         preEncodeLimiterGainReductionDBValue = preEncodeAudioLimiterGainReductionDB
         safetyLimiterGainReductionDBValue = mpxSafetyLimiterGainReductionDB
 
@@ -6424,6 +6429,13 @@ private struct ProcessingCompositeClipperTab: View {
                 tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)
             DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.compositeClipperCeilingDB, runtimeDisposition: .live), range: -6...0, format: "%.1f dB",
                 tooltip: "Maximum output level after composite clipping. Must stay below 0 dBFS to leave headroom for pilot/RDS injection.").disabled(disabled)
+            DoubleSliderRow(title: "Look-ahead", value: model.configBinding(\.compositeClipperLookaheadMS, runtimeDisposition: .live), range: 0...5, format: "%.1f ms",
+                tooltip: "Predictive peak shaving. 0.0 disables; 2.0 ms = recommended preset. Sliding-window-max detector + half-cosine attack + 200 Hz smoother bound overshoots tighter than the soft-clip alone, at the cost of N ms added chain latency. Hardcoded internals: 1.5 ms attack, 80 ms release, 200 Hz smoothing.").disabled(disabled)
+            LabeledContent("Look-ahead GR") {
+                Text(String(format: "%.1f dB", Double(model.compositeClipperLookaheadGainReductionDBValue)))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
             Divider()
             Text("Per-band cancellation")
                 .font(.caption.weight(.semibold))

@@ -61,6 +61,7 @@ final class AudioOutputEngine {
         var agcGainDB: Float
         var agcGateActive: Bool
         var compositeClipperGainReductionDB: Float
+        var compositeClipperLookaheadGainReductionDB: Float
         var preEncodeAudioLimiterGainReductionDB: Float
         var mpxSafetyLimiterGainReductionDB: Float
         var pilotInjectionPercent: Float
@@ -133,6 +134,7 @@ final class AudioOutputEngine {
         agcGainDB: 0.0,
         agcGateActive: false,
         compositeClipperGainReductionDB: 0.0,
+        compositeClipperLookaheadGainReductionDB: 0.0,
         preEncodeAudioLimiterGainReductionDB: 0.0,
         mpxSafetyLimiterGainReductionDB: 0.0,
         pilotInjectionPercent: 0.0,
@@ -533,6 +535,7 @@ final class AudioOutputEngine {
         meterSnapshot.agcGainDB = 0.0
         meterSnapshot.agcGateActive = false
         meterSnapshot.compositeClipperGainReductionDB = 0.0
+        meterSnapshot.compositeClipperLookaheadGainReductionDB = 0.0
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = 0.0
         meterSnapshot.mpxSafetyLimiterGainReductionDB = 0.0
         meterSnapshot.pilotInjectionPercent = 0.0
@@ -1384,6 +1387,7 @@ final class AudioOutputEngine {
         meterSnapshot.agcGainDB = agc.gainDB
         meterSnapshot.agcGateActive = agc.gateActive
         meterSnapshot.compositeClipperGainReductionDB = limiter.gainReductionDB
+        meterSnapshot.compositeClipperLookaheadGainReductionDB = limiter.compositeLookaheadGainReductionDB
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = limiter.preEncodeGainReductionDB
         meterSnapshot.mpxSafetyLimiterGainReductionDB = limiter.safetyGainReductionDB
         meterSnapshot.pilotInjectionPercent = calibration.pilotPercent

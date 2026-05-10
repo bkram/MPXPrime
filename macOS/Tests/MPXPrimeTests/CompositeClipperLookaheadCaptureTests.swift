@@ -78,84 +78,73 @@ struct CompositeClipperLookaheadCaptureTests {
     // additions) — the look-ahead's value shows up most on transient-
     // rich content.
 
-    /// Raised-cosine fade-in/out window. Returns 0..1 envelope value
-    /// for the given index inside a windowed event of `length` samples
-    /// with `fadeLen` raised-cosine fades at each end. Avoids broadband
-    /// click content that hard truncation would produce in the test
-    /// signal itself.
-    private func raisedCosineEnvelope(idx: Int, length: Int, fadeLen: Int) -> Double {
-        guard idx >= 0, idx < length else { return 0.0 }
-        if idx < fadeLen {
-            return 0.5 * (1.0 - cos(.pi * Double(idx) / Double(fadeLen)))
-        }
-        if idx >= length - fadeLen {
-            let outIdx = length - 1 - idx
-            return 0.5 * (1.0 - cos(.pi * Double(outIdx) / Double(fadeLen)))
-        }
-        return 1.0
-    }
+    // Test programs designed for clean A/B listening: sustained spectral
+    // content within the chain's normal operating range (peak ≈ 0.7).
+    // Earlier versions used synthetic "transient" pulses (sharp
+    // amplitude jumps every ~100 ms), but those drove the AGC +
+    // multiband + composite clipper chain into saturation, producing
+    // rail-hitting periodic spikes that sounded like clicks at all
+    // lookahead settings. Real broadcast program doesn't have such
+    // signals, so the captures weren't measuring lookahead's behavior
+    // on realistic input. These regenerated programs avoid sharp
+    // synthetic transients entirely; lookahead engages on the
+    // continuous near-clipping content of each program.
 
     private func brightDenseProgram(frames: Int) -> (left: [Float], right: [Float]) {
+        // HF-rich pop spectrum: sustained tones across the audio band,
+        // peak-summed near the clipper threshold so the clipper engages
+        // continuously without saturating earlier stages.
         var left = [Float](repeating: 0.0, count: frames)
         var right = [Float](repeating: 0.0, count: frames)
-        let crashLen = 1_500
-        let crashFade = 64
-        let crashStride = 19_200
         for i in 0..<frames {
             let t = Double(i) / sampleRate
-            let lf = 0.30 * sin(2.0 * .pi * 80.0 * t)
-            let mid = 0.28 * sin(2.0 * .pi * 1_000.0 * t)
-            let upper = 0.26 * sin(2.0 * .pi * 4_500.0 * t)
-            let hf = 0.22 * sin(2.0 * .pi * 9_500.0 * t)
-            let crashEnv = raisedCosineEnvelope(idx: i % crashStride, length: crashLen, fadeLen: crashFade)
-            let crash = crashEnv * 0.18 * sin(2.0 * .pi * 12_000.0 * t)
-            let v = lf + mid + upper + hf + crash
+            let lf = 0.20 * sin(2.0 * .pi * 80.0 * t)
+            let mid = 0.18 * sin(2.0 * .pi * 1_000.0 * t)
+            let upper = 0.15 * sin(2.0 * .pi * 4_500.0 * t)
+            let hf = 0.12 * sin(2.0 * .pi * 9_500.0 * t)
+            let v = lf + mid + upper + hf
             left[i] = Float(v)
-            right[i] = Float(v * 0.94 + 0.04 * sin(2.0 * .pi * 600.0 * t + 0.7))
+            right[i] = Float(v * 0.94 + 0.03 * sin(2.0 * .pi * 600.0 * t + 0.7))
         }
         return (left, right)
     }
 
     private func transientPushProgram(frames: Int) -> (left: [Float], right: [Float]) {
-        // Recurring brick-wall transients — the headline stress for
-        // look-ahead. A 2 kHz tone at sustained level with periodic
-        // impulse-like onsets every ~120 ms. The pulse uses an
-        // exponential decay with a raised-cosine fade-in so there's
-        // no step discontinuity at the pulse onset.
+        // Slow amplitude modulation (8 Hz tremolo on a 2 kHz tone)
+        // sweeps the input level through the clipper's threshold
+        // periodically. Lookahead should produce smoothly-varying gain
+        // reduction without click artifacts. Replaces the earlier
+        // brick-wall pulse design that produced rail-hitting spikes.
         var left = [Float](repeating: 0.0, count: frames)
         var right = [Float](repeating: 0.0, count: frames)
-        let pulseLen = 384
-        let pulseFade = 24
-        let pulseStride = 23_040
         for i in 0..<frames {
             let t = Double(i) / sampleRate
-            let sustain = 0.35 * sin(2.0 * .pi * 2_000.0 * t)
-            let pIdx = i % pulseStride
-            var pulse = 0.0
-            if pIdx < pulseLen {
-                let decay = 0.85 * exp(-Double(pIdx) / 80.0)
-                let env = raisedCosineEnvelope(idx: pIdx, length: pulseLen, fadeLen: pulseFade)
-                pulse = decay * env * sin(2.0 * .pi * 4_000.0 * t)
-            }
-            let v = sustain + pulse
+            // 2 kHz carrier with 8 Hz amplitude modulation 0.4..0.7
+            let modEnv = 0.55 + 0.15 * sin(2.0 * .pi * 8.0 * t)
+            let carrier = sin(2.0 * .pi * 2_000.0 * t)
+            // Companion mid tone for stereo difference
+            let companion = 0.20 * sin(2.0 * .pi * 750.0 * t)
+            let v = modEnv * carrier + companion
             left[i] = Float(v)
-            right[i] = Float(v * 0.92)
+            right[i] = Float(v * 0.92 + 0.05 * sin(2.0 * .pi * 1_100.0 * t))
         }
         return (left, right)
     }
 
     private func wideBassProgram(frames: Int) -> (left: [Float], right: [Float]) {
-        // Sustained low-frequency content with brief LF transients.
-        // Look-ahead's effect on perceived bass character matters
-        // listening-wise.
+        // Sustained low-frequency content with smoothly-decaying kick
+        // every ~167 ms — already sounds clean per prior listening; LF
+        // kick envelope is gentle enough that the chain doesn't saturate.
         var left = [Float](repeating: 0.0, count: frames)
         var right = [Float](repeating: 0.0, count: frames)
         for i in 0..<frames {
             let t = Double(i) / sampleRate
-            let bass = 0.45 * sin(2.0 * .pi * 70.0 * t)
-            let bass2 = 0.30 * sin(2.0 * .pi * 110.0 * t + 0.3)
-            let mid = 0.18 * sin(2.0 * .pi * 700.0 * t)
-            let kick = (i % 32_000 < 600) ? 0.55 * exp(-Double(i % 32_000) / 200.0) * sin(2.0 * .pi * 60.0 * t) : 0.0
+            let bass = 0.30 * sin(2.0 * .pi * 70.0 * t)
+            let bass2 = 0.20 * sin(2.0 * .pi * 110.0 * t + 0.3)
+            let mid = 0.12 * sin(2.0 * .pi * 700.0 * t)
+            let kick = (i % 32_000 < 1_600)
+                ? 0.40 * exp(-Double(i % 32_000) / 480.0) * sin(2.0 * .pi * 60.0 * t)
+                : 0.0
             let v = bass + bass2 + mid + kick
             left[i] = Float(v)
             right[i] = Float(v)

@@ -9,9 +9,7 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
-## Unreleased (queued for 0.23)
-
-Work accumulating on `develop/v.023` past `v0.21`. No release cut yet — these will roll into 0.23 when the substantive work for that release lands.
+## 0.23 — 2026-05-10
 
 ### Tools
 - **Test Tone tab — first-class sidebar stage with Stereo Tool parity.** Engine had a sine-only generator (mono / stereo (L=−R) / left-only / right-only) wired up since 0.11 but **never surfaced in the GUI** and stuck at full-scale (1.0) amplitude — operators couldn't run any calibration workflow. New "Tools" sidebar group with a "Test Tone" tab (⌘T from anywhere). Tab content: Enable toggle (live-flips the engine source from input → tone with no restart), Type picker (Sine / Pink / White), Stereo mode picker (Mono / Stereo / Left / Right), Frequency text field + presets (50 / 100 / 400 / 1k / 5k / 10k / 12k / 15k Hz, sine only), Level slider (−60 to 0 dBFS, default −20 dBFS for broadcast line reference), and a Status grid summarising the current source / type / mode / freq / level. Tone enters the chain pre-AGC so operators can observe how the chain responds at calibrated input levels. Pink noise via Paul Kellet's 4-pole IIR (≈3 dB/octave); white noise via xorshift64* uniform. New `test_tone_level_db` and `test_tone_type` INI keys; existing `test_tone_freq` / `test_tone_mode` stay. New `TestToneGeneratorTests` suite (8 tests) covers AppConfig defaults / clamps / type+mode validation, plus end-to-end render-amplitude checks at −20 dBFS and −40 dBFS through a mono-mode minimal-chain `MPXGenerator`. Default verifier baseline bit-identical to prior build (engine source defaults to `input`; Test Tone is opt-in). Pre-existing minor bug in the non-monitor tone render path (where `tonePhase` was never advanced — generated DC silence) fixed in the same commit.

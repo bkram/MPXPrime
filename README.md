@@ -1,6 +1,6 @@
 # MPX Prime
 
-Version: 0.24
+Version: 0.25
 
 MPX Prime is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -511,7 +511,7 @@ Disabled by bypass:
 Build a release app bundle / DMG:
 
 ```bash
-./build-release.sh 0.24
+./build-release.sh 0.25
 ```
 
 Artifacts are written to `macOS/dist/`.

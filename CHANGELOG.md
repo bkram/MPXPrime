@@ -9,7 +9,7 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
-## Unreleased
+## 0.25 — 2026-05-10
 
 ### DSP — chain-order modernization
 - **Pre-emphasis relocated from M/S to L/R, upstream of the pre-encode limiter.** Canonical Optimod / Stereotool placement: pre-emphasis runs in L/R domain immediately before the pre-encode audio limiter, so the limiter peak-controls the +10–12 dB HF-boosted signal before composite assembly. Previously ran in M/S inside `makeCompositeComponents`, after the limiter — HF transients flew un-peak-controlled into the composite stage. Phase 1 chain-order audit (see `macOS/.audit-out/chain_order/REPORT.md`) confirmed: C1 CPU gate PASS at 1.07× release-build ratio (b806053-class regression no longer reproducible on the current chain — vvtanhf, vDSP_dotpr, FIR multiband, and differential composite clipper optimizations between 0.10 and 0.24 cut absolute chain cost from ~95% to ~28% of real-time); C2 sustained-load PASS over 30 s; HF guard band cleaner above 60/67 kHz on `bright_dense`, `mono_1khz`, `stereo_diff_400hz`, `wide_bass`. Renamed `preSum`/`preDiff` → `preL`/`preR` to reflect the operating domain change.

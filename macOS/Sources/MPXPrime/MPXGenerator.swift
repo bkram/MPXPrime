@@ -940,9 +940,63 @@ struct CompositeClipper {
     private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: factor)
     private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: factor)
 
+    // === Look-ahead peak control (0.26) ===
+    // Predictive sidechain that knows the future peak amplitude over the
+    // next `lookaheadHostSamples` host samples. Multiplicative gain is
+    // applied at the input so the soft-clip kernel sees an already-shaved
+    // signal, mathematically bounding overshoots tighter than the soft-
+    // clip alone. Patent-clean: half-cosine attack from US 6,434,241
+    // (expired 2014); 200 Hz smoothing from US 5,737,434 (expired ~2017);
+    // sliding-window-max detector from public DSP literature
+    // (Signalsmith / musicdsp.org #274).
+    //
+    // Disabled when lookaheadHostSamples == 0; default OFF.
+    private var lookaheadEnabled: Bool = false
+    private var lookaheadHostSamples: Int = 0
+    private var lookaheadDelay: [Float] = []
+    private var lookaheadDelayWriteIdx: Int = 0
+
+    // Lemire monotonic deque (sliding-window max). deqValues / deqIndices
+    // are pre-allocated arrays of size lookaheadHostSamples + 2; deqHead
+    // and deqTail are circular indices. deqIndices stores the absolute
+    // sample counter at which the value was inserted, used to expire
+    // entries that have aged past the window.
+    private var deqValues: [Float] = []
+    private var deqIndices: [Int] = []
+    private var deqCapacity: Int = 0
+    private var deqHead: Int = 0
+    private var deqTail: Int = 0
+    private var deqSampleCounter: Int = 0
+
+    // Half-cosine attack ramp lookup table — 0.5*(1-cos(pi*t/T)) sweeping
+    // from 0 to 1 over the attack duration. Continuous first derivative
+    // avoids the click that linear/exponential attack onsets produce.
+    private var hcosLUT: [Float] = []
+    private var hcosLUTLen: Int = 0
+
+    // Gain state machine. lookaheadGain is the unsmoothed envelope after
+    // attack/hold/release; lookaheadLPState is the 200 Hz-smoothed gain
+    // applied to the audio path. Modulation sidebands sit ≤200 Hz from
+    // carrier — masked auditorily and 38+ dB down by 17 kHz, so they
+    // cannot leak into the protected pilot guard band.
+    private var lookaheadGain: Float = 1.0
+    private var lookaheadGainStartAttack: Float = 1.0
+    private var lookaheadGainTargetAttack: Float = 1.0
+    private var lookaheadAttackIdx: Int = 0
+    private var lookaheadHoldRemaining: Int = 0
+    private var lookaheadReleaseCoeff: Float = 0.0
+    private var lookaheadLPCoeff: Float = 0.0
+    private var lookaheadLPState: Float = 1.0
+
+    // Telemetry — minimum lookahead-applied gain over a 50 ms decay
+    // envelope, mirroring peakInEnv/peakOutEnv. Surfaced via
+    // `lookaheadGainReductionDB` for the UI meter.
+    private var lookaheadGainEnv: Float = 1.0
+
     mutating func configure(sampleRate: Float, thresholdDB: Float, ceilingDB: Float,
                             cancelAudio: Bool = false, cancelStereo: Bool = true,
-                            cancelPilot: Bool = true, cancelRDS: Bool = true) {
+                            cancelPilot: Bool = true, cancelRDS: Bool = true,
+                            lookaheadMS: Float = 0.0) {
         thresholdLin = clampf(powf(10.0, min(0.0, thresholdDB) / 20.0), 0.1, 0.995)
         let cMin: Float = thresholdLin + 0.02
         ceilingLin = clampf(powf(10.0, min(0.0, ceilingDB) / 20.0), cMin, 0.999)
@@ -997,11 +1051,191 @@ struct CompositeClipper {
         peakDecayCoeff = expf(-1.0 / (0.050 * sr))
         peakInEnv = 0.0
         peakOutEnv = 0.0
+
+        // === Look-ahead peak control ===
+        // Window length in host samples. Hard cap 5 ms; 0 ms disables.
+        let cap = Int((5.0 / 1000.0) * sr)
+        let n = max(0, min(cap, Int(roundf((lookaheadMS / 1000.0) * sr))))
+        lookaheadHostSamples = n
+        lookaheadEnabled = n > 0
+
+        if lookaheadEnabled {
+            // Audio path delay so the deque sees future samples.
+            lookaheadDelay = [Float](repeating: 0.0, count: n)
+            lookaheadDelayWriteIdx = 0
+
+            // Lemire monotonic deque over the next n samples. Capacity
+            // n+2 (deque worst-case = window length; +2 sentinel slack
+            // so head/tail can wrap without aliasing on full-window).
+            deqCapacity = n + 2
+            deqValues = [Float](repeating: 0.0, count: deqCapacity)
+            deqIndices = [Int](repeating: 0, count: deqCapacity)
+            deqHead = 0
+            deqTail = 0
+            deqSampleCounter = 0
+
+            // Half-cosine attack ramp, length = 1.5 ms host samples
+            // (hardcoded — single-knob design; clamped to ≤ window).
+            let hcLenRaw = max(1, Int(roundf(0.0015 * sr)))
+            hcosLUTLen = min(hcLenRaw, max(1, n))
+            hcosLUT = [Float](repeating: 0.0, count: hcosLUTLen)
+            for k in 0..<hcosLUTLen {
+                let t = Float(k + 1) / Float(hcosLUTLen)
+                hcosLUT[k] = 0.5 * (1.0 - cosf(.pi * t))
+            }
+        } else {
+            lookaheadDelay = []
+            lookaheadDelayWriteIdx = 0
+            deqValues = []
+            deqIndices = []
+            deqCapacity = 0
+            deqHead = 0
+            deqTail = 0
+            deqSampleCounter = 0
+            hcosLUT = []
+            hcosLUTLen = 0
+        }
+
+        // Release time constant: 80 ms (hardcoded). Smoothing 200 Hz
+        // single-pole IIR — keeps gain modulation sidebands ≤200 Hz from
+        // carrier so they cannot leak into the 17–21 kHz pilot guard
+        // band (38+ dB down by 17 kHz).
+        let releaseS: Float = 0.080
+        lookaheadReleaseCoeff = expf(-1.0 / (releaseS * sr))
+        let lpCutoffHz: Float = 200.0
+        lookaheadLPCoeff = clampf(1.0 - expf(-2.0 * .pi * lpCutoffHz / sr), 0.0, 1.0)
+
+        lookaheadGain = 1.0
+        lookaheadGainStartAttack = 1.0
+        lookaheadGainTargetAttack = 1.0
+        lookaheadAttackIdx = 0
+        lookaheadHoldRemaining = 0
+        lookaheadLPState = 1.0
+        lookaheadGainEnv = 1.0
+    }
+
+    /// Total host-rate delay added by this clipper: lookahead window +
+    /// FIR group delay. Used by chain-latency reporting.
+    var totalDelayHostSamples: Int {
+        lookaheadHostSamples + decimLP.groupDelayHostSamples
+    }
+
+    /// Lookahead gain reduction in dB (positive = look-ahead is shaving
+    /// peaks). Tracked separately from `gainReductionDB` so operators can
+    /// distinguish predictive shaving (clean) from soft-clip shaving
+    /// (distortion-producing). Decayed at ~50 ms via lookaheadGainEnv.
+    var lookaheadGainReductionDB: Float {
+        let g = max(1e-6, lookaheadGainEnv)
+        return max(0.0, -20.0 * log10f(g))
     }
 
     @inline(__always)
     mutating func process(_ x: Float) -> Float {
-        if !lag.isPrimed { lag.prime(x) }
+        // === Phase 0: look-ahead peak control ===
+        // Push current input to the detector deque, read the delayed
+        // input the audio path will actually clip, compute pre-clip gain.
+        // When disabled (lookaheadHostSamples == 0): xPath = x, g = 1.0,
+        // bit-identical to the pre-look-ahead pipeline.
+        let xPath: Float
+        let g: Float
+        if lookaheadEnabled {
+            // 1. Sliding-window-max push. Lemire monotonic deque:
+            //    drop expired entries from the head, drop smaller-or-equal
+            //    entries from the tail, append (counter, |x|).
+            let absX = fabsf(x)
+            let curIdx = deqSampleCounter
+            // Expire head entries older than (curIdx - n + 1).
+            let oldestValidIdx = curIdx - lookaheadHostSamples + 1
+            while deqHead != deqTail && deqIndices[deqHead] < oldestValidIdx {
+                deqHead += 1
+                if deqHead >= deqCapacity { deqHead = 0 }
+            }
+            // Drop tail entries ≤ absX (they can never be the max while
+            // absX is in the window). Note empty-deque check.
+            while deqHead != deqTail {
+                let prevTail = deqTail == 0 ? deqCapacity - 1 : deqTail - 1
+                if deqValues[prevTail] <= absX {
+                    deqTail = prevTail
+                } else {
+                    break
+                }
+            }
+            // Append.
+            deqValues[deqTail] = absX
+            deqIndices[deqTail] = curIdx
+            deqTail += 1
+            if deqTail >= deqCapacity { deqTail = 0 }
+            deqSampleCounter += 1
+
+            // 2. Compute peak-ahead and target gain.
+            let peakAhead = (deqHead != deqTail) ? deqValues[deqHead] : absX
+            let gTarget: Float = peakAhead > ceilingLin
+                ? ceilingLin / max(1e-6, peakAhead)
+                : 1.0
+
+            // 3. Attack/hold/release state machine. New attack triggers
+            //    when the target drops below the current gain by more
+            //    than a denormal-margin epsilon.
+            if gTarget < lookaheadGain - 1.0e-6 {
+                lookaheadGainStartAttack = lookaheadGain
+                lookaheadGainTargetAttack = gTarget
+                lookaheadAttackIdx = 1
+                lookaheadHoldRemaining = lookaheadHostSamples
+            }
+            if lookaheadAttackIdx > 0 && lookaheadAttackIdx <= hcosLUTLen {
+                let ramp = hcosLUT[lookaheadAttackIdx - 1]
+                lookaheadGain = lookaheadGainStartAttack
+                    + ramp * (lookaheadGainTargetAttack - lookaheadGainStartAttack)
+                lookaheadAttackIdx += 1
+                if lookaheadAttackIdx > hcosLUTLen {
+                    lookaheadAttackIdx = 0
+                    lookaheadGain = lookaheadGainTargetAttack
+                }
+            } else if lookaheadHoldRemaining > 0 {
+                lookaheadHoldRemaining -= 1
+            } else {
+                // Release toward gTarget (typically 1.0 once peaks have
+                // passed). Exponential smoothing with 80 ms time constant.
+                let r = lookaheadReleaseCoeff
+                lookaheadGain = r * lookaheadGain + (1.0 - r) * gTarget
+            }
+
+            // 4. 200 Hz single-pole LP smoother on the gain envelope.
+            //    This is the load-bearing pilot/RDS protection: keeps
+            //    modulation sidebands ≤200 Hz from carrier so they cannot
+            //    reach the 17–21 kHz pilot guard or 55–59 kHz RDS guard.
+            lookaheadLPState += lookaheadLPCoeff * (lookaheadGain - lookaheadLPState)
+            g = lookaheadLPState
+
+            // Telemetry: track minimum smoothed gain over a 50 ms decay
+            // window (parallel to peakInEnv/peakOutEnv).
+            let decay = peakDecayCoeff
+            // For "minimum gain" envelope: use the inverse-of-max trick.
+            // 1.0 = no GR; smaller g = more GR. Decay: env *= decay (toward
+            // 1.0); attack: env = min(env, g).
+            lookaheadGainEnv = min(g, 1.0 - (1.0 - lookaheadGainEnv) * decay)
+
+            // 5. Read delayed input from lookahead delay ring.
+            let dLen = lookaheadDelay.count
+            let xDelayed = dLen > 0 ? lookaheadDelay[lookaheadDelayWriteIdx] : x
+            lookaheadDelay[lookaheadDelayWriteIdx] = x
+            lookaheadDelayWriteIdx += 1
+            if lookaheadDelayWriteIdx >= dLen { lookaheadDelayWriteIdx = 0 }
+            // Apply gain to the audio path. Multiplicative scaling at
+            // input means the entire downstream pipeline (Lagrange interp,
+            // soft-clip, per-band cancellation, decimation, bypass) sees
+            // a gain-scaled signal in lockstep — the (oBand − cBand)
+            // cancellation identity is preserved by linearity.
+            xPath = xDelayed * g
+        } else {
+            xPath = x
+            g = 1.0
+            // Decay telemetry envelope toward 1.0 even when disabled, so
+            // a transient enable/disable doesn't leave the meter pinned.
+            lookaheadGainEnv = 1.0 - (1.0 - lookaheadGainEnv) * peakDecayCoeff
+        }
+
+        if !lag.isPrimed { lag.prime(xPath) }
         let f = Self.factor
         let step = 1.0 / Float(f)
 
@@ -1010,7 +1244,7 @@ struct CompositeClipper {
         // is safe to do as a batch up front.
         for i in 0..<f {
             let t = step * Float(i + 1)
-            upBatch[i] = (i == f - 1) ? x : lag.interpolate(t: t, cur: x)
+            upBatch[i] = (i == f - 1) ? xPath : lag.interpolate(t: t, cur: xPath)
         }
 
         // Phase 2: batched soft-clip via vvtanhf. Replaces 8 scalar tanhf
@@ -1118,7 +1352,7 @@ struct CompositeClipper {
             // after the loop is the freshly-decimated residual.
             residualDecimated = decimLP.push(residual)
         }
-        lag.advance(x)
+        lag.advance(xPath)
 
         // Bypass: read host-rate input from `groupDelayHostSamples`
         // ago. With a length-N ring buffer (N = group delay), we read
@@ -1126,19 +1360,27 @@ struct CompositeClipper {
         // N samples ago. The N=1 special case (FIR group delay rounds
         // to 0 host samples, e.g. on extremely short FIRs) gives
         // zero-delay bypass, which is the correct degenerate
-        // behaviour.
+        // behaviour. Bypass holds gain-scaled `xPath` so the
+        // differential math `out = bypassed − decimated(residual)`
+        // gives the gain-scaled clipped output (per the look-ahead
+        // multiplicative-scaling-at-input identity).
         let bypassLen = bypassDelay.count
-        let bypassed = bypassLen > 1 ? bypassDelay[bypassWriteIdx] : x
-        bypassDelay[bypassWriteIdx] = x
+        let bypassed = bypassLen > 1 ? bypassDelay[bypassWriteIdx] : xPath
+        bypassDelay[bypassWriteIdx] = xPath
         bypassWriteIdx += 1
         if bypassWriteIdx >= bypassLen { bypassWriteIdx = 0 }
 
         let out = bypassed - residualDecimated
 
+        // Peak meters reflect the user-perceived input/output (pre-
+        // look-ahead-gain on the input side; post-clipper on the
+        // output side). `gainReductionDB` then reads as the total
+        // peak attenuation including look-ahead shaving.
         let inAbs = fabsf(x)
         let outAbs = fabsf(out)
         peakInEnv = max(inAbs, peakInEnv * peakDecayCoeff)
         peakOutEnv = max(outAbs, peakOutEnv * peakDecayCoeff)
+        _ = g  // silence unused-when-disabled warning
         return out
     }
 
@@ -5696,7 +5938,8 @@ final class MPXGenerator {
             cancelAudio: compositeClipperCancelAudio,
             cancelStereo: compositeClipperCancelStereo,
             cancelPilot: compositeClipperCancelPilot,
-            cancelRDS: compositeClipperCancelRDS
+            cancelRDS: compositeClipperCancelRDS,
+            lookaheadMS: compositeClipperLookaheadMS
         )
         updateDerivedRates()
         configureMonitorDemod()
@@ -5795,7 +6038,8 @@ final class MPXGenerator {
             cancelAudio: compositeClipperCancelAudio,
             cancelStereo: compositeClipperCancelStereo,
             cancelPilot: compositeClipperCancelPilot,
-            cancelRDS: compositeClipperCancelRDS
+            cancelRDS: compositeClipperCancelRDS,
+            lookaheadMS: compositeClipperLookaheadMS
         )
         rdsCoder?.setSampleRate(sampleRate)
         updateDerivedRates()
@@ -6073,7 +6317,8 @@ final class MPXGenerator {
                 cancelAudio: compositeClipperCancelAudio,
                 cancelStereo: compositeClipperCancelStereo,
                 cancelPilot: compositeClipperCancelPilot,
-                cancelRDS: compositeClipperCancelRDS
+                cancelRDS: compositeClipperCancelRDS,
+                lookaheadMS: compositeClipperLookaheadMS
             )
         }
 

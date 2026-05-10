@@ -4962,6 +4962,7 @@ final class MPXGenerator {
         let compositeClipperCancelStereo: Bool
         let compositeClipperCancelPilot: Bool
         let compositeClipperCancelRDS: Bool
+        let compositeClipperLookaheadMS: Float
 
         // Tone-generator parameters. Live-applicable so the Test Tone
         // tab can toggle source / type / freq / mode / level without
@@ -5359,6 +5360,7 @@ final class MPXGenerator {
     private var compositeClipperCancelStereo: Bool = true
     private var compositeClipperCancelPilot: Bool = true
     private var compositeClipperCancelRDS: Bool = true
+    private var compositeClipperLookaheadMS: Float = 0.0
     private var compositeClipper = CompositeClipper()
 
     private var stereoWidenEnabled: Bool
@@ -5622,6 +5624,7 @@ final class MPXGenerator {
         self.compositeClipperCancelStereo = config.compositeClipperCancelStereo
         self.compositeClipperCancelPilot = config.compositeClipperCancelPilot
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
+        self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
 
         self.stereoWidenEnabled = config.stereoWidenEnabled
         self.monoBassEnabled = config.monoBassEnabled
@@ -6053,6 +6056,7 @@ final class MPXGenerator {
             || compositeClipperCancelStereo != config.compositeClipperCancelStereo
             || compositeClipperCancelPilot != config.compositeClipperCancelPilot
             || compositeClipperCancelRDS != config.compositeClipperCancelRDS
+            || fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
         compositeClipperEnabled = config.compositeClipperEnabled
         compositeClipperThresholdDB = clampf(config.compositeClipperThresholdDB, -12.0, 0.0)
         compositeClipperCeilingDB = clampf(config.compositeClipperCeilingDB, -6.0, 0.0)
@@ -6060,6 +6064,7 @@ final class MPXGenerator {
         compositeClipperCancelStereo = config.compositeClipperCancelStereo
         compositeClipperCancelPilot = config.compositeClipperCancelPilot
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
+        compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
         if compClipChanged {
             compositeClipper.configure(
                 sampleRate: sampleRate,

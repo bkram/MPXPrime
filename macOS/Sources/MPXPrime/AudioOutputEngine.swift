@@ -1034,6 +1034,7 @@ final class AudioOutputEngine {
             compositeClipperCancelStereo: config.compositeClipperCancelStereo,
             compositeClipperCancelPilot: config.compositeClipperCancelPilot,
             compositeClipperCancelRDS: config.compositeClipperCancelRDS,
+            compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
             sourceMode: config.sourceMode,
             testToneType: config.testToneType,
             testToneMode: config.testToneMode,

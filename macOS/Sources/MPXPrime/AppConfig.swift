@@ -248,6 +248,11 @@ struct AppConfig {
     var compositeClipperCancelStereo: Bool = true
     var compositeClipperCancelPilot: Bool = true
     var compositeClipperCancelRDS: Bool = true
+    // Look-ahead composite peak control (0.0 disables; recommended preset: 2.0 ms).
+    // Sliding-window-max detector + half-cosine attack + 200 Hz smoothed gain
+    // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
+    // See plan.md "Enterprise-parity status" / 0.26 release plan.
+    var compositeClipperLookaheadMS: Double = 0.0
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
     var rdsPTY: Int = 8
@@ -567,6 +572,8 @@ struct AppConfig {
             "mpx_clipper_cancel_pilot", defaultValue: cfg.compositeClipperCancelPilot)
         cfg.compositeClipperCancelRDS = mpx.bool(
             "mpx_clipper_cancel_rds", defaultValue: cfg.compositeClipperCancelRDS)
+        cfg.compositeClipperLookaheadMS = mpx.double(
+            "mpx_clipper_lookahead_ms", defaultValue: cfg.compositeClipperLookaheadMS)
         cfg.rdsLevel = rds.double("rds_level", defaultValue: cfg.rdsLevel)
         cfg.rdsPI = rds.string("pi", defaultValue: cfg.rdsPI)
         cfg.rdsPTY = rds.int("pty", defaultValue: cfg.rdsPTY)
@@ -789,6 +796,7 @@ struct AppConfig {
         if compositeClipperCeilingDB <= compositeClipperThresholdDB + 0.2 {
             compositeClipperCeilingDB = min(0.0, compositeClipperThresholdDB + 0.5)
         }
+        compositeClipperLookaheadMS = max(0.0, min(5.0, compositeClipperLookaheadMS))
 
         // Engine
         sampleRate = max(44_100.0, min(384_000.0, sampleRate))
@@ -940,6 +948,7 @@ struct AppConfig {
             "mpx_clipper_cancel_stereo = \(Self.boolString(compositeClipperCancelStereo))",
             "mpx_clipper_cancel_pilot = \(Self.boolString(compositeClipperCancelPilot))",
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
+            "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
             "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",

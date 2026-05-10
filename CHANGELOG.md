@@ -9,6 +9,19 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
+## Unreleased (queued for 0.24)
+
+Work accumulating on `develop/v.024` past `v0.23`. No release cut yet.
+
+### UI
+- **GUI exposure of the last engine + safety-limiter knobs that were INI-only.** Two new cards close out the "every operator setting reachable from the GUI" story that started in 0.23:
+  - Core tab → "Engine — TX path" card: `Encoder Lowpass: linear-phase FIR` (FIR vs Butterworth — ~1.67 ms vs ~0.2 ms latency, >80 dB vs ~40 dB stop-band) and `Multiband Crossovers: linear-phase FIR` (FIR splitters vs IIR LR4 — ~5.3 ms vs ~0.3 ms, sum-to-flat at -155 dB). Both restart-required.
+  - Final Stage tab → "Final-MPX Safety Limiter" card: `Enable Safety Limiter` (`limit_mpx`), `Threshold` (0.5..0.999), `Enable Look-Ahead`, `Look-Ahead` (0..20 ms). Restart-required.
+- **Chain-strip taxonomy fixes.** Three issues found while auditing the strip pill order against `MPXGenerator.processProgramStereo` / `processFinalComposite`:
+  - **Phase Rotator pill was missing entirely** — it runs *before* AGC in code but was never rendered in the strip. Inserted between Core and AGC.
+  - **BS.412 / Composite Clipper order was reversed.** Strip showed `Lim → BS.412 → MPX-Clip → Final`; actual code runs Composite Clipper *before* BS.412 in the audio-composite domain. Swapped to `Lim → MPX-Clip → BS.412 → Final`.
+  - **MB Limiter and Downward Expander removed from the strip.** They are *per-band* processors *inside* the multiband stage, not three serial stages — strip was implying a sequential flow that doesn't match the code. Sidebar entries kept (operators still want their own controls cards).
+
 ## 0.23 — 2026-05-10
 
 ### Tools

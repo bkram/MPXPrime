@@ -44,7 +44,8 @@ transport restart since they reconfigure the modulator.
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
 - Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
 - Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing
-- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation) and a separate **Audio Limiter** tab (pre-encode 4× oversampled true-peak limiter), feeding the 8× oversampled composite clipper with live clipper telemetry
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled true-peak limiter), feeding the 8× oversampled composite clipper with live clipper telemetry
+- TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
 - Composite budget telemetry with pilot/RDS/audio visibility and safety-limiter readout
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
 - Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
@@ -174,7 +175,7 @@ Relevant config sections:
 
 ### Final-stage presets and clipper workflow
 
-The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
+The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms — restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
 
 - `Broadcast Preset`: loads a matched AGC + final-stage starting point
 - `Final Drive`: drives the composite clipper harder or softer

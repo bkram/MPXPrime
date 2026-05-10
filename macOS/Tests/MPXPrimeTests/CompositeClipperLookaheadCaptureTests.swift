@@ -78,16 +78,37 @@ struct CompositeClipperLookaheadCaptureTests {
     // additions) — the look-ahead's value shows up most on transient-
     // rich content.
 
+    /// Raised-cosine fade-in/out window. Returns 0..1 envelope value
+    /// for the given index inside a windowed event of `length` samples
+    /// with `fadeLen` raised-cosine fades at each end. Avoids broadband
+    /// click content that hard truncation would produce in the test
+    /// signal itself.
+    private func raisedCosineEnvelope(idx: Int, length: Int, fadeLen: Int) -> Double {
+        guard idx >= 0, idx < length else { return 0.0 }
+        if idx < fadeLen {
+            return 0.5 * (1.0 - cos(.pi * Double(idx) / Double(fadeLen)))
+        }
+        if idx >= length - fadeLen {
+            let outIdx = length - 1 - idx
+            return 0.5 * (1.0 - cos(.pi * Double(outIdx) / Double(fadeLen)))
+        }
+        return 1.0
+    }
+
     private func brightDenseProgram(frames: Int) -> (left: [Float], right: [Float]) {
         var left = [Float](repeating: 0.0, count: frames)
         var right = [Float](repeating: 0.0, count: frames)
+        let crashLen = 1_500
+        let crashFade = 64
+        let crashStride = 19_200
         for i in 0..<frames {
             let t = Double(i) / sampleRate
             let lf = 0.30 * sin(2.0 * .pi * 80.0 * t)
             let mid = 0.28 * sin(2.0 * .pi * 1_000.0 * t)
             let upper = 0.26 * sin(2.0 * .pi * 4_500.0 * t)
             let hf = 0.22 * sin(2.0 * .pi * 9_500.0 * t)
-            let crash = (i % 19_200 < 1_500) ? 0.18 * sin(2.0 * .pi * 12_000.0 * t) : 0.0
+            let crashEnv = raisedCosineEnvelope(idx: i % crashStride, length: crashLen, fadeLen: crashFade)
+            let crash = crashEnv * 0.18 * sin(2.0 * .pi * 12_000.0 * t)
             let v = lf + mid + upper + hf + crash
             left[i] = Float(v)
             right[i] = Float(v * 0.94 + 0.04 * sin(2.0 * .pi * 600.0 * t + 0.7))
@@ -98,16 +119,24 @@ struct CompositeClipperLookaheadCaptureTests {
     private func transientPushProgram(frames: Int) -> (left: [Float], right: [Float]) {
         // Recurring brick-wall transients — the headline stress for
         // look-ahead. A 2 kHz tone at sustained level with periodic
-        // impulse-like onsets every ~120 ms.
+        // impulse-like onsets every ~120 ms. The pulse uses an
+        // exponential decay with a raised-cosine fade-in so there's
+        // no step discontinuity at the pulse onset.
         var left = [Float](repeating: 0.0, count: frames)
         var right = [Float](repeating: 0.0, count: frames)
+        let pulseLen = 384
+        let pulseFade = 24
+        let pulseStride = 23_040
         for i in 0..<frames {
             let t = Double(i) / sampleRate
             let sustain = 0.35 * sin(2.0 * .pi * 2_000.0 * t)
-            let pulseEnv = (i % 23_040 < 256)
-                ? 0.85 * exp(-Double(i % 23_040) / 64.0)
-                : 0.0
-            let pulse = pulseEnv * sin(2.0 * .pi * 4_000.0 * t)
+            let pIdx = i % pulseStride
+            var pulse = 0.0
+            if pIdx < pulseLen {
+                let decay = 0.85 * exp(-Double(pIdx) / 80.0)
+                let env = raisedCosineEnvelope(idx: pIdx, length: pulseLen, fadeLen: pulseFade)
+                pulse = decay * env * sin(2.0 * .pi * 4_000.0 * t)
+            }
             let v = sustain + pulse
             left[i] = Float(v)
             right[i] = Float(v * 0.92)

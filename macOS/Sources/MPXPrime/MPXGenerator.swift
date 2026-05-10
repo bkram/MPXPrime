@@ -968,22 +968,17 @@ struct CompositeClipper {
     private var deqTail: Int = 0
     private var deqSampleCounter: Int = 0
 
-    // Half-cosine attack ramp lookup table — 0.5*(1-cos(pi*t/T)) sweeping
-    // from 0 to 1 over the attack duration. Continuous first derivative
-    // avoids the click that linear/exponential attack onsets produce.
-    private var hcosLUT: [Float] = []
-    private var hcosLUTLen: Int = 0
-
-    // Gain state machine. lookaheadGain is the unsmoothed envelope after
-    // attack/hold/release; lookaheadLPState is the 200 Hz-smoothed gain
-    // applied to the audio path. Modulation sidebands sit ≤200 Hz from
-    // carrier — masked auditorily and 38+ dB down by 17 kHz, so they
-    // cannot leak into the protected pilot guard band.
+    // Gain state machine: exponential attack toward gTarget (rate tied
+    // to lookaheadHostSamples so gain reaches ~98% by the time the
+    // audio path catches up), hold for the window length, then
+    // exponential release at 80 ms time constant. The 200 Hz LP
+    // smoother on the gain envelope is the load-bearing pilot/RDS
+    // protection — modulation sidebands sit ≤200 Hz from carrier,
+    // 38+ dB down by 17 kHz so they cannot reach the protected pilot
+    // guard band.
     private var lookaheadGain: Float = 1.0
-    private var lookaheadGainStartAttack: Float = 1.0
-    private var lookaheadGainTargetAttack: Float = 1.0
-    private var lookaheadAttackIdx: Int = 0
     private var lookaheadHoldRemaining: Int = 0
+    private var lookaheadAttackCoeff: Float = 0.0
     private var lookaheadReleaseCoeff: Float = 0.0
     private var lookaheadLPCoeff: Float = 0.0
     private var lookaheadLPState: Float = 1.0
@@ -1074,15 +1069,15 @@ struct CompositeClipper {
             deqTail = 0
             deqSampleCounter = 0
 
-            // Half-cosine attack ramp, length = 1.5 ms host samples
-            // (hardcoded — single-knob design; clamped to ≤ window).
-            let hcLenRaw = max(1, Int(roundf(0.0015 * sr)))
-            hcosLUTLen = min(hcLenRaw, max(1, n))
-            hcosLUT = [Float](repeating: 0.0, count: hcosLUTLen)
-            for k in 0..<hcosLUTLen {
-                let t = Float(k + 1) / Float(hcosLUTLen)
-                hcosLUT[k] = 0.5 * (1.0 - cosf(.pi * t))
-            }
+            // Attack rate: reach ~98% of gTarget in `n` samples (4 time
+            // constants over the lookahead window). This lets the audio
+            // path's clip kernel see a fully-shaved signal by the time
+            // it catches up to the detected peak.
+            let attackTimeConstantSamples = max(1.0, Float(n) * 0.25)
+            lookaheadAttackCoeff = clampf(
+                1.0 - expf(-1.0 / attackTimeConstantSamples),
+                0.0, 1.0
+            )
         } else {
             lookaheadDelay = []
             lookaheadDelayWriteIdx = 0
@@ -1092,8 +1087,7 @@ struct CompositeClipper {
             deqHead = 0
             deqTail = 0
             deqSampleCounter = 0
-            hcosLUT = []
-            hcosLUTLen = 0
+            lookaheadAttackCoeff = 0.0
         }
 
         // Release time constant: 80 ms (hardcoded). Smoothing 200 Hz
@@ -1101,14 +1095,14 @@ struct CompositeClipper {
         // carrier so they cannot leak into the 17–21 kHz pilot guard
         // band (38+ dB down by 17 kHz).
         let releaseS: Float = 0.080
-        lookaheadReleaseCoeff = expf(-1.0 / (releaseS * sr))
+        lookaheadReleaseCoeff = clampf(
+            1.0 - expf(-1.0 / (releaseS * sr)),
+            0.0, 1.0
+        )
         let lpCutoffHz: Float = 200.0
         lookaheadLPCoeff = clampf(1.0 - expf(-2.0 * .pi * lpCutoffHz / sr), 0.0, 1.0)
 
         lookaheadGain = 1.0
-        lookaheadGainStartAttack = 1.0
-        lookaheadGainTargetAttack = 1.0
-        lookaheadAttackIdx = 0
         lookaheadHoldRemaining = 0
         lookaheadLPState = 1.0
         lookaheadGainEnv = 1.0
@@ -1173,31 +1167,26 @@ struct CompositeClipper {
                 ? ceilingLin / max(1e-6, peakAhead)
                 : 1.0
 
-            // 3. Attack/hold/release state machine. New attack triggers
-            //    when the target drops below the current gain by more
-            //    than a denormal-margin epsilon.
-            if gTarget < lookaheadGain - 1.0e-6 {
-                lookaheadGainStartAttack = lookaheadGain
-                lookaheadGainTargetAttack = gTarget
-                lookaheadAttackIdx = 1
+            // 3. Attack/hold/release state machine. Exponential attack
+            //    with rate tied to the lookahead window — the gain
+            //    chases gTarget down as long as the detector says peak
+            //    is above ceiling. Hold for window length once gain has
+            //    reached target, then exponential release (80 ms time
+            //    constant) toward gTarget = 1.0 when the peak passes.
+            if gTarget < lookaheadGain {
+                // Attack: chase gTarget exponentially. Hold counter
+                // resets whenever attack engages so a steady stream of
+                // peaks doesn't release between them.
+                let a = lookaheadAttackCoeff
+                lookaheadGain = (1.0 - a) * lookaheadGain + a * gTarget
                 lookaheadHoldRemaining = lookaheadHostSamples
-            }
-            if lookaheadAttackIdx > 0 && lookaheadAttackIdx <= hcosLUTLen {
-                let ramp = hcosLUT[lookaheadAttackIdx - 1]
-                lookaheadGain = lookaheadGainStartAttack
-                    + ramp * (lookaheadGainTargetAttack - lookaheadGainStartAttack)
-                lookaheadAttackIdx += 1
-                if lookaheadAttackIdx > hcosLUTLen {
-                    lookaheadAttackIdx = 0
-                    lookaheadGain = lookaheadGainTargetAttack
-                }
             } else if lookaheadHoldRemaining > 0 {
                 lookaheadHoldRemaining -= 1
             } else {
                 // Release toward gTarget (typically 1.0 once peaks have
-                // passed). Exponential smoothing with 80 ms time constant.
+                // passed). Exponential with 80 ms time constant.
                 let r = lookaheadReleaseCoeff
-                lookaheadGain = r * lookaheadGain + (1.0 - r) * gTarget
+                lookaheadGain = (1.0 - r) * lookaheadGain + r * gTarget
             }
 
             // 4. 200 Hz single-pole LP smoother on the gain envelope.

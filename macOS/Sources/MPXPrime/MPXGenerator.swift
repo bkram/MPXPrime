@@ -5409,8 +5409,14 @@ final class MPXGenerator {
     private var stereoSubcarrierSupported: Bool = false
     private var rdsSupported: Bool = false
 
-    private var preSum = PreemphasisFilter()
-    private var preDiff = PreemphasisFilter()
+    // Pre-emphasis runs in L/R domain immediately upstream of the pre-encode
+    // limiter (canonical Optimod / Stereotool placement). The limiter then
+    // peak-controls the HF-boosted signal before it crosses into composite
+    // assembly. Moved here from M/S inside `makeCompositeComponents` in the
+    // 2026-05 chain-order audit — see plan.md "Pre-emphasis placement" and
+    // the chain-order-audit report at macOS/.audit-out/chain_order/REPORT.md.
+    private var preL = PreemphasisFilter()
+    private var preR = PreemphasisFilter()
     private var programLP = ProgramLowpass()
     private var encoderProgramLP = ProgramLowpass()
     private var encoderProgramFIR = LinearPhaseFIRLowpass()
@@ -5631,8 +5637,8 @@ final class MPXGenerator {
 
         self.toneStep = 0.0
 
-        preSum.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
-        preDiff.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
+        preL.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
+        preR.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
         applyEncoderComplianceConfiguration(sampleRate: self.sampleRate)
 
         widebandAGC.configure(
@@ -5735,8 +5741,8 @@ final class MPXGenerator {
             return
         }
         sampleRate = sr
-        preSum.configure(tauUS: preemphasisUS, sampleRate: sampleRate)
-        preDiff.configure(tauUS: preemphasisUS, sampleRate: sampleRate)
+        preL.configure(tauUS: preemphasisUS, sampleRate: sampleRate)
+        preR.configure(tauUS: preemphasisUS, sampleRate: sampleRate)
         applyEncoderComplianceConfiguration(sampleRate: sampleRate)
         widebandAGC.configure(
             sampleRate: sampleRate,
@@ -6913,6 +6919,11 @@ final class MPXGenerator {
 
         updateStereoImageMonitor(left: stereo.left, right: stereo.right)
 
+        // Pre-emphasis on L/R immediately upstream of the pre-encode limiter,
+        // so the limiter peak-controls the HF-boosted signal. See `preL`/`preR`.
+        stereo.left = preL.process(stereo.left)
+        stereo.right = preR.process(stereo.right)
+
         if preEncodeAudioLimiterEnabled && !processingBypass {
             let limited = preEncodeAudioLimiter.process(left: stereo.left, right: stereo.right)
             stereo.left = limited.0
@@ -7128,11 +7139,10 @@ final class MPXGenerator {
     private func makeCompositeComponents(left: Float, right: Float, inputActivity: Float)
         -> CompositeComponents
     {
-        var base = ((left + right) * 0.5) * sumLevel
-        var diff = monoMode ? 0.0 : (((right - left) * 0.5) * diffLevel)
-
-        base = preSum.process(base)
-        diff = preDiff.process(diff)
+        let base = ((left + right) * 0.5) * sumLevel
+        let diff = monoMode ? 0.0 : (((right - left) * 0.5) * diffLevel)
+        // Pre-emphasis ran here pre-2026-05; it now runs in L/R domain
+        // immediately upstream of the pre-encode limiter. See `preL` / `preR`.
         lastProgramActivity = inputActivity
 
         // (Phase advance for the tone source moved into

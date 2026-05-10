@@ -37,13 +37,16 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 ├──► Dynamics and image shaping (audio domain, float)
 │    ├── PrimeBass bass enhancement (optional)
 │    ├── Mono bass management (optional)
-│    ├── Stereo widener with image protection (optional)
-│    └── Multiband compressor (optional)
-│        ├── TX path: linear-phase FIR splitters (sum-to-flat, all bands
-│        │   share group delay — eliminates IIR-LR4 transient smear)
-│        ├── Monitor path: IIR Linkwitz-Riley LR4 crossovers (low latency)
-│        ├── Per-band downward expander (optional noise reduction)
-│        └── Per-band fast peak limiter (optional transient control)
+│    ├── Mono bass (optional, inside processStereoImageStage)
+│    ├── Multiband compressor (optional)
+│    │   ├── TX path: linear-phase FIR splitters (sum-to-flat, all bands
+│    │   │   share group delay — eliminates IIR-LR4 transient smear)
+│    │   ├── Monitor path: IIR Linkwitz-Riley LR4 crossovers (low latency)
+│    │   ├── Per-band downward expander (optional noise reduction)
+│    │   └── Per-band fast peak limiter (optional transient control)
+│    ├── Stereo widener (optional, post-multiband)
+│    └── PrimeBass (optional, post-multiband)
+│        └── Multiband doesn't compress synthesised harmonics back down
 │
 ├──► Peak control (audio domain, L/R)
 │    ├── Bass clipper (optional) — dedicated LF clipper with LR4 split
@@ -64,13 +67,16 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 ├──► Stereo-image protection
 │    └── Limits side-channel expansion from PrimeBass/widener
 │
-├──► Pre-encode audio limiter (L/R domain, stereo-linked)
+├──► Pre-emphasis (L/R domain, region specific)
+│    ├── 50 us (Europe) / 75 us (Americas / Japan / Australia)
+│    └── Applied L/R immediately upstream of the pre-encode limiter
+│        so the limiter peak-controls the +10..12 dB HF-boosted signal
+│        (canonical Optimod / Stereotool placement)
+│
+├──► Pre-encode audio limiter (L/R domain, per-channel oversampled)
 │    └── True-peak limiter on L/R before stereo encoding
 │
-├──► Pre-emphasis stage (region specific)
-│    ├── Pre-emphasis 50 us / 75 us
-│    └── Applied during stereo encoding
-│
+
 ├──► Stereo encoder (phase-coherent)
 │    ├── M = (L+R)/2
 │    ├── S = (L-R)/2
@@ -133,25 +139,26 @@ Within the main audio path, MPX Prime runs:
 5. Program lowpass
 6. HF trim
 7. **Parametric EQ** (4-band: low shelf + 2 peaking + high shelf, optional)
-8. PrimeBass
-9. Mono bass + stereo widener
-10. Multiband compressor (3-band or 5-band)
+8. Mono bass (inside `processStereoImageStage`)
+9. Multiband compressor (3-band or 5-band)
     - **TX path**: linear-phase FIR splitters (sum-to-flat, ~5.3 ms latency at 192 kHz)
     - **Monitor path**: IIR Linkwitz-Riley LR4 crossovers (low latency)
     - Per-band downward expander (optional)
     - Per-band fast peak limiter (optional)
-11. Bass clipper (LR4 split + tanh-clipped LF band, vvtanhf-batched, optional)
-12. Distortion-cancelled clipper (Orban-principle LF cancellation, vvtanhf-batched, optional)
-13. Encoder HF guard
-14. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor
-15. Stereo-image protection
-16. Pre-encode audio limiter (L/R domain, stereo-linked true-peak; uses `OversampledPeakLimiter` per channel)
-17. Pre-emphasis (M/S domain inside `makeCompositeComponents`)
-18. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
-19. Composite clipper (8× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched)
-20. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
-21. Final-MPX safety limiter (audio composite only)
-22. Pilot and RDS injection (post-clipper, constant amplitude)
+10. Stereo widener (post-multiband; canonical Optimod placement so multiband doesn't compress widened side-channel HF)
+11. PrimeBass (post-multiband; canonical MaxxBass / Aural Exciter / Big Bottom placement so multiband doesn't compress the synthesised harmonics)
+12. Bass clipper (LR4 split + tanh-clipped LF band, vvtanhf-batched, optional)
+13. Distortion-cancelled clipper (Orban-principle LF cancellation, vvtanhf-batched, optional)
+14. Encoder HF guard
+15. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor
+16. Stereo-image protection
+17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal)
+18. Pre-encode audio limiter (L/R domain, per-channel `OversampledPeakLimiter`)
+19. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
+20. Composite clipper (8× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched)
+21. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
+22. Final-MPX safety limiter (audio composite only)
+23. Pilot and RDS injection (post-clipper, constant amplitude)
 
 All optional stages are disabled by default and can be enabled via config/UI; multiband, bass clipper, and composite clipper are on by default per `AppConfig`.
 

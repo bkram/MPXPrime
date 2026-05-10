@@ -6996,11 +6996,8 @@ final class MPXGenerator {
                 right = eqd.1
             }
 
-            // PrimeBass runs after the multiband stereo block (see below) so
-            // multiband doesn't compress the synthesised harmonics it adds.
-            // Canonical post-multiband placement matches MaxxBass / Aural
-            // Exciter / Big Bottom industry practice — moved here from
-            // pre-multiband in the 2026-05 chain-order audit.
+            // Stereo image stage: mono bass only. Stereo widener moved
+            // post-multiband in the 2026-05 chain-order modernization.
             let stereoImage = processStereoImageStage(left: left, right: right)
             left = stereoImage.left
             right = stereoImage.right
@@ -7019,6 +7016,9 @@ final class MPXGenerator {
                 right = widened.1
             }
 
+            // PrimeBass post-multiband: multiband no longer compresses the
+            // MaxxBass / Aural Exciter / Big Bottom-style harmonics back
+            // down. Canonical industry placement for bass enhancers.
             if primeBassEnabled {
                 let primeBassOut = processPrimeBass(left: left, right: right)
                 left = primeBassOut.0

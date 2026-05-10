@@ -4,14 +4,22 @@ import Foundation
 
 // Regression tests that measure wall-clock cost of the real-time DSP path.
 //
-// These catch the class of regression that dropped audio 3-5 s into every
-// engine start on release/MPXPrime-0.10 pre-fix: commit b806053 relocated
-// pre-emphasis from M/S (inside makeCompositeComponents, 2 filter passes on
-// mixed signals) to L/R upstream of the pre-encode limiter (2 filter passes,
-// same count, BUT now feeding the limiter a signal with a 10-12 dB HF boost).
-// The limiter then ran near-constantly in gain reduction with HF-rich program
-// material, and the combined per-sample cost exceeded the real-time budget
-// on busy systems — producing ring overflow.
+// History: a 0.9 -> 0.10 commit (b806053) relocated pre-emphasis from M/S
+// inside makeCompositeComponents to L/R upstream of the pre-encode limiter,
+// causing audio dropouts 3-5 s into every engine start on busy systems —
+// the limiter ran near-constantly in gain reduction with HF-rich program,
+// and the combined per-sample cost exceeded the real-time budget. 0.10
+// reverted to M/S and added preEmphasisDoesNotExplodeFullChainCost as a
+// canary against re-introducing the cost regression.
+//
+// Today: the L/R relocation it originally guarded against is now the
+// production placement (post-0.24 chain-order modernization). Optimizations
+// between 0.10 and 0.24 (vvtanhf, vDSP_dotpr, FIR multiband, differential
+// composite clipper) cut absolute chain cost from ~95% to ~28% of
+// real-time, comfortably absorbing the upstream-pre-emphasis cost. The
+// canary now bounds the production placement's cost vs disabled-pre-
+// emphasis at 1.5x — useful as a forward-looking regression detector,
+// not as a guard against a specific historical pattern.
 //
 // Strategy: process a full second of worst-case HF-rich stereo through the
 // complete MPXGenerator chain in realistic ~512-frame blocks, measure wall

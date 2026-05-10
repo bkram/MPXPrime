@@ -12,21 +12,29 @@ import SwiftUI
 struct SignalFlowStrip: View {
     @ObservedObject var model: MPXPrimeViewModel
 
-    /// Stages shown in the strip, in chain order.
+    /// Stages shown in the strip, in chain order. Phase Rotator runs
+    /// before AGC (cf. MPXGenerator.processProgramStereo). Composite
+    /// Clipper runs before BS.412 in the audio-composite domain
+    /// (cf. processFinalComposite); earlier strip ordering had them
+    /// reversed.
+    ///
+    /// MB Limiter and Downward Expander are *per-band* processors
+    /// inside the Multiband stage — not three serial stages — so the
+    /// strip only shows the `MB` pill. They keep their own sidebar
+    /// entries for operator-facing controls.
     private static let chainStages: [Stage] = [
         .processingCore,
+        .processingPhaseRotator,
         .processingAGC,
         .processingParametricEQ,
         .processingPrimeBass,
         .processingWidener,
         .processingMultiband,
-        .processingMBLimiter,
-        .processingExpander,
         .processingBassClipper,
         .processingDCClipper,
         .processingLimiter,
-        .processingBS412,
         .processingCompositeClipper,
+        .processingBS412,
         .processingFinalStage,
     ]
 
@@ -34,18 +42,17 @@ struct SignalFlowStrip: View {
     /// dense; full-length labels won't fit at typical window widths.
     private static let chipLabels: [Stage: String] = [
         .processingCore: "Core",
+        .processingPhaseRotator: "PhaseRot",
         .processingAGC: "AGC",
         .processingParametricEQ: "PEQ",
         .processingPrimeBass: "PrimeBass",
         .processingWidener: "Width",
         .processingMultiband: "MB",
-        .processingMBLimiter: "MB-Lim",
-        .processingExpander: "Exp",
         .processingBassClipper: "BassClip",
         .processingDCClipper: "DC-Clip",
         .processingLimiter: "Lim",
-        .processingBS412: "BS.412",
         .processingCompositeClipper: "MPX-Clip",
+        .processingBS412: "BS.412",
         .processingFinalStage: "Final",
     ]
 

@@ -5944,6 +5944,7 @@ private struct ProcessingCoreTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+      VStack(alignment: .leading, spacing: 16) {
         Card(title: "Core Processing") {
             Toggle("Bypass Processing", isOn: Binding(
                 get: { model.processingBypass },
@@ -5979,6 +5980,16 @@ private struct ProcessingCoreTab: View {
             DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz")
             DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...17_000, format: "%.0f Hz")
         }
+        Card(title: "Engine — TX path") {
+            Toggle("Encoder Lowpass: linear-phase FIR", isOn: model.configBinding(\.encoderFIREnabled))
+                .help("Transmit-mode encoder bandwidth guard. On (default): Kaiser-windowed linear-phase FIR, >80 dB stop-band, ~1.67 ms latency at 192 kHz. Off: 12th-order Butterworth cascade, ~0.2 ms latency, ~40 dB stop-band. Monitor mode always uses Butterworth. Restart-required.")
+            Toggle("Multiband Crossovers: linear-phase FIR", isOn: model.configBinding(\.multibandFIREnabled))
+                .help("Transmit-mode multiband splitters. On (default): Kaiser-windowed FIR splitters, sum-to-flat at -155 dB, all bands share group delay (no transient smear / inter-band pumping), ~5.3 ms latency at 192 kHz. Off: IIR Linkwitz-Riley 4th-order cascade, low latency but with the IIR-LR4 phase artefacts. Monitor mode always uses LR4. Restart-required.")
+            Text("Both toggles only affect the transmit (composite) path. Restart engine to apply.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+      }
     }
 }
 
@@ -6227,6 +6238,7 @@ private struct ProcessingFinalStageTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+      VStack(alignment: .leading, spacing: 16) {
         Card(title: "Final Stage") {
             Picker("Broadcast Preset", selection: Binding(
                 get: { self.model.config.finalStagePresetID },
@@ -6253,6 +6265,22 @@ private struct ProcessingFinalStageTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        Card(title: "Final-MPX Safety Limiter") {
+            Toggle("Enable Safety Limiter", isOn: model.configBinding(\.limitMPX))
+                .help("Look-ahead peak limiter on the final MPX (audio composite + safety net). Pilot and RDS bypass this stage to keep subcarriers at constant amplitude. Restart-required.")
+            let disabled = !model.config.limitMPX
+            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.limitThreshold), range: 0.5...0.999, format: "%.3f",
+                tooltip: "Linear ceiling for the safety limiter (0.5..0.999). 0.98 = -0.18 dBFS. Below this the limiter doesn't engage; above it the look-ahead reduces gain to keep peaks under the ceiling.").disabled(disabled)
+            Toggle("Enable Look-Ahead", isOn: model.configBinding(\.limitLookaheadEnabled))
+                .help("Look-ahead delay so the limiter sees future peaks and applies gain reduction smoothly before the peak arrives. Off makes the limiter purely reactive (more overshoot).")
+                .disabled(disabled)
+            DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
+                tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
+            Text("Final guardrail on the audio composite after the composite clipper and BS.412. Pilot and RDS subcarriers are injected after this stage at constant amplitude. Restart-required.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+      }
     }
 }
 

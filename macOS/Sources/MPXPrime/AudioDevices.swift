@@ -73,6 +73,26 @@ enum AudioDevices {
         try list().filter { $0.hasOutput }
     }
 
+    /// System default input device per the Core Audio HAL. Used when
+    /// the operator has not selected an explicit input — AUHAL needs
+    /// an explicit `AudioDeviceID`, unlike AVAudioEngine which infers
+    /// "default" implicitly.
+    static func defaultInputDeviceID() -> AudioDeviceID? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let sysObj = AudioObjectID(kAudioObjectSystemObject)
+        let status = AudioObjectGetPropertyData(
+            sysObj, &addr, 0, nil, &size, &deviceID
+        )
+        guard status == noErr, deviceID != 0 else { return nil }
+        return deviceID
+    }
+
     private static func readCFString(
         objectID: AudioObjectID,
         selector: AudioObjectPropertySelector,

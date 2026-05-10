@@ -72,7 +72,13 @@ final class AudioOutputEngine {
     }
 
     private let engine = AVAudioEngine()
-    private var captureEngine: AVAudioEngine?
+    /// Direct AUHAL input-capture path. Replaces the prior
+    /// `captureEngine: AVAudioEngine?` to escape AVAudioEngine's
+    /// first-start failure on non-default input devices — the
+    /// dedicated input-node binding intermittently failed to deliver
+    /// tap callbacks on cold start. AUHAL is TN2091's documented
+    /// answer to that bug.
+    private var inputAU: InputAUHAL?
     private var sourceNode: AVAudioSourceNode?
     private let generator: MPXGenerator
     /// Tracks whether the engine is currently rendering live input
@@ -88,7 +94,6 @@ final class AudioOutputEngine {
     private var targetDeviationKHz: Float
     private var configuredRenderSampleRate: Double = 0.0
     private var inputRing: StereoInputRingBuffer?
-    private var captureTapInstalled = false
     private var configuredInputSampleRate: Double?
     private var inputToRenderRatio: Double = 1.0
     private var inputPrefillFrames = 0
@@ -490,14 +495,9 @@ final class AudioOutputEngine {
         inputRing = nil
         engine.stop()
         engine.reset()
-        if let capture = captureEngine {
-            capture.stop()
-            if captureTapInstalled {
-                capture.inputNode.removeTap(onBus: 0)
-                captureTapInstalled = false
-            }
-            capture.reset()
-            captureEngine = nil
+        if let inputAU {
+            inputAU.stop()
+            self.inputAU = nil
         }
         inputPrimed = false
         configuredInputSampleRate = nil
@@ -613,37 +613,80 @@ final class AudioOutputEngine {
 
     private func setupInputCapture(targetSampleRate: Double) throws {
         captureLog.info("setupInputCapture: requestedInputDeviceID=\(self.requestedInputDeviceID.map { String($0) } ?? "nil", privacy: .public) targetSampleRate=\(targetSampleRate, privacy: .public)")
-        let capture = AVAudioEngine()
-        if let inputID = requestedInputDeviceID {
-            try setCurrentDevice(inputID, for: capture.inputNode, role: "input")
-            applyHALBufferSize(deviceID: inputID, role: "input")
-            captureLog.info("setupInputCapture: setCurrentDevice ok deviceID=\(inputID, privacy: .public)")
+
+        // AUHAL needs an explicit AudioDeviceID — unlike AVAudioEngine,
+        // it cannot infer the system default implicitly. Resolve to
+        // the HAL default when the operator hasn't selected a device.
+        let deviceID: AudioDeviceID
+        if let requested = requestedInputDeviceID {
+            deviceID = requested
+            captureLog.info("setupInputCapture: using requested deviceID=\(requested, privacy: .public)")
+        } else if let resolved = AudioDevices.defaultInputDeviceID() {
+            deviceID = resolved
+            captureLog.info("setupInputCapture: no requestedInputDeviceID; resolved system default deviceID=\(resolved, privacy: .public)")
         } else {
-            captureLog.info("setupInputCapture: no requestedInputDeviceID; using AVAudioEngine default input")
-        }
-        let inFormat = capture.inputNode.inputFormat(forBus: 0)
-        captureLog.info("setupInputCapture: inputFormat sampleRate=\(inFormat.sampleRate, privacy: .public) channels=\(inFormat.channelCount, privacy: .public)")
-        if inFormat.channelCount < 1 {
-            captureLog.error("setupInputCapture: input format has no channels — throwing inputFormatUnavailable")
+            captureLog.error("setupInputCapture: no input device available")
             throw AudioEngineError.inputFormatUnavailable
         }
-        configuredInputSampleRate = inFormat.sampleRate
+
+        applyHALBufferSize(deviceID: deviceID, role: "input")
+
+        let inputAU = InputAUHAL()
+        let firstFrameLogged = ManagedAtomic<Bool>(false)
+        // Capture only the input ring + the diagnostic flag, both
+        // through `[unowned self]`. The frame sink is invoked from
+        // the AUHAL real-time thread; closure body must stay
+        // allocation-free and lock-free (matches the prior tap
+        // contract).
+        inputAU.frameSink = { [unowned self] left, right, frames in
+            if firstFrameLogged.compareExchange(
+                expected: false,
+                desired: true,
+                ordering: .acquiringAndReleasing
+            ).exchanged {
+                var peak: Float = 0
+                for i in 0..<frames {
+                    peak = max(peak, fabsf(left[i]))
+                }
+                captureLog.info("first AUHAL render frames=\(frames, privacy: .public) leftPeak=\(peak, privacy: .public)")
+            }
+            self.handleInputAUHALFrames(left: left, right: right, frameCount: frames)
+        }
+
+        // MaxFramesPerSlice sized for the worst case (display-sleep
+        // wake delivers one large slice) — matches the prior tap
+        // bufferSize ceiling but generous.
+        let captureBlockFrames = min(2048, max(256, requestedBlockSize))
+        let mfps = max(4096, captureBlockFrames * 2)
+
+        let format: InputAUHAL.Format
+        do {
+            format = try inputAU.start(deviceID: deviceID, maxFramesPerSlice: mfps)
+        } catch {
+            captureLog.error("AUHAL input start failed: \(String(describing: error), privacy: .public)")
+            throw AudioEngineError.engineStartFailed(
+                "input capture start failed: \(String(describing: error))")
+        }
+
+        captureLog.info("AUHAL input running deviceRate=\(format.deviceSampleRate, privacy: .public) deviceChannels=\(format.deviceChannelCount, privacy: .public)")
+
+        configuredInputSampleRate = format.deviceSampleRate
         if targetSampleRate > 1.0 {
-            inputToRenderRatio = max(0.25, min(4.0, inFormat.sampleRate / targetSampleRate))
+            inputToRenderRatio = max(0.25, min(4.0, format.deviceSampleRate / targetSampleRate))
         } else {
             inputToRenderRatio = 1.0
         }
-        let captureBlockFrames = min(2048, max(256, requestedBlockSize))
-        let ringFrames = max(captureBlockFrames * 128, Int(inFormat.sampleRate * 1.0))
+
+        let ringFrames = max(captureBlockFrames * 128, Int(format.deviceSampleRate * 1.0))
         let ring = StereoInputRingBuffer(capacityFrames: ringFrames)
         inputRing = ring
         inputPrefillFrames = max(captureBlockFrames * 12, 4096)
         // Time-based floor on buffered frames so small block sizes still
         // get enough cushion to absorb scheduling jitter. 100 ms at the
-        // input rate ≈ 19 200 frames at 192 kHz; gives ~37 callback worth
-        // of headroom at block=512 (matches the headroom block=2048 had
-        // before the time-based floor was added).
-        let timeBasedTargetFloor = Int(inFormat.sampleRate * 0.100)
+        // input rate ≈ 19 200 frames at 192 kHz; gives ~37 callbacks
+        // worth of headroom at block=512 (matches the headroom
+        // block=2048 had before the time-based floor was added).
+        let timeBasedTargetFloor = Int(format.deviceSampleRate * 0.100)
         inputTargetBufferedFrames = max(
             inputPrefillFrames * 2,
             captureBlockFrames * 24,
@@ -655,48 +698,56 @@ final class AudioOutputEngine {
             inputTargetBufferedFrames - inputBufferedDeadbandFrames
         )
         inputPrimed = false
-        let tapFormat = inFormat
-        let firstTapLogged = ManagedAtomic<Bool>(false)
-        capture.inputNode.installTap(
-            onBus: 0,
-            bufferSize: AVAudioFrameCount(captureBlockFrames),
-            format: tapFormat
-        ) { [weak self] buffer, _ in
-            guard let self, let activeRing = self.inputRing else { return }
-            if firstTapLogged.compareExchange(
-                expected: false, desired: true,
-                ordering: .acquiringAndReleasing).exchanged
-            {
-                let frames = Int(buffer.frameLength)
-                var peak: Float = 0
-                if let ch = buffer.floatChannelData?[0] {
-                    for i in 0..<frames { peak = max(peak, fabsf(ch[i])) }
-                }
-                captureLog.info("first tap callback frames=\(frames, privacy: .public) peak=\(peak, privacy: .public)")
-            }
-            self.pushInputBufferToRing(buffer, ring: activeRing)
-        }
-        captureTapInstalled = true
-        captureLog.info("tap installed bufferSize=\(captureBlockFrames, privacy: .public) ringCapacity=\(ringFrames, privacy: .public)")
-        do {
-            try capture.start()
-        } catch {
-            captureLog.error("capture.start threw: \(error.localizedDescription, privacy: .public)")
-            throw AudioEngineError.engineStartFailed(
-                "input capture start failed: \(error.localizedDescription)")
-        }
-        captureEngine = capture
-        captureLog.info("capture.start ok isRunning=\(capture.isRunning, privacy: .public)")
-        // One-shot diagnostic: warn (don't fail) if the tap hasn't fired
-        // within 2s of capture.start. Surfaces "Transport: Running but ring
-        // stays at 0" silent stalls in Console.app for diagnosis without
-        // breaking workflows where the source genuinely takes longer to
-        // produce (BlackHole waiting for an upstream producer, sleeping mics).
+        self.inputAU = inputAU
+
+        // One-shot diagnostic: warn (don't fail) if no AUHAL frame
+        // has arrived within 2 s of start. Surfaces "Transport:
+        // Running but ring stays at 0" silent stalls in Console.app
+        // — same diagnostic the prior AVAudioEngine path emitted.
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) {
-            if !firstTapLogged.load(ordering: .acquiring) {
-                captureLog.warning("2s after start, tap has NOT fired. Likely causes: virtual-device with no upstream producer (BlackHole), sleeping mic, sandboxed-input mismatch.")
+            if !firstFrameLogged.load(ordering: .acquiring) {
+                captureLog.warning("2s after start, AUHAL input has NOT delivered a frame. Likely causes: virtual-device with no upstream producer (BlackHole), sleeping mic, missing TCC entitlement.")
             } else {
-                captureLog.info("2s after start, tap is delivering normally.")
+                captureLog.info("2s after start, AUHAL input is delivering normally.")
+            }
+        }
+    }
+
+    /// Frame-sink for the AUHAL input callback. RT-safe: no
+    /// allocations, no locks, no Obj-C runtime, no logging on the
+    /// hot path. Counterpart to the prior `pushInputBufferToRing`
+    /// fast-path; the AUHAL client format is fixed at planar
+    /// Float32 / 2 channels / device sample rate, so all the Int16
+    /// / Int32 / interleaved conversion paths the AVAudioEngine tap
+    /// needed are gone.
+    private func handleInputAUHALFrames(
+        left: UnsafePointer<Float>,
+        right: UnsafePointer<Float>,
+        frameCount: Int
+    ) {
+        guard frameCount > 0, let ring = inputRing else { return }
+        captureCallbackCount += 1
+        captureFrameCount += UInt64(frameCount)
+        captureFrameCounter += frameCount
+        let throttled = meteringEnabled
+            && ((captureFrameCounter % Self.meterUpdateIntervalFrames) < frameCount)
+        let captureInputScope =
+            throttled && inputScopeCaptureEnabled.load(ordering: .relaxed)
+        ring.write(left: left, right: right, frameCount: frameCount)
+        if throttled {
+            let meter = Self.computeStereoLevels(
+                left: left, right: right, frameCount: frameCount)
+            updateInputMeters(
+                inputRMS: meter.rms,
+                inputPeak: meter.peak,
+                inputLeftRMS: meter.leftRMS,
+                inputRightRMS: meter.rightRMS,
+                inputLeftPeak: meter.leftPeak,
+                inputRightPeak: meter.rightPeak
+            )
+            if captureInputScope {
+                updateInputScopeSnapshot(
+                    left: left, right: right, frameCount: frameCount)
             }
         }
     }

@@ -1002,40 +1002,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
 
         if vm.autoStartEnabled {
-            // WORKAROUND (auto-start input stall): AVAudioEngine has an
-            // observed issue where the FIRST start() in a process with a
-            // non-default input device fails to deliver tap callbacks —
-            // engine.start() returns success, capture.isRunning is true,
-            // ring stays at 0/N forever. Manual Stop+Start always recovers
-            // because the second AVAudioEngine in the process is fine.
-            //
-            // What we tried that did NOT fix it:
-            //   - 1 s asyncAfter delay (gives runloop time to settle)
-            //   - throwaway warmup AVAudioEngine that touches inputNode +
-            //     start()/stop()/reset() before the real engine starts
-            //   - permission gate via AVCaptureDevice.requestAccess
-            //
-            // What this workaround does: kick off auto-start, then 1.5 s
-            // later check whether the input ring has any samples. If not,
-            // run a real Stop+Start cycle (matches what the user does
-            // manually, which deterministically fixes it). Adds 0.25 s
-            // visible "stall + recover" flash on launch in the failure
-            // case; no-op when auto-start succeeds first try.
-            //
-            // PROPER FIX (future): replace the AVAudioEngine-based capture
-            // path in AudioOutputEngine.setupInputCapture with a direct
-            // AUHAL audio unit (kAudioUnitSubType_HALOutput, EnableIO on
-            // input scope, manual render callback). AUHAL is the
-            // Apple-documented capture-from-specific-device path and
-            // doesn't have AVAudioEngine's input-binding quirks. Tracked
-            // in plan.md "Auto-start input stall workaround".
+            // The Stop+Start watchdog that used to live here was a
+            // workaround for AVAudioEngine's first-start failure on
+            // non-default input devices. The input path now uses a
+            // direct AUHAL audio unit (`InputAUHAL`) per TN2091,
+            // which doesn't have that bug — auto-start delivers
+            // frames immediately on the first try.
             DispatchQueue.main.async { [weak vm] in
                 vm?.startOrStopTransport(forceStart: true)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak vm] in
-                guard let vm, vm.isRunning, vm.transportInputStalled else { return }
-                vm.statusText = "Auto-start input stall detected; cycling engine."
-                vm.cycleEngineForRecovery()
             }
         }
 
@@ -2543,26 +2517,6 @@ final class MPXPrimeViewModel: ObservableObject {
             startEngine()
         } else {
             stopEngine()
-        }
-    }
-
-    /// True when the transport reports running but the input ring has
-    /// received zero samples — the AVAudioEngine first-start input-stall
-    /// signature. Used by the auto-start watchdog to decide whether to
-    /// trigger an automatic engine cycle.
-    var transportInputStalled: Bool {
-        guard isRunning, sourceMode.lowercased() == "input" else { return false }
-        guard let engine = runningEngine, let snap = engine.transportSnapshot else { return false }
-        return snap.bufferedFrames == 0
-    }
-
-    /// Cycle the engine: stop, then start again on the next runloop tick.
-    /// The auto-start watchdog uses this to recover from a stalled first
-    /// start without requiring user interaction.
-    func cycleEngineForRecovery() {
-        stopEngine()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.startEngine()
         }
     }
 

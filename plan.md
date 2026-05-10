@@ -98,82 +98,6 @@ directions needs a clear design-around or a wait).
 | [US 4,412,100](https://patents.google.com/patent/US4412100A/en)       | Audio limiter using FET attenuator                                                                | Expired                                                      | Analog circuit patent (1981, JFET as voltage-controlled resistor). Pre-DSP era; the modern DSP equivalent (envelope-driven gain reduction with attack/release) is how every compressor in this codebase already works.                                                                                                                                                                    |
 | [US 7,587,254](https://patents.google.com/patent/US7587254B2/en)      | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029                                                        | Filed 2004; not yet expired. Revisit post-2029.                                                                                                                                                                                                                                                                                                                                           |
 
-## Recently landed (0.20 + 0.21 — released; later items unreleased on `develop/v.023`)
-
-- **Optional deep DSP combination test suite** (`DeepDSPTests.swift`).
-  Five-layer opt-in coverage of stage interactions, gated by
-  `MPXPRIME_DEEP=1`. (1) Per-stage isolation smoke tests for the
-  previously-unstested stages — Phase Rotator, Parametric EQ, Mono
-  Bass, Stereo Widener, BS.412, Pre-encode limiter, DC clipper,
-  3-band multiband, multiband limiter, encoder FIR, final MPX safety
-  limiter. (2) Universal invariants on 50 deterministically-seeded
-  random valid configs × 4 adversarial programs (HF-rich pop /
-  sustained bass / percussive transients / pink noise) — asserts no
-  NaN / inf, composite peak ≤ 1.05, pilot RMS within ±30% of
-  configured `pilotLevel` when stereo subcarriers are emitted, RDS
-  sideband energy present (>-75 dBFS in 55–59 kHz band) when active.
-  (3) Pairwise enable/disable matrix on 11 high-impact stage flags,
-  12 covering rows. (4) Counteract detection — for 10 suspect pairs
-  asserts no amplitude conspiracy (combined peak ≤ max single ×
-  1.10) and no cancellation conspiracy (combined 1 kHz energy ≥
-  min single − 6 dB). (5) Per-preset safety on five 5-band presets
-  × three programs. The suite stays out of the default `swift test`
-  invocation (still ~10 s); deep run takes ~3 min on M1.
-
-- **PrimeBass Phase 2 — Werrbach transient-discriminate harmonic
-  gain** (commit `af7b883`, US 5,424,488 expired 2013-06-08). Dual-
-  envelope detector — fast (5 ms / 30 ms) follower minus slow
-  (50 ms / 250 ms) baseline, normalized — modulates the harmonic-band
-  gain from a 0.7× sustain floor to a 1.4× peak on real onsets.
-  "Punchy not boomy" character: reduces continuous HF energy on
-  sustained material while preserving peak harmonic intensity on
-  attacks.
-
-- **PrimeBass bass enhancement modernised + renamed from Orbass**
-  (commit `4d4a70f`). Phase 1 of the bass-enhancement patent backlog:
-  Waves MaxxBass-style equal-loudness-weighted harmonics (US 5,930,373,
-  expired 2017) and Aphex-style pre-waveshaper allpass topology
-  (US 4,150,253, expired 1996, adapted for bass extension via allpass
-  instead of HPF). Direct LF gain tapered down with the harmonics
-  knob so perceived bass shifts onto the weighted harmonics — buys
-  headroom in the bass clipper / pre-encode limiter while makeup gain
-  compensates absolute level. New `PrimeBassMaxxBassTests` (4 tests)
-  via mono-mode minimal-chain `MPXGenerator` render. Default verifier
-  baseline (PrimeBass off) bit-identical to prior build. **Renamed**
-  from `Orbass` (which read as a portmanteau of Orban) to `PrimeBass`
-  across Swift identifiers, UI labels, INI keys (`primebass_*`), and
-  tests; legacy `orbass_*` INI keys still read as fallback for one
-  release.
-
-- **`CompositeClipper` linear-phase FIR decimation + differential
-  topology** (Orban US 6,337,999, expired 2022). New
-  `LinearPhaseFIRDecimator` struct (Kaiser-windowed sinc, ~147 taps,
-  `vDSP_dotpr` polyphase). Replaces the prior `BiquadCascade6` 12th-
-  order Butterworth. `CompositeClipper.process` restructured so only
-  the *clipping residual* goes through decimation; the wanted signal
-  rides a 1× delay-matched bypass. Per-band IM cancellation still
-  works — the cancelled bands are subtracted from the residual before
-  decimation rather than added back to the clipped signal. Net win:
-  flat passband response across 0–53 kHz (versus Butterworth's 1–2 dB
-  rolloff at the subcarrier edge), 90 dB FIR stopband (versus
-  Butterworth's ~70–80 dB), no decimator-induced phase rotation on
-  the wanted signal. Cost: ~9 host samples (~47 µs at 192 kHz) of
-  TX-path latency, negligible CPU thanks to `vDSP_dotpr`. Cross-
-  domain cancellation depth on the synthetic test scenario drops
-  1–2 dB (architectural trade-off, not a regression in receiver-
-  perceived behaviour). Verifier scenarios run with
-  `mpx_clipper_enabled = False`, so these changes don't move the
-  `hf_edge_12k` / `bright_dense` flags — that needs the P0 patent
-  applied to `OversampledPeakLimiter` and the audio-composite shaper.
-
-
-- **RDS live-apply expansion** — every operationally-toggled RDS setting applies without transport restart. Single `RDSRuntimeConfig.make(from:)` factory; `.liveRDS` runtime disposition; 38-field runtime config; PI / PTY / PTYN / ECC / LIC / TP / TA / MS / DI / AF / group sequence / scheduler / CT all flip without restart. Restart-only set is now just `rds_level`, `rds_freq`, `rds_gaussian_*` (physical-layer / modulator FIR).
-- **RDS GUI restructure** — Control tab as the new primary landing (master enable + injection + live status + runtime flags); detail tabs reorganised per UECP message-class taxonomy: Identity, Radiotext, Long PS, Alt. Frequencies, Schedule, Subcarrier. Old Flags tab removed. MOD chip added to broadcast status bar.
-- **AF Method B** — IEC 62106-2 §7.5.3 / EN 50067 §3.2.1.6.4 paired-frequency encoding now correctly emitted when `rds_af_method = B`.
-- **TA-flag auto-injection** — UECP §2.5.1.1 forced 0A on TA edge; receivers see flag flips within one group time regardless of schedule cadence.
-- **`Date()` deferred from audio thread** — replaced with `BasicRDSCoder.monotonicSeconds()` (`ProcessInfo.systemUptime`, commpage-backed). RT `{time}/{date}` macro path retained (needs wall clock; DateFormatter cost dwarfs the `Date()` call there).
-- **Test count: 204 → 227 across 25 → 26 suites.** New `RDSLiveApplyTests` covers PI/PTY/PTYN/Long PS/AF/CT round-trips, master-enable disengage, AF Method B encoding, TA-edge auto-injection.
-
 ## Next up
 
 1. **Preset tuning — make it sound great out of the box.** Composite clipper now ships clean (delta-based per-band substitution; (L-R) subcarrier sidebands within ~1 dB across the audio band). Time to push it. Tune `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, AGC density curve, and stereo widener defaults so a fresh install with no operator knowledge already sounds noticeably better than `mpxgen` / PiFmRds. Probably also: a small set of named presets (e.g. `clean`, `loud`, `community-radio`, `lpfm-conservative`) as INI fragments. Estimated scope: a focused listening session + tuning pass.
@@ -182,9 +106,7 @@ directions needs a clear design-around or a wait).
 
 3. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema, different scenario sets. Once preset tuning lands the verify presets become more meaningful.
 
-4. **Operator getting-started README pass.** Plug-in flow, what the meters mean, how to pick a preset, common pitfalls. The polished macOS UX is the project's edge over headless open-source alternatives; the README should reflect that.
-
-5. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. **Must preserve M/S-domain pre-emphasis placement** (see "Pre-emphasis placement" note below) — if a sidechain-only HF-boost feed into the pre-encode limiter is needed, build it as a dedicated sidechain path, not by moving pre-emphasis upstream. Lower priority for amateur-grade — current pre-emphasis behaviour is fine for the target audience; this is a polish item.
+4. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. **Must preserve M/S-domain pre-emphasis placement** (see "Pre-emphasis placement" note below) — if a sidechain-only HF-boost feed into the pre-encode limiter is needed, build it as a dedicated sidechain path, not by moving pre-emphasis upstream. Lower priority for amateur-grade — current pre-emphasis behaviour is fine for the target audience; this is a polish item.
 
 ## RDS roadmap toward enterprise tier
 
@@ -224,13 +146,11 @@ Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction
 
 ### Composite clipper improvements
 
-1. **Linear-phase FIR decimation in `CompositeClipper`** — *shipped in 0.20* (commit `d1d8180`). `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband) replaces the prior `BiquadCascade6` 12th-order Butterworth. Combined with the differential-clipper topology (Orban US 6,337,999, expired) — only the clipping residual goes through decimation; the wanted signal rides a 1× delay-matched bypass. Cost: ~9 host samples (~47 µs at 192 kHz) of TX-path latency.
+1. **Look-ahead composite peak control.** Modern processors (Optimod 8x00, Omnia.9, Stereotool) drive composite peak control from a sidechain that knows future peak amplitude, so gain reduction is applied before the peak arrives and overshoots are mathematically bounded. Today the composite clipper is purely time-symmetric soft-clip with no look-ahead; the final-stage MPX limiter has look-ahead but operates after pilot/RDS injection. Add a delay line + predictive peak detector to the composite clipper. Estimated scope: 1–2 weeks. **Highest-payoff loudness improvement remaining.**
 
-2. **Look-ahead composite peak control.** Modern processors (Optimod 8x00, Omnia.9, Stereotool) drive composite peak control from a sidechain that knows future peak amplitude, so gain reduction is applied before the peak arrives and overshoots are mathematically bounded. Today the composite clipper is purely time-symmetric soft-clip with no look-ahead; the final-stage MPX limiter has look-ahead but operates after pilot/RDS injection. Add a delay line + predictive peak detector to the composite clipper. Estimated scope: 1–2 weeks. **Highest-payoff loudness improvement remaining.**
+2. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier. Larger lift than #1 alone — split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
 
-3. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier. Larger lift than #2 alone — split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
-
-4. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The new delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
+3. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
 
 ### Chain-order audit (industry comparison)
 
@@ -274,14 +194,13 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 1. Validate PrimeBass, mono bass, widener, and multiband interaction on difficult real material.
 2. Refine calibration workflow only where real operator friction exists.
 3. Build a small set of named presets (`clean`, `loud`, `community-radio`, `lpfm-conservative`) — INI fragments shipped alongside the binary.
-4. Document the amateur-operator getting-started flow in README — what to plug where, what the meters mean, how to pick a preset, common pitfalls.
-5. **Auto-start input stall — proper fix.** Currently mitigated by a watchdog in `applicationDidFinishLaunching`: kick auto-start, wait 1.5 s, if the input ring is still at 0, run a Stop+Start cycle. The cycle deterministically recovers, but the underlying issue is in `AudioOutputEngine.setupInputCapture` — AVAudioEngine's first start() in a process with a non-default input device fails to deliver tap callbacks even though every API call returns success (`capture.isRunning == true`, `inputFormat` correct, `kAudioOutputUnitProperty_CurrentDevice` set ok, permission `.authorized`). Replace the AVAudioEngine-based capture path with a direct AUHAL audio unit (`kAudioUnitSubType_HALOutput`, `EnableIO` on input scope element 1, manual render callback into the existing `StereoInputRingBuffer`). AUHAL is Apple's documented capture-from-specific-device path (TN2091) and doesn't have AVAudioEngine's input-node binding quirks.
+4. **Auto-start input stall — proper fix.** Currently mitigated by a watchdog in `applicationDidFinishLaunching`: kick auto-start, wait 1.5 s, if the input ring is still at 0, run a Stop+Start cycle. The cycle deterministically recovers, but the underlying issue is in `AudioOutputEngine.setupInputCapture` — AVAudioEngine's first start() in a process with a non-default input device fails to deliver tap callbacks even though every API call returns success (`capture.isRunning == true`, `inputFormat` correct, `kAudioOutputUnitProperty_CurrentDevice` set ok, permission `.authorized`). Replace the AVAudioEngine-based capture path with a direct AUHAL audio unit (`kAudioUnitSubType_HALOutput`, `EnableIO` on input scope element 1, manual render callback into the existing `StereoInputRingBuffer`). AUHAL is Apple's documented capture-from-specific-device path (TN2091) and doesn't have AVAudioEngine's input-node binding quirks.
 
 ### Medium-term
 1. Reduce duplicated filter configuration logic in biquad/crossover helpers.
 2. Replace undocumented DSP magic numbers with named constants.
 3. Simplify and test RDS group scheduler modes more deterministically.
-4. Add AGC / filter-primitive unit tests, `AppConfig` round-trip and invalid-input tests.
+4. Add AGC / filter-primitive unit tests. (`AppConfig` round-trip + invalid-input coverage shipped — see `AppConfigInvalidInputTests`.)
 5. Split the monolithic SwiftUI view model into smaller focused view models.
 6. Loosen tight coupling between engine and generator; add DI seams for system-facing services.
 7. Harden config file watching/reload behavior against race conditions.
@@ -292,13 +211,11 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 ### P0 — Confidence and safety
 1. Add deterministic unit tests for AGC envelope behavior, filter primitives (PreemphasisFilter, DeemphasisFilter, Biquad, BiquadCascade6), stereo coding M/S round-trip sanity, and bypass-path null-signal tests.
 2. Fix the verifier bandwidth metric so RDS does not produce misleading occupied-width failures (`bright_dense` occ999 warning disappears when `en_rds = False`).
-3. Add config round-trip and invalid-input tests for `AppConfig`.
-4. Define and test live-apply vs restart-required behavior as code, not just UI guidance.
 
 ### P1 — Structural cleanup
-1. Split `MPXGenerator.swift` (~6300 lines now) into stage-focused components.
+1. Split `MPXGenerator.swift` (~7900 lines now) into stage-focused components.
 2. Split `AudioOutputEngine.swift` by concern (device routing, capture, render loop, metering, monitoring).
-3. Split `SwiftUIControlApp.swift` (~7200 lines now) into smaller views and state holders.
+3. Split `SwiftUIControlApp.swift` (~7600 lines now) into smaller views and state holders.
 4. Reduce hidden coupling between engine, config, generator, and UI state.
 
 ### P2 — Harden behavior

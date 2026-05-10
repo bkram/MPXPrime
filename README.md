@@ -23,8 +23,9 @@ MPX Prime is an independent open-source project. Names referenced in this README
 ## Current app structure
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
-- `Processing`: core DSP, AGC, PrimeBass, multiband, widener, limiter
+- `Processing`: Overview, Core, AGC, Phase Rotator, Parametric EQ, PrimeBass, Stereo Widener, Multiband, MB Limiter, Expander, Bass Clipper, DC Clipper, Audio Limiter, BS.412, Composite Clipper, Final Stage
 - `RDS`: control (master enable + injection + live status + runtime flags), identity (PI / PTY / PTYN / ECC + PS banks), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (physical layer)
+- `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, audio engine, spectrum options
 - Separate windows: `Scopes`, `Spectrum`, `Levels`, `Help`
 
@@ -41,9 +42,9 @@ transport restart since they reconfigure the modulator.
 - Native macOS app built with Swift + SwiftUI + AppKit windowing
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
-- Live input source or built-in test tone source
+- Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
 - Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing
-- Broadcast-style final MPX stage with `Final Drive`, 8× oversampled composite clipper, and live clipper telemetry
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation) and a separate **Audio Limiter** tab (pre-encode 4× oversampled true-peak limiter), feeding the 8× oversampled composite clipper with live clipper telemetry
 - Composite budget telemetry with pilot/RDS/audio visibility and safety-limiter readout
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
 - Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
@@ -55,7 +56,7 @@ transport restart since they reconfigure the modulator.
 
 - macOS 15+
 - Xcode command line tools / Swift 6 toolchain
-- Core Audio device capable of your chosen output rate; 192 kHz required for the full composite with RDS (RDS at 57 kHz exceeds 96 kHz Nyquist), 96 kHz works for stereo-without-RDS
+- **External USB / Thunderbolt audio interface that supports 192 kHz output is effectively required.** The built-in audio on Mac laptops and most desktops tops out at 96 kHz, which cannot carry RDS (RDS sits at 57 kHz, above the 48 kHz Nyquist of a 96 kHz device). For a full composite with stereo + RDS you need a sound card that runs at 192 kHz natively. 96 kHz devices can carry stereo-without-RDS only.
 - Input devices may run at lower rates; the app handles conversion internally
 
 ## Build
@@ -122,6 +123,8 @@ This is the minimum to hear MPX Prime processing your audio and feeding a transm
 
 192 kHz output is **required for the full composite with RDS.** RDS sits at 57 kHz, which exceeds the 48 kHz Nyquist of 96 kHz sample rates — the RDS subcarrier cannot be represented at 96 kHz or below. 96 kHz is just enough to carry the FM stereo composite alone (M + 19 kHz pilot + 38 kHz DSB-SC stereo subcarrier) provided the audio bandwidth is limited so the upper L−R sideband doesn't push past 48 kHz; pilot-locked stereo decoding works, but disable RDS at this rate. Below 96 kHz the stereo subcarrier itself doesn't fit. 192 kHz is the recommended rate for everything because it gives Nyquist headroom for the post-clipper pilot/RDS injection plus the oversampled peak-control stages the chain runs above the host rate.
 
+> **External sound card required for RDS.** Apple's built-in audio output on Mac laptops and most desktops tops out at **96 kHz**, which cannot carry RDS — the 57 kHz subcarrier exceeds 48 kHz Nyquist. For any FM-with-RDS chain you need a USB / Thunderbolt audio interface that natively runs at **192 kHz**. Most pro and prosumer interfaces (RME, MOTU, Focusrite Scarlett 3rd-gen+, Apogee, etc.) support 192 kHz on at least the analog or AES outputs — check the spec sheet before ordering. The internal Mac speakers / headphone jack are fine for *listening to a test tone* through MPX Prime, but they cannot be the production output if RDS is in play.
+
 ### Audio MIDI Setup — required output configuration
 
 macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime tells the engine what rate it wants, but the device-side format and volume are owned by the OS — wrong values there silently corrupt the composite before it leaves the Mac.
@@ -139,7 +142,7 @@ If your output device is BlackHole or a virtual loopback, the same rules apply �
 - **USA / Canada / South Korea**: 75 µs
 - **Everywhere else (EU, ROW)**: 50 µs (current default)
 
-Edit `~/Library/Application Support/MPX Prime/MPX Prime.ini`, set `preemphasis_us = 75` if you are in a 75 µs region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). EU operators required to comply with ITU-R BS.412 should also flip `bs412_enabled = True`.
+Open `Processing` → `Core` and change `Pre-emphasis (μs)` to `75` if you are in a 75 µs region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). EU operators required to comply with ITU-R BS.412 should also enable `Processing` → `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
 
 **3. Launch and Start.** Open MPX Prime, pick your input and output devices in `Settings`, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
 
@@ -147,13 +150,13 @@ Edit `~/Library/Application Support/MPX Prime/MPX Prime.ini`, set `preemphasis_u
 
 - **Safe**: nominal modulation, headroom available
 - **Tight**: near 100% modulation, fine for normal broadcast
-- **Risk**: peaks exceeding 100% — back off `MPX Output Level` on the `Limiter` tab
+- **Risk**: peaks exceeding 100% — back off `MPX Output Level` on the `Core` tab
 
-`Final Drive` controls perceived loudness; `MPX Output Level` calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
+`Final Drive` (on the `Final Stage` tab) controls perceived loudness; `MPX Output Level` (on the `Core` tab) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
 
 **5. Verify on a receiver.** Tune a real FM radio or RTL-SDR to your transmitter's frequency. You should hear stereo audio with a steady stereo-pilot indicator, see RDS PS and Radiotext on the radio's display (if your radio supports RDS), and the audio should sound louder and more present than the same source through `mpxgen` / PiFmRds.
 
-If you cannot hear anything, check `Settings` → output device routing, that the engine is started, and that `processing_bypass` is `False` in the INI (the default).
+If you cannot hear anything, check `Settings` → output device routing, that the engine is started, and that `Processing` → `Core` → `Bypass Processing` is **off** (the default).
 
 ## Configuration
 
@@ -171,7 +174,7 @@ Relevant config sections:
 
 ### Final-stage presets and clipper workflow
 
-The `Processing` -> `Final Stage` tab contains the main loudness-building controls for the FM chain.
+The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
 
 - `Broadcast Preset`: loads a matched AGC + final-stage starting point
 - `Final Drive`: drives the composite clipper harder or softer
@@ -205,6 +208,17 @@ Monitoring also shows composite calibration status:
 - `Audio`: audio-composite peak before pilot/RDS sum
 - `Margin`: estimated remaining composite headroom
 - `Composite Budget`: `Safe`, `Tight`, or `Risk`
+
+### When to leave BS.412 and the Composite Clipper off
+
+Both stages are loudness / regulatory tools and both visibly cost stereo image and high-frequency detail when engaged. If you do not need them, leave them off — the chain still produces a fully compliant FM composite.
+
+- `BS.412` (`Processing` -> `BS.412`): only required if you operate under EU power-limiting rules (rolling 60-second MPX power cap). Outside that regulatory context, leave `Enable BS.412` off — it actively pulls level back over long windows and dulls dynamics.
+- `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band cancellation toggles let you choose what to protect:
+  - `Cancel pilot guard`, `Cancel stereo subcarrier`, `Cancel RDS guard` — leave on (defaults). These keep the 19 kHz pilot, 38 kHz L-R subcarrier, and 57 kHz RDS regions clean of clip IM.
+  - `Cancel audio band` — off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
+
+All of these are exposed in the GUI; no INI editing is required.
 
 ### Stereo image control
 

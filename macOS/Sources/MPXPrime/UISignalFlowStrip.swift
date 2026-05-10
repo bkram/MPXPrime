@@ -27,6 +27,7 @@ struct SignalFlowStrip: View {
         .processingLimiter,
         .processingBS412,
         .processingCompositeClipper,
+        .processingFinalStage,
     ]
 
     /// Compact label for each stage in the chip — chain order is
@@ -45,6 +46,7 @@ struct SignalFlowStrip: View {
         .processingLimiter: "Lim",
         .processingBS412: "BS.412",
         .processingCompositeClipper: "MPX-Clip",
+        .processingFinalStage: "Final",
     ]
 
     var body: some View {

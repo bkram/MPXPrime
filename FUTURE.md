@@ -86,8 +86,8 @@ Each platform has its own audio I/O layer calling into the shared C++ DSP core.
 
 ## Current Status
 
-- macOS/SwiftUI version in active development; latest release **0.21** (2026-05-09)
-- Current macOS chain ships pre-encode L/R true-peak limiter, 8× oversampled composite clipper with linear-phase FIR decimation + differential topology + delta-based per-band IM cancellation, linear-phase FIR multiband crossovers in TX path, PrimeBass adaptive LF enhancement (MaxxBass equal-loudness harmonics + Aphex pre-waveshaper allpass + Werrbach transient-discriminate gain), comprehensive RDS live-apply (PI/PTY/PTYN/ECC/LIC/TP/TA/MS/DI/AF/group-sequence/scheduler/CT all live without restart), AF Method B + TA-flag auto-injection, adaptive on-screen FPS for meters / scopes / spectrum, vDSP/vForce SIMD on hot loops, italo / disco / dance presets, mono bass + stereo-image handling, and an optional deep DSP combination test suite (`MPXPRIME_DEEP=1`)
+- macOS/SwiftUI version in active development; latest release **0.21** (2026-05-09); 0.23 work accumulating on `develop/v.023`
+- Current macOS chain ships pre-encode L/R true-peak limiter (Audio Limiter tab — Threshold + Release exposed in GUI), Final Stage workflow tab (Broadcast Preset + Final Drive + Composite Deviation), 8× oversampled composite clipper with linear-phase FIR decimation + differential topology + delta-based per-band IM cancellation (per-band cancel toggles all in GUI), linear-phase FIR multiband crossovers in TX path, PrimeBass adaptive LF enhancement (MaxxBass equal-loudness harmonics + Aphex pre-waveshaper allpass + Werrbach transient-discriminate gain + Werrbach Big Bottom envelope follower), comprehensive RDS live-apply (PI/PTY/PTYN/ECC/LIC/TP/TA/MS/DI/AF/group-sequence/scheduler/CT all live without restart), AF Method B + TA-flag auto-injection, first-class Test Tone tab with Stereo Tool parity (sine / pink / white, four stereo modes, frequency presets, dBFS level, ⌘T), adaptive on-screen FPS for meters / scopes / spectrum, vDSP/vForce SIMD on hot loops, italo / disco / dance presets, mono bass + stereo-image handling, and an optional deep DSP combination test suite (`MPXPRIME_DEEP=1`)
 - C++ core - not started
 - JUCE GUI - not started
 - Linux/Windows ports - not started
@@ -132,15 +132,3 @@ What's *not* worth doing in this codebase:
   drives the sidechain. The `L+R` sidechain trick buys ~1–2 dB more
   loudness on stereo content, not a correctness fix. Skip.
 
-## Phase-coherent decoding through the oversampling chain
-
-The composite clipper's 8× oversampled chain uses a 6th-order Butterworth
-decimation LP at ~57.6 kHz. Group delay is small at audio frequencies
-but ~150° at the upper subcarrier edge (37 kHz) — meaning the digital
-output, decoded through a locally-generated 38 kHz reference, exhibits
-apparent L/R reconstruction errors that real FM receivers don't see
-(receivers don't share our digital chain's phase reference). This is a
-non-issue for broadcast quality but limits how strict our test scenarios
-can be. A linear-phase FIR decimation filter would eliminate this, at the
-cost of additional latency on the TX path — same trade-off the encoder
-FIR already accepts.

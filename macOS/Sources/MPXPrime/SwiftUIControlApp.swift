@@ -172,6 +172,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case limiter = "Limiter"
     case bs412 = "BS.412"
     case compositeClipper = "Comp Clip"
+    case finalStage = "Final Stage"
 
     var id: String { rawValue }
 
@@ -202,11 +203,13 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .widener:
             return "Reset Widener Tab"
         case .limiter:
-            return "Reset Final Stage Tab"
+            return "Reset Audio Limiter Tab"
         case .bs412:
             return "Reset BS.412 Tab"
         case .compositeClipper:
             return "Reset Composite Clipper Tab"
+        case .finalStage:
+            return "Reset Final Stage Tab"
         }
     }
 
@@ -237,11 +240,13 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .widener:
             return "Reset Widener tab to defaults"
         case .limiter:
-            return "Reset Final Stage tab to defaults"
+            return "Reset audio limiter tab to defaults"
         case .bs412:
             return "Reset BS.412 tab to defaults"
         case .compositeClipper:
             return "Reset composite clipper tab to defaults"
+        case .finalStage:
+            return "Reset Final Stage tab to defaults"
         }
     }
 }
@@ -308,6 +313,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingLimiter
     case processingBS412
     case processingCompositeClipper
+    case processingFinalStage
 
     // RDS — Control is the primary landing; the rest are detail tabs.
     case rdsControl
@@ -361,9 +367,10 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "DC Clipper"
-        case .processingLimiter: return "Final Stage"
+        case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
         case .processingCompositeClipper: return "Composite Clipper"
+        case .processingFinalStage: return "Final Stage"
         case .rdsControl: return "Control"
         case .rdsProgram: return "Identity"
         case .rdsRadiotext: return "Radiotext"
@@ -394,6 +401,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingLimiter: return "rectangle.compress.vertical"
         case .processingBS412: return "doc.badge.gearshape"
         case .processingCompositeClipper: return "rectangle.stack"
+        case .processingFinalStage: return "flag.checkered"
         case .rdsControl: return "switch.2"
         case .rdsProgram: return "dot.radiowaves.left.and.right"
         case .rdsRadiotext: return "text.bubble"
@@ -424,9 +432,10 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
         case .processingDCClipper: return "Distortion-cancelled audio clipper"
-        case .processingLimiter: return "Broadcast preset, final drive, deviation, pre-encode limiter"
+        case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
+        case .processingFinalStage: return "Broadcast preset, final drive, composite deviation"
         case .rdsControl: return "Live status, master enable, injection, runtime flags"
         case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks"
         case .rdsRadiotext: return "Radiotext + RT+ tagging"
@@ -474,6 +483,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingLimiter: return .limiter
         case .processingBS412: return .bs412
         case .processingCompositeClipper: return .compositeClipper
+        case .processingFinalStage: return .finalStage
         default: return nil
         }
     }
@@ -2315,10 +2325,11 @@ final class MPXPrimeViewModel: ObservableObject {
             config.stereoWidenCenter = defaults.stereoWidenCenter
             config.stereoWidenMix = defaults.stereoWidenMix
         case .limiter:
-            config.finalStagePresetID = defaults.finalStagePresetID
             config.preEncodeAudioLimiterEnabled = defaults.preEncodeAudioLimiterEnabled
             config.preEncodeThreshold = defaults.preEncodeThreshold
             config.preEncodeReleaseMS = defaults.preEncodeReleaseMS
+        case .finalStage:
+            config.finalStagePresetID = defaults.finalStagePresetID
             config.finalDriveDB = defaults.finalDriveDB
             config.mpxDeviationKHz = defaults.mpxDeviationKHz
         case .phaseRotator:
@@ -2373,7 +2384,8 @@ final class MPXPrimeViewModel: ObservableObject {
         case .overview,
              .agc, .primeBass, .multiband, .widener, .limiter,
              .phaseRotator, .parametricEQ, .mbLimiter, .expander,
-             .bassClipper, .dcClipper, .bs412, .compositeClipper:
+             .bassClipper, .dcClipper, .bs412, .compositeClipper,
+             .finalStage:
             runtimeDisposition = .live
         }
 
@@ -4335,6 +4347,8 @@ private struct StageProcessingContent: View {
                         ProcessingBS412Tab(model: model)
                     case .compositeClipper:
                         ProcessingCompositeClipperTab(model: model)
+                    case .finalStage:
+                        ProcessingFinalStageTab(model: model)
                     }
 
                     if model.selectedProcessingTab != .overview {
@@ -6185,6 +6199,34 @@ private struct ProcessingLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        Card(title: "Audio Limiter") {
+            Toggle("Enable Pre-Encode Limiter", isOn: model.configBinding(\.preEncodeAudioLimiterEnabled, runtimeDisposition: .live))
+            let disabled = !model.config.preEncodeAudioLimiterEnabled
+            DoubleSliderRow(
+                title: "Threshold",
+                value: model.configBinding(\.preEncodeThreshold, runtimeDisposition: .live),
+                range: 0.5...0.999,
+                format: "%.3f",
+                tooltip: "Linear ceiling for the 4x oversampled true-peak limiter (0.5..0.999). 0.95 = -0.45 dBFS, 0.85 = -1.41 dBFS. Lower = more headroom for downstream stages, more limiting on peaks."
+            ).disabled(disabled)
+            DoubleSliderRow(
+                title: "Release",
+                value: model.configBinding(\.preEncodeReleaseMS, runtimeDisposition: .live),
+                range: 10...200,
+                format: "%.0f ms",
+                tooltip: "Release time of the limiter envelope. Faster (lower ms) recovers loudness quicker but may pump; slower is cleaner but holds gain reduction longer."
+            ).disabled(disabled)
+            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with tanh ceiling shaping, stereo-linked. Runs after pre-emphasis and before stereo encoding to keep the audio composite below ceiling without clipping the post-emphasis peaks.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct ProcessingFinalStageTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
         Card(title: "Final Stage") {
             Picker("Broadcast Preset", selection: Binding(
                 get: { self.model.config.finalStagePresetID },
@@ -6198,7 +6240,6 @@ private struct ProcessingLimiterTab: View {
                 }
             }
             .pickerStyle(.menu)
-            Toggle("Enable Pre-Encode Limiter", isOn: model.configBinding(\.preEncodeAudioLimiterEnabled, runtimeDisposition: .live))
             DoubleSliderRow(
                 title: "Final Drive",
                 value: model.configBinding(\.finalDriveDB, runtimeDisposition: .live),
@@ -6206,11 +6247,11 @@ private struct ProcessingLimiterTab: View {
                 format: "%.1f dB",
                 tooltip: "Drive into the composite clipper. The primary loudness control. Higher drive = hotter, more clipping; sustained high attenuation means too hot."
             )
-            Text("Broadcast Preset updates AGC platform and final-stage drive together. Final Drive feeds the composite clipper before MPX Output Level calibration.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             DoubleSliderRow(title: "Composite Deviation", value: model.configBinding(\.mpxDeviationKHz, runtimeDisposition: .live), range: 40...90, format: "%.1f kHz",
                 tooltip: "Target peak FM deviation. 75 kHz = ITU-R BS.450 / US FM; 50 kHz = some European reduced-deviation mandates.")
+            Text("Broadcast Preset updates AGC platform and final-stage drive together. Final Drive feeds the composite clipper before MPX Output Level calibration. Composite Deviation sets the peak target for the final FM modulator.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -6401,7 +6442,26 @@ private struct ProcessingCompositeClipperTab: View {
                 tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)
             DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.compositeClipperCeilingDB, runtimeDisposition: .live), range: -6...0, format: "%.1f dB",
                 tooltip: "Maximum output level after composite clipping. Must stay below 0 dBFS to leave headroom for pilot/RDS injection.").disabled(disabled)
+            Divider()
+            Text("Per-band cancellation")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Toggle("Cancel audio band (0-17 kHz)", isOn: model.configBinding(\.compositeClipperCancelAudio, runtimeDisposition: .live))
+                .help("Off (default): full clipping in the audio band — maximum loudness. On: subtracts in-band clip residual to keep highs cleaner at the cost of peak control / loudness. Enable when high-frequency harshness is the bigger concern.")
+                .disabled(disabled)
+            Toggle("Cancel pilot guard (17-21 kHz)", isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live))
+                .help("Removes clipping IM from the 19 kHz pilot region so the receiver decodes stereo cleanly. Leave on except for diagnostic A/B.")
+                .disabled(disabled)
+            Toggle("Cancel stereo subcarrier (23-53 kHz)", isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live))
+                .help("Removes clipping IM from the 38 kHz DSB-SC L-R subcarrier so stereo separation is preserved. Leave on except for diagnostic A/B.")
+                .disabled(disabled)
+            Toggle("Cancel RDS guard (55-59 kHz)", isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live))
+                .help("Removes clipping IM from the 57 kHz RDS region so receivers don't see clipper noise vector-summed with RDS. Leave on except for diagnostic A/B.")
+                .disabled(disabled)
             Text("8x oversampled tanh soft-clip on audio composite with additive distortion cancellation (Orban US 4,460,871 / 5,737,434). Primary loudness lever: peaks above Threshold are shaped toward Ceiling. Bandpass-isolated clip residual is subtracted from the 17-21 kHz pilot guard, 23-53 kHz stereo subcarrier, and 55-59 kHz RDS guard so those bands stay clean. Placed before BS.412 and safety limiter. Pilot and RDS are injected after this stage.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Tip: leave the composite clipper off when loudness isn't critical — it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Cancel audio band\" recovers HF detail at the cost of some loudness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

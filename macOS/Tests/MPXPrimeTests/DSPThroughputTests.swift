@@ -283,10 +283,17 @@ struct DSPThroughputTests {
     }
 
     @Test func preEmphasisDoesNotExplodeFullChainCost() {
-        // Specifically pins the b806053-class regression. Measure the chain
-        // with pre-emphasis on vs. off. The delta must be small — pre-
-        // emphasis is a 2-tap IIR; even with the limiter reacting to HF
-        // boost, the increase should be modest (<50%).
+        // Pre-emphasis runs in L/R immediately upstream of the pre-encode
+        // limiter (canonical placement, post-0.24). The limiter therefore sees
+        // a 10-12 dB HF-boosted signal and does more work on HF-rich program
+        // than it would on the dry signal. This test bounds that extra work:
+        // the chain cost with pre-emphasis on must stay within 1.5x of the
+        // chain cost with pre-emphasis off. Historically pinned the b806053
+        // regression class; the chain has since been substantially optimized
+        // (vvtanhf, vDSP_dotpr, FIR multiband) and the L/R relocation now
+        // ships, but this canary is still useful — any future cost increase
+        // from the pre-emphasis path or the upstream limiter response is
+        // caught here.
         var withPre = makeHeavyConfig()
         withPre.preemphasisUS = 50
         var withoutPre = makeHeavyConfig()
@@ -297,6 +304,6 @@ struct DSPThroughputTests {
 
         let delta = enabled / max(1e-6, disabled)
         #expect(delta < 1.5,
-            "pre-emphasis on raised chain cost \(delta)x over off — limiter may be fighting an upstream HF boost (regression class of b806053)")
+            "pre-emphasis on raised chain cost \(delta)x over off — limiter may be fighting unbounded upstream HF boost")
     }
 }

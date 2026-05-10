@@ -9,6 +9,13 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
+## Unreleased
+
+### DSP — chain-order modernization
+- **Pre-emphasis relocated from M/S to L/R, upstream of the pre-encode limiter.** Canonical Optimod / Stereotool placement: pre-emphasis runs in L/R domain immediately before the pre-encode audio limiter, so the limiter peak-controls the +10–12 dB HF-boosted signal before composite assembly. Previously ran in M/S inside `makeCompositeComponents`, after the limiter — HF transients flew un-peak-controlled into the composite stage. Phase 1 chain-order audit (see `macOS/.audit-out/chain_order/REPORT.md`) confirmed: C1 CPU gate PASS at 1.07× release-build ratio (b806053-class regression no longer reproducible on the current chain — vvtanhf, vDSP_dotpr, FIR multiband, and differential composite clipper optimizations between 0.10 and 0.24 cut absolute chain cost from ~95% to ~28% of real-time); C2 sustained-load PASS over 30 s; HF guard band cleaner above 60/67 kHz on `bright_dense`, `mono_1khz`, `stereo_diff_400hz`, `wide_bass`. Renamed `preSum`/`preDiff` → `preL`/`preR` to reflect the operating domain change.
+- **PrimeBass moved post-multiband.** Industry canonical: bass enhancers (MaxxBass / Aural Exciter / Big Bottom-class) belong after the multiband stage. Multiband no longer compresses synthesised harmonics that PrimeBass just generated. Zero verifier-baseline drift on the standard scenarios; listening confirmed the move on real program.
+- **Stereo widener moved post-multiband.** Industry canonical: a widener belongs after multiband. Multiband on a widened L/R can over-enhance side-channel differences in HF bands where compression ratios are highest. Mono bass stays inside `processStereoImageStage`. Zero verifier-baseline drift; listening confirmed.
+
 ## 0.24 — 2026-05-10
 
 ### Audio I/O

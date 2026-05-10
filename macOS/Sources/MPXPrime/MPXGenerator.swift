@@ -956,17 +956,24 @@ struct CompositeClipper {
     private var lookaheadDelay: [Float] = []
     private var lookaheadDelayWriteIdx: Int = 0
 
-    // Lemire monotonic deque (sliding-window max). deqValues / deqIndices
-    // are pre-allocated arrays of size lookaheadHostSamples + 2; deqHead
-    // and deqTail are circular indices. deqIndices stores the absolute
-    // sample counter at which the value was inserted, used to expire
-    // entries that have aged past the window.
+    // Lemire monotonic deque (sliding-window max) over OS-rate samples.
+    // Operating at OS rate (8x host) so the detector sees Lagrange-
+    // interpolated intersample peaks — closes the gap where a host-rate
+    // detector misses the 0.3-1.0 dB intersample peaks above |x| and
+    // lets them through after pre-clip gain scaling. deqValues /
+    // deqIndices pre-allocated to lookaheadHostSamples * factor + 2;
+    // deqIndices stores the absolute OS-sample counter for expiry.
     private var deqValues: [Float] = []
     private var deqIndices: [Int] = []
     private var deqCapacity: Int = 0
     private var deqHead: Int = 0
     private var deqTail: Int = 0
     private var deqSampleCounter: Int = 0
+    // Parallel Lagrange-4 interpolator for the detector. Advances on
+    // un-delayed input `x` so the deque sees OS samples that the audio
+    // path will encounter `lookaheadHostSamples` host samples from now.
+    private var detLag = Lagrange4Interp()
+    private var detOSBatch: [Float] = Array(repeating: 0.0, count: factor)
 
     // Gain state machine: exponential attack toward gTarget (rate tied
     // to lookaheadHostSamples so gain reaches ~98% by the time the
@@ -1059,15 +1066,17 @@ struct CompositeClipper {
             lookaheadDelay = [Float](repeating: 0.0, count: n)
             lookaheadDelayWriteIdx = 0
 
-            // Lemire monotonic deque over the next n samples. Capacity
-            // n+2 (deque worst-case = window length; +2 sentinel slack
-            // so head/tail can wrap without aliasing on full-window).
-            deqCapacity = n + 2
+            // OS-rate Lemire monotonic deque over n*factor OS samples.
+            // Capacity n*factor + 2 (worst-case = window length; +2
+            // sentinel slack so head/tail wrap without aliasing).
+            let nOS = n * Self.factor
+            deqCapacity = nOS + 2
             deqValues = [Float](repeating: 0.0, count: deqCapacity)
             deqIndices = [Int](repeating: 0, count: deqCapacity)
             deqHead = 0
             deqTail = 0
             deqSampleCounter = 0
+            detLag = Lagrange4Interp()
 
             // Attack rate: reach ~98% of gTarget in `n` samples (4 time
             // constants over the lookahead window). This lets the audio
@@ -1087,6 +1096,7 @@ struct CompositeClipper {
             deqHead = 0
             deqTail = 0
             deqSampleCounter = 0
+            detLag = Lagrange4Interp()
             lookaheadAttackCoeff = 0.0
         }
 
@@ -1133,36 +1143,52 @@ struct CompositeClipper {
         let xPath: Float
         let g: Float
         if lookaheadEnabled {
-            // 1. Sliding-window-max push. Lemire monotonic deque:
-            //    drop expired entries from the head, drop smaller-or-equal
-            //    entries from the tail, append (counter, |x|).
-            let absX = fabsf(x)
-            let curIdx = deqSampleCounter
-            // Expire head entries older than (curIdx - n + 1).
-            let oldestValidIdx = curIdx - lookaheadHostSamples + 1
-            while deqHead != deqTail && deqIndices[deqHead] < oldestValidIdx {
-                deqHead += 1
-                if deqHead >= deqCapacity { deqHead = 0 }
+            // 1. OS-rate sliding-window-max push. The detector's
+            //    Lagrange interpolator runs on the un-delayed input x;
+            //    we compute 8 OS samples between the previous host
+            //    sample and x, then push each to the deque. This sees
+            //    Lagrange-interpolated intersample peaks that a
+            //    host-rate detector would miss.
+            if !detLag.isPrimed { detLag.prime(x) }
+            let f = Self.factor
+            let stepDet = 1.0 / Float(f)
+            for i in 0..<f {
+                let t = stepDet * Float(i + 1)
+                detOSBatch[i] = (i == f - 1) ? x : detLag.interpolate(t: t, cur: x)
             }
-            // Drop tail entries ≤ absX (they can never be the max while
-            // absX is in the window). Note empty-deque check.
-            while deqHead != deqTail {
-                let prevTail = deqTail == 0 ? deqCapacity - 1 : deqTail - 1
-                if deqValues[prevTail] <= absX {
-                    deqTail = prevTail
-                } else {
-                    break
+            detLag.advance(x)
+            let nWindowOS = lookaheadHostSamples * f
+            for i in 0..<f {
+                let absV = fabsf(detOSBatch[i])
+                let curIdx = deqSampleCounter
+                // Expire from head: drop entries older than the window.
+                let oldestValidIdx = curIdx - nWindowOS + 1
+                while deqHead != deqTail && deqIndices[deqHead] < oldestValidIdx {
+                    deqHead += 1
+                    if deqHead >= deqCapacity { deqHead = 0 }
                 }
+                // Drop tail entries ≤ absV (can never be max while
+                // absV is in window).
+                while deqHead != deqTail {
+                    let prevTail = deqTail == 0 ? deqCapacity - 1 : deqTail - 1
+                    if deqValues[prevTail] <= absV {
+                        deqTail = prevTail
+                    } else {
+                        break
+                    }
+                }
+                deqValues[deqTail] = absV
+                deqIndices[deqTail] = curIdx
+                deqTail += 1
+                if deqTail >= deqCapacity { deqTail = 0 }
+                deqSampleCounter += 1
             }
-            // Append.
-            deqValues[deqTail] = absX
-            deqIndices[deqTail] = curIdx
-            deqTail += 1
-            if deqTail >= deqCapacity { deqTail = 0 }
-            deqSampleCounter += 1
 
-            // 2. Compute peak-ahead and target gain.
-            let peakAhead = (deqHead != deqTail) ? deqValues[deqHead] : absX
+            // 2. Compute peak-ahead and target gain. peakAhead now
+            //    reflects worst-case OS-rate intersample peak in the
+            //    next n*factor OS samples — the actual peak the
+            //    soft-clip kernel will see.
+            let peakAhead = (deqHead != deqTail) ? deqValues[deqHead] : 0.0
             let gTarget: Float = peakAhead > ceilingLin
                 ? ceilingLin / max(1e-6, peakAhead)
                 : 1.0

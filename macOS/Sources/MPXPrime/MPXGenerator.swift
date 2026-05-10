@@ -6996,12 +6996,11 @@ final class MPXGenerator {
                 right = eqd.1
             }
 
-            if primeBassEnabled {
-                let primeBassOut = processPrimeBass(left: left, right: right)
-                left = primeBassOut.0
-                right = primeBassOut.1
-            }
-
+            // PrimeBass runs after the multiband stereo block (see below) so
+            // multiband doesn't compress the synthesised harmonics it adds.
+            // Canonical post-multiband placement matches MaxxBass / Aural
+            // Exciter / Big Bottom industry practice — moved here from
+            // pre-multiband in the 2026-05 chain-order audit.
             let stereoImage = processStereoImageStage(left: left, right: right)
             left = stereoImage.left
             right = stereoImage.right
@@ -7010,6 +7009,12 @@ final class MPXGenerator {
                 let multiband = processMultibandStereo(left: left, right: right)
                 left = multiband.0
                 right = multiband.1
+            }
+
+            if primeBassEnabled {
+                let primeBassOut = processPrimeBass(left: left, right: right)
+                left = primeBassOut.0
+                right = primeBassOut.1
             }
 
             // Bass clipper: pre-clip bass peaks independently to reduce LF-induced IMD

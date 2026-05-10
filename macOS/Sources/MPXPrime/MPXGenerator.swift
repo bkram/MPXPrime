@@ -7011,6 +7011,14 @@ final class MPXGenerator {
                 right = multiband.1
             }
 
+            // Stereo widener post-multiband (canonical Optimod placement):
+            // multiband no longer compresses widened side-channel HF.
+            if stereoWidenEnabled {
+                let widened = processStereoWidener(left: left, right: right)
+                left = widened.0
+                right = widened.1
+            }
+
             if primeBassEnabled {
                 let primeBassOut = processPrimeBass(left: left, right: right)
                 left = primeBassOut.0
@@ -7182,12 +7190,9 @@ final class MPXGenerator {
             state.right = monoBass.1
         }
 
-        if stereoWidenEnabled {
-            let widened = processStereoWidener(left: state.left, right: state.right)
-            state.left = widened.0
-            state.right = widened.1
-        }
-
+        // Stereo widener moved to post-multiband in `processProgramStereo`
+        // (2026-05 chain-order audit) so multiband doesn't compress the
+        // widened side-channel HF energy.
         return state
     }
 

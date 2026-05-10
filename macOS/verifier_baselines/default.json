@@ -1,6 +1,6 @@
 {
   "blockSize" : 1024,
-  "capturedAt" : "2026-05-06T15:00:12Z",
+  "capturedAt" : "2026-05-10T11:59:46Z",
   "configPath" : "\/Users\/mrk\/Projects\/git\/MPXPrime\/macOS\/Verification.ini",
   "durationSeconds" : 5,
   "renderSampleRateHz" : 192000,
@@ -54,12 +54,12 @@
       "inputSideToMid" : 1,
       "limiterGRDB" : 0,
       "occupied999Hz" : 55860.35,
-      "outputCorrelation" : 0.24589202,
-      "outputSideToMid" : 0.77930236,
+      "outputCorrelation" : 0.24589221,
+      "outputSideToMid" : 0.7793022,
       "peakDBFS" : -0.18448232,
       "pilotPercent" : 8,
       "rdsPercent" : 2.6666667,
-      "rmsDeltaDB" : -0.81798863,
+      "rmsDeltaDB" : -0.8179909,
       "safetyGRDB" : 0
     },
     "mono_1khz" : {
@@ -74,7 +74,7 @@
       "limiterGRDB" : 0,
       "occupied999Hz" : 57820.312,
       "outputCorrelation" : 0.9999968,
-      "outputSideToMid" : 0.0012654213,
+      "outputSideToMid" : 0.0012654223,
       "peakDBFS" : -0.11007781,
       "pilotPercent" : 8,
       "rdsPercent" : 2.6666667,

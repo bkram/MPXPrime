@@ -9,9 +9,7 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
-## Unreleased (queued for 0.24)
-
-Work accumulating on `develop/v.024` past `v0.23`. No release cut yet.
+## 0.24 — 2026-05-10
 
 ### Audio I/O
 - **AUHAL input capture replaces the AVAudioEngine input path.** New `InputAUHAL` wrapper around a direct `kAudioUnitSubType_HALOutput` audio unit configured for input capture, replacing the second `AVAudioEngine` instance that `AudioOutputEngine.setupInputCapture` used to spin up. Closes the longstanding bug where AVAudioEngine's first `start()` with a non-default input device intermittently failed to deliver tap callbacks even though every API call returned success — `engine.start()` ok, `capture.isRunning == true`, ring stayed at 0/N forever. The two-AUHAL pattern (separate input AU + output AVAudioEngine + ring buffer as the only bridge) is documented in TN2091 and is what professional audio apps (Stereotool, CAPlayThrough, AudioKit's non-default-device path) use on macOS. Setup follows TN2091's 11-step sequence verbatim; client format pinned to the device's native sample rate (AUHAL's built-in converter does packing/format only, NOT sample-rate conversion — the existing adaptive cubic resampler in `StereoInputRingBuffer.readAdaptive` handles 48→192/96→192 plus clock drift). Channel selection via `kAudioOutputUnitProperty_ChannelMap` covers mono devices (`[0,0]`) and multichannel devices (`[0,1]`). Output stays on AVAudioEngine — output side is not the bug source.

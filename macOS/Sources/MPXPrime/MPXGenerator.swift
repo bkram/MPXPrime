@@ -1150,14 +1150,6 @@ struct CompositeClipper {
         let po = max(1e-6, peakOutEnv)
         return max(0.0, 20.0 * log10f(pi / po))
     }
-
-    @inline(__always)
-    private func softClip(_ x: Float) -> Float {
-        let ax = fabsf(x)
-        if ax <= thresholdLin { return x }
-        let excess = (ax - thresholdLin) / knee
-        return copysignf(thresholdLin + knee * tanhf(excess), x)
-    }
 }
 
 // MARK: - BS.412 MPX Power Limiter
@@ -7456,36 +7448,6 @@ final class MPXGenerator {
         return (mid + combinedSide, mid - combinedSide)
     }
 
-    private func resetDynamicStereoState() {
-        widebandAGC.reset()
-        configureStereoWidener()
-
-        primeBassAdaptiveGain = 0.0
-        primeBassBigBottomEnv = 0.0
-        primeBassLevelEst = 1e-3
-        primeBassSubPrevSample = 0.0
-        primeBassSubPhase = 0
-        primeBassMakeupGain = 1.0
-        primeBassFastEnv = 0.0
-        primeBassSlowEnv = 0.0
-
-        mbLowCompL.detector.value = 0.0
-        mbLowCompR.detector.value = 0.0
-        mbMidCompL.detector.value = 0.0
-        mbMidCompR.detector.value = 0.0
-        mbHighCompL.detector.value = 0.0
-        mbHighCompR.detector.value = 0.0
-        mb5Comp1L.detector.value = 0.0
-        mb5Comp1R.detector.value = 0.0
-        mb5Comp2L.detector.value = 0.0
-        mb5Comp2R.detector.value = 0.0
-        mb5Comp3L.detector.value = 0.0
-        mb5Comp3R.detector.value = 0.0
-        mb5Comp4L.detector.value = 0.0
-        mb5Comp4R.detector.value = 0.0
-        mb5Comp5L.detector.value = 0.0
-        mb5Comp5R.detector.value = 0.0
-    }
 
     private func processPrimeBass(left: Float, right: Float) -> (Float, Float) {
         let mid = (left + right) * 0.5

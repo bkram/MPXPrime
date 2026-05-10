@@ -79,7 +79,6 @@ final class AudioOutputEngine {
     /// tap callbacks on cold start. AUHAL is TN2091's documented
     /// answer to that bug.
     private var inputAU: InputAUHAL?
-    private var sourceNode: AVAudioSourceNode?
     private let generator: MPXGenerator
     /// Tracks whether the engine is currently rendering live input
     /// (`true`) or the test tone (`false`). Mutable so the Test Tone
@@ -173,8 +172,6 @@ final class AudioOutputEngine {
     private var isShuttingDown = false
     private var frameCounter: Int = 0
     private var meteringEnabled: Bool = true
-    private var inputConversionBufferStereoL: [Float] = []
-    private var inputConversionBufferStereoR: [Float] = []
     private var pendingRuntimeConfig: MPXGenerator.RuntimeConfig?
     private var lastQueuedRuntimeConfig: MPXGenerator.RuntimeConfig?
     private var pendingRDSRuntimeConfig: MPXGenerator.RDSRuntimeConfig?
@@ -474,7 +471,6 @@ final class AudioOutputEngine {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: sourceFormat)
         engine.mainMixerNode.outputVolume = 1.0
-        sourceNode = node
 
         do {
             try engine.start()
@@ -502,7 +498,6 @@ final class AudioOutputEngine {
         inputPrimed = false
         configuredInputSampleRate = nil
         inputToRenderRatio = 1.0
-        sourceNode = nil
         frameCounter = 0
         captureFrameCounter = 0
         meterLock.lock()
@@ -812,8 +807,6 @@ final class AudioOutputEngine {
         postAGCRightScratch = [Float](repeating: 0.0, count: safeFrames)
         preMPXLeftScratch = [Float](repeating: 0.0, count: safeFrames)
         preMPXRightScratch = [Float](repeating: 0.0, count: safeFrames)
-        inputConversionBufferStereoL = [Float](repeating: 0.0, count: safeFrames)
-        inputConversionBufferStereoR = [Float](repeating: 0.0, count: safeFrames)
     }
 
     private func withAnalysisBuffers<R>(
@@ -859,459 +852,11 @@ final class AudioOutputEngine {
         }
     }
 
-    private func ensureInputConversionCapacity(frames: Int) {
-        guard frames > 0 else { return }
-        if inputConversionBufferStereoL.count < frames {
-            inputConversionBufferStereoL = [Float](repeating: 0.0, count: frames)
-        }
-        if inputConversionBufferStereoR.count < frames {
-            inputConversionBufferStereoR = [Float](repeating: 0.0, count: frames)
-        }
-    }
-
-    private func processConvertedInput(
-        ring: StereoInputRingBuffer,
-        left: UnsafePointer<Float>,
-        right: UnsafePointer<Float>,
-        frameCount: Int,
-        throttled: Bool,
-        captureInputScope: Bool
-    ) {
-        ring.write(left: left, right: right, frameCount: frameCount)
-        if throttled {
-            let meter = Self.computeStereoLevels(left: left, right: right, frameCount: frameCount)
-            updateInputMeters(
-                inputRMS: meter.rms,
-                inputPeak: meter.peak,
-                inputLeftRMS: meter.leftRMS,
-                inputRightRMS: meter.rightRMS,
-                inputLeftPeak: meter.leftPeak,
-                inputRightPeak: meter.rightPeak
-            )
-            if captureInputScope {
-                updateInputScopeSnapshot(left: left, right: right, frameCount: frameCount)
-            }
-        }
-    }
-
-    private func processConvertedMonoInput(
-        ring: StereoInputRingBuffer,
-        samples: UnsafePointer<Float>,
-        frameCount: Int,
-        throttled: Bool,
-        captureInputScope: Bool
-    ) {
-        ring.writeMono(mono: samples, frameCount: frameCount)
-        if throttled {
-            let meter = Self.computeMonoMeter(samples: samples, frameCount: frameCount)
-            updateInputMeters(
-                inputRMS: meter.rms,
-                inputPeak: meter.peak,
-                inputLeftRMS: meter.rms,
-                inputRightRMS: meter.rms,
-                inputLeftPeak: meter.peak,
-                inputRightPeak: meter.peak
-            )
-            if captureInputScope {
-                updateInputScopeSnapshot(mono: samples, frameCount: frameCount)
-            }
-        }
-    }
-
-    private func withInputConversionBuffers<R>(frames: Int, _ body: (UnsafeMutablePointer<Float>, UnsafeMutablePointer<Float>) -> R)
-        -> R?
-    {
-        ensureInputConversionCapacity(frames: frames)
-        return inputConversionBufferStereoL.withUnsafeMutableBufferPointer { leftBuffer in
-            inputConversionBufferStereoR.withUnsafeMutableBufferPointer { rightBuffer in
-                guard let left = leftBuffer.baseAddress,
-                    let right = rightBuffer.baseAddress
-                else {
-                    return nil
-                }
-                return body(left, right)
-            }
-        }
-    }
-
-    private func withInputMonoConversionBuffer<R>(
-        frames: Int,
-        _ body: (UnsafeMutablePointer<Float>) -> R
-    ) -> R?
-    {
-        ensureInputConversionCapacity(frames: frames)
-        return inputConversionBufferStereoL.withUnsafeMutableBufferPointer { buffer in
-            guard let samples = buffer.baseAddress else {
-                return nil
-            }
-            return body(samples)
-        }
-    }
-
-    private func convertInt16ToFloat(
-        source: UnsafePointer<Int16>,
-        sourceStride: Int,
-        frameCount: Int,
-        destination: UnsafeMutablePointer<Float>
-    ) {
-        var scale: Float = 1.0 / 32768.0
-        vDSP_vflt16(source, vDSP_Stride(sourceStride), destination, 1, vDSP_Length(frameCount))
-        vDSP_vsmul(destination, 1, &scale, destination, 1, vDSP_Length(frameCount))
-    }
-
-    private func convertInt32ToFloat(
-        source: UnsafePointer<Int32>,
-        sourceStride: Int,
-        frameCount: Int,
-        destination: UnsafeMutablePointer<Float>
-    ) {
-        var scale: Float = 1.0 / 2147483648.0
-        vDSP_vflt32(source, vDSP_Stride(sourceStride), destination, 1, vDSP_Length(frameCount))
-        vDSP_vsmul(destination, 1, &scale, destination, 1, vDSP_Length(frameCount))
-    }
-
-    private func convertPlanarInt16ToStereoFloat(
-        left sourceLeft: UnsafePointer<Int16>,
-        right sourceRight: UnsafePointer<Int16>,
-        frameCount: Int,
-        destinationLeft: UnsafeMutablePointer<Float>,
-        destinationRight: UnsafeMutablePointer<Float>
-    ) {
-        convertInt16ToFloat(
-            source: sourceLeft,
-            sourceStride: 1,
-            frameCount: frameCount,
-            destination: destinationLeft
-        )
-        convertInt16ToFloat(
-            source: sourceRight,
-            sourceStride: 1,
-            frameCount: frameCount,
-            destination: destinationRight
-        )
-    }
-
-    private func convertPlanarInt32ToStereoFloat(
-        left sourceLeft: UnsafePointer<Int32>,
-        right sourceRight: UnsafePointer<Int32>,
-        frameCount: Int,
-        destinationLeft: UnsafeMutablePointer<Float>,
-        destinationRight: UnsafeMutablePointer<Float>
-    ) {
-        convertInt32ToFloat(
-            source: sourceLeft,
-            sourceStride: 1,
-            frameCount: frameCount,
-            destination: destinationLeft
-        )
-        convertInt32ToFloat(
-            source: sourceRight,
-            sourceStride: 1,
-            frameCount: frameCount,
-            destination: destinationRight
-        )
-    }
-
-    private func deinterleaveFloatToStereo(
-        interleaved source: UnsafePointer<Float>,
-        channelCount: Int,
-        frameCount: Int,
-        destinationLeft: UnsafeMutablePointer<Float>,
-        destinationRight: UnsafeMutablePointer<Float>
-    ) {
-        var zero: Float = 0.0
-        vDSP_vsadd(
-            source,
-            vDSP_Stride(channelCount),
-            &zero,
-            destinationLeft,
-            1,
-            vDSP_Length(frameCount)
-        )
-        if channelCount >= 2 {
-            vDSP_vsadd(
-                source.advanced(by: 1),
-                vDSP_Stride(channelCount),
-                &zero,
-                destinationRight,
-                1,
-                vDSP_Length(frameCount)
-            )
-        } else {
-            vDSP_vsadd(destinationLeft, 1, &zero, destinationRight, 1, vDSP_Length(frameCount))
-        }
-    }
-
-    private func deinterleaveInt16ToStereoFloat(
-        interleaved source: UnsafePointer<Int16>,
-        channelCount: Int,
-        frameCount: Int,
-        destinationLeft: UnsafeMutablePointer<Float>,
-        destinationRight: UnsafeMutablePointer<Float>
-    ) {
-        var scale: Float = 1.0 / 32768.0
-        var zero: Float = 0.0
-        vDSP_vflt16(source, vDSP_Stride(channelCount), destinationLeft, 1, vDSP_Length(frameCount))
-        vDSP_vsmul(destinationLeft, 1, &scale, destinationLeft, 1, vDSP_Length(frameCount))
-        if channelCount >= 2 {
-            vDSP_vflt16(
-                source.advanced(by: 1),
-                vDSP_Stride(channelCount),
-                destinationRight,
-                1,
-                vDSP_Length(frameCount)
-            )
-            vDSP_vsmul(destinationRight, 1, &scale, destinationRight, 1, vDSP_Length(frameCount))
-        } else {
-            vDSP_vsadd(destinationLeft, 1, &zero, destinationRight, 1, vDSP_Length(frameCount))
-        }
-    }
-
-    private func deinterleaveInt32ToStereoFloat(
-        interleaved source: UnsafePointer<Int32>,
-        channelCount: Int,
-        frameCount: Int,
-        destinationLeft: UnsafeMutablePointer<Float>,
-        destinationRight: UnsafeMutablePointer<Float>
-    ) {
-        var scale: Float = 1.0 / 2147483648.0
-        var zero: Float = 0.0
-        vDSP_vflt32(source, vDSP_Stride(channelCount), destinationLeft, 1, vDSP_Length(frameCount))
-        vDSP_vsmul(destinationLeft, 1, &scale, destinationLeft, 1, vDSP_Length(frameCount))
-        if channelCount >= 2 {
-            vDSP_vflt32(
-                source.advanced(by: 1),
-                vDSP_Stride(channelCount),
-                destinationRight,
-                1,
-                vDSP_Length(frameCount)
-            )
-            vDSP_vsmul(destinationRight, 1, &scale, destinationRight, 1, vDSP_Length(frameCount))
-        } else {
-            vDSP_vsadd(destinationLeft, 1, &zero, destinationRight, 1, vDSP_Length(frameCount))
-        }
-    }
-
     private func appendRoutingNote(_ note: String) {
         if let current = routingNote, !current.isEmpty {
             routingNote = current + " " + note
         } else {
             routingNote = note
-        }
-    }
-
-    private func pushInputBufferToRing(_ buffer: AVAudioPCMBuffer, ring: StereoInputRingBuffer) {
-        let frames = Int(buffer.frameLength)
-        guard frames > 0 else { return }
-        captureCallbackCount += 1
-        captureFrameCount += UInt64(frames)
-        captureFrameCounter += frames
-        let throttled = meteringEnabled && ((captureFrameCounter % Self.meterUpdateIntervalFrames) < frames)
-        let captureInputScope =
-            throttled && inputScopeCaptureEnabled.load(ordering: .relaxed)
-        let chanCount = Int(buffer.format.channelCount)
-        let isInterleaved = buffer.format.isInterleaved
-        if let channels = buffer.floatChannelData {
-            if chanCount >= 2 {
-                ring.write(left: channels[0], right: channels[1], frameCount: frames)
-                if throttled {
-                    let meter = Self.computeStereoLevels(
-                        left: channels[0], right: channels[1], frameCount: frames)
-                    updateInputMeters(
-                        inputRMS: meter.rms,
-                        inputPeak: meter.peak,
-                        inputLeftRMS: meter.leftRMS,
-                        inputRightRMS: meter.rightRMS,
-                        inputLeftPeak: meter.leftPeak,
-                        inputRightPeak: meter.rightPeak
-                    )
-                    if captureInputScope {
-                        updateInputScopeSnapshot(left: channels[0], right: channels[1], frameCount: frames)
-                    }
-                }
-            } else {
-                ring.writeMono(mono: channels[0], frameCount: frames)
-                if throttled {
-                    let meter = Self.computeMonoMeter(samples: channels[0], frameCount: frames)
-                    updateInputMeters(
-                        inputRMS: meter.rms,
-                        inputPeak: meter.peak,
-                        inputLeftRMS: meter.rms,
-                        inputRightRMS: meter.rms,
-                        inputLeftPeak: meter.peak,
-                        inputRightPeak: meter.peak
-                    )
-                    if captureInputScope {
-                        updateInputScopeSnapshot(mono: channels[0], frameCount: frames)
-                    }
-                }
-            }
-            return
-        }
-        if let channels = buffer.int16ChannelData {
-            if chanCount >= 2 {
-                _ = withInputConversionBuffers(frames: frames) { left, right in
-                    convertPlanarInt16ToStereoFloat(
-                        left: channels[0],
-                        right: channels[1],
-                        frameCount: frames,
-                        destinationLeft: left,
-                        destinationRight: right
-                    )
-                    processConvertedInput(
-                        ring: ring,
-                        left: left,
-                        right: right,
-                        frameCount: frames,
-                        throttled: throttled,
-                        captureInputScope: captureInputScope
-                    )
-                }
-            } else {
-                _ = withInputMonoConversionBuffer(frames: frames) { mono in
-                    convertInt16ToFloat(
-                        source: channels[0],
-                        sourceStride: 1,
-                        frameCount: frames,
-                        destination: mono
-                    )
-                    processConvertedMonoInput(
-                        ring: ring,
-                        samples: mono,
-                        frameCount: frames,
-                        throttled: throttled,
-                        captureInputScope: captureInputScope
-                    )
-                }
-            }
-            return
-        }
-        if let channels = buffer.int32ChannelData {
-            if chanCount >= 2 {
-                _ = withInputConversionBuffers(frames: frames) { left, right in
-                    convertPlanarInt32ToStereoFloat(
-                        left: channels[0],
-                        right: channels[1],
-                        frameCount: frames,
-                        destinationLeft: left,
-                        destinationRight: right
-                    )
-                    processConvertedInput(
-                        ring: ring,
-                        left: left,
-                        right: right,
-                        frameCount: frames,
-                        throttled: throttled,
-                        captureInputScope: captureInputScope
-                    )
-                }
-            } else {
-                _ = withInputMonoConversionBuffer(frames: frames) { mono in
-                    convertInt32ToFloat(
-                        source: channels[0],
-                        sourceStride: 1,
-                        frameCount: frames,
-                        destination: mono
-                    )
-                    processConvertedMonoInput(
-                        ring: ring,
-                        samples: mono,
-                        frameCount: frames,
-                        throttled: throttled,
-                        captureInputScope: captureInputScope
-                    )
-                }
-            }
-            return
-        }
-        let audioBuffers = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
-        if isInterleaved, audioBuffers.count == 1, let mData = audioBuffers[0].mData {
-            if chanCount == 1 {
-                switch buffer.format.commonFormat {
-                case .pcmFormatFloat32:
-                    let mono = mData.assumingMemoryBound(to: Float.self)
-                    processConvertedMonoInput(
-                        ring: ring,
-                        samples: mono,
-                        frameCount: frames,
-                        throttled: throttled,
-                        captureInputScope: captureInputScope
-                    )
-                case .pcmFormatInt16:
-                    _ = withInputMonoConversionBuffer(frames: frames) { mono in
-                        convertInt16ToFloat(
-                            source: mData.assumingMemoryBound(to: Int16.self),
-                            sourceStride: 1,
-                            frameCount: frames,
-                            destination: mono
-                        )
-                        processConvertedMonoInput(
-                            ring: ring,
-                            samples: mono,
-                            frameCount: frames,
-                            throttled: throttled,
-                            captureInputScope: captureInputScope
-                        )
-                    }
-                case .pcmFormatInt32:
-                    _ = withInputMonoConversionBuffer(frames: frames) { mono in
-                        convertInt32ToFloat(
-                            source: mData.assumingMemoryBound(to: Int32.self),
-                            sourceStride: 1,
-                            frameCount: frames,
-                            destination: mono
-                        )
-                        processConvertedMonoInput(
-                            ring: ring,
-                            samples: mono,
-                            frameCount: frames,
-                            throttled: throttled,
-                            captureInputScope: captureInputScope
-                        )
-                    }
-                default:
-                    return
-                }
-            } else {
-                _ = withInputConversionBuffers(frames: frames) { left, right in
-                    switch buffer.format.commonFormat {
-                    case .pcmFormatFloat32:
-                        deinterleaveFloatToStereo(
-                            interleaved: mData.assumingMemoryBound(to: Float.self),
-                            channelCount: chanCount,
-                            frameCount: frames,
-                            destinationLeft: left,
-                            destinationRight: right
-                        )
-                    case .pcmFormatInt16:
-                        deinterleaveInt16ToStereoFloat(
-                            interleaved: mData.assumingMemoryBound(to: Int16.self),
-                            channelCount: chanCount,
-                            frameCount: frames,
-                            destinationLeft: left,
-                            destinationRight: right
-                        )
-                    case .pcmFormatInt32:
-                        deinterleaveInt32ToStereoFloat(
-                            interleaved: mData.assumingMemoryBound(to: Int32.self),
-                            channelCount: chanCount,
-                            frameCount: frames,
-                            destinationLeft: left,
-                            destinationRight: right
-                        )
-                    default:
-                        return
-                    }
-                    processConvertedInput(
-                        ring: ring,
-                        left: left,
-                        right: right,
-                        frameCount: frames,
-                        throttled: throttled,
-                        captureInputScope: captureInputScope
-                    )
-                }
-            }
         }
     }
 
@@ -1724,48 +1269,6 @@ final class AudioOutputEngine {
         )
     }
 
-    private func updateMeters(
-        inputRMS: Float, inputPeak: Float, outputRMS: Float, outputPeak: Float
-    ) {
-        let agc = generator.agcStatus
-        let limiter = generator.finalLimiterStatus
-        let calibration = generator.compositeCalibrationStatus
-        meterSnapshot = MeterSnapshot(
-            inputRMS: inputRMS,
-            inputPeak: inputPeak,
-            inputLeftRMS: inputRMS,
-            inputRightRMS: inputRMS,
-            inputLeftPeak: inputPeak,
-            inputRightPeak: inputPeak,
-            postAGCLeftRMS: 0.0,
-            postAGCRightRMS: 0.0,
-            postAGCLeftPeak: 0.0,
-            postAGCRightPeak: 0.0,
-            outputRMS: outputRMS,
-            outputPeak: outputPeak,
-            deviationKHzPeak: outputPeak * targetDeviationKHz,
-            liveInputPeak: inputPeak,
-            liveInputLeftPeak: inputPeak,
-            liveInputRightPeak: inputPeak,
-            livePostAGCLeftPeak: 0.0,
-            livePostAGCRightPeak: 0.0,
-            liveOutputPeak: outputPeak,
-            liveDeviationKHzPeak: outputPeak * targetDeviationKHz,
-            agcDetectorDB: agc.detectorDB,
-            agcGainDB: agc.gainDB,
-            agcGateActive: agc.gateActive,
-            compositeClipperGainReductionDB: limiter.gainReductionDB,
-            preEncodeAudioLimiterGainReductionDB: limiter.preEncodeGainReductionDB,
-            mpxSafetyLimiterGainReductionDB: limiter.safetyGainReductionDB,
-            pilotInjectionPercent: calibration.pilotPercent,
-            rdsInjectionPercent: calibration.rdsPercent,
-            audioCompositePeak: calibration.audioPeak,
-            compositeBudgetMarginDB: calibration.budgetMarginDB,
-            outputStereoCorrelation: 1.0,
-            outputSideToMidRatio: 0.0
-        )
-    }
-
     private func updateInputMeters(
         inputRMS: Float,
         inputPeak: Float,
@@ -2106,36 +1609,6 @@ final class AudioOutputEngine {
                     sourceOffset += chunk
                     remaining -= chunk
                 }
-            }
-        }
-        writeIndex = idx
-        validFrames = min(historyCount, validFrames + frameCount)
-    }
-
-    private func appendMonoScopeSamples(
-        samples: UnsafePointer<Float>,
-        frameCount: Int,
-        into history: inout [Float],
-        writeIndex: inout Int,
-        validFrames: inout Int
-    ) {
-        guard !history.isEmpty, frameCount > 0 else { return }
-        var low: Float = -1.0
-        var high: Float = 1.0
-        var remaining = frameCount
-        var sourceOffset = 0
-        var idx = writeIndex
-        let historyCount = history.count
-        history.withUnsafeMutableBufferPointer { buffer in
-            guard let destination = buffer.baseAddress else { return }
-            while remaining > 0 {
-                let chunk = min(remaining, historyCount - idx)
-                let out = destination.advanced(by: idx)
-                out.update(from: samples.advanced(by: sourceOffset), count: chunk)
-                vDSP_vclip(out, 1, &low, &high, out, 1, vDSP_Length(chunk))
-                idx = (idx + chunk) % historyCount
-                sourceOffset += chunk
-                remaining -= chunk
             }
         }
         writeIndex = idx

@@ -173,6 +173,64 @@ Relevant config sections:
 - `MPX`: processing, levels, stereo coding, limiter behavior
 - `RDS`: program service, radiotext, flags, carrier settings
 
+### Setting levels — input, AGC, Final Drive, exciter
+
+Three knobs do most of the work between your source and the exciter. They sit at three different points in the chain and each does a specific job — get them right in order and the chain sounds clean without much fiddling.
+
+**The chain (left to right):**
+
+```
+source → IN meter → AGC → [DSP] → Final Drive → composite clipper → MPX Output Level → exciter
+                  ^                ^                                 ^
+                  level control    loudness lever                   hardware calibration
+```
+
+**1. Get your input into the AGC's working range.** Open `Monitoring`. The `IN` meter shows the level coming into MPX Prime from your source (before any processing). Aim for input peaks landing roughly in the **−12 to −6 dBFS** range on busy program — bright but not pinned. If the source is consistently below −18 dBFS the AGC has to push hard to reach its target; if it's above −3 dBFS it's eating its own headroom before the chain even sees it.
+
+The level adjustment lives upstream of MPX Prime — in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Processing` → `Core` → `Input Gain` (±24 dB) inside MPX Prime, but use that only to trim — the further upstream you fix the level, the less you stack noise floors.
+
+**2. Let AGC do the level-evening.** Open `Processing` → `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
+
+- `Platform Target` — the level the AGC drives the program *toward*. **Default −16 dBFS** (Balanced Music preset) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
+- `Enable Wideband AGC` — leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program.
+
+Watch the `AGC GR` field in `DSP Overview` (or the AGC card itself). Healthy operation:
+
+- **0 to 3 dB occasional pulls** = source feeding cleanly, AGC riding lightly. Goal state.
+- **Sustained 6+ dB pulls** = source is too hot. Back off upstream.
+- **AGC pushing 6+ dB consistently (positive gain)** = source is too quiet. Boost upstream.
+- **AGC parked at min/max gain limit** = source is so far off the AGC can't keep up — fix the source level.
+
+Don't use AGC `Platform Target` as a loudness knob. It tunes the chain's working point, not perceived broadcast loudness.
+
+**3. Set Final Drive for the loudness you want.** `Processing` → `Final Stage` → `Final Drive` is the primary loudness lever. It drives the audio composite into the composite clipper — higher drive = harder clipping = louder, denser, but also harsher. Range 0..12 dB.
+
+- Pick the `Broadcast Preset` matching your content (Balanced Music / CHR-Dance / Punchy / Speech-Talk) — that sets a sensible Final Drive starting point along with matched AGC tuning.
+- Nudge from there. Watch the **composite clipper `GR`** in `Monitoring`:
+  - 0 to 3 dB occasional GR = clean, dynamic. Good for talk and acoustic music.
+  - 3 to 6 dB regular GR = competitive loudness, contemporary radio sound.
+  - Sustained 6+ dB = clipper is the loudness ceiling, you're trading dynamics and HF cleanliness for level.
+
+Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudness *inside* the chain; MPX Output Level adjusts the *voltage* leaving the Mac.
+
+**4. Set MPX Output Level to match the exciter's input.** `Processing` → `Core` → `MPX Output Level` (±18 dB) is the final calibration knob — it scales the composite signal between MPX Prime and the exciter. The right value depends on your exciter / SDR / RF generator's input sensitivity.
+
+- Watch the `Composite Budget` chip on `Monitoring`:
+  - **Safe** — nominal modulation, headroom available
+  - **Tight** — near 100 % modulation, fine for normal broadcast
+  - **Risk** — peaks exceeding 100 %, back off
+- And on the exciter side:
+  - If your exciter has a modulation meter, aim for **100 % modulation on peaks** (75 kHz deviation in US-style FM, or whatever your local mandate is).
+  - If the exciter has an input-level meter, match what its manual recommends — typically a peak hits around `0 dBu` / `0 dBV` at full modulation.
+- Adjust **MPX Output Level until the exciter shows correct modulation**. *Don't* use MPX Output Level to chase loudness — that's Final Drive's job. Use MPX Output Level only for level-matching to hardware.
+
+**Common mistakes:**
+
+- Driving Final Drive hard while MPX Output Level is low → audio sounds limited but exciter is under-modulated → quiet on-air. Check the modulation meter.
+- Cranking MPX Output Level for loudness → exciter over-modulates → splatter / distortion / regulatory issues. Final Drive is the loudness knob.
+- Source too quiet → AGC pushing 8+ dB → noise floor lifts, breathing on quiet program. Boost upstream.
+- AGC off / bypassed → multiband and final stage see widely-varying program levels → pumping on dense material. Leave AGC on.
+
 ### Final-stage presets and clipper workflow
 
 The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms — restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.

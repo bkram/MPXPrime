@@ -15,7 +15,10 @@ SwiftUI UI  <->  App State (ObservableObject)
 ## Block Diagram
 
 ```
-Audio Input (L/R) @ interface rate (typically 192 kHz)
+Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
+│  via `InputAUHAL` (direct AUHAL audio unit) → `StereoInputRingBuffer`
+│  Adaptive cubic resampler in the output render callback absorbs
+│  input/render rate mismatch + clock drift up to 50 ppm.
 │
 ├──► Phase rotation (optional)
 │    └── 4-pole allpass chain at ~200 Hz — reduces waveform asymmetry
@@ -105,11 +108,12 @@ Audio Input (L/R) @ interface rate (typically 192 kHz)
 ## Major Components
 
 - `main.swift`: CLI entry point, config loading, audio engine lifecycle.
-- `AudioOutputEngine.swift`: AVAudioEngine setup, render callback, input tap.
+- `AudioOutputEngine.swift`: AVAudioEngine output setup, render callback, transport orchestration. Delegates input capture to `InputAUHAL`.
+- `InputAUHAL.swift`: Direct AUHAL (`kAudioUnitSubType_HALOutput`) input-capture wrapper. Replaces a second `AVAudioEngine` instance the engine used to spin up for input — AVAudioEngine's first `start()` with a non-default input device intermittently failed to deliver tap callbacks. The two-AUHAL pattern (separate input AU + output AVAudioEngine + `StereoInputRingBuffer` as the only bridge) is what TN2091 / CAPlayThrough / Stereotool / AudioKit's non-default-device path use on macOS.
 - `MPXGenerator.swift`: Real-time MPX/DSP generation, RDS encoding.
 - `AppConfig.swift`: Configuration model, INI parsing/serialization.
 - `SwiftUIControlApp.swift`: SwiftUI views, state management.
-- `AudioDevices.swift`: CoreAudio device enumeration.
+- `AudioDevices.swift`: CoreAudio device enumeration; resolves UIDs to `AudioDeviceID`s and provides the `defaultInputDeviceID()` helper AUHAL needs (AUHAL requires an explicit device, unlike AVAudioEngine which inferred the default implicitly).
 - `INIParser.swift`: INI file read/write.
 
 ## Threading Model

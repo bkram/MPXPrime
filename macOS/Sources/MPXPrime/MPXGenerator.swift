@@ -5319,6 +5319,8 @@ final class MPXGenerator {
         let widebandAGCKWeightingEnabled: Bool
         let widebandAGCReleaseProgramDependent: Bool
         let preEncodeAudioLimiterEnabled: Bool
+        let preEncodeThreshold: Float
+        let preEncodeReleaseMS: Float
         let mpxDeviationKHz: Float
         let primeBassEnabled: Bool
         let primeBassAmount: Float
@@ -5406,6 +5408,110 @@ final class MPXGenerator {
         let testToneMode: String      // "mono" | "stereo" | "left" | "right"
         let testToneFreq: Float
         let testToneLevelDB: Float
+    }
+
+    /// Factory: convert AppConfig → RuntimeConfig. Used by
+    /// AudioOutputEngine.applyRuntimeConfig and shared with tests so
+    /// runtime live-apply semantics can be exercised end-to-end.
+    static func makeRuntimeConfig(from config: AppConfig) -> RuntimeConfig {
+        RuntimeConfig(
+            inputGainDB: Float(config.inputGainDB),
+            outputGainDB: Float(config.outputGainDB),
+            finalDriveDB: Float(config.finalDriveDB),
+            widebandAGCEnabled: config.widebandAGCEnabled,
+            widebandAGCTargetDB: Float(config.widebandAGCTargetDB),
+            widebandAGCMaxGainDB: Float(config.widebandAGCMaxGainDB),
+            widebandAGCMinGainDB: Float(config.widebandAGCMinGainDB),
+            widebandAGCAttackMS: Float(config.widebandAGCAttackMS),
+            widebandAGCReleaseMS: Float(config.widebandAGCReleaseMS),
+            widebandAGCKWeightingEnabled: config.widebandAGCKWeightingEnabled,
+            widebandAGCReleaseProgramDependent: config.widebandAGCReleaseProgramDependent,
+            preEncodeAudioLimiterEnabled: config.preEncodeAudioLimiterEnabled,
+            preEncodeThreshold: Float(config.preEncodeThreshold),
+            preEncodeReleaseMS: Float(config.preEncodeReleaseMS),
+            mpxDeviationKHz: Float(config.mpxDeviationKHz),
+            primeBassEnabled: config.primeBassEnabled,
+            primeBassAmount: Float(config.primeBassAmount),
+            primeBassHarmonics: Float(config.primeBassHarmonics),
+            primeBassDrive: Float(config.primeBassDrive),
+            primeBassDensity: Float(config.primeBassDensity),
+            primeBassSubharmonicsEnabled: config.primeBassSubharmonicsEnabled,
+            primeBassSubharmonicsAmount: Float(config.primeBassSubharmonicsAmount),
+            primeBassFreqHz: Float(config.primeBassFreqHz),
+            stereoWidenEnabled: config.stereoWidenEnabled,
+            monoBassEnabled: config.monoBassEnabled,
+            monoBassFreqHz: Float(config.monoBassFreqHz),
+            widenWidth: Float(config.stereoWidenWidth),
+            widenCenter: Float(config.stereoWidenCenter),
+            widenMix: Float(config.stereoWidenMix),
+            multibandEnabled: config.multibandEnabled,
+            multibandMode: config.multibandMode,
+            multibandMakeupDB: Float(config.multibandMakeupDB),
+            multibandKneeDB: Float(config.multibandKneeDB),
+            multibandLinkStrength: Float(config.multibandLinkStrength),
+            multibandReleaseProgramDependent: config.multibandReleaseProgramDependent,
+            multibandX1Hz: Float(config.multibandX1Hz),
+            multibandX2Hz: Float(config.multibandX2Hz),
+            multibandX3Hz: Float(config.multibandX3Hz),
+            multibandX4Hz: Float(config.multibandX4Hz),
+            multibandLowThresholdDB: Float(config.multibandLowThresholdDB),
+            multibandMidThresholdDB: Float(config.multibandMidThresholdDB),
+            multibandHighThresholdDB: Float(config.multibandHighThresholdDB),
+            multibandLowRatio: Float(config.multibandLowRatio),
+            multibandMidRatio: Float(config.multibandMidRatio),
+            multibandHighRatio: Float(config.multibandHighRatio),
+            multibandLowAttackMS: Float(config.multibandLowAttackMS),
+            multibandMidAttackMS: Float(config.multibandMidAttackMS),
+            multibandHighAttackMS: Float(config.multibandHighAttackMS),
+            multibandLowReleaseMS: Float(config.multibandLowReleaseMS),
+            multibandMidReleaseMS: Float(config.multibandMidReleaseMS),
+            multibandHighReleaseMS: Float(config.multibandHighReleaseMS),
+            phaseRotationEnabled: config.phaseRotationEnabled,
+            phaseRotationFreqHz: Float(config.phaseRotationFreqHz),
+            parametricEQEnabled: config.parametricEQEnabled,
+            peqB1FreqHz: Float(config.peqB1FreqHz),
+            peqB1GainDB: Float(config.peqB1GainDB),
+            peqB2FreqHz: Float(config.peqB2FreqHz),
+            peqB2GainDB: Float(config.peqB2GainDB),
+            peqB2Q: Float(config.peqB2Q),
+            peqB3FreqHz: Float(config.peqB3FreqHz),
+            peqB3GainDB: Float(config.peqB3GainDB),
+            peqB3Q: Float(config.peqB3Q),
+            peqB4FreqHz: Float(config.peqB4FreqHz),
+            peqB4GainDB: Float(config.peqB4GainDB),
+            multibandLimiterEnabled: config.multibandLimiterEnabled,
+            multibandLimiterThresholdDB: Float(config.multibandLimiterThresholdDB),
+            multibandLimiterAttackMS: Float(config.multibandLimiterAttackMS),
+            multibandLimiterReleaseMS: Float(config.multibandLimiterReleaseMS),
+            downwardExpanderEnabled: config.downwardExpanderEnabled,
+            expanderThresholdDB: Float(config.expanderThresholdDB),
+            expanderRatio: Float(config.expanderRatio),
+            expanderAttackMS: Float(config.expanderAttackMS),
+            expanderReleaseMS: Float(config.expanderReleaseMS),
+            bassClipperEnabled: config.bassClipperEnabled,
+            bassClipperCrossoverHz: Float(config.bassClipperCrossoverHz),
+            bassClipperThresholdDB: Float(config.bassClipperThresholdDB),
+            bassClipperDrive: Float(config.bassClipperDrive),
+            dcClipperEnabled: config.dcClipperEnabled,
+            dcClipperCeilingDB: Float(config.dcClipperCeilingDB),
+            dcClipperCancelFreqHz: Float(config.dcClipperCancelFreqHz),
+            bs412Enabled: config.bs412Enabled,
+            bs412ThresholdDB: Float(config.bs412ThresholdDB),
+            bs412WindowSeconds: Float(config.bs412WindowSeconds),
+            compositeClipperEnabled: config.compositeClipperEnabled,
+            compositeClipperThresholdDB: Float(config.compositeClipperThresholdDB),
+            compositeClipperCeilingDB: Float(config.compositeClipperCeilingDB),
+            compositeClipperCancelAudio: config.compositeClipperCancelAudio,
+            compositeClipperCancelStereo: config.compositeClipperCancelStereo,
+            compositeClipperCancelPilot: config.compositeClipperCancelPilot,
+            compositeClipperCancelRDS: config.compositeClipperCancelRDS,
+            compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
+            sourceMode: config.sourceMode,
+            testToneType: config.testToneType,
+            testToneMode: config.testToneMode,
+            testToneFreq: Float(config.testToneFreq),
+            testToneLevelDB: Float(config.testToneLevelDB)
+        )
     }
 
     /// Runtime-applicable RDS state. Anything an operator can change
@@ -5797,6 +5903,23 @@ final class MPXGenerator {
     private var compositeClipperLookaheadMS: Float = 0.0
     private var compositeClipper = CompositeClipper()
 
+    // Subcarrier delay line — keeps pilot+RDS phase-aligned with the
+    // delayed audio composite. Pilot and the embedded 38 kHz stereo
+    // subcarrier are generated at the same oscillator step in
+    // `makeCompositeComponents`, but the audio composite (containing
+    // the stereo subcarrier × diff modulator) then passes through the
+    // composite clipper's FIR group delay and the final-stage MPX
+    // limiter's look-ahead delay before output. Adding the pilot+RDS
+    // un-delayed introduces a phase mismatch between the audio
+    // composite's internal 38 kHz reference and the pilot the receiver
+    // locks to — measured up to ~280° phase rotation at default config
+    // (~9-sample FIR delay + 960-sample look-ahead at 192 kHz). The
+    // receiver demodulates L−R with that phase error, producing
+    // dramatic stereo separation loss. Delaying subcarriers by the
+    // same chain delay restores the phase alignment.
+    internal var subcarrierDelayLine: [Float] = []
+    internal var subcarrierDelayWriteIdx: Int = 0
+
     private var stereoWidenEnabled: Bool
     private var monoBassEnabled: Bool
     private var monoBassFreqHz: Float
@@ -6133,8 +6256,25 @@ final class MPXGenerator {
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS
         )
+        recomputeSubcarrierDelay()
         updateDerivedRates()
         configureMonitorDemod()
+    }
+
+    /// Recompute the pilot+RDS delay-line length so it matches the audio
+    /// composite's total chain delay through composite clipper + final
+    /// MPX limiter look-ahead. Called after any stage configure() that
+    /// could change the audio path delay (init, setSampleRate, runtime
+    /// reconfigure on compositeClipper change).
+    private func recomputeSubcarrierDelay() {
+        let clipperDelay = compositeClipperEnabled
+            ? compositeClipper.totalDelayHostSamples : 0
+        let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
+        let total = clipperDelay + limiterDelay
+        if total != subcarrierDelayLine.count {
+            subcarrierDelayLine = [Float](repeating: 0.0, count: total)
+            subcarrierDelayWriteIdx = 0
+        }
     }
 
     /// Called by AudioOutputEngine at start() to pick the TX-grade FIR or
@@ -6233,6 +6373,7 @@ final class MPXGenerator {
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS
         )
+        recomputeSubcarrierDelay()
         rdsCoder?.setSampleRate(sampleRate)
         updateDerivedRates()
         configureMonitorDemod()
@@ -6243,7 +6384,20 @@ final class MPXGenerator {
         outputGain = powf(10.0, config.outputGainDB / 20.0)
         finalDrive = powf(10.0, config.finalDriveDB / 20.0)
         deviationScale = config.mpxDeviationKHz / 75.0
+        let preEncodeLimiterChanged =
+            preEncodeAudioLimiterEnabled != config.preEncodeAudioLimiterEnabled
+            || fabsf(preEncodeThreshold - config.preEncodeThreshold) > 0.0001
+            || fabsf(preEncodeReleaseMS - config.preEncodeReleaseMS) > 0.001
         preEncodeAudioLimiterEnabled = config.preEncodeAudioLimiterEnabled
+        preEncodeThreshold = clampf(config.preEncodeThreshold, 0.5, 0.999)
+        preEncodeReleaseMS = clampf(config.preEncodeReleaseMS, 10.0, 200.0)
+        if preEncodeLimiterChanged {
+            preEncodeAudioLimiter.configure(
+                sampleRate: sampleRate,
+                threshold: preEncodeThreshold,
+                releaseMS: preEncodeReleaseMS
+            )
+        }
 
         let agcChanged =
             widebandAGCEnabled != config.widebandAGCEnabled
@@ -6512,6 +6666,7 @@ final class MPXGenerator {
                 cancelRDS: compositeClipperCancelRDS,
                 lookaheadMS: compositeClipperLookaheadMS
             )
+            recomputeSubcarrierDelay()
         }
 
         // Tone-generator parameters. Recompute `toneStep` when freq
@@ -7648,6 +7803,27 @@ final class MPXGenerator {
         rds: Float
     ) -> Float {
         let subcarriers = (pilot + rds) * deviationScale
+        // Phase-align pilot/RDS with the delayed audio composite (the
+        // 38 kHz stereo subcarrier embedded in `diff·sub` was generated
+        // at this oscillator step; the audio composite about to be
+        // assembled will then traverse the composite clipper and final
+        // limiter delays before output, while pilot/RDS would otherwise
+        // be added with the current phase. Delaying pilot+RDS by the
+        // same chain delay keeps the receiver-side stereo decoder's
+        // pilot-locked 38 kHz reference aligned with the audio
+        // composite's internal subcarrier modulation.
+        let delayedSubcarriers: Float
+        let subDelayN = subcarrierDelayLine.count
+        if subDelayN > 0 {
+            delayedSubcarriers = subcarrierDelayLine[subcarrierDelayWriteIdx]
+            subcarrierDelayLine[subcarrierDelayWriteIdx] = subcarriers
+            subcarrierDelayWriteIdx += 1
+            if subcarrierDelayWriteIdx >= subDelayN {
+                subcarrierDelayWriteIdx = 0
+            }
+        } else {
+            delayedSubcarriers = subcarriers
+        }
         let reserved = updateSubcarrierReservation(subcarriers)
         let thresholds = Self.makeFinalCompositeThresholds(
             outputGain: outputGain,
@@ -7713,8 +7889,11 @@ final class MPXGenerator {
             }
         }
 
-        // Inject pilot and RDS after all limiting — constant amplitude
-        mpx += subcarriers * outputGain
+        // Inject pilot and RDS after all limiting — constant amplitude.
+        // Use the delay-aligned subcarriers so receiver-side stereo
+        // demod sees pilot phase consistent with the audio composite's
+        // internal 38 kHz subcarrier modulation.
+        mpx += delayedSubcarriers * outputGain
 
         return clampf(mpx, -1.0, 1.0)
     }

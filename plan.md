@@ -4,8 +4,8 @@
 
 **Goal: the best amateur-grade free FM processor available.**
 
-MPX Prime is *not* trying to be a $5–15k Optimod / Omnia / Stereotool replacement. It is trying to be the obvious choice for hobbyist, community radio, pirate, SDR-fed exciter, and DIY broadcast workflows where commercial processors are unaffordable or overkill. That framing is load-bearing for prioritisation:
-yes
+MPX Prime is *not* trying to be a $5–15k Optimod / Omnia / Stereotool replacement. It is trying to be the obvious choice for hobbyist, community radio, pirate, SDR-fed exciter, and DIY broadcast workflows where commercial processors are unaffordable or overkill. That framing is load-bearing for prioritisation.
+
 **Current focus: macOS.** Linux is on the future roadmap (see "Cross-platform" section below) but is not the current priority. Get the macOS experience exceptional first; widening to Linux is a separate later effort that benefits from a more mature DSP / preset / UX baseline.
 
 **In scope** (amateur-grade differentiators):
@@ -100,15 +100,17 @@ directions needs a clear design-around or a wait).
 
 ## Next up
 
-1. **Look-ahead composite peak control** — the highest-payoff loudness improvement remaining and the largest single remaining gap toward Optimod 8x00 / Omnia.9 / Stereotool. Today the composite clipper is purely time-symmetric soft-clip with no look-ahead; the final-stage MPX limiter has look-ahead but operates after pilot/RDS injection and so cannot help peak-bound the audio composite. Add a delay line + predictive peak detector to the composite clipper so gain reduction is applied before the peak arrives and overshoots are mathematically bounded. Estimated scope: 1–2 weeks. After this lands, preset tuning becomes more meaningful (the clipper's behaviour on dense program will be different).
+1. **Tune and validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` landed in 0.26 (OS-rate sliding-window-max detector, Lagrange-interpolated intersample peaks, exponential-attack / 200 Hz-smoothed gain envelope applied identically to `up` and per-band `orig*` filters; default 0.0 disabled, range 0.0–5.0 ms). Listening work: dense real-program A/B at 0.5 / 1 / 2 ms; verify pilot and RDS guard cleanliness; decide whether loud presets ship with a small non-zero default. Captured WAVs land in `macOS/.audit-out/lookahead/` via the env-gated `MPXPRIME_AUDIT_CAPTURE=1` capture driver.
 
-2. **Preset tuning — make it sound great out of the box.** Composite clipper now ships clean (delta-based per-band substitution; (L-R) subcarrier sidebands within ~1 dB across the audio band) and the chain has been brought to canonical industry order. Time to push it. Tune `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, AGC density curve, and stereo widener defaults so a fresh install with no operator knowledge already sounds noticeably better than `mpxgen` / PiFmRds. Probably also: a small set of named presets (e.g. `clean`, `loud`, `community-radio`, `lpfm-conservative`) as INI fragments. Best done after #1 lands so defaults are tuned for the new clipper behaviour.
+2. **Preset tuning — make it sound great out of the box.** Composite clipper now ships clean (delta-based per-band substitution + optional look-ahead; subcarrier sidebands within ~1 dB across the audio band) and the chain is in canonical industry order. Tune `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, `mpx_clipper_lookahead_ms`, AGC density curve, and stereo widener defaults so a fresh install with no operator knowledge already sounds noticeably better than `mpxgen` / PiFmRds. Add a small set of named presets (e.g. `clean`, `loud`, `community-radio`, `lpfm-conservative`) as INI fragments. Best done after #1 lands so presets can bake in a tuned look-ahead default.
 
 3. **Smoke-test pass.** Validate live-apply vs restart-required settings on difficult real material. Catch any transients / clicks / dropouts on toggle changes. Pre-release blocking item. The new RDS live-apply paths (PI / PTY / flags / AF / scheduler) need particular attention — most are tested at the bit-stream level but not against real receivers.
 
-4. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema, different scenario sets. Once preset tuning lands the verify presets become more meaningful.
+4. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema (now at schema v2 with `postInjectionOvershoot` / `overBudget` fields), different scenario sets. Once preset tuning lands the verify presets become more meaningful.
 
-5. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. Pre-emphasis is now in L/R upstream of the pre-encode limiter, so dynamic relaxation can either modulate the existing `preL` / `preR` filters in place or build a dedicated sidechain detector — both paths are now compatible with the production chain. Lower priority for amateur-grade; this is a polish item.
+5. **Receiver-model verifier.** Enterprise-style DSP changes should be judged at receiver output, not only at MPX waveform level. Add offline decode metrics for stereo separation at 1 / 10 / 14 kHz, mono compatibility, pilot level/phase error, RDS band level/center accuracy, post-injection overshoot count, MPX power, and composite crest factor. Prerequisite for promoting `postInjectionOvershoot > 0` from TIGHT to a hard verifier failure for normal presets.
+
+6. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. Pre-emphasis is now in L/R upstream of the pre-encode limiter, so dynamic relaxation can either modulate the existing `preL` / `preR` filters in place or build a dedicated sidechain detector — both paths are now compatible with the production chain. Lower priority for amateur-grade; this is a polish item.
 
 ## RDS roadmap toward enterprise tier
 
@@ -148,9 +150,9 @@ Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction
 
 ### Composite clipper improvements
 
-1. **Look-ahead composite peak control.** Modern processors (Optimod 8x00, Omnia.9, Stereotool) drive composite peak control from a sidechain that knows future peak amplitude, so gain reduction is applied before the peak arrives and overshoots are mathematically bounded. Today the composite clipper is purely time-symmetric soft-clip with no look-ahead; the final-stage MPX limiter has look-ahead but operates after pilot/RDS injection. Add a delay line + predictive peak detector to the composite clipper. Estimated scope: 1–2 weeks. **Highest-payoff loudness improvement remaining.**
+1. **Look-ahead composite peak control.** — **LANDED in 0.26.** OS-rate (1.536 MHz at 192 kHz × 8) sliding-window-max detector with Lagrange-interpolated intersample-peak detection drives an exponential-attack / 200 Hz-smoothed gain envelope. Gain is applied identically to both `up` (clipper input) and the per-band `orig*` filters so the differential-topology cancellation linearity holds. Single INI knob `mpx_clipper_lookahead_ms` (0.0–5.0 ms, default 0.0 disabled). Separate `lookaheadGainReductionDB` telemetry on the meter. Remaining work is listening-tuning and deciding the default preset value — see "Next up" #1.
 
-2. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier. Larger lift than #1 alone — split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
+2. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier; look-ahead recovers some of that gap, but multiband composite clipping is still the next loudness step. Split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
 
 3. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
 
@@ -164,7 +166,7 @@ Audit done 2026-05-09 against published Orban Optimod 8500/8600, Omnia.9/.11, an
 | **Stereo widener before multiband** | **Resolved.** Moved post-multiband (still L/R domain; M/S variant skipped per audit decision). | Mono bass stays inside `processStereoImageStage`. Zero verifier drift; listening confirmed. |
 | **Pre-emphasis in M/S after pre-encode L/R limiter** | **Resolved.** Moved to L/R immediately upstream of the pre-encode limiter; renamed `preSum`/`preDiff` → `preL`/`preR`. | The b806053 cost regression that originally motivated the M/S placement is no longer reproducible — chain optimizations between 0.10 and 0.24 cut absolute cost from ~95% to ~28% of real-time, so the 7% relative cost increase from upstream pre-emphasis is comfortably absorbed. C1 PASS at 1.07× release-build ratio; C2 sustained-load PASS over 30 s; HF guard band cleaner above 60/67 kHz on 5 verifier scenarios. |
 
-The only known remaining drift is `hard_panned_hf` showing asymmetric L/R limiter response (per-channel limiters produce a +15 dB side-to-mid metric blowup on synthetic-pathological L-only HF chirps + R-only rumble). Listening on real program found no audible regression. If a future operator complaint surfaces on hard-panned material, the cheap fix is a stereo-linked `PreEncodeAudioLimiter` whose detector is `max(|L|, |R|)` (~1 day work).
+The previously-noted `hard_panned_hf` asymmetric L/R limiter response (per-channel limiters produced a +15 dB side-to-mid metric blowup on synthetic-pathological L-only HF chirps + R-only rumble) was resolved in 0.26 by switching to `StereoLinkedOversampledPeakLimiter` — a `max(|L|, |R|)` detector drives both channels identically. No remaining known chain-order drift.
 
 ### Enterprise-parity status
 
@@ -176,6 +178,10 @@ Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereot
 - PrimeBass post-multiband (canonical MaxxBass / Aural Exciter / Big Bottom placement)
 - Stereo widener post-multiband (canonical Optimod placement)
 - Differential-topology composite clipper with delta-based per-band substitution (Orban US 6,337,999 + US 4,460,871 lineage, expired)
+- **Composite clipper look-ahead peak control (0.26)** — OS-rate sliding-window-max detector + 200 Hz-smoothed gain envelope; closes the largest single loudness-architecture gap toward Optimod 8x00 / Omnia.9 / Stereotool
+- **Composite budget governor (0.26)** — smoothed gain ride on the audio composite before pilot/RDS injection so the post-injection clamp is unreachable for sane configs; `overBudget` flag classifies impossible configs
+- **Pilot/RDS subcarrier delay alignment (0.26)** — receiver's pilot-derived 38 kHz reference now phase-coherent with the audio composite's internal L−R subcarrier
+- **Stereo-linked `PreEncodeAudioLimiter` (0.26)** — `max(|L|, |R|)` detector eliminates per-channel asymmetric pumping
 - Linear-phase FIR multiband splitters (sum-to-flat at -155 dB)
 - BS.412 dual-integrator power controller (US 6,618,486 functional equivalent)
 - PrimeBass full bass-enhancement patent backlog (MaxxBass + Aphex + Werrbach transient gain + Big Bottom)
@@ -185,19 +191,19 @@ Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereot
 
 | Priority | Item | Where | Effort | Impact |
 |---|---|---|---|---|
-| **1** | Look-ahead composite peak control | "Next up" #1; `CompositeClipper` | 1–2 weeks | **Highest** — mathematically bounded overshoot vs time-symmetric soft-clip; measurable loudness lift |
-| **2** | Multiband Phase 2: transient-aware attack + RMS/peak hybrid envelope | "Multiband DSP modernisation Phase 2" below | ~1 week | High — eliminates multiband over-squashing on kicks / snares; "Smart Attack" character |
-| **3** | Multiband composite clipping | "Composite clipper improvements" #2 | 2–4 weeks | High — per-band thresholds avoid tonal shift; ~1.5 dB more loudness on dense program |
+| **1** | Multiband Phase 2: transient-aware attack + RMS/peak hybrid envelope | "Multiband DSP modernisation Phase 2" below | ~1 week | High — eliminates multiband over-squashing on kicks / snares; "Smart Attack" character |
+| **2** | Multiband composite clipping | "Composite clipper improvements" #2 | 2–4 weeks | High — per-band thresholds avoid tonal shift; ~1.5 dB more loudness on dense program |
+| **3** | Receiver-model verifier | "Next up" #5 | 1 week | High — promotes `postInjectionOvershoot` and other budget invariants from TIGHT to hard failure; gates future tuning |
 | **4** | Inter-band gain coupling ("loud bass softens highs") | "Multiband DSP modernisation Phase 4" | ~1 week | Medium — subtle Optimod-style polish |
-| 5 | Stereo-linked `PreEncodeAudioLimiter` (closes `hard_panned_hf` asymmetry) | new helper next to `PreEncodeAudioLimiter` | ~1 day | Polish; only matters if operator complaint surfaces |
+| 5 | Composite look-ahead default tuning (listening) | "Next up" #1 | ~3–5 days | Medium — turns the 0.26-landed feature into operator-visible loudness improvement |
 
 **Honest rating, today, structurally:**
-- vs. **Optimod 8500/8600**: ~60–70% of audible chain quality. Missing pieces are #1 (look-ahead composite) and #3 (multiband composite clipping); both are real loudness-level gaps.
-- vs. **Omnia.9/.11**: ~60–70%. Omnia "Undo" declipper and the depth of their multiband are out of scope.
+- vs. **Optimod 8500/8600**: ~70–80% of audible chain quality. Look-ahead composite peak control landed in 0.26; the remaining real loudness-architecture gap is multiband composite clipping.
+- vs. **Omnia.9/.11**: ~70–80%. Omnia "Undo" declipper and the depth of their multiband are out of scope.
 - vs. **Stereotool free build**: substantially ahead on structural completeness. Stereotool full license is comparable to Optimod 8x00 — same gap as above.
 - vs. **mpxgen / PiFmRds**: different category. MPX Prime is the only open-source FM processor with a real processing chain at this point.
 
-The amateur-grade goal is now structurally complete. Remaining work is specific feature additions (look-ahead, multiband clipping, transient attack), not architectural rewiring.
+The amateur-grade goal is structurally complete. Remaining work is specific feature additions (multiband clipping, transient attack, receiver-model verifier) and listening-tuning, not architectural rewiring.
 
 *Linux port — deferred. See the "Cross-platform" section below for scoping; revisit once the macOS preset / smoke-test / README work has landed.*
 
@@ -223,7 +229,7 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 
 ### Release-blocking
 1. Smoke-test pass for live-apply vs restart-required settings.
-2. Tune composite clipper defaults so a fresh install audibly outperforms `mpxgen` / PiFmRds with no operator tweaking.
+2. Tune composite clipper defaults (drive, ceiling, and the 0.26-landed `mpx_clipper_lookahead_ms`) so a fresh install audibly outperforms `mpxgen` / PiFmRds with no operator tweaking.
 
 ### Sprint
 1. Validate PrimeBass, mono bass, widener, and multiband interaction on difficult real material.
@@ -436,11 +442,11 @@ Swift-first direction.
    level/phase error, RDS band level/center accuracy, post-injection
    overshoot count, MPX power, and composite crest factor.
 
-3. **Tune and validate composite clipper look-ahead.**
-   `mpx_clipper_lookahead_ms` has landed and defaults off. Run dense
-   real-program listening tests at 0.5 ms, 1 ms, and 2 ms; verify pilot
-   and RDS guard cleanliness; then decide whether loud presets should
-   enable a conservative default.
+3. **Tune and validate composite clipper look-ahead.** — DSP DONE (0.26);
+   listening-tuning still ahead. `mpx_clipper_lookahead_ms` landed default
+   off. Run dense real-program A/B at 0.5 / 1 / 2 ms; verify pilot and RDS
+   guard cleanliness; decide whether loud presets ship with a conservative
+   non-zero default. See "Next up" #1.
 
 4. **Add transient-aware multiband detection.**
    `MonoCompressor` is still a single-pole absolute-envelope compressor.
@@ -503,7 +509,8 @@ Swift-first direction.
    Use slow timing, e.g. 1-3 s attack and 5-10 s release, to keep long
    term density and multipath behavior controlled without obvious pumping.
 
-Practical implementation order: clamp/budget governor, receiver-model
-verifier, composite look-ahead tuning, transient-aware multiband,
-inter-band coupling, dynamic pre-emphasis, multiband composite clipper,
-then composite crest governor.
+Practical implementation order, post-0.26 (clamp/budget governor + composite
+look-ahead DSP both landed): composite look-ahead listening-tuning →
+receiver-model verifier → transient-aware multiband → inter-band coupling →
+dynamic pre-emphasis → multiband composite clipper → composite crest
+governor.

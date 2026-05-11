@@ -5294,27 +5294,37 @@ final class MPXGenerator {
         /// destroying the constant-amplitude invariant. Operationally
         /// reportable as a warning condition.
         let postInjectionOvershoot: Float
+        /// True when the composite budget governor has been forced to
+        /// mute audio (audio composite ceiling reached 0) because
+        /// `outputGain × subcarrier reservation` left no headroom.
+        /// Audio is silenced but pilot/RDS keep operator-chosen
+        /// amplitude — the chain is "valid but useless"; UI should
+        /// surface this as a config error.
+        let overBudget: Bool
     }
 
     private struct FinalCompositeThresholds {
         let effectiveThreshold: Float
         let preLimiterCeiling: Float
         let postLimiterCeiling: Float
+        /// True when the operator's outputGain × subcarrier reservation
+        /// leaves no real headroom for audio composite (audio ceiling
+        /// has been forced to ≤0). The chain still produces sensible
+        /// output (audio muted, subcarriers preserved at operator-
+        /// chosen amplitude), but the operator should reduce
+        /// outputGain or subcarrier levels to recover audio.
+        let overBudget: Bool
     }
 
-    private static let finalCompositePreLimiterHeadroom: Float = 0.040
-    private static let finalCompositePostLimiterHeadroom: Float = 0.030
-    // Numeric-safety floor only — kept low so the audio composite
-    // ceiling actually shrinks to fit subcarrier reservation when
-    // outputGain is pushed high. The previous 0.18 / 0.16 floors
-    // kept audio above the budget when pilot/RDS reservation could
-    // not fit, then the post-injection clamp silently distorted the
-    // supposedly constant-amplitude subcarriers (Finding #3 in the
-    // 2026-05 chain audit). When the unclipped ceiling falls below
-    // this floor the chain is over-budget — `postInjectionOvershoot`
-    // telemetry surfaces the condition.
-    private static let finalCompositePreLimiterFloor: Float = 0.02
-    private static let finalCompositePostLimiterFloor: Float = 0.02
+    /// Composite-budget safety margin. The audio-composite ceiling is
+    /// computed as `effectiveThreshold - reserved - safetyMargin`,
+    /// where `effectiveThreshold = threshold/outputGain` and `reserved`
+    /// is the smoothed peak of pilot+RDS subcarriers. This leaves
+    /// ~2% of the budget unallocated as headroom against numerical
+    /// jitter, peak-tracking lag, and the lookahead limiter's small
+    /// overshoot. The final post-injection clamp is the last-resort
+    /// numeric guard; it should never engage for valid configs.
+    private static let finalCompositeBudgetSafetyMargin: Float = 0.02
     private static let monitorDiffDecodeGain: Float = 1.06
 
     private struct EncoderComplianceConfig {
@@ -6794,12 +6804,22 @@ final class MPXGenerator {
             reservationEnv: subcarrierReservationEnv,
             outputGain: outputGain
         )
+        // Re-derive overBudget from current outputGain + smoothed
+        // reservation envelope. Cheap (no DSP work) and always
+        // tracks the same value the render path sees in
+        // `makeFinalCompositeThresholds`.
+        let thresholds = Self.makeFinalCompositeThresholds(
+            outputGain: outputGain,
+            threshold: threshold,
+            reserved: subcarrierReservationEnv
+        )
         return CompositeCalibrationStatus(
             pilotPercent: monoMode ? 0.0 : pilotInjectionPercent,
             rdsPercent: monoMode ? 0.0 : rdsInjectionPercent,
             audioPeak: calibration.audioPeak,
             budgetMarginDB: calibration.budgetMarginDB,
-            postInjectionOvershoot: postInjectionOvershootEnv
+            postInjectionOvershoot: postInjectionOvershootEnv,
+            overBudget: thresholds.overBudget
         )
     }
 
@@ -7917,6 +7937,21 @@ final class MPXGenerator {
             }
         }
 
+        // Composite budget governor — hard ceiling on the audio path
+        // at `postLimiterCeiling × outputGain`. The earlier audio-
+        // composite shapers used `postLimiterCeiling` directly, but
+        // the lookahead limiter operates at the engine's threshold
+        // (~0.98) regardless of subcarrier reservation, so audio ×
+        // outputGain can re-rise above the budget. This clamp
+        // enforces the budget invariant before pilot/RDS injection.
+        // For sane configs the audio is already below `audioCeilOut`
+        // and the clamp is a no-op; for over-budget configs it caps
+        // audio so subcarriers can still inject at full amplitude.
+        let audioCeilOut = thresholds.postLimiterCeiling * outputGain
+        if fabsf(mpx) > audioCeilOut {
+            mpx = copysignf(audioCeilOut, mpx)
+        }
+
         // Inject pilot and RDS after all limiting — constant amplitude.
         // Use the delay-aligned subcarriers so receiver-side stereo
         // demod sees pilot phase consistent with the audio composite's
@@ -7964,17 +7999,33 @@ final class MPXGenerator {
         threshold: Float,
         reserved: Float
     ) -> FinalCompositeThresholds {
-        let effectiveThreshold = threshold / max(1.0, outputGain)
+        // Composite budget governor (per 2026-05 chain audit Finding
+        // #3). The audio composite must fit inside whatever budget is
+        // left after the operator's outputGain × subcarrier reservation:
+        //
+        //   |audio·outputGain + subcarriers·outputGain| ≤ 1.0
+        //   audio ≤ (1.0 - subcarriers·outputGain) / outputGain
+        //   audio ≤ 1/outputGain - reserved
+        //
+        // We use the engine's `threshold` (default 0.98) instead of 1.0
+        // to leave a small numeric guard below the hard ±1.0 clamp.
+        // No headroom split between pre/post limiter ceilings; both
+        // share the same `allowedAudioAbs`. The audio composite is
+        // dynamically reduced when reservation grows; pilot/RDS stay
+        // at the operator-chosen amplitude. When `allowedAudioAbs`
+        // reaches 0, audio is muted and `overBudget` is reported via
+        // telemetry — the operator must lower outputGain or
+        // subcarrier levels.
+        let gain = max(1.0, outputGain)
+        let effectiveThreshold = threshold / gain
+        let allowedAudioAbs = max(0.0,
+            effectiveThreshold - reserved - Self.finalCompositeBudgetSafetyMargin)
+        let overBudget = allowedAudioAbs <= 0.0
         return FinalCompositeThresholds(
             effectiveThreshold: effectiveThreshold,
-            preLimiterCeiling: max(
-                Self.finalCompositePreLimiterFloor,
-                effectiveThreshold - reserved - Self.finalCompositePreLimiterHeadroom
-            ),
-            postLimiterCeiling: max(
-                Self.finalCompositePostLimiterFloor,
-                effectiveThreshold - reserved - Self.finalCompositePostLimiterHeadroom
-            )
+            preLimiterCeiling: allowedAudioAbs,
+            postLimiterCeiling: allowedAudioAbs,
+            overBudget: overBudget
         )
     }
 

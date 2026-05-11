@@ -1627,6 +1627,9 @@ final class MPXPrimeViewModel: ObservableObject {
     /// budget. UI surfaces this as an over-budget warning so the
     /// operator can reduce outputGain / pilot / RDS levels.
     @Published var postInjectionOvershootValue: Float = 0.0
+    /// True when the composite budget governor has muted the audio
+    /// path — outputGain × subcarrier reservation left no headroom.
+    @Published var compositeOverBudget: Bool = false
     @Published var compositeClipperGainReductionDBValue: Float = 0.0
     @Published var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
     @Published var preEncodeLimiterGainReductionDBValue: Float = 0.0
@@ -2769,6 +2772,7 @@ final class MPXPrimeViewModel: ObservableObject {
         var audioCompositePeak: Float = 0.0
         var compositeBudgetMarginDB: Float = 0.0
         var postInjectionOvershoot: Float = 0.0
+        var compositeOverBudget: Bool = false
         var outputStereoCorrelation: Float = 1.0
         var outputSideToMidRatio: Float = 0.0
         var health = MonitoringStreamHealth.stopped
@@ -2903,6 +2907,7 @@ final class MPXPrimeViewModel: ObservableObject {
             audioCompositePeak = meters.audioCompositePeak
             compositeBudgetMarginDB = meters.compositeBudgetMarginDB
             postInjectionOvershoot = meters.postInjectionOvershoot
+            compositeOverBudget = meters.compositeOverBudget
             outputStereoCorrelation = meters.outputStereoCorrelation
             outputSideToMidRatio = meters.outputSideToMidRatio
 
@@ -2970,6 +2975,7 @@ final class MPXPrimeViewModel: ObservableObject {
             audioCompositePeakLinear = 0.0
             compositeBudgetMarginDBValue = 0.0
             postInjectionOvershootValue = 0.0
+            compositeOverBudget = false
             compositeClipperGainReductionDBValue = 0.0
             compositeClipperLookaheadGainReductionDBValue = 0.0
             preEncodeLimiterGainReductionDBValue = 0.0
@@ -3088,6 +3094,7 @@ final class MPXPrimeViewModel: ObservableObject {
         audioCompositePeakLinear = audioCompositePeak
         compositeBudgetMarginDBValue = compositeBudgetMarginDB
         postInjectionOvershootValue = postInjectionOvershoot
+        self.compositeOverBudget = compositeOverBudget
         compositeClipperGainReductionDBValue = compositeClipperGainReductionDB
         compositeClipperLookaheadGainReductionDBValue = compositeClipperLookaheadGainReductionDB
         preEncodeLimiterGainReductionDBValue = preEncodeAudioLimiterGainReductionDB

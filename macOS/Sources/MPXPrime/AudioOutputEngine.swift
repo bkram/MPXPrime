@@ -73,6 +73,11 @@ final class AudioOutputEngine {
         /// (output gain × subcarrier reservation > 1.0). Surfaces what
         /// would otherwise be silent pilot/RDS distortion.
         var postInjectionOvershoot: Float
+        /// True when the composite budget governor has muted the
+        /// audio path because outputGain × subcarrier reservation
+        /// left no headroom. Operator must reduce outputGain,
+        /// pilot/RDS injection levels, or deviation.
+        var compositeOverBudget: Bool
         var outputStereoCorrelation: Float
         var outputSideToMidRatio: Float
     }
@@ -147,6 +152,7 @@ final class AudioOutputEngine {
         audioCompositePeak: 0.0,
         compositeBudgetMarginDB: 0.0,
         postInjectionOvershoot: 0.0,
+        compositeOverBudget: false,
         outputStereoCorrelation: 1.0,
         outputSideToMidRatio: 0.0
     )
@@ -549,6 +555,7 @@ final class AudioOutputEngine {
         meterSnapshot.audioCompositePeak = 0.0
         meterSnapshot.compositeBudgetMarginDB = 0.0
         meterSnapshot.postInjectionOvershoot = 0.0
+        meterSnapshot.compositeOverBudget = false
         meterSnapshot.outputStereoCorrelation = 1.0
         meterSnapshot.outputSideToMidRatio = 0.0
         meterSnapshot.liveInputPeak = 0.0
@@ -1307,6 +1314,7 @@ final class AudioOutputEngine {
         meterSnapshot.audioCompositePeak = calibration.audioPeak
         meterSnapshot.compositeBudgetMarginDB = calibration.budgetMarginDB
         meterSnapshot.postInjectionOvershoot = calibration.postInjectionOvershoot
+        meterSnapshot.compositeOverBudget = calibration.overBudget
         if outputPeak > pendingOutputPeak {
             pendingOutputPeak = outputPeak
         }

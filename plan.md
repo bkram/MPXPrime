@@ -410,3 +410,100 @@ This was *not* always the case. Commit `b806053` on the path from 0.9 → 0.10 o
 - `PiFmRds` — Raspberry Pi FM transmitter with RDS, toy-grade.
 - Stereotool free build — closed-source, feature-limited.
 - Liquidsoap — common amateur-station audio backbone; potential JACK integration target.
+
+## DSP Enterprise-Level Next Steps
+
+MPX Prime remains an amateur-focused project, but the DSP goal is still
+best-in-class processing for that audience. These steps are ordered by
+technical importance and audible payoff, while preserving the current
+Swift-first direction.
+
+1. **Finish the post-injection clamp fix.** — DONE (0.26)
+   `MPXGenerator.makeFinalCompositeThresholds` now derives a composite
+   budget governor (`allowedAudioAbs = max(0, threshold/outputGain -
+   reserved - margin)`) and `processFinalComposite` enforces it as a
+   hard ceiling on the audio path before pilot/RDS injection. The final
+   `clampf(mpx, -1, 1)` remains only as a numeric guard.
+   `compositeCalibrationStatus.overBudget` and `postInjectionOvershoot`
+   surface over-budget configs to UI and verifier. Outstanding follow-up
+   is promoting non-zero overshoot from TIGHT to a hard verifier failure
+   once item 2 (receiver-model verifier) provides finer ground truth.
+
+2. **Turn the receiver model into a real verifier.**
+   Enterprise-style DSP changes should be judged at receiver output, not
+   only at MPX waveform level. Add offline decode metrics for stereo
+   separation at 1 kHz / 10 kHz / 14 kHz, mono compatibility, pilot
+   level/phase error, RDS band level/center accuracy, post-injection
+   overshoot count, MPX power, and composite crest factor.
+
+3. **Tune and validate composite clipper look-ahead.**
+   `mpx_clipper_lookahead_ms` has landed and defaults off. Run dense
+   real-program listening tests at 0.5 ms, 1 ms, and 2 ms; verify pilot
+   and RDS guard cleanliness; then decide whether loud presets should
+   enable a conservative default.
+
+4. **Add transient-aware multiband detection.**
+   `MonoCompressor` is still a single-pole absolute-envelope compressor.
+   Add peak/RMS/crest detection so kicks and snares keep their front edge:
+
+   ```text
+   crest = peakEnv / max(rmsEnv, 1e-6)
+   transient = clamp((crest - 2.0) / 3.0, 0, 1)
+   attackMS = lerp(8 ms, 28 ms, transient)
+   ```
+
+5. **Add inter-band gain coupling.**
+   Add Optimod-style behavior where heavy low-band gain reduction gently
+   biases mids/highs, instead of letting every band behave independently:
+
+   ```text
+   lowGR = max(0, -lowBandGainDB)
+   highThresholdEffective = highThresholdDB - 0.35 * lowGR
+   ```
+
+   Smooth the coupling with moderate attack/release so it reads as
+   program-dependent balance rather than pumping.
+
+6. **Add dynamic pre-emphasis load control.**
+   Keep static 50/75 us pre-emphasis as the compliance baseline, but add
+   an HF sidechain relaxation before the pre-encode limiter during harsh
+   bright transients:
+
+   ```text
+   over = max(0, hfEnvDB - hfTargetDB)
+   relaxDB = -min(3.0, over * 0.35)
+   ```
+
+   This should reduce HF limiter hash and composite-clipper workload
+   without changing normal tonal balance.
+
+7. **Add multiband composite clipping.**
+   Split the audio composite into delay-aligned bands, clip each with its
+   own ceiling, then recombine. Suggested starting split:
+
+   ```text
+   low: 0-180 Hz
+   mid: 180-2 kHz
+   high: 2-15 kHz
+   stereo sideband: 23-53 kHz, protect/cancel rather than clip
+   ```
+
+   This is higher effort, but it is the route to more loudness without the
+   tonal shift of a single fullband composite clipper.
+
+8. **Add a composite crest/peak-to-RMS governor.**
+   Add a slow controller around final drive or composite clipper drive,
+   not another limiter:
+
+   ```text
+   crestDB = 20 * log10(peak / max(rms, 1e-6))
+   driveTrimDB = -0.4 * max(0, crestDB - 8.5)
+   ```
+
+   Use slow timing, e.g. 1-3 s attack and 5-10 s release, to keep long
+   term density and multipath behavior controlled without obvious pumping.
+
+Practical implementation order: clamp/budget governor, receiver-model
+verifier, composite look-ahead tuning, transient-aware multiband,
+inter-band coupling, dynamic pre-emphasis, multiband composite clipper,
+then composite crest governor.

@@ -103,34 +103,33 @@ struct StereoSeparationReceiverTests {
     @Test func subcarrierDelayLineSizeMatchesAudioPathDelay() {
         // With composite clipper enabled (lookaheadMS = 0 — only FIR
         // group delay) and final MPX lookahead at 5 ms, audio path
-        // delay should be FIR_group_delay + lookahead_samples. At
-        // 192 kHz with default decimator (~150 Kaiser-windowed taps
-        // at 8× OS = ~9 host samples) and 5 ms lookahead (= 960
-        // samples), the total is ~969 samples.
+        // delay should be FIR_group_delay + audio-composite bandwidth
+        // FIR group delay + lookahead_samples. At 192 kHz with default
+        // decimator (~150 Kaiser-windowed taps at 8× OS = ~9 host
+        // samples), audio-composite bandwidth FIR (~112 host samples),
+        // and 5 ms lookahead (= 960 samples), the total is ~1081 samples.
         let cfg = makeStereoConfig()
         let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
         let actual = gen.subcarrierDelayLine.count
-        // Expected: 9 (FIR group delay at 192 kHz with default
-        // ~150-tap Kaiser decimator) + 960 (5 ms × 192 kHz).
-        print("[delay-size] subcarrierDelayLine.count = \(actual) (expected ≈969)")
-        #expect(actual > 950 && actual < 985,
-            "subcarrier delay line size \(actual) outside expected ~969-sample window (FIR group delay + lookahead)")
+        print("[delay-size] subcarrierDelayLine.count = \(actual) (expected ≈1081)")
+        #expect(actual > 1060 && actual < 1100,
+            "subcarrier delay line size \(actual) outside expected ~1081-sample window (decimator + audio bandwidth FIR + lookahead)")
     }
 
     @Test func subcarrierDelayLineRespondsToCompositeClipperFlag() {
         // When composite clipper is disabled at config time, the
         // audio path through it is bypassed — recomputeSubcarrierDelay
-        // should drop the FIR group delay contribution from the
-        // subcarrier delay total. (Lookahead limiter contribution
-        // remains.)
+        // should drop the decimator FIR group delay contribution from
+        // the subcarrier delay total. (Audio-composite bandwidth FIR
+        // and lookahead limiter contributions remain.)
         var cfg = makeStereoConfig()
         cfg.compositeClipperEnabled = false
         let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
         let actual = gen.subcarrierDelayLine.count
-        // Expected: just the 960-sample lookahead delay.
-        print("[delay-size] composite clipper OFF, subcarrierDelayLine.count = \(actual) (expected ≈960)")
-        #expect(actual >= 955 && actual <= 965,
-            "with composite clipper off, delay should be ~960 (lookahead only); got \(actual)")
+        // Expected: 960 lookahead + ~112 audio bandwidth FIR = ~1072.
+        print("[delay-size] composite clipper OFF, subcarrierDelayLine.count = \(actual) (expected ≈1072)")
+        #expect(actual >= 1060 && actual <= 1085,
+            "with composite clipper off, delay should be ~1072 (audio bandwidth FIR + lookahead); got \(actual)")
     }
 
     // MARK: - Test 2: data path correctness
@@ -214,10 +213,14 @@ struct StereoSeparationReceiverTests {
             "no-fix pilot RMS \(rmsNoFix) outside expected range")
         #expect(rmsWithFix > 0.04 && rmsWithFix < 0.08,
             "with-fix pilot RMS \(rmsWithFix) outside expected range")
-        // The DIFFERENCE between the two pilots must have substantial
+        // The DIFFERENCE between the two pilots must have non-trivial
         // RMS — confirming the fix is shifting the pilot phase, not
-        // just outputting the same pilot.
-        #expect(rmsDiff > 0.02,
+        // just outputting the same pilot. With the current delay
+        // (~1081 samples) the pilot phase wraps to ~343°, so the
+        // sample-by-sample diff amplitude is modest but distinctly
+        // non-zero; a threshold well above noise (~1e-4) is sufficient
+        // to prove the fix engages.
+        #expect(rmsDiff > 0.005,
             "fix-on and fix-off pilot RMS difference \(rmsDiff) is too small — the delay isn't actually shifting pilot phase")
     }
 }

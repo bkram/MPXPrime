@@ -128,6 +128,8 @@ struct PostInjectionClampTests {
             // Governor must not be marking sane configs as over-budget.
             #expect(!calib.overBudget,
                 "+\(String(gainDB)) dB outputGain should not be flagged over-budget; subcarrier reservation should still fit")
+            #expect(calib.audioPeak < 0.98,
+                "+\(String(gainDB)) dB outputGain should report governed post-gain audio peak; got \(String(calib.audioPeak))")
         }
     }
 
@@ -157,11 +159,9 @@ struct PostInjectionClampTests {
     @Test func silentInputAtHighGainStaysWithinBudget() {
         // Pilot + RDS at +18 dB outputGain alone: pilot 0.08 × 7.94 ≈ 0.63,
         // RDS contribution ≈ 0.32. Even instantaneously they sum well
-        // below ±1.0. The governor recognizes the audio path has no
-        // headroom (overBudget==true), but the subcarriers still inject
-        // cleanly without engaging the final clamp. This is the
-        // canonical "no audio room but pilot/RDS-only path is fine"
-        // case the governor must not mishandle.
+        // below ±1.0. With silent input, the audio path is idle and the
+        // smoothed subcarrier reservation still fits, so this should not
+        // be flagged over-budget and must not engage the final clamp.
         let cfg = makeStereoConfig(outputGainDB: 18.0)
         let calib = renderAndReadCalibration(cfg: cfg, amplitude: 0.0, seconds: 0.2)
         print(String(format: "[silent +18 dB] overshoot=%.6f, audioPeak=%.4f, overBudget=%@",
@@ -170,6 +170,8 @@ struct PostInjectionClampTests {
         // Pilot/RDS combined peak < 1.0 — no clamp engagement.
         #expect(calib.postInjectionOvershoot < 1e-3,
             "silent input + high gain should not engage post-injection clamp; got overshoot=\(String(calib.postInjectionOvershoot))")
+        #expect(!calib.overBudget,
+            "silent input +18 dB should fit pilot/RDS reservation; got overBudget=\(String(describing: calib.overBudget))")
         // Audio path is observably idle.
         #expect(calib.audioPeak < 0.02,
             "silent input should leave audio composite near zero; got audioPeak=\(String(calib.audioPeak))")

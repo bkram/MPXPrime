@@ -23,6 +23,8 @@ struct VerifierBaselineRecord: Codable, Equatable {
     var limiterGRDB: Float
     var safetyGRDB: Float
     var audioCompositePeakDBFS: Float
+    var postInjectionOvershoot: Float
+    var overBudget: Bool
     var pilotPercent: Float
     var rdsPercent: Float
     var budgetMarginDB: Float
@@ -47,7 +49,7 @@ struct VerifierBaselineFile: Codable, Equatable {
     /// Dictionary keyed by scenario name → baseline record.
     var scenarios: [String: VerifierBaselineRecord]
 
-    static let currentSchemaVersion: Int = 1
+    static let currentSchemaVersion: Int = 2
 }
 
 // MARK: - Tolerances
@@ -62,6 +64,7 @@ struct MetricTolerances {
     var limiterGRDB: Float = 0.15
     var safetyGRDB: Float = 0.15
     var audioCompositePeakDBFS: Float = 0.10
+    var postInjectionOvershoot: Float = 0.0001
     var pilotPercent: Float = 0.05
     var rdsPercent: Float = 0.05
     var budgetMarginDB: Float = 0.15
@@ -128,6 +131,7 @@ func compareBaseline(
         Probe(name: "limiterGRDB", unit: "dB", tolerance: tolerances.limiterGRDB, get: { $0.limiterGRDB }),
         Probe(name: "safetyGRDB", unit: "dB", tolerance: tolerances.safetyGRDB, get: { $0.safetyGRDB }),
         Probe(name: "audioCompositePeakDBFS", unit: "dBFS", tolerance: tolerances.audioCompositePeakDBFS, get: { $0.audioCompositePeakDBFS }),
+        Probe(name: "postInjectionOvershoot", unit: "", tolerance: tolerances.postInjectionOvershoot, get: { $0.postInjectionOvershoot }),
         Probe(name: "pilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.pilotPercent }),
         Probe(name: "rdsPercent", unit: "%", tolerance: tolerances.rdsPercent, get: { $0.rdsPercent }),
         Probe(name: "budgetMarginDB", unit: "dB", tolerance: tolerances.budgetMarginDB, get: { $0.budgetMarginDB }),
@@ -180,6 +184,16 @@ func compareBaseline(
                     unit: probe.unit
                 ))
             }
+        }
+        if measuredRec.overBudget != baselineRec.overBudget {
+            findings.append(BaselineDriftFinding(
+                scenarioName: name,
+                metricName: "overBudget",
+                measured: measuredRec.overBudget ? 1.0 : 0.0,
+                baseline: baselineRec.overBudget ? 1.0 : 0.0,
+                tolerance: 0.0,
+                unit: "bool"
+            ))
         }
     }
 

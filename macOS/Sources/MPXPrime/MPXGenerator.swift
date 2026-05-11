@@ -5325,7 +5325,7 @@ final class MPXGenerator {
     /// overshoot. The final post-injection clamp is the last-resort
     /// numeric guard; it should never engage for valid configs.
     private static let finalCompositeBudgetSafetyMargin: Float = 0.02
-    private static let monitorDiffDecodeGain: Float = 1.06
+    private static let monitorDiffDecodeGain: Float = 1.22
 
     private struct EncoderComplianceConfig {
         let programLowpassHz: Float
@@ -5929,6 +5929,7 @@ final class MPXGenerator {
     private var compositeClipperCancelRDS: Bool = true
     private var compositeClipperLookaheadMS: Float = 0.0
     private var compositeClipper = CompositeClipper()
+    private var audioCompositeBandwidthFIR = LinearPhaseFIRLowpass()
 
     // Subcarrier delay line — keeps pilot+RDS phase-aligned with the
     // delayed audio composite. Pilot and the embedded 38 kHz stereo
@@ -5946,6 +5947,8 @@ final class MPXGenerator {
     // same chain delay restores the phase alignment.
     internal var subcarrierDelayLine: [Float] = []
     internal var subcarrierDelayWriteIdx: Int = 0
+    private var stereoSubcarrierDelayLine: [Float] = []
+    private var stereoSubcarrierDelayWriteIdx: Int = 0
 
     private var stereoWidenEnabled: Bool
     private var monoBassEnabled: Bool
@@ -6037,6 +6040,9 @@ final class MPXGenerator {
     private var lastSubcarrierSample: Float = 0.0
     private var audioCompositePeakState: Float = 0.0
     private var audioCompositePeakDecayCoeff: Float = 0.0
+    private var compositeBudgetGain: Float = 1.0
+    private var compositeBudgetGainAttackCoeff: Float = 0.0
+    private var compositeBudgetGainReleaseCoeff: Float = 0.0
     /// Decayed envelope of `max(0, |unclampedMPX| - 1)` — captures how
     /// far the post-injection MPX exceeded the ±1.0 clamp at any
     /// recent sample. Non-zero = pilot/RDS subcarriers are being
@@ -6296,18 +6302,21 @@ final class MPXGenerator {
     }
 
     /// Recompute the pilot+RDS delay-line length so it matches the audio
-    /// composite's total chain delay through composite clipper + final
-    /// MPX limiter look-ahead. Called after any stage configure() that
-    /// could change the audio path delay (init, setSampleRate, runtime
-    /// reconfigure on compositeClipper change).
+    /// composite's total chain delay through audio-composite bandwidth
+    /// cleanup + composite clipper + final MPX limiter look-ahead. Called
+    /// after any stage configure() that could change the audio path delay
+    /// (init, setSampleRate, runtime reconfigure on compositeClipper change).
     private func recomputeSubcarrierDelay() {
         let clipperDelay = compositeClipperEnabled
             ? compositeClipper.totalDelayHostSamples : 0
+        let compositeBandwidthDelay = audioCompositeBandwidthFIR.groupDelaySamples
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
-        let total = clipperDelay + limiterDelay
+        let total = compositeBandwidthDelay + clipperDelay + limiterDelay
         if total != subcarrierDelayLine.count {
             subcarrierDelayLine = [Float](repeating: 0.0, count: total)
             subcarrierDelayWriteIdx = 0
+            stereoSubcarrierDelayLine = [Float](repeating: 0.0, count: total)
+            stereoSubcarrierDelayWriteIdx = 0
         }
     }
 
@@ -6762,6 +6771,12 @@ final class MPXGenerator {
         programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: sampleRate)
         encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: sampleRate)
         encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: sampleRate)
+        audioCompositeBandwidthFIR.configure(
+            cutoffHz: 55_000.0,
+            sampleRate: sampleRate,
+            stopBandDB: 92.0,
+            transitionHz: 5_000.0
+        )
         if preemphasisUS > 0 {
             pilotNotchL.configureNotch(freqHz: 19_000.0, sampleRate: sampleRate, q: 50.0)
             pilotNotchR.configureNotch(freqHz: 19_000.0, sampleRate: sampleRate, q: 50.0)
@@ -6828,6 +6843,9 @@ final class MPXGenerator {
         pilotOsc.configure(freq: pilotFreq, sampleRate: sampleRate)
         let sr = max(8_000.0, sampleRate)
         audioCompositePeakDecayCoeff = expf(-1.0 / (0.250 * sr))
+        compositeBudgetGainAttackCoeff = expf(-1.0 / (0.001 * sr))
+        compositeBudgetGainReleaseCoeff = expf(-1.0 / (0.120 * sr))
+        compositeBudgetGain = 1.0
         // Overshoot envelope decays at ~50 ms so a single transient
         // doesn't immediately disappear from the meter.
         postInjectionOvershootDecayCoeff = expf(-1.0 / (0.050 * sr))
@@ -7869,8 +7887,15 @@ final class MPXGenerator {
             if subcarrierDelayWriteIdx >= subDelayN {
                 subcarrierDelayWriteIdx = 0
             }
+            lastSubcarrierSample = stereoSubcarrierDelayLine[stereoSubcarrierDelayWriteIdx]
+            stereoSubcarrierDelayLine[stereoSubcarrierDelayWriteIdx] = sub
+            stereoSubcarrierDelayWriteIdx += 1
+            if stereoSubcarrierDelayWriteIdx >= subDelayN {
+                stereoSubcarrierDelayWriteIdx = 0
+            }
         } else {
             delayedSubcarriers = subcarriers
+            lastSubcarrierSample = sub
         }
         let reserved = updateSubcarrierReservation(subcarriers)
         let thresholds = Self.makeFinalCompositeThresholds(
@@ -7907,16 +7932,19 @@ final class MPXGenerator {
             )
         }
 
-        let audioCompositeAbs = fabsf(audioComposite)
-        audioCompositePeakState = max(
-            audioCompositeAbs,
-            audioCompositePeakState * audioCompositePeakDecayCoeff
-        )
-
         // Composite clipper: 8x oversampled soft-clip on audio composite.
         if compositeClipperEnabled {
             audioComposite = compositeClipper.process(audioComposite)
         }
+
+        // Audio-composite bandwidth cleanup. Any real program content should
+        // live below the upper stereo sideband, so remove shaper/limiter spill
+        // before pilot/RDS injection. The FIR's group delay is included in
+        // `recomputeSubcarrierDelay()` so subcarriers remain phase-aligned.
+        audioComposite = audioCompositeBandwidthFIR.process(
+            left: audioComposite,
+            right: audioComposite
+        ).0
 
         // BS.412 MPX power limiter — rolling average power limit for EU compliance.
         if bs412Enabled {
@@ -7937,20 +7965,35 @@ final class MPXGenerator {
             }
         }
 
-        // Composite budget governor — hard ceiling on the audio path
-        // at `postLimiterCeiling × outputGain`. The earlier audio-
-        // composite shapers used `postLimiterCeiling` directly, but
-        // the lookahead limiter operates at the engine's threshold
-        // (~0.98) regardless of subcarrier reservation, so audio ×
-        // outputGain can re-rise above the budget. This clamp
-        // enforces the budget invariant before pilot/RDS injection.
-        // For sane configs the audio is already below `audioCeilOut`
-        // and the clamp is a no-op; for over-budget configs it caps
-        // audio so subcarriers can still inject at full amplitude.
+        // Composite budget governor. A smoothed gain ride does the
+        // audible work, reducing only the audio path before pilot/RDS
+        // injection. The hard ceiling remains as a last-sample guard
+        // for attack-time transients and impossible configurations.
         let audioCeilOut = thresholds.postLimiterCeiling * outputGain
+        let audioAbsOut = fabsf(mpx)
+        let budgetTargetGain = audioAbsOut > audioCeilOut
+            ? audioCeilOut / max(1e-9, audioAbsOut)
+            : 1.0
+        compositeBudgetGain = Self.smoothTowardTarget(
+            current: compositeBudgetGain,
+            target: budgetTargetGain,
+            attackCoeff: compositeBudgetGainAttackCoeff,
+            releaseCoeff: compositeBudgetGainReleaseCoeff
+        )
+        mpx *= compositeBudgetGain
         if fabsf(mpx) > audioCeilOut {
             mpx = copysignf(audioCeilOut, mpx)
         }
+
+        // Meter the governed audio path, not the pre-governor composite.
+        // `audioPeak` is reported post-outputGain by
+        // `makeCompositeCalibration`, so store the equivalent pre-gain
+        // value here.
+        let governedAudioPreGainAbs = fabsf(mpx) / max(1e-6, outputGain)
+        audioCompositePeakState = max(
+            governedAudioPreGainAbs,
+            audioCompositePeakState * audioCompositePeakDecayCoeff
+        )
 
         // Inject pilot and RDS after all limiting — constant amplitude.
         // Use the delay-aligned subcarriers so receiver-side stereo

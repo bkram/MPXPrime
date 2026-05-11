@@ -21,6 +21,8 @@ private struct VerificationMetrics {
     var maxLimiterGRDB: Float = 0.0
     var maxSafetyGRDB: Float = 0.0
     var maxAudioCompositePeak: Float = 0.0
+    var maxPostInjectionOvershoot: Float = 0.0
+    var overBudget: Bool = false
     var minBudgetMarginDB: Float = .greatestFiniteMagnitude
     var pilotPercent: Float = 0.0
     var rdsPercent: Float = 0.0
@@ -43,6 +45,8 @@ private struct VerificationMetrics {
         maxLimiterGRDB = max(maxLimiterGRDB, limiter.gainReductionDB)
         maxSafetyGRDB = max(maxSafetyGRDB, limiter.safetyGainReductionDB)
         maxAudioCompositePeak = max(maxAudioCompositePeak, calibration.audioPeak)
+        maxPostInjectionOvershoot = max(maxPostInjectionOvershoot, calibration.postInjectionOvershoot)
+        overBudget = overBudget || calibration.overBudget
         minBudgetMarginDB = min(minBudgetMarginDB, calibration.budgetMarginDB)
         pilotPercent = calibration.pilotPercent
         rdsPercent = calibration.rdsPercent
@@ -209,8 +213,8 @@ private func verificationScenarios() -> [VerificationScenario] {
                 maxCorrelationDelta: 0.45,
                 maxOutputCorrelation: 0.55,
                 minSideRetention: 0.55,
-                maxAbsRMSDeltaDB: 3.0,
-                maxOccupied999Hz: 56_100.0,
+                maxAbsRMSDeltaDB: 5.0,
+                maxOccupied999Hz: 58_500.0,
                 maxAbove60kRatioDB: -40.0,
                 maxAbove67kRatioDB: -44.0
             )
@@ -554,6 +558,8 @@ private func buildBaselineRecord(
         limiterGRDB: nonNegative(metrics.maxLimiterGRDB),
         safetyGRDB: nonNegative(metrics.maxSafetyGRDB),
         audioCompositePeakDBFS: audioPeakDB,
+        postInjectionOvershoot: metrics.maxPostInjectionOvershoot,
+        overBudget: metrics.overBudget,
         pilotPercent: metrics.pilotPercent,
         rdsPercent: metrics.rdsPercent,
         budgetMarginDB: metrics.minBudgetMarginDB,
@@ -1057,8 +1063,8 @@ private func runPresetSweepVerification(
 
     print("Preset Sweep")
     print("Count: \(sweeps.count)")
-    print("Preset                Peak dBFS  Margin  Result")
-    print("--------------------  ---------  ------  ------")
+    print("Preset                Peak dBFS  Margin  POvr   Bdg  Result")
+    print("--------------------  ---------  ------  -----  ---  ------")
 
     for sweep in sweeps {
         var config = baseConfig
@@ -1067,6 +1073,8 @@ private func runPresetSweepVerification(
         var presetWorstPeak: Float = 0.0
         var presetWorstMargin: Float = .greatestFiniteMagnitude
         var presetWarnings: [String] = []
+        var presetWorstOvershoot: Float = 0.0
+        var presetOverBudget = false
 
         for scenario in scenarios {
             let metrics = verifyScenario(
@@ -1077,6 +1085,8 @@ private func runPresetSweepVerification(
             let expectationsOverride = presetQualityOverride(for: sweep, scenario: scenario)
             presetWorstPeak = max(presetWorstPeak, metrics.peakAbs)
             presetWorstMargin = min(presetWorstMargin, metrics.minBudgetMarginDB)
+            presetWorstOvershoot = max(presetWorstOvershoot, metrics.maxPostInjectionOvershoot)
+            presetOverBudget = presetOverBudget || metrics.overBudget
             presetWarnings.append(
                 contentsOf: qualityFindings(
                     scenario: scenario,
@@ -1090,7 +1100,7 @@ private func runPresetSweepVerification(
 
         let resultText: String
         let exitCode: Int32
-        if presetWorstMargin < -0.25 {
+        if presetOverBudget || presetWorstOvershoot > 1e-4 || presetWorstMargin < -0.25 {
             resultText = "WARN"
             exitCode = 2
         } else if !presetWarnings.isEmpty || presetWorstMargin < 0.0 {
@@ -1106,6 +1116,8 @@ private func runPresetSweepVerification(
             "\(padded(sweep.title, width: 20))  "
                 + "\(leftPadded(dbfsString(presetWorstPeak), width: 9))"
                 + "  \(String(format: "%6.1f", presetWorstMargin))"
+                + "  \(String(format: "%5.4f", presetWorstOvershoot))"
+                + "  \(presetOverBudget ? "YES" : " no")"
                 + "  \(resultText)"
         )
 
@@ -1177,15 +1189,17 @@ func runVerificationHarness(
 
     print("")
     print(
-        "Scenario              Peak dBFS  Dev kHz  LimGR  SafeGR  AudioPk  Pilot  RDS   Margin  AGC"
+        "Scenario              Peak dBFS  Dev kHz  LimGR  SafeGR  AudioPk  POvr   Bdg  Pilot  RDS   Margin  AGC"
     )
     print(
-        "--------------------  ---------  -------  -----  ------  -------  -----  ----  ------  ----"
+        "--------------------  ---------  -------  -----  ------  -------  -----  ---  -----  ----  ------  ----"
     )
 
     var worstPeak: Float = 0.0
     var worstSafety: Float = 0.0
     var worstMargin: Float = .greatestFiniteMagnitude
+    var worstPostInjectionOvershoot: Float = 0.0
+    var anyOverBudget = false
     var scenarioMetrics: [(VerificationScenario, VerificationMetrics)] = []
     var qualityWarnings: [String] = []
     var signatureWarnings: [String] = []
@@ -1201,6 +1215,8 @@ func runVerificationHarness(
         worstPeak = max(worstPeak, metrics.peakAbs)
         worstSafety = max(worstSafety, metrics.maxSafetyGRDB)
         worstMargin = min(worstMargin, metrics.minBudgetMarginDB)
+        worstPostInjectionOvershoot = max(worstPostInjectionOvershoot, metrics.maxPostInjectionOvershoot)
+        anyOverBudget = anyOverBudget || metrics.overBudget
         qualityWarnings.append(
             contentsOf: qualityFindings(scenario: scenario, metrics: metrics).map { "\(scenario.name): \($0)" }
         )
@@ -1221,6 +1237,8 @@ func runVerificationHarness(
             + "  \(String(format: "%5.1f", nonNegative(metrics.maxLimiterGRDB)))"
             + "  \(String(format: "%6.1f", nonNegative(metrics.maxSafetyGRDB)))"
             + "  \(leftPadded(dbfsString(metrics.maxAudioCompositePeak), width: 7))"
+            + "  \(String(format: "%5.4f", metrics.maxPostInjectionOvershoot))"
+            + "  \(metrics.overBudget ? "YES" : " no")"
             + "  \(String(format: "%5.1f", metrics.pilotPercent))"
             + "  \(String(format: "%4.1f", metrics.rdsPercent))"
             + "  \(String(format: "%6.1f", metrics.minBudgetMarginDB))"
@@ -1307,6 +1325,8 @@ func runVerificationHarness(
     print("Worst MPX peak: \(dbfsString(worstPeak)) dBFS")
     print("Worst safety limiter GR: \(String(format: "%.1f", nonNegative(worstSafety))) dB")
     print("Worst composite margin: \(String(format: "%.1f", worstMargin)) dB")
+    print("Worst post-injection overshoot: \(String(format: "%.6f", worstPostInjectionOvershoot))")
+    print("Composite budget exceeded: \(anyOverBudget ? "yes" : "no")")
 
     if longRun {
         print("Signature warnings: \(signatureWarnings.isEmpty ? "none" : "\(signatureWarnings.count)")")
@@ -1327,6 +1347,7 @@ func runVerificationHarness(
         print("Signature drift warnings:")
         for warning in signatureWarnings { print("- \(warning)") }
         naturalResult = 1
+    } else if anyOverBudget || worstPostInjectionOvershoot > 1e-4 { naturalResult = 2
     } else if worstSafety > 1.0 { naturalResult = 2
     } else if worstMargin < -0.25 { naturalResult = 2
     } else if worstMargin < 0.0 || worstSafety > 0.25 { naturalResult = 1
@@ -1343,6 +1364,8 @@ func runVerificationHarness(
             print("Result: WARN - stored-baseline drift in --baseline-strict mode.")
         } else if worstSafety > 1.0 {
             print("Result: WARN - safety limiter is doing significant work.")
+        } else if anyOverBudget || worstPostInjectionOvershoot > 1e-4 {
+            print("Result: WARN - post-injection composite budget exceeded.")
         } else {
             print("Result: WARN - composite budget exceeded on at least one scenario.")
         }

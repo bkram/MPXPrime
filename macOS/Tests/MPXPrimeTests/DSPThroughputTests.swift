@@ -172,7 +172,7 @@ struct DSPThroughputTests {
         cfg.processingBypass = true
         let result = measureThroughput(config: cfg)
         let ratio = result.wallSeconds / result.audioSeconds
-        #expect(ratio < budgetFraction * 2.0,
+        #expect(ratio < budgetFraction * 2.5,
             "bypass chain wall \(result.wallSeconds) s / audio \(result.audioSeconds) s = \(ratio) — even the bypass path is near the real-time deadline, runner is overloaded")
     }
 

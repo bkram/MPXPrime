@@ -217,21 +217,194 @@ struct OversampledPeakLimiter {
     }
 }
 
+/// Stereo-linked variant of OversampledPeakLimiter. Shared gain
+/// envelope driven by `max(|L_os|, |R_os|)` at OS rate; per-channel
+/// Lagrange interpolation and decimation filter.
+///
+/// Replaces the prior per-channel limiter pair (one OversampledPeakLimiter
+/// per channel) which made independent gain decisions and produced an
+/// asymmetric image on hard-panned content — the chain-order audit
+/// recorded a +15 dB side-to-mid blowup on the synthetic-pathological
+/// `hard_panned_hf` scenario in 0.25. Stereo-linked detection applies
+/// the same GR to both channels, so L/R relative balance is preserved
+/// even when one channel peaks asymmetrically.
+///
+/// For monaural input (L = R) the output is bit-identical to two
+/// OversampledPeakLimiter instances on each channel.
+struct StereoLinkedOversampledPeakLimiter {
+    var threshold: Float = 0.94
+    var releaseMS: Float = 35.0
+    var ceiling: Float = 0.985
+
+    // Shared envelope state (the load-bearing change vs the prior pair
+    // of independent OversampledPeakLimiters: same gain for both L/R).
+    private var gain: Float = 1.0
+    private var attackCoeff: Float = 0.0
+    private var releaseCoeff: Float = 0.0
+    private var holdSamples: Int = 0
+    private var holdCounter: Int = 0
+
+    // Per-channel Lagrange-4 interpolator state
+    private var lPrev3: Float = 0.0
+    private var lPrev2: Float = 0.0
+    private var lPrev1: Float = 0.0
+    private var rPrev3: Float = 0.0
+    private var rPrev2: Float = 0.0
+    private var rPrev1: Float = 0.0
+    // Per-channel decimation low-pass (same 12th-order Butterworth
+    // cascade as OversampledPeakLimiter)
+    private var lDecimLP = BiquadCascade6()
+    private var rDecimLP = BiquadCascade6()
+    private var initialized: Bool = false
+
+    mutating func configure(sampleRate: Float, threshold: Float, releaseMS: Float = 35.0) {
+        let sr = max(8_000.0, sampleRate * 4.0)
+        self.threshold = clampf(threshold, 0.75, 0.995)
+        self.releaseMS = max(8.0, releaseMS)
+        let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
+        ceiling = min(0.999, self.threshold + ceilingMargin)
+
+        let attackS = 0.00025 as Float
+        let relS = max(0.008, Double(self.releaseMS) * 0.001)
+        attackCoeff = expf(-1.0 / (attackS * sr))
+        releaseCoeff = expf(-1.0 / Float(relS * Double(sr)))
+        holdSamples = max(1, Int((0.004 * sr).rounded()))
+        holdCounter = 0
+        gain = 1.0
+        lPrev3 = 0.0; lPrev2 = 0.0; lPrev1 = 0.0
+        rPrev3 = 0.0; rPrev2 = 0.0; rPrev1 = 0.0
+        let cutoff = min(sampleRate * 0.30, (sr * 0.5) - 1_000.0)
+        let cutoffHz = max(12_000.0 as Float, cutoff)
+        lDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
+        rDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
+        initialized = false
+    }
+
+    mutating func process(left: Float, right: Float) -> (Float, Float) {
+        if !initialized {
+            initialized = true
+            lPrev3 = left; lPrev2 = left; lPrev1 = left
+            rPrev3 = right; rPrev2 = right; rPrev1 = right
+            let (qL, qR) = stereoStep(lOS: left, rOS: right)
+            return (decimate(qL, qL, qL, qL, ch: .left),
+                    decimate(qR, qR, qR, qR, ch: .right))
+        }
+
+        // 4x upsample both channels via Lagrange interp.
+        let l1 = interpolateLagrange4(t: 0.25, current: left,
+                                      p3: lPrev3, p2: lPrev2, p1: lPrev1)
+        let l2 = interpolateLagrange4(t: 0.50, current: left,
+                                      p3: lPrev3, p2: lPrev2, p1: lPrev1)
+        let l3 = interpolateLagrange4(t: 0.75, current: left,
+                                      p3: lPrev3, p2: lPrev2, p1: lPrev1)
+        let l4 = left
+        let r1 = interpolateLagrange4(t: 0.25, current: right,
+                                      p3: rPrev3, p2: rPrev2, p1: rPrev1)
+        let r2 = interpolateLagrange4(t: 0.50, current: right,
+                                      p3: rPrev3, p2: rPrev2, p1: rPrev1)
+        let r3 = interpolateLagrange4(t: 0.75, current: right,
+                                      p3: rPrev3, p2: rPrev2, p1: rPrev1)
+        let r4 = right
+
+        // Stereo-linked gain step at each OS position. Same gain
+        // applied to both channels each step.
+        let (qL1, qR1) = stereoStep(lOS: l1, rOS: r1)
+        let (qL2, qR2) = stereoStep(lOS: l2, rOS: r2)
+        let (qL3, qR3) = stereoStep(lOS: l3, rOS: r3)
+        let (qL4, qR4) = stereoStep(lOS: l4, rOS: r4)
+
+        let outL = decimate(qL1, qL2, qL3, qL4, ch: .left)
+        let outR = decimate(qR1, qR2, qR3, qR4, ch: .right)
+
+        lPrev3 = lPrev2; lPrev2 = lPrev1; lPrev1 = left
+        rPrev3 = rPrev2; rPrev2 = rPrev1; rPrev1 = right
+        return (outL, outR)
+    }
+
+    var gainReductionDB: Float {
+        let safeGain = max(1e-6, gain)
+        return max(0.0, -20.0 * log10f(safeGain))
+    }
+
+    @inline(__always)
+    private mutating func stereoStep(lOS: Float, rOS: Float) -> (Float, Float) {
+        // Stereo-linked detector: peak of either channel drives the
+        // shared gain envelope. This is the core of the stereo-link
+        // discipline — both channels see the same multiplicative gain.
+        let peak = max(fabsf(lOS), fabsf(rOS))
+        var targetGain: Float = 1.0
+        if peak > threshold {
+            targetGain = threshold / max(1e-9, peak)
+        }
+        targetGain = clampf(targetGain, 0.0, 1.0)
+
+        if targetGain < gain {
+            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * targetGain)
+            holdCounter = holdSamples
+        } else if holdCounter > 0 {
+            holdCounter -= 1
+        } else {
+            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * targetGain)
+        }
+
+        let yL = lOS * gain
+        let yR = rOS * gain
+        return (clipToCeiling(yL), clipToCeiling(yR))
+    }
+
+    @inline(__always)
+    private func interpolateLagrange4(t: Float, current: Float,
+                                      p3: Float, p2: Float, p1: Float) -> Float {
+        // Same Lagrange-4 coefficients as OversampledPeakLimiter's
+        // internal helper — causal 4-point reconstruction.
+        let l0 = -((t + 1.0) * t * (t - 1.0)) / 6.0
+        let l1 = ((t + 2.0) * t * (t - 1.0)) * 0.5
+        let l2 = -((t + 2.0) * (t + 1.0) * (t - 1.0)) * 0.5
+        let l3 = ((t + 2.0) * (t + 1.0) * t) / 6.0
+        return (p3 * l0) + (p2 * l1) + (p1 * l2) + (current * l3)
+    }
+
+    private enum Channel { case left, right }
+
+    @inline(__always)
+    private mutating func decimate(_ q1: Float, _ q2: Float, _ q3: Float, _ q4: Float,
+                                   ch: Channel) -> Float {
+        switch ch {
+        case .left:
+            _ = lDecimLP.process(q1)
+            _ = lDecimLP.process(q2)
+            _ = lDecimLP.process(q3)
+            return lDecimLP.process(q4)
+        case .right:
+            _ = rDecimLP.process(q1)
+            _ = rDecimLP.process(q2)
+            _ = rDecimLP.process(q3)
+            return rDecimLP.process(q4)
+        }
+    }
+
+    @inline(__always)
+    private func clipToCeiling(_ x: Float) -> Float {
+        let ax = fabsf(x)
+        if ax <= threshold { return x }
+        let knee = max(1e-4, ceiling - threshold)
+        let clipped = threshold + ((ceiling - threshold) * tanhf((ax - threshold) / knee))
+        return copysignf(min(clipped, ceiling), x)
+    }
+}
+
 struct PreEncodeAudioLimiter {
-    private var limiterL = OversampledPeakLimiter()
-    private var limiterR = OversampledPeakLimiter()
+    private var limiter = StereoLinkedOversampledPeakLimiter()
     private var gainReduction: Float = 0.0
 
     mutating func configure(sampleRate: Float, threshold: Float, releaseMS: Float = 50.0) {
-        limiterL.configure(sampleRate: sampleRate, threshold: threshold, releaseMS: releaseMS)
-        limiterR.configure(sampleRate: sampleRate, threshold: threshold, releaseMS: releaseMS)
+        limiter.configure(sampleRate: sampleRate, threshold: threshold, releaseMS: releaseMS)
         gainReduction = 0.0
     }
 
     mutating func process(left: Float, right: Float) -> (Float, Float) {
-        let outL = limiterL.process(left)
-        let outR = limiterR.process(right)
-        gainReduction = max(limiterL.gainReductionDB, limiterR.gainReductionDB)
+        let (outL, outR) = limiter.process(left: left, right: right)
+        gainReduction = limiter.gainReductionDB
         return (outL, outR)
     }
 

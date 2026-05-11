@@ -68,6 +68,11 @@ final class AudioOutputEngine {
         var rdsInjectionPercent: Float
         var audioCompositePeak: Float
         var compositeBudgetMarginDB: Float
+        /// Post-injection overshoot envelope — non-zero means the chain
+        /// is operating over-budget at the operator's current config
+        /// (output gain × subcarrier reservation > 1.0). Surfaces what
+        /// would otherwise be silent pilot/RDS distortion.
+        var postInjectionOvershoot: Float
         var outputStereoCorrelation: Float
         var outputSideToMidRatio: Float
     }
@@ -141,6 +146,7 @@ final class AudioOutputEngine {
         rdsInjectionPercent: 0.0,
         audioCompositePeak: 0.0,
         compositeBudgetMarginDB: 0.0,
+        postInjectionOvershoot: 0.0,
         outputStereoCorrelation: 1.0,
         outputSideToMidRatio: 0.0
     )
@@ -542,6 +548,7 @@ final class AudioOutputEngine {
         meterSnapshot.rdsInjectionPercent = 0.0
         meterSnapshot.audioCompositePeak = 0.0
         meterSnapshot.compositeBudgetMarginDB = 0.0
+        meterSnapshot.postInjectionOvershoot = 0.0
         meterSnapshot.outputStereoCorrelation = 1.0
         meterSnapshot.outputSideToMidRatio = 0.0
         meterSnapshot.liveInputPeak = 0.0
@@ -1299,6 +1306,7 @@ final class AudioOutputEngine {
         meterSnapshot.rdsInjectionPercent = calibration.rdsPercent
         meterSnapshot.audioCompositePeak = calibration.audioPeak
         meterSnapshot.compositeBudgetMarginDB = calibration.budgetMarginDB
+        meterSnapshot.postInjectionOvershoot = calibration.postInjectionOvershoot
         if outputPeak > pendingOutputPeak {
             pendingOutputPeak = outputPeak
         }

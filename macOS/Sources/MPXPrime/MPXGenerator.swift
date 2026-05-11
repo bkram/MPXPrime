@@ -5286,6 +5286,14 @@ final class MPXGenerator {
         let rdsPercent: Float
         let audioPeak: Float
         let budgetMarginDB: Float
+        /// Post-injection overshoot envelope: the maximum amount by
+        /// which `audioComposite·outputGain + subcarriers·outputGain`
+        /// exceeds the ±1.0 clamp at the final MPX output, decayed at
+        /// ~50 ms. Should be 0.0 in normal operation — non-zero means
+        /// pilot/RDS subcarriers are being clipped at the final clamp,
+        /// destroying the constant-amplitude invariant. Operationally
+        /// reportable as a warning condition.
+        let postInjectionOvershoot: Float
     }
 
     private struct FinalCompositeThresholds {
@@ -5296,8 +5304,17 @@ final class MPXGenerator {
 
     private static let finalCompositePreLimiterHeadroom: Float = 0.040
     private static let finalCompositePostLimiterHeadroom: Float = 0.030
-    private static let finalCompositePreLimiterFloor: Float = 0.18
-    private static let finalCompositePostLimiterFloor: Float = 0.16
+    // Numeric-safety floor only — kept low so the audio composite
+    // ceiling actually shrinks to fit subcarrier reservation when
+    // outputGain is pushed high. The previous 0.18 / 0.16 floors
+    // kept audio above the budget when pilot/RDS reservation could
+    // not fit, then the post-injection clamp silently distorted the
+    // supposedly constant-amplitude subcarriers (Finding #3 in the
+    // 2026-05 chain audit). When the unclipped ceiling falls below
+    // this floor the chain is over-budget — `postInjectionOvershoot`
+    // telemetry surfaces the condition.
+    private static let finalCompositePreLimiterFloor: Float = 0.02
+    private static let finalCompositePostLimiterFloor: Float = 0.02
     private static let monitorDiffDecodeGain: Float = 1.06
 
     private struct EncoderComplianceConfig {
@@ -6010,6 +6027,13 @@ final class MPXGenerator {
     private var lastSubcarrierSample: Float = 0.0
     private var audioCompositePeakState: Float = 0.0
     private var audioCompositePeakDecayCoeff: Float = 0.0
+    /// Decayed envelope of `max(0, |unclampedMPX| - 1)` — captures how
+    /// far the post-injection MPX exceeded the ±1.0 clamp at any
+    /// recent sample. Non-zero = pilot/RDS subcarriers are being
+    /// clipped at the final clamp (the constant-amplitude invariant
+    /// is broken). See Finding #3 in the chain audit.
+    private var postInjectionOvershootEnv: Float = 0.0
+    private var postInjectionOvershootDecayCoeff: Float = 0.0
     private var subcarrierReservationEnv: Float = 0.0
     private var subcarrierReservationAttackCoeff: Float = 0.0
     private var subcarrierReservationReleaseCoeff: Float = 0.0
@@ -6774,7 +6798,8 @@ final class MPXGenerator {
             pilotPercent: monoMode ? 0.0 : pilotInjectionPercent,
             rdsPercent: monoMode ? 0.0 : rdsInjectionPercent,
             audioPeak: calibration.audioPeak,
-            budgetMarginDB: calibration.budgetMarginDB
+            budgetMarginDB: calibration.budgetMarginDB,
+            postInjectionOvershoot: postInjectionOvershootEnv
         )
     }
 
@@ -6783,6 +6808,9 @@ final class MPXGenerator {
         pilotOsc.configure(freq: pilotFreq, sampleRate: sampleRate)
         let sr = max(8_000.0, sampleRate)
         audioCompositePeakDecayCoeff = expf(-1.0 / (0.250 * sr))
+        // Overshoot envelope decays at ~50 ms so a single transient
+        // doesn't immediately disappear from the meter.
+        postInjectionOvershootDecayCoeff = expf(-1.0 / (0.050 * sr))
         subcarrierReservationAttackCoeff = expf(-1.0 / (0.0005 * sr))
         subcarrierReservationReleaseCoeff = expf(-1.0 / (0.012 * sr))
         encoderHFGuardEnv = 0.0
@@ -7894,6 +7922,17 @@ final class MPXGenerator {
         // demod sees pilot phase consistent with the audio composite's
         // internal 38 kHz subcarrier modulation.
         mpx += delayedSubcarriers * outputGain
+
+        // Telemetry: measure how far the unclamped MPX exceeds ±1.0.
+        // Non-zero envelope ⇒ pilot/RDS are being clipped at the
+        // final clamp, breaking the constant-amplitude subcarrier
+        // invariant. Reported through `CompositeCalibrationStatus`
+        // so operators / verifier can detect over-budget config.
+        let overshoot = max(0.0, fabsf(mpx) - 1.0)
+        postInjectionOvershootEnv = max(
+            overshoot,
+            postInjectionOvershootEnv * postInjectionOvershootDecayCoeff
+        )
 
         return clampf(mpx, -1.0, 1.0)
     }

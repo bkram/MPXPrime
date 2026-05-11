@@ -1621,6 +1621,12 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var rdsInjectionPercentValue: Float = 0.0
     @Published var audioCompositePeakLinear: Float = 0.0
     @Published var compositeBudgetMarginDBValue: Float = 0.0
+    /// Post-injection overshoot envelope (from `CompositeCalibrationStatus`).
+    /// Non-zero ⇒ pilot/RDS subcarriers are clipping at the final
+    /// ±1.0 clamp because audio + subcarrier × outputGain exceeds
+    /// budget. UI surfaces this as an over-budget warning so the
+    /// operator can reduce outputGain / pilot / RDS levels.
+    @Published var postInjectionOvershootValue: Float = 0.0
     @Published var compositeClipperGainReductionDBValue: Float = 0.0
     @Published var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
     @Published var preEncodeLimiterGainReductionDBValue: Float = 0.0
@@ -2762,6 +2768,7 @@ final class MPXPrimeViewModel: ObservableObject {
         var rdsInjectionPercent: Float = 0.0
         var audioCompositePeak: Float = 0.0
         var compositeBudgetMarginDB: Float = 0.0
+        var postInjectionOvershoot: Float = 0.0
         var outputStereoCorrelation: Float = 1.0
         var outputSideToMidRatio: Float = 0.0
         var health = MonitoringStreamHealth.stopped
@@ -2895,6 +2902,7 @@ final class MPXPrimeViewModel: ObservableObject {
             rdsInjectionPercent = meters.rdsInjectionPercent
             audioCompositePeak = meters.audioCompositePeak
             compositeBudgetMarginDB = meters.compositeBudgetMarginDB
+            postInjectionOvershoot = meters.postInjectionOvershoot
             outputStereoCorrelation = meters.outputStereoCorrelation
             outputSideToMidRatio = meters.outputSideToMidRatio
 
@@ -2961,6 +2969,7 @@ final class MPXPrimeViewModel: ObservableObject {
             rdsInjectionPercentValue = 0.0
             audioCompositePeakLinear = 0.0
             compositeBudgetMarginDBValue = 0.0
+            postInjectionOvershootValue = 0.0
             compositeClipperGainReductionDBValue = 0.0
             compositeClipperLookaheadGainReductionDBValue = 0.0
             preEncodeLimiterGainReductionDBValue = 0.0
@@ -3078,6 +3087,7 @@ final class MPXPrimeViewModel: ObservableObject {
         rdsInjectionPercentValue = rdsInjectionPercent
         audioCompositePeakLinear = audioCompositePeak
         compositeBudgetMarginDBValue = compositeBudgetMarginDB
+        postInjectionOvershootValue = postInjectionOvershoot
         compositeClipperGainReductionDBValue = compositeClipperGainReductionDB
         compositeClipperLookaheadGainReductionDBValue = compositeClipperLookaheadGainReductionDB
         preEncodeLimiterGainReductionDBValue = preEncodeAudioLimiterGainReductionDB

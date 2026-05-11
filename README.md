@@ -23,7 +23,7 @@ MPX Prime is an independent open-source project. Names referenced in this README
 ## Current app structure
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
-- `Processing`: Overview, Core, AGC, Phase Rotator, Parametric EQ, PrimeBass, Stereo Widener, Multiband, MB Limiter, Expander, Bass Clipper, DC Clipper, Audio Limiter, BS.412, Composite Clipper, Final Stage
+- `Processing`: Overview, Core, AGC, Phase Rotator, Parametric EQ, PrimeBass, Stereo Widener, Multiband, MB Limiter, Expander, Bass Clipper, DC Clipper, Audio Limiter, BS.412, Composite Clipper (optional look-ahead peak control on top of the soft-clipper), Final Stage
 - `RDS`: control (master enable + injection + live status + runtime flags), identity (PI / PTY / PTYN / ECC + PS banks), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (physical layer)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, audio engine, spectrum options
@@ -44,9 +44,9 @@ transport restart since they reconfigure the modulator.
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
 - Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
 - Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing
-- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled true-peak limiter), feeding the 8× oversampled composite clipper with live clipper telemetry
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter), feeding the 8× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control) with live clipper telemetry
 - TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
-- Composite budget telemetry with pilot/RDS/audio visibility and safety-limiter readout
+- Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
 - Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
 - Decoded MPX monitor output on a selectable monitor device

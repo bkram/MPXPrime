@@ -9,6 +9,33 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
+## 0.26 — unreleased
+
+### DSP — composite peak control + chain integrity
+
+- **Composite clipper look-ahead peak control.** New OS-rate (1.536 MHz at 192 kHz × 8) sliding-window-max detector with Lagrange-interpolated intersample-peak detection feeding an exponential-attack / exponential-release gain envelope smoothed by a 200 Hz one-pole LP. Gain is applied identically to both `up` (clipper input) and the per-band `orig*` filters so the differential topology's per-band cancellation linearity holds. Single INI knob `mpx_clipper_lookahead_ms` (0.0–5.0 ms, default 0.0 disabled, recommended 2.0). Separate `lookaheadGainReductionDB` telemetry distinguishes clean predictive ducking from soft-clip distortion-producing GR. Sources: US 5,737,434 (Orban 4 ms look-ahead, expired ~2017), US 6,434,241 (Orban half-cosine FM peak control, expired 2014), Lemire monotonic deque (sliding-window-max), Signalsmith / musicdsp.org #274 — every primitive expired or public-domain.
+- **Composite budget governor — post-injection clamp no longer reachable for sane configs.** `MPXGenerator.makeFinalCompositeThresholds(outputGain:threshold:reserved:)` now derives `allowedAudioAbs = max(0, effectiveThreshold - reserved - safetyMargin)` and an `overBudget: Bool` flag. The previous `0.18` / `0.16` audio-composite hard floors are gone; a single `finalCompositeBudgetSafetyMargin = 0.02` remains. `processFinalComposite` enforces `audioCeilOut = postLimiterCeiling × outputGain` as a smoothed gain ride on the audio path *before* pilot/RDS injection — the audible work is done by the smoothed ride (separate attack/release time constants), and a hard ceiling remains as a last-sample guard for attack transients. The final `clampf(mpx, -1, 1)` stays only as a numeric guard. `CompositeCalibrationStatus.overBudget` re-derives from current outputGain + smoothed subcarrier reservation envelope and surfaces to UI / verifier. Tests pin `postInjectionOvershoot < 1e-4` for default and `< 1e-2` for hot-but-sane (+6/+12 dB); pathological (+24 dB) classifies explicitly as `overBudget == true` rather than silently relying on the final clamp.
+- **Pilot/RDS subcarrier delay alignment.** New `subcarrierDelayLine` host-rate ring buffer delays pilot+RDS by the composite clipper's total delay plus the final lookahead-limiter lookahead samples. `recomputeSubcarrierDelay()` sizes the line dynamically from the active stage delays so the receiver-side pilot-derived 38 kHz reference aligns with the audio composite's internal subcarrier modulation. Closes a long-standing receiver-side stereo-decode degradation where the 38 kHz reference was time-shifted relative to the audio L−R sidebands. `StereoSeparationReceiverTests` covers delay sizing, composite-clipper flag response, MPX output difference, and silent-input pilot phase shift.
+- **Audio composite bandwidth FIR.** New linear-phase FIR cleanup stage between BS.412 and the safety limiter strips shaper/limiter spill that would otherwise live above the upper stereo sideband. Its group delay (~112 host samples at 192 kHz) folds into `recomputeSubcarrierDelay()` so subcarriers remain phase-aligned automatically.
+- **Audio-peak metric is now post-governor.** `audioCompositePeakState` capture moved to *after* the budget governor clamp, storing the governed pre-outputGain value. `CompositeCalibrationStatus.audioPeak` now reports the post-governor MPX-scale audio peak — the metric finally reflects what is delivered to the MPX output (was previously a pre-clamp internal value that could exceed 1.0 at hot gains).
+- **Stereo-linked PreEncodeAudioLimiter.** New `StereoLinkedOversampledPeakLimiter` replaces the per-channel `OversampledPeakLimiter` pair. Detector uses `max(|L|, |R|)` so both channels receive identical gain reduction — eliminates the asymmetric-pumping artifact the per-channel pair produced when one channel briefly exceeded threshold. Pre-encode limiter threshold/release are now in `RuntimeConfig` (`preEncodeThreshold`, `preEncodeReleaseMS`) and re-applied live via `MPXGenerator.applyRuntimeConfig`. `PreEncodeLimiterLiveApplyTests` verifies both edits without restarting the generator.
+
+### Verifier
+
+- **`worstPostInjectionOvershoot` and `compositeBudgetExceeded` exposed as first-class verifier signals.** `VerificationHarness` and the `--verify` / `--verify-presets` / `--verify-long` reports now print these per scenario; the baseline JSON file carries them so `--baseline-strict` flags regressions in the post-injection budget invariant.
+
+### Tests
+
+- **+5 lookahead unit tests** (`CompositeClipperLookaheadTests`): overshoot bound at 2 ms lookahead (`max(|out|) ≤ ceilingLin × 1.005`), steady-state transparency on pink noise, pilot/stereo/RDS guard regression coverage with lookahead on, cross-domain cancellation regression catching asymmetric per-band gain leak, and latency reporting (`compositeClipper.totalDelayHostSamples` correctness for 0/1/2/3/5 ms).
+- **+4 receiver-side stereo separation regression tests** (`StereoSeparationReceiverTests`).
+- **+4 post-injection clamp budget tests** (`PostInjectionClampTests`): default config zero-overshoot acceptance, hot-but-sane settings (`audioPeak < 0.98`, `overshoot < 1e-2`, `!overBudget`), pathological config (`overBudget == true`), silent-input + high-gain path stays clean.
+- **+2 pre-encode limiter live-apply tests** (`PreEncodeLimiterLiveApplyTests`).
+- **Permanent WAV-capture test infrastructure.** New `Support/WAVExport.swift` (32-bit float WAV writer) and `Support/AuditCaptureDriver.swift` (env-gated `MPXPRIME_AUDIT_CAPTURE=1` orchestrator with scenario generators: bright_dense, program_mix, hard_panned_hf, dense_pop, classical_orchestral, sparse_acoustic, spoken_word). Captures land in `macOS/.audit-out/<audit-name>/<arrangement>/<scenario>/{demod,mpx}-<arrangement>.wav` and are reusable for future audits (preset tuning, multiband Phase 2).
+
+### Docs
+
+- **FUTURE.md and plan.md updated:** composite clipper look-ahead, pilot/RDS delay alignment, post-injection clamp fix, and pre-encode limiter live-apply marked LANDED.
+
 ## 0.25 — 2026-05-10
 
 ### DSP — chain-order modernization

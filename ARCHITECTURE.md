@@ -73,8 +73,12 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │        so the limiter peak-controls the +10..12 dB HF-boosted signal
 │        (canonical Optimod / Stereotool placement)
 │
-├──► Pre-encode audio limiter (L/R domain, per-channel oversampled)
-│    └── True-peak limiter on L/R before stereo encoding
+├──► Pre-encode audio limiter (L/R domain, stereo-linked oversampled)
+│    └── True-peak limiter on L/R before stereo encoding —
+│        `StereoLinkedOversampledPeakLimiter` uses a max(|L|, |R|)
+│        detector so both channels receive identical gain reduction
+│        (no asymmetric pumping). Threshold + release live-applied
+│        via `RuntimeConfig`.
 │
 
 ├──► Stereo encoder (phase-coherent)
@@ -91,15 +95,29 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │    ├── Final Drive (audio-composite domain)
 │    ├── Composite clipper (8x oversampled tanh soft-clip, delta-based
 │    │   per-band substitution: pilot/stereo/RDS guards kept clean via
-│    │   bandpass-isolated clip-residual subtraction; vvtanhf-batched)
+│    │   bandpass-isolated clip-residual subtraction; vvtanhf-batched;
+│    │   optional OS-rate sliding-window-max look-ahead peak control
+│    │   gated by `mpx_clipper_lookahead_ms`)
+│    ├── Audio composite bandwidth FIR (linear-phase cleanup before
+│    │   pilot/RDS injection — group delay folded into the subcarrier
+│    │   delay line so phase alignment is preserved)
 │    ├── BS.412 MPX power limiter (optional, EU regulatory compliance)
 │    │   Rolling 60-second average power measurement with slow gain reduction
-│    ├── MPX output calibration
-│    └── Final-MPX safety limiter (audio composite only — no pilot, no RDS)
+│    ├── Final-MPX safety limiter (audio composite only — no pilot, no RDS)
+│    ├── Composite budget governor (smoothed gain ride on the audio
+│    │   path enforces `audioCeil = (threshold/outputGain - reserved -
+│    │   margin) × outputGain` BEFORE pilot/RDS injection so the
+│    │   post-injection clamp is unreachable for sane configs;
+│    │   `overBudget` flag classifies impossible configs explicitly)
+│    └── MPX output calibration
 │
-├──► Post-clipper subcarrier injection
+├──► Post-clipper subcarrier injection (delay-aligned)
 │    ├── Pilot 19 kHz (approx 8–10% injection, constant amplitude)
 │    ├── RDS 57 kHz (approx 3–7% injection, constant amplitude)
+│    ├── `subcarrierDelayLine` delays pilot+RDS by composite-clipper
+│    │   total delay + safety-limiter lookahead so the receiver's
+│    │   pilot-derived 38 kHz reference aligns with the audio
+│    │   composite's internal stereo subcarrier modulation
 │    └── Subcarriers bypass all peak-control stages to preserve constant
 │        amplitude for reliable stereo decoding and RDS reception
 │        (professional broadcast standard: Omnia, Orban, Stereotool)
@@ -153,12 +171,14 @@ Within the main audio path, MPX Prime runs:
 15. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor
 16. Stereo-image protection
 17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal)
-18. Pre-encode audio limiter (L/R domain, per-channel `OversampledPeakLimiter`)
+18. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically)
 19. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
-20. Composite clipper (8× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched)
-21. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
-22. Final-MPX safety limiter (audio composite only)
-23. Pilot and RDS injection (post-clipper, constant amplitude)
+20. Composite clipper (8× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead)
+21. Audio composite bandwidth FIR (linear-phase HF cleanup before pilot/RDS injection)
+22. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
+23. Final-MPX safety limiter (audio composite only)
+24. Composite budget governor (smoothed gain ride on audio path so post-injection clamp is unreachable for sane configs)
+25. Pilot and RDS injection (post-clipper, constant amplitude, delay-aligned via `subcarrierDelayLine`)
 
 All optional stages are disabled by default and can be enabled via config/UI; multiband, bass clipper, and composite clipper are on by default per `AppConfig`.
 
@@ -225,9 +245,26 @@ Soft-clip via `vvtanhf` (vForce SIMD) batched in 8-element groups: per OS-step t
 
 Topologically inspired by three expired Orban patents: US 4,460,871 (1984) introduced the delta-cancellation primitive on a single audio band; US 5,737,434 (1998) layered it across multiple guard bands for FM composite; US 6,337,999 (1998 / expired 2022) added the differential-clipper topology where only the residual is decimated. Per-band RBJ bandpass implementation, the linear-phase FIR decimator, and the `vvtanhf`-batched 8× oversampled core are project-specific.
 
-Live-apply via `RuntimeConfig`. INI keys `mpx_clipper_enabled`, `mpx_clipper_drive_db`, `mpx_clipper_ceiling_db`, `mpx_clipper_cancel_audio`, `mpx_clipper_cancel_pilot`, `mpx_clipper_cancel_stereo`, `mpx_clipper_cancel_rds`. The legacy `composite_clipper_enabled` key (which used to control the now-deleted composite *limiter*) was removed in 0.11 — see the Verification.ini key-collision warning in AGENTS.md.
+Live-apply via `RuntimeConfig`. INI keys `mpx_clipper_enabled`, `mpx_clipper_drive_db`, `mpx_clipper_ceiling_db`, `mpx_clipper_cancel_audio`, `mpx_clipper_cancel_pilot`, `mpx_clipper_cancel_stereo`, `mpx_clipper_cancel_rds`, and (0.26) `mpx_clipper_lookahead_ms`. The legacy `composite_clipper_enabled` key (which used to control the now-deleted composite *limiter*) was removed in 0.11 — see the Verification.ini key-collision warning in AGENTS.md.
 
-`CompositeClipperCrossDomainTests` and `CompositeClipperStereoSeparationTests` are the regression guards. The first asserts cross-domain IM drop with each guard band engaged; the second asserts that decoded L/R separation is preserved within tolerance when the stereo guard is on. Together they catch both regressions in cancellation depth and over-cancellation that would collapse the stereo image.
+**Look-ahead peak control (0.26, optional).** When `mpx_clipper_lookahead_ms > 0`, an OS-rate (1.536 MHz at 192 kHz × 8) sliding-window-max detector with Lagrange-interpolated intersample peak detection feeds a gain envelope smoothed by a 200 Hz one-pole LP. The gain is applied identically to both the clipper's `up` input and the per-band `orig*` filters, so the differential-topology cancellation linearity holds. A separate `lookaheadGainReductionDB` telemetry value distinguishes clean predictive ducking from soft-clip distortion-producing GR on the meter. Single INI knob; attack/release/smoother cutoff are hardcoded (exponential attack tied to the look-ahead window, ~80 ms release, 200 Hz smoother). 0.0 disables (default); 2.0 ms is the recommended value for loudness-priority presets. Algorithmic primitives — Lemire monotonic deque (sliding-window max), half-cosine attack LUT (US 6,434,241, expired 2014), 200 Hz gain-modulation smoother (US 5,737,434, expired ~2017) — are expired or public-domain.
+
+`CompositeClipperCrossDomainTests` and `CompositeClipperStereoSeparationTests` are the regression guards. The first asserts cross-domain IM drop with each guard band engaged; the second asserts that decoded L/R separation is preserved within tolerance when the stereo guard is on. `CompositeClipperLookaheadTests` covers the (0.26) look-ahead path: overshoot bound (`max(|out|) ≤ ceiling × 1.005` at 2 ms), steady-state transparency on pink noise, pilot/stereo/RDS guard regression with look-ahead engaged, cross-domain cancellation regression (catches asymmetric per-band gain leak), and total-delay reporting. Together they catch regressions in cancellation depth, over-cancellation that would collapse the stereo image, look-ahead detector / gain-application asymmetry, and latency-reporting drift.
+
+### Audio Composite Bandwidth FIR (0.26)
+Linear-phase FIR cleanup stage placed between BS.412 and the safety limiter. Strips shaper/limiter spill that would otherwise live above the upper stereo sideband and beat with the cleanly-injected pilot/RDS. Group delay (~112 host samples at 192 kHz) folds into `recomputeSubcarrierDelay()` so the post-clipper subcarrier delay line tracks the new audio path delay automatically.
+
+### Composite Budget Governor (0.26)
+Smoothed gain ride on the audio composite that runs *before* pilot/RDS injection. `MPXGenerator.makeFinalCompositeThresholds(outputGain:threshold:reserved:)` derives
+```
+effectiveThreshold = threshold / max(1.0, outputGain)
+allowedAudioAbs    = max(0, effectiveThreshold - reservedSubcarrier - safetyMargin)  // safetyMargin = 0.02
+overBudget         = allowedAudioAbs <= 0
+```
+`processFinalComposite` applies a smoothed gain ride driven by `audioCeilOut = postLimiterCeiling × outputGain`. The audible work is done by the smoothed ride (separate attack/release time constants); a hard ceiling remains at the same value as a last-sample guard for attack-time transients. Pilot and RDS are *not* scaled or clipped — only the audio composite is reduced. The final `clampf(mpx, -1, 1)` survives only as a numeric guard against illegal samples reaching CoreAudio; for valid configs it should never engage. `CompositeCalibrationStatus.overBudget` re-derives from current `outputGain` and the smoothed `subcarrierReservationEnv`, exposing impossible configs (e.g. very hot output gain where pilot reservation alone exceeds the threshold) to UI and verifier. `postInjectionOvershoot` (50 ms decayed envelope) reports the size of any residual clamp engagement so transient governor lag is visible too. The verifier reports both `worstPostInjectionOvershoot` and `compositeBudgetExceeded` per scenario.
+
+### Subcarrier Delay Alignment (0.26)
+A new host-rate `subcarrierDelayLine` ring buffer delays pilot+RDS by the composite clipper's total delay plus the safety-limiter lookahead samples. `recomputeSubcarrierDelay()` sizes the line dynamically from the active stage delays (composite clipper FIR decimator group delay + composite-clipper look-ahead samples + audio-composite bandwidth FIR group delay + safety limiter look-ahead). The receiver's pilot-derived 38 kHz reference is now phase-coherent with the audio composite's internal L−R subcarrier modulation, closing a stereo-decode degradation that grew with the differential-topology + audio-bandwidth-FIR + look-ahead stack. `StereoSeparationReceiverTests` is the regression guard.
 
 ### Encoder program lowpass (FIR / Butterworth split)
 Final audio-bandwidth guard sitting immediately before stereo encoding. Two implementations co-exist and the engine picks per output mode:

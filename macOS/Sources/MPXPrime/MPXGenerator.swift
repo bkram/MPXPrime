@@ -1333,6 +1333,84 @@ struct CompositeClipper {
         lookaheadHostSamples + decimLP.groupDelayHostSamples
     }
 
+    /// Focused live-update for the look-ahead window size only. Skips the
+    /// FIR decimator / bypass delay / 8 bandpass filter reconfiguration
+    /// that `configure(...)` does, and preserves the ducking state
+    /// (`lookaheadGain` / `lookaheadGainEnv` / `lookaheadLPState`) so a
+    /// GUI slider drag doesn't snap gain back to 1.0 on every tick.
+    ///
+    /// Buffer resizes preserve the time-ordered audio content in
+    /// `lookaheadDelay` and reset the Lemire deque (the deque refills
+    /// within `n` samples, during which the gain envelope is held by
+    /// the LP smoother — no audible step). Bandwidth, bypass, and all
+    /// per-band cancellation state are untouched.
+    mutating func setLookaheadMS(_ lookaheadMS: Float, sampleRate: Float) {
+        let sr = max(8_000.0, sampleRate)
+        let cap = Int((5.0 / 1000.0) * sr)
+        let n = max(0, min(cap, Int(roundf((lookaheadMS / 1000.0) * sr))))
+        let oldN = lookaheadHostSamples
+        let oldEnabled = lookaheadEnabled
+        let newEnabled = n > 0
+        lookaheadHostSamples = n
+        lookaheadEnabled = newEnabled
+
+        if newEnabled {
+            // Preserve audio content in `lookaheadDelay`: read oldest-to-newest
+            // into a temporary, then prepend zeros or drop the oldest to fit
+            // the new size. This keeps the live audio sample flowing through
+            // the resized pipeline without a step at the resize boundary.
+            if n != oldN || lookaheadDelay.count != n {
+                var contents = [Float](repeating: 0.0, count: n)
+                if oldEnabled && oldN > 0 && lookaheadDelay.count == oldN {
+                    let copyN = min(oldN, n)
+                    var srcIdx = (lookaheadDelayWriteIdx + oldN - copyN) % oldN
+                    let dstStart = n - copyN
+                    for i in 0..<copyN {
+                        contents[dstStart + i] = lookaheadDelay[srcIdx]
+                        srcIdx = (srcIdx + 1) % oldN
+                    }
+                }
+                lookaheadDelay = contents
+                lookaheadDelayWriteIdx = 0
+            }
+
+            let nOS = n * Self.factor
+            let newCapacity = nOS + 2
+            if deqCapacity != newCapacity {
+                deqValues = [Float](repeating: 0.0, count: newCapacity)
+                deqIndices = [Int](repeating: 0, count: newCapacity)
+                deqCapacity = newCapacity
+            }
+            deqHead = 0
+            deqTail = 0
+            deqSampleCounter = 0
+            detLag = Lagrange4Interp()
+
+            let attackTimeConstantSamples = max(1.0, Float(n) * 0.25)
+            lookaheadAttackCoeff = clampf(
+                1.0 - expf(-1.0 / attackTimeConstantSamples),
+                0.0, 1.0
+            )
+        } else {
+            // Disabled. Drop buffers; gain envelopes stay at their current
+            // values and will decay naturally through the LP smoother when
+            // the next configure() runs or playback resumes.
+            lookaheadDelay = []
+            lookaheadDelayWriteIdx = 0
+            deqValues = []
+            deqIndices = []
+            deqCapacity = 0
+            deqHead = 0
+            deqTail = 0
+            deqSampleCounter = 0
+            detLag = Lagrange4Interp()
+            lookaheadAttackCoeff = 0.0
+        }
+        // Do NOT reset lookaheadGain / lookaheadGainEnv / lookaheadLPState /
+        // lookaheadHoldRemaining — preserving them is the load-bearing
+        // anti-click property of this method.
+    }
+
     /// Lookahead gain reduction in dB (positive = look-ahead is shaving
     /// peaks). Tracked separately from `gainReductionDB` so operators can
     /// distinguish predictive shaving (clean) from soft-clip shaving
@@ -6325,11 +6403,46 @@ final class MPXGenerator {
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
         let total = compositeBandwidthDelay + clipperDelay + limiterDelay
         if total != subcarrierDelayLine.count {
-            subcarrierDelayLine = [Float](repeating: 0.0, count: total)
+            subcarrierDelayLine = Self.resizedDelayPreservingContents(
+                line: subcarrierDelayLine,
+                writeIdx: subcarrierDelayWriteIdx,
+                newCount: total
+            )
             subcarrierDelayWriteIdx = 0
-            stereoSubcarrierDelayLine = [Float](repeating: 0.0, count: total)
+            stereoSubcarrierDelayLine = Self.resizedDelayPreservingContents(
+                line: stereoSubcarrierDelayLine,
+                writeIdx: stereoSubcarrierDelayWriteIdx,
+                newCount: total
+            )
             stereoSubcarrierDelayWriteIdx = 0
         }
+    }
+
+    /// Resize a ring buffer to `newCount` slots, preserving the most
+    /// recent samples in time order at the start of the new buffer
+    /// (write index resets to 0, so reads of `[writeIdx]` immediately
+    /// after will see the oldest preserved sample). On grow, zeros pad
+    /// the head; on shrink, the oldest samples are dropped. Used so a
+    /// live-applied chain-latency change (e.g. composite-clipper look-
+    /// ahead slider drag) doesn't zero the in-flight pilot / RDS / 38
+    /// kHz reference stream and click the audio.
+    private static func resizedDelayPreservingContents(
+        line: [Float],
+        writeIdx: Int,
+        newCount: Int
+    ) -> [Float] {
+        if newCount == 0 { return [] }
+        let oldCount = line.count
+        var result = [Float](repeating: 0.0, count: newCount)
+        if oldCount == 0 { return result }
+        let copyN = min(oldCount, newCount)
+        let dstStart = newCount - copyN
+        var srcIdx = (writeIdx + oldCount - copyN) % oldCount
+        for i in 0..<copyN {
+            result[dstStart + i] = line[srcIdx]
+            srcIdx = (srcIdx + 1) % oldCount
+        }
+        return result
     }
 
     /// Called by AudioOutputEngine at start() to pick the TX-grade FIR or
@@ -6697,7 +6810,12 @@ final class MPXGenerator {
             )
         }
 
-        let compClipChanged =
+        // Split into "structural" (FIR / bandpass / bypass / clipper-kernel
+        // reset) vs "lookahead-only" so a GUI slider drag of
+        // `mpx_clipper_lookahead_ms` doesn't clack every tick. Lookahead-only
+        // changes go through `setLookaheadMS` which preserves filter state +
+        // ducking envelopes.
+        let compClipStructuralChanged =
             compositeClipperEnabled != config.compositeClipperEnabled
             || fabsf(compositeClipperThresholdDB - config.compositeClipperThresholdDB) > 0.0001
             || fabsf(compositeClipperCeilingDB - config.compositeClipperCeilingDB) > 0.0001
@@ -6705,7 +6823,8 @@ final class MPXGenerator {
             || compositeClipperCancelStereo != config.compositeClipperCancelStereo
             || compositeClipperCancelPilot != config.compositeClipperCancelPilot
             || compositeClipperCancelRDS != config.compositeClipperCancelRDS
-            || fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
+        let compClipLookaheadChanged =
+            fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
         compositeClipperEnabled = config.compositeClipperEnabled
         compositeClipperThresholdDB = clampf(config.compositeClipperThresholdDB, -12.0, 0.0)
         compositeClipperCeilingDB = clampf(config.compositeClipperCeilingDB, -6.0, 0.0)
@@ -6714,7 +6833,7 @@ final class MPXGenerator {
         compositeClipperCancelPilot = config.compositeClipperCancelPilot
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
         compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
-        if compClipChanged {
+        if compClipStructuralChanged {
             compositeClipper.configure(
                 sampleRate: sampleRate,
                 thresholdDB: compositeClipperThresholdDB,
@@ -6724,6 +6843,12 @@ final class MPXGenerator {
                 cancelPilot: compositeClipperCancelPilot,
                 cancelRDS: compositeClipperCancelRDS,
                 lookaheadMS: compositeClipperLookaheadMS
+            )
+            recomputeSubcarrierDelay()
+        } else if compClipLookaheadChanged {
+            compositeClipper.setLookaheadMS(
+                compositeClipperLookaheadMS,
+                sampleRate: sampleRate
             )
             recomputeSubcarrierDelay()
         }

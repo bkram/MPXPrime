@@ -27,6 +27,7 @@ swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime.ini"
 swift run --package-path macOS MPXPrime --verify --seconds 5
 swift run --package-path macOS MPXPrime --verify-presets --seconds 5
 swift run --package-path macOS MPXPrime --verify-long --seconds 30
+swift run --package-path macOS MPXPrime --verify-receiver --seconds 5  # 0.27: coherent receiver-side decode (separation @ 1/10/14 kHz, pilot, RDS)
 
 # Baseline capture + strict compare
 swift run --package-path macOS MPXPrime --capture-baseline      # writes macOS/verifier_baselines/default.json
@@ -62,9 +63,12 @@ The default `swift test` is fast (~10 s, 255 tests) and runs on every change. Th
   - `AppConfig.swift` — INI-backed config model + live-apply routing (`RuntimeConfig`, `RDSRuntimeConfig`)
   - `INIParser.swift`, `AudioDevices.swift` — file and CoreAudio plumbing
   - `AudioOutputEngine.swift` — AVAudioEngine lifecycle, input tap, render callback
-  - `MPXGenerator.swift` (~7100 lines) — DSP core + `BasicRDSCoder`. All stages of the chain live here
+  - `MPXGenerator.swift` (~8500 lines) — DSP core + `BasicRDSCoder`. All stages of the chain live here
+  - `MPXDecoder.swift` (0.27) — reusable FM stereo demod (pilot PLL, deemphasis, noise gate, stereo-collapse cooldown). Used by the monitor path with the delay-aligned reference and by `--verify-receiver` with a PLL-recovered reference
+  - `BandLimitedStep.swift` (0.27) — BLEP/BLAMP correction primitive for the US 6,937,912 anti-aliased clipping work
+  - `AcceleratedBandlimitedResidualClipper.swift` (0.27) — vDSP-accelerated patent-style residual-bandlimiting clipper, opt-in via `pre_encode_bandlimited_residual_enabled`
   - `StereoInputRingBuffer.swift` — lock-free input → render bridge
-  - `SwiftUIControlApp.swift` (~7000 lines) — SwiftUI views + view-model state
+  - `SwiftUIControlApp.swift` (~7600 lines) — SwiftUI views + view-model state
   - `UIBroadcastStatusBar.swift` / `UIBroadcastMeter.swift` / `UIBroadcastStyle.swift` — pinned-top status header, vertical meter strips, shared style tokens
   - `UISignalFlowStrip.swift` — read-only DSP-chain pill strip
   - `UIInspector.swift` — stage-aware right-pane inspector

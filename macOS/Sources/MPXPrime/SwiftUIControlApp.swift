@@ -6203,7 +6203,13 @@ private struct ProcessingLimiterTab: View {
                 format: "%.0f ms",
                 tooltip: "Release time of the limiter envelope. Faster (lower ms) recovers loudness quicker but may pump; slower is cleaner but holds gain reduction longer."
             ).disabled(disabled)
-            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with tanh ceiling shaping, stereo-linked. Runs after pre-emphasis and before stereo encoding to keep the audio composite below ceiling without clipping the post-emphasis peaks.")
+            Toggle(
+                "Band-limited Residual Ceiling",
+                isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
+            )
+            .help("Experimental 0.27 anti-aliased ceiling kernel for the pre-encode limiter. Off by default while it is compared against the current tanh ceiling.")
+            .disabled(disabled)
+            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. The default ceiling uses tanh shaping; the experimental band-limited residual ceiling is off by default for 0.27 verification.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

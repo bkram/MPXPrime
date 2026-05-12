@@ -109,6 +109,44 @@ private struct LongRunSignatureReference {
     let above60kRatioDB: Float
 }
 
+private struct ToneVector {
+    var sin: Double = 0.0
+    var cos: Double = 0.0
+
+    var amplitude: Double {
+        sqrt((sin * sin) + (cos * cos))
+    }
+
+    static func + (lhs: ToneVector, rhs: ToneVector) -> ToneVector {
+        ToneVector(sin: lhs.sin + rhs.sin, cos: lhs.cos + rhs.cos)
+    }
+
+    static func - (lhs: ToneVector, rhs: ToneVector) -> ToneVector {
+        ToneVector(sin: lhs.sin - rhs.sin, cos: lhs.cos - rhs.cos)
+    }
+}
+
+private struct ReceiverToneMetrics {
+    let toneHz: Double
+    let wantedDBFS: Float
+    let crosstalkDBFS: Float
+    let separationDB: Float
+}
+
+private struct ReceiverMonoMetrics {
+    let midDBFS: Float
+    let sideDBFS: Float
+    let sideRejectionDB: Float
+}
+
+private struct ReceiverSubcarrierMetrics {
+    let pilotPercent: Float
+    let pilotPhaseDegrees: Float
+    let rdsLowerDBFS: Float
+    let rdsUpperDBFS: Float
+    let rdsCenterDBFS: Float
+}
+
 private struct DeterministicNoise {
     private var state: UInt64
 
@@ -509,6 +547,11 @@ private func dbfsString(_ linear: Float) -> String {
     return String(format: "%.2f", 20.0 * log10(Double(linear)))
 }
 
+private func dbfs(_ linear: Double) -> Float {
+    guard linear > 1e-12 else { return -240.0 }
+    return Float(20.0 * log10(linear))
+}
+
 private func deviationString(peakAbs: Float, targetDeviationKHz: Double) -> String {
     String(format: "%.1f", Double(peakAbs) * max(1.0, targetDeviationKHz))
 }
@@ -572,6 +615,284 @@ private func buildBaselineRecord(
         occupied999Hz: metrics.bandwidth.occupied999Hz,
         above60kRatioDB: metrics.bandwidth.above60kRatioDB,
         above67kRatioDB: metrics.bandwidth.above67kRatioDB
+    )
+}
+
+private func renderReceiverMPX(
+    config: AppConfig,
+    durationSeconds: Double,
+    source: (_ frameIndex: Int, _ sampleRate: Double) -> (Float, Float)
+) -> [Float] {
+    let sampleRate = max(8_000.0, config.sampleRate)
+    let frames = max(1, Int((durationSeconds * sampleRate).rounded()))
+    let generator = MPXGenerator(config: config, sampleRate: sampleRate)
+    var samples = [Float](repeating: 0.0, count: frames)
+    for frame in 0..<frames {
+        let input = source(frame, sampleRate)
+        samples[frame] = generator.renderSingleSample(leftIn: input.0, rightIn: input.1)
+    }
+    return samples
+}
+
+private func toneVector(
+    samples: [Float],
+    sampleRate: Double,
+    frequencyHz: Double,
+    start: Int,
+    count: Int
+) -> ToneVector {
+    guard count > 0, start >= 0, start + count <= samples.count else {
+        return ToneVector()
+    }
+    let omega = 2.0 * Double.pi * frequencyHz / sampleRate
+    var sinSum = 0.0
+    var cosSum = 0.0
+    for i in 0..<count {
+        let phase = omega * Double(start + i)
+        let sample = Double(samples[start + i])
+        sinSum += sample * sin(phase)
+        cosSum += sample * cos(phase)
+    }
+    let scale = 2.0 / Double(count)
+    return ToneVector(sin: sinSum * scale, cos: cosSum * scale)
+}
+
+private func receiverAnalysisWindow(sampleCount: Int, sampleRate: Double) -> (start: Int, count: Int) {
+    let desiredCount = min(sampleCount / 2, max(4096, Int((0.25 * sampleRate).rounded())))
+    let count = max(1024, desiredCount)
+    let start = max(0, sampleCount - count)
+    return (start, min(count, sampleCount - start))
+}
+
+private func estimatePilotPhase(
+    samples: [Float],
+    sampleRate: Double,
+    start: Int,
+    count: Int
+) -> (amplitude: Double, phase: Double) {
+    let pilot = toneVector(
+        samples: samples,
+        sampleRate: sampleRate,
+        frequencyHz: 19_000.0,
+        start: start,
+        count: count
+    )
+    return (pilot.amplitude, atan2(pilot.cos, pilot.sin))
+}
+
+private func demodulatedSideVector(
+    samples: [Float],
+    sampleRate: Double,
+    audioHz: Double,
+    pilotPhase: Double,
+    start: Int,
+    count: Int
+) -> ToneVector {
+    guard count > 0, start >= 0, start + count <= samples.count else {
+        return ToneVector()
+    }
+    let audioOmega = 2.0 * Double.pi * audioHz / sampleRate
+    let pilotOmega = 2.0 * Double.pi * 19_000.0 / sampleRate
+    var sinSum = 0.0
+    var cosSum = 0.0
+    for i in 0..<count {
+        let absoluteIndex = Double(start + i)
+        let sub = sin(2.0 * ((pilotOmega * absoluteIndex) + pilotPhase))
+        let demod = Double(samples[start + i]) * 2.0 * sub
+        let audioPhase = audioOmega * absoluteIndex
+        sinSum += demod * sin(audioPhase)
+        cosSum += demod * cos(audioPhase)
+    }
+    let scale = 2.0 / Double(count)
+    return ToneVector(sin: sinSum * scale, cos: cosSum * scale)
+}
+
+private func decodeMPXWithReference(
+    samples: [Float],
+    pilotPhase: Double,
+    config: AppConfig,
+    programActivity: Float,
+    expectedSide: Float
+) -> (left: [Float], right: [Float]) {
+    var decoder = MPXDecoder()
+    decoder.configure(sampleRate: Float(config.sampleRate), preemphasisUS: config.preemphasisUS)
+    var left = [Float](repeating: 0.0, count: samples.count)
+    var right = [Float](repeating: 0.0, count: samples.count)
+    let omega = 2.0 * Double.pi * 19_000.0 / config.sampleRate
+    for i in 0..<samples.count {
+        let ref = Float(sin(2.0 * ((omega * Double(i)) + pilotPhase)))
+        let decoded = decoder.process(
+            samples[i],
+            referenceSubcarrier: ref,
+            programActivity: programActivity,
+            expectedSide: expectedSide
+        )
+        left[i] = decoded.0
+        right[i] = decoded.1
+    }
+    return (left, right)
+}
+
+private func receiverToneMetrics(
+    config: AppConfig,
+    toneHz: Double,
+    durationSeconds: Double
+) -> ReceiverToneMetrics {
+    var cfg = config
+    cfg.monoMode = false
+    cfg.enRDS = false
+    let amplitude = 0.45
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let tone = Float(amplitude * sin(2.0 * Double.pi * toneHz * Double(frame) / sampleRate))
+        return (tone, 0.0)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+    let pilot = estimatePilotPhase(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        start: window.start,
+        count: window.count
+    )
+    let decoded = decodeMPXWithReference(
+        samples: samples,
+        pilotPhase: pilot.phase,
+        config: cfg,
+        programActivity: Float(amplitude),
+        expectedSide: 0.0
+    )
+    let left = toneVector(
+        samples: decoded.left,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let right = toneVector(
+        samples: decoded.right,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    // The synthetic pilot reference may lock with either 38 kHz polarity,
+    // which swaps decoded L/R. Separation is therefore scored as stronger
+    // decoded channel vs weaker decoded channel.
+    let wanted = max(max(left.amplitude, right.amplitude), 1e-12)
+    let crosstalk = max(min(left.amplitude, right.amplitude), 1e-12)
+    return ReceiverToneMetrics(
+        toneHz: toneHz,
+        wantedDBFS: dbfs(wanted),
+        crosstalkDBFS: dbfs(crosstalk),
+        separationDB: Float(20.0 * log10(wanted / crosstalk))
+    )
+}
+
+private func receiverMonoMetrics(
+    config: AppConfig,
+    durationSeconds: Double
+) -> ReceiverMonoMetrics {
+    var cfg = config
+    cfg.monoMode = false
+    cfg.enRDS = false
+    let toneHz = 1_000.0
+    let amplitude = 0.45
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let tone = Float(amplitude * sin(2.0 * Double.pi * toneHz * Double(frame) / sampleRate))
+        return (tone, tone)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+    let pilot = estimatePilotPhase(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        start: window.start,
+        count: window.count
+    )
+    let decoded = decodeMPXWithReference(
+        samples: samples,
+        pilotPhase: pilot.phase,
+        config: cfg,
+        programActivity: Float(amplitude),
+        expectedSide: 0.0
+    )
+    let mid = toneVector(
+        samples: decoded.left,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    ) + toneVector(
+        samples: decoded.right,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let side = toneVector(
+        samples: decoded.left,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    ) - toneVector(
+        samples: decoded.right,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let midAmp = max(mid.amplitude * 0.5, 1e-12)
+    let sideAmp = max(side.amplitude * 0.5, 1e-12)
+    return ReceiverMonoMetrics(
+        midDBFS: dbfs(midAmp),
+        sideDBFS: dbfs(sideAmp),
+        sideRejectionDB: Float(20.0 * log10(midAmp / sideAmp))
+    )
+}
+
+private func receiverSubcarrierMetrics(
+    config: AppConfig,
+    durationSeconds: Double
+) -> ReceiverSubcarrierMetrics {
+    var cfg = config
+    cfg.monoMode = false
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { _, _ in
+        (0.0, 0.0)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+    let pilot = estimatePilotPhase(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        start: window.start,
+        count: window.count
+    )
+    let rdsLower = toneVector(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: 57_000.0 - 1_187.5,
+        start: window.start,
+        count: window.count
+    )
+    let rdsUpper = toneVector(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: 57_000.0 + 1_187.5,
+        start: window.start,
+        count: window.count
+    )
+    let rdsCenter = toneVector(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: 57_000.0,
+        start: window.start,
+        count: window.count
+    )
+    let wrappedDegrees = fmod((pilot.phase * 180.0 / Double.pi) + 360.0, 360.0)
+    return ReceiverSubcarrierMetrics(
+        pilotPercent: Float(pilot.amplitude * 100.0),
+        pilotPhaseDegrees: Float(wrappedDegrees),
+        rdsLowerDBFS: dbfs(rdsLower.amplitude),
+        rdsUpperDBFS: dbfs(rdsUpper.amplitude),
+        rdsCenterDBFS: dbfs(rdsCenter.amplitude)
     )
 }
 
@@ -1130,15 +1451,115 @@ private func runPresetSweepVerification(
     return worstExit
 }
 
+private func runReceiverModelVerification(
+    baseConfig: AppConfig,
+    durationSeconds: Double
+) -> Int32 {
+    let duration = max(1.0, durationSeconds)
+    let toneFrequencies = [1_000.0, 10_000.0, 14_000.0]
+    let toneMetrics = toneFrequencies.map {
+        receiverToneMetrics(config: baseConfig, toneHz: $0, durationSeconds: duration)
+    }
+    let mono = receiverMonoMetrics(config: baseConfig, durationSeconds: duration)
+    let subcarriers = receiverSubcarrierMetrics(config: baseConfig, durationSeconds: duration)
+
+    print("Receiver Model")
+    print("Scope: coherent pilot-estimated stereo decode, mono compatibility, pilot/RDS spectral checks")
+    print("")
+    print("Stereo Decode")
+    print("Tone Hz  Wanted   Xtalk    Sep")
+    print("-------  -------  -------  -----")
+
+    var warnings: [String] = []
+    for metric in toneMetrics {
+        let minimumSeparation: Float = metric.toneHz >= 14_000.0 ? 16.0 : 18.0
+        if metric.separationDB < minimumSeparation {
+            warnings.append(
+                "\(Int(metric.toneHz)) Hz separation \(String(format: "%.1f", metric.separationDB)) dB < \(String(format: "%.1f", minimumSeparation)) dB"
+            )
+        }
+        print(
+            "\(leftPadded(String(format: "%.0f", metric.toneHz), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.wantedDBFS), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.crosstalkDBFS), width: 7))"
+                + "  \(String(format: "%5.1f", metric.separationDB))"
+        )
+    }
+
+    if mono.sideRejectionDB < 26.0 {
+        warnings.append(
+            "mono side rejection \(String(format: "%.1f", mono.sideRejectionDB)) dB < 26.0 dB"
+        )
+    }
+    let rdsSideband = max(subcarriers.rdsLowerDBFS, subcarriers.rdsUpperDBFS)
+    if subcarriers.pilotPercent < 6.5 || subcarriers.pilotPercent > 9.5 {
+        warnings.append(
+            "pilot level \(String(format: "%.2f", subcarriers.pilotPercent))% outside 6.5-9.5%"
+        )
+    }
+    if baseConfig.enRDS && rdsSideband < -60.0 {
+        warnings.append(
+            "RDS sideband \(String(format: "%.1f", rdsSideband)) dBFS below -60 dBFS"
+        )
+    }
+    if baseConfig.enRDS && subcarriers.rdsCenterDBFS > rdsSideband - 8.0 {
+        warnings.append(
+            "RDS center null \(String(format: "%.1f", subcarriers.rdsCenterDBFS)) dBFS is not at least 8 dB below sideband \(String(format: "%.1f", rdsSideband)) dBFS"
+        )
+    }
+
+    print("")
+    print("Mono Compatibility")
+    print(
+        "Mid \(String(format: "%.1f", mono.midDBFS)) dBFS"
+            + "  Side \(String(format: "%.1f", mono.sideDBFS)) dBFS"
+            + "  Rejection \(String(format: "%.1f", mono.sideRejectionDB)) dB"
+    )
+
+    print("")
+    print("Subcarriers")
+    print(
+        "Pilot \(String(format: "%.2f", subcarriers.pilotPercent))%"
+            + "  Phase \(String(format: "%.1f", subcarriers.pilotPhaseDegrees)) deg"
+            + "  RDS lower \(String(format: "%.1f", subcarriers.rdsLowerDBFS)) dBFS"
+            + "  upper \(String(format: "%.1f", subcarriers.rdsUpperDBFS)) dBFS"
+            + "  center \(String(format: "%.1f", subcarriers.rdsCenterDBFS)) dBFS"
+    )
+
+    print("")
+    print("Assessment")
+    if warnings.isEmpty {
+        print("Result: OK - receiver-model decode checks passed.")
+        return 0
+    }
+    print("Receiver warnings:")
+    for warning in warnings { print("- \(warning)") }
+    print("Result: TIGHT - receiver-model checks need review.")
+    return 1
+}
+
 func runVerificationHarness(
     configPath: String,
     durationSeconds: Double,
     presetSweep: Bool = false,
     longRun: Bool = false,
+    receiverModel: Bool = false,
     captureBaseline: Bool = false,
     strictBaseline: Bool = false
 ) throws -> Int32 {
     let config = try AppConfig.load(fromINI: configPath)
+    if receiverModel {
+        print("MPX Prime Receiver Verification")
+        print("Config: \(configPath)")
+        print(
+            "Render: \(Int(config.sampleRate)) Hz • Duration \(String(format: "%.1f", max(1.0, durationSeconds))) s"
+        )
+        print("")
+        return runReceiverModelVerification(
+            baseConfig: config,
+            durationSeconds: durationSeconds
+        )
+    }
     if presetSweep {
         print("MPX Prime Preset Verification")
         print("Config: \(configPath)")

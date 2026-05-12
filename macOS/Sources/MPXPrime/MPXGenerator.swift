@@ -103,6 +103,7 @@ struct OversampledPeakLimiter {
     var threshold: Float = 0.94
     var releaseMS: Float = 35.0
     var ceiling: Float = 0.985
+    var bandlimitedResidualEnabled: Bool = false
 
     private var gain: Float = 1.0
     private var attackCoeff: Float = 0.0
@@ -113,12 +114,19 @@ struct OversampledPeakLimiter {
     private var prevPrevIn: Float = 0.0
     private var prevIn: Float = 0.0
     private var decimationLP = BiquadCascade6()
+    private var residualClipper = AcceleratedBandlimitedResidualClipper()
     private var initialized: Bool = false
 
-    mutating func configure(sampleRate: Float, threshold: Float, releaseMS: Float = 35.0) {
+    mutating func configure(
+        sampleRate: Float,
+        threshold: Float,
+        releaseMS: Float = 35.0,
+        bandlimitedResidualEnabled: Bool = false
+    ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
         self.releaseMS = max(8.0, releaseMS)
+        self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
         let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
         ceiling = min(0.999, self.threshold + ceilingMargin)
 
@@ -134,6 +142,7 @@ struct OversampledPeakLimiter {
         prevIn = 0.0
         let cutoff = min(sampleRate * 0.30, (sr * 0.5) - 1_000.0)
         decimationLP.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: sr)
+        residualClipper.configure(threshold: ceiling, tapCount: 65, cutoffFraction: 0.20)
         initialized = false
     }
 
@@ -153,8 +162,10 @@ struct OversampledPeakLimiter {
         let q4 = processStep(x)
         let output = decimate(q1: q1, q2: q2, q3: q3, q4: q4)
 
-        prevPrevPrevIn = prevPrevIn
-        prevPrevIn = prevIn
+        let priorPrev = prevPrevIn
+        let priorCurrent = prevIn
+        prevPrevPrevIn = priorPrev
+        prevPrevIn = priorCurrent
         prevIn = x
         return output
     }
@@ -207,7 +218,10 @@ struct OversampledPeakLimiter {
     }
 
     @inline(__always)
-    private func clipToCeiling(_ x: Float) -> Float {
+    private mutating func clipToCeiling(_ x: Float) -> Float {
+        if bandlimitedResidualEnabled {
+            return residualClipper.process(x)
+        }
         let ax = fabsf(x)
         if ax <= threshold { return x }
 
@@ -235,6 +249,7 @@ struct StereoLinkedOversampledPeakLimiter {
     var threshold: Float = 0.94
     var releaseMS: Float = 35.0
     var ceiling: Float = 0.985
+    var bandlimitedResidualEnabled: Bool = false
 
     // Shared envelope state (the load-bearing change vs the prior pair
     // of independent OversampledPeakLimiters: same gain for both L/R).
@@ -255,12 +270,20 @@ struct StereoLinkedOversampledPeakLimiter {
     // cascade as OversampledPeakLimiter)
     private var lDecimLP = BiquadCascade6()
     private var rDecimLP = BiquadCascade6()
+    private var lResidualClipper = AcceleratedBandlimitedResidualClipper()
+    private var rResidualClipper = AcceleratedBandlimitedResidualClipper()
     private var initialized: Bool = false
 
-    mutating func configure(sampleRate: Float, threshold: Float, releaseMS: Float = 35.0) {
+    mutating func configure(
+        sampleRate: Float,
+        threshold: Float,
+        releaseMS: Float = 35.0,
+        bandlimitedResidualEnabled: Bool = false
+    ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
         self.releaseMS = max(8.0, releaseMS)
+        self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
         let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
         ceiling = min(0.999, self.threshold + ceilingMargin)
 
@@ -277,6 +300,8 @@ struct StereoLinkedOversampledPeakLimiter {
         let cutoffHz = max(12_000.0 as Float, cutoff)
         lDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
         rDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
+        lResidualClipper.configure(threshold: ceiling, tapCount: 65, cutoffFraction: 0.20)
+        rResidualClipper.configure(threshold: ceiling, tapCount: 65, cutoffFraction: 0.20)
         initialized = false
     }
 
@@ -349,7 +374,7 @@ struct StereoLinkedOversampledPeakLimiter {
 
         let yL = lOS * gain
         let yR = rOS * gain
-        return (clipToCeiling(yL), clipToCeiling(yR))
+        return (clipToCeiling(yL, ch: .left), clipToCeiling(yR, ch: .right))
     }
 
     @inline(__always)
@@ -384,7 +409,15 @@ struct StereoLinkedOversampledPeakLimiter {
     }
 
     @inline(__always)
-    private func clipToCeiling(_ x: Float) -> Float {
+    private mutating func clipToCeiling(_ x: Float, ch: Channel) -> Float {
+        if bandlimitedResidualEnabled {
+            switch ch {
+            case .left:
+                return lResidualClipper.process(x)
+            case .right:
+                return rResidualClipper.process(x)
+            }
+        }
         let ax = fabsf(x)
         if ax <= threshold { return x }
         let knee = max(1e-4, ceiling - threshold)
@@ -397,8 +430,18 @@ struct PreEncodeAudioLimiter {
     private var limiter = StereoLinkedOversampledPeakLimiter()
     private var gainReduction: Float = 0.0
 
-    mutating func configure(sampleRate: Float, threshold: Float, releaseMS: Float = 50.0) {
-        limiter.configure(sampleRate: sampleRate, threshold: threshold, releaseMS: releaseMS)
+    mutating func configure(
+        sampleRate: Float,
+        threshold: Float,
+        releaseMS: Float = 50.0,
+        bandlimitedResidualEnabled: Bool = false
+    ) {
+        limiter.configure(
+            sampleRate: sampleRate,
+            threshold: threshold,
+            releaseMS: releaseMS,
+            bandlimitedResidualEnabled: bandlimitedResidualEnabled
+        )
         gainReduction = 0.0
     }
 
@@ -1027,19 +1070,11 @@ struct DistortionCancelledClipper {
 // content modulating to ~52 kHz is at most –3 dB attenuated rather
 // than the previous –9 dB.
 //
-// Pilot guard (17–21 kHz) and RDS guard (55–59 kHz) cancellations are
-// served by the audio crossover at 15 kHz and the stereo crossover at
-// 53 kHz: the gap zones 15–22 kHz and 53 kHz+ are taken from clipped
-// (where they're filled by clipping IM that the post-stage pilot/RDS
-// injection then has to ride against). This is acceptable because
-// pilot/RDS guard cancellation only becomes meaningful at heavy clip
-// drives; the stereo-image fix is the load-bearing change here. Pilot
-// and RDS cancel flags are accepted for API stability but are no-ops
-// in the substitution-based design — the subcarrier injection happens
-// post-clipper anyway.
-//
 // Pilot (19 kHz) and RDS (57 kHz) are injected post-clipper, so their
-// amplitude is unaffected by anything this stage does.
+// amplitudes bypass this stage. Clipper IM in the 17-21 kHz pilot guard
+// and 55-59 kHz RDS guard still rides under those clean subcarriers at
+// the receiver, so the pilot/RDS cancel flags actively subtract
+// bandpass-isolated residual energy before decimation.
 struct CompositeClipper {
     private var thresholdLin: Float = 0.708
     private var ceilingLin: Float = 0.944
@@ -1100,9 +1135,11 @@ struct CompositeClipper {
     private var cancelPilot: Bool = true
     private var cancelRDS: Bool = true
 
-    // Peak-attenuation telemetry for the UI meter (envelope-following ratio).
-    private var peakInEnv: Float = 0.0
-    private var peakOutEnv: Float = 0.0
+    // Soft-clip attenuation telemetry for the UI meter. This tracks the
+    // actual oversampled clip-kernel gain, not input/output peak ratio:
+    // the differential FIR path delays and band-cancels the output, so
+    // a direct peak ratio is not a valid gain-reduction measurement.
+    private var clipGainEnv: Float = 1.0
     private var peakDecayCoeff: Float = 0.0
 
     // Stack-allocated batch buffers for vvtanhf-accelerated soft-clipping.
@@ -1224,8 +1261,7 @@ struct CompositeClipper {
 
         let sr = max(8_000.0, sampleRate)
         peakDecayCoeff = expf(-1.0 / (0.050 * sr))
-        peakInEnv = 0.0
-        peakOutEnv = 0.0
+        clipGainEnv = 1.0
 
         // === Look-ahead peak control ===
         // Window length in host samples. Hard cap 5 ms; 0 ms disables.
@@ -1453,13 +1489,16 @@ struct CompositeClipper {
                 vvtanhf(tanhPtr.baseAddress!, excessPtr.baseAddress!, &n)
             }
         }
+        var sampleClipGain: Float = 1.0
         for i in 0..<f {
             let up = upBatch[i]
             let ax = fabsf(up)
             if ax <= thr {
                 clipBatch[i] = up
             } else {
-                clipBatch[i] = copysignf(thr + kn * clipTanhBatch[i], up)
+                let clippedAbs = thr + kn * clipTanhBatch[i]
+                clipBatch[i] = copysignf(clippedAbs, up)
+                sampleClipGain = min(sampleClipGain, clippedAbs / max(1e-6, ax))
             }
         }
 
@@ -1560,25 +1599,17 @@ struct CompositeClipper {
 
         let out = bypassed - residualDecimated
 
-        // Peak meters reflect the user-perceived input/output (pre-
-        // look-ahead-gain on the input side; post-clipper on the
-        // output side). `gainReductionDB` then reads as the total
-        // peak attenuation including look-ahead shaving.
-        let inAbs = fabsf(x)
-        let outAbs = fabsf(out)
-        peakInEnv = max(inAbs, peakInEnv * peakDecayCoeff)
-        peakOutEnv = max(outAbs, peakOutEnv * peakDecayCoeff)
+        clipGainEnv = min(sampleClipGain, 1.0 - (1.0 - clipGainEnv) * peakDecayCoeff)
         _ = g  // silence unused-when-disabled warning
         return out
     }
 
     /// Headroom reduction in dB (positive = clipper is shaving peaks).
-    /// Computed from envelope-tracked peaks of input and output, decayed
-    /// at ~50 ms; meant for the UI meter, not for sample-accurate analysis.
+    /// Computed from the oversampled clip-kernel gain, decayed at ~50
+    /// ms; meant for the UI meter, not for sample-accurate analysis.
     var gainReductionDB: Float {
-        let pi = max(1e-6, peakInEnv)
-        let po = max(1e-6, peakOutEnv)
-        return max(0.0, 20.0 * log10f(pi / po))
+        let g = max(1e-6, clipGainEnv)
+        return max(0.0, -20.0 * log10f(g))
     }
 }
 
@@ -5325,7 +5356,6 @@ final class MPXGenerator {
     /// overshoot. The final post-injection clamp is the last-resort
     /// numeric guard; it should never engage for valid configs.
     private static let finalCompositeBudgetSafetyMargin: Float = 0.02
-    private static let monitorDiffDecodeGain: Float = 1.22
 
     private struct EncoderComplianceConfig {
         let programLowpassHz: Float
@@ -5348,6 +5378,7 @@ final class MPXGenerator {
         let preEncodeAudioLimiterEnabled: Bool
         let preEncodeThreshold: Float
         let preEncodeReleaseMS: Float
+        let preEncodeBandlimitedResidualEnabled: Bool
         let mpxDeviationKHz: Float
         let primeBassEnabled: Bool
         let primeBassAmount: Float
@@ -5456,6 +5487,7 @@ final class MPXGenerator {
             preEncodeAudioLimiterEnabled: config.preEncodeAudioLimiterEnabled,
             preEncodeThreshold: Float(config.preEncodeThreshold),
             preEncodeReleaseMS: Float(config.preEncodeReleaseMS),
+            preEncodeBandlimitedResidualEnabled: config.preEncodeBandlimitedResidualEnabled,
             mpxDeviationKHz: Float(config.mpxDeviationKHz),
             primeBassEnabled: config.primeBassEnabled,
             primeBassAmount: Float(config.primeBassAmount),
@@ -5971,6 +6003,7 @@ final class MPXGenerator {
     private var preEncodeAudioLimiter = PreEncodeAudioLimiter()
     private var preEncodeThreshold: Float = 0.85
     private var preEncodeReleaseMS: Float = 50.0
+    private var preEncodeBandlimitedResidualEnabled: Bool = false
 
     private var toneStep: Float
     private var tonePhase: Float = 0.0
@@ -6027,16 +6060,7 @@ final class MPXGenerator {
     private var encoderHFGuardReleaseCoeff: Float = 0.0
     private var compositeAudioSmoother = OnePoleLP()
     private var compositeAudioSmootherEnabled: Bool = false
-    private var monitorLPRLP = BiquadCascade6()
-    private var monitorDiffBandHP = BiquadCascade6()
-    private var monitorDiffBandLP = BiquadCascade6()
-    private var monitorDiffLP = BiquadCascade6()
-    private var monitorRFNotchPilot = Biquad()
-    private var monitorRFNotchRDS = Biquad()
-    private var monitorPilotNotchL = Biquad()
-    private var monitorPilotNotchR = Biquad()
-    private var monitorDeemphasisL = DeemphasisFilter()
-    private var monitorDeemphasisR = DeemphasisFilter()
+    private var monitorDecoder = MPXDecoder()
     private var lastSubcarrierSample: Float = 0.0
     private var audioCompositePeakState: Float = 0.0
     private var audioCompositePeakDecayCoeff: Float = 0.0
@@ -6053,8 +6077,6 @@ final class MPXGenerator {
     private var subcarrierReservationEnv: Float = 0.0
     private var subcarrierReservationAttackCoeff: Float = 0.0
     private var subcarrierReservationReleaseCoeff: Float = 0.0
-    private var monitorNoiseGateGain: Float = 0.0
-    private var monitorNoiseGateOpen: Bool = false
     private var lastProgramActivity: Float = 0.0
     private struct ProgramStereoState {
         var left: Float
@@ -6078,21 +6100,9 @@ final class MPXGenerator {
         var left: Float
         var right: Float
     }
-    private var monitorProgramEnv: Float = 0.0
-    private var monitorProgramNoiseFloor: Float = 0.0
     private var monitorExpectedSideEnv: Float = 0.0
     private var monitorExpectedSideAttackCoeff: Float = 0.0
     private var monitorExpectedSideReleaseCoeff: Float = 0.0
-    private var monitorCollapseHoldSamples: Int = 0
-    private var monitorCollapseCooldownSamples: Int = 0
-    private var monitorProgramEnvAttackCoeff: Float = 0.0
-    private var monitorProgramEnvReleaseCoeff: Float = 0.0
-    private var monitorNoiseFloorRiseCoeff: Float = 0.0
-    private var monitorNoiseFloorFallCoeff: Float = 0.0
-    private var monitorNoiseGateAttackCoeff: Float = 0.0
-    private var monitorNoiseGateReleaseCoeff: Float = 0.0
-    private var monitorCollapseHoldThresholdSamples: Int = 0
-    private var monitorCollapseCooldownResetSamples: Int = 0
 
     init(config: AppConfig, sampleRate: Double, nowPlayingState: NowPlayingState? = nil) {
         self.sampleRate = Float(max(8_000.0, sampleRate))
@@ -6148,6 +6158,7 @@ final class MPXGenerator {
         self.limitLookaheadEnabled = config.limitLookaheadEnabled
         self.limitLookaheadMS = clampf(Float(config.limitLookaheadMS), 0.0, 20.0)
         self.preEncodeAudioLimiterEnabled = config.preEncodeAudioLimiterEnabled
+        self.preEncodeBandlimitedResidualEnabled = config.preEncodeBandlimitedResidualEnabled
         self.audioCompositeSoftClipEnabled = config.audioCompositeSoftClipEnabled
         self.audioCompositeSmootherRequested = config.audioCompositeSmootherEnabled
         self.finalMPXSoftClipEnabled = config.finalMPXSoftClipEnabled
@@ -6279,7 +6290,8 @@ final class MPXGenerator {
         preEncodeAudioLimiter.configure(
             sampleRate: self.sampleRate,
             threshold: preEncodeThreshold,
-            releaseMS: preEncodeReleaseMS
+            releaseMS: preEncodeReleaseMS,
+            bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled
         )
         bs412Limiter.configure(
             sampleRate: self.sampleRate,
@@ -6399,7 +6411,8 @@ final class MPXGenerator {
         preEncodeAudioLimiter.configure(
             sampleRate: sampleRate,
             threshold: preEncodeThreshold,
-            releaseMS: preEncodeReleaseMS
+            releaseMS: preEncodeReleaseMS,
+            bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled
         )
         bs412Limiter.configure(
             sampleRate: sampleRate,
@@ -6431,14 +6444,17 @@ final class MPXGenerator {
             preEncodeAudioLimiterEnabled != config.preEncodeAudioLimiterEnabled
             || fabsf(preEncodeThreshold - config.preEncodeThreshold) > 0.0001
             || fabsf(preEncodeReleaseMS - config.preEncodeReleaseMS) > 0.001
+            || preEncodeBandlimitedResidualEnabled != config.preEncodeBandlimitedResidualEnabled
         preEncodeAudioLimiterEnabled = config.preEncodeAudioLimiterEnabled
         preEncodeThreshold = clampf(config.preEncodeThreshold, 0.5, 0.999)
         preEncodeReleaseMS = clampf(config.preEncodeReleaseMS, 10.0, 200.0)
+        preEncodeBandlimitedResidualEnabled = config.preEncodeBandlimitedResidualEnabled
         if preEncodeLimiterChanged {
             preEncodeAudioLimiter.configure(
                 sampleRate: sampleRate,
                 threshold: preEncodeThreshold,
-                releaseMS: preEncodeReleaseMS
+                releaseMS: preEncodeReleaseMS,
+                bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled
             )
         }
 
@@ -6878,14 +6894,6 @@ final class MPXGenerator {
         let sr = max(8_000.0, sampleRate)
         monitorExpectedSideAttackCoeff = expf(-1.0 / (0.010 * sr))
         monitorExpectedSideReleaseCoeff = expf(-1.0 / (0.260 * sr))
-        monitorProgramEnvAttackCoeff = expf(-1.0 / (0.010 * sr))
-        monitorProgramEnvReleaseCoeff = expf(-1.0 / (0.180 * sr))
-        monitorNoiseFloorRiseCoeff = expf(-1.0 / (3.0 * sr))
-        monitorNoiseFloorFallCoeff = expf(-1.0 / (0.50 * sr))
-        monitorNoiseGateAttackCoeff = expf(-1.0 / (0.006 * sr))
-        monitorNoiseGateReleaseCoeff = expf(-1.0 / (0.140 * sr))
-        monitorCollapseHoldThresholdSamples = max(1, Int((sr * 0.55).rounded()))
-        monitorCollapseCooldownResetSamples = max(1, Int((sr * 2.0).rounded()))
     }
 
     private func updatePrimeBassDynamicRates() {
@@ -6933,123 +6941,18 @@ final class MPXGenerator {
     }
 
     private func configureMonitorDemod() {
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = max(6_000.0, (sr * 0.5) - 200.0)
-
-        monitorLPRLP.configureLowpass(cutoffHz: 15_500.0, sampleRate: sr)
-
-        monitorDiffBandHP.configureHighpass(cutoffHz: 23_000.0, sampleRate: sr)
-        let diffHigh = min(54_000.0, nyquist)
-        if diffHigh > 24_000.0 {
-            monitorDiffBandLP.configureLowpass(cutoffHz: diffHigh, sampleRate: sr)
-        } else {
-            monitorDiffBandLP.configureIdentity()
-        }
-
-        monitorDiffLP.configureLowpass(cutoffHz: 15_500.0, sampleRate: sr)
-
-        if nyquist > (pilotFreq + 100.0) {
-            monitorRFNotchPilot.configureNotch(freqHz: pilotFreq, sampleRate: sr, q: 18.0)
-            monitorPilotNotchL.configureNotch(freqHz: pilotFreq, sampleRate: sr, q: 24.0)
-            monitorPilotNotchR.configureNotch(freqHz: pilotFreq, sampleRate: sr, q: 24.0)
-        } else {
-            monitorRFNotchPilot.configureIdentity()
-            monitorPilotNotchL.configureIdentity()
-            monitorPilotNotchR.configureIdentity()
-        }
-
-        if nyquist > 57_100.0 {
-            monitorRFNotchRDS.configureNotch(freqHz: 57_000.0, sampleRate: sr, q: 22.0)
-        } else {
-            monitorRFNotchRDS.configureIdentity()
-        }
-
-        monitorDeemphasisL.configure(tauUS: preemphasisUS, sampleRate: sr)
-        monitorDeemphasisR.configure(tauUS: preemphasisUS, sampleRate: sr)
+        monitorDecoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         lastSubcarrierSample = 0.0
-        monitorNoiseGateGain = 0.0
-        monitorNoiseGateOpen = false
         lastProgramActivity = 0.0
-        monitorProgramEnv = 0.0
-        monitorProgramNoiseFloor = 0.0
-        monitorCollapseHoldSamples = 0
     }
 
     private func demodulateMonitorFromMPXSample(_ mpx: Float) -> (Float, Float) {
-        var monSrc = monitorRFNotchPilot.process(mpx)
-        monSrc = monitorRFNotchRDS.process(monSrc)
-
-        let lpr = monitorLPRLP.process(monSrc)
-
-        let dsbHP = monitorDiffBandHP.process(monSrc)
-        let dsb = monitorDiffBandLP.process(dsbHP)
-        var diff = 2.0 * dsb * lastSubcarrierSample
-        diff = monitorDiffLP.process(diff)
-        diff *= Self.monitorDiffDecodeGain
-        diff = -diff
-
-        var left = lpr + diff
-        var right = lpr - diff
-
-        left = monitorPilotNotchL.process(left)
-        right = monitorPilotNotchR.process(right)
-        left = monitorDeemphasisL.process(left)
-        right = monitorDeemphasisR.process(right)
-
-        let activity = max(0.0, lastProgramActivity)
-
-        let envCoeff =
-            activity > monitorProgramEnv ? monitorProgramEnvAttackCoeff : monitorProgramEnvReleaseCoeff
-        monitorProgramEnv = (envCoeff * monitorProgramEnv) + ((1.0 - envCoeff) * activity)
-
-        // Track the long-term idle floor to reject ADC hiss when no real program is present.
-        let floorTarget = monitorProgramEnv
-        if !monitorNoiseGateOpen || floorTarget <= (monitorProgramNoiseFloor * 1.4) {
-            let floorCoeff =
-                floorTarget > monitorProgramNoiseFloor
-                ? monitorNoiseFloorRiseCoeff : monitorNoiseFloorFallCoeff
-            monitorProgramNoiseFloor =
-                (floorCoeff * monitorProgramNoiseFloor) + ((1.0 - floorCoeff) * floorTarget)
-        }
-
-        let openThreshold = max(0.00016, monitorProgramNoiseFloor * 2.3)
-        let closeThreshold = max(0.00008, monitorProgramNoiseFloor * 1.6)
-        if monitorNoiseGateOpen {
-            if monitorProgramEnv < closeThreshold {
-                monitorNoiseGateOpen = false
-            }
-        } else if monitorProgramEnv > openThreshold {
-            monitorNoiseGateOpen = true
-        }
-        let targetGain: Float = monitorNoiseGateOpen ? 1.0 : 0.0
-        let coeff =
-            targetGain > monitorNoiseGateGain ? monitorNoiseGateAttackCoeff : monitorNoiseGateReleaseCoeff
-        monitorNoiseGateGain = (coeff * monitorNoiseGateGain) + ((1.0 - coeff) * targetGain)
-        left *= monitorNoiseGateGain
-        right *= monitorNoiseGateGain
-
-        // Auto-recover demod state if decoded stereo collapses while encoded side persists.
-        if monitorCollapseCooldownSamples > 0 {
-            monitorCollapseCooldownSamples -= 1
-        }
-        let outSideAbs = fabsf((left - right) * 0.5)
-        let expectedSide = monitorExpectedSideEnv
-        let sidePresent = expectedSide > max(0.0012, monitorProgramEnv * 0.08)
-        let collapsed = outSideAbs < (expectedSide * 0.12)
-        if sidePresent && collapsed {
-            monitorCollapseHoldSamples += 1
-            if monitorCollapseCooldownSamples <= 0,
-                monitorCollapseHoldSamples > monitorCollapseHoldThresholdSamples
-            {
-                configureMonitorDemod()
-                monitorCollapseCooldownSamples = monitorCollapseCooldownResetSamples
-                monitorCollapseHoldSamples = 0
-            }
-        } else {
-            monitorCollapseHoldSamples = max(0, monitorCollapseHoldSamples - 1)
-        }
-
-        return (clampf(left, -1.0, 1.0), clampf(right, -1.0, 1.0))
+        monitorDecoder.process(
+            mpx,
+            referenceSubcarrier: lastSubcarrierSample,
+            programActivity: lastProgramActivity,
+            expectedSide: monitorExpectedSideEnv
+        )
     }
 
     private func configurePrimeBassFilters() {

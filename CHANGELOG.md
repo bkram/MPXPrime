@@ -9,6 +9,41 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
+## 0.27 — unreleased
+
+### DSP — anti-aliased clipping (US 6,937,912) groundwork
+
+- **`BandLimitedStep` primitive landed** ([`macOS/Sources/MPXPrime/BandLimitedStep.swift`](macOS/Sources/MPXPrime/BandLimitedStep.swift), Phase A of the US 6,937,912 work). Allocation-free helper that detects fractional threshold crossings (`crossingFraction(previous:current:threshold:)`) and schedules normalized finite band-limited correction windows. Three correction shapes supported — impulse (area-normalized), step (BLEP, for value discontinuities), and ramp (BLAMP, for slope discontinuities — the shape the current `tanh` soft knee actually needs since it is value-continuous). 13 deterministic tests in `BandLimitedStepTests` cover kernel normalization, crossing detection, DC balance, overlap, reset, and finiteness of both step and ramp correction outputs.
+- **Spectral gate landed** ([`AntiAliasedClipperProbeTests`](macOS/Tests/MPXPrimeTests/AntiAliasedClipperProbeTests.swift), Phase B). A 5.111 kHz mono-tone probe at 48 kHz compares four kernels against the alias-bin energy budget: hard knee (-31.06 dBFS), current `tanh` knee (-30.76 dBFS), naive normalized BLAMP-only correction (-30.87 dBFS — stable but no improvement yet), and the patent-style residual-bandlimiting candidate (-44.90 dBFS — 13.84 dB cleaner than hard, fundamental preserved within 0.00 dB at -3.17 dBFS). Gate asserts the patent-residual candidate is ≥6 dB cleaner than hard and preserves the wanted fundamental within 1 dB.
+- **`AcceleratedBandlimitedResidualClipper` landed** ([`macOS/Sources/MPXPrime/AcceleratedBandlimitedResidualClipper.swift`](macOS/Sources/MPXPrime/AcceleratedBandlimitedResidualClipper.swift)). Patent-style candidate: hard clip → residual = clipped − input → band-limit residual through a 65-tap Kaiser-windowed-sinc lowpass via `vDSP_dotpr` polyphase → reconstruct as `delayedCleanInput + filteredResidual`. The clean signal rides a group-delay-matched bypass; only the broadband clipping error is filtered. Kept off the production hot path; available via the new `pre_encode_bandlimited_residual_enabled` opt-in.
+- **`OversampledPeakLimiter` / `StereoLinkedOversampledPeakLimiter` gain an opt-in band-limited residual ceiling.** New `bandlimitedResidualEnabled` parameter on both `configure(...)` paths wires the residual clipper as the inner kernel. Stereo-linked path keeps the `max(|L|, |R|)` detector intact; only the per-channel ceiling kernel changes. New `pre_encode_bandlimited_residual_enabled` INI key (default false) + `RuntimeConfig` plumbing + live-apply via `applyRuntimeConfig` change detection + GUI toggle on the Audio Limiter card (clearly labelled "Experimental 0.27"). 4 integration tests in `PreEncodeBandlimitedResidualLimiterTests` cover the runtime-config flag, single-channel ceiling holding under 1.02, stereo-link gain shared across channels at L/R asymmetry, and a 2-tone IM gate.
+
+### DSP — monitor path refactor + receiver model
+
+- **`MPXDecoder` extracted as a reusable struct** ([`macOS/Sources/MPXPrime/MPXDecoder.swift`](macOS/Sources/MPXPrime/MPXDecoder.swift)). Pilot-PLL-locked or externally-referenced 38 kHz subcarrier demod, L+R / L−R recovery, pilot/RDS notches, deemphasis, smoothed noise gate, and stereo-collapse cooldown logic. Replaces ~200 lines of inline monitor-demod code in `MPXGenerator`. `MPXGenerator` now owns a `monitorDecoder: MPXDecoder` and feeds it the existing delay-aligned reference subcarrier + program-activity envelope on each render sample.
+- **Stereo-subcarrier delay alignment for the monitor path.** New `stereoSubcarrierDelayLine` ring buffer mirrors the existing 0.26 `subcarrierDelayLine` but carries the 38 kHz stereo reference instead of pilot+RDS. The monitor decoder now reads the delay-aligned reference, so the monitor demod stays phase-coherent with the audio composite even with the composite clipper, audio bandwidth FIR, and look-ahead all engaged.
+- **`--verify-receiver` CLI mode** ([`main.swift`](macOS/Sources/MPXPrime/main.swift), [`VerificationHarness.swift`](macOS/Sources/MPXPrime/VerificationHarness.swift)). Offline receiver-model verifier reports stereo separation at 1 / 10 / 14 kHz, mono compatibility (mid / side / side-rejection in dB), and subcarrier health (pilot percent + phase, RDS lower / upper / center sideband levels). Result `OK` when separations exceed 18 / 18 / 16 dB respectively, side rejection ≥ 26 dB, pilot 6.5–9.5 %, RDS sideband ≥ -60 dBFS, RDS center ≥ 8 dB below sidebands; otherwise `TIGHT` with a per-metric warning list.
+
+### Configuration + UI
+
+- **`pre_encode_bandlimited_residual_enabled` INI key** added to `MPXPrime.ini` and `Verification.ini` (default `False`). Live-applicable (no engine restart). Audio Limiter card gains a toggle clearly tagged "Experimental 0.27 anti-aliased ceiling kernel" with a tooltip pointing at the comparison-pending status.
+
+### Verifier
+
+- Default `--verify --baseline-strict` and `--verify-presets` remain `OK` on the post-0.27-groundwork chain (worst overshoot 0.000000, composite budget exceeded no, all 7 presets clean). Baseline JSON refreshed.
+
+### Tests
+
+- **+21 tests across 4 new suites** (280 → 301 across 38 → 42 suites):
+  - `BandLimitedStepTests` (13)
+  - `AcceleratedBandlimitedResidualClipperTests` (4)
+  - `PreEncodeBandlimitedResidualLimiterTests` (4)
+  - `AntiAliasedClipperProbeTests` (2 — `tanh` knee continuity + 4-way spectral comparison gate)
+
+### Docs
+
+- **plan.md** Next up #1 rewritten: Phase A marked landed, Phase B has its spectral gate landed and an off-by-default candidate ready, Phase C / D still pending. New "Extended MPX monitoring" subsection describes the generated-MPX monitor and the planned external-USB MPX-input analyzer.
+
 ## 0.26 — 2026-05-11
 
 ### DSP — composite peak control + chain integrity

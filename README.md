@@ -106,6 +106,16 @@ Long-run compliance/regression verification:
 swift run --package-path macOS MPXPrime --verify-long --seconds 30
 ```
 
+Receiver-model verification (0.27 — offline coherent stereo decode through
+the same `MPXDecoder` the monitor path uses):
+
+```bash
+swift run --package-path macOS MPXPrime --verify-receiver --seconds 5
+```
+
+Reports stereo separation at 1 / 10 / 14 kHz, mono compatibility, pilot
+percent and phase, and RDS lower/upper sideband + center-null levels.
+
 Custom config file:
 
 ```bash

@@ -22,6 +22,7 @@ struct CLIOptions {
     var verify: Bool = false
     var verifyPresets: Bool = false
     var verifyLong: Bool = false
+    var verifyReceiver: Bool = false
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
 }
@@ -86,6 +87,10 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyLong = true
             options.gui = false
+        case "--verify-receiver":
+            options.verify = true
+            options.verifyReceiver = true
+            options.gui = false
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -109,6 +114,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify [--seconds 5]
           MPXPrime [--config <path>] --verify-presets [--seconds 5]
           MPXPrime [--config <path>] --verify-long [--seconds 30]
+          MPXPrime [--config <path>] --verify-receiver [--seconds 5]
 
         Options:
           --config   Path to macOS INI config (default: ~/Library/Application Support/MPX Prime/MPX Prime.ini)
@@ -122,6 +128,7 @@ func printUsage() {
           --baseline-strict   Any baseline drift elevates exit code to WARN (2).
           --verify-presets  Sweep key multiband presets through the offline verification harness
           --verify-long  Run the longer focused compliance/regression verifier
+          --verify-receiver  Run offline receiver-model decode checks
         """
     print(text)
 }
@@ -166,6 +173,7 @@ do {
                 durationSeconds: duration,
                 presetSweep: options.verifyPresets,
                 longRun: options.verifyLong,
+                receiverModel: options.verifyReceiver,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )

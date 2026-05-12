@@ -27,6 +27,7 @@ struct AppConfig {
     //   testToneMode/Freq/LevelDB/Type (tone-generator parameters),
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled, preEncodeThreshold, preEncodeReleaseMS,
+    //   preEncodeBandlimitedResidualEnabled,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
@@ -98,6 +99,7 @@ struct AppConfig {
     var preEncodeAudioLimiterEnabled: Bool = true
     var preEncodeThreshold: Double = 0.85
     var preEncodeReleaseMS: Double = 50.0
+    var preEncodeBandlimitedResidualEnabled: Bool = false
     // TX-path encoder bandwidth guard: linear-phase FIR (~1.67 ms latency at
     // 192 kHz, >80 dB stop-band) instead of the default Butterworth (~0.2 ms
     // latency, ~40 dB stop-band). Only active when running in composite
@@ -386,6 +388,10 @@ struct AppConfig {
             "pre_encode_threshold", defaultValue: cfg.preEncodeThreshold)
         cfg.preEncodeReleaseMS = mpx.double(
             "pre_encode_release_ms", defaultValue: cfg.preEncodeReleaseMS)
+        cfg.preEncodeBandlimitedResidualEnabled = mpx.bool(
+            "pre_encode_bandlimited_residual_enabled",
+            defaultValue: cfg.preEncodeBandlimitedResidualEnabled
+        )
         cfg.encoderFIREnabled = mpx.bool(
             "encoder_fir_enabled", defaultValue: cfg.encoderFIREnabled)
         cfg.multibandFIREnabled = mpx.bool(
@@ -852,6 +858,7 @@ struct AppConfig {
             "pre_encode_limiter_enabled = \(Self.boolString(preEncodeAudioLimiterEnabled))",
             "pre_encode_threshold = \(Self.formatFloat(preEncodeThreshold))",
             "pre_encode_release_ms = \(Self.formatFloat(preEncodeReleaseMS))",
+            "pre_encode_bandlimited_residual_enabled = \(Self.boolString(preEncodeBandlimitedResidualEnabled))",
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",

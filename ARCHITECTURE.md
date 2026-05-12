@@ -131,10 +131,13 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 
 ## Major Components
 
-- `main.swift`: CLI entry point, config loading, audio engine lifecycle.
+- `main.swift`: CLI entry point, config loading, audio engine lifecycle. New `--verify-receiver` mode added in 0.27.
 - `AudioOutputEngine.swift`: AVAudioEngine output setup, render callback, transport orchestration. Delegates input capture to `InputAUHAL`.
 - `InputAUHAL.swift`: Direct AUHAL (`kAudioUnitSubType_HALOutput`) input-capture wrapper. Replaces a second `AVAudioEngine` instance the engine used to spin up for input — AVAudioEngine's first `start()` with a non-default input device intermittently failed to deliver tap callbacks. The two-AUHAL pattern (separate input AU + output AVAudioEngine + `StereoInputRingBuffer` as the only bridge) is what TN2091 / CAPlayThrough / Stereotool / AudioKit's non-default-device path use on macOS.
 - `MPXGenerator.swift`: Real-time MPX/DSP generation, RDS encoding.
+- `MPXDecoder.swift` (0.27): Reusable FM-stereo demodulator. Used both by the audio render callback for monitor output (with the internally generated, delay-aligned 38 kHz reference) and by the offline verifier (with a pilot-PLL recovered reference). Includes a smoothed noise gate and a stereo-collapse cooldown that re-initialises the PLL if it ever drifts off-lock.
+- `BandLimitedStep.swift` (0.27): Allocation-free BLEP/BLAMP correction helper for the US 6,937,912 anti-aliased clipping work. Detects fractional threshold crossings and schedules normalized finite correction windows in impulse / step / ramp shapes.
+- `AcceleratedBandlimitedResidualClipper.swift` (0.27): vDSP-accelerated patent-style residual-bandlimiting candidate clipper (hard-clip → bandlimit the residual → reconstruct as delayed-clean + filtered-residual). Wired as the inner kernel of `OversampledPeakLimiter` / `StereoLinkedOversampledPeakLimiter` behind the off-by-default `pre_encode_bandlimited_residual_enabled` opt-in.
 - `AppConfig.swift`: Configuration model, INI parsing/serialization.
 - `SwiftUIControlApp.swift`: SwiftUI views, state management.
 - `AudioDevices.swift`: CoreAudio device enumeration; resolves UIDs to `AudioDeviceID`s and provides the `defaultInputDeviceID()` helper AUHAL needs (AUHAL requires an explicit device, unlike AVAudioEngine which inferred the default implicitly).

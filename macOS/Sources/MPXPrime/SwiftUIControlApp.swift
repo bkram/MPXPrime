@@ -159,19 +159,19 @@ enum AppSection: String, CaseIterable, Identifiable {
 enum ProcessingTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case core = "Core"
-    case agc = "AGC"
     case phaseRotator = "Phase Rot"
+    case agc = "AGC"
     case parametricEQ = "PEQ"
-    case primeBass = "PrimeBass"
-    case widener = "Widener"
     case multiband = "Multiband"
     case mbLimiter = "MB Limiter"
     case expander = "Expander"
+    case widener = "Widener"
+    case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "DC Clipper"
     case limiter = "Limiter"
-    case bs412 = "BS.412"
     case compositeClipper = "Comp Clip"
+    case bs412 = "BS.412"
     case finalStage = "Final Stage"
 
     var id: String { rawValue }
@@ -300,19 +300,19 @@ enum Stage: String, CaseIterable, Identifiable {
     // Processing
     case processingOverview
     case processingCore
-    case processingAGC
     case processingPhaseRotator
+    case processingAGC
     case processingParametricEQ
-    case processingPrimeBass
-    case processingWidener
     case processingMultiband
     case processingMBLimiter
     case processingExpander
+    case processingWidener
+    case processingPrimeBass
     case processingBassClipper
     case processingDCClipper
     case processingLimiter
-    case processingBS412
     case processingCompositeClipper
+    case processingBS412
     case processingFinalStage
 
     // RDS — Control is the primary landing; the rest are detail tabs.
@@ -2366,9 +2366,11 @@ final class MPXPrimeViewModel: ObservableObject {
         case .core:
             runtimeDisposition = .restart
         case .overview,
-             .agc, .primeBass, .multiband, .widener, .limiter,
-             .phaseRotator, .parametricEQ, .mbLimiter, .expander,
-             .bassClipper, .dcClipper, .bs412, .compositeClipper,
+             .phaseRotator, .agc, .parametricEQ,
+             .multiband, .mbLimiter, .expander,
+             .widener, .primeBass,
+             .bassClipper, .dcClipper, .limiter,
+             .compositeClipper, .bs412,
              .finalStage:
             runtimeDisposition = .live
         }
@@ -4988,7 +4990,7 @@ private struct MonitoringDashboardView: View {
         }
     }
 
-    // MARK: - Panel B: DSP chain (3-pill context strip + 14-stage grid)
+    // MARK: - Panel B: DSP chain (3-pill context strip + 13-stage grid)
 
     private var chainPanel: some View {
         Card(title: "Signal Chain") {

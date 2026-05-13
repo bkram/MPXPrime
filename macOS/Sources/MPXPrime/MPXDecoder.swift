@@ -26,10 +26,11 @@ struct MPXDecoder {
     private var deemphasisL = DeemphasisFilter()
     private var deemphasisR = DeemphasisFilter()
 
-    private var pilotPLLBandpass = Biquad()
     private var pllPhase: Float = 0.0
     private var pllStep: Float = 0.0
-    private var pllGain: Float = 0.0015
+    private var pilotLockI: Float = 0.0
+    private var pilotLockQ: Float = 0.0
+    private var pilotLockCoeff: Float = 0.0
 
     private var noiseGateGain: Float = 0.0
     private var noiseGateOpen: Bool = false
@@ -62,12 +63,10 @@ struct MPXDecoder {
             rfNotchPilot.configureNotch(freqHz: Self.pilotHz, sampleRate: sr, q: 18.0)
             pilotNotchL.configureNotch(freqHz: Self.pilotHz, sampleRate: sr, q: 24.0)
             pilotNotchR.configureNotch(freqHz: Self.pilotHz, sampleRate: sr, q: 24.0)
-            pilotPLLBandpass.configureBandpass(freqHz: Self.pilotHz, sampleRate: sr, q: 18.0)
         } else {
             rfNotchPilot.configureIdentity()
             pilotNotchL.configureIdentity()
             pilotNotchR.configureIdentity()
-            pilotPLLBandpass.configureIdentity()
         }
 
         if nyquist > 57_100.0 {
@@ -81,7 +80,9 @@ struct MPXDecoder {
 
         pllPhase = 0.0
         pllStep = (Float.pi * 2.0 * Self.pilotHz) / sr
-        pllGain = min(0.004, max(0.0004, 288.0 / sr))
+        pilotLockI = 0.0
+        pilotLockQ = 0.0
+        pilotLockCoeff = expf(-1.0 / (0.020 * sr))
 
         programEnvAttackCoeff = expf(-1.0 / (0.010 * sr))
         programEnvReleaseCoeff = expf(-1.0 / (0.180 * sr))
@@ -173,14 +174,30 @@ struct MPXDecoder {
 
     @inline(__always)
     private mutating func pilotLockedSubcarrier(from mpx: Float) -> Float {
-        let pilot = pilotPLLBandpass.process(mpx)
-        let error = pilot * cosf(pllPhase)
-        pllPhase += pllStep + (pllGain * error)
+        let oscSin = sinf(pllPhase)
+        let oscCos = cosf(pllPhase)
+        pilotLockI = (pilotLockCoeff * pilotLockI) + ((1.0 - pilotLockCoeff) * (mpx * oscSin))
+        pilotLockQ = (pilotLockCoeff * pilotLockQ) + ((1.0 - pilotLockCoeff) * (mpx * oscCos))
+
+        let mag2 = (pilotLockI * pilotLockI) + (pilotLockQ * pilotLockQ)
+        let subcarrier: Float
+        if mag2 > 1e-4 {
+            let invMag2 = 1.0 / mag2
+            let cos2Phi = ((pilotLockI * pilotLockI) - (pilotLockQ * pilotLockQ)) * invMag2
+            let sin2Phi = (2.0 * pilotLockI * pilotLockQ) * invMag2
+            let sin2Theta = 2.0 * oscSin * oscCos
+            let cos2Theta = (oscCos * oscCos) - (oscSin * oscSin)
+            subcarrier = (sin2Theta * cos2Phi) + (cos2Theta * sin2Phi)
+        } else {
+            subcarrier = 0.0
+        }
+
+        pllPhase += pllStep
         if pllPhase >= (Float.pi * 2.0) {
             pllPhase -= Float.pi * 2.0
         } else if pllPhase < 0.0 {
             pllPhase += Float.pi * 2.0
         }
-        return sinf(2.0 * pllPhase)
+        return subcarrier
     }
 }

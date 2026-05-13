@@ -104,6 +104,44 @@ PrimeBass (renamed from `Orbass` in 0.20) is the adaptive low-band enhancer; goa
 
 6. **Receiver-model verifier.** Enterprise-style DSP changes should be judged at receiver output, not only at MPX waveform level. Add offline decode metrics for stereo separation at 1 / 10 / 14 kHz, mono compatibility, pilot level/phase error, RDS band level/center accuracy, post-injection overshoot count, MPX power, and composite crest factor. Prerequisite for promoting `postInjectionOvershoot > 0` from TIGHT to a hard verifier failure for normal presets.
 
+### High-frequency stereo separation improvement plan
+
+Current receiver-verifier truth: MPX Prime is not broken. Coherent decode and external-style PLL decode now agree at 1 / 10 / 14 kHz, which means the recovered pilot path is not the high-frequency separation bottleneck. The measured separation is good at 1 kHz and acceptable at the top of the stereo band, but not yet premium:
+
+```text
+1 kHz   ~34 dB
+10 kHz  ~26 dB
+14 kHz  ~24 dB
+```
+
+Target for the next DSP quality pass:
+
+```text
+1 kHz   >=35 dB
+10 kHz  >=30 dB
+14 kHz  >=25-30 dB
+```
+
+Work in this order:
+
+1. **Separate encoder-side loss from receiver-model loss.** Add a raw MPX sideband analyzer that measures `(L-R)` sideband amplitude and symmetry directly around 38 kHz for 1 / 10 / 14 kHz L-only and R-only tones, before deemphasis or receiver lowpass can influence the result. If raw sidebands are clean but decoded separation is lower, the receiver filter/deemphasis model is the limit. If raw sidebands already show imbalance or leakage, the encoder/composite path is the limit.
+
+2. **Add a stage-isolation sweep.** Re-run the same sideband/separation metrics with the following stages toggled individually: composite clipper, audio-composite bandwidth FIR, final MPX safety limiter, encoder FIR, pilot notch, pre-encode limiter, and pre-emphasis. This should produce a small table of separation deltas, not a listening-only judgement.
+
+3. **Check phase and delay alignment at high stereo sidebands.** Measure the relative phase of lower/upper `(L-R)` sidebands versus the delayed pilot-derived 38 kHz reference. A small phase error near 24 kHz / 52 kHz can collapse decoded separation more at 14 kHz than at 1 kHz. Keep any correction verifier-backed; do not move the post-clipper pilot/RDS injection invariant.
+
+4. **Audit receiver filter contribution.** The shared `MPXDecoder` uses deemphasis, RF pilot/RDS notches, and a 15.5 kHz lowpass. Add a decode A/B metric with simplified ideal receiver filters versus the production monitor filters. If ideal decode is much better, tune the decoder filters first. If both paths match, improve the generated MPX.
+
+5. **Tune only after the bottleneck is identified.** Candidate fixes are: refine encoder FIR cutoff/group-delay alignment, adjust pilot-notch depth/Q, add a small stereo-sideband phase compensation if measured, or reduce composite-stage interaction near 24-52 kHz. Avoid broad chain rewrites; the current verifier already shows stable pilot, RDS, mono, and 1 kHz separation.
+
+Done criteria:
+
+- `--verify-receiver` reports the PLL and coherent rows for 1 / 10 / 14 kHz.
+- A new raw-sideband table identifies whether loss is encoder-side or receiver-model-side.
+- 10 kHz separation improves toward 30 dB without reducing pilot/RDS cleanliness or increasing post-injection overshoot.
+- 14 kHz separation stays at or above 25 dB, ideally closer to 30 dB, on both coherent and PLL decode.
+- Full verifier and Swift tests pass.
+
 ### Extended MPX monitoring
 
 MPX Prime should treat "monitoring" as a real receive path, not only as a convenience downmix. The same reusable MPX decoder should support both internal generated-MPX monitoring and external MPX input monitoring from a high-rate USB audio interface.

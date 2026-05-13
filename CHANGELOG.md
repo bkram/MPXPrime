@@ -9,7 +9,7 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
-## 0.27 — unreleased
+## 0.27 — 2026-05-13
 
 ### DSP — anti-aliased clipping (US 6,937,912) groundwork
 

@@ -139,12 +139,69 @@ private struct ReceiverMonoMetrics {
     let sideRejectionDB: Float
 }
 
+private struct ReceiverPLLRoundTripMetrics {
+    let toneHz: Double
+    let wantedDBFS: Float
+    let crosstalkDBFS: Float
+    let separationDB: Float
+    let decodedRMSDBFS: Float
+    let decodedPeakDBFS: Float
+    let correlation: Float
+    let sideToMidRatio: Float
+}
+
+private struct ReceiverNoPilotMetrics {
+    let pilotPercent: Float
+    let midDBFS: Float
+    let sideDBFS: Float
+    let sideRejectionDB: Float
+    let correlation: Float
+}
+
 private struct ReceiverSubcarrierMetrics {
     let pilotPercent: Float
     let pilotPhaseDegrees: Float
-    let rdsLowerDBFS: Float
-    let rdsUpperDBFS: Float
+    let rdsBandDBFS: Float
     let rdsCenterDBFS: Float
+}
+
+/// Encoder-side raw-MPX sideband measurement. Used to separate
+/// encoder-side stereo-separation loss from receiver-model loss when
+/// chasing premium-grade HF separation. Tap point is the raw MPX
+/// waveform pre-MPXDecoder, so no receiver-side deemphasis, pilot/RDS
+/// notch, or 15.5 kHz lowpass contaminates the numbers.
+///
+/// Driven by a single-channel sine (L-only or R-only). For perfect
+/// DSB-SC stereo encoding with `sumLevel == diffLevel`, lower and
+/// upper sidebands should match in amplitude and the side-sum should
+/// equal the baseband mono. Deviations are encoder-side fingerprints:
+/// FIR rolloff between 24 / 28 / 37 / 39 / 48 / 52 kHz produces
+/// `asymmetryDB`; differential attenuation between baseband and
+/// sideband bands produces `sideMonoDeltaDB`.
+private struct EncoderSidebandMetrics {
+    /// "L" or "R" — which channel was driven.
+    let drivenChannel: String
+    let toneHz: Double
+    /// Baseband bin at toneHz (raw MPX, Goertzel extraction).
+    let monoDBFS: Float
+    /// Lower DSB-SC sideband at |38000 - toneHz|.
+    let lowerSidebandDBFS: Float
+    /// Upper DSB-SC sideband at 38000 + toneHz.
+    let upperSidebandDBFS: Float
+    /// |lower - upper| in dB. Direct signal of encoder FIR / clipper
+    /// asymmetry across the sideband frequency span.
+    let asymmetryDB: Float
+    /// Side-sum amplitude as `20·log10(|lower| + |upper|)`, the
+    /// amplitude an ideal coherent receiver would recover from the
+    /// two mirror sidebands when they are in phase.
+    let sideSumDBFS: Float
+    /// `sideSumDBFS - monoDBFS`. For ideal DSB-SC with the encoder's
+    /// default `sumLevel == diffLevel`, this is 0 dB. Negative values
+    /// mean the side path is being attenuated relative to mono in the
+    /// post-encoder chain (composite clipper / audio bandwidth FIR /
+    /// safety limiter rolling off the sideband region more than
+    /// baseband).
+    let sideMonoDeltaDB: Float
 }
 
 private struct DeterministicNoise {
@@ -680,6 +737,33 @@ private func estimatePilotPhase(
     return (pilot.amplitude, atan2(pilot.cos, pilot.sin))
 }
 
+private func toneBandEnergyDBFS(
+    samples: [Float],
+    sampleRate: Double,
+    lowerHz: Double,
+    upperHz: Double,
+    start: Int,
+    count: Int,
+    stepHz: Double = 250.0
+) -> Float {
+    guard lowerHz <= upperHz, stepHz > 0.0 else { return -200.0 }
+    var power = 0.0
+    var frequency = lowerHz
+    while frequency <= upperHz {
+        let vector = toneVector(
+            samples: samples,
+            sampleRate: sampleRate,
+            frequencyHz: frequency,
+            start: start,
+            count: count
+        )
+        let amplitude = max(vector.amplitude, 1e-12)
+        power += amplitude * amplitude
+        frequency += stepHz
+    }
+    return dbfs(sqrt(max(power, 1e-24)))
+}
+
 private func demodulatedSideVector(
     samples: [Float],
     sampleRate: Double,
@@ -724,6 +808,29 @@ private func decodeMPXWithReference(
         let decoded = decoder.process(
             samples[i],
             referenceSubcarrier: ref,
+            programActivity: programActivity,
+            expectedSide: expectedSide
+        )
+        left[i] = decoded.0
+        right[i] = decoded.1
+    }
+    return (left, right)
+}
+
+private func decodeMPXWithPLL(
+    samples: [Float],
+    config: AppConfig,
+    programActivity: Float,
+    expectedSide: Float
+) -> (left: [Float], right: [Float]) {
+    var decoder = MPXDecoder()
+    decoder.configure(sampleRate: Float(config.sampleRate), preemphasisUS: config.preemphasisUS)
+    var left = [Float](repeating: 0.0, count: samples.count)
+    var right = [Float](repeating: 0.0, count: samples.count)
+    for i in 0..<samples.count {
+        let decoded = decoder.process(
+            samples[i],
+            referenceSubcarrier: nil,
             programActivity: programActivity,
             expectedSide: expectedSide
         )
@@ -784,6 +891,124 @@ private func receiverToneMetrics(
         wantedDBFS: dbfs(wanted),
         crosstalkDBFS: dbfs(crosstalk),
         separationDB: Float(20.0 * log10(wanted / crosstalk))
+    )
+}
+
+private func encoderSidebandMetrics(
+    config: AppConfig,
+    toneHz: Double,
+    drivenChannel: String,
+    durationSeconds: Double
+) -> EncoderSidebandMetrics {
+    var cfg = config
+    cfg.monoMode = false
+    cfg.enRDS = false
+    let amplitude = 0.45
+    let driveLeft = drivenChannel == "L"
+    // Single-channel sine: produces a baseband (L+R)/2 component at
+    // toneHz plus symmetric DSB-SC sidebands at 38 +/- toneHz. Any
+    // encoder-side asymmetry between those sidebands (e.g., audio
+    // composite bandwidth FIR rolling off 52 kHz harder than 24 kHz
+    // for a 14 kHz tone) becomes a direct fingerprint of encoder-side
+    // separation loss.
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let tone = Float(amplitude * sin(2.0 * Double.pi * toneHz * Double(frame) / sampleRate))
+        return driveLeft ? (tone, 0.0) : (0.0, tone)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+
+    let mono = toneVector(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let lower = toneVector(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: 38_000.0 - toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let upper = toneVector(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: 38_000.0 + toneHz,
+        start: window.start,
+        count: window.count
+    )
+
+    let monoAmp = max(mono.amplitude, 1e-12)
+    let lowerAmp = max(lower.amplitude, 1e-12)
+    let upperAmp = max(upper.amplitude, 1e-12)
+    let sideSumAmp = max(lowerAmp + upperAmp, 1e-12)
+
+    let lowerDB = dbfs(lowerAmp)
+    let upperDB = dbfs(upperAmp)
+    let monoDB = dbfs(monoAmp)
+    let sideSumDB = dbfs(sideSumAmp)
+    return EncoderSidebandMetrics(
+        drivenChannel: drivenChannel,
+        toneHz: toneHz,
+        monoDBFS: monoDB,
+        lowerSidebandDBFS: lowerDB,
+        upperSidebandDBFS: upperDB,
+        asymmetryDB: abs(lowerDB - upperDB),
+        sideSumDBFS: sideSumDB,
+        sideMonoDeltaDB: sideSumDB - monoDB
+    )
+}
+
+private func receiverPLLRoundTripMetrics(
+    config: AppConfig,
+    toneHz: Double,
+    durationSeconds: Double
+) -> ReceiverPLLRoundTripMetrics {
+    var cfg = config
+    cfg.monoMode = false
+    cfg.enRDS = false
+    let amplitude = 0.45
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let tone = Float(amplitude * sin(2.0 * Double.pi * toneHz * Double(frame) / sampleRate))
+        return (tone, 0.0)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+    let decoded = decodeMPXWithPLL(
+        samples: samples,
+        config: cfg,
+        programActivity: Float(amplitude),
+        expectedSide: 0.0
+    )
+    let left = toneVector(
+        samples: decoded.left,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let right = toneVector(
+        samples: decoded.right,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let wanted = max(max(left.amplitude, right.amplitude), 1e-12)
+    let crosstalk = max(min(left.amplitude, right.amplitude), 1e-12)
+    let decodedMetrics = computeStereoSignalMetrics(
+        left: Array(decoded.left[window.start..<(window.start + window.count)]),
+        right: Array(decoded.right[window.start..<(window.start + window.count)])
+    )
+    return ReceiverPLLRoundTripMetrics(
+        toneHz: toneHz,
+        wantedDBFS: dbfs(wanted),
+        crosstalkDBFS: dbfs(crosstalk),
+        separationDB: Float(20.0 * log10(wanted / crosstalk)),
+        decodedRMSDBFS: dbfs(Double(max(decodedMetrics.rms, 1e-12))),
+        decodedPeakDBFS: dbfs(Double(max(decodedMetrics.peak, 1e-12))),
+        correlation: decodedMetrics.correlation,
+        sideToMidRatio: decodedMetrics.sideToMidRatio
     )
 }
 
@@ -849,6 +1074,63 @@ private func receiverMonoMetrics(
     )
 }
 
+private func receiverNoPilotMetrics(
+    config: AppConfig,
+    durationSeconds: Double
+) -> ReceiverNoPilotMetrics {
+    var cfg = config
+    cfg.monoMode = true
+    cfg.enRDS = false
+    let toneHz = 1_000.0
+    let amplitude = 0.45
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let tone = Float(amplitude * sin(2.0 * Double.pi * toneHz * Double(frame) / sampleRate))
+        return (tone, tone)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+    let pilot = estimatePilotPhase(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        start: window.start,
+        count: window.count
+    )
+    let decoded = decodeMPXWithPLL(
+        samples: samples,
+        config: cfg,
+        programActivity: Float(amplitude),
+        expectedSide: 0.0
+    )
+    let leftVector = toneVector(
+        samples: decoded.left,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let rightVector = toneVector(
+        samples: decoded.right,
+        sampleRate: cfg.sampleRate,
+        frequencyHz: toneHz,
+        start: window.start,
+        count: window.count
+    )
+    let mid = leftVector + rightVector
+    let side = leftVector - rightVector
+    let midAmp = max(mid.amplitude * 0.5, 1e-12)
+    let sideAmp = max(side.amplitude * 0.5, 1e-12)
+    let decodedMetrics = computeStereoSignalMetrics(
+        left: Array(decoded.left[window.start..<(window.start + window.count)]),
+        right: Array(decoded.right[window.start..<(window.start + window.count)])
+    )
+    return ReceiverNoPilotMetrics(
+        pilotPercent: Float(pilot.amplitude * 100.0),
+        midDBFS: dbfs(midAmp),
+        sideDBFS: dbfs(sideAmp),
+        sideRejectionDB: Float(20.0 * log10(midAmp / sideAmp)),
+        correlation: decodedMetrics.correlation
+    )
+}
+
 private func receiverSubcarrierMetrics(
     config: AppConfig,
     durationSeconds: Double
@@ -865,17 +1147,11 @@ private func receiverSubcarrierMetrics(
         start: window.start,
         count: window.count
     )
-    let rdsLower = toneVector(
+    let rdsBand = toneBandEnergyDBFS(
         samples: samples,
         sampleRate: cfg.sampleRate,
-        frequencyHz: 57_000.0 - 1_187.5,
-        start: window.start,
-        count: window.count
-    )
-    let rdsUpper = toneVector(
-        samples: samples,
-        sampleRate: cfg.sampleRate,
-        frequencyHz: 57_000.0 + 1_187.5,
+        lowerHz: 55_000.0,
+        upperHz: 59_000.0,
         start: window.start,
         count: window.count
     )
@@ -890,8 +1166,7 @@ private func receiverSubcarrierMetrics(
     return ReceiverSubcarrierMetrics(
         pilotPercent: Float(pilot.amplitude * 100.0),
         pilotPhaseDegrees: Float(wrappedDegrees),
-        rdsLowerDBFS: dbfs(rdsLower.amplitude),
-        rdsUpperDBFS: dbfs(rdsUpper.amplitude),
+        rdsBandDBFS: rdsBand,
         rdsCenterDBFS: dbfs(rdsCenter.amplitude)
     )
 }
@@ -1456,15 +1731,29 @@ private func runReceiverModelVerification(
     durationSeconds: Double
 ) -> Int32 {
     let duration = max(1.0, durationSeconds)
+    let pllDuration = max(3.0, durationSeconds)
     let toneFrequencies = [1_000.0, 10_000.0, 14_000.0]
     let toneMetrics = toneFrequencies.map {
         receiverToneMetrics(config: baseConfig, toneHz: $0, durationSeconds: duration)
     }
+    let pllRoundTripMetrics = toneFrequencies.map {
+        receiverPLLRoundTripMetrics(config: baseConfig, toneHz: $0, durationSeconds: pllDuration)
+    }
+    var encoderSidebandMetricsList: [EncoderSidebandMetrics] = []
+    for tone in toneFrequencies {
+        encoderSidebandMetricsList.append(
+            encoderSidebandMetrics(config: baseConfig, toneHz: tone, drivenChannel: "L", durationSeconds: duration)
+        )
+        encoderSidebandMetricsList.append(
+            encoderSidebandMetrics(config: baseConfig, toneHz: tone, drivenChannel: "R", durationSeconds: duration)
+        )
+    }
     let mono = receiverMonoMetrics(config: baseConfig, durationSeconds: duration)
+    let noPilot = receiverNoPilotMetrics(config: baseConfig, durationSeconds: duration)
     let subcarriers = receiverSubcarrierMetrics(config: baseConfig, durationSeconds: duration)
 
     print("Receiver Model")
-    print("Scope: coherent pilot-estimated stereo decode, mono compatibility, pilot/RDS spectral checks")
+    print("Scope: coherent stereo decode, PLL external-style decode, mono/no-pilot behavior, pilot/RDS spectral checks")
     print("")
     print("Stereo Decode")
     print("Tone Hz  Wanted   Xtalk    Sep")
@@ -1486,25 +1775,85 @@ private func runReceiverModelVerification(
         )
     }
 
+    for metric in pllRoundTripMetrics {
+        let minimumSeparation: Float = metric.toneHz >= 14_000.0 ? 16.0 : 18.0
+        if metric.separationDB < minimumSeparation {
+            warnings.append(
+                "PLL external-style \(Int(metric.toneHz)) Hz separation \(String(format: "%.1f", metric.separationDB)) dB < \(String(format: "%.1f", minimumSeparation)) dB"
+            )
+        }
+        if metric.decodedRMSDBFS < -42.0 {
+            warnings.append(
+                "PLL external-style \(Int(metric.toneHz)) Hz decoded RMS \(String(format: "%.1f", metric.decodedRMSDBFS)) dBFS is unexpectedly low"
+            )
+        }
+    }
     if mono.sideRejectionDB < 26.0 {
         warnings.append(
             "mono side rejection \(String(format: "%.1f", mono.sideRejectionDB)) dB < 26.0 dB"
         )
     }
-    let rdsSideband = max(subcarriers.rdsLowerDBFS, subcarriers.rdsUpperDBFS)
+    if noPilot.pilotPercent > 0.50 {
+        warnings.append(
+            "mono MPX no-pilot residual \(String(format: "%.2f", noPilot.pilotPercent))% > 0.50%"
+        )
+    }
+    if noPilot.sideRejectionDB < 26.0 {
+        warnings.append(
+            "mono MPX no-pilot side rejection \(String(format: "%.1f", noPilot.sideRejectionDB)) dB < 26.0 dB"
+        )
+    }
     if subcarriers.pilotPercent < 6.5 || subcarriers.pilotPercent > 9.5 {
         warnings.append(
             "pilot level \(String(format: "%.2f", subcarriers.pilotPercent))% outside 6.5-9.5%"
         )
     }
-    if baseConfig.enRDS && rdsSideband < -60.0 {
+    if baseConfig.enRDS && subcarriers.rdsBandDBFS < -60.0 {
         warnings.append(
-            "RDS sideband \(String(format: "%.1f", rdsSideband)) dBFS below -60 dBFS"
+            "RDS band energy \(String(format: "%.1f", subcarriers.rdsBandDBFS)) dBFS below -60 dBFS"
         )
     }
-    if baseConfig.enRDS && subcarriers.rdsCenterDBFS > rdsSideband - 8.0 {
+    if baseConfig.enRDS && subcarriers.rdsCenterDBFS > subcarriers.rdsBandDBFS - 8.0 {
         warnings.append(
-            "RDS center null \(String(format: "%.1f", subcarriers.rdsCenterDBFS)) dBFS is not at least 8 dB below sideband \(String(format: "%.1f", rdsSideband)) dBFS"
+            "RDS center null \(String(format: "%.1f", subcarriers.rdsCenterDBFS)) dBFS is not at least 8 dB below band energy \(String(format: "%.1f", subcarriers.rdsBandDBFS)) dBFS"
+        )
+    }
+
+    print("")
+    print("PLL External-Style Decode")
+    print("Tone Hz  Wanted   Xtalk    Sep    RMS     Peak   Corr   S/M")
+    print("-------  -------  -------  -----  ------  ------  -----  ----")
+    for metric in pllRoundTripMetrics {
+        print(
+            "\(leftPadded(String(format: "%.0f", metric.toneHz), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.wantedDBFS), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.crosstalkDBFS), width: 7))"
+                + "  \(String(format: "%5.1f", metric.separationDB))"
+                + "  \(leftPadded(String(format: "%.1f", metric.decodedRMSDBFS), width: 6))"
+                + "  \(leftPadded(String(format: "%.1f", metric.decodedPeakDBFS), width: 6))"
+                + "  \(String(format: "%5.2f", metric.correlation))"
+                + "  \(String(format: "%4.2f", metric.sideToMidRatio))"
+        )
+    }
+
+    print("")
+    print("Encoder-Side Sidebands (raw MPX, pre-MPXDecoder)")
+    print("Tap point: composite output before deemphasis / 15.5 kHz LP / pilot/RDS notches.")
+    print("Drive: single-channel sine. Lower/Upper at 38 +/- toneHz. Asymm = |lower-upper|.")
+    print("SideSum = |lower|+|upper|. SideDelta = SideSum - Mono (0 dB = perfect DSB-SC balance).")
+    print("")
+    print("Ch  Tone Hz  Mono     Lower    Upper    Asymm  SideSum  SideDelta")
+    print("--  -------  -------  -------  -------  -----  -------  ---------")
+    for metric in encoderSidebandMetricsList {
+        print(
+            "\(padded(metric.drivenChannel, width: 2))"
+                + "  \(leftPadded(String(format: "%.0f", metric.toneHz), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.monoDBFS), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.lowerSidebandDBFS), width: 7))"
+                + "  \(leftPadded(String(format: "%.1f", metric.upperSidebandDBFS), width: 7))"
+                + "  \(String(format: "%5.2f", metric.asymmetryDB))"
+                + "  \(leftPadded(String(format: "%.1f", metric.sideSumDBFS), width: 7))"
+                + "  \(String(format: "%+8.2f", metric.sideMonoDeltaDB))"
         )
     }
 
@@ -1515,14 +1864,20 @@ private func runReceiverModelVerification(
             + "  Side \(String(format: "%.1f", mono.sideDBFS)) dBFS"
             + "  Rejection \(String(format: "%.1f", mono.sideRejectionDB)) dB"
     )
+    print(
+        "No-pilot MPX: Pilot \(String(format: "%.2f", noPilot.pilotPercent))%"
+            + "  Mid \(String(format: "%.1f", noPilot.midDBFS)) dBFS"
+            + "  Side \(String(format: "%.1f", noPilot.sideDBFS)) dBFS"
+            + "  Rejection \(String(format: "%.1f", noPilot.sideRejectionDB)) dB"
+            + "  Corr \(String(format: "%.2f", noPilot.correlation))"
+    )
 
     print("")
     print("Subcarriers")
     print(
         "Pilot \(String(format: "%.2f", subcarriers.pilotPercent))%"
             + "  Phase \(String(format: "%.1f", subcarriers.pilotPhaseDegrees)) deg"
-            + "  RDS lower \(String(format: "%.1f", subcarriers.rdsLowerDBFS)) dBFS"
-            + "  upper \(String(format: "%.1f", subcarriers.rdsUpperDBFS)) dBFS"
+            + "  RDS band \(String(format: "%.1f", subcarriers.rdsBandDBFS)) dBFS"
             + "  center \(String(format: "%.1f", subcarriers.rdsCenterDBFS)) dBFS"
     )
 

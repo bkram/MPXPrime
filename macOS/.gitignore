@@ -4,3 +4,7 @@ dist/
 xcuserdata/
 *.xcuserstate
 DerivedData/
+
+# Audit captures (env-gated MPXPRIME_AUDIT_CAPTURE=1 driver output;
+# kept locally, not for version control).
+.audit-out/

@@ -35,9 +35,7 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │        Low shelf + 2 peaking + high shelf, placed before dynamics
 │
 ├──► Dynamics and image shaping (audio domain, float)
-│    ├── PrimeBass bass enhancement (optional)
 │    ├── Mono bass management (optional)
-│    ├── Mono bass (optional, inside processStereoImageStage)
 │    ├── Multiband compressor (optional)
 │    │   ├── TX path: linear-phase FIR splitters (sum-to-flat, all bands
 │    │   │   share group delay — eliminates IIR-LR4 transient smear)
@@ -77,7 +75,9 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │    └── True-peak limiter on L/R before stereo encoding —
 │        `StereoLinkedOversampledPeakLimiter` uses a max(|L|, |R|)
 │        detector so both channels receive identical gain reduction
-│        (no asymmetric pumping). Threshold + release live-applied
+│        (no asymmetric pumping). Optional band-limited residual ceiling
+│        uses the 33-tap / 0.25-cutoff kernel when enabled. Threshold,
+│        release, residual enable, and residual kernel shape live-apply
 │        via `RuntimeConfig`.
 │
 
@@ -183,7 +183,7 @@ Within the main audio path, MPX Prime runs:
 24. Composite budget governor (smoothed gain ride on audio path so post-injection clamp is unreachable for sane configs)
 25. Pilot and RDS injection (post-clipper, constant amplitude, delay-aligned via `subcarrierDelayLine`)
 
-All optional stages are disabled by default and can be enabled via config/UI; multiband, bass clipper, and composite clipper are on by default per `AppConfig`.
+Most optional stages are disabled by default and can be enabled via config/UI. The default processing chain intentionally ships with multiband, bass clipper, composite clipper, pre-encode limiter, final MPX safety, encoder FIR, and multiband FIR enabled per `AppConfig`.
 
 When `Mono Mode` is enabled, MPX Prime suppresses the pilot, stereo subcarrier, and RDS injection so the transmitted composite is true mono.
 
@@ -255,7 +255,7 @@ Live-apply via `RuntimeConfig`. INI keys `mpx_clipper_enabled`, `mpx_clipper_dri
 `CompositeClipperCrossDomainTests` and `CompositeClipperStereoSeparationTests` are the regression guards. The first asserts cross-domain IM drop with each guard band engaged; the second asserts that decoded L/R separation is preserved within tolerance when the stereo guard is on. `CompositeClipperLookaheadTests` covers the (0.26) look-ahead path: overshoot bound (`max(|out|) ≤ ceiling × 1.005` at 2 ms), steady-state transparency on pink noise, pilot/stereo/RDS guard regression with look-ahead engaged, cross-domain cancellation regression (catches asymmetric per-band gain leak), and total-delay reporting. Together they catch regressions in cancellation depth, over-cancellation that would collapse the stereo image, look-ahead detector / gain-application asymmetry, and latency-reporting drift.
 
 ### Audio Composite Bandwidth FIR (0.26)
-Linear-phase FIR cleanup stage placed between BS.412 and the safety limiter. Strips shaper/limiter spill that would otherwise live above the upper stereo sideband and beat with the cleanly-injected pilot/RDS. Group delay (~112 host samples at 192 kHz) folds into `recomputeSubcarrierDelay()` so the post-clipper subcarrier delay line tracks the new audio path delay automatically.
+Linear-phase FIR cleanup stage placed after the composite clipper and before BS.412 / final-MPX safety limiting. Strips shaper/clipper spill that would otherwise live above the upper stereo sideband and beat with the cleanly-injected pilot/RDS. Group delay (~112 host samples at 192 kHz) folds into `recomputeSubcarrierDelay()` so the post-clipper subcarrier delay line tracks the new audio path delay automatically.
 
 ### Composite Budget Governor (0.26)
 Smoothed gain ride on the audio composite that runs *before* pilot/RDS injection. `MPXGenerator.makeFinalCompositeThresholds(outputGain:threshold:reserved:)` derives

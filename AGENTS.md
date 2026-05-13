@@ -55,6 +55,8 @@ Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not XCTe
 
 The default `swift test` is fast (~10 s, 255 tests) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
 
+For DSP differences, prefer measurement-first validation wherever technically possible before asking the operator to listen. If a behavior can be characterized with deterministic signals, FFT/band-energy analysis, receiver decode metrics, alias/IM checks, peak/ceiling checks, stereo-link checks, CPU budget tests, or verifier/baseline comparisons, add or run those tests first. Listening tests are still useful for final subjective confirmation, but they should not be the primary regression detector for measurable DSP behavior.
+
 ## Architecture
 
 ### Layout

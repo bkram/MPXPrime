@@ -218,6 +218,27 @@ struct DSPThroughputTests {
             "pre-encode limiter disabled (\(lighter) s) is not lighter than enabled (\(full) s); something is wrong")
     }
 
+    @Test func bandlimitedResidualPreEncodeLimiterCostStaysBounded() {
+        // The residual ceiling runs FIR dot products inside the pre-encode
+        // limiter, so treat its cost as measurable. This bounds the new path
+        // against the classic tanh ceiling on the same heavy-program render.
+        var classic = makeHeavyConfig()
+        classic.preEncodeBandlimitedResidualEnabled = false
+        classic.preEncodeThreshold = 0.78
+
+        var residual = classic
+        residual.preEncodeBandlimitedResidualEnabled = true
+
+        let classicWall = measureThroughput(config: classic).wallSeconds
+        let residualWall = measureThroughput(config: residual).wallSeconds
+        let relative = residualWall / max(1e-6, classicWall)
+        print(String(format: "Pre-encode residual limiter cost ratio: %.2fx (residual %.3f s, classic %.3f s)",
+                     relative, residualWall, classicWall))
+
+        #expect(relative < 2.5,
+            "band-limited residual pre-encode limiter cost \(residualWall) s vs classic \(classicWall) s = \(relative)x; >2.5x means the FIR residual kernel needs more acceleration or tuning before it is safe for real-time use")
+    }
+
     @Test func multibandFIRStaysInsideRelativeBudget() {
         // Compare FIR-path cost vs IIR-path cost on the same heavy-program
         // config. Both runs do the same chain except for the multiband

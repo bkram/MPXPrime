@@ -61,18 +61,6 @@ struct ProcessingOverviewGrid: View {
                     enabledPath: \.parametricEQEnabled
                 )
                 stageCard(
-                    .primeBass,
-                    title: "PrimeBass",
-                    subtitle: primeBassSubtitle,
-                    enabledPath: \.primeBassEnabled
-                )
-                stageCard(
-                    .widener,
-                    title: "Stereo Widener",
-                    subtitle: widenerSubtitle,
-                    enabledPath: \.stereoWidenEnabled
-                )
-                stageCard(
                     .multiband,
                     title: "Multiband",
                     subtitle: multibandSubtitle,
@@ -91,6 +79,18 @@ struct ProcessingOverviewGrid: View {
                     enabledPath: \.downwardExpanderEnabled
                 )
                 stageCard(
+                    .widener,
+                    title: "Stereo Widener",
+                    subtitle: widenerSubtitle,
+                    enabledPath: \.stereoWidenEnabled
+                )
+                stageCard(
+                    .primeBass,
+                    title: "PrimeBass",
+                    subtitle: primeBassSubtitle,
+                    enabledPath: \.primeBassEnabled
+                )
+                stageCard(
                     .bassClipper,
                     title: "Bass Clipper",
                     subtitle: bassClipperSubtitle,
@@ -101,6 +101,12 @@ struct ProcessingOverviewGrid: View {
                     title: "DC Clipper",
                     subtitle: dcClipperSubtitle,
                     enabledPath: \.dcClipperEnabled
+                )
+                stageCard(
+                    .limiter,
+                    title: "Audio Limiter",
+                    subtitle: limiterSubtitle,
+                    enabledPath: \.preEncodeAudioLimiterEnabled
                 )
                 stageCard(
                     .compositeClipper,
@@ -242,6 +248,14 @@ struct ProcessingOverviewGrid: View {
         String(format: "Ceil %.1f dB · cancel %.0f Hz",
             model.config.dcClipperCeilingDB,
             model.config.dcClipperCancelFreqHz)
+    }
+
+    private var limiterSubtitle: String {
+        let kernel = model.config.preEncodeBandlimitedResidualEnabled ? "residual" : "tanh"
+        return String(format: "Thr %.2f | rel %.0f ms | %@",
+            model.config.preEncodeThreshold,
+            model.config.preEncodeReleaseMS,
+            kernel)
     }
 
     private var bs412Subtitle: String {

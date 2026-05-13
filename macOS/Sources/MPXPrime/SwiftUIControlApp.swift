@@ -421,12 +421,12 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "Overview and live status"
         case .processingOverview: return "DSP chain status at a glance"
-        case .processingCore: return "Bypass, mono, pre-emphasis, gains, lowpass"
+        case .processingCore: return "Bypass, mono, gains, HPF, LPF, HF trim"
         case .processingAGC: return "Wideband AGC with K-weighting"
         case .processingPhaseRotator: return "Allpass phase rotator"
         case .processingParametricEQ: return "4-band parametric EQ"
-        case .processingPrimeBass: return "Adaptive low-band enhancement"
-        case .processingWidener: return "Mono bass + stereo widener"
+        case .processingPrimeBass: return "Post-multiband bass and harmonic enhancement"
+        case .processingWidener: return "Post-multiband stereo widening plus mono bass control"
         case .processingMultiband: return "3 / 5-band multiband compressor"
         case .processingMBLimiter: return "Per-band fast peak limiter"
         case .processingExpander: return "Per-band downward expander"
@@ -435,7 +435,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
-        case .processingFinalStage: return "Broadcast preset, final drive, composite deviation"
+        case .processingFinalStage: return "Final drive, MPX safety, budget, deviation"
         case .rdsControl: return "Live status, master enable, injection, runtime flags"
         case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks"
         case .rdsRadiotext: return "Radiotext + RT+ tagging"
@@ -6204,12 +6204,12 @@ private struct ProcessingLimiterTab: View {
                 tooltip: "Release time of the limiter envelope. Faster (lower ms) recovers loudness quicker but may pump; slower is cleaner but holds gain reduction longer."
             ).disabled(disabled)
             Toggle(
-                "Band-limited Residual Ceiling",
+                "Use New Band-limited Limiter Ceiling",
                 isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
             )
-            .help("Experimental 0.27 anti-aliased ceiling kernel for the pre-encode limiter. Off by default while it is compared against the current tanh ceiling.")
+            .help("Switches the pre-encode limiter ceiling from the classic tanh soft ceiling to the experimental 0.27 band-limited residual ceiling. Off = old/current chain. On = new patent-style candidate.")
             .disabled(disabled)
-            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. The default ceiling uses tanh shaping; the experimental band-limited residual ceiling is off by default for 0.27 verification.")
+            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Switch off for the old/current tanh ceiling; switch on for the new 0.27 band-limited residual ceiling candidate.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -264,6 +264,38 @@ struct CompositeClipperLookaheadTests {
         }
     }
 
+    @Test func liveLookaheadResizePreservesProcessingPath() {
+        var clip = makeClipper(lookaheadMS: 0.5)
+        let baseDelay = makeClipper(lookaheadMS: 0.0).totalDelayHostSamples
+
+        for i in 0..<4_096 {
+            let sample = 0.8 * sinf(2.0 * .pi * 1_000.0 * Float(i) / sampleRate)
+            _ = clip.process(sample)
+        }
+
+        clip.setLookaheadMS(3.0, sampleRate: sampleRate)
+        #expect(clip.totalDelayHostSamples - baseDelay == Int(roundf(3.0 / 1000.0 * sampleRate)))
+
+        var peak: Float = 0.0
+        for i in 0..<4_096 {
+            let sample = 1.2 * sinf(2.0 * .pi * 1_777.0 * Float(i) / sampleRate)
+            let y = clip.process(sample)
+            peak = max(peak, abs(y))
+        }
+
+        clip.setLookaheadMS(0.0, sampleRate: sampleRate)
+        #expect(clip.totalDelayHostSamples == baseDelay)
+
+        for i in 0..<512 {
+            let sample = 0.2 * sinf(2.0 * .pi * 997.0 * Float(i) / sampleRate)
+            let y = clip.process(sample)
+            peak = max(peak, abs(y))
+        }
+
+        #expect(peak.isFinite)
+        #expect(peak < 1.2)
+    }
+
     // MARK: - Helpers
 
     /// Single-bin DFT magnitude in dBFS (Goertzel filter). Cheap, no FFT

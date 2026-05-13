@@ -68,7 +68,7 @@ struct StereoSeparationReceiverTests {
         let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
         if disableSubcarrierDelay {
             // Emulate the pre-fix code path (no subcarrier delay).
-            gen.subcarrierDelayLine = []
+            gen.subcarrierDelayActiveCount = 0
             gen.subcarrierDelayWriteIdx = 0
         }
         let frames = Int(sampleRate * seconds)
@@ -110,7 +110,7 @@ struct StereoSeparationReceiverTests {
         // and 5 ms lookahead (= 960 samples), the total is ~1081 samples.
         let cfg = makeStereoConfig()
         let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
-        let actual = gen.subcarrierDelayLine.count
+        let actual = gen.subcarrierDelayActiveCount
         print("[delay-size] subcarrierDelayLine.count = \(actual) (expected ≈1081)")
         #expect(actual > 1060 && actual < 1100,
             "subcarrier delay line size \(actual) outside expected ~1081-sample window (decimator + audio bandwidth FIR + lookahead)")
@@ -125,11 +125,35 @@ struct StereoSeparationReceiverTests {
         var cfg = makeStereoConfig()
         cfg.compositeClipperEnabled = false
         let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
-        let actual = gen.subcarrierDelayLine.count
+        let actual = gen.subcarrierDelayActiveCount
         // Expected: 960 lookahead + ~112 audio bandwidth FIR = ~1072.
         print("[delay-size] composite clipper OFF, subcarrierDelayLine.count = \(actual) (expected ≈1072)")
         #expect(actual >= 1060 && actual <= 1085,
             "with composite clipper off, delay should be ~1072 (audio bandwidth FIR + lookahead); got \(actual)")
+    }
+
+    @Test func liveCompositeLookaheadResizeChangesActiveDelayWithoutGrowingStorage() {
+        var cfg = makeStereoConfig()
+        cfg.compositeClipperLookaheadMS = 0.0
+        let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
+        let initialCapacity = gen.subcarrierDelayLine.count
+        let initialActive = gen.subcarrierDelayActiveCount
+
+        cfg.compositeClipperLookaheadMS = 3.0
+        gen.applyRuntimeConfig(MPXGenerator.makeRuntimeConfig(from: cfg))
+
+        let resizedCapacity = gen.subcarrierDelayLine.count
+        let resizedActive = gen.subcarrierDelayActiveCount
+        let expectedDelta = Int(round(3.0 / 1000.0 * sampleRate))
+
+        #expect(resizedCapacity == initialCapacity)
+        #expect(resizedActive - initialActive == expectedDelta)
+
+        cfg.compositeClipperLookaheadMS = 0.5
+        gen.applyRuntimeConfig(MPXGenerator.makeRuntimeConfig(from: cfg))
+
+        #expect(gen.subcarrierDelayLine.count == initialCapacity)
+        #expect(gen.subcarrierDelayActiveCount - initialActive == Int(round(0.5 / 1000.0 * sampleRate)))
     }
 
     // MARK: - Test 2: data path correctness

@@ -27,7 +27,7 @@ struct AppConfig {
     //   testToneMode/Freq/LevelDB/Type (tone-generator parameters),
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled, preEncodeThreshold, preEncodeReleaseMS,
-    //   preEncodeBandlimitedResidualEnabled,
+    //   preEncodeBandlimitedResidualEnabled/Taps/CutoffFraction,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
@@ -100,6 +100,8 @@ struct AppConfig {
     var preEncodeThreshold: Double = 0.85
     var preEncodeReleaseMS: Double = 50.0
     var preEncodeBandlimitedResidualEnabled: Bool = false
+    var preEncodeBandlimitedResidualTapCount: Int = 33
+    var preEncodeBandlimitedResidualCutoffFraction: Double = 0.25
     // TX-path encoder bandwidth guard: linear-phase FIR (~1.67 ms latency at
     // 192 kHz, >80 dB stop-band) instead of the default Butterworth (~0.2 ms
     // latency, ~40 dB stop-band). Only active when running in composite
@@ -391,6 +393,14 @@ struct AppConfig {
         cfg.preEncodeBandlimitedResidualEnabled = mpx.bool(
             "pre_encode_bandlimited_residual_enabled",
             defaultValue: cfg.preEncodeBandlimitedResidualEnabled
+        )
+        cfg.preEncodeBandlimitedResidualTapCount = mpx.int(
+            "pre_encode_bandlimited_residual_taps",
+            defaultValue: cfg.preEncodeBandlimitedResidualTapCount
+        )
+        cfg.preEncodeBandlimitedResidualCutoffFraction = mpx.double(
+            "pre_encode_bandlimited_residual_cutoff_fraction",
+            defaultValue: cfg.preEncodeBandlimitedResidualCutoffFraction
         )
         cfg.encoderFIREnabled = mpx.bool(
             "encoder_fir_enabled", defaultValue: cfg.encoderFIREnabled)
@@ -700,6 +710,8 @@ struct AppConfig {
         limitLookaheadMS = max(0.0, min(20.0, limitLookaheadMS))
         preEncodeThreshold = max(0.5, min(0.999, preEncodeThreshold))
         preEncodeReleaseMS = max(10.0, min(200.0, preEncodeReleaseMS))
+        preEncodeBandlimitedResidualTapCount = max(5, min(129, preEncodeBandlimitedResidualTapCount | 1))
+        preEncodeBandlimitedResidualCutoffFraction = max(0.05, min(0.49, preEncodeBandlimitedResidualCutoffFraction))
 
         // MPX deviation
         mpxDeviationKHz = max(25.0, min(100.0, mpxDeviationKHz))
@@ -859,6 +871,8 @@ struct AppConfig {
             "pre_encode_threshold = \(Self.formatFloat(preEncodeThreshold))",
             "pre_encode_release_ms = \(Self.formatFloat(preEncodeReleaseMS))",
             "pre_encode_bandlimited_residual_enabled = \(Self.boolString(preEncodeBandlimitedResidualEnabled))",
+            "pre_encode_bandlimited_residual_taps = \(preEncodeBandlimitedResidualTapCount)",
+            "pre_encode_bandlimited_residual_cutoff_fraction = \(Self.formatFloat(preEncodeBandlimitedResidualCutoffFraction))",
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",

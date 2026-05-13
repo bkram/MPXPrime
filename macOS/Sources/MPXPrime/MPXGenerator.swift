@@ -121,7 +121,9 @@ struct OversampledPeakLimiter {
         sampleRate: Float,
         threshold: Float,
         releaseMS: Float = 35.0,
-        bandlimitedResidualEnabled: Bool = false
+        bandlimitedResidualEnabled: Bool = false,
+        residualTapCount: Int = 33,
+        residualCutoffFraction: Float = 0.25
     ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
@@ -142,7 +144,11 @@ struct OversampledPeakLimiter {
         prevIn = 0.0
         let cutoff = min(sampleRate * 0.30, (sr * 0.5) - 1_000.0)
         decimationLP.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: sr)
-        residualClipper.configure(threshold: ceiling, tapCount: 65, cutoffFraction: 0.20)
+        residualClipper.configure(
+            threshold: ceiling,
+            tapCount: residualTapCount,
+            cutoffFraction: residualCutoffFraction
+        )
         initialized = false
     }
 
@@ -278,7 +284,9 @@ struct StereoLinkedOversampledPeakLimiter {
         sampleRate: Float,
         threshold: Float,
         releaseMS: Float = 35.0,
-        bandlimitedResidualEnabled: Bool = false
+        bandlimitedResidualEnabled: Bool = false,
+        residualTapCount: Int = 33,
+        residualCutoffFraction: Float = 0.25
     ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
@@ -300,8 +308,16 @@ struct StereoLinkedOversampledPeakLimiter {
         let cutoffHz = max(12_000.0 as Float, cutoff)
         lDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
         rDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
-        lResidualClipper.configure(threshold: ceiling, tapCount: 65, cutoffFraction: 0.20)
-        rResidualClipper.configure(threshold: ceiling, tapCount: 65, cutoffFraction: 0.20)
+        lResidualClipper.configure(
+            threshold: ceiling,
+            tapCount: residualTapCount,
+            cutoffFraction: residualCutoffFraction
+        )
+        rResidualClipper.configure(
+            threshold: ceiling,
+            tapCount: residualTapCount,
+            cutoffFraction: residualCutoffFraction
+        )
         initialized = false
     }
 
@@ -434,13 +450,17 @@ struct PreEncodeAudioLimiter {
         sampleRate: Float,
         threshold: Float,
         releaseMS: Float = 50.0,
-        bandlimitedResidualEnabled: Bool = false
+        bandlimitedResidualEnabled: Bool = false,
+        residualTapCount: Int = 33,
+        residualCutoffFraction: Float = 0.25
     ) {
         limiter.configure(
             sampleRate: sampleRate,
             threshold: threshold,
             releaseMS: releaseMS,
-            bandlimitedResidualEnabled: bandlimitedResidualEnabled
+            bandlimitedResidualEnabled: bandlimitedResidualEnabled,
+            residualTapCount: residualTapCount,
+            residualCutoffFraction: residualCutoffFraction
         )
         gainReduction = 0.0
     }
@@ -1164,6 +1184,7 @@ struct CompositeClipper {
     private var lookaheadEnabled: Bool = false
     private var lookaheadHostSamples: Int = 0
     private var lookaheadDelay: [Float] = []
+    private var lookaheadResizeScratch: [Float] = []
     private var lookaheadDelayWriteIdx: Int = 0
 
     // Lemire monotonic deque (sliding-window max) over OS-rate samples.
@@ -1171,7 +1192,8 @@ struct CompositeClipper {
     // interpolated intersample peaks — closes the gap where a host-rate
     // detector misses the 0.3-1.0 dB intersample peaks above |x| and
     // lets them through after pre-clip gain scaling. deqValues /
-    // deqIndices pre-allocated to lookaheadHostSamples * factor + 2;
+    // deqIndices are pre-allocated to the 5 ms maximum window at configure
+    // time; lookaheadHostSamples is the active logical window length.
     // deqIndices stores the absolute OS-sample counter for expiry.
     private var deqValues: [Float] = []
     private var deqIndices: [Int] = []
@@ -1269,24 +1291,19 @@ struct CompositeClipper {
         let n = max(0, min(cap, Int(roundf((lookaheadMS / 1000.0) * sr))))
         lookaheadHostSamples = n
         lookaheadEnabled = n > 0
+        lookaheadDelay = [Float](repeating: 0.0, count: cap)
+        lookaheadResizeScratch = [Float](repeating: 0.0, count: cap)
+        let maxWindowOS = cap * Self.factor
+        deqCapacity = maxWindowOS + 2
+        deqValues = [Float](repeating: 0.0, count: deqCapacity)
+        deqIndices = [Int](repeating: 0, count: deqCapacity)
+        deqHead = 0
+        deqTail = 0
+        deqSampleCounter = 0
+        lookaheadDelayWriteIdx = 0
+        detLag = Lagrange4Interp()
 
         if lookaheadEnabled {
-            // Audio path delay so the deque sees future samples.
-            lookaheadDelay = [Float](repeating: 0.0, count: n)
-            lookaheadDelayWriteIdx = 0
-
-            // OS-rate Lemire monotonic deque over n*factor OS samples.
-            // Capacity n*factor + 2 (worst-case = window length; +2
-            // sentinel slack so head/tail wrap without aliasing).
-            let nOS = n * Self.factor
-            deqCapacity = nOS + 2
-            deqValues = [Float](repeating: 0.0, count: deqCapacity)
-            deqIndices = [Int](repeating: 0, count: deqCapacity)
-            deqHead = 0
-            deqTail = 0
-            deqSampleCounter = 0
-            detLag = Lagrange4Interp()
-
             // Attack rate: reach ~98% of gTarget in `n` samples (4 time
             // constants over the lookahead window). This lets the audio
             // path's clip kernel see a fully-shaved signal by the time
@@ -1297,15 +1314,6 @@ struct CompositeClipper {
                 0.0, 1.0
             )
         } else {
-            lookaheadDelay = []
-            lookaheadDelayWriteIdx = 0
-            deqValues = []
-            deqIndices = []
-            deqCapacity = 0
-            deqHead = 0
-            deqTail = 0
-            deqSampleCounter = 0
-            detLag = Lagrange4Interp()
             lookaheadAttackCoeff = 0.0
         }
 
@@ -1333,54 +1341,61 @@ struct CompositeClipper {
         lookaheadHostSamples + decimLP.groupDelayHostSamples
     }
 
+    /// Maximum delay this configured clipper can add without reallocating
+    /// during a live look-ahead resize. `configure()` preallocates the 5 ms
+    /// look-ahead delay capacity; `lookaheadHostSamples` is only the active
+    /// logical length.
+    var maxTotalDelayHostSamples: Int {
+        lookaheadDelay.count + decimLP.groupDelayHostSamples
+    }
+
     /// Focused live-update for the look-ahead window size only. Skips the
     /// FIR decimator / bypass delay / 8 bandpass filter reconfiguration
     /// that `configure(...)` does, and preserves the ducking state
     /// (`lookaheadGain` / `lookaheadGainEnv` / `lookaheadLPState`) so a
     /// GUI slider drag doesn't snap gain back to 1.0 on every tick.
     ///
-    /// Buffer resizes preserve the time-ordered audio content in
-    /// `lookaheadDelay` and reset the Lemire deque (the deque refills
-    /// within `n` samples, during which the gain envelope is held by
-    /// the LP smoother — no audible step). Bandwidth, bypass, and all
-    /// per-band cancellation state are untouched.
+    /// Logical buffer resizes preserve the time-ordered audio content in
+    /// `lookaheadDelay` without allocating: configure() preallocates the
+    /// maximum 5 ms host delay and OS-rate deque, while this method only
+    /// changes active lengths and copies within those buffers. The Lemire
+    /// deque is reset (it refills within `n` samples, while the gain envelope
+    /// is held by the LP smoother). Bandwidth, bypass, and all per-band
+    /// cancellation state are untouched.
     mutating func setLookaheadMS(_ lookaheadMS: Float, sampleRate: Float) {
         let sr = max(8_000.0, sampleRate)
         let cap = Int((5.0 / 1000.0) * sr)
-        let n = max(0, min(cap, Int(roundf((lookaheadMS / 1000.0) * sr))))
+        let storageCap = min(cap, lookaheadDelay.count)
+        let n = max(0, min(storageCap, Int(roundf((lookaheadMS / 1000.0) * sr))))
         let oldN = lookaheadHostSamples
         let oldEnabled = lookaheadEnabled
         let newEnabled = n > 0
-        lookaheadHostSamples = n
-        lookaheadEnabled = newEnabled
 
         if newEnabled {
             // Preserve audio content in `lookaheadDelay`: read oldest-to-newest
-            // into a temporary, then prepend zeros or drop the oldest to fit
-            // the new size. This keeps the live audio sample flowing through
-            // the resized pipeline without a step at the resize boundary.
-            if n != oldN || lookaheadDelay.count != n {
-                var contents = [Float](repeating: 0.0, count: n)
-                if oldEnabled && oldN > 0 && lookaheadDelay.count == oldN {
+            // into preallocated scratch, then prepend zeros or drop the oldest
+            // to fit the new logical size. This keeps the live audio sample
+            // flowing through the resized pipeline without allocating or
+            // stepping the delay contents.
+            if n != oldN {
+                for i in 0..<n {
+                    lookaheadResizeScratch[i] = 0.0
+                }
+                if oldEnabled && oldN > 0 {
                     let copyN = min(oldN, n)
                     var srcIdx = (lookaheadDelayWriteIdx + oldN - copyN) % oldN
                     let dstStart = n - copyN
                     for i in 0..<copyN {
-                        contents[dstStart + i] = lookaheadDelay[srcIdx]
+                        lookaheadResizeScratch[dstStart + i] = lookaheadDelay[srcIdx]
                         srcIdx = (srcIdx + 1) % oldN
                     }
                 }
-                lookaheadDelay = contents
+                for i in 0..<n {
+                    lookaheadDelay[i] = lookaheadResizeScratch[i]
+                }
                 lookaheadDelayWriteIdx = 0
             }
 
-            let nOS = n * Self.factor
-            let newCapacity = nOS + 2
-            if deqCapacity != newCapacity {
-                deqValues = [Float](repeating: 0.0, count: newCapacity)
-                deqIndices = [Int](repeating: 0, count: newCapacity)
-                deqCapacity = newCapacity
-            }
             deqHead = 0
             deqTail = 0
             deqSampleCounter = 0
@@ -1392,20 +1407,18 @@ struct CompositeClipper {
                 0.0, 1.0
             )
         } else {
-            // Disabled. Drop buffers; gain envelopes stay at their current
-            // values and will decay naturally through the LP smoother when
-            // the next configure() runs or playback resumes.
-            lookaheadDelay = []
+            // Disabled. Keep the preallocated buffers and only reset logical
+            // state; gain envelopes stay at their current values and will
+            // decay naturally through the LP smoother when playback resumes.
             lookaheadDelayWriteIdx = 0
-            deqValues = []
-            deqIndices = []
-            deqCapacity = 0
             deqHead = 0
             deqTail = 0
             deqSampleCounter = 0
             detLag = Lagrange4Interp()
             lookaheadAttackCoeff = 0.0
         }
+        lookaheadHostSamples = n
+        lookaheadEnabled = newEnabled
         // Do NOT reset lookaheadGain / lookaheadGainEnv / lookaheadLPState /
         // lookaheadHoldRemaining — preserving them is the load-bearing
         // anti-click property of this method.
@@ -1518,7 +1531,7 @@ struct CompositeClipper {
             lookaheadGainEnv = min(g, 1.0 - (1.0 - lookaheadGainEnv) * decay)
 
             // 5. Read delayed input from lookahead delay ring.
-            let dLen = lookaheadDelay.count
+            let dLen = lookaheadHostSamples
             let xDelayed = dLen > 0 ? lookaheadDelay[lookaheadDelayWriteIdx] : x
             lookaheadDelay[lookaheadDelayWriteIdx] = x
             lookaheadDelayWriteIdx += 1
@@ -5457,6 +5470,8 @@ final class MPXGenerator {
         let preEncodeThreshold: Float
         let preEncodeReleaseMS: Float
         let preEncodeBandlimitedResidualEnabled: Bool
+        let preEncodeBandlimitedResidualTapCount: Int
+        let preEncodeBandlimitedResidualCutoffFraction: Float
         let mpxDeviationKHz: Float
         let primeBassEnabled: Bool
         let primeBassAmount: Float
@@ -5566,6 +5581,8 @@ final class MPXGenerator {
             preEncodeThreshold: Float(config.preEncodeThreshold),
             preEncodeReleaseMS: Float(config.preEncodeReleaseMS),
             preEncodeBandlimitedResidualEnabled: config.preEncodeBandlimitedResidualEnabled,
+            preEncodeBandlimitedResidualTapCount: config.preEncodeBandlimitedResidualTapCount,
+            preEncodeBandlimitedResidualCutoffFraction: Float(config.preEncodeBandlimitedResidualCutoffFraction),
             mpxDeviationKHz: Float(config.mpxDeviationKHz),
             primeBassEnabled: config.primeBassEnabled,
             primeBassAmount: Float(config.primeBassAmount),
@@ -6056,8 +6073,11 @@ final class MPXGenerator {
     // dramatic stereo separation loss. Delaying subcarriers by the
     // same chain delay restores the phase alignment.
     internal var subcarrierDelayLine: [Float] = []
+    internal var subcarrierDelayActiveCount: Int = 0
     internal var subcarrierDelayWriteIdx: Int = 0
     private var stereoSubcarrierDelayLine: [Float] = []
+    private var subcarrierDelayResizeScratch: [Float] = []
+    private var stereoSubcarrierDelayResizeScratch: [Float] = []
     private var stereoSubcarrierDelayWriteIdx: Int = 0
 
     private var stereoWidenEnabled: Bool
@@ -6082,6 +6102,8 @@ final class MPXGenerator {
     private var preEncodeThreshold: Float = 0.85
     private var preEncodeReleaseMS: Float = 50.0
     private var preEncodeBandlimitedResidualEnabled: Bool = false
+    private var preEncodeBandlimitedResidualTapCount: Int = 33
+    private var preEncodeBandlimitedResidualCutoffFraction: Float = 0.25
 
     private var toneStep: Float
     private var tonePhase: Float = 0.0
@@ -6237,6 +6259,8 @@ final class MPXGenerator {
         self.limitLookaheadMS = clampf(Float(config.limitLookaheadMS), 0.0, 20.0)
         self.preEncodeAudioLimiterEnabled = config.preEncodeAudioLimiterEnabled
         self.preEncodeBandlimitedResidualEnabled = config.preEncodeBandlimitedResidualEnabled
+        self.preEncodeBandlimitedResidualTapCount = max(5, min(129, config.preEncodeBandlimitedResidualTapCount | 1))
+        self.preEncodeBandlimitedResidualCutoffFraction = clampf(Float(config.preEncodeBandlimitedResidualCutoffFraction), 0.05, 0.49)
         self.audioCompositeSoftClipEnabled = config.audioCompositeSoftClipEnabled
         self.audioCompositeSmootherRequested = config.audioCompositeSmootherEnabled
         self.finalMPXSoftClipEnabled = config.finalMPXSoftClipEnabled
@@ -6369,7 +6393,9 @@ final class MPXGenerator {
             sampleRate: self.sampleRate,
             threshold: preEncodeThreshold,
             releaseMS: preEncodeReleaseMS,
-            bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled
+            bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
+            residualTapCount: preEncodeBandlimitedResidualTapCount,
+            residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction
         )
         bs412Limiter.configure(
             sampleRate: self.sampleRate,
@@ -6399,42 +6425,95 @@ final class MPXGenerator {
     private func recomputeSubcarrierDelay() {
         let clipperDelay = compositeClipperEnabled
             ? compositeClipper.totalDelayHostSamples : 0
+        let clipperDelayCapacity = compositeClipperEnabled
+            ? compositeClipper.maxTotalDelayHostSamples : 0
         let compositeBandwidthDelay = audioCompositeBandwidthFIR.groupDelaySamples
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
         let total = compositeBandwidthDelay + clipperDelay + limiterDelay
-        if total != subcarrierDelayLine.count {
-            subcarrierDelayLine = Self.resizedDelayPreservingContents(
-                line: subcarrierDelayLine,
+        let capacity = compositeBandwidthDelay + clipperDelayCapacity + limiterDelay
+        if total != subcarrierDelayActiveCount || capacity > subcarrierDelayLine.count {
+            Self.resizeDelayPreservingContentsInPlace(
+                line: &subcarrierDelayLine,
+                scratch: &subcarrierDelayResizeScratch,
                 writeIdx: subcarrierDelayWriteIdx,
-                newCount: total
+                oldCount: subcarrierDelayActiveCount,
+                newCount: total,
+                requiredCapacity: capacity
             )
             subcarrierDelayWriteIdx = 0
-            stereoSubcarrierDelayLine = Self.resizedDelayPreservingContents(
-                line: stereoSubcarrierDelayLine,
+            Self.resizeDelayPreservingContentsInPlace(
+                line: &stereoSubcarrierDelayLine,
+                scratch: &stereoSubcarrierDelayResizeScratch,
                 writeIdx: stereoSubcarrierDelayWriteIdx,
-                newCount: total
+                oldCount: subcarrierDelayActiveCount,
+                newCount: total,
+                requiredCapacity: capacity
             )
             stereoSubcarrierDelayWriteIdx = 0
+            subcarrierDelayActiveCount = total
         }
     }
 
-    /// Resize a ring buffer to `newCount` slots, preserving the most
-    /// recent samples in time order at the start of the new buffer
-    /// (write index resets to 0, so reads of `[writeIdx]` immediately
-    /// after will see the oldest preserved sample). On grow, zeros pad
-    /// the head; on shrink, the oldest samples are dropped. Used so a
-    /// live-applied chain-latency change (e.g. composite-clipper look-
-    /// ahead slider drag) doesn't zero the in-flight pilot / RDS / 38
-    /// kHz reference stream and click the audio.
+    /// Change a delay line's active logical length while preserving the most
+    /// recent samples in time order. If the required capacity is already
+    /// available, this is allocation-free and only copies within preallocated
+    /// storage. Structural changes may grow storage outside normal slider-drag
+    /// use; live composite-lookahead updates should stay inside capacity.
+    private static func resizeDelayPreservingContentsInPlace(
+        line: inout [Float],
+        scratch: inout [Float],
+        writeIdx: Int,
+        oldCount: Int,
+        newCount: Int,
+        requiredCapacity: Int
+    ) {
+        let capacity = max(0, requiredCapacity)
+        if line.count < capacity {
+            line = Self.resizedDelayPreservingContents(
+                line: line,
+                writeIdx: writeIdx,
+                oldCount: oldCount,
+                newCount: newCount,
+                requiredCapacity: capacity
+            )
+            scratch = [Float](repeating: 0.0, count: capacity)
+            return
+        }
+        if scratch.count < line.count {
+            scratch = [Float](repeating: 0.0, count: line.count)
+        }
+        guard newCount > 0 else { return }
+        for i in 0..<newCount {
+            scratch[i] = 0.0
+        }
+        guard oldCount > 0 else {
+            for i in 0..<newCount {
+                line[i] = 0.0
+            }
+            return
+        }
+        let copyN = min(oldCount, newCount)
+        let dstStart = newCount - copyN
+        var srcIdx = (writeIdx + oldCount - copyN) % oldCount
+        for i in 0..<copyN {
+            scratch[dstStart + i] = line[srcIdx]
+            srcIdx = (srcIdx + 1) % oldCount
+        }
+        for i in 0..<newCount {
+            line[i] = scratch[i]
+        }
+    }
+
     private static func resizedDelayPreservingContents(
         line: [Float],
         writeIdx: Int,
-        newCount: Int
+        oldCount: Int,
+        newCount: Int,
+        requiredCapacity: Int
     ) -> [Float] {
-        if newCount == 0 { return [] }
-        let oldCount = line.count
-        var result = [Float](repeating: 0.0, count: newCount)
-        if oldCount == 0 { return result }
+        if requiredCapacity == 0 { return [] }
+        var result = [Float](repeating: 0.0, count: requiredCapacity)
+        guard newCount > 0, oldCount > 0 else { return result }
         let copyN = min(oldCount, newCount)
         let dstStart = newCount - copyN
         var srcIdx = (writeIdx + oldCount - copyN) % oldCount
@@ -6525,7 +6604,9 @@ final class MPXGenerator {
             sampleRate: sampleRate,
             threshold: preEncodeThreshold,
             releaseMS: preEncodeReleaseMS,
-            bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled
+            bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
+            residualTapCount: preEncodeBandlimitedResidualTapCount,
+            residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction
         )
         bs412Limiter.configure(
             sampleRate: sampleRate,
@@ -6558,16 +6639,22 @@ final class MPXGenerator {
             || fabsf(preEncodeThreshold - config.preEncodeThreshold) > 0.0001
             || fabsf(preEncodeReleaseMS - config.preEncodeReleaseMS) > 0.001
             || preEncodeBandlimitedResidualEnabled != config.preEncodeBandlimitedResidualEnabled
+            || preEncodeBandlimitedResidualTapCount != config.preEncodeBandlimitedResidualTapCount
+            || fabsf(preEncodeBandlimitedResidualCutoffFraction - config.preEncodeBandlimitedResidualCutoffFraction) > 0.0001
         preEncodeAudioLimiterEnabled = config.preEncodeAudioLimiterEnabled
         preEncodeThreshold = clampf(config.preEncodeThreshold, 0.5, 0.999)
         preEncodeReleaseMS = clampf(config.preEncodeReleaseMS, 10.0, 200.0)
         preEncodeBandlimitedResidualEnabled = config.preEncodeBandlimitedResidualEnabled
+        preEncodeBandlimitedResidualTapCount = max(5, min(129, config.preEncodeBandlimitedResidualTapCount | 1))
+        preEncodeBandlimitedResidualCutoffFraction = clampf(config.preEncodeBandlimitedResidualCutoffFraction, 0.05, 0.49)
         if preEncodeLimiterChanged {
             preEncodeAudioLimiter.configure(
                 sampleRate: sampleRate,
                 threshold: preEncodeThreshold,
                 releaseMS: preEncodeReleaseMS,
-                bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled
+                bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
+                residualTapCount: preEncodeBandlimitedResidualTapCount,
+                residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction
             )
         }
 
@@ -7907,7 +7994,7 @@ final class MPXGenerator {
         // pilot-locked 38 kHz reference aligned with the audio
         // composite's internal subcarrier modulation.
         let delayedSubcarriers: Float
-        let subDelayN = subcarrierDelayLine.count
+        let subDelayN = subcarrierDelayActiveCount
         if subDelayN > 0 {
             delayedSubcarriers = subcarrierDelayLine[subcarrierDelayWriteIdx]
             subcarrierDelayLine[subcarrierDelayWriteIdx] = subcarriers

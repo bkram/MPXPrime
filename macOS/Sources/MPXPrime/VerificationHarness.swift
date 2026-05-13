@@ -996,6 +996,7 @@ private func runEncoderStageIsolationSweep(
     rows.append(measure(label: "baseline (full chain)") { _ in })
     rows.append(measure(label: "composite clipper OFF") { $0.compositeClipperEnabled = false })
     rows.append(measure(label: "audio composite softclip OFF") { $0.audioCompositeSoftClipEnabled = false })
+    rows.append(measure(label: "audio composite smoother OFF") { $0.audioCompositeSmootherEnabled = false })
     rows.append(measure(label: "final MPX safety OFF") { $0.finalMPXSoftClipEnabled = false })
     rows.append(measure(label: "encoder FIR OFF") { $0.encoderFIREnabled = false })
     rows.append(measure(label: "pre-encode limiter OFF") { $0.preEncodeAudioLimiterEnabled = false })

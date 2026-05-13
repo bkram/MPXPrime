@@ -960,6 +960,53 @@ private func encoderSidebandMetrics(
     )
 }
 
+/// Per-stage isolation sweep for the HF stereo-separation
+/// investigation. Renders L-only sines at 1 / 10 / 14 kHz through the
+/// chain with each stage individually disabled, and reports the
+/// resulting asymmetry + side-vs-mono delta against the baseline (all
+/// stages enabled). The stage whose row most-moves the metric is the
+/// stage contributing that loss.
+private struct StageIsolationRow {
+    let label: String
+    let metricsByTone: [Double: EncoderSidebandMetrics]
+}
+
+private func runEncoderStageIsolationSweep(
+    baseConfig: AppConfig,
+    durationSeconds: Double
+) -> [StageIsolationRow] {
+    let tones: [Double] = [1_000.0, 10_000.0, 14_000.0]
+
+    func measure(label: String, mutate: (inout AppConfig) -> Void) -> StageIsolationRow {
+        var cfg = baseConfig
+        mutate(&cfg)
+        var byTone: [Double: EncoderSidebandMetrics] = [:]
+        for tone in tones {
+            byTone[tone] = encoderSidebandMetrics(
+                config: cfg,
+                toneHz: tone,
+                drivenChannel: "L",
+                durationSeconds: durationSeconds
+            )
+        }
+        return StageIsolationRow(label: label, metricsByTone: byTone)
+    }
+
+    var rows: [StageIsolationRow] = []
+    rows.append(measure(label: "baseline (full chain)") { _ in })
+    rows.append(measure(label: "composite clipper OFF") { $0.compositeClipperEnabled = false })
+    rows.append(measure(label: "audio composite softclip OFF") { $0.audioCompositeSoftClipEnabled = false })
+    rows.append(measure(label: "final MPX safety OFF") { $0.finalMPXSoftClipEnabled = false })
+    rows.append(measure(label: "encoder FIR OFF") { $0.encoderFIREnabled = false })
+    rows.append(measure(label: "pre-encode limiter OFF") { $0.preEncodeAudioLimiterEnabled = false })
+    // Pre-emphasis disable also disables the 19 kHz pilot notch in
+    // the audio path (they share the `preemphasisUS > 0` gate in
+    // `configureAudioPath`). The pilot notch is only meaningful when
+    // pre-emphasis is on, so the joint toggle is the right unit.
+    rows.append(measure(label: "pre-emphasis + pilot notch OFF") { $0.preemphasisUS = 0 })
+    return rows
+}
+
 private func receiverPLLRoundTripMetrics(
     config: AppConfig,
     toneHz: Double,
@@ -1748,6 +1795,7 @@ private func runReceiverModelVerification(
             encoderSidebandMetrics(config: baseConfig, toneHz: tone, drivenChannel: "R", durationSeconds: duration)
         )
     }
+    let stageIsolationRows = runEncoderStageIsolationSweep(baseConfig: baseConfig, durationSeconds: duration)
     let mono = receiverMonoMetrics(config: baseConfig, durationSeconds: duration)
     let noPilot = receiverNoPilotMetrics(config: baseConfig, durationSeconds: duration)
     let subcarriers = receiverSubcarrierMetrics(config: baseConfig, durationSeconds: duration)
@@ -1855,6 +1903,47 @@ private func runReceiverModelVerification(
                 + "  \(leftPadded(String(format: "%.1f", metric.sideSumDBFS), width: 7))"
                 + "  \(String(format: "%+8.2f", metric.sideMonoDeltaDB))"
         )
+    }
+
+    print("")
+    print("Stage-Isolation Sweep (encoder-side, L-only sine, deltas vs baseline)")
+    print("SideDelta col: SideSum - Mono (0 dB = balanced DSB-SC).")
+    print("Asym col: |lower - upper| sideband dB. Bigger delta-vs-baseline = bigger contribution from that stage.")
+    print("")
+    print("Stage                          1k Asym  1k SideDel  10k Asym  10k SideDel  14k Asym  14k SideDel")
+    print("-----------------------------  -------  ----------  --------  -----------  --------  -----------")
+    if let baseline = stageIsolationRows.first {
+        for row in stageIsolationRows {
+            let a1 = row.metricsByTone[1_000.0]
+            let a10 = row.metricsByTone[10_000.0]
+            let a14 = row.metricsByTone[14_000.0]
+            let label = padded(row.label, width: 29)
+            let isBaseline = row.label == baseline.label
+            func diffOrAbs(
+                _ row: EncoderSidebandMetrics?,
+                _ base: EncoderSidebandMetrics?,
+                _ keyPath: KeyPath<EncoderSidebandMetrics, Float>
+            ) -> String {
+                guard let row = row else { return "  -    " }
+                let value = row[keyPath: keyPath]
+                if isBaseline { return String(format: "%+6.2f ", value) }
+                guard let base = base else { return String(format: "%+6.2f ", value) }
+                let delta = value - base[keyPath: keyPath]
+                return String(format: "%+6.2f ", delta)
+            }
+            let b1 = baseline.metricsByTone[1_000.0]
+            let b10 = baseline.metricsByTone[10_000.0]
+            let b14 = baseline.metricsByTone[14_000.0]
+            print(
+                "\(label)"
+                    + "  \(diffOrAbs(a1, b1, \.asymmetryDB))"
+                    + "  \(diffOrAbs(a1, b1, \.sideMonoDeltaDB))"
+                    + "    \(diffOrAbs(a10, b10, \.asymmetryDB))"
+                    + "   \(diffOrAbs(a10, b10, \.sideMonoDeltaDB))"
+                    + "    \(diffOrAbs(a14, b14, \.asymmetryDB))"
+                    + "   \(diffOrAbs(a14, b14, \.sideMonoDeltaDB))"
+            )
+        }
     }
 
     print("")

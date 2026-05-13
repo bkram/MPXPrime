@@ -9,6 +9,71 @@ PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
 patent-grade harmonic synthesis, adaptive on-screen FPS, and an
 optional deep DSP combination test suite. Newest first.
 
+## 0.28 — 2026-05-13
+
+### DSP — high-frequency stereo separation premium-grade (headline)
+
+A focused investigation + fix cycle that lifted decoded receiver-side stereo separation by 19-31 dB across 1 / 10 / 14 kHz, putting MPX Prime into premium amateur / lower-prosumer territory.
+
+Receiver-decoded separation (default config, `--verify-receiver --seconds 5`):
+
+| Tone | 0.27 | 0.28 | Δ |
+|---|---|---|---|
+| 1 kHz | 33.7 dB | **65.0 dB** | +31.3 dB |
+| 10 kHz | 26.1 dB | **50.5 dB** | +24.4 dB |
+| 14 kHz | 24.0 dB | **43.4 dB** | +19.4 dB |
+
+All three exceed plan.md "Next up — HF separation" targets (≥35 / ≥30 / ≥25-30 dB) by 13-31 dB on both coherent decode and the PLL external-style decode. The two paired root-cause fixes:
+
+- **`AppConfig.audioCompositeSmootherEnabled` default `true` → `false`.** The legacy one-pole 54 kHz LP inside `processFinalComposite` was asymmetrically rolling off the wanted (L−R) sidebands at 24-52 kHz (-1.83 dB at 39 kHz, +1.84 dB asymmetry at the 14 kHz tone upper sideband). It is now opt-in for compatibility but the default chain is the cleaner softclip-only path.
+- **`MPXDecoder.diffDecodeGain` `1.22 → 1.0`.** The 1.22× diff-channel gain implicitly compensated for the smoother's side attenuation; with the smoother off, unity gain is the natural scale.
+
+### DSP — receiver-side PLL refactor
+
+- **`MPXDecoder` PLL switched from bandpass + phase-discriminator to I/Q coherent lockin demodulator.** Slow IIR-smoothed estimates of `mpx·sin(ω_p·t)` and `mpx·cos(ω_p·t)` at the local oscillator, then the doubled-phase subcarrier is recovered via trig identities. Effect: PLL external-style decode now achieves parity with synthetic-reference coherent decode at all three test tones (was ~10 dB behind in 0.27).
+
+### DSP — multiband Phase 2 (transient-aware attack + RMS/peak hybrid)
+
+- **`MonoCompressor` gains `transientAwareAttackEnabled`** (default off, opt-in via `multiband_transient_aware_attack_enabled`). An RMS envelope (10 ms attack / 90 ms release) runs alongside the existing peak follower; the peak-to-RMS ratio drives a transient indicator that triggers when peak rises above 1.65× RMS. A 10 ms hold latches the indicator. On a transient, the detector blends mostly RMS (peakWeight drops 0.58 → 0.18) and the attack coefficient stretches to 3.2× the base attack. Net effect: percussive fronts pass hotter than the classic peak-only detector; sustained content converges back near the classic level. Matches Optimod "Smart Attack" character.
+- Public `transientDriveObserved` accumulator exposes the indicator for tests and future telemetry.
+- Wired through both 3-band and 5-band compressor pairs via `configureCompressorPair`. Live-apply via the existing `multibandCompressorChanged` change detector.
+- Tests: percussive 6 ms burst over a 120 ms primed bed lands ≥4% hotter with the flag on; sustained 440 Hz at -1.7 dBFS converges within ±15-20% of the classic detector level over 500 ms.
+
+### DSP — composite multiband clipper (experimental, opt-in)
+
+- **New `CompositeMultibandClipper`** (default off, opt-in via `mpx_multiband_clipper_enabled`). Parallel-cumulative-LP topology with shared-tap-count linear-phase FIR lowpasses at 180 Hz and 4200 Hz, delay-matched input bypass. Recombines as `softClipSafety(low, 0.94) + softClipSafety(mid, 0.88) + softClipSafety(high, 0.78)`. Sum-to-flat property holds at low drive (output = `delayed(input)` when no band clips).
+- Placed after the broadband composite clipper and before the audio-composite bandwidth FIR. Group delay folds into `recomputeSubcarrierDelay()` only when enabled; capacity is unconditionally reserved at configure time so live-toggle is allocation-free.
+- Tests: runtime-config flag propagates, toggling adds exactly `groupDelaySamples` to the subcarrier delay line, below-threshold signal reconstructs to within 0.015 linear, hot signal stays finite and `outputPeak < inputPeak × 0.92`.
+- **Caveat (acknowledged in plan.md + ARCHITECTURE.md)**: runs at host rate without oversampling, so the high band will alias on hot HF content. Default-off until verifier/listening/cost data proves a net win.
+
+### Verifier — new infrastructure for HF separation work
+
+- **Raw MPX sideband analyzer in `--verify-receiver`.** New "Encoder-Side Sidebands" table reports per (channel, tone): baseband mono bin, lower / upper DSB-SC sidebands at 38 ± toneHz, asymmetry, side-sum vs mono delta. Tap point is raw MPX *before* MPXDecoder applies deemphasis / 15.5 kHz LP / pilot/RDS notches — isolates encoder-side from receiver-model loss.
+- **Per-stage isolation sweep.** Renders the encoder-side metrics with each toggleable stage individually disabled (composite clipper, audio composite softclip, audio composite smoother, final MPX safety, encoder FIR, pre-encode limiter, pre-emphasis + pilot notch), printing each row's asymmetry + side-delta as a delta vs the all-stages-enabled baseline. Identified the one-pole smoother as the entire encoder-side bottleneck (every other stage moves the metric by ~0.01 dB).
+- **Ideal Receiver Decode table.** Computes coherent decode using raw mono + Goertzel-side with the side phasor normalized to mono magnitude — isolates phase alignment as the ceiling, separates it from amplitude loss. "Gap vs Prod" column reports `idealSeparation - productionSeparation`; receiver notes emit ("audit MPXDecoder filters before encoder tuning") when the gap exceeds 6 dB.
+- `hf_edge_12k` scenario `maxAbove67kRatioDB` tolerance widened from -58 to -52 dB to reflect the post-smoother chain's true alias-band behavior; baseline JSON refreshed.
+
+### Configuration + UI
+
+- **New INI keys** (all live-apply, default false):
+  - `multiband_transient_aware_attack_enabled` — Multiband tab toggle.
+  - `mpx_multiband_clipper_enabled` — Composite Clipper tab toggle.
+  - `audio_composite_smoother_enabled` default flipped to `False` (still configurable for compatibility / A/B).
+- **UI**: Multiband and Composite Clipper tabs gain Toggle rows with `.help` tooltips describing the experimental status. Processing-tab order in the sidebar now matches the chain order (Phase Rotator before AGC, Multiband / MB Limiter / Expander before Widener / PrimeBass, Composite Clipper before BS.412).
+
+### Tests
+
+- **+7 tests / +2 suites** (308 / 42 → 315 / 44):
+  - `MultibandPhase2Tests` (3): transient-burst-vs-classic, sustained convergence, runtime-config flag.
+  - `CompositeMultibandClipperTests` (4): runtime-config flag, subcarrier-delay accounting on toggle, sum-to-flat reconstruction, finite + peak-reduced under hot drive.
+  - `StereoSeparationReceiverTests` previously updated for the 0.27 active-count split; still passing on the new chain.
+
+### Docs
+
+- **plan.md**: HF separation 5-step plan added to "Next up" with completed-work summary and actual achieved numbers; multiband Phase 2 + multiband composite clipping reranked from "open" to "implementation landed, validation pending"; receiver-model verifier item retitled "hardening" and rescoped.
+- **AGENTS.md**: multiband composite clipper and transient-aware attack added to the chain description; measurement-first DSP-validation guideline retained from 0.27.
+- **ARCHITECTURE.md**: composite-clipper-improvements section gains a `CompositeMultibandClipper` paragraph; dynamics block gains a transient-aware-attack note.
+
 ## 0.27 — 2026-05-13
 
 ### DSP — anti-aliased clipping (US 6,937,912) groundwork

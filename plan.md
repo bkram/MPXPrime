@@ -57,21 +57,9 @@ explicitly enabled.
 
 ### Bass enhancement (PrimeBass) — secondary backlog
 
-Patents informing improvements to the `PrimeBass` adaptive low-band
-enhancer (renamed from `Orbass` in 0.20 to remove the Orban-trademark
-adjacency). Goal: enhance perceived bass while *reducing* true-peak
-LF amplitude (so downstream bass clipper / pre-encode limiter /
-composite clipper see less LF energy).
+PrimeBass (renamed from `Orbass` in 0.20) is the adaptive low-band enhancer; goal is to lift perceived bass while *reducing* true-peak LF amplitude so downstream bass clipper / pre-encode limiter / composite clipper see less LF energy. The full B1/B2/B3/B4 patent backlog shipped across 0.20–0.23; further LF work would need new design directions (the active Music Tribe / DTS claims below are deliberate skips).
 
-**B1, B2, B3, and B4 all landed.** B1 + B4 in 0.20 (commit `4d4a70f`),
-B2 in 0.20 (commit `af7b883`), B3 queued for 0.23 on `develop/v.023`.
-The bass-enhancement patent backlog is now complete; further LF
-enhancement work would need new design directions (e.g., the
-Music Tribe / DTS active patents listed below as "skipped" — both
-have active patent claims through ~2032 so any work in those
-directions needs a clear design-around or a wait).
-
-**Already implemented:**
+**Already implemented (do not re-implement):**
 
 | Patent                                                          | Title                                                       | Where in code                                                       | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -100,14 +88,13 @@ directions needs a clear design-around or a wait).
 
 ## Next up
 
-1. **START NOW: Phase A - `BandLimitedStep` primitive for the anti-aliased clipping kernel (US 6,937,912; Orban; expired Sept 2025).** Headline DSP work for v0.27. The standard verifier is now clean (`--verify --baseline-strict` OK; `--verify-presets --seconds 1` OK), after the audio-composite cleanup FIR and monitor subcarrier-delay correction. This item is therefore no longer a blocker to clear `bright_dense` / `hf_edge_12k`; it is the next quality/headroom step. Goal: stop alias/IM products at the clipping event itself instead of relying on oversampling, decimation, and the new composite cleanup FIR to remove them after they exist. Scope: ~2–3 weeks across four phases:
-   - **A. Build `BandLimitedStep` first.** STATUS: primitive landed as `macOS/Sources/MPXPrime/BandLimitedStep.swift` with deterministic tests in `macOS/Tests/MPXPrimeTests/BandLimitedStepTests.swift`; focused `--filter BandLimitedStep` and full fast `swift test` pass. Alignment note: this is a patent-aligned building block, not the full US 6,937,912 implementation yet. It detects fractional threshold crossings and schedules normalized finite band-limited correction windows. The helper now exposes both BLEP-style value-step correction and BLAMP-style slope-break correction, because the current `tanh` soft knee is value-continuous and most likely needs the ramp/slope path. The production alignment work is still Phase B/C, where the helper must be wired into the actual pre-encode limiter and audio-composite shaper and verified spectrally against the current oversampled path.
-   - **B. Apply to `OversampledPeakLimiter` / `StereoLinkedOversampledPeakLimiter` only after a spectral gate.** STATUS: gate landed as `macOS/Tests/MPXPrimeTests/AntiAliasedClipperProbeTests.swift`. Current code uses a `tanh` soft knee that is value-continuous and first-derivative-continuous at the threshold, so blindly adding BLEP/BLAMP correction can add a new artifact instead of removing one. Initial 5.111 kHz stress probe at 48 kHz measured hard knee -31.06 dBFS alias energy, current `tanh` -30.76 dBFS, and naive BLAMP -12.43 dBFS. The ramp correction is now normalized by window length and delay-aligned in the probe, bringing the BLAMP candidate back to -30.87 dBFS: stable, but not an improvement yet. A better patent-style residual-bandlimiting candidate now lives in `AcceleratedBandlimitedResidualClipper` and uses double-buffered `vDSP_dotpr`; it measures -44.90 dBFS while preserving the wanted 5.111 kHz fundamental at -3.17 dBFS, matching hard clip level. This is the first candidate worth promoting. Next B work: wire the residual-bandlimiting kernel behind an off-by-default config flag, verify limiter gain/stereo-link/true-peak behavior, and compare against current `tanh` on multi-tone and program-material probes before defaulting it.
-   - **C. Apply to `softClipSafety` calls inside `processFinalComposite` only if Phase B proves benefit.** `softClipSafety` also uses a smooth `tanh` knee, so the same caveat applies. Keep pilot/RDS injection post-processing and preserve the composite budget governor invariant.
-   - **D. Refresh verifier baselines and listen on real program.** Expected benefit is lower generated IM/alias tail, cleaner future loud presets, and more margin if the composite cleanup FIR is relaxed later. Do not relax current verifier thresholds unless measurement proves they are overfitting.
-   References: Välimäki "Discrete-Time Modelling..." (1995), Brandt "Hard Sync without Aliasing" (2001), Stilson/Smith "Alias-Free Digital Synthesis..." (1996). Patent status: expired 2025-09, public domain. Branch: cut `develop/v.027` after 0.26 ships.
+1. **Anti-aliased clipping kernel (US 6,937,912; Orban; expired Sept 2025).** Headline DSP work for v0.27. Goal: stop alias/IM products at the clipping event itself rather than relying on oversampling, decimation, and the composite cleanup FIR to remove them after they exist. Phases A and B (primitive + spectral gate + off-by-default residual-bandlimiting kernel with tunable taps/cutoff) are landed and locked behind regression tests — see CHANGELOG 0.27. Remaining:
+   - **B finish.** A/B real program material with `pre_encode_bandlimited_residual_enabled = True`; decide whether the residual path defaults on for 0.27 ship.
+   - **C. Apply same primitive to `softClipSafety` calls inside `processFinalComposite`** only if B proves benefit. Keep pilot/RDS injection post-processing and preserve the composite budget governor invariant.
+   - **D. Refresh verifier baselines and listen on real program.** Do not relax current verifier thresholds unless measurement proves they are overfitting.
+   References: Välimäki "Discrete-Time Modelling..." (1995), Brandt "Hard Sync without Aliasing" (2001), Stilson/Smith "Alias-Free Digital Synthesis..." (1996).
 
-2. **Tune and validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` landed in 0.26 (OS-rate sliding-window-max detector, Lagrange-interpolated intersample peaks, exponential-attack / 200 Hz-smoothed gain envelope applied identically to `up` and per-band `orig*` filters; default 0.0 disabled, range 0.0–5.0 ms). Listening work: dense real-program A/B at 0.5 / 1 / 2 ms; verify pilot and RDS guard cleanliness; decide whether loud presets ship with a small non-zero default. Captured WAVs land in `macOS/.audit-out/lookahead/` via the env-gated `MPXPRIME_AUDIT_CAPTURE=1` capture driver. Runs in parallel with #1 — listening is a separate track from DSP.
+2. **Tune and validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped (0.26) and silent live-resize shipped (0.27); listening work remains. Dense real-program A/B at 0.5 / 1 / 2 ms via the live slider; verify pilot and RDS guard cleanliness; decide whether loud presets ship with a small non-zero default. Captured WAVs land in `macOS/.audit-out/lookahead/` via the env-gated `MPXPRIME_AUDIT_CAPTURE=1` capture driver (directory is gitignored). Runs in parallel with #1 — listening is a separate track from DSP.
 
 3. **Preset tuning — make it sound great out of the box.** Composite clipper now ships clean (delta-based per-band substitution + optional look-ahead; subcarrier sidebands within ~1 dB across the audio band) and the chain is in canonical industry order. Tune `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, `mpx_clipper_lookahead_ms`, AGC density curve, and stereo widener defaults so a fresh install with no operator knowledge already sounds noticeably better than `mpxgen` / PiFmRds. Add a small set of named presets (e.g. `clean`, `loud`, `community-radio`, `lpfm-conservative`) as INI fragments. Best done after #1 + #2 land so presets can bake in both the anti-aliased clipper behaviour and a tuned look-ahead default.
 
@@ -173,42 +160,13 @@ Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction
 
 ### Composite clipper improvements
 
-1. **Look-ahead composite peak control.** — **LANDED in 0.26.** OS-rate (1.536 MHz at 192 kHz × 8) sliding-window-max detector with Lagrange-interpolated intersample-peak detection drives an exponential-attack / 200 Hz-smoothed gain envelope. Gain is applied identically to both `up` (clipper input) and the per-band `orig*` filters so the differential-topology cancellation linearity holds. Single INI knob `mpx_clipper_lookahead_ms` (0.0–5.0 ms, default 0.0 disabled). Separate `lookaheadGainReductionDB` telemetry on the meter. Remaining work is listening-tuning and deciding the default preset value — see "Next up" #1.
+1. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier; look-ahead recovers some of that gap, but multiband composite clipping is still the next loudness step. Split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
 
-2. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier; look-ahead recovers some of that gap, but multiband composite clipping is still the next loudness step. Split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
-
-3. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
-
-### Chain-order audit (industry comparison) — RESOLVED
-
-Audit done 2026-05-09 against published Orban Optimod 8500/8600, Omnia.9/.11, and Stereo Tool architectures. The current chain matches industry practice on every load-bearing position — phase rotator early, AGC before EQ, multiband with per-band limiters, encoder lowpass before stereo encoding, composite clipper before BS.412, and pilot/RDS injection post-clipper at constant amplitude (the professional invariant). Three deviations from canonical ordering existed; **all three landed in the post-0.24 cycle** following a Phase 1 audit (see `macOS/.audit-out/chain_order/REPORT.md` if still on the local filesystem):
-
-| Deviation | Status | Notes |
-|---|---|---|
-| **PrimeBass before multiband** | **Resolved.** Moved post-multiband. | Multiband no longer compresses synthesised harmonics. Phase 1 audit showed zero verifier-baseline drift on standard scenarios; listening confirmed on real program. |
-| **Stereo widener before multiband** | **Resolved.** Moved post-multiband (still L/R domain; M/S variant skipped per audit decision). | Mono bass stays inside `processStereoImageStage`. Zero verifier drift; listening confirmed. |
-| **Pre-emphasis in M/S after pre-encode L/R limiter** | **Resolved.** Moved to L/R immediately upstream of the pre-encode limiter; renamed `preSum`/`preDiff` → `preL`/`preR`. | The b806053 cost regression that originally motivated the M/S placement is no longer reproducible — chain optimizations between 0.10 and 0.24 cut absolute cost from ~95% to ~28% of real-time, so the 7% relative cost increase from upstream pre-emphasis is comfortably absorbed. C1 PASS at 1.07× release-build ratio; C2 sustained-load PASS over 30 s; HF guard band cleaner above 60/67 kHz on 5 verifier scenarios. |
-
-The previously-noted `hard_panned_hf` asymmetric L/R limiter response (per-channel limiters produced a +15 dB side-to-mid metric blowup on synthetic-pathological L-only HF chirps + R-only rumble) was resolved in 0.26 by switching to `StereoLinkedOversampledPeakLimiter` — a `max(|L|, |R|)` detector drives both channels identically. No remaining known chain-order drift.
+2. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
 
 ### Enterprise-parity status
 
-Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereotool. Structural ordering is now identical to all three; what's missing is feature depth, not architecture.
-
-**Landed (the chain matches industry canon):**
-- Phase rotator early; AGC before EQ; multiband with per-band limiters; encoder lowpass before stereo encoding; composite clipper before BS.412; pilot/RDS injection post-clipper at constant amplitude (the professional invariant)
-- Pre-emphasis L/R immediately upstream of pre-encode limiter (canonical Optimod / Stereotool placement)
-- PrimeBass post-multiband (canonical MaxxBass / Aural Exciter / Big Bottom placement)
-- Stereo widener post-multiband (canonical Optimod placement)
-- Differential-topology composite clipper with delta-based per-band substitution (Orban US 6,337,999 + US 4,460,871 lineage, expired)
-- **Composite clipper look-ahead peak control (0.26)** — OS-rate sliding-window-max detector + 200 Hz-smoothed gain envelope; closes the largest single loudness-architecture gap toward Optimod 8x00 / Omnia.9 / Stereotool
-- **Composite budget governor (0.26)** — smoothed gain ride on the audio composite before pilot/RDS injection so the post-injection clamp is unreachable for sane configs; `overBudget` flag classifies impossible configs
-- **Pilot/RDS subcarrier delay alignment (0.26)** — receiver's pilot-derived 38 kHz reference now phase-coherent with the audio composite's internal L−R subcarrier
-- **Stereo-linked `PreEncodeAudioLimiter` (0.26)** — `max(|L|, |R|)` detector eliminates per-channel asymmetric pumping
-- Linear-phase FIR multiband splitters (sum-to-flat at -155 dB)
-- BS.412 dual-integrator power controller (US 6,618,486 functional equivalent)
-- PrimeBass full bass-enhancement patent backlog (MaxxBass + Aphex + Werrbach transient gain + Big Bottom)
-- vDSP / vForce SIMD on hot loops (vvtanhf-batched soft-clip, vDSP_dotpr FIR — competitive with what enterprise DSP looks like under the hood)
+Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereotool. Structural ordering is now identical to all three across every load-bearing position — chain canonical, differential-topology composite clipper with look-ahead and budget governor, stereo-linked pre-encode limiter, linear-phase FIR multiband, full PrimeBass patent backlog, vDSP/vForce SIMD on hot loops. What's missing is feature depth, not architecture. (Per-release detail in CHANGELOG.)
 
 **Open, ranked impact-per-effort:**
 
@@ -404,13 +362,7 @@ JACK backend + headless; +2-4 weeks for web dashboard.**
 
 ## Pre-emphasis placement (history)
 
-**Currently shipping:** L/R domain, immediately upstream of the pre-encode limiter (canonical Optimod / Stereotool placement). Implemented as `preL` / `preR` in `processSampleDetailed`.
-
-This was *not* always the case. Commit `b806053` on the path from 0.9 → 0.10 originally attempted the same relocation but caused real-time budget overrun: combined per-sample cost on the audio thread exceeded budget, the input ring filled from empty to capacity (~1.35 s) within 3–5 s of every engine start. 0.10 reverted to M/S inside `makeCompositeComponents` and added `DSPThroughputTests.preEmphasisDoesNotExplodeFullChainCost` as a regression canary.
-
-**The b806053 cost regression is no longer reproducible** on the post-0.24 chain. Optimizations between 0.10 and 0.24 (vvtanhf-batched soft-clip, vDSP_dotpr FIR, linear-phase FIR multiband, composite clipper differential topology) cut absolute chain cost from ~95% to ~28% of real-time, comfortably absorbing the ~7% relative cost increase from pre-emphasis upstream of the limiter. Phase 1 chain-order audit (post-0.24, see `macOS/.audit-out/chain_order/REPORT.md`) confirmed C1 PASS at 1.07× ratio + C2 PASS over 30 s sustained load. The relocation now ships as the production placement.
-
-**If dynamic pre-emphasis (7.6) ever wants further refinement:** build a dedicated sidechain detector that doesn't disturb the audio-domain `preL` / `preR` filters; or modulate the existing filters' tau in real time. Either path is now compatible with the production chain.
+Ships in L/R, immediately upstream of the pre-encode limiter (canonical Optimod / Stereotool placement); `preL` / `preR` in `processSampleDetailed`. The b806053 cost regression that historically reverted this in 0.10 is no longer reproducible on the post-0.24 chain — vvtanhf, vDSP_dotpr, FIR multiband, and differential composite clipper optimizations cut absolute chain cost from ~95% to ~28% of real-time, absorbing the ~7% relative increase. If dynamic pre-emphasis (7.6) ever lands, either modulate `preL` / `preR` tau in place, or build a dedicated sidechain detector.
 
 ## Design constraints
 
@@ -440,101 +392,3 @@ This was *not* always the case. Commit `b806053` on the path from 0.9 → 0.10 o
 - `PiFmRds` — Raspberry Pi FM transmitter with RDS, toy-grade.
 - Stereotool free build — closed-source, feature-limited.
 - Liquidsoap — common amateur-station audio backbone; potential JACK integration target.
-
-## DSP Enterprise-Level Next Steps
-
-MPX Prime remains an amateur-focused project, but the DSP goal is still
-best-in-class processing for that audience. These steps are ordered by
-technical importance and audible payoff, while preserving the current
-Swift-first direction.
-
-1. **Finish the post-injection clamp fix.** — DONE (0.26)
-   `MPXGenerator.makeFinalCompositeThresholds` now derives a composite
-   budget governor (`allowedAudioAbs = max(0, threshold/outputGain -
-   reserved - margin)`) and `processFinalComposite` enforces it as a
-   hard ceiling on the audio path before pilot/RDS injection. The final
-   `clampf(mpx, -1, 1)` remains only as a numeric guard.
-   `compositeCalibrationStatus.overBudget` and `postInjectionOvershoot`
-   surface over-budget configs to UI and verifier. Outstanding follow-up
-   is promoting non-zero overshoot from TIGHT to a hard verifier failure
-   once item 2 (receiver-model verifier) provides finer ground truth.
-
-2. **Turn the receiver model into a real verifier.**
-   Enterprise-style DSP changes should be judged at receiver output, not
-   only at MPX waveform level. Add offline decode metrics for stereo
-   separation at 1 kHz / 10 kHz / 14 kHz, mono compatibility, pilot
-   level/phase error, RDS band level/center accuracy, post-injection
-   overshoot count, MPX power, and composite crest factor.
-
-3. **Tune and validate composite clipper look-ahead.** — DSP DONE (0.26);
-   listening-tuning still ahead. `mpx_clipper_lookahead_ms` landed default
-   off. Run dense real-program A/B at 0.5 / 1 / 2 ms; verify pilot and RDS
-   guard cleanliness; decide whether loud presets ship with a conservative
-   non-zero default. See "Next up" #1.
-
-4. **Add transient-aware multiband detection.**
-   `MonoCompressor` is still a single-pole absolute-envelope compressor.
-   Add peak/RMS/crest detection so kicks and snares keep their front edge:
-
-   ```text
-   crest = peakEnv / max(rmsEnv, 1e-6)
-   transient = clamp((crest - 2.0) / 3.0, 0, 1)
-   attackMS = lerp(8 ms, 28 ms, transient)
-   ```
-
-5. **Add inter-band gain coupling.**
-   Add Optimod-style behavior where heavy low-band gain reduction gently
-   biases mids/highs, instead of letting every band behave independently:
-
-   ```text
-   lowGR = max(0, -lowBandGainDB)
-   highThresholdEffective = highThresholdDB - 0.35 * lowGR
-   ```
-
-   Smooth the coupling with moderate attack/release so it reads as
-   program-dependent balance rather than pumping.
-
-6. **Add dynamic pre-emphasis load control.**
-   Keep static 50/75 us pre-emphasis as the compliance baseline, but add
-   an HF sidechain relaxation before the pre-encode limiter during harsh
-   bright transients:
-
-   ```text
-   over = max(0, hfEnvDB - hfTargetDB)
-   relaxDB = -min(3.0, over * 0.35)
-   ```
-
-   This should reduce HF limiter hash and composite-clipper workload
-   without changing normal tonal balance.
-
-7. **Add multiband composite clipping.**
-   Split the audio composite into delay-aligned bands, clip each with its
-   own ceiling, then recombine. Suggested starting split:
-
-   ```text
-   low: 0-180 Hz
-   mid: 180-2 kHz
-   high: 2-15 kHz
-   stereo sideband: 23-53 kHz, protect/cancel rather than clip
-   ```
-
-   This is higher effort, but it is the route to more loudness without the
-   tonal shift of a single fullband composite clipper.
-
-8. **Add a composite crest/peak-to-RMS governor.**
-   Add a slow controller around final drive or composite clipper drive,
-   not another limiter:
-
-   ```text
-   crestDB = 20 * log10(peak / max(rms, 1e-6))
-   driveTrimDB = -0.4 * max(0, crestDB - 8.5)
-   ```
-
-   Use slow timing, e.g. 1-3 s attack and 5-10 s release, to keep long
-   term density and multipath behavior controlled without obvious pumping.
-
-Practical implementation order, post-0.26 (clamp/budget governor + composite
-look-ahead DSP both landed): **US 6,937,912 anti-aliased clipping kernel
-(v0.27)** → composite look-ahead listening-tuning → receiver-model verifier
-→ transient-aware multiband → inter-band coupling → dynamic pre-emphasis →
-multiband composite clipper → composite crest governor.

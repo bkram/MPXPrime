@@ -2391,6 +2391,69 @@ struct LinearPhaseMultibandSplitter5 {
     }
 }
 
+/// Experimental host-rate multiband clipper for the audio composite.
+/// Splits the already-encoded audio composite into low / mid / high
+/// regions, clips each region independently, then recombines. The input
+/// delay is matched to the two FIR lowpasses so the sum reconstructs a
+/// delayed copy of the input when no band clips.
+struct CompositeMultibandClipper {
+    private var lpLow = LinearPhaseFIRLowpass()
+    private var lpMid = LinearPhaseFIRLowpass()
+    private var delayLine: [Float] = []
+    private var writeIdx: Int = 0
+    private var halfLength: Int = 0
+
+    var groupDelaySamples: Int { halfLength }
+
+    mutating func configure(sampleRate: Float) {
+        lpLow.configure(
+            cutoffHz: 180.0,
+            sampleRate: sampleRate,
+            stopBandDB: 70.0,
+            transitionHz: 1_500.0
+        )
+        lpMid.configure(
+            cutoffHz: 4_200.0,
+            sampleRate: sampleRate,
+            stopBandDB: 70.0,
+            transitionHz: 1_500.0
+        )
+        precondition(lpLow.tapCount == lpMid.tapCount)
+        halfLength = lpLow.groupDelaySamples
+        delayLine = [Float](repeating: 0.0, count: max(1, halfLength + 1))
+        writeIdx = 0
+    }
+
+    mutating func reset() {
+        lpLow.reset()
+        lpMid.reset()
+        for i in 0..<delayLine.count { delayLine[i] = 0.0 }
+        writeIdx = 0
+    }
+
+    mutating func process(_ x: Float) -> Float {
+        let n = delayLine.count
+        guard n > 0 else { return x }
+
+        let low = lpLow.process(left: x, right: x).0
+        let lowMid = lpMid.process(left: x, right: x).0
+
+        delayLine[writeIdx] = x
+        var readIdx = writeIdx - halfLength
+        if readIdx < 0 { readIdx += n }
+        let delayed = delayLine[readIdx]
+        writeIdx += 1
+        if writeIdx >= n { writeIdx = 0 }
+
+        let mid = lowMid - low
+        let high = delayed - lowMid
+        let lowOut = MPXGenerator.softClipSafety(low, threshold: 0.94)
+        let midOut = MPXGenerator.softClipSafety(mid, threshold: 0.88)
+        let highOut = MPXGenerator.softClipSafety(high, threshold: 0.78)
+        return lowOut + midOut + highOut
+    }
+}
+
 /// Linear-phase 3-band splitter — same construction as the 5-band but
 /// with 2 cumulative lowpasses.
 struct LinearPhaseMultibandSplitter3 {
@@ -2789,6 +2852,14 @@ struct MonoCompressor {
     var makeupDB: Float = 0.0
     var kneeDB: Float = 0.0
     var detector = EnvelopeFollower()
+    var transientDriveObserved: Float = 0.0
+    private var transientAwareAttackEnabled: Bool = false
+    private var rmsPower: Float = 0.0
+    private var rmsAttackCoeff: Float = 0.0
+    private var rmsReleaseCoeff: Float = 0.0
+    private var transientAttackCoeff: Float = 0.0
+    private var transientHoldSamples: Int = 0
+    private var transientHoldCounter: Int = 0
 
     mutating func configure(
         sampleRate: Float,
@@ -2797,22 +2868,73 @@ struct MonoCompressor {
         attackMS: Float,
         releaseMS: Float,
         makeupDB: Float,
-        kneeDB: Float = 0.0
+        kneeDB: Float = 0.0,
+        transientAwareAttackEnabled: Bool = false
     ) {
+        let sr = max(8_000.0, sampleRate)
+        let attack = max(0.1, attackMS)
+        let release = max(1.0, releaseMS)
         self.thresholdDB = thresholdDB
         self.ratio = max(1.0, ratio)
         self.makeupDB = makeupDB
         self.kneeDB = max(0.0, min(12.0, kneeDB))
-        detector.configure(sampleRate: sampleRate, attackMS: attackMS, releaseMS: releaseMS)
+        self.transientAwareAttackEnabled = transientAwareAttackEnabled
+        detector.configure(sampleRate: sr, attackMS: attack, releaseMS: release)
+        rmsAttackCoeff = expf(-1.0 / (0.010 * sr))
+        rmsReleaseCoeff = expf(-1.0 / (0.090 * sr))
+        transientAttackCoeff = expf(-1.0 / ((attack * 3.2 * 0.001) * sr))
+        transientHoldSamples = max(1, Int((sr * 0.010).rounded()))
+        transientHoldCounter = 0
+        transientDriveObserved = 0.0
+        rmsPower = 0.0
     }
 
     mutating func process(_ x: Float, sidechainAbs: Float? = nil) -> Float {
         let detectorSample = sidechainAbs ?? x
-        let env = max(1e-8, detector.processAbs(detectorSample))
+        let env = max(
+            1e-8,
+            transientAwareAttackEnabled
+                ? processTransientAwareEnvelope(detectorSample)
+                : detector.processAbs(detectorSample)
+        )
         let levelDB = 20.0 * log10f(env)
         let gainDB = gainReductionDB(for: levelDB)
         let gain = powf(10.0, (gainDB + makeupDB) / 20.0)
         return x * gain
+    }
+
+    private mutating func processTransientAwareEnvelope(_ x: Float) -> Float {
+        let ax = fabsf(x)
+        let power = ax * ax
+        let rmsCoeff = power > rmsPower ? rmsAttackCoeff : rmsReleaseCoeff
+        rmsPower = (rmsCoeff * rmsPower) + ((1.0 - rmsCoeff) * power)
+        rmsPower = zapDenorm(rmsPower)
+        let rms = sqrtf(max(1e-12, rmsPower))
+
+        let peakToRMS = ax / max(1e-4, rms)
+        let rising = ax > detector.value
+        let transientDrive =
+            rising && ax > 1e-5
+            ? clampf((peakToRMS - 1.65) / 2.35, 0.0, 1.0)
+            : 0.0
+        if transientDrive > 0.15 {
+            transientHoldCounter = transientHoldSamples
+        } else if transientHoldCounter > 0 {
+            transientHoldCounter -= 1
+        }
+        let heldDrive = transientHoldCounter > 0 ? max(transientDriveObserved * 0.94, transientDrive) : transientDrive
+        transientDriveObserved = max(transientDriveObserved, heldDrive)
+
+        let peakWeight = lerpf(0.58, 0.18, heldDrive)
+        let hybrid = (rms * (1.0 - peakWeight)) + (ax * peakWeight)
+        let attackCoeff = heldDrive > 0.0 ? transientAttackCoeff : detector.attackCoeff
+        if hybrid > detector.value {
+            detector.value = (attackCoeff * detector.value) + ((1.0 - attackCoeff) * hybrid)
+        } else {
+            detector.value = (detector.releaseCoeff * detector.value) + ((1.0 - detector.releaseCoeff) * hybrid)
+        }
+        detector.value = zapDenorm(detector.value)
+        return detector.value
     }
 
     private func gainReductionDB(for levelDB: Float) -> Float {
@@ -5493,6 +5615,7 @@ final class MPXGenerator {
         let multibandKneeDB: Float
         let multibandLinkStrength: Float
         let multibandReleaseProgramDependent: Bool
+        let multibandTransientAwareAttackEnabled: Bool
         let multibandX1Hz: Float
         let multibandX2Hz: Float
         let multibandX3Hz: Float
@@ -5550,6 +5673,7 @@ final class MPXGenerator {
         let compositeClipperCancelPilot: Bool
         let compositeClipperCancelRDS: Bool
         let compositeClipperLookaheadMS: Float
+        let compositeMultibandClipperEnabled: Bool
 
         // Tone-generator parameters. Live-applicable so the Test Tone
         // tab can toggle source / type / freq / mode / level without
@@ -5604,6 +5728,7 @@ final class MPXGenerator {
             multibandKneeDB: Float(config.multibandKneeDB),
             multibandLinkStrength: Float(config.multibandLinkStrength),
             multibandReleaseProgramDependent: config.multibandReleaseProgramDependent,
+            multibandTransientAwareAttackEnabled: config.multibandTransientAwareAttackEnabled,
             multibandX1Hz: Float(config.multibandX1Hz),
             multibandX2Hz: Float(config.multibandX2Hz),
             multibandX3Hz: Float(config.multibandX3Hz),
@@ -5660,6 +5785,7 @@ final class MPXGenerator {
             compositeClipperCancelPilot: config.compositeClipperCancelPilot,
             compositeClipperCancelRDS: config.compositeClipperCancelRDS,
             compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
+            compositeMultibandClipperEnabled: config.compositeMultibandClipperEnabled,
             sourceMode: config.sourceMode,
             testToneType: config.testToneType,
             testToneMode: config.testToneMode,
@@ -5952,6 +6078,7 @@ final class MPXGenerator {
     private var multibandKneeDB: Float
     private var multibandLinkStrength: Float
     private var multibandReleaseProgramDependent: Bool
+    private var multibandTransientAwareAttackEnabled: Bool
     private var multibandX1Hz: Float
     private var multibandX2Hz: Float
     private var multibandX3Hz: Float
@@ -6055,7 +6182,9 @@ final class MPXGenerator {
     private var compositeClipperCancelPilot: Bool = true
     private var compositeClipperCancelRDS: Bool = true
     private var compositeClipperLookaheadMS: Float = 0.0
+    private var compositeMultibandClipperEnabled: Bool = false
     private var compositeClipper = CompositeClipper()
+    private var compositeMultibandClipper = CompositeMultibandClipper()
     private var audioCompositeBandwidthFIR = LinearPhaseFIRLowpass()
 
     // Subcarrier delay line — keeps pilot+RDS phase-aligned with the
@@ -6280,6 +6409,7 @@ final class MPXGenerator {
         self.multibandKneeDB = clampf(Float(config.multibandKneeDB), 0.0, 12.0)
         self.multibandLinkStrength = clampf(Float(config.multibandLinkStrength), 0.0, 1.0)
         self.multibandReleaseProgramDependent = config.multibandReleaseProgramDependent
+        self.multibandTransientAwareAttackEnabled = config.multibandTransientAwareAttackEnabled
         let crossovers = Self.resolveMultibandCrossovers(
             sampleRate: self.sampleRate,
             x1: Float(config.multibandX1Hz),
@@ -6335,6 +6465,7 @@ final class MPXGenerator {
         self.compositeClipperCancelPilot = config.compositeClipperCancelPilot
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
+        self.compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
 
         self.stereoWidenEnabled = config.stereoWidenEnabled
         self.monoBassEnabled = config.monoBassEnabled
@@ -6412,6 +6543,7 @@ final class MPXGenerator {
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS
         )
+        compositeMultibandClipper.configure(sampleRate: self.sampleRate)
         recomputeSubcarrierDelay()
         updateDerivedRates()
         configureMonitorDemod()
@@ -6428,9 +6560,14 @@ final class MPXGenerator {
         let clipperDelayCapacity = compositeClipperEnabled
             ? compositeClipper.maxTotalDelayHostSamples : 0
         let compositeBandwidthDelay = audioCompositeBandwidthFIR.groupDelaySamples
+        let multibandClipperDelay = compositeMultibandClipperEnabled
+            ? compositeMultibandClipper.groupDelaySamples : 0
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
-        let total = compositeBandwidthDelay + clipperDelay + limiterDelay
-        let capacity = compositeBandwidthDelay + clipperDelayCapacity + limiterDelay
+        let total = compositeBandwidthDelay + clipperDelay + multibandClipperDelay + limiterDelay
+        let capacity = compositeBandwidthDelay
+            + clipperDelayCapacity
+            + compositeMultibandClipper.groupDelaySamples
+            + limiterDelay
         if total != subcarrierDelayActiveCount || capacity > subcarrierDelayLine.count {
             Self.resizeDelayPreservingContentsInPlace(
                 line: &subcarrierDelayLine,
@@ -6623,6 +6760,7 @@ final class MPXGenerator {
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS
         )
+        compositeMultibandClipper.configure(sampleRate: sampleRate)
         recomputeSubcarrierDelay()
         rdsCoder?.setSampleRate(sampleRate)
         updateDerivedRates()
@@ -6741,6 +6879,7 @@ final class MPXGenerator {
         let multibandCompressorChanged =
             fabsf(multibandKneeDB - config.multibandKneeDB) > 0.0001
             || multibandReleaseProgramDependent != config.multibandReleaseProgramDependent
+            || multibandTransientAwareAttackEnabled != config.multibandTransientAwareAttackEnabled
             || fabsf(multibandLowThresholdDB - config.multibandLowThresholdDB) > 0.0001
             || fabsf(multibandMidThresholdDB - config.multibandMidThresholdDB) > 0.0001
             || fabsf(multibandHighThresholdDB - config.multibandHighThresholdDB) > 0.0001
@@ -6759,6 +6898,7 @@ final class MPXGenerator {
         multibandKneeDB = clampf(config.multibandKneeDB, 0.0, 12.0)
         multibandLinkStrength = clampf(config.multibandLinkStrength, 0.0, 1.0)
         multibandReleaseProgramDependent = config.multibandReleaseProgramDependent
+        multibandTransientAwareAttackEnabled = config.multibandTransientAwareAttackEnabled
         multibandX1Hz = resolvedCrossovers.x1
         multibandX2Hz = resolvedCrossovers.x2
         multibandX3Hz = resolvedCrossovers.x3
@@ -6912,6 +7052,8 @@ final class MPXGenerator {
             || compositeClipperCancelRDS != config.compositeClipperCancelRDS
         let compClipLookaheadChanged =
             fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
+        let compositeMultibandClipperChanged =
+            compositeMultibandClipperEnabled != config.compositeMultibandClipperEnabled
         compositeClipperEnabled = config.compositeClipperEnabled
         compositeClipperThresholdDB = clampf(config.compositeClipperThresholdDB, -12.0, 0.0)
         compositeClipperCeilingDB = clampf(config.compositeClipperCeilingDB, -6.0, 0.0)
@@ -6920,6 +7062,7 @@ final class MPXGenerator {
         compositeClipperCancelPilot = config.compositeClipperCancelPilot
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
         compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
+        compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
         if compClipStructuralChanged {
             compositeClipper.configure(
                 sampleRate: sampleRate,
@@ -6937,6 +7080,10 @@ final class MPXGenerator {
                 compositeClipperLookaheadMS,
                 sampleRate: sampleRate
             )
+            recomputeSubcarrierDelay()
+        }
+        if compositeMultibandClipperChanged {
+            compositeMultibandClipper.reset()
             recomputeSubcarrierDelay()
         }
 
@@ -7262,7 +7409,8 @@ final class MPXGenerator {
             thresholdDB: multibandLowThresholdDB,
             ratio: multibandLowRatio,
             attackMS: multibandLowAttackMS,
-            releaseMS: releaseAdjusted(multibandLowReleaseMS)
+            releaseMS: releaseAdjusted(multibandLowReleaseMS),
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
             left: &mbMidCompL,
@@ -7270,7 +7418,8 @@ final class MPXGenerator {
             thresholdDB: multibandMidThresholdDB,
             ratio: multibandMidRatio,
             attackMS: multibandMidAttackMS,
-            releaseMS: releaseAdjusted(multibandMidReleaseMS)
+            releaseMS: releaseAdjusted(multibandMidReleaseMS),
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
             left: &mbHighCompL,
@@ -7278,7 +7427,8 @@ final class MPXGenerator {
             thresholdDB: multibandHighThresholdDB,
             ratio: multibandHighRatio,
             attackMS: multibandHighAttackMS,
-            releaseMS: releaseAdjusted(multibandHighReleaseMS)
+            releaseMS: releaseAdjusted(multibandHighReleaseMS),
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
 
         let t2 = lerpf(multibandLowThresholdDB, multibandMidThresholdDB, 0.5)
@@ -7296,7 +7446,8 @@ final class MPXGenerator {
             thresholdDB: multibandLowThresholdDB,
             ratio: multibandLowRatio,
             attackMS: multibandLowAttackMS,
-            releaseMS: releaseAdjusted(multibandLowReleaseMS)
+            releaseMS: releaseAdjusted(multibandLowReleaseMS),
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
             left: &mb5Comp2L,
@@ -7304,7 +7455,8 @@ final class MPXGenerator {
             thresholdDB: t2,
             ratio: r2,
             attackMS: a2,
-            releaseMS: rel2
+            releaseMS: rel2,
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
             left: &mb5Comp3L,
@@ -7312,7 +7464,8 @@ final class MPXGenerator {
             thresholdDB: multibandMidThresholdDB,
             ratio: multibandMidRatio,
             attackMS: multibandMidAttackMS,
-            releaseMS: releaseAdjusted(multibandMidReleaseMS)
+            releaseMS: releaseAdjusted(multibandMidReleaseMS),
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
             left: &mb5Comp4L,
@@ -7320,7 +7473,8 @@ final class MPXGenerator {
             thresholdDB: t4,
             ratio: r4,
             attackMS: a4,
-            releaseMS: rel4
+            releaseMS: rel4,
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
             left: &mb5Comp5L,
@@ -7328,7 +7482,8 @@ final class MPXGenerator {
             thresholdDB: multibandHighThresholdDB,
             ratio: multibandHighRatio,
             attackMS: multibandHighAttackMS,
-            releaseMS: releaseAdjusted(multibandHighReleaseMS)
+            releaseMS: releaseAdjusted(multibandHighReleaseMS),
+            transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
     }
 
@@ -7345,7 +7500,8 @@ final class MPXGenerator {
         thresholdDB: Float,
         ratio: Float,
         attackMS: Float,
-        releaseMS: Float
+        releaseMS: Float,
+        transientAwareAttackEnabled: Bool
     ) {
         left.configure(
             sampleRate: sampleRate,
@@ -7354,7 +7510,8 @@ final class MPXGenerator {
             attackMS: attackMS,
             releaseMS: releaseMS,
             makeupDB: 0.0,
-            kneeDB: multibandKneeDB
+            kneeDB: multibandKneeDB,
+            transientAwareAttackEnabled: transientAwareAttackEnabled
         )
         right.configure(
             sampleRate: sampleRate,
@@ -7363,7 +7520,8 @@ final class MPXGenerator {
             attackMS: attackMS,
             releaseMS: releaseMS,
             makeupDB: 0.0,
-            kneeDB: multibandKneeDB
+            kneeDB: multibandKneeDB,
+            transientAwareAttackEnabled: transientAwareAttackEnabled
         )
     }
 
@@ -8050,6 +8208,10 @@ final class MPXGenerator {
         // Composite clipper: 8x oversampled soft-clip on audio composite.
         if compositeClipperEnabled {
             audioComposite = compositeClipper.process(audioComposite)
+        }
+
+        if compositeMultibandClipperEnabled {
+            audioComposite = compositeMultibandClipper.process(audioComposite)
         }
 
         // Audio-composite bandwidth cleanup. Any real program content should

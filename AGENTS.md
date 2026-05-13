@@ -53,7 +53,7 @@ Verifier exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN.
 
 Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not XCTest. Do not add XCTest-based tests.
 
-The default `swift test` is fast (~10 s, 255 tests) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
+The default `swift test` is fast (~10 s) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
 
 For DSP differences, prefer measurement-first validation wherever technically possible before asking the operator to listen. If a behavior can be characterized with deterministic signals, FFT/band-energy analysis, receiver decode metrics, alias/IM checks, peak/ceiling checks, stereo-link checks, CPU budget tests, or verifier/baseline comparisons, add or run those tests first. Listening tests are still useful for final subjective confirmation, but they should not be the primary regression detector for measurable DSP behavior.
 
@@ -93,6 +93,7 @@ The audio path runs ~24 stages, ending with **post-clipper pilot + RDS injection
 Peak control:
 - **Pre-encode audio limiter** — L/R, stereo-linked, after pre-emphasis, before stereo encoding. Uses `OversampledPeakLimiter` per channel (4× oversampled true-peak with tanh ceiling).
 - **Composite clipper** — 8× oversampled tanh soft-clipper on the audio composite, **differential topology** (only the clipping residual goes through decimation; wanted signal rides a 1× delay-matched bypass), with delta-based per-band substitution that protects audio (0–17 kHz, opt-in), pilot guard (17–21 kHz), stereo subcarrier (22–53 kHz), and RDS guard (55–59 kHz) bands. Decimation via `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband). Replaces the old `CompositeTruePeakLimiter` (deleted in 0.11) which used `|composite|` peak detection + memoryless tanh and produced intermod that demodulated as `(L-R)` cancellation. Inspired by Orban US 4,460,871 + US 5,737,434 (delta-cancellation primitive, expired) and US 6,337,999 (differential topology, expired 2022 — landed in 0.20).
+- **Multiband composite clipper** — experimental, off by default via `mpx_multiband_clipper_enabled`. Runs after the broadband composite clipper and before the audio-composite bandwidth FIR, using linear-phase low/mid/high splitting and independent band clipping. Treat as a measured loudness experiment until verifier/listening/cost data proves it should be used in presets.
 
 `Mono Mode` suppresses pilot, stereo subcarrier, and RDS — true mono composite.
 
@@ -101,6 +102,8 @@ Oversampled clippers (BassClipper 4×, DistortionCancelledClipper 8×, Composite
 The multiband compressor has two crossover backends, picked at engine start by output mode:
 - **TX path** uses `LinearPhaseMultibandSplitter5` / `3` — Kaiser-windowed-sinc FIR splitters with parallel-cumulative-LP topology, all bands sharing group delay so summed bands reconstruct the input delayed-by-`groupDelaySamples` exactly (sum-to-flat at –155 dB). Eliminates IIR-LR4's transient smear and inter-band pumping. ~5.3 ms latency at 192 kHz with the default 90 Hz lowest crossover. Convolution runs through `vDSP_dotpr` (double-buffered delay line) — without that the FIR path overruns real-time budget on most machines (manifests as audio crackle + RDS BCH corruption from sample dropouts).
 - **Monitor path** keeps the IIR `StereoLinkwitzRiley4` chain for low latency.
+
+Multiband Phase 2 is implemented but opt-in: `multiband_transient_aware_attack_enabled = false` by default. When enabled, `MonoCompressor` uses an RMS/peak hybrid detector and briefly stretches attack on peak-vs-RMS transients so percussive fronts pass hotter while sustained material settles near the classic peak-detector level. Keep it verifier-backed before enabling it in presets.
 
 RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. RDS carrier frequency is config-only; the UI exposes carrier level and program data.
 

@@ -2359,6 +2359,7 @@ final class MPXPrimeViewModel: ObservableObject {
             config.compositeClipperEnabled = defaults.compositeClipperEnabled
             config.compositeClipperThresholdDB = defaults.compositeClipperThresholdDB
             config.compositeClipperCeilingDB = defaults.compositeClipperCeilingDB
+            config.compositeMultibandClipperEnabled = defaults.compositeMultibandClipperEnabled
         }
 
         let runtimeDisposition: RuntimeChangeDisposition
@@ -6126,6 +6127,8 @@ private struct ProcessingMultibandTab: View {
             DoubleSliderRow(title: "Link", value: model.configBinding(\.multibandLinkStrength, runtimeDisposition: .live), range: 0...1, format: "%.2f",
                 tooltip: "How much gain reduction is shared across bands. 0 = independent (dense), 1 = linked (preserves spectral balance).")
             Toggle("Program-dependent Release", isOn: model.configBinding(\.multibandReleaseProgramDependent, runtimeDisposition: .live))
+            Toggle("Transient-aware Attack", isOn: model.configBinding(\.multibandTransientAwareAttackEnabled, runtimeDisposition: .live))
+                .help("Uses a peak/RMS hybrid detector and briefly slows attack on percussive fronts so kicks and snares are not over-squashed.")
 
             // Crossovers — operator-rare; collapsed by default. Once
             // the FabFilter-style spectrum-with-drag-handles editor
@@ -6449,6 +6452,8 @@ private struct ProcessingCompositeClipperTab: View {
     var body: some View {
         Card(title: "Composite Clipper") {
             Toggle("Enable Composite Clipper", isOn: model.configBinding(\.compositeClipperEnabled, runtimeDisposition: .live))
+            Toggle("Experimental Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
+                .help("Additional off-by-default loudness stage after the broadband composite clipper. Splits the audio composite into low/mid/high bands, clips the bands independently, then recombines before pilot/RDS injection.")
             let disabled = !model.config.compositeClipperEnabled
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.compositeClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)

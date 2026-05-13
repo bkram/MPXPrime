@@ -102,19 +102,21 @@ PrimeBass (renamed from `Orbass` in 0.20) is the adaptive low-band enhancer; goa
 
 5. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema (now at schema v2 with `postInjectionOvershoot` / `overBudget` fields), different scenario sets. Once preset tuning lands the verify presets become more meaningful.
 
-6. **Receiver-model verifier.** Enterprise-style DSP changes should be judged at receiver output, not only at MPX waveform level. Add offline decode metrics for stereo separation at 1 / 10 / 14 kHz, mono compatibility, pilot level/phase error, RDS band level/center accuracy, post-injection overshoot count, MPX power, and composite crest factor. Prerequisite for promoting `postInjectionOvershoot > 0` from TIGHT to a hard verifier failure for normal presets.
+6. **Receiver-model verifier hardening.** The receiver verifier is now implemented and reports coherent decode, PLL external-style decode, ideal raw M/S decode, raw sideband balance, stage-isolation rows, mono/no-pilot behavior, and pilot/RDS spectral health. Next work is hardening: promote budget invariants such as unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets, then add stored baselines for receiver metrics.
 
 ### High-frequency stereo separation improvement plan
 
-Current receiver-verifier truth: MPX Prime is not broken. Coherent decode and external-style PLL decode now agree at 1 / 10 / 14 kHz, which means the recovered pilot path is not the high-frequency separation bottleneck. The measured separation is good at 1 kHz and acceptable at the top of the stereo band, but not yet premium:
+Current receiver-verifier truth: the previous HF separation bottleneck is fixed. Coherent decode and external-style PLL decode now agree at 1 / 10 / 14 kHz, and raw encoder-side sidebands are balanced to within roughly 0.02 dB. The legacy one-pole audio-composite smoother was the encoder-side sideband problem; it is now default-off, and `MPXDecoder.diffDecodeGain` is back to unity so the receiver model no longer compensates for old smoother loss.
 
 ```text
-1 kHz   ~34 dB
-10 kHz  ~26 dB
-14 kHz  ~24 dB
+1 kHz   ~65 dB coherent / ~68 dB PLL
+10 kHz  ~50.5 dB coherent / ~50.6 dB PLL
+14 kHz  ~43.4 dB coherent / ~43.5 dB PLL
 ```
 
-Target for the next DSP quality pass:
+This is now strong amateur/prosumer-grade stereo separation. The remaining gap is in the production `MPXDecoder` filters, not the generated MPX: the ideal raw M/S decode still reports much higher separation, so future work should audit monitor/receiver filters before making more encoder-side changes.
+
+Historical target, now exceeded:
 
 ```text
 1 kHz   >=35 dB
@@ -122,25 +124,22 @@ Target for the next DSP quality pass:
 14 kHz  >=25-30 dB
 ```
 
-Work in this order:
+Completed work:
 
-1. **Separate encoder-side loss from receiver-model loss.** Add a raw MPX sideband analyzer that measures `(L-R)` sideband amplitude and symmetry directly around 38 kHz for 1 / 10 / 14 kHz L-only and R-only tones, before deemphasis or receiver lowpass can influence the result. If raw sidebands are clean but decoded separation is lower, the receiver filter/deemphasis model is the limit. If raw sidebands already show imbalance or leakage, the encoder/composite path is the limit.
+1. **Raw MPX sideband analyzer.** `--verify-receiver` measures `(L-R)` lower/upper sideband amplitude and symmetry directly around 38 kHz for 1 / 10 / 14 kHz L-only and R-only tones.
 
-2. **Add a stage-isolation sweep.** Re-run the same sideband/separation metrics with the following stages toggled individually: composite clipper, audio-composite bandwidth FIR, final MPX safety limiter, encoder FIR, pilot notch, pre-encode limiter, and pre-emphasis. This should produce a small table of separation deltas, not a listening-only judgement.
+2. **Stage-isolation sweep.** The receiver verifier now toggles composite clipper, audio-composite softclip/smoother, final MPX safety, encoder FIR, pre-encode limiter, and pre-emphasis/pilot notch, then reports sideband deltas.
 
-3. **Check phase and delay alignment at high stereo sidebands.** Measure the relative phase of lower/upper `(L-R)` sidebands versus the delayed pilot-derived 38 kHz reference. A small phase error near 24 kHz / 52 kHz can collapse decoded separation more at 14 kHz than at 1 kHz. Keep any correction verifier-backed; do not move the post-clipper pilot/RDS injection invariant.
+3. **Receiver filter A/B.** The verifier reports ideal raw coherent M/S decode beside production coherent and PLL decode. Ideal-vs-production gaps are notes, not failures.
 
-4. **Audit receiver filter contribution.** The shared `MPXDecoder` uses deemphasis, RF pilot/RDS notches, and a 15.5 kHz lowpass. Add a decode A/B metric with simplified ideal receiver filters versus the production monitor filters. If ideal decode is much better, tune the decoder filters first. If both paths match, improve the generated MPX.
+4. **Fix identified bottleneck.** Default `audio_composite_smoother_enabled = False`; set receiver `diffDecodeGain = 1.0`.
 
-5. **Tune only after the bottleneck is identified.** Candidate fixes are: refine encoder FIR cutoff/group-delay alignment, adjust pilot-notch depth/Q, add a small stereo-sideband phase compensation if measured, or reduce composite-stage interaction near 24-52 kHz. Avoid broad chain rewrites; the current verifier already shows stable pilot, RDS, mono, and 1 kHz separation.
+Next work:
 
-Done criteria:
+- Audit `MPXDecoder` deemphasis/notch/15.5 kHz lowpass contribution if we want production monitor separation closer to ideal decode.
+- Add receiver-metric baselines once the decoder filter audit settles.
 
-- `--verify-receiver` reports the PLL and coherent rows for 1 / 10 / 14 kHz.
-- A new raw-sideband table identifies whether loss is encoder-side or receiver-model-side.
-- 10 kHz separation improves toward 30 dB without reducing pilot/RDS cleanliness or increasing post-injection overshoot.
-- 14 kHz separation stays at or above 25 dB, ideally closer to 30 dB, on both coherent and PLL decode.
-- Full verifier and Swift tests pass.
+Done criteria were met: `--verify-receiver`, strict verifier, and full Swift tests pass.
 
 ### Extended MPX monitoring
 
@@ -190,15 +189,18 @@ These close the gap from "best amateur-grade" toward prosumer/lower-commercial. 
 
 ### Multiband DSP modernisation
 
-Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction with –155 dB sum-to-flat error floor; eliminates the transient smear and inter-band pumping that made IIR-LR4 multiband sound worse than single-band on percussive content. Remaining phases:
+Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction with –155 dB sum-to-flat error floor; eliminates the transient smear and inter-band pumping that made IIR-LR4 multiband sound worse than single-band on percussive content.
 
-- **Phase 2: Transient-aware attack + RMS/peak hybrid `EnvelopeFollower`.** Current detector is single-pole peak-only; commercial processors (Optimod's "Smart Attack") detect percussive transients and briefly stretch the attack so kick/snare fronts pass through without being squashed. Build a transient detector (peak-vs-RMS envelope ratio crossing threshold) and modify `MonoCompressor` to take a transient hint. Largest remaining audible win for percussive sources after Phase 1. Scope: ~1 week.
+Phase 2 (transient-aware attack + RMS/peak hybrid detector) is implemented behind `multiband_transient_aware_attack_enabled = False`. It keeps the legacy peak detector as the default path, and adds an opt-in compressor detector that blends RMS and peak level while briefly stretching attack on peak-vs-RMS transient hits. Tests verify that percussive fronts pass hotter than the classic detector while sustained over-threshold material converges back near the classic compression level.
+
+Remaining phases:
+
 - **Phase 3: Per-band look-ahead.** Reuse `LookaheadLimiter`'s ring-buffer pattern per band so each band's compressor sees its peaks ~1–5 ms before they arrive. Largely redundant with Phase 2 once that's in. Scope: ~3–5 days.
 - **Phase 4: Inter-band gain coupling.** Optimod-style "loud bass softens the highs" cross-band coupling. Refinement after the foundation is right; subtle. Scope: ~1 week.
 
 ### Composite clipper improvements
 
-1. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier; look-ahead recovers some of that gap, but multiband composite clipping is still the next loudness step. Split the audio composite at e.g. 200 Hz / 2 kHz / 8 kHz, clip each band against its own threshold, recombine. Estimated scope: 2–4 weeks. Builds on the linear-phase FIR decimation already shipped for clean spectral splits.
+1. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier; look-ahead recovers some of that gap, but multiband composite clipping is still the next loudness step. Phase 1 is now implemented behind `mpx_multiband_clipper_enabled = False`: host-rate linear-phase low/mid/high splitting, independent band clipping, recombine, then the existing audio-composite bandwidth FIR and post-stage pilot/RDS injection. Keep it experimental until verifier deltas, real-time cost, and dense-program listening prove it is a net win.
 
 2. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
 
@@ -211,9 +213,9 @@ Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereot
 | Priority | Item | Where | Effort | Impact |
 |---|---|---|---|---|
 | **1 - start Phase A** | Anti-aliased clipping kernel (US 6,937,912) | "Next up" #1; start with standalone `BandLimitedStep` primitive | 2–3 weeks | **Highest** - verifier is already OK; this reduces generated IM at the source and creates cleaner headroom for future loud presets |
-| **2** | Multiband Phase 2: transient-aware attack + RMS/peak hybrid envelope | "Multiband DSP modernisation Phase 2" below | ~1 week | High — eliminates multiband over-squashing on kicks / snares; "Smart Attack" character |
-| **3** | Multiband composite clipping | "Composite clipper improvements" #2 | 2–4 weeks | High — per-band thresholds avoid tonal shift; ~1.5 dB more loudness on dense program |
-| **4** | Receiver-model verifier | "Next up" #6 | 1 week | High — promotes `postInjectionOvershoot` and other budget invariants from TIGHT to hard failure; gates future tuning |
+| **2** | Multiband Phase 2 opt-in validation | `multiband_transient_aware_attack_enabled` | 2–3 days | High - implementation is in; next step is verifier/listening A/B before deciding whether any preset should enable it |
+| **3** | Multiband composite clipping validation | `mpx_multiband_clipper_enabled` | 2–4 days | High - implementation is in behind a toggle; next step is verifier/listening/cost proof before preset use |
+| **4** | Receiver verifier hardening | "Next up" #6 | 2–4 days | High — receiver verifier exists; next step is stored receiver baselines and harder failures for budget invariants |
 | **5** | Inter-band gain coupling ("loud bass softens highs") | "Multiband DSP modernisation Phase 4" | ~1 week | Medium — subtle Optimod-style polish |
 | 6 | Composite look-ahead default tuning (listening) | "Next up" #2 | ~3–5 days | Medium — turns the 0.26-landed feature into operator-visible loudness improvement |
 

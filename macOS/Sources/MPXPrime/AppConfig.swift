@@ -196,6 +196,7 @@ struct AppConfig {
     var multibandKneeDB: Double = 3.6
     var multibandLinkStrength: Double = 0.52
     var multibandReleaseProgramDependent: Bool = true
+    var multibandTransientAwareAttackEnabled: Bool = false
     var multibandMakeupDB: Double = 0.0
     var phaseRotationEnabled: Bool = false
     var phaseRotationFreqHz: Double = 200.0
@@ -260,6 +261,7 @@ struct AppConfig {
     // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
     // See plan.md "Enterprise-parity status" / 0.26 release plan.
     var compositeClipperLookaheadMS: Double = 0.0
+    var compositeMultibandClipperEnabled: Bool = false
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
     var rdsPTY: Int = 8
@@ -525,6 +527,10 @@ struct AppConfig {
             "multiband_release_program_dependent",
             defaultValue: cfg.multibandReleaseProgramDependent
         )
+        cfg.multibandTransientAwareAttackEnabled = mpx.bool(
+            "multiband_transient_aware_attack_enabled",
+            defaultValue: cfg.multibandTransientAwareAttackEnabled
+        )
         cfg.multibandMakeupDB = mpx.double(
             "multiband_makeup_db", defaultValue: cfg.multibandMakeupDB)
         cfg.phaseRotationEnabled = mpx.bool(
@@ -593,6 +599,10 @@ struct AppConfig {
             "mpx_clipper_cancel_rds", defaultValue: cfg.compositeClipperCancelRDS)
         cfg.compositeClipperLookaheadMS = mpx.double(
             "mpx_clipper_lookahead_ms", defaultValue: cfg.compositeClipperLookaheadMS)
+        cfg.compositeMultibandClipperEnabled = mpx.bool(
+            "mpx_multiband_clipper_enabled",
+            defaultValue: cfg.compositeMultibandClipperEnabled
+        )
         cfg.rdsLevel = rds.double("rds_level", defaultValue: cfg.rdsLevel)
         cfg.rdsPI = rds.string("pi", defaultValue: cfg.rdsPI)
         cfg.rdsPTY = rds.int("pty", defaultValue: cfg.rdsPTY)
@@ -932,6 +942,7 @@ struct AppConfig {
             "multiband_knee_db = \(Self.formatFloat(multibandKneeDB))",
             "multiband_link_strength = \(Self.formatFloat(multibandLinkStrength))",
             "multiband_release_program_dependent = \(Self.boolString(multibandReleaseProgramDependent))",
+            "multiband_transient_aware_attack_enabled = \(Self.boolString(multibandTransientAwareAttackEnabled))",
             "multiband_makeup_db = \(Self.formatFloat(multibandMakeupDB))",
             "phase_rotation_enabled = \(Self.boolString(phaseRotationEnabled))",
             "phase_rotation_freq_hz = \(Self.formatFloat(phaseRotationFreqHz))",
@@ -973,6 +984,7 @@ struct AppConfig {
             "mpx_clipper_cancel_pilot = \(Self.boolString(compositeClipperCancelPilot))",
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
+            "mpx_multiband_clipper_enabled = \(Self.boolString(compositeMultibandClipperEnabled))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
             "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",

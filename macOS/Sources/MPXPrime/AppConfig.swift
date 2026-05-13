@@ -120,7 +120,11 @@ struct AppConfig {
     // uses the low-latency LR4 path. Restart-required.
     var multibandFIREnabled: Bool = true
     var audioCompositeSoftClipEnabled: Bool = true
-    var audioCompositeSmootherEnabled: Bool = true
+    // The legacy one-pole composite smoother rolls off the upper stereo
+    // sideband enough to limit 10/14 kHz receiver separation. Keep it
+    // available as an opt-in compatibility cleanup stage, but default the
+    // normal chain to the cleaner softclip-only path.
+    var audioCompositeSmootherEnabled: Bool = false
     var finalMPXSoftClipEnabled: Bool = true
     var mpxDeviationKHz: Double = 75.0
     var enRDS: Bool = true

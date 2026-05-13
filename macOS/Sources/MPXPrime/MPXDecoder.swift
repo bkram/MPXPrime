@@ -10,7 +10,7 @@ import Foundation
 struct MPXDecoder {
     private static let pilotHz: Float = 19_000.0
     private static let rdsHz: Float = 57_000.0
-    private static let diffDecodeGain: Float = 1.22
+    private static let diffDecodeGain: Float = 1.0
 
     private var sampleRate: Float = 192_000.0
     private var preemphasisUS: Int = 50

@@ -252,7 +252,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
 }
 
 enum RDSTab: String, CaseIterable, Identifiable {
-    case control = "Control"
+    case control = "Status"
     case program = "Program"
     case radiotext = "Radiotext"
     case longPS = "Long PS"
@@ -264,7 +264,7 @@ enum RDSTab: String, CaseIterable, Identifiable {
 
     var resetButtonTitle: String {
         switch self {
-        case .control: return "Reset Control Tab"
+        case .control: return "Reset Status Tab"
         case .program: return "Reset Program Tab"
         case .radiotext: return "Reset Radiotext Tab"
         case .longPS: return "Reset Long PS Tab"
@@ -276,7 +276,7 @@ enum RDSTab: String, CaseIterable, Identifiable {
 
     var resetStatusText: String {
         switch self {
-        case .control: return "Reset RDS control tab to defaults"
+        case .control: return "Reset RDS status tab to defaults"
         case .program: return "Reset RDS program tab to defaults"
         case .radiotext: return "Reset RDS radiotext tab to defaults"
         case .longPS: return "Reset RDS long PS tab to defaults"
@@ -371,7 +371,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingBS412: return "BS.412"
         case .processingCompositeClipper: return "Composite Clipper"
         case .processingFinalStage: return "Final Stage"
-        case .rdsControl: return "Control"
+        case .rdsControl: return "Status"
         case .rdsProgram: return "Identity"
         case .rdsRadiotext: return "Radiotext"
         case .rdsLongPS: return "Long PS"
@@ -436,13 +436,13 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
         case .processingFinalStage: return "Final drive, MPX safety, budget, deviation"
-        case .rdsControl: return "Live status, master enable, injection, runtime flags"
-        case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks"
+        case .rdsControl: return "Master enable + live snapshot of what's on air"
+        case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks, runtime flags"
         case .rdsRadiotext: return "Radiotext + RT+ tagging"
         case .rdsLongPS: return "32-character Long PS (15A)"
         case .rdsAF: return "Alternative frequencies (AF)"
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
-        case .rdsCarrier: return "Subcarrier frequency, Gaussian shaping"
+        case .rdsCarrier: return "Injection level, subcarrier frequency, Gaussian shaping"
         case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
         }
     }
@@ -4356,7 +4356,7 @@ private struct StageRDSContent: View {
             VStack(alignment: .leading, spacing: 16) {
                 switch model.selectedRDSTab {
                 case .control:
-                    RDSControlTab(model: model)
+                    RDSStatusTab(model: model)
                 case .program:
                     RDSProgramTab(model: model)
                 case .radiotext:
@@ -6677,6 +6677,32 @@ private struct RDSProgramTab: View {
             TextField("PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS))
             Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
         }
+
+        // Per-program operational flags. Live-applied; UECP MEC 0x0E
+        // (TA) flips edge-triggered during a traffic announcement.
+        // Commercial RDS encoder convention (P164, SmartGen, Audemat,
+        // every UECP encoder) places these alongside PI / PS / PTY in
+        // the Basic/Identity tab — they describe "what this station is
+        // broadcasting right now", not encoder control.
+        Card(title: "Runtime Flags") {
+            LazyVGrid(columns: [
+                GridItem(.flexible(minimum: 100)),
+                GridItem(.flexible(minimum: 100)),
+                GridItem(.flexible(minimum: 100))
+            ], alignment: .leading, spacing: 8) {
+                Toggle("TP", isOn: model.configBinding(\.rdsTP, runtimeDisposition: .liveRDS))
+                Toggle("TA", isOn: model.configBinding(\.rdsTA, runtimeDisposition: .liveRDS))
+                Toggle("MS", isOn: model.configBinding(\.rdsMS, runtimeDisposition: .liveRDS))
+                Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
+                Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
+                Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
+                Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
+            }
+            .toggleStyle(.switch)
+            Text("Per-program flags. Applied live without restart.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -6847,10 +6873,15 @@ private struct RDSCarrierTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        // Subcarrier physical layer only. Injection level lives on
-        // the Control tab next to the master Enable; freq + Gaussian
-        // shaping are tuning controls that almost never change.
+        // Physical-layer settings for the 57 kHz subcarrier:
+        // amplitude (injection level), frequency, and Gaussian shaping.
+        // All restart-required; live-apply RDS data lives on the
+        // Identity / Radiotext / Schedule tabs.
         Card(title: "Subcarrier") {
+            DoubleSliderRow(
+                title: "Injection Level",
+                value: model.configBinding(\.rdsLevel),
+                range: 0...7.5, format: "%.2f kHz")
             DoubleSliderRow(
                 title: "Subcarrier Frequency", value: model.configBinding(\.rdsFreq),
                 range: 40_000...80_000, format: "%.0f Hz")
@@ -6861,7 +6892,7 @@ private struct RDSCarrierTab: View {
             IntStepperRow(
                 title: "Gaussian Taps", value: model.oddTapBinding(), range: 9...401,
                 step: 2, format: "%d")
-            Text("These settings reconfigure the RDS modulator FIR and require a transport restart to take effect.")
+            Text("Subcarrier physical-layer settings: injection level + frequency + FIR shaping. All require a transport restart to take effect.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -6946,49 +6977,24 @@ private struct RDSAFTab: View {
 /// RT readout, and operator toggles for TP / TA / MS / DI flags +
 /// RT+ Item Toggle / Item Running. Detail tabs handle setup; this
 /// tab handles "is it working right now".
-private struct RDSControlTab: View {
+private struct RDSStatusTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        // Master kill switch + live monitoring view. Commercial
+        // RDS-encoder convention (DEVA SmartGen, RDS Manager,
+        // Audemat) calls this tab "Status". Per-program flags now
+        // live on Identity; subcarrier injection now lives on
+        // Subcarrier.
         Card(title: "Master") {
             Toggle(
                 "Enable RDS",
                 isOn: model.configBinding(\.enRDS, runtimeDisposition: .liveRDS))
-            DoubleSliderRow(
-                title: "Injection Level",
-                value: model.configBinding(\.rdsLevel),
-                range: 0...7.5, format: "%.2f kHz")
-            Text("Injection level is set at engine start and requires transport restart to take effect — every other RDS setting on this page applies live.")
+            Text("Master enable applies live. Subcarrier-physical-layer settings (injection level, frequency, Gaussian shaping) live on the Subcarrier tab and require a transport restart.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
 
-        Card(title: "Runtime Flags") {
-            // Operationally toggled flags. TA in particular is meant
-            // to flip live during a traffic announcement — UECP MEC
-            // 0x0E, group 14B / 15B auto-injection.
-            LazyVGrid(columns: [
-                GridItem(.flexible(minimum: 100)),
-                GridItem(.flexible(minimum: 100)),
-                GridItem(.flexible(minimum: 100))
-            ], alignment: .leading, spacing: 8) {
-                Toggle("TP", isOn: model.configBinding(\.rdsTP, runtimeDisposition: .liveRDS))
-                Toggle("TA", isOn: model.configBinding(\.rdsTA, runtimeDisposition: .liveRDS))
-                Toggle("MS", isOn: model.configBinding(\.rdsMS, runtimeDisposition: .liveRDS))
-                Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
-                Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
-                Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
-                Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
-            }
-            .toggleStyle(.switch)
-            Text("These flags are set per-program and apply live. Detailed setup and AF list live on their own tabs.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-
-        // Live preview of what's actually on air. Same data the
-        // Snapshot card on the legacy Identity tab used to show; the
-        // duplicate is gone, this is the canonical home now.
         Card(title: "Snapshot", style: .meter) {
             RDSLivePreviewPlate(model: model)
         }

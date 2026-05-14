@@ -1,10 +1,10 @@
 # Clipper aliasing measurements
 
-The tests in this directory drive each clipper with a worst-case synthetic tone and measure the energy at aliased harmonic locations via FFT. They are written as regression gates: the aliasing threshold is set at the TARGET value and the test **fails on current code** because the clippers run at native sample rate without oversampling. The failure message prints the measured aliasing energy so progress can be tracked.
+The tests described here drove each clipper with a worst-case synthetic tone and measured the energy at aliased harmonic locations via FFT. They are preserved as a historical regression note: these measurements documented the pre-oversampling state and explain why the later oversampled/vDSP clipper work mattered.
 
-> **Status as of 0.11**: Phase 7.1 oversampling wrappers shipped for `BassClipper` (4x), `DistortionCancelledClipper` (8x), and `CompositeClipper` (8x), all sharing the `Lagrange4Interp` + `BiquadCascade6` (12th-order Butterworth) pattern with `vvtanhf`-batched soft-clip. The pre-Phase-7.1 numbers below are kept as a historical reference so post-refactor deltas in `--verify --baseline-strict` can be attributed to the oversampling change versus other regressions. Re-run the tests on current code to capture the post-refactor measurements; the pre-refactor table here is no longer the live-fail state.
+> **Status as of 0.28**: Phase 7.1 oversampling wrappers shipped for `BassClipper` (4x), `DistortionCancelledClipper` (8x), and `CompositeClipper` (8x), all sharing the `Lagrange4Interp` + `BiquadCascade6` / FIR-decimator family and `vvtanhf`-batched soft-clip where applicable. The US 6,937,912 residual ceiling work also landed as an opt-in pre-encode limiter kernel (`pre_encode_bandlimited_residual_enabled`). The pre-Phase-7.1 numbers below are kept as a historical reference so post-refactor deltas in `--verify --baseline-strict` can be attributed to intentional clipping changes versus other regressions. The table is no longer the live-fail state.
 
-## Current measurements (native-rate clippers, no oversampling)
+## Historical measurements (native-rate clippers, no oversampling)
 
 | Clipper | Test signal | Measured alias energy | Test threshold |
 |---|---|---|---|

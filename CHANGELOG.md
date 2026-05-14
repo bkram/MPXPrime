@@ -5,9 +5,54 @@ not decimals. 0.20 was a deliberate jump from 0.11 to mark the magnitude
 of the post-0.11 work — composite clipper differential topology with
 linear-phase FIR decimation, RDS live-apply for the full operationally-
 toggled surface, GUI restructure with status-first Control tab,
-PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
-patent-grade harmonic synthesis, adaptive on-screen FPS, and an
-optional deep DSP combination test suite. Newest first.
+PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
+synthesis, adaptive on-screen FPS, and an optional deep DSP
+combination test suite. Newest first.
+
+## 0.29 — 2026-05-14
+
+### DSP — multiband inter-band coupling (experimental, opt-in)
+
+- **New `multiband_inter_band_coupling_enabled`** INI key (default off, live-apply). When enabled, low-band gain reduction is smoothed with a 20 ms attack / 300 ms release control envelope and converted into small negative threshold biases on the upper bands. 3-band mapping: `mid = -0.15 x lowGR`, `high = -0.25 x lowGR`. 5-band mapping: bands 2-5 = -0.10 / -0.15 / -0.22 / -0.25 x lowGR. This is the canonical Optimod-style "loud bass softens highs" tonal-glue control law, not a wideband gain ride.
+- `MonoCompressor.process` gains a `thresholdBiasDB` parameter (default 0.0) that adds to `thresholdDB` in the gain-reduction calc. `lastGainReductionDB` exposed as `private(set)` so the low-band's GR can drive the upper bands' bias in the same render sample. With the toggle off, the bias is exactly zero and the classic compression path is byte-identical.
+- Wired through both 3-band and 5-band compressor pairs in `MPXGenerator.process3BandMultiband` / `process5BandMultiband` via the new `multibandCouplingBiases(lowGainReductionDB:)` / `multibandFiveBandCouplingBiases(lowGainReductionDB:)` static helpers. Live-apply via the existing `multibandCompressorChanged` change detector.
+- New `MultibandInterBandCouplingTests` suite (4 tests): runtime-config flag propagation, coupling arithmetic matches the design ratios, threshold bias measurably increases upper-band control (>=0.5 dB GR + >=10% RMS drop), zero-bias matches classic compression to within 1e-6.
+
+### DSP — composite multiband clipper retune
+
+- **Per-band ceilings tightened**: `low 0.94 / mid 0.88 / high 0.78` → `low 0.90 / mid 0.62 / high 0.38`. The 0.28 thresholds were too gentle to engage on most program material; the retune lifts peak control on dense/HF content into the measurable range. Default still off (`mpx_multiband_clipper_enabled = False`); no shipping behavior change.
+- `--verify-composite-multiband --seconds 2` (see below) confirms about 1.4-1.6 dB peak/audio-composite peak reduction on HF-heavy scenarios (`hf_edge_12k`, `hard_panned_hf`), zero post-injection overshoot, correlation delta within +/- 0.05 across all measured scenarios.
+- Two new tests in `CompositeMultibandClipperTests`: `enabledChainPreservesRawStereoSidebandSymmetry` (FFT-measured `38 +/- 10 kHz` sideband asymmetry stays below 1.5 dB and within 1 dB of the disabled chain) and `enabledChainReducesHFEdgePeakWithoutBudgetOvershoot` (HF-edge stress reduces composite peak and audio-composite peak by >=1 dB each with zero post-injection overshoot).
+
+### Verifier — opt-in feature A/B modes
+
+- **`--verify-composite-multiband [--seconds N]`** new CLI mode. Renders 5 dense/HF verifier scenarios (`bright_dense`, `vocal_sibilant`, `hf_edge_12k`, `transient_push`, `hard_panned_hf`) with the broadband composite clipper forced on and the multiband clipper toggled off/on. Reports PeakDelta / AudioPkDelta / MarginDelta / POvrOn / CorrDelta / SideDelta / `>60kDelta` per scenario. Pass criteria: at least one scenario reduces peak or audio-peak by >=0.15 dB, no scenario exceeds composite budget, no correlation flip beyond +/-0.18, `>60k` energy doesn't worsen by 6 dB. Result: OK.
+- **`--verify-multiband-coupling [--seconds N]`** new CLI mode. Renders 5 program scenarios (`bass_dense`, `kick_vocal`, `italo_pump`, `wide_bass`, `speech_bed`) with multiband forced on and AGC disabled (for isolation), toggling inter-band coupling off/on. Reports per-band Low/Mid/High RMS deltas + RMSDelta / CorrDelta / SideDelta / PeakDelta / POvrOn / offline render cost ratio. Pass criteria: no scenario exceeds composite budget, correlation within +/-0.15, side/mid doesn't fall more than 1.5 dB, at least one scenario shows >=0.05 dB mid-or-high reduction. Result: OK; cost ratio 1.02x.
+- New `DSPThroughputTests.compositeMultibandClipperCostStaysBounded`: bounds the FIR-split clipper path at <2.5x the same chain with the toggle off. Measured 0.98x on the heavy-program render.
+
+### Configuration + UI
+
+- New INI key `multiband_inter_band_coupling_enabled` (default `False`) in `MPXPrime.ini` and `Verification.ini`.
+- Multiband processing tab gains a third Toggle row labelled "Inter-band Coupling" with `.help` tooltip describing the experimental status.
+
+### GUI taxonomy alignment
+
+- **Processing tabs**: `MB Limiter` and `Expander` order swapped to match the actual chain processing order. In `processMultibandStage` the downward expander runs first (per-band noise reduction) and the per-band peak limiter runs after; the tab order now reflects this.
+- **`Limiter` → `Audio Limiter`** rename. The chain has five distinct limiters (MB Limiter, this pre-encode L/R Audio Limiter, lookahead limiter, final-MPX safety limiter, BS.412). The generic "Limiter" label was ambiguous; "Audio Limiter" matches AGENTS.md / README terminology.
+- **RDS tabs aligned with commercial-encoder convention**:
+  - `Control` tab renamed to `Status`. After moves 1 and 2 below, the remaining content is master enable + live snapshot, which is the canonical "Status" tab of DEVA SmartGen / RDS Manager / Audemat encoders.
+  - Per-program flags TP / TA / MS / DI (incl. DI sub-flags Stereo / Head / Comp / Dyn-PTY) moved from `Control` → `Identity`. Standard practice puts these next to PI / PS / PTY because they describe what the station is broadcasting *right now*.
+  - Subcarrier injection level moved from `Control` → `Subcarrier`. Injection level is physical-layer data — belongs with carrier frequency + Gaussian shaping.
+  - All `RDSTab` and `Stage` enum *cases* preserved (`.control`, `.rdsControl`) for code stability; only rawValue strings + sidebar labels changed. Every config key, every live-apply route, every test unaffected.
+
+### Docs
+
+- **README.md**: new **Download** section linking to GitHub Releases with a first-launch Gatekeeper walkthrough (the DMG is ad-hoc signed, not Apple-notarized, so users must approve once in System Settings → Privacy & Security → Open Anyway). Features list gains the **HF stereo separation headline** (65 / 50.5 / 43.4 dB at 1 / 10 / 14 kHz from the 0.28 work). Processing tab list updated to match the new sidebar order + "Audio Limiter" rename + Expander-before-MB-Limiter swap. Receiver-model verifier description refreshed for the 0.28 additions (raw sideband analyzer, stage-isolation sweep, ideal-receiver decode). New CLI examples for `--verify-composite-multiband` and `--verify-multiband-coupling` in Offline Verification. PrimeBass paragraph trimmed to a one-line "what it does"; Orbass-rename history removed.
+- **ARCHITECTURE.md**: new "Multiband Inter-Band Coupling" + "Multiband Transient-Aware Attack" sections under the multiband dynamics block. Composite multiband clipper paragraph updated with the 0.29 ceilings and verifier-mode pointer. `main.swift` verifier-mode list updated for the two new 0.28 modes. `MPXDecoder` bullet documents the 0.28 I/Q coherent lockin PLL refactor. PrimeBass paragraph trimmed.
+- **plan.md**: HF separation subsection collapsed to a 5-line summary (work all done); multiband Phase 1 / 2 / 4 marked landed (only Phase 3 still open); composite-clipper-improvements #1 condensed; Patent-backlog P0 / P2 rows refreshed.
+- **FUTURE.md**: DSP Enterprise-Level Roadmap items 1 / 2 / 3 arithmetic blocks collapsed (work shipped); Plan.md alignment table compressed; Patent candidates table renumbered.
+- **AGENTS.md**: `--verify-composite-multiband` and `--verify-multiband-coupling` added to the verification command list. Composite multiband clipper description updated with current ceiling values + verifier mode pointer. New Multiband inter-band coupling paragraph in the dynamics summary. Branch-model example refreshed to v.028 / v0.28.
+- **verifier_baselines/ClipperAliasingBaseline.md** and `README.md`: small wording fixes for consistency.
 
 ## 0.28 — 2026-05-13
 

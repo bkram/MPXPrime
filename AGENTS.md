@@ -28,6 +28,8 @@ swift run --package-path macOS MPXPrime --verify --seconds 5
 swift run --package-path macOS MPXPrime --verify-presets --seconds 5
 swift run --package-path macOS MPXPrime --verify-long --seconds 30
 swift run --package-path macOS MPXPrime --verify-receiver --seconds 5  # 0.27: coherent receiver-side decode (separation @ 1/10/14 kHz, pilot, RDS)
+swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2  # A/B experimental composite multiband clipper toggle
+swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2  # A/B experimental multiband inter-band coupling toggle
 
 # Baseline capture + strict compare
 swift run --package-path macOS MPXPrime --capture-baseline      # writes macOS/verifier_baselines/default.json
@@ -40,7 +42,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-pa
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS --filter BassClipperTests
 
 # Release bundle + DMG
-./build-release.sh 0.21
+./build-release.sh 0.28
 
 # Optional deep DSP combination test suite (~3 min; opt-in)
 MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
@@ -53,7 +55,7 @@ Verifier exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN.
 
 Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not XCTest. Do not add XCTest-based tests.
 
-The default `swift test` is fast (~10 s) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
+The default `swift test` is fast (~10 s; latest observed suite is 322 tests / 45 suites) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
 
 For DSP differences, prefer measurement-first validation wherever technically possible before asking the operator to listen. If a behavior can be characterized with deterministic signals, FFT/band-energy analysis, receiver decode metrics, alias/IM checks, peak/ceiling checks, stereo-link checks, CPU budget tests, or verifier/baseline comparisons, add or run those tests first. Listening tests are still useful for final subjective confirmation, but they should not be the primary regression detector for measurable DSP behavior.
 
@@ -93,7 +95,7 @@ The audio path runs ~24 stages, ending with **post-clipper pilot + RDS injection
 Peak control:
 - **Pre-encode audio limiter** — L/R, stereo-linked, after pre-emphasis, before stereo encoding. Uses `OversampledPeakLimiter` per channel (4× oversampled true-peak with tanh ceiling).
 - **Composite clipper** — 8× oversampled tanh soft-clipper on the audio composite, **differential topology** (only the clipping residual goes through decimation; wanted signal rides a 1× delay-matched bypass), with delta-based per-band substitution that protects audio (0–17 kHz, opt-in), pilot guard (17–21 kHz), stereo subcarrier (22–53 kHz), and RDS guard (55–59 kHz) bands. Decimation via `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband). Replaces the old `CompositeTruePeakLimiter` (deleted in 0.11) which used `|composite|` peak detection + memoryless tanh and produced intermod that demodulated as `(L-R)` cancellation. Inspired by Orban US 4,460,871 + US 5,737,434 (delta-cancellation primitive, expired) and US 6,337,999 (differential topology, expired 2022 — landed in 0.20).
-- **Multiband composite clipper** — experimental, off by default via `mpx_multiband_clipper_enabled`. Runs after the broadband composite clipper and before the audio-composite bandwidth FIR, using linear-phase low/mid/high splitting and independent band clipping. Treat as a measured loudness experiment until verifier/listening/cost data proves it should be used in presets.
+- **Multiband composite clipper** — experimental, off by default via `mpx_multiband_clipper_enabled`. Runs after the broadband composite clipper and before the audio-composite bandwidth FIR, using linear-phase low/mid/high splitting (`LP180`, `LP4200 - LP180`, delayed input minus `LP4200`) and independent band clipping with current ceilings 0.90 / 0.62 / 0.38. `--verify-composite-multiband` and `DSPThroughputTests.compositeMultibandClipperCostStaysBounded` provide the current measurement gate; dense-program listening and preset A/B are still required before using it in presets.
 
 `Mono Mode` suppresses pilot, stereo subcarrier, and RDS — true mono composite.
 
@@ -104,6 +106,8 @@ The multiband compressor has two crossover backends, picked at engine start by o
 - **Monitor path** keeps the IIR `StereoLinkwitzRiley4` chain for low latency.
 
 Multiband Phase 2 is implemented but opt-in: `multiband_transient_aware_attack_enabled = false` by default. When enabled, `MonoCompressor` uses an RMS/peak hybrid detector and briefly stretches attack on peak-vs-RMS transients so percussive fronts pass hotter while sustained material settles near the classic peak-detector level. Keep it verifier-backed before enabling it in presets.
+
+Multiband inter-band coupling is implemented but opt-in: `multiband_inter_band_coupling_enabled = false` by default. When enabled, low-band gain reduction is smoothed (20 ms attack / 300 ms release) and gently biases upper-band thresholds lower so bass-heavy passages keep tonal glue without wideband pumping. Keep it preset-gated until program-material A/B confirms the balance.
 
 RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. RDS carrier frequency is config-only; the UI exposes carrier level and program data.
 
@@ -162,5 +166,5 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `swift build --package-path macOS -c release` is clean.
 - Manual smoke test with `--gui`: monitoring + processing tabs work.
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
-- Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.023`). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.23`); only branch names use the `v.NNN` form.
+- Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.028`). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.

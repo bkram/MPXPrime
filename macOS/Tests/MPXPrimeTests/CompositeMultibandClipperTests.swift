@@ -6,6 +6,67 @@ import Foundation
 struct CompositeMultibandClipperTests {
     private let sampleRate: Float = 192_000.0
 
+    private func makeChainConfig(multibandClipperEnabled: Bool) -> AppConfig {
+        var config = AppConfig()
+        config.sampleRate = Double(sampleRate)
+        config.sourceMode = "input"
+        config.processingBypass = false
+        config.widebandAGCEnabled = false
+        config.preEncodeAudioLimiterEnabled = true
+        config.preEncodeThreshold = 0.90
+        config.compositeClipperEnabled = true
+        config.compositeClipperThresholdDB = -1.0
+        config.compositeClipperCeilingDB = -0.3
+        config.compositeClipperCancelStereo = true
+        config.compositeClipperCancelPilot = true
+        config.compositeClipperCancelRDS = true
+        config.compositeClipperLookaheadMS = 0.0
+        config.compositeMultibandClipperEnabled = multibandClipperEnabled
+        config.limitMPX = true
+        config.limitLookaheadEnabled = true
+        config.limitLookaheadMS = 5.0
+        config.enRDS = true
+        config.rdsLevel = 2.0
+        return config
+    }
+
+    private func renderLeftOnlyMPX(config: AppConfig, toneHz: Float, amplitude: Float, frames: Int) -> [Float] {
+        let generator = MPXGenerator(config: config, sampleRate: Double(sampleRate))
+        var samples = [Float](repeating: 0.0, count: frames)
+        for i in 0..<frames {
+            let t = Float(i) / sampleRate
+            let left = amplitude * sinf(2.0 * Float.pi * toneHz * t)
+            samples[i] = generator.renderSingleSample(leftIn: left, rightIn: 0.0)
+        }
+        return samples
+    }
+
+    private func renderHFEdgeMetrics(config: AppConfig) -> (
+        peak: Float,
+        audioPeak: Float,
+        postInjectionOvershoot: Float
+    ) {
+        let generator = MPXGenerator(config: config, sampleRate: Double(sampleRate))
+        let frames = Int(sampleRate * 1.2)
+        let warmup = Int(sampleRate * 0.4)
+        var peak: Float = 0.0
+        var audioPeak: Float = 0.0
+        var overshoot: Float = 0.0
+        for i in 0..<frames {
+            let t = Float(i) / sampleRate
+            let left = 0.92 * sinf(2.0 * Float.pi * 12_000.0 * t)
+                + 0.22 * sinf(2.0 * Float.pi * 9_700.0 * t)
+            let mpx = generator.renderSingleSample(leftIn: left, rightIn: 0.0)
+            if i >= warmup {
+                peak = max(peak, fabsf(mpx))
+                let calibration = generator.compositeCalibrationStatus
+                audioPeak = max(audioPeak, calibration.audioPeak)
+                overshoot = max(overshoot, calibration.postInjectionOvershoot)
+            }
+        }
+        return (peak, audioPeak, overshoot)
+    }
+
     @Test func runtimeConfigCarriesCompositeMultibandClipperFlag() {
         var config = AppConfig()
         #expect(config.compositeMultibandClipperEnabled == false)
@@ -75,5 +136,46 @@ struct CompositeMultibandClipperTests {
         }
 
         #expect(outputPeak < inputPeak * 0.92)
+    }
+
+    @Test func enabledChainPreservesRawStereoSidebandSymmetry() {
+        let toneHz: Float = 10_000.0
+        let fftSize = 65_536
+        let frames = fftSize * 2
+        let analyzer = FFTAnalyzer(fftSize: fftSize)
+
+        let disabled = renderLeftOnlyMPX(
+            config: makeChainConfig(multibandClipperEnabled: false),
+            toneHz: toneHz,
+            amplitude: 0.82,
+            frames: frames
+        )
+        let enabled = renderLeftOnlyMPX(
+            config: makeChainConfig(multibandClipperEnabled: true),
+            toneHz: toneHz,
+            amplitude: 0.82,
+            frames: frames
+        )
+
+        let disabledReport = analyzer.analyze(Array(disabled.suffix(fftSize)), sampleRate: sampleRate)
+        let enabledReport = analyzer.analyze(Array(enabled.suffix(fftSize)), sampleRate: sampleRate)
+        let lowerHz = 38_000.0 - toneHz
+        let upperHz = 38_000.0 + toneHz
+        let disabledAsym = abs(disabledReport.dBFSAt(freqHz: lowerHz) - disabledReport.dBFSAt(freqHz: upperHz))
+        let enabledAsym = abs(enabledReport.dBFSAt(freqHz: lowerHz) - enabledReport.dBFSAt(freqHz: upperHz))
+
+        #expect(enabledAsym < 1.5)
+        #expect(enabledAsym <= disabledAsym + 1.0)
+    }
+
+    @Test func enabledChainReducesHFEdgePeakWithoutBudgetOvershoot() {
+        let disabled = renderHFEdgeMetrics(config: makeChainConfig(multibandClipperEnabled: false))
+        let enabled = renderHFEdgeMetrics(config: makeChainConfig(multibandClipperEnabled: true))
+        let peakDeltaDB = 20.0 * log10f(max(1e-9, enabled.peak) / max(1e-9, disabled.peak))
+        let audioPeakDeltaDB = 20.0 * log10f(max(1e-9, enabled.audioPeak) / max(1e-9, disabled.audioPeak))
+
+        #expect(peakDeltaDB < -1.0)
+        #expect(audioPeakDeltaDB < -1.0)
+        #expect(enabled.postInjectionOvershoot <= 1e-5)
     }
 }

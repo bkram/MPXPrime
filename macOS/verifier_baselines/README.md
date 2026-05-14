@@ -34,6 +34,9 @@ Measurements are stable within small floating-point / FFT jitter (~10⁻⁴ on c
 
 ## Scope
 
-- `--verify` (default 8 scenarios): covered by `default.json` in this directory.
+- `--verify` (default 9 scenarios): covered by `default.json` in this directory.
 - `--verify-presets`: not covered by stored baselines yet; uses `presetQualityOverride()` in `VerificationHarness.swift`.
 - `--verify-long`: not covered by stored baselines yet; uses hardcoded `longRunSignatureReferences()` in `VerificationHarness.swift`. Migration to JSON is a follow-up (same pattern as `default.json`).
+- `--verify-receiver`: not covered by stored baselines yet; emits receiver-side stereo/mono/pilot/RDS metrics and stage-isolation tables.
+- `--verify-composite-multiband`: comparison mode for the default-off experimental `mpx_multiband_clipper_enabled` path. It does not mutate or consume `default.json`; the committed baseline remains the toggle-off production chain.
+- `--verify-multiband-coupling`: comparison mode for the default-off experimental `multiband_inter_band_coupling_enabled` path. It forces multiband on and disables AGC for isolation, but does not mutate or consume `default.json`.

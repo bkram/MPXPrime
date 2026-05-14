@@ -41,10 +41,10 @@ explicitly enabled.
 
 | Priority | Patent                                                           | Title                                                  | Expires          | Stage                                                                              | Why                                                                                                                                                                                                                                                                                                                                                         |
 | -------- | ---------------------------------------------------------------- | ------------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P0 - VALIDATE / PHASE C** | [US 6,937,912](https://patents.google.com/patent/US6937912B1/en) | Anti-aliased clipping with band-limited step functions | 2025-09          | `OversampledPeakLimiter` (pre-encode L/R) landed opt-in; `audioCompositeSoftClipEnabled` shaper still candidate | Phase A/B landed: `BandLimitedStep`, accelerated residual ceiling, tunable taps/cutoff, full-chain A/B tests, HF-grain checks, and CPU-cost guard. Remaining work is program-material validation before any default/preset use, then optional Phase C on the audio-composite shaper if measured benefit survives. |
-| **P1**   | [US 6,434,241](https://patents.google.com/patent/US6434241B1/en) | Half-cosine signal peak control                        | 2014-08 (lapsed) | Same stages as P0, alternative kernel                                              | Continuous-first-derivative half-cosine peak; overshoot drops from ~10 % to 0.1–0.2 %. Less effective than US 6,937,912 for IM rejection but lower CPU. Useful as a selectable kernel or fallback.                                                                                                                                                          |
-| **P2**   | [US 5,737,434](https://patents.google.com/patent/US5737434A/en)  | Multi-band audio compressor with cross-band coupling   | Expired          | `MonoCompressor` per-band logic in multiband stage                                 | Inter-band gain coupling — "loud bass softens highs", the Optimod 8500/8600 multiband behaviour we don't have. Already in plan.md item 4 of multiband DSP modernisation; named here for the patent reference.                                                                                                                                               |
-| **P3**   | [US 5,892,833](https://patents.google.com/patent/US5892833A/en)  | Gain calibration for audio compressors                 | Expired          | `MonoCompressor` makeup-gain stage                                                 | Algorithmic gain-staging that tracks compressor's average GR to keep makeup gain roughly compensating. Polish item — low priority.                                                                                                                                                                                                                          |
+| **P0 — VALIDATE / PHASE C** | [US 6,937,912](https://patents.google.com/patent/US6937912B1/en) | Anti-aliased clipping with band-limited step functions | 2025-09 | `OversampledPeakLimiter` (pre-encode L/R) landed opt-in; `audioCompositeSoftClipEnabled` shaper still candidate | Phase A/B landed, opt-in via `pre_encode_bandlimited_residual_enabled`. Remaining: program-material validation, then optional Phase C on the audio-composite shaper. |
+| **P1** | [US 6,434,241](https://patents.google.com/patent/US6434241B1/en) | Half-cosine signal peak control | 2014-08 (lapsed) | Same stages as P0, alternative kernel | Continuous-first-derivative half-cosine peak; overshoot drops from ~10 % to 0.1–0.2 %. Less effective than US 6,937,912 for IM rejection but lower CPU. Useful as a selectable kernel or fallback. |
+| **P2 — LANDED** | [US 5,737,434](https://patents.google.com/patent/US5737434A/en) | Multi-band audio compressor with cross-band coupling | Expired | `MonoCompressor` per-band logic in multiband stage | Inter-band gain coupling landed opt-in in 0.28 via `multiband_inter_band_coupling_enabled`. Validation/listening pending. |
+| **P3** | [US 5,892,833](https://patents.google.com/patent/US5892833A/en) | Gain calibration for audio compressors | Expired | `MonoCompressor` makeup-gain stage | Algorithmic gain-staging that tracks compressor's average GR to keep makeup gain roughly compensating. Polish item — low priority. |
 
 ### Already implemented or structurally equivalent (do not re-implement)
 
@@ -104,42 +104,11 @@ PrimeBass (renamed from `Orbass` in 0.20) is the adaptive low-band enhancer; goa
 
 6. **Receiver-model verifier hardening.** The receiver verifier is now implemented and reports coherent decode, PLL external-style decode, ideal raw M/S decode, raw sideband balance, stage-isolation rows, mono/no-pilot behavior, and pilot/RDS spectral health. Next work is hardening: promote budget invariants such as unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets, then add stored baselines for receiver metrics.
 
-### High-frequency stereo separation improvement plan
+### High-frequency stereo separation — landed in 0.28
 
-Current receiver-verifier truth: the previous HF separation bottleneck is fixed. Coherent decode and external-style PLL decode now agree at 1 / 10 / 14 kHz, and raw encoder-side sidebands are balanced to within roughly 0.02 dB. The legacy one-pole audio-composite smoother was the encoder-side sideband problem; it is now default-off, and `MPXDecoder.diffDecodeGain` is back to unity so the receiver model no longer compensates for old smoother loss.
+Default-config receiver decode at **1 kHz 65 dB / 10 kHz 50.5 dB / 14 kHz 43.4 dB** (coherent and PLL agree within 0.1 dB), exceeding the original ≥35 / ≥30 / ≥25-30 dB targets by 13-31 dB. Investigation infrastructure (`--verify-receiver` raw sideband analyzer + stage-isolation sweep + ideal-receiver A/B), root-cause fixes (`audio_composite_smoother_enabled` default off, `MPXDecoder.diffDecodeGain` back to 1.0), and PLL refactor all in. See CHANGELOG 0.28 for the audit.
 
-```text
-1 kHz   ~65 dB coherent / ~68 dB PLL
-10 kHz  ~50.5 dB coherent / ~50.6 dB PLL
-14 kHz  ~43.4 dB coherent / ~43.5 dB PLL
-```
-
-This is now strong amateur/prosumer-grade stereo separation. The remaining gap is in the production `MPXDecoder` filters, not the generated MPX: the ideal raw M/S decode still reports much higher separation, so future work should audit monitor/receiver filters before making more encoder-side changes.
-
-Historical target, now exceeded:
-
-```text
-1 kHz   >=35 dB
-10 kHz  >=30 dB
-14 kHz  >=25-30 dB
-```
-
-Completed work:
-
-1. **Raw MPX sideband analyzer.** `--verify-receiver` measures `(L-R)` lower/upper sideband amplitude and symmetry directly around 38 kHz for 1 / 10 / 14 kHz L-only and R-only tones.
-
-2. **Stage-isolation sweep.** The receiver verifier now toggles composite clipper, audio-composite softclip/smoother, final MPX safety, encoder FIR, pre-encode limiter, and pre-emphasis/pilot notch, then reports sideband deltas.
-
-3. **Receiver filter A/B.** The verifier reports ideal raw coherent M/S decode beside production coherent and PLL decode. Ideal-vs-production gaps are notes, not failures.
-
-4. **Fix identified bottleneck.** Default `audio_composite_smoother_enabled = False`; set receiver `diffDecodeGain = 1.0`.
-
-Next work:
-
-- Audit `MPXDecoder` deemphasis/notch/15.5 kHz lowpass contribution if we want production monitor separation closer to ideal decode.
-- Add receiver-metric baselines once the decoder filter audit settles.
-
-Done criteria were met: `--verify-receiver`, strict verifier, and full Swift tests pass.
+Only remaining thread: audit `MPXDecoder` deemphasis / notch / 15.5 kHz lowpass contribution if production decode needs to close further on the ideal-coherent ceiling. Receiver-verifier hardening ("Next up" #6) is the structural complement.
 
 ### Extended MPX monitoring
 
@@ -189,18 +158,13 @@ These close the gap from "best amateur-grade" toward prosumer/lower-commercial. 
 
 ### Multiband DSP modernisation
 
-Phase 1 (linear-phase FIR crossovers) shipped — phase-flat band reconstruction with –155 dB sum-to-flat error floor; eliminates the transient smear and inter-band pumping that made IIR-LR4 multiband sound worse than single-band on percussive content.
+Phases 1, 2, and 4 are landed. Phase 1 (linear-phase FIR crossovers) is default-on; Phases 2 (transient-aware attack) and 4 (inter-band coupling) are opt-in via INI flags with verifier A/B coverage. See CHANGELOG for the detail. Only remaining open phase:
 
-Phase 2 (transient-aware attack + RMS/peak hybrid detector) is implemented behind `multiband_transient_aware_attack_enabled = False`. It keeps the legacy peak detector as the default path, and adds an opt-in compressor detector that blends RMS and peak level while briefly stretching attack on peak-vs-RMS transient hits. Tests verify that percussive fronts pass hotter than the classic detector while sustained over-threshold material converges back near the classic compression level.
-
-Remaining phases:
-
-- **Phase 3: Per-band look-ahead.** Reuse `LookaheadLimiter`'s ring-buffer pattern per band so each band's compressor sees its peaks ~1–5 ms before they arrive. Largely redundant with Phase 2 once that's in. Scope: ~3–5 days.
-- **Phase 4: Inter-band gain coupling.** Implemented behind `multiband_inter_band_coupling_enabled = False`: low-band gain reduction is smoothed and used to gently lower upper-band thresholds. `--verify-multiband-coupling` now provides the program-material A/B gate; remaining work is listening and deciding whether any preset enables it.
+- **Phase 3: Per-band look-ahead.** Reuse `LookaheadLimiter`'s ring-buffer pattern per band so each band's compressor sees its peaks ~1–5 ms before they arrive. Largely redundant with Phase 2 once that's in. Scope: ~3–5 days. Probably skip unless listening shows Phase 2 isn't enough on dense percussive program.
 
 ### Composite clipper improvements
 
-1. **Multiband composite clipping.** Spectral-band-specific clip thresholds give more loudness for the same peak modulation and avoid the tonal-shift artifact heavy clipping produces. Optimod 8x00's loudness lift on dense program comes from this. Single-band clipping hits a wall ~1.5 dB earlier; look-ahead recovers some of that gap, but multiband composite clipping is still the next loudness step. Phase 1 is now implemented behind `mpx_multiband_clipper_enabled = False`: host-rate linear-phase low/mid/high splitting, independent band clipping, recombine, then the existing audio-composite bandwidth FIR and post-stage pilot/RDS injection. First automated validation is in: delay alignment, below-threshold reconstruction, hot-signal peak reduction, enabled-chain raw stereo sideband symmetry, and relative real-time cost are covered. `--verify-composite-multiband --seconds 2` now A/Bs dense/HF verifier scenarios; current tuning shows ~1.4-1.6 dB peak/audio-composite reduction on HF-heavy cases, zero post-injection overshoot, and no default-chain baseline movement. Keep it experimental until dense-program listening proves it is a net win.
+1. **Multiband composite clipping.** Phase 1 landed opt-in (`mpx_multiband_clipper_enabled`, host-rate linear-phase low/mid/high splitting with per-band ceilings, verifier A/B via `--verify-composite-multiband`). Remaining: dense-program listening, oversampling refinement if HF aliasing turns out audible, preset decision.
 
 2. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
 

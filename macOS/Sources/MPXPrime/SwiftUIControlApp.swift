@@ -163,13 +163,13 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case agc = "AGC"
     case parametricEQ = "PEQ"
     case multiband = "Multiband"
-    case mbLimiter = "MB Limiter"
     case expander = "Expander"
+    case mbLimiter = "MB Limiter"
     case widener = "Widener"
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "DC Clipper"
-    case limiter = "Limiter"
+    case limiter = "Audio Limiter"
     case compositeClipper = "Comp Clip"
     case bs412 = "BS.412"
     case finalStage = "Final Stage"
@@ -304,8 +304,8 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingAGC
     case processingParametricEQ
     case processingMultiband
-    case processingMBLimiter
     case processingExpander
+    case processingMBLimiter
     case processingWidener
     case processingPrimeBass
     case processingBassClipper

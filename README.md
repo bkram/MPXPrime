@@ -18,12 +18,12 @@ In short: well past the hobbyist baseline, sized for amateur broadcast use. Use 
 
 ### Trademarks and affiliations
 
-MPX Prime is an independent open-source project. Names referenced in this README, the changelog, and the source — including but not limited to **Orban**, **Optimod**, **Omnia**, **Stereo Tool** / **Stereotool**, **Aphex** (Aural Exciter, Sound Enhancement System, Big Bottom), **Waves** (MaxxBass), **BBE** (Sonic Maximizer), **DTS**, **Music Tribe**, **Inovonics**, **DEVA** (SmartGen), **Audemat**, **BW** (RDS3), **JUCE**, **Qt**, **Apple**, **macOS**, **AVFoundation**, **CoreAudio**, **AVAudioEngine**, **vDSP**, **vForce**, **JACK**, **ALSA**, **AES3**, **DAB+**, **Livewire**, **Dante**, **Ravenna** — are trademarks or registered trademarks of their respective owners. Their use here is descriptive only (to identify and compare against published behavior, prior art, and platform APIs); MPX Prime is not affiliated with, endorsed by, or sponsored by any of them. The PrimeBass enhancer was renamed from `Orbass` in 0.20 specifically to remove the unintended trademark adjacency to Orban.
+MPX Prime is an independent open-source project. Names referenced in this README, the changelog, and the source — including but not limited to **Orban**, **Optimod**, **Omnia**, **Stereo Tool** / **Stereotool**, **Aphex** (Aural Exciter, Sound Enhancement System, Big Bottom), **Waves** (MaxxBass), **BBE** (Sonic Maximizer), **DTS**, **Music Tribe**, **Inovonics**, **DEVA** (SmartGen), **Audemat**, **BW** (RDS3), **JUCE**, **Qt**, **Apple**, **macOS**, **AVFoundation**, **CoreAudio**, **AVAudioEngine**, **vDSP**, **vForce**, **JACK**, **ALSA**, **AES3**, **DAB+**, **Livewire**, **Dante**, **Ravenna** — are trademarks or registered trademarks of their respective owners. Their use here is descriptive only (to identify and compare against published behavior, prior art, and platform APIs); MPX Prime is not affiliated with, endorsed by, or sponsored by any of them.
 
 ## Current app structure
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
-- `Processing`: Overview, Core, AGC, Phase Rotator, Parametric EQ, PrimeBass, Stereo Widener, Multiband, MB Limiter, Expander, Bass Clipper, DC Clipper, Audio Limiter, BS.412, Composite Clipper (optional look-ahead peak control and experimental multiband composite clipping on top of the soft-clipper), Final Stage
+- `Processing`: Overview, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), Expander, MB Limiter, Stereo Widener, PrimeBass, Bass Clipper, DC Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control and experimental multiband composite clipping on top of the soft-clipper), BS.412, Final Stage
 - `RDS`: control (master enable + injection + live status + runtime flags), identity (PI / PTY / PTYN / ECC + PS banks), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (physical layer)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, audio engine, spectrum options
@@ -41,9 +41,10 @@ transport restart since they reconfigure the modulator.
 
 - Native macOS app built with Swift + SwiftUI + AppKit windowing
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
+- **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
 - Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
-- Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing
+- Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing (including 0.28 opt-in transient-aware attack + inter-band gain coupling)
 - Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter), feeding the 8× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control and experimental default-off multiband composite clipping) with live clipper telemetry
 - TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
 - Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
@@ -56,11 +57,38 @@ transport restart since they reconfigure the modulator.
 ## Requirements
 
 - macOS 15+
-- Xcode command line tools / Swift 6 toolchain
+- Xcode command line tools / Swift 6 toolchain (only needed for building from source — download the DMG below if you just want to run it)
 - **External USB / Thunderbolt audio interface that supports 192 kHz output is effectively required.** The built-in audio on Mac laptops and most desktops tops out at 96 kHz, which cannot carry RDS (RDS sits at 57 kHz, above the 48 kHz Nyquist of a 96 kHz device). For a full composite with stereo + RDS you need a sound card that runs at 192 kHz natively. 96 kHz devices can carry stereo-without-RDS only.
 - Input devices may run at lower rates; the app handles conversion internally
 
+## Download
+
+Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files on the project's GitHub Releases page:
+
+**[github.com/bkram/MPXPrime/releases](https://github.com/bkram/MPXPrime/releases)**
+
+Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, drag `MPX Prime.app` into `/Applications` (or any folder you prefer), and launch.
+
+### First-launch security note
+
+MPX Prime is **ad-hoc signed**, not Apple-notarized. The DMG is built and signed by an automated GitHub Actions workflow with a self-managed signing identity — it is *not* enrolled in the Apple Developer Notary Service. As a result, macOS Gatekeeper will refuse to open the app on first launch with a message similar to:
+
+> *"MPX Prime" cannot be opened because Apple cannot check it for malicious software.*
+
+This is the standard macOS warning for any app distributed outside the Mac App Store / Apple Notarization. To approve the app once:
+
+1. Open **System Settings → Privacy & Security**.
+2. Scroll to the **Security** section near the bottom. You will see a message like *"MPX Prime was blocked from use because it is not from an identified developer"*.
+3. Click **Open Anyway** next to that message.
+4. The next time you launch MPX Prime, macOS will prompt one more time — click **Open**.
+
+After the first approval, MPX Prime launches normally on subsequent runs. This is a one-time per-version operation; updating to a new release will trigger the prompt again on first launch.
+
+If you would rather skip the Gatekeeper dialog entirely, build from source (see below) — locally built binaries are not subject to the same check.
+
 ## Build
+
+If you prefer building from source instead of downloading the release DMG:
 
 ```bash
 swift build --package-path macOS
@@ -106,15 +134,21 @@ Long-run compliance/regression verification:
 swift run --package-path macOS MPXPrime --verify-long --seconds 30
 ```
 
-Receiver-model verification (0.27 - offline coherent stereo decode through
-the same `MPXDecoder` the monitor path uses):
+Receiver-model verification (0.27 reusable `MPXDecoder` + 0.28 expanded
+analysis — coherent + PLL external-style decode, raw encoder-side
+sideband symmetry, per-stage isolation sweep, and ideal-receiver A/B):
 
 ```bash
 swift run --package-path macOS MPXPrime --verify-receiver --seconds 5
 ```
 
-Reports stereo separation at 1 / 10 / 14 kHz, mono compatibility, pilot
-percent and phase, and RDS lower/upper sideband + center-null levels.
+Reports per-tone stereo separation (1 / 10 / 14 kHz) on both coherent
+and PLL decode, raw `(L-R)` lower/upper sideband balance, a per-stage
+on/off sweep that attributes encoder-side loss to specific blocks, an
+"ideal receiver" decode that isolates phase alignment from filter
+shape, mono compatibility, pilot percent and phase, and RDS sideband
++ center-null levels. Default-config decode at 0.28: 65.0 / 50.5 /
+43.4 dB at 1 / 10 / 14 kHz.
 
 Composite multiband clipper A/B verification (0.28 - compares the default
 chain with `mpx_multiband_clipper_enabled = True` on dense/HF scenarios):
@@ -326,7 +360,7 @@ This keeps bass more mono-compatible while leaving the upper image open enough f
 
 The current low-frequency enhancement and multiband stages are now tuned more conservatively than earlier builds.
 
-- `PrimeBass` (formerly `Orbass`, renamed in 0.20) uses adaptive low-band enhancement with restrained harmonics, optional subharmonics, and gated makeup behavior to avoid obvious bass pumping and synthetic overhang. 0.20 modernised the harmonic synth with MaxxBass-style equal-loudness weighting (per-order ISO 226 phon-curve weights for 2nd–5th harmonics), an Aphex-style pre-waveshaper allpass at F0 that decorrelates harmonic phase from the direct boost, and a Werrbach transient-discriminate gain modulator that briefly bursts harmonics on attacks and settles to a lower floor on sustained material — the perceived bass weight shifts onto the weighted harmonics, which buys headroom downstream without changing subjective bass.
+- `PrimeBass` adds perceived bass weight by synthesising controlled harmonics of low-frequency content. The listener hears more bass without the chain having to push LF peaks higher, which saves headroom for the rest of the dynamics chain.
 - `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `−155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move — not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on). Two advanced options are default-off while being evaluated: `multiband_transient_aware_attack_enabled` for peak/RMS transient handling, and `multiband_inter_band_coupling_enabled` for low-band-GR-driven upper-band threshold bias.
 
 Recommended starting point:
@@ -502,7 +536,18 @@ Current post-build preset sweep status:
 - `5B Urban`: `OK`
 - `5B Dance`: `OK`
 
-Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, and composite-multiband A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
+Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled across stress scenarios:
+
+```bash
+./macOS/.build/debug/MPXPrime --verify-composite-multiband --seconds 2
+./macOS/.build/debug/MPXPrime --verify-multiband-coupling --seconds 2
+```
+
+`--verify-composite-multiband` toggles `mpx_multiband_clipper_enabled` off/on across 5 dense/HF scenarios and reports peak / audio-peak / margin / overshoot / correlation / side / >60 kHz deltas. Current tuning shows ~1.4-1.6 dB peak reduction on HF-heavy program with zero post-injection overshoot.
+
+`--verify-multiband-coupling` forces multiband on, disables AGC for isolation, and toggles `multiband_inter_band_coupling_enabled` off/on across 5 program scenarios (bass-heavy, kick/vocal, dance, wide-bass, speech-bed), reporting per-band Low/Mid/High deltas + correlation / side-to-mid / peak / overshoot / render-cost ratio.
+
+Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, and composite-multiband + inter-band-coupling A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
 
 Exit status:
 

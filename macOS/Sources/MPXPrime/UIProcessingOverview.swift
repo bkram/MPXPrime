@@ -67,16 +67,16 @@ struct ProcessingOverviewGrid: View {
                     enabledPath: \.multibandEnabled
                 )
                 stageCard(
-                    .mbLimiter,
-                    title: "MB Limiter",
-                    subtitle: mbLimiterSubtitle,
-                    enabledPath: \.multibandLimiterEnabled
-                )
-                stageCard(
                     .expander,
                     title: "Downward Expander",
                     subtitle: expanderSubtitle,
                     enabledPath: \.downwardExpanderEnabled
+                )
+                stageCard(
+                    .mbLimiter,
+                    title: "MB Limiter",
+                    subtitle: mbLimiterSubtitle,
+                    enabledPath: \.multibandLimiterEnabled
                 )
                 stageCard(
                     .widener,

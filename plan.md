@@ -57,7 +57,7 @@ explicitly enabled.
 
 ### Bass enhancement (PrimeBass) — secondary backlog
 
-PrimeBass (renamed from `Orbass` in 0.20) is the adaptive low-band enhancer; goal is to lift perceived bass while *reducing* true-peak LF amplitude so downstream bass clipper / pre-encode limiter / composite clipper see less LF energy. The full B1/B2/B3/B4 patent backlog shipped across 0.20–0.23; further LF work would need new design directions (the active Music Tribe / DTS claims below are deliberate skips).
+PrimeBass is the adaptive low-band enhancer; goal is to lift perceived bass while *reducing* true-peak LF amplitude so downstream bass clipper / pre-encode limiter / composite clipper see less LF energy. The full B1/B2/B3/B4 patent backlog has shipped; further LF work would need new design directions (the active Music Tribe / DTS claims below are deliberate skips).
 
 **Already implemented (do not re-implement):**
 

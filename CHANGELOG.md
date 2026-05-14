@@ -5,9 +5,9 @@ not decimals. 0.20 was a deliberate jump from 0.11 to mark the magnitude
 of the post-0.11 work — composite clipper differential topology with
 linear-phase FIR decimation, RDS live-apply for the full operationally-
 toggled surface, GUI restructure with status-first Control tab,
-PrimeBass (renamed from Orbass) with MaxxBass / Aphex / Werrbach
-patent-grade harmonic synthesis, adaptive on-screen FPS, and an
-optional deep DSP combination test suite. Newest first.
+PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
+synthesis, adaptive on-screen FPS, and an optional deep DSP
+combination test suite. Newest first.
 
 ## 0.29 — unreleased
 

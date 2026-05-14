@@ -9,7 +9,7 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## 0.29 — unreleased
+## 0.29 — 2026-05-14
 
 ### DSP — multiband inter-band coupling (experimental, opt-in)
 
@@ -35,13 +35,23 @@ combination test suite. Newest first.
 - New INI key `multiband_inter_band_coupling_enabled` (default `False`) in `MPXPrime.ini` and `Verification.ini`.
 - Multiband processing tab gains a third Toggle row labelled "Inter-band Coupling" with `.help` tooltip describing the experimental status.
 
+### GUI taxonomy alignment
+
+- **Processing tabs**: `MB Limiter` and `Expander` order swapped to match the actual chain processing order. In `processMultibandStage` the downward expander runs first (per-band noise reduction) and the per-band peak limiter runs after; the tab order now reflects this.
+- **`Limiter` → `Audio Limiter`** rename. The chain has five distinct limiters (MB Limiter, this pre-encode L/R Audio Limiter, lookahead limiter, final-MPX safety limiter, BS.412). The generic "Limiter" label was ambiguous; "Audio Limiter" matches AGENTS.md / README terminology.
+- **RDS tabs aligned with commercial-encoder convention**:
+  - `Control` tab renamed to `Status`. After moves 1 and 2 below, the remaining content is master enable + live snapshot, which is the canonical "Status" tab of DEVA SmartGen / RDS Manager / Audemat encoders.
+  - Per-program flags TP / TA / MS / DI (incl. DI sub-flags Stereo / Head / Comp / Dyn-PTY) moved from `Control` → `Identity`. Standard practice puts these next to PI / PS / PTY because they describe what the station is broadcasting *right now*.
+  - Subcarrier injection level moved from `Control` → `Subcarrier`. Injection level is physical-layer data — belongs with carrier frequency + Gaussian shaping.
+  - All `RDSTab` and `Stage` enum *cases* preserved (`.control`, `.rdsControl`) for code stability; only rawValue strings + sidebar labels changed. Every config key, every live-apply route, every test unaffected.
+
 ### Docs
 
+- **README.md**: new **Download** section linking to GitHub Releases with a first-launch Gatekeeper walkthrough (the DMG is ad-hoc signed, not Apple-notarized, so users must approve once in System Settings → Privacy & Security → Open Anyway). Features list gains the **HF stereo separation headline** (65 / 50.5 / 43.4 dB at 1 / 10 / 14 kHz from the 0.28 work). Processing tab list updated to match the new sidebar order + "Audio Limiter" rename + Expander-before-MB-Limiter swap. Receiver-model verifier description refreshed for the 0.28 additions (raw sideband analyzer, stage-isolation sweep, ideal-receiver decode). New CLI examples for `--verify-composite-multiband` and `--verify-multiband-coupling` in Offline Verification. PrimeBass paragraph trimmed to a one-line "what it does"; Orbass-rename history removed.
+- **ARCHITECTURE.md**: new "Multiband Inter-Band Coupling" + "Multiband Transient-Aware Attack" sections under the multiband dynamics block. Composite multiband clipper paragraph updated with the 0.29 ceilings and verifier-mode pointer. `main.swift` verifier-mode list updated for the two new 0.28 modes. `MPXDecoder` bullet documents the 0.28 I/Q coherent lockin PLL refactor. PrimeBass paragraph trimmed.
+- **plan.md**: HF separation subsection collapsed to a 5-line summary (work all done); multiband Phase 1 / 2 / 4 marked landed (only Phase 3 still open); composite-clipper-improvements #1 condensed; Patent-backlog P0 / P2 rows refreshed.
+- **FUTURE.md**: DSP Enterprise-Level Roadmap items 1 / 2 / 3 arithmetic blocks collapsed (work shipped); Plan.md alignment table compressed; Patent candidates table renumbered.
 - **AGENTS.md**: `--verify-composite-multiband` and `--verify-multiband-coupling` added to the verification command list. Composite multiband clipper description updated with current ceiling values + verifier mode pointer. New Multiband inter-band coupling paragraph in the dynamics summary. Branch-model example refreshed to v.028 / v0.28.
-- **ARCHITECTURE.md**: new "Multiband Inter-Band Coupling" section under the multiband dynamics block (control-law math + test pointers). Composite multiband clipper paragraph updated with the current ceilings and verifier-mode pointer.
-- **plan.md**: Phase 4 inter-band coupling status moved from "open" to "implemented behind toggle, validation pending"; Phase A/B anti-aliased clipping rerated as "validate" rather than "start"; "Open, ranked impact-per-effort" table now points to the new verifier modes for items 3 and 5.
-- **README.md**: command-line summary catches up to the two new verifier modes; minor tightening.
-- **FUTURE.md**: alignment-table rows for Phase 4 inter-band coupling and the composite multiband clipper updated to "landed opt-in, listening pending".
 - **verifier_baselines/ClipperAliasingBaseline.md** and `README.md`: small wording fixes for consistency.
 
 ## 0.28 — 2026-05-13

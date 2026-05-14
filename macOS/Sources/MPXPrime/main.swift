@@ -23,6 +23,8 @@ struct CLIOptions {
     var verifyPresets: Bool = false
     var verifyLong: Bool = false
     var verifyReceiver: Bool = false
+    var verifyCompositeMultibandClipper: Bool = false
+    var verifyMultibandCoupling: Bool = false
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
 }
@@ -91,6 +93,14 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyReceiver = true
             options.gui = false
+        case "--verify-composite-multiband":
+            options.verify = true
+            options.verifyCompositeMultibandClipper = true
+            options.gui = false
+        case "--verify-multiband-coupling":
+            options.verify = true
+            options.verifyMultibandCoupling = true
+            options.gui = false
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -115,6 +125,8 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-presets [--seconds 5]
           MPXPrime [--config <path>] --verify-long [--seconds 30]
           MPXPrime [--config <path>] --verify-receiver [--seconds 5]
+          MPXPrime [--config <path>] --verify-composite-multiband [--seconds 5]
+          MPXPrime [--config <path>] --verify-multiband-coupling [--seconds 5]
 
         Options:
           --config   Path to macOS INI config (default: ~/Library/Application Support/MPX Prime/MPX Prime.ini)
@@ -129,6 +141,8 @@ func printUsage() {
           --verify-presets  Sweep key multiband presets through the offline verification harness
           --verify-long  Run the longer focused compliance/regression verifier
           --verify-receiver  Run offline receiver-model decode checks
+          --verify-composite-multiband  A/B the experimental composite multiband clipper toggle
+          --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
         """
     print(text)
 }
@@ -174,6 +188,8 @@ do {
                 presetSweep: options.verifyPresets,
                 longRun: options.verifyLong,
                 receiverModel: options.verifyReceiver,
+                compositeMultibandClipperComparison: options.verifyCompositeMultibandClipper,
+                multibandCouplingComparison: options.verifyMultibandCoupling,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )

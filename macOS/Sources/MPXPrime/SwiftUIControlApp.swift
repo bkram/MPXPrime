@@ -6129,6 +6129,8 @@ private struct ProcessingMultibandTab: View {
             Toggle("Program-dependent Release", isOn: model.configBinding(\.multibandReleaseProgramDependent, runtimeDisposition: .live))
             Toggle("Transient-aware Attack", isOn: model.configBinding(\.multibandTransientAwareAttackEnabled, runtimeDisposition: .live))
                 .help("Uses a peak/RMS hybrid detector and briefly slows attack on percussive fronts so kicks and snares are not over-squashed.")
+            Toggle("Inter-band Coupling", isOn: model.configBinding(\.multibandInterBandCouplingEnabled, runtimeDisposition: .live))
+                .help("Experimental: low-band gain reduction gently lowers upper-band thresholds so bass-heavy passages stay tonally glued.")
 
             // Crossovers — operator-rare; collapsed by default. Once
             // the FabFilter-style spectrum-with-drag-handles editor

@@ -2447,9 +2447,9 @@ struct CompositeMultibandClipper {
 
         let mid = lowMid - low
         let high = delayed - lowMid
-        let lowOut = MPXGenerator.softClipSafety(low, threshold: 0.94)
-        let midOut = MPXGenerator.softClipSafety(mid, threshold: 0.88)
-        let highOut = MPXGenerator.softClipSafety(high, threshold: 0.78)
+        let lowOut = MPXGenerator.softClipSafety(low, threshold: 0.90)
+        let midOut = MPXGenerator.softClipSafety(mid, threshold: 0.62)
+        let highOut = MPXGenerator.softClipSafety(high, threshold: 0.38)
         return lowOut + midOut + highOut
     }
 }
@@ -2853,6 +2853,7 @@ struct MonoCompressor {
     var kneeDB: Float = 0.0
     var detector = EnvelopeFollower()
     var transientDriveObserved: Float = 0.0
+    private(set) var lastGainReductionDB: Float = 0.0
     private var transientAwareAttackEnabled: Bool = false
     private var rmsPower: Float = 0.0
     private var rmsAttackCoeff: Float = 0.0
@@ -2886,19 +2887,21 @@ struct MonoCompressor {
         transientHoldSamples = max(1, Int((sr * 0.010).rounded()))
         transientHoldCounter = 0
         transientDriveObserved = 0.0
+        lastGainReductionDB = 0.0
         rmsPower = 0.0
     }
 
-    mutating func process(_ x: Float, sidechainAbs: Float? = nil) -> Float {
+    mutating func process(_ x: Float, sidechainAbs: Float? = nil, thresholdBiasDB: Float = 0.0) -> Float {
         let detectorSample = sidechainAbs ?? x
         let env = max(
             1e-8,
             transientAwareAttackEnabled
                 ? processTransientAwareEnvelope(detectorSample)
-                : detector.processAbs(detectorSample)
+            : detector.processAbs(detectorSample)
         )
         let levelDB = 20.0 * log10f(env)
-        let gainDB = gainReductionDB(for: levelDB)
+        let gainDB = gainReductionDB(for: levelDB, thresholdBiasDB: thresholdBiasDB)
+        lastGainReductionDB = gainDB
         let gain = powf(10.0, (gainDB + makeupDB) / 20.0)
         return x * gain
     }
@@ -2937,26 +2940,27 @@ struct MonoCompressor {
         return detector.value
     }
 
-    private func gainReductionDB(for levelDB: Float) -> Float {
+    private func gainReductionDB(for levelDB: Float, thresholdBiasDB: Float = 0.0) -> Float {
         if ratio <= 1.0 {
             return 0.0
         }
+        let effectiveThresholdDB = thresholdDB + thresholdBiasDB
         let kneeHalf = kneeDB * 0.5
         if kneeDB <= 0.01 {
-            if levelDB <= thresholdDB {
+            if levelDB <= effectiveThresholdDB {
                 return 0.0
             }
-            let over = levelDB - thresholdDB
+            let over = levelDB - effectiveThresholdDB
             return -(over - (over / ratio))
         }
 
-        let lower = thresholdDB - kneeHalf
-        let upper = thresholdDB + kneeHalf
+        let lower = effectiveThresholdDB - kneeHalf
+        let upper = effectiveThresholdDB + kneeHalf
         if levelDB <= lower {
             return 0.0
         }
         if levelDB >= upper {
-            let over = levelDB - thresholdDB
+            let over = levelDB - effectiveThresholdDB
             return -(over - (over / ratio))
         }
         let delta = levelDB - lower
@@ -5616,6 +5620,7 @@ final class MPXGenerator {
         let multibandLinkStrength: Float
         let multibandReleaseProgramDependent: Bool
         let multibandTransientAwareAttackEnabled: Bool
+        let multibandInterBandCouplingEnabled: Bool
         let multibandX1Hz: Float
         let multibandX2Hz: Float
         let multibandX3Hz: Float
@@ -5729,6 +5734,7 @@ final class MPXGenerator {
             multibandLinkStrength: Float(config.multibandLinkStrength),
             multibandReleaseProgramDependent: config.multibandReleaseProgramDependent,
             multibandTransientAwareAttackEnabled: config.multibandTransientAwareAttackEnabled,
+            multibandInterBandCouplingEnabled: config.multibandInterBandCouplingEnabled,
             multibandX1Hz: Float(config.multibandX1Hz),
             multibandX2Hz: Float(config.multibandX2Hz),
             multibandX3Hz: Float(config.multibandX3Hz),
@@ -6079,6 +6085,10 @@ final class MPXGenerator {
     private var multibandLinkStrength: Float
     private var multibandReleaseProgramDependent: Bool
     private var multibandTransientAwareAttackEnabled: Bool
+    private var multibandInterBandCouplingEnabled: Bool
+    private var multibandCouplingGRDB: Float = 0.0
+    private var multibandCouplingAttackCoeff: Float = 0.0
+    private var multibandCouplingReleaseCoeff: Float = 0.0
     private var multibandX1Hz: Float
     private var multibandX2Hz: Float
     private var multibandX3Hz: Float
@@ -6410,6 +6420,7 @@ final class MPXGenerator {
         self.multibandLinkStrength = clampf(Float(config.multibandLinkStrength), 0.0, 1.0)
         self.multibandReleaseProgramDependent = config.multibandReleaseProgramDependent
         self.multibandTransientAwareAttackEnabled = config.multibandTransientAwareAttackEnabled
+        self.multibandInterBandCouplingEnabled = config.multibandInterBandCouplingEnabled
         let crossovers = Self.resolveMultibandCrossovers(
             sampleRate: self.sampleRate,
             x1: Float(config.multibandX1Hz),
@@ -6880,6 +6891,7 @@ final class MPXGenerator {
             fabsf(multibandKneeDB - config.multibandKneeDB) > 0.0001
             || multibandReleaseProgramDependent != config.multibandReleaseProgramDependent
             || multibandTransientAwareAttackEnabled != config.multibandTransientAwareAttackEnabled
+            || multibandInterBandCouplingEnabled != config.multibandInterBandCouplingEnabled
             || fabsf(multibandLowThresholdDB - config.multibandLowThresholdDB) > 0.0001
             || fabsf(multibandMidThresholdDB - config.multibandMidThresholdDB) > 0.0001
             || fabsf(multibandHighThresholdDB - config.multibandHighThresholdDB) > 0.0001
@@ -6899,6 +6911,7 @@ final class MPXGenerator {
         multibandLinkStrength = clampf(config.multibandLinkStrength, 0.0, 1.0)
         multibandReleaseProgramDependent = config.multibandReleaseProgramDependent
         multibandTransientAwareAttackEnabled = config.multibandTransientAwareAttackEnabled
+        multibandInterBandCouplingEnabled = config.multibandInterBandCouplingEnabled
         multibandX1Hz = resolvedCrossovers.x1
         multibandX2Hz = resolvedCrossovers.x2
         multibandX3Hz = resolvedCrossovers.x3
@@ -7403,6 +7416,10 @@ final class MPXGenerator {
     }
 
     private func configureMultibandCompressors() {
+        multibandCouplingAttackCoeff = expf(-1.0 / (max(1.0, sampleRate) * 0.020))
+        multibandCouplingReleaseCoeff = expf(-1.0 / (max(1.0, sampleRate) * 0.300))
+        multibandCouplingGRDB = 0.0
+
         configureCompressorPair(
             left: &mbLowCompL,
             right: &mbLowCompR,
@@ -7492,6 +7509,35 @@ final class MPXGenerator {
             return releaseMS * 1.1
         }
         return releaseMS
+    }
+
+    static func multibandCouplingBiases(lowGainReductionDB: Float) -> (mid: Float, high: Float) {
+        let lowGR = clampf(lowGainReductionDB, 0.0, 24.0)
+        return (-0.15 * lowGR, -0.25 * lowGR)
+    }
+
+    static func multibandFiveBandCouplingBiases(lowGainReductionDB: Float) -> (
+        b2: Float,
+        b3: Float,
+        b4: Float,
+        b5: Float
+    ) {
+        let lowGR = clampf(lowGainReductionDB, 0.0, 24.0)
+        return (-0.10 * lowGR, -0.15 * lowGR, -0.22 * lowGR, -0.25 * lowGR)
+    }
+
+    private func updateMultibandCouplingGainReduction(_ lowGainReductionDB: Float) -> Float {
+        guard multibandInterBandCouplingEnabled else {
+            multibandCouplingGRDB = 0.0
+            return 0.0
+        }
+        let target = clampf(lowGainReductionDB, 0.0, 24.0)
+        let coeff = target > multibandCouplingGRDB
+            ? multibandCouplingAttackCoeff
+            : multibandCouplingReleaseCoeff
+        multibandCouplingGRDB = (coeff * multibandCouplingGRDB) + ((1.0 - coeff) * target)
+        multibandCouplingGRDB = zapDenorm(multibandCouplingGRDB)
+        return multibandCouplingGRDB
     }
 
     private func configureCompressorPair(
@@ -8748,17 +8794,24 @@ final class MPXGenerator {
             leftComp: &mbLowCompL,
             rightComp: &mbLowCompR
         )
+        let couplingGR = updateMultibandCouplingGainReduction(Self.bandGainReductionDB(
+            mbLowCompL,
+            mbLowCompR
+        ))
+        let couplingBias = Self.multibandCouplingBiases(lowGainReductionDB: couplingGR)
         var midOut = compressStereoBand(
             left: midBandL,
             right: midBandR,
             leftComp: &mbMidCompL,
-            rightComp: &mbMidCompR
+            rightComp: &mbMidCompR,
+            thresholdBiasDB: couplingBias.mid
         )
         var highOut = compressStereoBand(
             left: highBandL,
             right: highBandR,
             leftComp: &mbHighCompL,
-            rightComp: &mbHighCompR
+            rightComp: &mbHighCompR,
+            thresholdBiasDB: couplingBias.high
         )
 
         // Per-band downward expander (noise reduction)
@@ -8828,14 +8881,23 @@ final class MPXGenerator {
 
         var o1 = compressStereoBand(
             left: b1L, right: b1R, leftComp: &mb5Comp1L, rightComp: &mb5Comp1R)
+        let couplingGR = updateMultibandCouplingGainReduction(Self.bandGainReductionDB(
+            mb5Comp1L,
+            mb5Comp1R
+        ))
+        let couplingBias = Self.multibandFiveBandCouplingBiases(lowGainReductionDB: couplingGR)
         var o2 = compressStereoBand(
-            left: b2L, right: b2R, leftComp: &mb5Comp2L, rightComp: &mb5Comp2R)
+            left: b2L, right: b2R, leftComp: &mb5Comp2L, rightComp: &mb5Comp2R,
+            thresholdBiasDB: couplingBias.b2)
         var o3 = compressStereoBand(
-            left: b3L, right: b3R, leftComp: &mb5Comp3L, rightComp: &mb5Comp3R)
+            left: b3L, right: b3R, leftComp: &mb5Comp3L, rightComp: &mb5Comp3R,
+            thresholdBiasDB: couplingBias.b3)
         var o4 = compressStereoBand(
-            left: b4L, right: b4R, leftComp: &mb5Comp4L, rightComp: &mb5Comp4R)
+            left: b4L, right: b4R, leftComp: &mb5Comp4L, rightComp: &mb5Comp4R,
+            thresholdBiasDB: couplingBias.b4)
         var o5 = compressStereoBand(
-            left: b5L, right: b5R, leftComp: &mb5Comp5L, rightComp: &mb5Comp5R)
+            left: b5L, right: b5R, leftComp: &mb5Comp5L, rightComp: &mb5Comp5R,
+            thresholdBiasDB: couplingBias.b5)
 
         // Per-band downward expander (noise reduction)
         if downwardExpanderEnabled {
@@ -8874,7 +8936,8 @@ final class MPXGenerator {
         left: Float,
         right: Float,
         leftComp: inout MonoCompressor,
-        rightComp: inout MonoCompressor
+        rightComp: inout MonoCompressor,
+        thresholdBiasDB: Float = 0.0
     ) -> (Float, Float) {
         let absL = fabsf(left)
         let absR = fabsf(right)
@@ -8887,11 +8950,19 @@ final class MPXGenerator {
                 linkStrength: multibandLinkStrength
             )
             return (
-                leftComp.process(left, sidechainAbs: sidechain),
-                rightComp.process(right, sidechainAbs: sidechain)
+                leftComp.process(left, sidechainAbs: sidechain, thresholdBiasDB: thresholdBiasDB),
+                rightComp.process(right, sidechainAbs: sidechain, thresholdBiasDB: thresholdBiasDB)
             )
         }
-        return (leftComp.process(left), rightComp.process(right))
+        return (
+            leftComp.process(left, thresholdBiasDB: thresholdBiasDB),
+            rightComp.process(right, thresholdBiasDB: thresholdBiasDB)
+        )
+    }
+
+    @inline(__always)
+    private static func bandGainReductionDB(_ left: MonoCompressor, _ right: MonoCompressor) -> Float {
+        max(0.0, max(-left.lastGainReductionDB, -right.lastGainReductionDB))
     }
 
     @inline(__always)

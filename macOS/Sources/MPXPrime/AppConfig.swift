@@ -33,7 +33,8 @@ struct AppConfig {
     //   monoBassEnabled/FreqHz,
     //   stereoWidenEnabled/Width/Center/Mix,
     //   multiband Enabled/Mode/X1-X4Hz/Thresholds/Ratios/Attack/Release/
-    //     KneeDB/LinkStrength/MakeupDB/ReleaseProgramDependent,
+    //     KneeDB/LinkStrength/MakeupDB/ReleaseProgramDependent/
+    //     TransientAwareAttack/InterBandCoupling,
     //   phaseRotationEnabled/FreqHz, parametricEQEnabled/B1-B4(Freq/Gain/Q),
     //   multibandLimiterEnabled/ThresholdDB/AttackMS/ReleaseMS,
     //   downwardExpanderEnabled/ThresholdDB/Ratio/AttackMS/ReleaseMS,
@@ -197,6 +198,7 @@ struct AppConfig {
     var multibandLinkStrength: Double = 0.52
     var multibandReleaseProgramDependent: Bool = true
     var multibandTransientAwareAttackEnabled: Bool = false
+    var multibandInterBandCouplingEnabled: Bool = false
     var multibandMakeupDB: Double = 0.0
     var phaseRotationEnabled: Bool = false
     var phaseRotationFreqHz: Double = 200.0
@@ -530,6 +532,10 @@ struct AppConfig {
         cfg.multibandTransientAwareAttackEnabled = mpx.bool(
             "multiband_transient_aware_attack_enabled",
             defaultValue: cfg.multibandTransientAwareAttackEnabled
+        )
+        cfg.multibandInterBandCouplingEnabled = mpx.bool(
+            "multiband_inter_band_coupling_enabled",
+            defaultValue: cfg.multibandInterBandCouplingEnabled
         )
         cfg.multibandMakeupDB = mpx.double(
             "multiband_makeup_db", defaultValue: cfg.multibandMakeupDB)
@@ -943,6 +949,7 @@ struct AppConfig {
             "multiband_link_strength = \(Self.formatFloat(multibandLinkStrength))",
             "multiband_release_program_dependent = \(Self.boolString(multibandReleaseProgramDependent))",
             "multiband_transient_aware_attack_enabled = \(Self.boolString(multibandTransientAwareAttackEnabled))",
+            "multiband_inter_band_coupling_enabled = \(Self.boolString(multibandInterBandCouplingEnabled))",
             "multiband_makeup_db = \(Self.formatFloat(multibandMakeupDB))",
             "phase_rotation_enabled = \(Self.boolString(phaseRotationEnabled))",
             "phase_rotation_freq_hz = \(Self.formatFloat(phaseRotationFreqHz))",

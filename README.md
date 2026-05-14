@@ -10,7 +10,7 @@ MPX Prime is experimental and not suitable for production broadcast use. It targ
 
 **Goal: be the best amateur-grade FM processor available** — for hobbyist LPFM, community radio, pirate, SDR-fed exciters, and DIY broadcast workflows. MPX Prime is *not* trying to be a $5–15k Optimod / Omnia / Stereo Tool replacement; it is trying to be the obvious choice where commercial processors are unaffordable or overkill. See [`plan.md`](plan.md) "Positioning" for the full scope-in / scope-out list.
 
-**Compared to open-source FM generators** (mpxgen, PiFmRds), MPX Prime runs a real processing chain in front of the encoder — phase rotator, wideband AGC with K-weighted detector + program-dependent release, 4-band parametric EQ, mono bass, 3- or 5-band multiband compressor with per-band expander and limiter (linear-phase FIR multiband crossovers in TX path), stereo widener, PrimeBass, bass clipper, audio-band distortion-cancelled clipper, L/R pre-emphasis, pre-encode L/R true-peak limiter, BS.412, and an 8× oversampled composite clipper with delta-based per-band IM cancellation — and enforces the professional invariant that pilot and RDS bypass all peak control (post-clipper subcarrier injection). Stage ordering matches Optimod / Omnia / Stereotool canon at every load-bearing position (PrimeBass and stereo widener post-multiband; pre-emphasis L/R upstream of pre-encode limiter). Add to that linear-phase Kaiser-windowed FIR encoder lowpass with ≥80 dB stop-band, 19 kHz pilot notch on the audio path, pilot-locked RDS with 301-tap biphase + optional Gaussian shaping, lock-free real-time DSP with vDSP/vForce SIMD acceleration on hot loops, and an offline verification harness with scenario / stereo / width tables. Open-source generators typically emit a valid MPX waveform without any of that.
+**Compared to open-source FM generators** (mpxgen, PiFmRds), MPX Prime runs a real processing chain in front of the encoder — phase rotator, wideband AGC with K-weighted detector + program-dependent release, 4-band parametric EQ, mono bass, 3- or 5-band multiband compressor with per-band expander and limiter (linear-phase FIR multiband crossovers in TX path), stereo widener, PrimeBass, bass clipper, audio-band distortion-cancelled clipper, L/R pre-emphasis, pre-encode L/R true-peak limiter, BS.412, and an 8× oversampled composite clipper with delta-based per-band IM cancellation plus an experimental default-off multiband composite clipper — and enforces the professional invariant that pilot and RDS bypass all peak control (post-clipper subcarrier injection). Stage ordering matches Optimod / Omnia / Stereotool canon at every load-bearing position (PrimeBass and stereo widener post-multiband; pre-emphasis L/R upstream of pre-encode limiter). Add to that linear-phase Kaiser-windowed FIR encoder lowpass with ≥80 dB stop-band, 19 kHz pilot notch on the audio path, pilot-locked RDS with 301-tap biphase + optional Gaussian shaping, lock-free real-time DSP with vDSP/vForce SIMD acceleration on hot loops, and an offline verification harness with scenario / stereo / width / receiver / composite-multiband A/B tables. Open-source generators typically emit a valid MPX waveform without any of that.
 
 **Compared to commercial processors**, MPX Prime's topology matches what Orban / Omnia / Stereo Tool publish, and individual stages (phase rotator, multiband with linear-phase FIR crossovers and stereo linking, post-clipper subcarrier injection, BS.412, delta-based per-band IM cancellation in the composite clipper, oversampled differential composite clipping, equal-loudness-weighted bass harmonic synthesis, transient-discriminate harmonic gain) are implemented at professional quality. The published claims used as design references are all expired (Orban [US 4,460,871](https://patents.google.com/patent/US4460871A) and [US 5,737,434](https://patents.google.com/patent/US5737434A) for distortion-cancelled composite clipping, [US 6,337,999](https://patents.google.com/patent/US6337999B1) for the differential topology, Waves [US 5,930,373](https://patents.google.com/patent/US5930373A) for MaxxBass-style equal-loudness harmonics, Aphex [US 4,150,253](https://patents.google.com/patent/US4150253A) for the pre-waveshaper allpass topology, and Werrbach [US 5,424,488](https://patents.google.com/patent/US5424488A) for transient-discriminate harmonic gain) — i.e., the techniques are public-domain prior art, not licensed reproductions. What's deliberately *out of scope* for amateur-grade: MPX-over-AES3 / Baseband192 transport, studio automation (Livewire/Dante/Ravenna), multi-site clustering, ITU-R SM.1268 RF-mask feedback at production grade, multipath mitigation. Lower-priority polish items still pending: heavier (16–32×) oversampling on the clipping nonlinearities, dynamic pre-emphasis, input-side restoration (declipper, dehumfilter). See [`plan.md`](plan.md) "Next up" for the current roadmap.
 
@@ -23,7 +23,7 @@ MPX Prime is an independent open-source project. Names referenced in this README
 ## Current app structure
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
-- `Processing`: Overview, Core, AGC, Phase Rotator, Parametric EQ, PrimeBass, Stereo Widener, Multiband, MB Limiter, Expander, Bass Clipper, DC Clipper, Audio Limiter, BS.412, Composite Clipper (optional look-ahead peak control on top of the soft-clipper), Final Stage
+- `Processing`: Overview, Core, AGC, Phase Rotator, Parametric EQ, PrimeBass, Stereo Widener, Multiband, MB Limiter, Expander, Bass Clipper, DC Clipper, Audio Limiter, BS.412, Composite Clipper (optional look-ahead peak control and experimental multiband composite clipping on top of the soft-clipper), Final Stage
 - `RDS`: control (master enable + injection + live status + runtime flags), identity (PI / PTY / PTYN / ECC + PS banks), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (physical layer)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, audio engine, spectrum options
@@ -44,7 +44,7 @@ transport restart since they reconfigure the modulator.
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
 - Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
 - Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing
-- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter), feeding the 8× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control) with live clipper telemetry
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter), feeding the 8× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control and experimental default-off multiband composite clipping) with live clipper telemetry
 - TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
 - Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
@@ -106,7 +106,7 @@ Long-run compliance/regression verification:
 swift run --package-path macOS MPXPrime --verify-long --seconds 30
 ```
 
-Receiver-model verification (0.27 — offline coherent stereo decode through
+Receiver-model verification (0.27 - offline coherent stereo decode through
 the same `MPXDecoder` the monitor path uses):
 
 ```bash
@@ -115,6 +115,21 @@ swift run --package-path macOS MPXPrime --verify-receiver --seconds 5
 
 Reports stereo separation at 1 / 10 / 14 kHz, mono compatibility, pilot
 percent and phase, and RDS lower/upper sideband + center-null levels.
+
+Composite multiband clipper A/B verification (0.28 - compares the default
+chain with `mpx_multiband_clipper_enabled = True` on dense/HF scenarios):
+
+```bash
+swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2
+```
+
+Multiband inter-band coupling A/B verification (0.28 - forces multiband on,
+disables AGC for isolation, and compares `multiband_inter_band_coupling_enabled`
+off/on):
+
+```bash
+swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2
+```
 
 Custom config file:
 
@@ -286,6 +301,7 @@ Both stages are loudness / regulatory tools and both visibly cost stereo image a
 - `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band cancellation toggles let you choose what to protect:
   - `Cancel pilot guard`, `Cancel stereo subcarrier`, `Cancel RDS guard` — leave on (defaults). These keep the 19 kHz pilot, 38 kHz L-R subcarrier, and 57 kHz RDS regions clean of clip IM.
   - `Cancel audio band` — off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
+  - `Experimental Multiband Composite Clipping` — off by default. It is an A/B loudness experiment for HF-heavy program material; current verifier numbers show useful peak/audio reduction, but it should stay out of presets until dense-program listening confirms the trade.
 
 All of these are exposed in the GUI; no INI editing is required.
 
@@ -311,7 +327,7 @@ This keeps bass more mono-compatible while leaving the upper image open enough f
 The current low-frequency enhancement and multiband stages are now tuned more conservatively than earlier builds.
 
 - `PrimeBass` (formerly `Orbass`, renamed in 0.20) uses adaptive low-band enhancement with restrained harmonics, optional subharmonics, and gated makeup behavior to avoid obvious bass pumping and synthetic overhang. 0.20 modernised the harmonic synth with MaxxBass-style equal-loudness weighting (per-order ISO 226 phon-curve weights for 2nd–5th harmonics), an Aphex-style pre-waveshaper allpass at F0 that decorrelates harmonic phase from the direct boost, and a Werrbach transient-discriminate gain modulator that briefly bursts harmonics on attacks and settles to a lower floor on sustained material — the perceived bass weight shifts onto the weighted harmonics, which buys headroom downstream without changing subjective bass.
-- `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `−155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move — not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on).
+- `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `−155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move — not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on). Two advanced options are default-off while being evaluated: `multiband_transient_aware_attack_enabled` for peak/RMS transient handling, and `multiband_inter_band_coupling_enabled` for low-band-GR-driven upper-band threshold bias.
 
 Recommended starting point:
 
@@ -461,7 +477,9 @@ Current deterministic scenarios include:
 - `program_mix`
 - `bright_dense`
 - `vocal_sibilant`
+- `hf_edge_12k`
 - `transient_push`
+- `hard_panned_hf`
 - `wide_bass`
 
 `--verify-presets` runs a shorter focused sweep across the main 5-band presets:
@@ -483,10 +501,8 @@ Current post-build preset sweep status:
 - `5B News`: `OK`
 - `5B Urban`: `OK`
 - `5B Dance`: `OK`
-- `5B Urban`: `OK`
-- `5B Dance`: `OK`
 
-Current verification is strongest for composite safety and budget behavior. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
+Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, and composite-multiband A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
 
 Exit status:
 

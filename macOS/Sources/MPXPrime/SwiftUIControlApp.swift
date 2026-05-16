@@ -5864,6 +5864,15 @@ struct MPXSpectrumView: View {
             .font(.system(.caption, design: .monospaced).weight(.medium))
             .foregroundStyle(.secondary)
         }
+        // Disable SwiftUI implicit animations on @Published dbBins updates.
+        // Without this, frame-to-frame interpolation queues accumulated
+        // when 30 Hz spectrum updates were interrupted mid-interpolation —
+        // visible as growing lag in the Audio Spectrum / MPX Spectrum
+        // windows after several minutes. Matches the inline spectrum view
+        // which already has this transaction modifier.
+        .transaction { txn in
+            txn.animation = nil
+        }
     }
 
     private func yPosition(forDB db: Float, height: CGFloat) -> CGFloat {

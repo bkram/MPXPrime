@@ -77,14 +77,21 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │        so the limiter peak-controls the +10..12 dB HF-boosted signal
 │        (canonical Optimod / Stereotool placement)
 │
-├──► Pre-encode audio limiter (L/R domain, stereo-linked oversampled)
+├──► Pre-encode audio limiter (L/R domain, stereo-linked oversampled, look-ahead)
 │    └── True-peak limiter on L/R before stereo encoding —
 │        `StereoLinkedOversampledPeakLimiter` uses a max(|L|, |R|)
 │        detector so both channels receive identical gain reduction
-│        (no asymmetric pumping). Optional band-limited residual ceiling
-│        uses the 33-tap / 0.25-cutoff kernel when enabled. Threshold,
+│        (no asymmetric pumping). Default 1.0 ms look-ahead (Phase 1,
+│        delay+detector primitive, US 4,208,548 prior art) so the
+│        gain ramp engages before the peak reaches the gain stage.
+│        Default-on Dolby HF-subband-aware detector (Phase 2, US 5,579,404
+│        / EP 0685130, expired 2013) high-passes the detector at 4 kHz
+│        so look-ahead engages only on HF transients (where pre-emphasis
+│        concentrates peaks), leaving LF punch untouched. Audio path
+│        stays full-band. Optional band-limited residual ceiling uses
+│        the 33-tap / 0.25-cutoff kernel when enabled. Threshold,
 │        release, residual enable, and residual kernel shape live-apply
-│        via `RuntimeConfig`.
+│        via `RuntimeConfig`; look-ahead settings are restart-required.
 │
 
 ├──► Stereo encoder (phase-coherent)
@@ -180,7 +187,7 @@ Within the main audio path, MPX Prime runs:
 15. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor
 16. Stereo-image protection
 17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal)
-18. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically)
+18. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`)
 19. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
 20. Composite clipper (16× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead)
 21. Audio composite bandwidth FIR (linear-phase HF cleanup before pilot/RDS injection)

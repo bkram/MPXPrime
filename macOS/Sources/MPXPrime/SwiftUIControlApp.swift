@@ -5477,20 +5477,11 @@ struct LevelsCardView: View {
                     peakLevel: model.modulationPeakHoldLevel,
                     scale: .modulationKHz(limit: model.config.mpxDeviationKHz)
                 )
-                VerticalMeterStrip(
-                    label: "GR",
-                    valueText: String(format: "%.1f dB", Double(model.compositeClipperGainReductionDBValue)),
-                    level: max(0.0, min(1.0, Double(model.compositeClipperGainReductionDBValue) / 16.0)),
-                    peakLevel: nil,
-                    scale: .gainReductionDB
-                )
-                VerticalMeterStrip(
-                    label: "SAFE",
-                    valueText: String(format: "%.1f dB", Double(model.safetyLimiterGainReductionDBValue)),
-                    level: max(0.0, min(1.0, Double(model.safetyLimiterGainReductionDBValue) / 16.0)),
-                    peakLevel: nil,
-                    scale: .gainReductionDB
-                )
+                // GR + SAFE removed in 0.30 — peak-control gain-reduction
+                // data is already surfaced by the Monitoring tab's Headroom
+                // card (PRE-ENCODE / COMPOSITE / SAFETY GR + BS.412 budget)
+                // and per-stage in the Signal Chain strip. The detached
+                // Levels window is now purely VU-style level metering.
                 Spacer(minLength: 0)
             }
             .frame(height: 340)

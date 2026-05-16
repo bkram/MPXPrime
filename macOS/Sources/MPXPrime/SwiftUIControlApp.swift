@@ -1515,7 +1515,11 @@ final class MPXPrimeViewModel: ObservableObject {
     // 30 Hz which is comfortably smooth for the dedicated detached
     // panels.
     private static let monitoringRefreshHzActive: Double = 30.0
-    private static let monitoringRefreshHzIdle: Double = 5.0
+    // Idle rate (window occluded / app backgrounded / minimized). 20 Hz
+    // keeps VU meters visibly responsive when glancing at the window from
+    // another app while adjusting source levels. Well below the 60 Hz
+    // preemption threshold for audio-thread safety.
+    private static let monitoringRefreshHzIdle: Double = 20.0
     private static let inlineMPXSpectrumRefreshHz: Double = 24.0
     private static let windowMPXSpectrumRefreshHz: Double = 30.0
     private static let windowPreMPXSpectrumRefreshHz: Double = 30.0

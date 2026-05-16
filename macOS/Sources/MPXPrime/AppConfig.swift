@@ -28,6 +28,7 @@ struct AppConfig {
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled, preEncodeThreshold, preEncodeReleaseMS,
     //   preEncodeBandlimitedResidualEnabled/Taps/CutoffFraction,
+    //   preEncodeLookaheadMS,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
@@ -64,7 +65,7 @@ struct AppConfig {
     //   hpfHz, hfTrimDB/Hz,
     //   audioCompositeSoftClipEnabled, audioCompositeSmootherEnabled,
     //   finalMPXSoftClipEnabled,
-    //   RDS physical-layer: rdsLevel (injection kHz), rdsFreq (subcarrier),
+    //   RDS physical-layer: rdsLevel (injection kHz),
     //                       rdsGaussianEnabled/BWHZ/Taps (modulator FIR)
 
     var sampleRate: Double = 192_000.0
@@ -92,7 +93,7 @@ struct AppConfig {
     var hpfHz: Double = 30.0
     var hfTrimDB: Double = 0.0
     var hfTrimHz: Double = 4000.0
-    var programLowpassHz: Double = 16_400.0
+    var programLowpassHz: Double = 16_000.0
     var limitMPX: Bool = true
     var limitThreshold: Double = 0.98
     var limitLookaheadMS: Double = 5.0
@@ -103,6 +104,7 @@ struct AppConfig {
     var preEncodeBandlimitedResidualEnabled: Bool = false
     var preEncodeBandlimitedResidualTapCount: Int = 33
     var preEncodeBandlimitedResidualCutoffFraction: Double = 0.25
+    var preEncodeLookaheadMS: Double = 1.0
     // TX-path encoder bandwidth guard: linear-phase FIR (~1.67 ms latency at
     // 192 kHz, >80 dB stop-band) instead of the default Butterworth (~0.2 ms
     // latency, ~40 dB stop-band). Only active when running in composite
@@ -346,7 +348,6 @@ struct AppConfig {
     var rdsSchedulerAuto: Bool = true
     var rdsSchedulerStandard: Bool = true
     var rdsSchedulerStandardLPS: Bool = true
-    var rdsFreq: Double = 57_000.0
     var rdsGaussianEnabled: Bool = true
     var rdsGaussianBWHZ: Double = 2400.0
     var rdsGaussianTaps: Int = 81
@@ -409,6 +410,10 @@ struct AppConfig {
         cfg.preEncodeBandlimitedResidualCutoffFraction = mpx.double(
             "pre_encode_bandlimited_residual_cutoff_fraction",
             defaultValue: cfg.preEncodeBandlimitedResidualCutoffFraction
+        )
+        cfg.preEncodeLookaheadMS = mpx.double(
+            "pre_encode_lookahead_ms",
+            defaultValue: cfg.preEncodeLookaheadMS
         )
         cfg.encoderFIREnabled = mpx.bool(
             "encoder_fir_enabled", defaultValue: cfg.encoderFIREnabled)
@@ -680,7 +685,6 @@ struct AppConfig {
             "scheduler_standard", defaultValue: cfg.rdsSchedulerStandard)
         cfg.rdsSchedulerStandardLPS = rds.bool(
             "scheduler_standard_lps", defaultValue: cfg.rdsSchedulerStandardLPS)
-        cfg.rdsFreq = rds.double("rds_freq", defaultValue: cfg.rdsFreq)
         cfg.rdsGaussianEnabled = rds.bool(
             "rds_gaussian_enabled", defaultValue: cfg.rdsGaussianEnabled)
         cfg.rdsGaussianBWHZ = rds.double("rds_gaussian_bw_hz", defaultValue: cfg.rdsGaussianBWHZ)
@@ -700,7 +704,7 @@ struct AppConfig {
         finalDriveDB = max(-20.0, min(20.0, finalDriveDB))
 
         // Pilot / sum / diff levels
-        pilotLevel = max(0.0, min(0.15, pilotLevel))
+        pilotLevel = max(0.0, min(0.12, pilotLevel))
         sumLevel = max(0.0, min(2.0, sumLevel))
         diffLevel = max(0.0, min(2.0, diffLevel))
 
@@ -723,7 +727,7 @@ struct AppConfig {
         hpfHz = max(10.0, min(200.0, hpfHz))
         hfTrimDB = max(-12.0, min(0.0, hfTrimDB))
         hfTrimHz = max(500.0, min(12_000.0, hfTrimHz))
-        programLowpassHz = max(8_000.0, min(20_000.0, programLowpassHz))
+        programLowpassHz = max(8_000.0, min(16_000.0, programLowpassHz))
 
         // Limiter
         limitThreshold = max(0.5, min(0.999, limitThreshold))
@@ -732,12 +736,15 @@ struct AppConfig {
         preEncodeReleaseMS = max(10.0, min(200.0, preEncodeReleaseMS))
         preEncodeBandlimitedResidualTapCount = max(5, min(129, preEncodeBandlimitedResidualTapCount | 1))
         preEncodeBandlimitedResidualCutoffFraction = max(0.05, min(0.49, preEncodeBandlimitedResidualCutoffFraction))
+        preEncodeLookaheadMS = max(0.0, min(5.0, preEncodeLookaheadMS))
 
         // MPX deviation
         mpxDeviationKHz = max(25.0, min(100.0, mpxDeviationKHz))
 
-        // Pre-emphasis
-        if ![0, 25, 50, 75].contains(preemphasisUS) {
+        // Pre-emphasis — ITU-R BS.450-4 (50 us EU/ITU) and FCC 73.317
+        // (75 us US/Japan) are the only FM broadcast values; 0 disables
+        // pre-emphasis for already-flat program lines.
+        if ![0, 50, 75].contains(preemphasisUS) {
             preemphasisUS = 50
         }
 
@@ -827,7 +834,10 @@ struct AppConfig {
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
-        bs412WindowSeconds = max(1.0, min(120.0, bs412WindowSeconds))
+        // ITU-R BS.412-9 canonical rolling-average window is ~60 s.
+        // Allow ±30 s of regulator latitude; anything outside this range
+        // stops being BS.412 and becomes a generic fast AGC.
+        bs412WindowSeconds = max(30.0, min(90.0, bs412WindowSeconds))
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
         if compositeClipperCeilingDB <= compositeClipperThresholdDB + 0.2 {
@@ -855,7 +865,6 @@ struct AppConfig {
         rdsLIC = Self.sanitizedHexByte(rdsLIC)
         rdsTZOffset = max(-12.0, min(14.0, rdsTZOffset))
         rdsLevel = max(0.0, min(7.5, rdsLevel))
-        rdsFreq = max(1_000.0, min(120_000.0, rdsFreq))
         rdsGaussianBWHZ = max(600.0, min(6_000.0, rdsGaussianBWHZ))
         rdsGaussianTaps = max(9, min(401, rdsGaussianTaps | 1))
         rdsNowPlayingPollSeconds = max(1.0, min(300.0, rdsNowPlayingPollSeconds))
@@ -893,6 +902,7 @@ struct AppConfig {
             "pre_encode_bandlimited_residual_enabled = \(Self.boolString(preEncodeBandlimitedResidualEnabled))",
             "pre_encode_bandlimited_residual_taps = \(preEncodeBandlimitedResidualTapCount)",
             "pre_encode_bandlimited_residual_cutoff_fraction = \(Self.formatFloat(preEncodeBandlimitedResidualCutoffFraction))",
+            "pre_encode_lookahead_ms = \(Self.formatFloat(preEncodeLookaheadMS))",
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",
@@ -1063,7 +1073,6 @@ struct AppConfig {
             "scheduler_auto = \(Self.boolString(rdsSchedulerAuto))",
             "scheduler_standard = \(Self.boolString(rdsSchedulerStandard))",
             "scheduler_standard_lps = \(Self.boolString(rdsSchedulerStandardLPS))",
-            "rds_freq = \(Self.formatFloat(max(1_000.0, min(120_000.0, rdsFreq))))",
             "rds_gaussian_enabled = \(Self.boolString(rdsGaussianEnabled))",
             "rds_gaussian_bw_hz = \(Self.formatFloat(max(600.0, min(6_000.0, rdsGaussianBWHZ))))",
             "rds_gaussian_taps = \(max(9, min(401, rdsGaussianTaps | 1)))",

@@ -2312,6 +2312,7 @@ final class MPXPrimeViewModel: ObservableObject {
             config.preEncodeAudioLimiterEnabled = defaults.preEncodeAudioLimiterEnabled
             config.preEncodeThreshold = defaults.preEncodeThreshold
             config.preEncodeReleaseMS = defaults.preEncodeReleaseMS
+            config.preEncodeLookaheadMS = defaults.preEncodeLookaheadMS
         case .finalStage:
             config.finalStagePresetID = defaults.finalStagePresetID
             config.finalDriveDB = defaults.finalDriveDB
@@ -2461,7 +2462,6 @@ final class MPXPrimeViewModel: ObservableObject {
             config.rdsLIC = defaults.rdsLIC
         case .carrier:
             config.rdsLevel = defaults.rdsLevel
-            config.rdsFreq = defaults.rdsFreq
             config.rdsGaussianEnabled = defaults.rdsGaussianEnabled
             config.rdsGaussianBWHZ = defaults.rdsGaussianBWHZ
             config.rdsGaussianTaps = defaults.rdsGaussianTaps
@@ -5957,7 +5957,7 @@ private struct ProcessingCoreTab: View {
             DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz")
             DoubleSliderRow(title: "HF Trim", value: model.configBinding(\.hfTrimDB), range: -12...12, format: "%.1f dB")
             DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz")
-            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...17_000, format: "%.0f Hz")
+            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...16_000, format: "%.0f Hz")
         }
         Card(title: "Engine — TX path") {
             Toggle("Encoder Lowpass: linear-phase FIR", isOn: model.configBinding(\.encoderFIREnabled))
@@ -6216,7 +6216,14 @@ private struct ProcessingLimiterTab: View {
             )
             .help("Switches the pre-encode limiter ceiling from the classic tanh soft ceiling to the experimental 0.27 band-limited residual ceiling. Off = old/current chain. On = new patent-style candidate.")
             .disabled(disabled)
-            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Switch off for the old/current tanh ceiling; switch on for the new 0.27 band-limited residual ceiling candidate.")
+            DoubleSliderRow(
+                title: "Look-ahead",
+                value: model.configBinding(\.preEncodeLookaheadMS, runtimeDisposition: .restart),
+                range: 0...5,
+                format: "%.2f ms",
+                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = legacy feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
+            ).disabled(disabled)
+            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Look-ahead is opt-in via the slider above; the band-limited residual toggle is the 0.27 patent-style ceiling candidate.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -6439,8 +6446,8 @@ private struct ProcessingBS412Tab: View {
             let disabled = !model.config.bs412Enabled
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.bs412ThresholdDB, runtimeDisposition: .live), range: -20...0, format: "%.1f dB",
                 tooltip: "MPX average-power ceiling per ITU-R BS.412. Required for EU regulatory compliance (DE, AT, CH, SE, CZ, SI, etc).").disabled(disabled)
-            DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 1...120, format: "%.0f s",
-                tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default.").disabled(disabled)
+            DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 30...90, format: "%.0f s",
+                tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default; values outside ~30-90 s stop being BS.412 and become a generic AGC.").disabled(disabled)
             Text("ITU-R BS.412 rolling average power limiter for European regulatory compliance (DE, AT, CH, SE, CZ, SI). Limits MPX power over a sliding time window.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -6538,23 +6545,20 @@ private struct SystemSettingsSectionContent: View {
                 "Auto Start at Launch",
                 isOn: model.configBinding(\.rdsAutoStart, runtimeDisposition: .none))
 
-            // Mono Mode lives in the sidebar footer (single source of
-            // truth across the whole window). Pilot / Sum / Diff stay
-            // here because they're encoder-structure parameters.
+            // Mono Mode lives in the sidebar footer. Pilot Level is the
+            // only stereo-encoder-structure parameter exposed here.
+            // Sum/diff matrix gains are spec-fixed (M=(L+R)/2, S=(L-R)/2
+            // per ITU-R BS.450 / EN 50067) and not user-configurable;
+            // INI keys `sum_level` / `diff_level` remain for lab/debug use.
+            // Pilot Level range follows ITU-R BS.450-4 / FCC 73.322 (8-10%
+            // deviation); slider permits 0-12% for headroom and 0 = mute.
             DoubleSliderRow(
                 title: "Pilot Level", value: model.configBinding(\.pilotLevel),
-                range: 0...0.2, format: "%.3f")
-            .disabled(model.config.monoMode)
-            DoubleSliderRow(
-                title: "Sum Level", value: model.configBinding(\.sumLevel),
-                range: 0...1.5, format: "%.2f")
-            DoubleSliderRow(
-                title: "Diff Level", value: model.configBinding(\.diffLevel),
-                range: 0...1.5, format: "%.2f")
+                range: 0...0.12, format: "%.3f")
             .disabled(model.config.monoMode)
 
             InlineRestartRequiredNote(
-                text: "Sample rate, block size, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
+                text: "Sample rate, block size, mono mode, pre-emphasis, pilot level, program lowpass, and other encoder-structure changes."
             )
         }
     }
@@ -6882,9 +6886,6 @@ private struct RDSCarrierTab: View {
                 title: "Injection Level",
                 value: model.configBinding(\.rdsLevel),
                 range: 0...7.5, format: "%.2f kHz")
-            DoubleSliderRow(
-                title: "Subcarrier Frequency", value: model.configBinding(\.rdsFreq),
-                range: 40_000...80_000, format: "%.0f Hz")
             Toggle("Gaussian Shaping", isOn: model.configBinding(\.rdsGaussianEnabled))
             DoubleSliderRow(
                 title: "Gaussian BW", value: model.configBinding(\.rdsGaussianBWHZ),
@@ -6892,7 +6893,7 @@ private struct RDSCarrierTab: View {
             IntStepperRow(
                 title: "Gaussian Taps", value: model.oddTapBinding(), range: 9...401,
                 step: 2, format: "%d")
-            Text("Subcarrier physical-layer settings: injection level + frequency + FIR shaping. All require a transport restart to take effect.")
+            Text("Subcarrier physical-layer settings: injection level + FIR shaping. Carrier is fixed at 57 kHz, locked to 3x pilot per EN 50067 Sec 2.1.4. Restart required.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

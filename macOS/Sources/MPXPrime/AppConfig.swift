@@ -28,7 +28,7 @@ struct AppConfig {
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled, preEncodeThreshold, preEncodeReleaseMS,
     //   preEncodeBandlimitedResidualEnabled/Taps/CutoffFraction,
-    //   preEncodeLookaheadMS,
+    //   preEncodeLookaheadMS, preEncodeLookaheadHFOnly, preEncodeLookaheadHFCutoffHz,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
@@ -105,6 +105,8 @@ struct AppConfig {
     var preEncodeBandlimitedResidualTapCount: Int = 33
     var preEncodeBandlimitedResidualCutoffFraction: Double = 0.25
     var preEncodeLookaheadMS: Double = 1.0
+    var preEncodeLookaheadHFOnly: Bool = false
+    var preEncodeLookaheadHFCutoffHz: Double = 4_000.0
     // TX-path encoder bandwidth guard: linear-phase FIR (~1.67 ms latency at
     // 192 kHz, >80 dB stop-band) instead of the default Butterworth (~0.2 ms
     // latency, ~40 dB stop-band). Only active when running in composite
@@ -414,6 +416,14 @@ struct AppConfig {
         cfg.preEncodeLookaheadMS = mpx.double(
             "pre_encode_lookahead_ms",
             defaultValue: cfg.preEncodeLookaheadMS
+        )
+        cfg.preEncodeLookaheadHFOnly = mpx.bool(
+            "pre_encode_lookahead_hf_only",
+            defaultValue: cfg.preEncodeLookaheadHFOnly
+        )
+        cfg.preEncodeLookaheadHFCutoffHz = mpx.double(
+            "pre_encode_lookahead_hf_cutoff_hz",
+            defaultValue: cfg.preEncodeLookaheadHFCutoffHz
         )
         cfg.encoderFIREnabled = mpx.bool(
             "encoder_fir_enabled", defaultValue: cfg.encoderFIREnabled)
@@ -737,6 +747,7 @@ struct AppConfig {
         preEncodeBandlimitedResidualTapCount = max(5, min(129, preEncodeBandlimitedResidualTapCount | 1))
         preEncodeBandlimitedResidualCutoffFraction = max(0.05, min(0.49, preEncodeBandlimitedResidualCutoffFraction))
         preEncodeLookaheadMS = max(0.0, min(5.0, preEncodeLookaheadMS))
+        preEncodeLookaheadHFCutoffHz = max(1_000.0, min(12_000.0, preEncodeLookaheadHFCutoffHz))
 
         // MPX deviation
         mpxDeviationKHz = max(25.0, min(100.0, mpxDeviationKHz))
@@ -903,6 +914,8 @@ struct AppConfig {
             "pre_encode_bandlimited_residual_taps = \(preEncodeBandlimitedResidualTapCount)",
             "pre_encode_bandlimited_residual_cutoff_fraction = \(Self.formatFloat(preEncodeBandlimitedResidualCutoffFraction))",
             "pre_encode_lookahead_ms = \(Self.formatFloat(preEncodeLookaheadMS))",
+            "pre_encode_lookahead_hf_only = \(Self.boolString(preEncodeLookaheadHFOnly))",
+            "pre_encode_lookahead_hf_cutoff_hz = \(Self.formatFloat(preEncodeLookaheadHFCutoffHz))",
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",

@@ -2313,6 +2313,8 @@ final class MPXPrimeViewModel: ObservableObject {
             config.preEncodeThreshold = defaults.preEncodeThreshold
             config.preEncodeReleaseMS = defaults.preEncodeReleaseMS
             config.preEncodeLookaheadMS = defaults.preEncodeLookaheadMS
+            config.preEncodeLookaheadHFOnly = defaults.preEncodeLookaheadHFOnly
+            config.preEncodeLookaheadHFCutoffHz = defaults.preEncodeLookaheadHFCutoffHz
         case .finalStage:
             config.finalStagePresetID = defaults.finalStagePresetID
             config.finalDriveDB = defaults.finalDriveDB
@@ -6223,7 +6225,20 @@ private struct ProcessingLimiterTab: View {
                 format: "%.2f ms",
                 tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = legacy feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
             ).disabled(disabled)
-            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Look-ahead is opt-in via the slider above; the band-limited residual toggle is the 0.27 patent-style ceiling candidate.")
+            Toggle(
+                "HF-Only Look-ahead Detector (Phase 2 / Dolby)",
+                isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)
+            )
+            .help("Phase 2: high-pass the detector path so look-ahead engages only on HF transients (where pre-emphasis concentrates peaks). Audio path stays full-band. LF dynamics / punch are not subject to the look-ahead gain ramp. Patent: US 5,579,404 / EP 0685130 (Dolby, expired 2013). Restart-required.")
+            .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
+            DoubleSliderRow(
+                title: "HF Detector Cutoff",
+                value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
+                range: 1_000...12_000,
+                format: "%.0f Hz",
+                tooltip: "High-pass cutoff for the HF-only look-ahead detector. 4 kHz default matches the Dolby spec where pre-emphasis-induced peaks start dominating. Lower (2-3 kHz) catches more vocal sibilance; higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required."
+            ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
+            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Look-ahead and HF-only detector (Phase 2, Dolby US 5,579,404) are opt-in via the controls above; the band-limited residual toggle is the 0.27 patent-style ceiling candidate.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -284,13 +284,23 @@ struct StereoLinkedOversampledPeakLimiter {
     // before it reaches the gain stage, letting the attack ramp engage
     // ahead of the audio. lookaheadSamples == 0 → bit-identical to the
     // no-lookahead path (cheap regression guard). Prior art: US 4,208,548
-    // (delay+detector primitive, expired ~1997). Subband-aware HF-only
-    // variant per US 5,579,404 (Dolby, expired 2013) is the Phase 2
-    // follow-up — see plan.md.
+    // (delay+detector primitive, expired ~1997).
     private var lookaheadSamples: Int = 0
     private var lDelay: [Float] = []
     private var rDelay: [Float] = []
     private var delayWriteIndex: Int = 0
+
+    // Phase 2: HF-subband-aware look-ahead per US 5,579,404 / EP 0685130
+    // (Dolby, expired 2013). When `lookaheadHFOnly` is true, the detector
+    // path runs through a 2nd-order Butterworth high-pass at ~4 kHz so
+    // futurePeak only fires on HF transients. Audio path stays full-band.
+    // Architecturally clean: pre-emphasis concentrates peaks above ~3 kHz,
+    // so the detector matches the band where the limiter actually fights.
+    // LF dynamics (kick, bass) are not subject to the look-ahead's gain
+    // ramp and retain their punch.
+    private var lookaheadHFOnly: Bool = false
+    private var hfDetectorL = Biquad()
+    private var hfDetectorR = Biquad()
 
     mutating func configure(
         sampleRate: Float,
@@ -299,7 +309,9 @@ struct StereoLinkedOversampledPeakLimiter {
         bandlimitedResidualEnabled: Bool = false,
         residualTapCount: Int = 33,
         residualCutoffFraction: Float = 0.25,
-        lookaheadMS: Float = 0.0
+        lookaheadMS: Float = 0.0,
+        lookaheadHFOnly: Bool = false,
+        lookaheadHFCutoffHz: Float = 4_000.0
     ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
@@ -345,6 +357,16 @@ struct StereoLinkedOversampledPeakLimiter {
             delayWriteIndex = 0
         }
 
+        // Phase 2 detector HP at host rate. Clamp cutoff 1-12 kHz; default
+        // 4 kHz matches the Dolby spec where pre-emphasis-induced peaks
+        // start dominating. Reset filter state on each reconfigure.
+        self.lookaheadHFOnly = lookaheadHFOnly
+        let hfCutoff = clampf(lookaheadHFCutoffHz, 1_000.0, 12_000.0)
+        hfDetectorL.configureHighpass(cutoffHz: hfCutoff, sampleRate: sampleRate)
+        hfDetectorR.configureHighpass(cutoffHz: hfCutoff, sampleRate: sampleRate)
+        hfDetectorL.reset()
+        hfDetectorR.reset()
+
         initialized = false
     }
 
@@ -359,7 +381,17 @@ struct StereoLinkedOversampledPeakLimiter {
         var procR = right
         var futurePeak: Float = 0.0
         if lookaheadSamples > 0, !lDelay.isEmpty {
-            futurePeak = max(fabsf(left), fabsf(right))
+            // Detector input: full-band (Phase 1) or HF-filtered (Phase 2).
+            // HF mode high-passes a COPY of the input through a biquad so
+            // futurePeak only triggers on HF transients (the band where
+            // pre-emphasis concentrates peaks). Audio path stays full-band.
+            if lookaheadHFOnly {
+                let hpL = hfDetectorL.process(left)
+                let hpR = hfDetectorR.process(right)
+                futurePeak = max(fabsf(hpL), fabsf(hpR))
+            } else {
+                futurePeak = max(fabsf(left), fabsf(right))
+            }
             procL = lDelay[delayWriteIndex]
             procR = rDelay[delayWriteIndex]
             lDelay[delayWriteIndex] = left
@@ -507,7 +539,9 @@ struct PreEncodeAudioLimiter {
         bandlimitedResidualEnabled: Bool = false,
         residualTapCount: Int = 33,
         residualCutoffFraction: Float = 0.25,
-        lookaheadMS: Float = 0.0
+        lookaheadMS: Float = 0.0,
+        lookaheadHFOnly: Bool = false,
+        lookaheadHFCutoffHz: Float = 4_000.0
     ) {
         limiter.configure(
             sampleRate: sampleRate,
@@ -516,7 +550,9 @@ struct PreEncodeAudioLimiter {
             bandlimitedResidualEnabled: bandlimitedResidualEnabled,
             residualTapCount: residualTapCount,
             residualCutoffFraction: residualCutoffFraction,
-            lookaheadMS: lookaheadMS
+            lookaheadMS: lookaheadMS,
+            lookaheadHFOnly: lookaheadHFOnly,
+            lookaheadHFCutoffHz: lookaheadHFCutoffHz
         )
         gainReduction = 0.0
     }
@@ -6310,6 +6346,8 @@ final class MPXGenerator {
     private var preEncodeBandlimitedResidualTapCount: Int = 33
     private var preEncodeBandlimitedResidualCutoffFraction: Float = 0.25
     private var preEncodeLookaheadMS: Float = 0.0
+    private var preEncodeLookaheadHFOnly: Bool = false
+    private var preEncodeLookaheadHFCutoffHz: Float = 4_000.0
 
     private var toneStep: Float
     private var tonePhase: Float = 0.0
@@ -6599,6 +6637,8 @@ final class MPXGenerator {
         preEncodeThreshold = clampf(Float(config.preEncodeThreshold), 0.5, 0.999)
         preEncodeReleaseMS = clampf(Float(config.preEncodeReleaseMS), 10.0, 200.0)
         preEncodeLookaheadMS = clampf(Float(config.preEncodeLookaheadMS), 0.0, 5.0)
+        preEncodeLookaheadHFOnly = config.preEncodeLookaheadHFOnly
+        preEncodeLookaheadHFCutoffHz = clampf(Float(config.preEncodeLookaheadHFCutoffHz), 1_000.0, 12_000.0)
         preEncodeAudioLimiter.configure(
             sampleRate: self.sampleRate,
             threshold: preEncodeThreshold,
@@ -6606,7 +6646,9 @@ final class MPXGenerator {
             bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
             residualTapCount: preEncodeBandlimitedResidualTapCount,
             residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
-            lookaheadMS: preEncodeLookaheadMS
+            lookaheadMS: preEncodeLookaheadMS,
+            lookaheadHFOnly: preEncodeLookaheadHFOnly,
+            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
         )
         bs412Limiter.configure(
             sampleRate: self.sampleRate,
@@ -6824,7 +6866,9 @@ final class MPXGenerator {
             bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
             residualTapCount: preEncodeBandlimitedResidualTapCount,
             residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
-            lookaheadMS: preEncodeLookaheadMS
+            lookaheadMS: preEncodeLookaheadMS,
+            lookaheadHFOnly: preEncodeLookaheadHFOnly,
+            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
         )
         bs412Limiter.configure(
             sampleRate: sampleRate,
@@ -6867,11 +6911,12 @@ final class MPXGenerator {
         preEncodeBandlimitedResidualTapCount = max(5, min(129, config.preEncodeBandlimitedResidualTapCount | 1))
         preEncodeBandlimitedResidualCutoffFraction = clampf(config.preEncodeBandlimitedResidualCutoffFraction, 0.05, 0.49)
         if preEncodeLimiterChanged {
-            // Preserve the existing lookahead setting on live-apply
-            // reconfigure. lookahead is restart-only (not in RuntimeConfig),
-            // so the current value held on the audio thread is authoritative;
-            // without passing it explicitly the limiter would reset to the
-            // default 0 ms and silently drop the operator's lookahead.
+            // Preserve the existing lookahead settings on live-apply
+            // reconfigure. lookahead + HF-only + HF cutoff are restart-only
+            // (not in RuntimeConfig), so the current values held on the audio
+            // thread are authoritative; without passing them explicitly the
+            // limiter would reset to defaults and silently drop the
+            // operator's lookahead config.
             preEncodeAudioLimiter.configure(
                 sampleRate: sampleRate,
                 threshold: preEncodeThreshold,
@@ -6879,7 +6924,9 @@ final class MPXGenerator {
                 bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
                 residualTapCount: preEncodeBandlimitedResidualTapCount,
                 residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
-                lookaheadMS: preEncodeLookaheadMS
+                lookaheadMS: preEncodeLookaheadMS,
+                lookaheadHFOnly: preEncodeLookaheadHFOnly,
+                lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
             )
         }
 

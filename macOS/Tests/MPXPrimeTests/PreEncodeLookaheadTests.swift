@@ -191,4 +191,134 @@ struct PreEncodeLookaheadTests {
                 "stereo-link broken at sample \(i): L=\(outL) R=\(outR)")
         }
     }
+
+    // MARK: - Phase 2: HF-subband-aware look-ahead per US 5,579,404
+
+    @Test func phase2HFOnlyDetectorIgnoresLFTransients() {
+        // Sustained 100 Hz sine at amplitude 1.5 — well above the limiter's
+        // threshold. With broadband lookahead, the detector sees the LF
+        // peaks via the un-delayed futurePeak path and engages GR on every
+        // half-cycle. With HF-only detector (HP at 4 kHz), the 100 Hz
+        // content is filtered out of the detector path → futurePeak stays
+        // near zero from the lookahead view; only the OS-rate peak of the
+        // delayed sample can trigger limiting via the normal (no-lookahead)
+        // path, which is the reactive feedback behavior.
+        //
+        // What we measure: with HF-only OFF the limiter sees the LF peak
+        // via the lookahead AND via the OS path, so its GR is steady and
+        // hits its full target. With HF-only ON it can only see the LF
+        // peak via the OS path (no lookahead boost), so the gain ramps
+        // less aggressively at the leading edge of the first peak.
+        let frames = 4_096
+        let f: Float = 100.0
+        var input = [Float](repeating: 0.0, count: frames)
+        for i in 0..<frames {
+            let phase = 2.0 * Float.pi * f * Float(i) / sampleRate
+            input[i] = 1.5 * sinf(phase)
+        }
+
+        // Inspect window: first 0.5 ms of the rising edge of the first
+        // peak. At 100 Hz, the sine reaches 0.9 × peak at ~3 ms (the
+        // first quarter-period is 2.5 ms). Sample peak GR in the window
+        // covering the sine's rise from 0.0 to ~0.85 of its peak — that's
+        // where the broadband detector's "future peak" knowledge gives it
+        // a head start versus the HF-only detector that can only react.
+        let inspectStart = 0
+        let inspectEnd = 480  // 2.5 ms — quarter period of 100 Hz
+
+        func renderPeakGR(hfOnly: Bool) -> Float {
+            var lim = StereoLinkedOversampledPeakLimiter()
+            lim.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
+                          lookaheadMS: 1.0, lookaheadHFOnly: hfOnly,
+                          lookaheadHFCutoffHz: 4_000.0)
+            var peakGR: Float = 0.0
+            for i in 0..<inspectEnd {
+                _ = lim.process(left: input[i], right: input[i])
+                if i >= inspectStart {
+                    peakGR = max(peakGR, lim.gainReductionDB)
+                }
+            }
+            return peakGR
+        }
+
+        let grBroadband = renderPeakGR(hfOnly: false)
+        let grHFOnly = renderPeakGR(hfOnly: true)
+
+        // Broadband sees the LF peak coming via future-peak hint → larger
+        // early GR. HF-only filters the LF out of the detector → less
+        // early GR. The gap should be at least 0.5 dB during the rising
+        // edge.
+        #expect(grHFOnly < grBroadband - 0.5,
+            "HF-only detector should respond less to a 100 Hz transient than broadband; got HF-only=\(grHFOnly) dB vs broadband=\(grBroadband) dB during rising edge")
+    }
+
+    @Test func phase2HFOnlyDetectorStillCatchesHFTransients() {
+        // Inverse of the LF test: a 6 kHz transient burst (well above the
+        // 4 kHz HP cutoff). HF-only should still see this, engage the
+        // look-ahead path, and produce GR comparable to broadband mode.
+        let frames = 4_096
+        let f: Float = 6_000.0  // HF
+        let stepStart = 960
+        var input = [Float](repeating: 0.0, count: frames)
+        for i in stepStart..<frames {
+            let phase = 2.0 * Float.pi * f * Float(i - stepStart) / sampleRate
+            input[i] = 1.5 * sinf(phase)
+        }
+
+        func renderPeakGR(hfOnly: Bool) -> Float {
+            var lim = StereoLinkedOversampledPeakLimiter()
+            lim.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
+                          lookaheadMS: 1.0, lookaheadHFOnly: hfOnly,
+                          lookaheadHFCutoffHz: 4_000.0)
+            var peakGR: Float = 0.0
+            for i in 0..<(stepStart + 384) {  // 2 ms post-onset (catches the full attack ramp)
+                _ = lim.process(left: input[i], right: input[i])
+                if i >= stepStart {
+                    peakGR = max(peakGR, lim.gainReductionDB)
+                }
+            }
+            return peakGR
+        }
+
+        let grBroadband = renderPeakGR(hfOnly: false)
+        let grHFOnly = renderPeakGR(hfOnly: true)
+
+        // HF transient: HF-only mode should still engage, within ~1 dB of
+        // broadband. (HP filter rolls off slightly even above cutoff, so
+        // a tiny gap is expected, but they should be in the same ballpark.)
+        let gap = fabsf(grBroadband - grHFOnly)
+        #expect(gap < 1.5,
+            "HF-only detector should still catch 6 kHz transients; broadband=\(grBroadband) dB vs HF-only=\(grHFOnly) dB (gap \(gap) dB > 1.5 dB tolerance)")
+        #expect(grHFOnly > 1.0,
+            "HF-only should produce >1 dB GR on a 6 kHz transient at threshold 0.85; got \(grHFOnly) dB")
+    }
+
+    @Test func phase2HFOnlyOffMatchesBroadbandLookahead() {
+        // Regression guard: with lookaheadHFOnly = false, behavior must be
+        // bit-identical to Phase 1 (broadband detector).
+        let frames = 2_048
+        var inputL = [Float](repeating: 0.0, count: frames)
+        var inputR = [Float](repeating: 0.0, count: frames)
+        let f: Float = 5_000.0
+        for i in 0..<frames {
+            let phase = 2.0 * Float.pi * f * Float(i) / sampleRate
+            let v = 1.1 * sinf(phase)
+            inputL[i] = v
+            inputR[i] = v
+        }
+
+        var p1 = StereoLinkedOversampledPeakLimiter()
+        var p2default = StereoLinkedOversampledPeakLimiter()
+        p1.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
+                     lookaheadMS: 1.0)
+        p2default.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
+                            lookaheadMS: 1.0, lookaheadHFOnly: false)
+
+        for i in 0..<frames {
+            let (l1, r1) = p1.process(left: inputL[i], right: inputR[i])
+            let (l2, r2) = p2default.process(left: inputL[i], right: inputR[i])
+            #expect(l1 == l2, "Phase 2 with HF-only=false diverges at sample \(i): \(l1) vs \(l2)")
+            #expect(r1 == r2, "Phase 2 with HF-only=false diverges at sample \(i): \(r1) vs \(r2)")
+        }
+    }
 }

@@ -105,7 +105,7 @@ struct AppConfig {
     var preEncodeBandlimitedResidualTapCount: Int = 33
     var preEncodeBandlimitedResidualCutoffFraction: Double = 0.25
     var preEncodeLookaheadMS: Double = 1.0
-    var preEncodeLookaheadHFOnly: Bool = false
+    var preEncodeLookaheadHFOnly: Bool = true
     var preEncodeLookaheadHFCutoffHz: Double = 4_000.0
     // TX-path encoder bandwidth guard: linear-phase FIR (~1.67 ms latency at
     // 192 kHz, >80 dB stop-band) instead of the default Butterworth (~0.2 ms

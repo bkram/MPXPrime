@@ -232,6 +232,29 @@ Relevant config sections:
 - `MPX`: processing, levels, stereo coding, limiter behavior
 - `RDS`: program service, radiotext, flags, carrier settings
 
+### Recommended DSP enablement (current default starting point)
+
+For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:
+
+- **Phase Rotator** — voice waveform symmetrization (f ≈ 200 Hz)
+- **Wideband AGC** — long-term level riding (target ≈ -14 dBLU, range ±10 dB, K-weighted, program-dependent release)
+- **Parametric EQ** — 4-band tonal shaping (shelf + 2 peaks + shelf)
+- **Multiband Compressor** — 3-band LR4 (or 5-band FIR on TX path); the `5_jazz` preset is a balanced starting point for mixed music + speech
+- **Downward Expander** — gates noise floor (threshold ≈ -45 dB, ratio 2.0:1)
+- **MB Limiter** — per-band peak control (threshold ≈ -3 dB, atk 0.5 ms, rel 50 ms)
+- **DC Clipper** — distortion-cancelled audio-band clipping with pilot/RDS protection
+- **Audio Limiter** — pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) — see 0.30 CHANGELOG
+- **Composite Clipper** — 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB)
+
+Recommended **off** by default (enable only when needed):
+
+- **Stereo Widener** — leave off unless the source program needs subtle width enhancement; aggressive widening risks mono-compatibility on FM (see "Stereo image control" below)
+- **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
+- **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
+- **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
+
+This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
+
 ### Setting levels — input, AGC, Final Drive, exciter
 
 Three knobs do most of the work between your source and the exciter. They sit at three different points in the chain and each does a specific job — get them right in order and the chain sounds clean without much fiddling.

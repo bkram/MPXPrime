@@ -116,6 +116,33 @@ struct RDSTextOrchestrationTests {
         }
     }
 
+    /// Confirms that multi-`<` scroll markers (Stereotool speed-N grammar)
+    /// strip cleanly — none of the leading `<` chars should leak into any
+    /// of the generated PS window frames. User reported seeing `<<` in
+    /// the transmitted PS; this test verifies the parser path doesn't
+    /// produce them.
+    @Test func psScrollSpeed2StripsAllAngleBrackets() {
+        let out = BasicRDSCoder.parseTimedSequence(
+            "<<ALPHA RADIO", width: 8, uppercase: true, center: false,
+            allowScroll: true)
+        #expect(out.count > 1, "expected multiple scroll-window frames")
+        for frame in out {
+            #expect(!frame.text.contains("<"),
+                "frame `\(frame.text)` unexpectedly contains '<' marker")
+        }
+    }
+
+    @Test func psScrollSpeed3StripsAllAngleBrackets() {
+        let out = BasicRDSCoder.parseTimedSequence(
+            "<<<BETA RADIO", width: 8, uppercase: true, center: false,
+            allowScroll: true)
+        #expect(out.count > 1)
+        for frame in out {
+            #expect(!frame.text.contains("<"),
+                "frame `\(frame.text)` unexpectedly contains '<' marker (speed 3)")
+        }
+    }
+
     @Test func leadingSlashWithTrailingEmptySegment() {
         // Trailing `/2s:` with no body emits a blank-for-2s frame —
         // intentional behaviour (operator can insert a deliberate pause)

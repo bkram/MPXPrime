@@ -84,13 +84,17 @@ struct RDSTextOrchestrationTests {
     /// up as PS text. Fixed to recognise any slash-separated part that
     /// starts with a timing prefix.
     @Test func leadingSlashSeparatorStereotoolCompatibility() {
+        // Stereotool RDS-text grammar accepts a leading '/' for visual
+        // symmetry with inter-segment separators. Fictional content;
+        // mirrors the typical decorated PS pattern with `*` accents and
+        // a long-then-short segment to exercise chunk splitting.
         // Note: segments longer than `width` get split into multiple
-        // chunks, each carrying the parent segment's duration. The
-        // 11-char " * RADIO  *" produces multiple frames; we just check
-        // that the three expected substrings all appear somewhere and
-        // that the parser doesn't treat the input as plain literal text.
+        // chunks, each carrying the parent segment's duration. We check
+        // that all expected substrings appear somewhere in the output
+        // and that the parser doesn't treat the input as plain literal
+        // text.
         let out = BasicRDSCoder.parseTimedSequence(
-            "/2s:* YOLO * /2s: * RADIO  */2s: !!!!!",
+            "/2s:* ALPHA * /2s: * BETA RADIO */2s: HELLO!",
             width: 8, uppercase: false, center: false)
         #expect(out.count >= 3, "expected at least three timed frames, got \(out.count)")
         // All frames are 2-second segments (no plain-literal fallback
@@ -101,9 +105,9 @@ struct RDSTextOrchestrationTests {
         }
         // All three text fragments must appear in the output sequence.
         let joined = out.map(\.text).joined()
-        #expect(joined.contains("YOLO"), "expected YOLO in output")
-        #expect(joined.contains("RADIO"), "expected RADIO in output")
-        #expect(joined.contains("!"), "expected ! in output")
+        #expect(joined.contains("ALPHA"), "expected ALPHA in output")
+        #expect(joined.contains("BETA"), "expected BETA in output")
+        #expect(joined.contains("HELLO"), "expected HELLO in output")
         // No frame should contain the literal "2s:" marker (regression
         // guard against the old "fell to plain literal" path).
         for frame in out {

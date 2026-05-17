@@ -2090,6 +2090,66 @@ final class MPXPrimeViewModel: ObservableObject {
         applyLiveRDSConfigIfRunning()
     }
 
+    /// Apply a top-level "Station Format" profile. Atomic across the four
+    /// per-stage preset systems (multiband / final-stage / PrimeBass /
+    /// stereo widener) plus composite-clipper threshold/ceiling and final
+    /// drive. Each per-stage apply call already routes through saveConfig
+    /// + applyLiveRuntimeConfigIfRunning, so the chain is fully reconciled
+    /// when this method returns.
+    ///
+    /// Per-stage knobs remain editable after a profile is applied; the
+    /// stored `formatProfileID` is a cosmetic label (no "dirty" / modified
+    /// indicator in v1 — the operator can re-pick the profile to restore
+    /// its defaults).
+    func applyFormatProfile(_ id: String) {
+        guard let profile = Self.formatProfile(forID: id) else {
+            statusText = "Unknown format profile: \(id)"
+            return
+        }
+        publishConfigChange()
+        config.formatProfileID = id
+
+        applyMultibandPreset(id: profile.multibandPresetID, intensity: profile.multibandIntensity)
+        applyFinalStagePreset(id: profile.finalStagePresetID)
+
+        config.primeBassEnabled = profile.primeBassEnabled
+        if profile.primeBassEnabled {
+            applyPrimeBassPreset(id: profile.primeBassPresetID)
+        } else {
+            // Still record the per-stage preset ID so toggling PrimeBass
+            // back on uses the format-appropriate flavour.
+            config.primeBassPresetID = profile.primeBassPresetID
+        }
+
+        applyWidenerPreset(id: profile.widenerPresetID)
+
+        config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
+        config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
+        config.finalDriveDB = profile.finalDriveDB
+
+        saveConfig(restartRequired: false)
+        applyLiveRuntimeConfigIfRunning()
+        statusText =
+            isRunning
+            ? "Loaded format profile \(profile.title) live."
+            : "Loaded format profile \(profile.title)."
+    }
+
+    func formatProfileBinding() -> Binding<String> {
+        Binding(
+            get: { self.config.formatProfileID },
+            set: { self.applyFormatProfile($0) }
+        )
+    }
+
+    /// One-line description of the currently selected format profile,
+    /// or a fallback string if the stored ID doesn't match any known
+    /// profile (operator typed a custom value into INI).
+    var currentFormatProfileSummary: String {
+        Self.formatProfile(forID: config.formatProfileID)?.summary
+            ?? "Custom (no matching format profile)."
+    }
+
     func applyPrimeBassPreset(id: String) {
         guard let preset = Self.primeBassPresets.first(where: { $0.id == id }) else { return }
         publishConfigChange()
@@ -3816,6 +3876,153 @@ final class MPXPrimeViewModel: ObservableObject {
             preEncodeAudioLimiterEnabled: true
         ),
     ]
+
+    // MARK: - Format Profiles (top-level "Station Format" selector)
+
+    /// A `FormatProfile` is a top-level "Station Format" bundle that
+    /// atomically wires multiband / final-stage / PrimeBass / stereo
+    /// widener / composite-clipper settings to a coherent target for one
+    /// programming format. The operator picks once; downstream stages all
+    /// receive matching settings. Per-stage knobs remain editable; the
+    /// profile selection stays as a cosmetic label until the operator
+    /// picks a different one.
+    ///
+    /// All `*PresetID` fields reference existing per-stage preset IDs —
+    /// the profile system is a wrapper over the existing per-stage
+    /// preset infrastructure, not a parallel one.
+    struct FormatProfile: Identifiable {
+        let id: String
+        let title: String
+        let summary: String
+        let multibandPresetID: String
+        let multibandIntensity: MultibandPresetIntensity
+        let finalStagePresetID: String
+        let primeBassEnabled: Bool
+        let primeBassPresetID: String      // ignored when primeBassEnabled == false
+        let widenerPresetID: String
+        let compositeClipperThresholdDB: Double
+        let compositeClipperCeilingDB: Double
+        let finalDriveDB: Double
+    }
+
+    static let formatProfiles: [FormatProfile] = [
+        FormatProfile(
+            id: "community_radio",
+            title: "Community Radio",
+            summary: "Conservative LPFM / community-radio default — clean output, low loudness, broad source compatibility.",
+            multibandPresetID: "5_ac",
+            multibandIntensity: .light,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: false,
+            primeBassPresetID: "ac",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 4.0
+        ),
+        FormatProfile(
+            id: "pop_ac",
+            title: "Pop / Adult Contemporary",
+            summary: "Mainstream music — balanced multiband, gentle PrimeBass, open widener, moderate drive.",
+            multibandPresetID: "5_ac",
+            multibandIntensity: .normal,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: true,
+            primeBassPresetID: "ac",
+            widenerPresetID: "open_music",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 6.0
+        ),
+        FormatProfile(
+            id: "chr_top40",
+            title: "CHR / Top 40",
+            summary: "Modern hits — bright multiband, hot drive, wide stereo image, competitive loudness.",
+            multibandPresetID: "5_chr",
+            multibandIntensity: .normal,
+            finalStagePresetID: "chr",
+            primeBassEnabled: true,
+            primeBassPresetID: "chr",
+            widenerPresetID: "wide_chr",
+            compositeClipperThresholdDB: -0.8,
+            compositeClipperCeilingDB: -0.2,
+            finalDriveDB: 8.0
+        ),
+        FormatProfile(
+            id: "rock",
+            title: "Rock",
+            summary: "Punchy multiband, rock-tuned PrimeBass, open widener — preserves transient impact.",
+            multibandPresetID: "5_rock",
+            multibandIntensity: .normal,
+            finalStagePresetID: "punchy",
+            primeBassEnabled: true,
+            primeBassPresetID: "rock",
+            widenerPresetID: "open_music",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 7.0
+        ),
+        FormatProfile(
+            id: "edm_dance",
+            title: "EDM / Dance",
+            summary: "Heavy multiband, hot drive, deep bass, wide image — peak loudness for dance formats.",
+            multibandPresetID: "5_dance",
+            multibandIntensity: .heavy,
+            finalStagePresetID: "chr",
+            primeBassEnabled: true,
+            primeBassPresetID: "chr",
+            widenerPresetID: "wide_chr",
+            compositeClipperThresholdDB: -0.7,
+            compositeClipperCeilingDB: -0.2,
+            finalDriveDB: 9.0
+        ),
+        FormatProfile(
+            id: "urban_hiphop",
+            title: "Urban / Hip-Hop",
+            summary: "Deep low end, urban-tuned PrimeBass, hot drive — bass-forward urban contemporary.",
+            multibandPresetID: "5_urban",
+            multibandIntensity: .normal,
+            finalStagePresetID: "chr",
+            primeBassEnabled: true,
+            primeBassPresetID: "urban",
+            widenerPresetID: "open_music",
+            compositeClipperThresholdDB: -0.8,
+            compositeClipperCeilingDB: -0.2,
+            finalDriveDB: 8.0
+        ),
+        FormatProfile(
+            id: "jazz_classical",
+            title: "Jazz / Classical",
+            summary: "Dynamic-preserving — light multiband, no PrimeBass, safe widener, conservative drive.",
+            multibandPresetID: "5_classic",
+            multibandIntensity: .light,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: false,
+            primeBassPresetID: "ac",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.2,
+            compositeClipperCeilingDB: -0.4,
+            finalDriveDB: 3.0
+        ),
+        FormatProfile(
+            id: "news_talk",
+            title: "News / Talk",
+            summary: "Speech-optimized multiband + final-stage, no PrimeBass, safe widener, low drive.",
+            multibandPresetID: "5_talk",
+            multibandIntensity: .light,
+            finalStagePresetID: "speech",
+            primeBassEnabled: false,
+            primeBassPresetID: "talk",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 4.5
+        ),
+    ]
+
+    static func formatProfile(forID id: String) -> FormatProfile? {
+        formatProfiles.first(where: { $0.id == id })
+    }
 
     private static func ptyName(for pty: Int) -> String {
         if ptyNames.indices.contains(pty) {

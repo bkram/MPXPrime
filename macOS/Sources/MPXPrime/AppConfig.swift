@@ -89,6 +89,13 @@ struct AppConfig {
     var outputGainDB: Double = 0.0
     var finalDriveDB: Double = 6.0
     var finalStagePresetID: String = "balanced"
+    // Top-level "Station Format" profile that atomically applies a coherent
+    // bundle of multiband / final-stage / PrimeBass / widener / composite-
+    // clipper settings per music format (Pop, Rock, CHR, EDM, Urban,
+    // Jazz/Classical, News/Talk, Community Radio). Cosmetic label only —
+    // the actual chain state is determined by the individual per-stage IDs
+    // set when the profile is applied. INI key: `format_profile_id`.
+    var formatProfileID: String = "community_radio"
     var preemphasisUS: Int = 50
     var hpfHz: Double = 30.0
     var hfTrimDB: Double = 0.0
@@ -385,6 +392,7 @@ struct AppConfig {
         cfg.outputGainDB = mpx.double("output_gain_db", defaultValue: cfg.outputGainDB)
         cfg.finalDriveDB = mpx.double("final_drive_db", defaultValue: cfg.finalDriveDB)
         cfg.finalStagePresetID = mpx.string("final_stage_preset_id", defaultValue: cfg.finalStagePresetID)
+        cfg.formatProfileID = mpx.string("format_profile_id", defaultValue: cfg.formatProfileID)
         cfg.preemphasisUS = mpx.int("preemphasis_us", defaultValue: cfg.preemphasisUS)
         cfg.hpfHz = mpx.double("hpf_hz", defaultValue: cfg.hpfHz)
         cfg.hfTrimDB = mpx.double("hf_trim_db", defaultValue: cfg.hfTrimDB)
@@ -900,6 +908,7 @@ struct AppConfig {
             "output_gain_db = \(Self.formatFloat(outputGainDB))",
             "final_drive_db = \(Self.formatFloat(finalDriveDB))",
             "final_stage_preset_id = \(finalStagePresetID)",
+            "format_profile_id = \(formatProfileID)",
             "hpf_hz = \(Self.formatFloat(hpfHz))",
             "hf_trim_db = \(Self.formatFloat(hfTrimDB))",
             "hf_trim_hz = \(Self.formatFloat(hfTrimHz))",

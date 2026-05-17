@@ -232,6 +232,23 @@ Relevant config sections:
 - `MPX`: processing, levels, stereo coding, limiter behavior
 - `RDS`: program service, radiotext, flags, carrier settings
 
+### Format Profiles (Station Format selector)
+
+For one-click "make this sound right for my format", MPX Prime ships with eight atomic Format Profiles, accessible from the picker at the top of **Processing → Overview**. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate.
+
+| Profile | Multiband | Intensity | Final Stage | PrimeBass | Widener | Clipper drive | Use case |
+|---|---|---|---|---|---|---|---|
+| **Community Radio** (default) | `5_ac` | light | `balanced` | off | `safe_fm` | +4 dB | Conservative LPFM / community radio; broad source compatibility |
+| **Pop / Adult Contemporary** | `5_ac` | normal | `balanced` | `ac` (on) | `open_music` | +6 dB | Mainstream music — balanced, gentle bass enhancement |
+| **CHR / Top 40** | `5_chr` | normal | `chr` | `chr` (on) | `wide_chr` | +8 dB | Modern hits — bright, hot, wide stereo |
+| **Rock** | `5_rock` | normal | `punchy` | `rock` (on) | `open_music` | +7 dB | Punchy multiband preserves rock transients |
+| **EDM / Dance** | `5_dance` | heavy | `chr` | `chr` (on) | `wide_chr` | +9 dB | Peak loudness, deep bass, wide image |
+| **Urban / Hip-Hop** | `5_urban` | normal | `chr` | `urban` (on) | `open_music` | +8 dB | Deep low end, urban-tuned PrimeBass |
+| **Jazz / Classical** | `5_classic` | light | `balanced` | off | `safe_fm` | +3 dB | Dynamic-preserving, no harmonic enhancement |
+| **News / Talk** | `5_talk` | light | `speech` | off | `safe_fm` | +4.5 dB | Speech-optimized multiband + final stage |
+
+Pick once, tune as needed. The selected profile is stored as `format_profile_id` in the INI; switching profiles overwrites the per-stage settings to the new format's defaults.
+
 ### Recommended DSP enablement (current default starting point)
 
 For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:

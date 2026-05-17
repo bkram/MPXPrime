@@ -31,12 +31,57 @@ struct ProcessingOverviewGrid: View {
 
     var body: some View {
         if embedded {
-            grid
-        } else {
-            ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                formatProfileCard
                 grid
             }
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    formatProfileCard
+                    grid
+                }
+            }
         }
+    }
+
+    /// Top-level "Station Format" profile picker. Atomic apply across
+    /// multiband / final-stage / PrimeBass / stereo widener / composite
+    /// clipper — one-click "make this sound right for my format". Per-
+    /// stage knobs stay editable after; the picker selection is a
+    /// cosmetic label.
+    @ViewBuilder
+    private var formatProfileCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Format Profile")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            Picker("Station Format", selection: model.formatProfileBinding()) {
+                ForEach(MPXPrimeViewModel.formatProfiles) { profile in
+                    Text(profile.title).tag(profile.id)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            Text(model.currentFormatProfileSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Picking a profile overwrites Multiband, Final Stage, PrimeBass, Stereo Widener, and Composite Clipper settings. Individual stage knobs stay editable after.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
     }
 
     @ViewBuilder

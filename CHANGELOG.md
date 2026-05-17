@@ -9,6 +9,31 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30 — 2026-05-17
+
+### UI — Format Profiles (atomic "Station Format" selector)
+
+Top-of-Processing-Overview Format Profile picker that atomically applies a coherent bundle of multiband + final-stage + PrimeBass + stereo widener + composite-clipper settings per programming format. One-click "make this sound right for my format" — operator picks the format, downstream stages all receive matching settings. Per-stage knobs remain editable after; the profile is a cosmetic label that stays selected until the operator picks a different one.
+
+Eight format profiles ship:
+- **Community Radio** (default) — `5_ac` light + `balanced` + no PrimeBass + `safe_fm` + +4 dB drive
+- **Pop / Adult Contemporary** — `5_ac` normal + `balanced` + PrimeBass `ac` + `open_music` + +6 dB
+- **CHR / Top 40** — `5_chr` normal + `chr` + PrimeBass `chr` + `wide_chr` + +8 dB
+- **Rock** — `5_rock` normal + `punchy` + PrimeBass `rock` + `open_music` + +7 dB
+- **EDM / Dance** — `5_dance` heavy + `chr` + PrimeBass `chr` + `wide_chr` + +9 dB
+- **Urban / Hip-Hop** — `5_urban` normal + `chr` + PrimeBass `urban` + `open_music` + +8 dB
+- **Jazz / Classical** — `5_classic` light + `balanced` + no PrimeBass + `safe_fm` + +3 dB
+- **News / Talk** — `5_talk` light + `speech` + no PrimeBass + `safe_fm` + +4.5 dB
+
+The "Community Radio" default produces a chain state equivalent to the shipping defaults (regression-guarded by `defaultProfileMatchesShippingDefaults` test) so the new default is a rename, not a behavioural change at first install. Closes "Next up #3" in plan.md (open since 0.26). All eight profiles reuse the existing per-stage preset IDs — no new multiband / final-stage / PrimeBass / widener entries.
+
+New surface:
+- `MPXPrimeViewModel.FormatProfile` struct + `formatProfiles` static catalogue + `applyFormatProfile(_:)` + `formatProfileBinding()` + `currentFormatProfileSummary`
+- `AppConfig.formatProfileID` (INI key `format_profile_id`, default `community_radio`)
+- `ProcessingOverviewGrid` picker card above the existing stage grid
+
+11 new tests in `FormatProfileTests`: catalogue uniqueness, all referenced per-stage IDs exist, atomic apply for `pop_ac` / `edm_dance` / `news_talk`, default profile matches shipping defaults, unknown ID is a no-op, INI round-trip, summary helper. 344 total tests pass (was 333).
+
 ## 0.30 — 2026-05-16
 
 ### DSP — pre-encode L/R limiter look-ahead (Phase 1 + Phase 2 both default-on)

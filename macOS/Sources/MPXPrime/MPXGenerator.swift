@@ -5070,11 +5070,18 @@ final class BasicRDSCoder {
             }
         }
 
-        let startsTimed = RDSTextParser.startsWithTimingPrefix(stripped)
+        // Split on '/' separators once. A leading '/' (operator wrote
+        // "/2s:A/2s:B" for symmetry with the inter-segment separators)
+        // produces an empty first part which is filtered out — we still
+        // recognise the input as a timed sequence as long as any
+        // non-empty part starts with a timing prefix.
+        let slashParts = RDSTextParser.splitTopLevel(stripped)
+            .filter { !$0.isEmpty }
+        let startsTimed =
+            RDSTextParser.startsWithTimingPrefix(stripped)
+            || slashParts.contains { RDSTextParser.startsWithTimingPrefix($0) }
 
         if startsTimed {
-            let slashParts = RDSTextParser.splitTopLevel(stripped)
-                .filter { !$0.isEmpty }
             if slashParts.count > 1 {
                 for part in slashParts {
                     let (timing, body) = RDSTextParser.parseTimingPrefix(

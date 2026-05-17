@@ -76,6 +76,54 @@ struct RDSTextOrchestrationTests {
         #expect(out[1].text.hasPrefix("Second"))
     }
 
+    /// Stereotool-style RDS text input uses a leading '/' separator
+    /// for visual symmetry with the inter-segment separators:
+    /// `/2s:A/2s:B/2s:C`. The old parser checked `startsWithTimingPrefix`
+    /// on the full string and rejected leading-'/' inputs, treating the
+    /// whole thing as a single literal body so the `/Ns:` markers showed
+    /// up as PS text. Fixed to recognise any slash-separated part that
+    /// starts with a timing prefix.
+    @Test func leadingSlashSeparatorStereotoolCompatibility() {
+        // Note: segments longer than `width` get split into multiple
+        // chunks, each carrying the parent segment's duration. The
+        // 11-char " * RADIO  *" produces multiple frames; we just check
+        // that the three expected substrings all appear somewhere and
+        // that the parser doesn't treat the input as plain literal text.
+        let out = BasicRDSCoder.parseTimedSequence(
+            "/2s:* YOLO * /2s: * RADIO  */2s: !!!!!",
+            width: 8, uppercase: false, center: false)
+        #expect(out.count >= 3, "expected at least three timed frames, got \(out.count)")
+        // All frames are 2-second segments (no plain-literal fallback
+        // would produce 2-second timings — they default to 10s holds).
+        for frame in out {
+            #expect(abs(frame.duration - 2.0) < 1e-6,
+                "frame `\(frame.text)` had duration \(frame.duration), expected 2.0")
+        }
+        // All three text fragments must appear in the output sequence.
+        let joined = out.map(\.text).joined()
+        #expect(joined.contains("YOLO"), "expected YOLO in output")
+        #expect(joined.contains("RADIO"), "expected RADIO in output")
+        #expect(joined.contains("!"), "expected ! in output")
+        // No frame should contain the literal "2s:" marker (regression
+        // guard against the old "fell to plain literal" path).
+        for frame in out {
+            #expect(!frame.text.contains("2s:"),
+                "frame `\(frame.text)` should not contain literal 2s: marker")
+        }
+    }
+
+    @Test func leadingSlashWithTrailingEmptySegment() {
+        // Trailing `/2s:` with no body emits a blank-for-2s frame —
+        // intentional behaviour (operator can insert a deliberate pause)
+        // and the parser must not crash or skip the prior segments.
+        let out = BasicRDSCoder.parseTimedSequence(
+            "/2s:A/2s:B/2s:",
+            width: 8, uppercase: false, center: false)
+        #expect(out.count >= 2)
+        #expect(out[0].text.hasPrefix("A"))
+        #expect(out[1].text.hasPrefix("B"))
+    }
+
     // MARK: - Transmits timing
 
     @Test func singleTransmitsSegment() {

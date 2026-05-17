@@ -1970,6 +1970,37 @@ final class MPXPrimeViewModel: ObservableObject {
         )
     }
 
+    /// RDS injection level expressed as % of total FM deviation. Industry
+    /// convention is to talk about RDS as "4 %", "5 %" etc. (Inovonics,
+    /// Audemat, DEVA, BW Broadcast displays all use %). The INI key
+    /// `rds_level` stays in kHz per EN 50067 / IEC 62106-2 so existing
+    /// configs are back-compat; the GUI just shows the user-friendly unit.
+    /// Mapping: % = kHz / 75 * 100 (75 kHz is total FM deviation).
+    func rdsLevelPercentBinding() -> Binding<Double> {
+        Binding(
+            get: { self.config.rdsLevel / 75.0 * 100.0 },
+            set: { newPercent in
+                let kHz = max(0.0, min(7.5, newPercent / 100.0 * 75.0))
+                self.setConfigValue(\.rdsLevel, kHz, runtimeDisposition: .restart)
+            }
+        )
+    }
+
+    /// Pilot tone level expressed as % of total FM deviation. ITU-R
+    /// BS.450 / FCC §73.322 / EN 50067 all specify 8-10 % deviation;
+    /// pro processors display this in %. The INI key `pilot_level` stays
+    /// as the linear amplitude fraction (0.0..0.12) for back-compat with
+    /// the underlying audio math. Mapping: % = fraction * 100.
+    func pilotLevelPercentBinding() -> Binding<Double> {
+        Binding(
+            get: { self.config.pilotLevel * 100.0 },
+            set: { newPercent in
+                let fraction = max(0.0, min(0.12, newPercent / 100.0))
+                self.setConfigValue(\.pilotLevel, fraction, runtimeDisposition: .restart)
+            }
+        )
+    }
+
     func oddTapBinding() -> Binding<Int> {
         Binding(
             get: { self.config.rdsGaussianTaps },
@@ -6774,8 +6805,8 @@ private struct SystemSettingsSectionContent: View {
             // Pilot Level range follows ITU-R BS.450-4 / FCC 73.322 (8-10%
             // deviation); slider permits 0-12% for headroom and 0 = mute.
             DoubleSliderRow(
-                title: "Pilot Level", value: model.configBinding(\.pilotLevel),
-                range: 0...0.12, format: "%.3f")
+                title: "Pilot Level", value: model.pilotLevelPercentBinding(),
+                range: 0...12, format: "%.1f %%")
             .disabled(model.config.monoMode)
 
             InlineRestartRequiredNote(
@@ -7105,8 +7136,8 @@ private struct RDSCarrierTab: View {
         Card(title: "Subcarrier") {
             DoubleSliderRow(
                 title: "Injection Level",
-                value: model.configBinding(\.rdsLevel),
-                range: 0...7.5, format: "%.2f kHz")
+                value: model.rdsLevelPercentBinding(),
+                range: 0...10, format: "%.1f %%")
             Toggle("Gaussian Shaping", isOn: model.configBinding(\.rdsGaussianEnabled))
             DoubleSliderRow(
                 title: "Gaussian BW", value: model.configBinding(\.rdsGaussianBWHZ),

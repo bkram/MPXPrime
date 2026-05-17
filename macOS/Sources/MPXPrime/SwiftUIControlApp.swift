@@ -7138,14 +7138,7 @@ private struct RDSCarrierTab: View {
                 title: "Injection Level",
                 value: model.rdsLevelPercentBinding(),
                 range: 0...10, format: "%.1f %%")
-            Toggle("Gaussian Shaping", isOn: model.configBinding(\.rdsGaussianEnabled))
-            DoubleSliderRow(
-                title: "Gaussian BW", value: model.configBinding(\.rdsGaussianBWHZ),
-                range: 600...6_000, format: "%.0f Hz")
-            IntStepperRow(
-                title: "Gaussian Taps", value: model.oddTapBinding(), range: 9...401,
-                step: 2, format: "%d")
-            Text("Subcarrier physical-layer settings: injection level + FIR shaping. Carrier is fixed at 57 kHz, locked to 3x pilot per EN 50067 Sec 2.1.4. Restart required.")
+            Text("Subcarrier physical-layer settings: injection level only. Carrier is fixed at 57 kHz, locked to 3x pilot per EN 50067 Sec 2.1.4. Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`. Restart required.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

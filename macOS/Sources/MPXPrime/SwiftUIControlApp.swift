@@ -5906,6 +5906,202 @@ struct MPXSpectrumView: View {
     }
 }
 
+/// Bar-style 1/3-octave RTA visualization. Used for the Audio Spectrum
+/// window — more representative of how pro broadcast processors
+/// (Optimod / Omnia / Stereotool) show audio program spectrum than a
+/// line/area FFT plot. Same underlying `dbBins` source as
+/// `MPXSpectrumView`; this view just remaps to ISO 1/3-octave bands and
+/// renders each as a gradient-filled bar.
+struct AudioBarSpectrumView: View {
+    let dbBins: [Float]
+    let maxHz: Double
+    let nyquistHz: Double
+
+    private let dbMin: Float = -100.0
+    private let dbMax: Float = 0.0
+
+    /// ISO 1/3-octave center frequencies (Hz). Covers the FM audio
+    /// program band; bands above the actual display Nyquist are filtered
+    /// out at render time.
+    private static let isoCenters: [Double] = [
+        31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250,
+        315, 400, 500, 630, 800, 1_000, 1_250, 1_600, 2_000, 2_500,
+        3_150, 4_000, 5_000, 6_300, 8_000, 10_000, 12_500, 16_000,
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Canvas { context, size in
+                let rect = CGRect(origin: .zero, size: size)
+                context.fill(
+                    Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius),
+                    with: .color(.black.opacity(0.30))
+                )
+                let leftAxisWidth: CGFloat = 42
+                let rightAxisWidth: CGFloat = 42
+                let topInset: CGFloat = 8
+                let bottomInset: CGFloat = 20
+                let plotRect = CGRect(
+                    x: leftAxisWidth,
+                    y: topInset,
+                    width: max(10, size.width - leftAxisWidth - rightAxisWidth),
+                    height: max(10, size.height - topInset - bottomInset)
+                )
+
+                // dB grid + border.
+                var grid = Path()
+                for db in stride(from: -100, through: 0, by: 10) {
+                    let y = yPosition(forDB: Float(db), in: plotRect)
+                    grid.move(to: CGPoint(x: plotRect.minX, y: y))
+                    grid.addLine(to: CGPoint(x: plotRect.maxX, y: y))
+                }
+                context.stroke(grid, with: .color(.white.opacity(0.18)), lineWidth: 0.9)
+                context.stroke(
+                    Path(plotRect),
+                    with: .color(.white.opacity(0.40)),
+                    lineWidth: 1.0
+                )
+
+                // dB axis labels (both sides).
+                for db in stride(from: -100, through: 0, by: 10) {
+                    let y = yPosition(forDB: Float(db), in: plotRect)
+                    let label = db == 0 ? "0 dB" : "\(db) dB"
+                    let text = Text(label)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    context.draw(text, at: CGPoint(x: 18, y: y))
+                    context.draw(text, at: CGPoint(x: size.width - 18, y: y))
+                }
+
+                // Filter ISO bands by display Nyquist so we don't draw
+                // bars whose center is beyond the actual analyzed range.
+                let displayMaxHz = max(1_000.0, maxHz)
+                let nyquist = nyquistHz > 0 ? min(nyquistHz, displayMaxHz) : displayMaxHz
+                let usableCenters = Self.isoCenters.filter { $0 <= nyquist * 0.99 }
+                guard !usableCenters.isEmpty, dbBins.count > 1 else { return }
+
+                let barCount = usableCenters.count
+                let interBarGap: CGFloat = max(1.0, plotRect.width * 0.004)
+                let barWidth = max(
+                    2.0,
+                    (plotRect.width - interBarGap * CGFloat(barCount - 1)) / CGFloat(barCount)
+                )
+
+                // For each ISO band, pull max of FFT bins falling in
+                // [center * 2^(-1/6), center * 2^(1/6)] — standard
+                // 1/3-octave window.
+                let binCount = dbBins.count
+                let oneSixthOctave = pow(2.0, 1.0 / 6.0)
+
+                let gradient = Gradient(colors: [
+                    Color.red.opacity(0.88),
+                    Color.yellow.opacity(0.80),
+                    Color.green.opacity(0.74),
+                    Color.cyan.opacity(0.62),
+                    Color.blue.opacity(0.55),
+                ])
+
+                for (i, center) in usableCenters.enumerated() {
+                    let lowHz = center / oneSixthOctave
+                    let highHz = center * oneSixthOctave
+                    let lowBin = max(
+                        0,
+                        min(binCount - 1, Int((lowHz / displayMaxHz) * Double(binCount - 1)))
+                    )
+                    let highBin = max(
+                        lowBin,
+                        min(
+                            binCount - 1,
+                            Int(ceil((highHz / displayMaxHz) * Double(binCount - 1)))
+                        )
+                    )
+                    var maxDB: Float = -100.0
+                    for b in lowBin...highBin {
+                        if dbBins[b] > maxDB { maxDB = dbBins[b] }
+                    }
+                    // Floor for visual readability — a 1-pixel sliver at
+                    // -100 is invisible; cap at -98 so very-quiet bands
+                    // still show a faint base.
+                    maxDB = max(-98.0, maxDB)
+
+                    let xLeft = plotRect.minX + CGFloat(i) * (barWidth + interBarGap)
+                    let yTop = yPosition(forDB: maxDB, in: plotRect)
+                    let barRect = CGRect(
+                        x: xLeft,
+                        y: yTop,
+                        width: barWidth,
+                        height: max(0, plotRect.maxY - yTop)
+                    )
+                    context.fill(
+                        Path(
+                            roundedRect: barRect,
+                            cornerRadius: max(1.0, min(3.5, barWidth * 0.18))
+                        ),
+                        with: .linearGradient(
+                            gradient,
+                            startPoint: CGPoint(x: barRect.midX, y: plotRect.minY),
+                            endPoint: CGPoint(x: barRect.midX, y: plotRect.maxY)
+                        )
+                    )
+                }
+
+                // Decade labels along the X-axis at 100 Hz, 1 kHz, 10 kHz.
+                let decadeLabels: [(Double, String)] = [
+                    (100, "100 Hz"),
+                    (1_000, "1 kHz"),
+                    (10_000, "10 kHz"),
+                ]
+                for (decadeHz, label) in decadeLabels where decadeHz <= nyquist * 0.99 {
+                    if let idx = usableCenters.firstIndex(where: { abs($0 - decadeHz) < 0.5 }) {
+                        let xCenter =
+                            plotRect.minX
+                            + CGFloat(idx) * (barWidth + interBarGap)
+                            + barWidth * 0.5
+                        let text = Text(label)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        context.draw(text, at: CGPoint(x: xCenter, y: plotRect.maxY + 12))
+                    }
+                }
+            }
+            .frame(minHeight: 190, idealHeight: 220)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: BroadcastStyle.panelInsetCornerRadius,
+                    style: .continuous
+                )
+            )
+
+            HStack(spacing: 14) {
+                Text("RTA: 1/3-octave (ISO) bars, log frequency, max in band")
+                Spacer()
+                if nyquistHz > 0.0, nyquistHz < maxHz {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.orange.opacity(0.9))
+                            .frame(width: 6, height: 6)
+                        Text("Nyquist \(Int((nyquistHz / 1000.0).rounded())) kHz")
+                    }
+                }
+            }
+            .font(.system(.caption, design: .monospaced).weight(.medium))
+            .foregroundStyle(.secondary)
+        }
+        // Discrete updates — no implicit interpolation between frames
+        // (matches the line spectrum's transaction modifier; prevents
+        // animation queue buildup at 30 Hz refresh).
+        .transaction { txn in
+            txn.animation = nil
+        }
+    }
+
+    private func yPosition(forDB db: Float, in rect: CGRect) -> CGFloat {
+        let clamped = max(dbMin, min(dbMax, db))
+        let norm = (clamped - dbMin) / (dbMax - dbMin)
+        return rect.minY + (1.0 - CGFloat(norm)) * rect.height
+    }
+}
+
 private struct KeyValueGrid: View {
     let rows: [(String, String)]
 
@@ -7649,7 +7845,7 @@ private struct StereoPreMPXSpectrumView: View {
                 Text("Left")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                MPXSpectrumView(
+                AudioBarSpectrumView(
                     dbBins: leftBins,
                     maxHz: maxHz,
                     nyquistHz: nyquistHz
@@ -7660,7 +7856,7 @@ private struct StereoPreMPXSpectrumView: View {
                 Text("Right")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                MPXSpectrumView(
+                AudioBarSpectrumView(
                     dbBins: rightBins,
                     maxHz: maxHz,
                     nyquistHz: nyquistHz

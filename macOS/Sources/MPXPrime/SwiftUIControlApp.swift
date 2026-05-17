@@ -5975,9 +5975,13 @@ struct AudioBarSpectrumView: View {
 
                 // Filter ISO bands by display Nyquist so we don't draw
                 // bars whose center is beyond the actual analyzed range.
+                // Inclusive comparison: a 16 kHz band at exactly maxHz
+                // still shows — the upper half of its 1/3-octave window
+                // extends past maxHz but its lower half (14.25-16 kHz)
+                // has valid FFT data and the bar reflects that energy.
                 let displayMaxHz = max(1_000.0, maxHz)
                 let nyquist = nyquistHz > 0 ? min(nyquistHz, displayMaxHz) : displayMaxHz
-                let usableCenters = Self.isoCenters.filter { $0 <= nyquist * 0.99 }
+                let usableCenters = Self.isoCenters.filter { $0 <= nyquist }
                 guard !usableCenters.isEmpty, dbBins.count > 1 else { return }
 
                 let barCount = usableCenters.count
@@ -6045,13 +6049,15 @@ struct AudioBarSpectrumView: View {
                     )
                 }
 
-                // Decade labels along the X-axis at 100 Hz, 1 kHz, 10 kHz.
+                // Decade labels along the X-axis at 100 Hz, 1 kHz, 10 kHz,
+                // plus a 16 kHz marker at the audio-program ceiling.
                 let decadeLabels: [(Double, String)] = [
                     (100, "100 Hz"),
                     (1_000, "1 kHz"),
                     (10_000, "10 kHz"),
+                    (16_000, "16 kHz"),
                 ]
-                for (decadeHz, label) in decadeLabels where decadeHz <= nyquist * 0.99 {
+                for (decadeHz, label) in decadeLabels where decadeHz <= nyquist {
                     if let idx = usableCenters.firstIndex(where: { abs($0 - decadeHz) < 0.5 }) {
                         let xCenter =
                             plotRect.minX

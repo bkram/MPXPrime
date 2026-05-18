@@ -1170,10 +1170,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             menuItem.state = (model?.inspectorVisible ?? false) ? .on : .off
             return true
         }
-        if menuItem.action == #selector(swapCompareSlots) {
-            // A/B swap is meaningful only when both slots are populated.
-            return (model?.compareSlotA != nil) && (model?.compareSlotB != nil)
-        }
         if let action = menuItem.action,
            action == #selector(goToMonitoring) || action == #selector(goToProcessing)
                || action == #selector(goToRDS) || action == #selector(goToTools) {
@@ -1348,15 +1344,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             withTitle: "Reset Peaks", action: #selector(resetPeaks), keyEquivalent: "r")
         resetPeaksItem.target = self
         transportMenu.addItem(NSMenuItem.separator())
-        // A/B compare swap. ⌥⌘B keeps ⌘B reserved for Bypass while
-        // grouping the two compare actions under the same modifier
-        // family. validateMenuItem disables the item when both slots
-        // aren't yet populated.
-        let swapItem = transportMenu.addItem(
-            withTitle: "Swap A ↔ B", action: #selector(swapCompareSlots), keyEquivalent: "b")
-        swapItem.target = self
-        swapItem.keyEquivalentModifierMask = [.command, .option]
-        transportMenu.addItem(NSMenuItem.separator())
         let applyItem = transportMenu.addItem(
             withTitle: "Apply Restart", action: #selector(applyPendingChanges), keyEquivalent: "A")
         applyItem.target = self
@@ -1520,10 +1507,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc private func goToProcessing() { model?.goToGroup(.processing) }
     @objc private func goToRDS() { model?.goToGroup(.rds) }
     @objc private func goToTools() { model?.goToGroup(.tools) }
-
-    @objc private func swapCompareSlots() {
-        model?.swapCompareSlot()
-    }
 
     @objc private func saveConfig() {
         model?.saveCurrentConfig()
@@ -1842,21 +1825,6 @@ final class MPXPrimeViewModel: ObservableObject {
     var snapshotsFilePath: String {
         configPath + ".snapshots.json"
     }
-
-    // A/B compare workspace. In-memory only — not persisted across app
-    // launches. Operator captures the current config to slot A, tunes,
-    // captures to slot B, then taps the swap to alternate between them
-    // while listening. Pro workflow standard (Optimod / Stereotool / Omnia
-    // all have this). Tweaks while a slot is loaded are EPHEMERAL — the
-    // operator must re-capture to save changes into a slot. Swap restores
-    // the captured snapshot wholesale.
-    @Published var compareSlotA: AppConfig?
-    @Published var compareSlotB: AppConfig?
-    /// Identifies which slot is currently loaded, "a" or "b", or nil if
-    /// neither was ever captured. After the most recent capture the
-    /// captured slot is the active one; after a swap the just-loaded
-    /// slot becomes active.
-    @Published var compareActiveSlot: String?
 
     @Published var sourceMode: String
     @Published var monitorEnabled: Bool
@@ -2449,55 +2417,6 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     // MARK: - A/B compare
-
-    /// Snapshot the current config into the named slot (`"a"` or `"b"`).
-    /// Marks that slot active. Tweaks made after this point are
-    /// ephemeral until the slot is re-captured.
-    func captureCurrentToCompareSlot(_ slot: String) {
-        publishConfigChange()
-        let snapshot = config
-        switch slot {
-        case "a":
-            compareSlotA = snapshot
-            compareActiveSlot = "a"
-            statusText = "Captured current state as A."
-        case "b":
-            compareSlotB = snapshot
-            compareActiveSlot = "b"
-            statusText = "Captured current state as B."
-        default:
-            return
-        }
-    }
-
-    /// Swap to the other captured slot. No-op when only one slot is
-    /// captured. Applies the loaded config via the existing save +
-    /// live-apply path so live-applicable fields take effect
-    /// immediately and restart-required fields surface the usual
-    /// pending-apply prompt.
-    func swapCompareSlot() {
-        guard compareSlotA != nil, compareSlotB != nil else { return }
-        publishConfigChange()
-        if compareActiveSlot == "a", let next = compareSlotB {
-            config = next
-            compareActiveSlot = "b"
-            statusText = "Compare: switched to B."
-        } else if let next = compareSlotA {
-            config = next
-            compareActiveSlot = "a"
-            statusText = "Compare: switched to A."
-        }
-        saveConfig(restartRequired: false)
-        applyLiveRuntimeConfigIfRunning()
-    }
-
-    /// Drop both captured slots.
-    func clearCompareSlots() {
-        compareSlotA = nil
-        compareSlotB = nil
-        compareActiveSlot = nil
-        statusText = "A/B compare slots cleared."
-    }
 
     // MARK: - Named snapshots
 

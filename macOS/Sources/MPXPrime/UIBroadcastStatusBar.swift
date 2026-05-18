@@ -177,13 +177,20 @@ struct ABCompareWidget: View {
         return Button {
             model.swapCompareSlot()
         } label: {
+            // Decorative — the Button's accessibilityLabel below carries
+            // the action description to VoiceOver. Hiding the icon
+            // prevents the screen reader from announcing "arrow.left
+            // arrow.right" alongside our label.
             Image(systemName: "arrow.left.arrow.right")
                 .font(.caption)
                 .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.5))
                 .frame(width: 22, height: 18)
+                .accessibilityHidden(true)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
         .help(enabled ? "Swap to the other slot." : "Capture both A and B before swapping.")
+        .accessibilityLabel("Swap A and B compare slots")
+        .accessibilityHint(enabled ? "Loads the inactive snapshot into the live engine." : "Capture both slots first.")
     }
 }

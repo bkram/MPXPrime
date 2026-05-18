@@ -4786,7 +4786,10 @@ private struct StageSidebar: View {
                         Label {
                             Text(stage.label)
                         } icon: {
+                            // Decorative — the adjacent Text(stage.label)
+                            // already conveys the row identity to VoiceOver.
                             Image(systemName: stage.icon)
+                                .accessibilityHidden(true)
                                 // Explicit `.tint` foreground on the
                                 // *icon only* — keeps text in the
                                 // default sidebar foreground (white in
@@ -5538,7 +5541,10 @@ private struct MonitoringDashboardView: View {
                         model.startOrStopTransport()
                     } label: {
                         HStack {
+                            // Decorative — the adjacent "Start" / "Stop"
+                            // text conveys the action to VoiceOver.
                             Image(systemName: model.isRunning ? "stop.fill" : "play.fill")
+                                .accessibilityHidden(true)
                             Text(model.isRunning ? "Stop" : "Start")
                         }
                         .frame(maxWidth: .infinity)
@@ -5551,7 +5557,10 @@ private struct MonitoringDashboardView: View {
                         model.toggleBypass()
                     } label: {
                         HStack {
+                            // Decorative — the adjacent "Bypass On / Off"
+                            // text conveys the action to VoiceOver.
                             Image(systemName: model.processingBypass ? "bolt.slash.fill" : "bolt.fill")
+                                .accessibilityHidden(true)
                             Text(model.processingBypass ? "Bypass On" : "Bypass Off")
                         }
                         .frame(maxWidth: .infinity)
@@ -6840,10 +6849,15 @@ private struct TabHelpBox: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
+            // Decorative info-icon — the Text alongside it carries the
+            // entire content to VoiceOver. Hide the icon from the
+            // accessibility tree so screen readers don't announce
+            // "info circle" before every tab help block.
             Image(systemName: "info.circle")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
             Text(text)
                 .font(.callout)
                 .foregroundStyle(.secondary)

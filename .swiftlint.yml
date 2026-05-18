@@ -1,0 +1,42 @@
+# MPX Prime SwiftLint configuration
+#
+# Scope is intentionally narrow: surface accessibility violations only.
+# The two rules below (both `opt_in`) are the closest thing to
+# automated HIG checks for SwiftUI on macOS — they catch missing
+# `.accessibilityLabel` on Image views and missing
+# `.accessibilityAddTraits(.isButton)` on views with tap gestures.
+#
+# We do NOT run the broader SwiftLint default rule pack. The DSP code
+# uses many intentional patterns (single-letter math variables, long
+# inner-loop functions, large source files per AGENTS.md) that fight
+# with the default style rules and would produce thousands of false
+# positives. If you want a full style pass later, remove `only_rules:`
+# and tune `disabled_rules:` against the resulting noise.
+#
+# How to run:
+#
+#   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint
+#
+# (DEVELOPER_DIR must point at Xcode, not the CommandLineTools shim,
+# because SwiftLint uses SourceKitten which loads `sourcekitdInProc`
+# from the Xcode toolchain.)
+#
+# Suggested CI integration: add the same invocation as a "Lint"
+# pre-commit / pre-push step. Don't block on warnings; only fail on
+# accessibility-rule errors.
+
+included:
+  - macOS/Sources
+
+excluded:
+  # SwiftPM dependency checkouts. Lots of upstream code that would
+  # otherwise dominate the report.
+  - macOS/.build
+  - macOS/dist
+  # Test files don't render user-facing UI; accessibility rules don't
+  # apply to test fixtures.
+  - macOS/Tests
+
+only_rules:
+  - accessibility_label_for_image
+  - accessibility_trait_for_button

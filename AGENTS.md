@@ -159,6 +159,7 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - Cards use `LabeledContent`, 10pt corner radius, 16pt spacing.
 - `.buttonStyle(.bordered)` / `.buttonStyle(.borderedProminent)` for buttons.
 - `.pickerStyle(.segmented)` for tab pickers within sections; `.pickerStyle(.menu)` for dropdowns.
+- **Accessibility lint** — the project ships a `.swiftlint.yml` that runs only `accessibility_label_for_image` and `accessibility_trait_for_button` (no broader style enforcement; DSP code uses many intentional patterns that fight the default SwiftLint rule pack). Run with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint` from the project root before committing UI changes. Decorative SF Symbols (icons next to descriptive text, info-circle in help boxes) should use `.accessibilityHidden(true)`; icon-only buttons need `.accessibilityLabel(...)`.
 
 ## Release prep
 

@@ -5080,7 +5080,7 @@ private struct SnapshotsView: View {
                 }
             }
             .padding(20)
-            .frame(maxWidth: 900, alignment: .topLeading)
+            .frame(maxWidth: 1120, alignment: .topLeading)
         }
     }
 }
@@ -5225,6 +5225,7 @@ private struct TestToneView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                TabHelpBox(text: "Internal signal generator that replaces the audio input. Sine for level / separation / encoder-bandwidth tests; pink and white noise for broadband response checks. Four stereo modes (mono / L=-R / left-only / right-only) cover common diagnostic needs. The rest of the chain (AGC, multiband, clippers, BS.412, encoder) processes the tone normally so you can observe each stage's response at calibrated input levels.")
                 enableCard
                 signalCard
                 if typeBinding.wrappedValue == "sine" {
@@ -5234,7 +5235,7 @@ private struct TestToneView: View {
                 statusCard
             }
             .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: 1120, alignment: .topLeading)
         }
     }
 

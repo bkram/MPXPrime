@@ -2696,8 +2696,9 @@ func runVerificationHarness(
     if !longRun && !captureBaseline {
         if FileManager.default.fileExists(atPath: baselineURL.path) {
             do {
-                loadedBaseline = try loadVerifierBaseline(from: baselineURL)
-                print("Baseline: \(baselineURL.lastPathComponent) (captured \(loadedBaseline!.capturedAt))")
+                let loaded = try loadVerifierBaseline(from: baselineURL)
+                loadedBaseline = loaded
+                print("Baseline: \(baselineURL.lastPathComponent) (captured \(loaded.capturedAt))")
             } catch {
                 print("Baseline: failed to load (\(error))")
             }

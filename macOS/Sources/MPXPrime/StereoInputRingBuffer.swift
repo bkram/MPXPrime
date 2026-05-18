@@ -351,6 +351,8 @@ final class StereoInputRingBuffer {
             let chunk = min(remaining, capacity - writeIndex)
             left.withUnsafeMutableBufferPointer { dstLeft in
                 right.withUnsafeMutableBufferPointer { dstRight in
+                    // baseAddress is non-nil for the pre-allocated ring storage.
+                    // swiftlint:disable force_unwrapping
                     dstLeft.baseAddress!.advanced(by: writeIndex).update(
                         from: sourceLeft.advanced(by: sourceOffset),
                         count: chunk
@@ -359,6 +361,7 @@ final class StereoInputRingBuffer {
                         from: sourceRight.advanced(by: sourceOffset),
                         count: chunk
                     )
+                    // swiftlint:enable force_unwrapping
                 }
             }
             writeIndex = (writeIndex + chunk) & mask
@@ -380,8 +383,11 @@ final class StereoInputRingBuffer {
             let chunk = min(remaining, capacity - writeIndex)
             left.withUnsafeMutableBufferPointer { dstLeft in
                 right.withUnsafeMutableBufferPointer { dstRight in
+                    // baseAddress is non-nil for the pre-allocated ring storage.
+                    // swiftlint:disable force_unwrapping
                     let outLeft = dstLeft.baseAddress!.advanced(by: writeIndex)
                     let outRight = dstRight.baseAddress!.advanced(by: writeIndex)
+                    // swiftlint:enable force_unwrapping
                     for i in 0..<chunk {
                         let sample = sourceMono[sourceOffset + i]
                         outLeft[i] = sample
@@ -409,6 +415,8 @@ final class StereoInputRingBuffer {
             let chunk = min(remaining, capacity - sourceIndex)
             left.withUnsafeBufferPointer { srcLeft in
                 right.withUnsafeBufferPointer { srcRight in
+                    // baseAddress is non-nil for the pre-allocated ring storage.
+                    // swiftlint:disable force_unwrapping
                     outLeft.advanced(by: destinationOffset).update(
                         from: srcLeft.baseAddress!.advanced(by: sourceIndex),
                         count: chunk
@@ -417,6 +425,7 @@ final class StereoInputRingBuffer {
                         from: srcRight.baseAddress!.advanced(by: sourceIndex),
                         count: chunk
                     )
+                    // swiftlint:enable force_unwrapping
                 }
             }
             sourceIndex = (sourceIndex + chunk) & mask

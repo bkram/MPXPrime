@@ -83,12 +83,15 @@ struct AcceleratedBandlimitedResidualClipper {
         let n = vDSP_Length(tapCountValue)
         coeffs.withUnsafeBufferPointer { coeffPtr in
             residualDelay.withUnsafeBufferPointer { delayPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+                // swiftlint:disable force_unwrapping
                 vDSP_dotpr(
                     coeffPtr.baseAddress!, 1,
                     delayPtr.baseAddress!.advanced(by: startIndex), 1,
                     &output,
                     n
                 )
+                // swiftlint:enable force_unwrapping
             }
         }
 

@@ -896,10 +896,10 @@ final class AudioOutputEngine {
         )
         if status != noErr {
             let be = UInt32(bitPattern: status)
-            let c1 = Character(UnicodeScalar((be >> 24) & 0xFF)!)
-            let c2 = Character(UnicodeScalar((be >> 16) & 0xFF)!)
-            let c3 = Character(UnicodeScalar((be >> 8) & 0xFF)!)
-            let c4 = Character(UnicodeScalar(be & 0xFF)!)
+            let c1 = Character(UnicodeScalar(UInt8((be >> 24) & 0xFF)))
+            let c2 = Character(UnicodeScalar(UInt8((be >> 16) & 0xFF)))
+            let c3 = Character(UnicodeScalar(UInt8((be >> 8) & 0xFF)))
+            let c4 = Character(UnicodeScalar(UInt8(be & 0xFF)))
             throw AudioEngineError.deviceSelectionFailed(
                 "\(role) device set failed status=\(status) fourcc=\(c1)\(c2)\(c3)\(c4)"
             )

@@ -1034,7 +1034,10 @@ struct BassClipper {
         var n = Int32(f * 2)
         clipDrivenBatch.withUnsafeMutableBufferPointer { dPtr in
             clipTanhBatch.withUnsafeMutableBufferPointer { tPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
                 vvtanhf(tPtr.baseAddress!, dPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
             }
         }
         for i in 0..<(f * 2) {
@@ -1118,7 +1121,10 @@ struct DistortionCancelledClipper {
         var n = Int32(f * 2)
         clipExcessBatch.withUnsafeMutableBufferPointer { exPtr in
             clipTanhBatch.withUnsafeMutableBufferPointer { thPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
                 vvtanhf(thPtr.baseAddress!, exPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
             }
         }
         for i in 0..<(f * 2) {
@@ -1669,7 +1675,10 @@ struct CompositeClipper {
         var n = Int32(f)
         clipExcessBatch.withUnsafeMutableBufferPointer { excessPtr in
             clipTanhBatch.withUnsafeMutableBufferPointer { tanhPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
                 vvtanhf(tanhPtr.baseAddress!, excessPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
             }
         }
         var sampleClipGain: Float = 1.0
@@ -2157,6 +2166,8 @@ struct LinearPhaseFIRLowpass {
         var outR: Float = 0
         let n = vDSP_Length(lengthTaps)
         coeffs.withUnsafeBufferPointer { coeffPtr in
+            // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+            // swiftlint:disable force_unwrapping
             delayL.withUnsafeBufferPointer { delayPtr in
                 vDSP_dotpr(
                     coeffPtr.baseAddress!, 1,
@@ -2173,6 +2184,7 @@ struct LinearPhaseFIRLowpass {
                     n
                 )
             }
+            // swiftlint:enable force_unwrapping
         }
 
         writeIdx += 1
@@ -2291,12 +2303,15 @@ struct LinearPhaseFIRDecimator {
             let n = vDSP_Length(lengthTaps)
             coeffs.withUnsafeBufferPointer { c in
                 delay.withUnsafeBufferPointer { d in
+                    // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+                    // swiftlint:disable force_unwrapping
                     vDSP_dotpr(
                         c.baseAddress!, 1,
                         d.baseAddress!.advanced(by: writeIdx), 1,
                         &out,
                         n
                     )
+                    // swiftlint:enable force_unwrapping
                 }
             }
             lastOutput = out

@@ -30,6 +30,10 @@ private let kLevelsWindowAutosaveName = "MPXPrime.LevelsWindow"
 private let kAboutWindowAutosaveName = "MPXPrime.AboutWindow"
 private let kHelpWindowAutosaveName = "MPXPrime.HelpWindow"
 private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
+// Compile-time constant URL; literal is well-formed so the optional
+// returned by URL(string:) is guaranteed non-nil.
+// swiftlint:disable:next force_unwrapping
+private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
 private let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
 
@@ -754,12 +758,15 @@ private final class MPXSpectrumAnalyzer: @unchecked Sendable {
 
         real.withUnsafeMutableBufferPointer { realBP in
             imag.withUnsafeMutableBufferPointer { imagBP in
+                // baseAddress is non-nil for non-empty pre-allocated arrays.
+                // swiftlint:disable force_unwrapping
                 var split = DSPSplitComplex(realp: realBP.baseAddress!, imagp: imagBP.baseAddress!)
                 windowed.withUnsafeBufferPointer { src in
                     src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: n / 2) { complexSrc in
                         vDSP_ctoz(complexSrc, 2, &split, 1, vDSP_Length(n / 2))
                     }
                 }
+                // swiftlint:enable force_unwrapping
                 vDSP_fft_zrip(fftSetup, &split, 1, fftLog2, FFTDirection(FFT_FORWARD))
                 // Apple's real-input FFT packs DC into split.realp[0]
                 // and Nyquist into split.imagp[0] to save one slot.
@@ -1370,7 +1377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc private func openDocs() {
-        NSWorkspace.shared.open(URL(string: "https://github.com/bkram/MPXPrime")!)
+        NSWorkspace.shared.open(kProjectURL)
     }
 
     @objc private func showSettings() {
@@ -8386,8 +8393,7 @@ private struct AboutSectionView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
-            Link("github.com/bkram/MPXPrime",
-                 destination: URL(string: "https://github.com/bkram/MPXPrime")!)
+            Link("github.com/bkram/MPXPrime", destination: kProjectURL)
                 .font(.system(size: 11))
 
             Divider()

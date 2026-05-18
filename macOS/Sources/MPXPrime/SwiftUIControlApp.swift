@@ -1144,6 +1144,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             menuItem.state = (model?.inspectorVisible ?? false) ? .on : .off
             return true
         }
+        if menuItem.action == #selector(swapCompareSlots) {
+            // A/B swap is meaningful only when both slots are populated.
+            return (model?.compareSlotA != nil) && (model?.compareSlotB != nil)
+        }
+        if let action = menuItem.action,
+           action == #selector(goToMonitoring) || action == #selector(goToProcessing)
+               || action == #selector(goToRDS) || action == #selector(goToTools) {
+            let targetGroup: Stage.Group
+            switch action {
+            case #selector(goToMonitoring): targetGroup = .monitoring
+            case #selector(goToProcessing): targetGroup = .processing
+            case #selector(goToRDS): targetGroup = .rds
+            default: targetGroup = .tools
+            }
+            menuItem.state = (model?.selectedStage.group == targetGroup) ? .on : .off
+            return true
+        }
         return true
     }
 
@@ -1257,6 +1274,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
+        // Go Menu — ⌘1-⌘4 jump to a sidebar section. Matches the
+        // section-shortcut pattern in Mail, Music, Notes (sidebar-driven
+        // macOS apps). Each item remembers the last sub-tab visited
+        // in that group, so ⌘2 from RDS returns to the Processing
+        // sub-tab the operator was last editing.
+        let goItem = NSMenuItem(title: "Go", action: nil, keyEquivalent: "")
+        let goMenu = NSMenu(title: "Go")
+        let goMonitoring = goMenu.addItem(
+            withTitle: "Monitoring",
+            action: #selector(goToMonitoring),
+            keyEquivalent: "1")
+        goMonitoring.target = self
+        let goProcessing = goMenu.addItem(
+            withTitle: "Processing",
+            action: #selector(goToProcessing),
+            keyEquivalent: "2")
+        goProcessing.target = self
+        let goRDS = goMenu.addItem(
+            withTitle: "RDS",
+            action: #selector(goToRDS),
+            keyEquivalent: "3")
+        goRDS.target = self
+        let goTools = goMenu.addItem(
+            withTitle: "Tools",
+            action: #selector(goToTools),
+            keyEquivalent: "4")
+        goTools.target = self
+        goItem.submenu = goMenu
+        mainMenu.addItem(goItem)
+
         // Control Menu
         let transportItem = NSMenuItem(title: "Control", action: nil, keyEquivalent: "")
         let transportMenu = NSMenu(title: "Control")
@@ -1275,6 +1322,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             withTitle: "Reset Peaks", action: #selector(resetPeaks), keyEquivalent: "r")
         resetPeaksItem.target = self
         transportMenu.addItem(NSMenuItem.separator())
+        // A/B compare swap. ⌥⌘B keeps ⌘B reserved for Bypass while
+        // grouping the two compare actions under the same modifier
+        // family. validateMenuItem disables the item when both slots
+        // aren't yet populated.
+        let swapItem = transportMenu.addItem(
+            withTitle: "Swap A ↔ B", action: #selector(swapCompareSlots), keyEquivalent: "b")
+        swapItem.target = self
+        swapItem.keyEquivalentModifierMask = [.command, .option]
+        transportMenu.addItem(NSMenuItem.separator())
         let applyItem = transportMenu.addItem(
             withTitle: "Apply Restart", action: #selector(applyPendingChanges), keyEquivalent: "A")
         applyItem.target = self
@@ -1287,7 +1343,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "Window")
 
-        let mainWindowItem = windowMenu.addItem(withTitle: "Main", action: #selector(showMainWindow), keyEquivalent: "1")
+        // No keyEquivalent: ⌘1 is reserved by the Go menu for "Monitoring".
+        // Operators jump back to the main window via the Window menu or
+        // by clicking on it; this entry just brings it forward when it
+        // was hidden behind a detached window.
+        let mainWindowItem = windowMenu.addItem(withTitle: "Main", action: #selector(showMainWindow), keyEquivalent: "")
         mainWindowItem.target = self
         let preMPXSpectrumItem = windowMenu.addItem(withTitle: kAudioSpectrumWindowTitle, action: #selector(showPreMPXSpectrumWindow), keyEquivalent: "7")
         preMPXSpectrumItem.target = self
@@ -1428,6 +1488,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc private func resetPeaks() {
         model?.resetPeaks()
+    }
+
+    @objc private func goToMonitoring() { model?.goToGroup(.monitoring) }
+    @objc private func goToProcessing() { model?.goToGroup(.processing) }
+    @objc private func goToRDS() { model?.goToGroup(.rds) }
+    @objc private func goToTools() { model?.goToGroup(.tools) }
+
+    @objc private func swapCompareSlots() {
+        model?.swapCompareSlot()
     }
 
     @objc private func saveConfig() {
@@ -1657,6 +1726,34 @@ final class MPXPrimeViewModel: ObservableObject {
                selectedRDSTab != rt {
                 selectedRDSTab = rt
             }
+            lastStageInGroup[selectedStage.group] = selectedStage
+        }
+    }
+    /// Remembers the last visited stage per sidebar group so the
+    /// ⌘1-⌘4 "Go to <Section>" shortcuts restore the sub-tab the user
+    /// was last on in that group instead of always snapping to the
+    /// group home. Seeded with each group's landing stage so a first
+    /// jump lands somewhere sensible.
+    private var lastStageInGroup: [Stage.Group: Stage] = [
+        .monitoring: .monitoring,
+        .processing: .processingOverview,
+        .rds: .rdsControl,
+        .tools: .testTone
+    ]
+    /// Jump to the given sidebar group. If the user has visited a
+    /// sub-tab in that group during this session, restore it;
+    /// otherwise land on the group's home stage.
+    func goToGroup(_ group: Stage.Group) {
+        let target = lastStageInGroup[group] ?? {
+            switch group {
+            case .monitoring: return .monitoring
+            case .processing: return .processingOverview
+            case .rds: return .rdsControl
+            case .tools: return .testTone
+            }
+        }()
+        if selectedStage != target {
+            selectedStage = target
         }
     }
     /// Phase 3 inspector visibility. Toggleable from View > Inspector.

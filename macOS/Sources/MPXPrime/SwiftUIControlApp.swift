@@ -4863,7 +4863,12 @@ private struct StageProcessingContent: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.selectedStage != .processingOverview {
+                // Cap to the same 1120 pt width as the content column
+                // below so the strip sits horizontally centered over its
+                // content. Default `.frame(maxWidth:)` alignment is
+                // `.center`, so no extra alignment argument needed.
                 SignalFlowStrip(model: model)
+                    .frame(maxWidth: 1120)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {

@@ -894,6 +894,32 @@ struct AppConfig {
         resolveINIPath(path, forWrite: forWrite)
     }
 
+    /// Returns the canonical INI representation as a string without
+    /// touching the filesystem. Used by the snapshot system (Snapshots
+    /// embed configs as INI text inside their JSON envelope so schema
+    /// migrations stay handled by the existing INI parser's defaults).
+    /// Implementation defers to `save(toINI:)` via a temp file rather
+    /// than duplicating the per-section line assembly.
+    func captureAsINIString() throws -> String {
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("MPXPrime-snapshot-\(UUID().uuidString).ini")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try save(toINI: tempURL.path)
+        return try String(contentsOf: tempURL, encoding: .utf8)
+    }
+
+    /// Inverse of `captureAsINIString` — parse a snapshot's embedded
+    /// INI text back into an `AppConfig`. Uses the existing
+    /// `load(fromINI:)` so missing-key defaults and validators apply
+    /// the same way as a normal disk load.
+    static func loadFromINIString(_ text: String) throws -> AppConfig {
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("MPXPrime-snapshot-load-\(UUID().uuidString).ini")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try text.write(to: tempURL, atomically: true, encoding: .utf8)
+        return try AppConfig.load(fromINI: tempURL.path)
+    }
+
     func save(toINI path: String) throws {
         let mpxLines: [String] = [
             "[MPX]",

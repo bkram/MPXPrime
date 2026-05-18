@@ -398,6 +398,7 @@ enum Stage: String, CaseIterable, Identifiable {
 
     // Tools
     case testTone
+    case snapshots
 
     var id: String { rawValue }
 
@@ -416,7 +417,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
              .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
-        case .testTone:
+        case .testTone, .snapshots:
             return .tools
         default:
             return .processing
@@ -452,6 +453,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Schedule"
         case .rdsCarrier: return "Subcarrier"
         case .testTone: return "Test Tone"
+        case .snapshots: return "Snapshots"
         }
     }
 
@@ -484,6 +486,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "calendar.badge.clock"
         case .rdsCarrier: return "antenna.radiowaves.left.and.right"
         case .testTone: return "waveform.badge.plus"
+        case .snapshots: return "bookmark.fill"
         }
     }
 
@@ -519,6 +522,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
         case .rdsCarrier: return "Injection level, subcarrier frequency, Gaussian shaping"
         case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
+        case .snapshots: return "Named save / recall slots for the full configuration"
         }
     }
 
@@ -588,6 +592,26 @@ enum MonitoringBufferHealth: String {
     case ok = "OK"
     case warn = "Warn"
     case bad = "Dropouts"
+}
+
+/// One saved snapshot slot — name, save timestamp, and the configuration
+/// captured at save time. The config is stored as the same INI text the
+/// app already round-trips through `AppConfig.save(toINI:)` /
+/// `load(fromINI:)`, embedded in JSON. INI keeps schema migrations
+/// handled by the existing parser's defaults (missing keys fall back),
+/// so future AppConfig additions don't break older snapshot files.
+struct ConfigSnapshot: Identifiable, Codable {
+    let id: UUID
+    var name: String
+    var savedAt: Date
+    var configINIText: String
+}
+
+/// On-disk JSON envelope for `snapshots.json`. Wraps the slot array so
+/// future top-level fields (schema version, app version recorded at
+/// save, etc.) can be added without breaking old files.
+struct SnapshotFile: Codable {
+    var slots: [ConfigSnapshot?]
 }
 
 struct MonitoringStreamHealth {
@@ -1642,6 +1666,24 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var statusText: String = "Idle"
     @Published var pendingRuntimeApply: Bool = false
 
+    // Named snapshot slots — persistent operator-saved setups beyond
+    // format profiles. Stored on disk as JSON alongside the INI; survive
+    // app upgrades. 8 fixed slots; nil = empty. Operator names each save
+    // ("Morning Show", "Saturday Night", "Live Sports").
+    @Published var snapshots: [ConfigSnapshot?] = Array(repeating: nil, count: MPXPrimeViewModel.snapshotSlotCount)
+
+    static let snapshotSlotCount: Int = 8
+
+    /// Snapshot file path derived from the config file path. Sibling
+    /// file with `.snapshots.json` suffix so each distinct config gets
+    /// its own snapshot file — important for `--config` overrides and
+    /// for test isolation (concurrent tests with unique temp config
+    /// paths get isolated snapshot files, not a shared one in the
+    /// directory).
+    var snapshotsFilePath: String {
+        configPath + ".snapshots.json"
+    }
+
     // A/B compare workspace. In-memory only — not persisted across app
     // launches. Operator captures the current config to slot A, tunes,
     // captures to slot B, then taps the swap to alternate between them
@@ -1862,6 +1904,7 @@ final class MPXPrimeViewModel: ObservableObject {
         refreshDevices()
         nowPlayingRunner.updateConfig(loadedConfig)
         startConfigWatcher()
+        loadSnapshotsFromDisk()
         refreshMonitoringSnapshot()
     }
 
@@ -2295,6 +2338,107 @@ final class MPXPrimeViewModel: ObservableObject {
         compareSlotB = nil
         compareActiveSlot = nil
         statusText = "A/B compare slots cleared."
+    }
+
+    // MARK: - Named snapshots
+
+    /// Load persisted snapshots from disk into the in-memory `snapshots`
+    /// array. Called from init. Missing or corrupt file → silent reset
+    /// to empty slots (operator can still save new ones).
+    func loadSnapshotsFromDisk() {
+        let path = snapshotsFilePath
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let file = try decoder.decode(SnapshotFile.self, from: data)
+            // Defensive: pad/truncate to our slot count so future schema
+            // changes don't break existing on-disk files.
+            var slots: [ConfigSnapshot?] = Array(
+                repeating: nil, count: Self.snapshotSlotCount)
+            let count = min(file.slots.count, slots.count)
+            for i in 0..<count { slots[i] = file.slots[i] }
+            self.snapshots = slots
+        } catch {
+            statusText = "Failed to load snapshots: \(error.localizedDescription)"
+        }
+    }
+
+    /// Persist all slots to disk. JSON envelope wraps the per-slot
+    /// `ConfigSnapshot` objects (which embed the config as INI text so
+    /// schema migrations stay handled by the existing INI parser's
+    /// defaults).
+    func writeSnapshotsToDisk() {
+        let file = SnapshotFile(slots: snapshots)
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(file)
+            try data.write(
+                to: URL(fileURLWithPath: snapshotsFilePath), options: [.atomic])
+        } catch {
+            statusText = "Failed to write snapshots: \(error.localizedDescription)"
+        }
+    }
+
+    /// Capture the current config into slot `slot` with the given name
+    /// (empty → "Snapshot N"). Writes the file immediately so a crash
+    /// doesn't lose the operator's save.
+    func saveSnapshot(slot: Int, name: String) {
+        guard (0..<snapshots.count).contains(slot) else { return }
+        publishConfigChange()
+        do {
+            let ini = try config.captureAsINIString()
+            let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            snapshots[slot] = ConfigSnapshot(
+                id: UUID(),
+                name: resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName,
+                savedAt: Date(),
+                configINIText: ini
+            )
+            writeSnapshotsToDisk()
+            statusText = "Saved snapshot to slot \(slot + 1)."
+        } catch {
+            statusText = "Failed to save snapshot: \(error.localizedDescription)"
+        }
+    }
+
+    /// Apply the snapshot in `slot` to the current config. Routes
+    /// through `applyLoadedConfig` so live-apply / restart-required
+    /// dispatching matches a normal disk load.
+    func loadSnapshot(slot: Int) {
+        guard (0..<snapshots.count).contains(slot),
+              let snapshot = snapshots[slot] else { return }
+        do {
+            let loaded = try AppConfig.loadFromINIString(snapshot.configINIText)
+            applyLoadedConfig(loaded, origin: .manual)
+            statusText = "Loaded snapshot \"\(snapshot.name)\"."
+        } catch {
+            statusText = "Failed to load snapshot: \(error.localizedDescription)"
+        }
+    }
+
+    /// Drop the snapshot in `slot` and persist the empty state.
+    func clearSnapshot(slot: Int) {
+        guard (0..<snapshots.count).contains(slot) else { return }
+        snapshots[slot] = nil
+        writeSnapshotsToDisk()
+        statusText = "Cleared snapshot slot \(slot + 1)."
+    }
+
+    /// Rename an existing snapshot in place (doesn't touch the stored
+    /// config text — just the operator-facing label). Persists on
+    /// every keystroke; the operator gets immediate save semantics
+    /// without an explicit confirm button.
+    func renameSnapshot(slot: Int, name: String) {
+        guard (0..<snapshots.count).contains(slot),
+              var snapshot = snapshots[slot] else { return }
+        let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        snapshot.name = resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName
+        snapshots[slot] = snapshot
+        writeSnapshotsToDisk()
     }
 
     // MARK: - Signal Flow Strip live GR
@@ -4277,7 +4421,7 @@ final class MPXPrimeViewModel: ObservableObject {
         nowPlayingRunner.updateConfig(config)
     }
 
-    private enum ConfigReloadOrigin {
+    enum ConfigReloadOrigin {
         case manual
         case external
     }
@@ -4294,7 +4438,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case none
     }
 
-    private func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) {
+    func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) {
         config = loadedConfig
         sourceMode = config.sourceMode
         monitorEnabled = config.monitorEnabled
@@ -4716,6 +4860,8 @@ private struct StageContentView: View {
                     MonitoringDashboardView(model: model)
                 } else if model.selectedStage == .testTone {
                     TestToneView(model: model)
+                } else if model.selectedStage == .snapshots {
+                    SnapshotsView(model: model)
                 } else if let _ = model.selectedStage.legacyProcessingTab {
                     StageProcessingContent(model: model)
                 } else if let _ = model.selectedStage.legacyRDSTab {
@@ -4922,6 +5068,121 @@ private struct Card<Content: View>: View {
 /// All controls are live-applicable via the existing RuntimeConfig
 /// path; no engine restart required when toggling enable, type,
 /// mode, frequency, or level.
+/// Named-snapshot manager. 8 fixed slots saved to `<configPath>.snapshots.json`
+/// alongside the INI. Each slot row: name field + Save (capture current
+/// config into this slot, overwrites) + Load (apply this slot's config
+/// to the live engine) + Clear (delete this slot). The saved-at
+/// timestamp reads "saved <date>" once the slot is occupied.
+///
+/// Snapshots are heavier than format profiles (full config capture vs
+/// per-stage preset bundle) and meant for "Saturday Night vs Morning
+/// Show" type setups operators want to flip between without recomposing
+/// every stage by hand.
+private struct SnapshotsView: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                TabHelpBox(text: "Eight named snapshot slots for the full configuration. Save the current setup into a slot, load it back later — survives app restart (stored as `<configPath>.snapshots.json`). Heavier than Format Profiles: snapshots capture every per-stage setting and RDS field, not just the DSP bundle.")
+
+                Card(title: "Snapshots") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
+                            SnapshotSlotRow(model: model, slot: slot)
+                            if slot < MPXPrimeViewModel.snapshotSlotCount - 1 {
+                                Divider().opacity(0.4)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 900, alignment: .topLeading)
+        }
+    }
+}
+
+private struct SnapshotSlotRow: View {
+    @ObservedObject var model: MPXPrimeViewModel
+    let slot: Int
+    @State private var draftName: String = ""
+
+    private var snapshot: ConfigSnapshot? { model.snapshots[slot] }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text("\(slot + 1).")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, alignment: .trailing)
+
+            VStack(alignment: .leading, spacing: 2) {
+                TextField(snapshot?.name ?? "Snapshot \(slot + 1)", text: $draftName, onCommit: {
+                    if snapshot != nil {
+                        model.renameSnapshot(slot: slot, name: draftName)
+                    } else {
+                        model.saveSnapshot(slot: slot, name: draftName)
+                        draftName = ""
+                    }
+                })
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .frame(maxWidth: 260)
+
+                if let snap = snapshot {
+                    Text("saved \(Self.relativeDateString(snap.savedAt))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("empty")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button("Save") {
+                    let nameToUse = !draftName.isEmpty ? draftName : (snapshot?.name ?? "")
+                    model.saveSnapshot(slot: slot, name: nameToUse)
+                    draftName = ""
+                }
+                .help("Capture the current full configuration into this slot. Overwrites any existing snapshot here.")
+
+                Button("Load") {
+                    model.loadSnapshot(slot: slot)
+                }
+                .disabled(snapshot == nil)
+                .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
+
+                Button("Clear") {
+                    model.clearSnapshot(slot: slot)
+                    draftName = ""
+                }
+                .disabled(snapshot == nil)
+                .help("Delete this slot. Cannot be undone.")
+            }
+            .controlSize(.small)
+        }
+        .onAppear {
+            draftName = snapshot?.name ?? ""
+        }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f
+    }()
+
+    private static func relativeDateString(_ date: Date) -> String {
+        dateFormatter.string(from: date)
+    }
+}
+
 private struct TestToneView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
@@ -6680,20 +6941,26 @@ private struct ProcessingCoreTab: View {
                 set: {
                     model.setInputGainLive($0)
                 }
-            ), range: -24...24, format: "%.1f dB")
+            ), range: -24...24, format: "%.1f dB",
+            tooltip: "Pre-chain trim on the L/R input. Use to land your typical source peaks around -6 to -3 dBFS on the input meters. NOT the loudness knob — use AGC target + final drive + composite clipper drive for that.")
             DoubleSliderRow(
                 title: "MPX Output Level",
                 value: model.configBinding(\.outputGainDB, runtimeDisposition: .live),
                 range: -18...18,
-                format: "%.1f dB"
+                format: "%.1f dB",
+                tooltip: "Final post-chain gain trim on the composite output before the audio device. Use for calibration into the exciter's MPX input — set so the exciter's deviation meter reads the licensed peak. Doesn't add loudness; the chain already drives the composite to 100% modulation."
             )
             Text("Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz")
-            DoubleSliderRow(title: "HF Trim", value: model.configBinding(\.hfTrimDB), range: -12...12, format: "%.1f dB")
-            DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz")
-            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...16_000, format: "%.0f Hz")
+            DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz",
+                tooltip: "High-pass filter cutoff on the L/R input. Removes DC, rumble, and very-low-end energy that would otherwise eat headroom downstream. 30 Hz is the ITU-R BS.450 audio-bandwidth lower bound; raise to 50-80 Hz for ground-loop or rumble-heavy sources.")
+            DoubleSliderRow(title: "HF Trim", value: model.configBinding(\.hfTrimDB), range: -12...12, format: "%.1f dB",
+                tooltip: "Pre-multiband shelf cut/boost at HF Trim Freq. Negative values tame harsh sources before they hit the multiband; positive values brighten dull material. Apply sparingly — global tonal shaping is the Parametric EQ stage's job.")
+            DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz",
+                tooltip: "Centre frequency for the HF Trim shelf above. 4 kHz default targets vocal presence and cymbal sheen.")
+            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...16_000, format: "%.0f Hz",
+                tooltip: "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")
         }
         Card(title: "Engine — TX path") {
             Toggle("Encoder Lowpass: linear-phase FIR", isOn: model.configBinding(\.encoderFIREnabled))

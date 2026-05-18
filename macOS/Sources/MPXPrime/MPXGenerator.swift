@@ -2348,8 +2348,7 @@ struct LinearPhaseFIRSplitter {
     /// Returns `(low_l, low_r, high_l, high_r)` with both outputs delayed
     /// by `groupDelaySamples` relative to the unfiltered input.
     mutating func process(left: Float, right: Float)
-        -> (lowL: Float, lowR: Float, highL: Float, highR: Float)
-    {
+        -> (lowL: Float, lowR: Float, highL: Float, highR: Float) {
         guard lengthTaps > 0 else { return (left, right, 0, 0) }
         delayL[writeIdx] = left
         delayR[writeIdx] = right
@@ -2453,8 +2452,7 @@ struct LinearPhaseMultibandSplitter5 {
     /// Returns 5 stereo bands `(b1L, b1R) ... (b5L, b5R)`, all delayed by
     /// `groupDelaySamples` relative to the input.
     mutating func process(left: Float, right: Float)
-        -> ((Float, Float), (Float, Float), (Float, Float), (Float, Float), (Float, Float))
-    {
+        -> ((Float, Float), (Float, Float), (Float, Float), (Float, Float), (Float, Float)) {
         let n = delayL.count
         guard n > 0 else {
             return ((0, 0), (0, 0), (left, right), (0, 0), (0, 0))
@@ -2592,8 +2590,7 @@ struct LinearPhaseMultibandSplitter3 {
     /// Returns 3 stereo bands `(low, mid, high)`, all delayed by
     /// `groupDelaySamples` relative to the input.
     mutating func process(left: Float, right: Float)
-        -> ((Float, Float), (Float, Float), (Float, Float))
-    {
+        -> ((Float, Float), (Float, Float), (Float, Float)) {
         let n = delayL.count
         guard n > 0 else { return ((0, 0), (left, right), (0, 0)) }
         let (l1L, l1R) = lp1.process(left: left, right: right)
@@ -3073,8 +3070,7 @@ struct LookaheadLimiter {
     var holdSamples: Int = 0
     var holdCounter: Int = 0
 
-    mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool)
-    {
+    mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool) {
         self.enabled = enabled
         self.threshold = clampf(threshold, 0.5, 0.999)
 
@@ -3352,9 +3348,9 @@ final class BasicRDSCoder {
     // Cheap-to-compute "should we bother rebuilding?" keys so the audio
     // thread can skip expandNowPlayingMacros (which does DateFormatter work
     // and multiple string replacements) when nothing relevant has changed.
-    private var rtDynamicCacheRevision: UInt64 = UInt64.max
-    private var rtDynamicCacheMinuteEpoch: Int64 = Int64.min
-    private var rtDynamicCacheDayEpoch: Int64 = Int64.min
+    private var rtDynamicCacheRevision = UInt64.max
+    private var rtDynamicCacheMinuteEpoch = Int64.min
+    private var rtDynamicCacheDayEpoch = Int64.min
 
     private var biphaseKernel: [Float] = []
     private var gaussianKernel: [Float] = []
@@ -3431,7 +3427,7 @@ final class BasicRDSCoder {
             config.rdsRTBufferAEnabled,
             config.rdsRTBufferBEnabled,
             config.rdsRTBufferCEnabled,
-            config.rdsRTBufferDEnabled,
+            config.rdsRTBufferDEnabled
         ]
         self.rtCR = config.rdsRTCR
         self.rtCentered = config.rdsRTCentered
@@ -3611,8 +3607,7 @@ final class BasicRDSCoder {
         if psBanks != previousBanks
             || psActiveBankIndex != previousActive
             || psCentered != previousCentered
-            || psFrameSeconds != previousPSFrameSeconds
-        {
+            || psFrameSeconds != previousPSFrameSeconds {
             rebuildPSSequence()
         }
 
@@ -3701,8 +3696,7 @@ final class BasicRDSCoder {
         // if the schedule shape changed (different cached groups apply).
         if rtMode2B != previousRTMode2B
             || rtPlusEnabled != previousRTPlusEnabled
-            || scheduleChanged || schedulerFlagsChanged
-        {
+            || scheduleChanged || schedulerFlagsChanged {
             rebuildScheduleCaches()
         }
 
@@ -3898,8 +3892,7 @@ final class BasicRDSCoder {
     }
 
     private static func biphaseShapingTaps(sampleRate: Float, bitrate: Float, tapCount: Int)
-        -> [Float]
-    {
+        -> [Float] {
         // Match Python path intent: firwin2-shaped EN50067 biphase impulse response.
         let count = max(9, tapCount | 1)
         let sr = max(8_000.0, sampleRate)
@@ -3953,8 +3946,7 @@ final class BasicRDSCoder {
     }
 
     private static func gaussianTaps(sampleRate: Float, bandwidthHz: Float, tapCount: Int)
-        -> [Float]
-    {
+        -> [Float] {
         let count = max(9, tapCount | 1)
         let sr = max(8_000.0, sampleRate)
         let bw = max(100.0, bandwidthHz)
@@ -4184,7 +4176,7 @@ final class BasicRDSCoder {
         var t2Length = 0
 
         let orderedTags = Array(rtPlusTags.prefix(2))
-        if orderedTags.count > 0 {
+        if !orderedTags.isEmpty {
             t1Type = orderedTags[0].contentType
             t1Start = max(0, min(63, orderedTags[0].start))
             t1Length = max(0, min(63, orderedTags[0].length > 0 ? orderedTags[0].length - 1 : 0))
@@ -4325,7 +4317,7 @@ final class BasicRDSCoder {
             RDSGroupSpec(type: 2, versionB: rtMode2B),
             RDSGroupSpec(type: 0, versionB: false),
             RDSGroupSpec(type: 2, versionB: rtMode2B),
-            RDSGroupSpec(type: 0, versionB: false),
+            RDSGroupSpec(type: 0, versionB: false)
         ]
         if lpsEnabled {
             seq.append(RDSGroupSpec(type: 15, versionB: false))
@@ -4375,7 +4367,7 @@ final class BasicRDSCoder {
             RDSGroupSpec(type: 0, versionB: false),
             RDSGroupSpec(type: 2, versionB: rtMode2B),
             RDSGroupSpec(type: 0, versionB: false),
-            RDSGroupSpec(type: 0, versionB: false),
+            RDSGroupSpec(type: 0, versionB: false)
         ]
         if enID {
             seq.append(RDSGroupSpec(type: 1, versionB: false))
@@ -4622,8 +4614,7 @@ final class BasicRDSCoder {
     }
 
     private func currentManualRTFrame(limit: Int, snapshot: NowPlayingSnapshot)
-        -> (index: Int, text: String, bytes: [UInt8])
-    {
+        -> (index: Int, text: String, bytes: [UInt8]) {
         let enabledBuffers = enabledManualRTBuffers()
         guard !enabledBuffers.isEmpty else {
             let frame = Self.prepareRTFrame("", width: limit, centered: rtCentered, appendCR: rtCR)
@@ -4932,8 +4923,7 @@ final class BasicRDSCoder {
             let versionB = (groupType == 0 || groupType == 2) && suffix == "B"
             if groupType == 0 || groupType == 1 || groupType == 2 || groupType == 3
                 || groupType == 4
-                || groupType == 10 || groupType == 11 || groupType == 15
-            {
+                || groupType == 10 || groupType == 11 || groupType == 15 {
                 out.append(RDSGroupSpec(type: groupType, versionB: versionB))
             }
         }
@@ -4942,7 +4932,7 @@ final class BasicRDSCoder {
                 RDSGroupSpec(type: 0, versionB: false),
                 RDSGroupSpec(type: 0, versionB: false),
                 RDSGroupSpec(type: 2, versionB: false),
-                RDSGroupSpec(type: 0, versionB: false),
+                RDSGroupSpec(type: 0, versionB: false)
             ]
         }
         return out
@@ -5159,8 +5149,7 @@ final class BasicRDSCoder {
     }
 
     private static func splitAndPad(_ raw: String, width: Int, uppercase: Bool, center: Bool)
-        -> [String]
-    {
+        -> [String] {
         let normalized = sanitizeText(raw, uppercase: uppercase)
         let words = normalized.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         if words.isEmpty {
@@ -5233,7 +5222,7 @@ final class BasicRDSCoder {
 
     private static let rdsDirectByteMap: [UInt32: UInt8] = [
         0x00D8: 0xE7,
-        0x00F8: 0xF7,
+        0x00F8: 0xF7
     ]
 
     private static let rdsTransliterationMap: [UInt32: String] = [
@@ -5253,7 +5242,7 @@ final class BasicRDSCoder {
         0x0152: "OE", 0x0153: "oe",
         0x00DF: "ss",
         0x20AC: "E",
-        0x00B0: " ", 0x2122: " ", 0x00AE: " ",
+        0x00B0: " ", 0x2122: " ", 0x00AE: " "
     ]
 
     private static func resolveTextMarkers(_ text: String) -> String? {
@@ -5364,8 +5353,7 @@ final class BasicRDSCoder {
                 var appended = false
                 for foldedScalar in folded.unicodeScalars {
                     if foldedScalar.value == 0x0D
-                        || (foldedScalar.value >= 0x20 && foldedScalar.value <= 0x7E)
-                    {
+                        || (foldedScalar.value >= 0x20 && foldedScalar.value <= 0x7E) {
                         out.append(Character(foldedScalar))
                         appended = true
                     }
@@ -5394,8 +5382,7 @@ final class BasicRDSCoder {
     }
 
     private static func prepareRTFrame(_ raw: String, width: Int, centered: Bool, appendCR: Bool)
-        -> String
-    {
+        -> String {
         let sanitized = sanitizeText(raw, uppercase: false)
         let limited = String(sanitized.prefix(width))
         if appendCR {
@@ -6014,7 +6001,7 @@ final class MPXGenerator {
                     config.rdsRTBufferAEnabled,
                     config.rdsRTBufferBEnabled,
                     config.rdsRTBufferCEnabled,
-                    config.rdsRTBufferDEnabled,
+                    config.rdsRTBufferDEnabled
                 ],
                 rtCR: config.rdsRTCR,
                 rtCentered: config.rdsRTCentered,
@@ -8264,8 +8251,7 @@ final class MPXGenerator {
     }
 
     private func makeCompositeComponents(left: Float, right: Float, inputActivity: Float)
-        -> CompositeComponents
-    {
+        -> CompositeComponents {
         let base = ((left + right) * 0.5) * sumLevel
         let diff = monoMode ? 0.0 : (((right - left) * 0.5) * diffLevel)
         // Pre-emphasis ran here pre-2026-05; it now runs in L/R domain
@@ -8676,7 +8662,6 @@ final class MPXGenerator {
         let combinedSide = highSide
         return (mid + combinedSide, mid - combinedSide)
     }
-
 
     private func processPrimeBass(left: Float, right: Float) -> (Float, Float) {
         let mid = (left + right) * 0.5

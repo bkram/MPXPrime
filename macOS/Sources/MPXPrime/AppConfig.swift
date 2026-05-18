@@ -1053,7 +1053,7 @@ struct AppConfig {
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
             "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",
-            "test_tone_type = \(testToneType)",
+            "test_tone_type = \(testToneType)"
         ]
         let rdsLines: [String] = [
             "[RDS]",
@@ -1123,7 +1123,7 @@ struct AppConfig {
             "scheduler_standard_lps = \(Self.boolString(rdsSchedulerStandardLPS))",
             "rds_gaussian_enabled = \(Self.boolString(rdsGaussianEnabled))",
             "rds_gaussian_bw_hz = \(Self.formatFloat(max(600.0, min(6_000.0, rdsGaussianBWHZ))))",
-            "rds_gaussian_taps = \(max(9, min(401, rdsGaussianTaps | 1)))",
+            "rds_gaussian_taps = \(max(9, min(401, rdsGaussianTaps | 1)))"
         ]
         let interfacesLines: [String] = [
             "[INTERFACES]",
@@ -1134,7 +1134,7 @@ struct AppConfig {
             "fft_window_92khz = \(Self.boolString(fftWindow96kHz))",
             "input_device_uid = \(inputDeviceUID ?? "")",
             "output_device_uid = \(outputDeviceUID ?? "")",
-            "monitor_device_uid = \(monitorDeviceUID ?? "")",
+            "monitor_device_uid = \(monitorDeviceUID ?? "")"
         ]
         let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""]).joined(
             separator: "\n")

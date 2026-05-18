@@ -511,7 +511,7 @@ private func verificationScenarios() -> [VerificationScenario] {
             let t = Double(frame) / sampleRate
             let tone = Float(sin(2.0 * Double.pi * 10_000.0 * t)) * 0.85
             return (tone, -tone)
-        },
+        }
     ]
 }
 
@@ -558,7 +558,7 @@ private func longRunSignatureReferences() -> [String: LongRunSignatureReference]
             outCorrelation: -0.22,
             occ999Hz: 58_112.0,
             above60kRatioDB: -83.6
-        ),
+        )
     ]
 }
 
@@ -1669,8 +1669,7 @@ private func qualityFindings(
     }
 
     if let minSideRetention = expectations.minSideRetention,
-        metrics.inputSignal.sideToMidRatio > 0.05
-    {
+        metrics.inputSignal.sideToMidRatio > 0.05 {
         let retention = metrics.outputSignal.sideToMidRatio / max(0.001, metrics.inputSignal.sideToMidRatio)
         if retention < (minSideRetention - tolerance) {
             findings.append(
@@ -1930,7 +1929,7 @@ private func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandKneeDB = 2.0
             config.multibandLinkStrength = 0.40
             config.multibandReleaseProgramDependent = true
-        },
+        }
     ]
 }
 
@@ -2249,7 +2248,7 @@ private func multibandCouplingComparisonScenarios() -> [VerificationScenario] {
                     + (0.10 * sin(2.0 * Double.pi * 2_800.0 * t)))
             let n = Double(speechNoise.next()) * 0.030
             return (Float(bed + speech + n), Float((0.96 * bed) + (0.92 * speech) + n))
-        },
+        }
     ]
 }
 
@@ -2809,7 +2808,7 @@ func runVerificationHarness(
     var baselineDrift: [BaselineDriftFinding] = []
     if !longRun {
         let measured: [String: VerifierBaselineRecord] = Dictionary(
-            uniqueKeysWithValues: scenarioMetrics.map { (scenario, metrics) in
+            uniqueKeysWithValues: scenarioMetrics.map { scenario, metrics in
                 (scenario.name, buildBaselineRecord(
                     metrics: metrics,
                     targetDeviationKHz: config.mpxDeviationKHz
@@ -2874,9 +2873,7 @@ func runVerificationHarness(
     } else { naturalResult = 0 }
 
     let result: Int32
-    if baselineDrift.isEmpty { result = naturalResult }
-    else if strictBaseline { result = 2 }
-    else { result = max(naturalResult, 1) }
+    if baselineDrift.isEmpty { result = naturalResult } else if strictBaseline { result = 2 } else { result = max(naturalResult, 1) }
 
     switch result {
     case 2:

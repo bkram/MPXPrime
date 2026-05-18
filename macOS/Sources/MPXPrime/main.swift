@@ -36,7 +36,7 @@ func defaultVerificationConfigPath() -> String {
         ((launchDirectory as NSString).appendingPathComponent("macOS/Verification.ini")
             as NSString).standardizingPath,
         ((launchDirectory as NSString).appendingPathComponent("Verification.ini")
-            as NSString).standardizingPath,
+            as NSString).standardizingPath
     ]
     for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
         return candidate
@@ -148,8 +148,7 @@ func printUsage() {
 }
 
 func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevices: [AudioDevice])
-    -> String
-{
+    -> String {
     var parts: [String] = []
     if let inputID = inputID {
         if let device = allDevices.first(where: { $0.id == inputID }) {
@@ -222,8 +221,8 @@ do {
 
     // Minimize blocking before audio engine start: do device lookup with minimal I/O and NO logging
     var allDevices: [AudioDevice] = []
-    var inputID: AudioDeviceID? = nil
-    var outputID: AudioDeviceID? = nil
+    var inputID: AudioDeviceID?
+    var outputID: AudioDeviceID?
 
     do {
         allDevices = try AudioDevices.list()

@@ -51,7 +51,7 @@ private func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     let panelPath = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
     NSGradient(colors: [
         NSColor(calibratedRed: 0.12, green: 0.45, blue: 0.63, alpha: 1.0),
-        NSColor(calibratedRed: 0.04, green: 0.16, blue: 0.28, alpha: 1.0),
+        NSColor(calibratedRed: 0.04, green: 0.16, blue: 0.28, alpha: 1.0)
     ])?.draw(in: panelPath, angle: -90)
 
     NSGraphicsContext.current?.saveGraphicsState()
@@ -72,7 +72,7 @@ private func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     let symbolAttributes: [NSAttributedString.Key: Any] = [
         .font: symbolFont,
         .foregroundColor: NSColor(calibratedWhite: 0.98, alpha: 1.0),
-        .shadow: shadowStyle,
+        .shadow: shadowStyle
     ]
     let symbol = NSAttributedString(string: kMPXPrimeIconSymbol, attributes: symbolAttributes)
     let symbolSize = symbol.size()
@@ -1058,7 +1058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = makeMPXPrimeAppIcon()
         NSApp.activate(ignoringOtherApps: true)
-        
+
         let vm = MPXPrimeViewModel(configPath: configPath)
         model = vm
         setupMainMenu()
@@ -1279,7 +1279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Window Menu
         let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "Window")
-        
+
         let mainWindowItem = windowMenu.addItem(withTitle: "Main", action: #selector(showMainWindow), keyEquivalent: "1")
         mainWindowItem.target = self
         let preMPXSpectrumItem = windowMenu.addItem(withTitle: kAudioSpectrumWindowTitle, action: #selector(showPreMPXSpectrumWindow), keyEquivalent: "7")
@@ -1293,35 +1293,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let scopesItem = windowMenu.addItem(withTitle: kScopesWindowTitle, action: #selector(showScopesWindow), keyEquivalent: "0")
         scopesItem.target = self
         scopesItem.keyEquivalentModifierMask = [.command, .shift]
-        
+
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        
+
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
         NSApp.windowsMenu = windowMenu
 
         let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
         let helpMenu = NSMenu(title: "Help")
-        
+
         let openHelp = NSMenuItem(title: "MPX Prime Help", action: #selector(showHelp), keyEquivalent: "/")
         openHelp.target = self
         openHelp.keyEquivalentModifierMask = [.command, .shift]
         helpMenu.addItem(openHelp)
-        
+
         helpMenu.addItem(NSMenuItem.separator())
-        
+
         let docs = NSMenuItem(title: "Online Documentation", action: #selector(openDocs), keyEquivalent: "")
         docs.target = self
         docs.isEnabled = true
         helpMenu.addItem(docs)
-        
+
         helpItem.submenu = helpMenu
         mainMenu.addItem(helpItem)
-        
+
         NSApp.helpMenu = helpMenu
 
         NSApp.mainMenu = mainMenu
@@ -1643,13 +1643,11 @@ final class MPXPrimeViewModel: ObservableObject {
                 selectedSection = selectedStage.legacySection
             }
             if let pt = selectedStage.legacyProcessingTab,
-               selectedProcessingTab != pt
-            {
+               selectedProcessingTab != pt {
                 selectedProcessingTab = pt
             }
             if let rt = selectedStage.legacyRDSTab,
-               selectedRDSTab != rt
-            {
+               selectedRDSTab != rt {
                 selectedRDSTab = rt
             }
         }
@@ -1691,13 +1689,13 @@ final class MPXPrimeViewModel: ObservableObject {
     // all have this). Tweaks while a slot is loaded are EPHEMERAL — the
     // operator must re-capture to save changes into a slot. Swap restores
     // the captured snapshot wholesale.
-    @Published var compareSlotA: AppConfig? = nil
-    @Published var compareSlotB: AppConfig? = nil
+    @Published var compareSlotA: AppConfig?
+    @Published var compareSlotB: AppConfig?
     /// Identifies which slot is currently loaded, "a" or "b", or nil if
     /// neither was ever captured. After the most recent capture the
     /// captured slot is the active one; after a swap the just-loaded
     /// slot becomes active.
-    @Published var compareActiveSlot: String? = nil
+    @Published var compareActiveSlot: String?
 
     @Published var sourceMode: String
     @Published var monitorEnabled: Bool
@@ -1954,7 +1952,7 @@ final class MPXPrimeViewModel: ObservableObject {
             ("RT+ App ID", rdsAID),
             ("Long PS", rdsLongPS),
             ("Radiotext", rdsRadiotext),
-            ("Now Playing", rdsNowPlayingStatus.replacingOccurrences(of: "Now Playing: ", with: "")),
+            ("Now Playing", rdsNowPlayingStatus.replacingOccurrences(of: "Now Playing: ", with: ""))
         ]
     }
 
@@ -2440,7 +2438,6 @@ final class MPXPrimeViewModel: ObservableObject {
         snapshots[slot] = snapshot
         writeSnapshotsToDisk()
     }
-
 
     /// One-line description of the currently selected format profile,
     /// or a fallback string if the stored ID doesn't match any known
@@ -3877,8 +3874,7 @@ final class MPXPrimeViewModel: ObservableObject {
                     let ns = p as NSString
                     if let match = prefixRegex.firstMatch(
                         in: p, options: [], range: NSRange(location: 0, length: ns.length)),
-                        match.range.location == 0
-                    {
+                        match.range.location == 0 {
                         let dur = Double(ns.substring(with: match.range(at: 1))) ?? 2.5
                         let textStart = match.range.location + match.range.length
                         let text = textStart < ns.length ? ns.substring(from: textStart) : ""
@@ -3925,7 +3921,7 @@ final class MPXPrimeViewModel: ObservableObject {
         "Other Music", "Weather", "Finance", "Children's", "Social Affairs", "Religion", "Phone-In",
         "Travel", "Leisure", "Jazz", "Country", "National Music", "Oldies", "Folk Music",
         "Documentary",
-        "Alarm Test", "Alarm",
+        "Alarm Test", "Alarm"
     ]
 
     private static let primeBassPresets: [PrimeBassPreset] = [
@@ -3943,7 +3939,7 @@ final class MPXPrimeViewModel: ObservableObject {
             drive: 0.68, density: 0.36, subharmonicsEnabled: false, subharmonicsAmount: 0.06),
         .init(
             id: "talk", title: "Talk", enabled: true, amount: 0.08, freqHz: 120, harmonics: 0.04,
-            drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0),
+            drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0)
     ]
 
     private static let widenerPresets: [WidenerPreset] = [
@@ -3976,7 +3972,7 @@ final class MPXPrimeViewModel: ObservableObject {
             width: 0.46,
             center: 0.50,
             mix: 0.76
-        ),
+        )
     ]
 
     private static let multibandPresets: [MultibandPreset] = [
@@ -4129,7 +4125,7 @@ final class MPXPrimeViewModel: ObservableObject {
             x2Hz: 340, x3Hz: 1450, x4Hz: 5600, lowThresholdDB: -20, lowRatio: 1.8, lowAttackMS: 26,
             lowReleaseMS: 360, midThresholdDB: -18, midRatio: 1.7, midAttackMS: 18,
             midReleaseMS: 280, highThresholdDB: -17, highRatio: 1.45, highAttackMS: 11,
-            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true),
+            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true)
     ]
 
     private static let finalStagePresets: [FinalStagePreset] = [
@@ -4180,7 +4176,7 @@ final class MPXPrimeViewModel: ObservableObject {
             agcMinGainDB: -8.0,
             finalDriveDB: 4.5,
             preEncodeAudioLimiterEnabled: true
-        ),
+        )
     ]
 
     // MARK: - Format Profiles (top-level "Station Format" selector)
@@ -4343,7 +4339,7 @@ final class MPXPrimeViewModel: ObservableObject {
             compositeClipperThresholdDB: -1.0,
             compositeClipperCeilingDB: -0.3,
             finalDriveDB: 4.5
-        ),
+        )
     ]
 
     static func formatProfile(forID id: String) -> FormatProfile? {
@@ -4842,9 +4838,9 @@ private struct StageContentView: View {
                     TestToneView(model: model)
                 } else if model.selectedStage == .snapshots {
                     SnapshotsView(model: model)
-                } else if let _ = model.selectedStage.legacyProcessingTab {
+                } else if model.selectedStage.legacyProcessingTab != nil {
                     StageProcessingContent(model: model)
-                } else if let _ = model.selectedStage.legacyRDSTab {
+                } else if model.selectedStage.legacyRDSTab != nil {
                     StageRDSContent(model: model)
                 }
             }
@@ -5172,7 +5168,7 @@ private struct TestToneView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     private static let frequencyPresets: [Double] = [
-        50, 100, 400, 1_000, 5_000, 10_000, 12_000, 15_000,
+        50, 100, 400, 1_000, 5_000, 10_000, 12_000, 15_000
     ]
 
     private var isEnabled: Binding<Bool> {
@@ -5451,7 +5447,7 @@ private struct MonitoringDashboardView: View {
                 ("OUTPUT", model.outputText.ifEmpty("—")),
                 ("AUDIO COMPOSITE", audioCompositeText),
                 ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
-                ("MODULATION", modulationText),
+                ("MODULATION", modulationText)
             ])
         }
     }
@@ -5462,7 +5458,7 @@ private struct MonitoringDashboardView: View {
                 ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
                 ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
                 ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
-                ("BS.412 BUDGET", budgetText),
+                ("BS.412 BUDGET", budgetText)
             ])
         }
     }
@@ -5472,7 +5468,7 @@ private struct MonitoringDashboardView: View {
             metricsGrid([
                 ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
                 ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
-                ("STEREO IMAGE", model.stereoImageText),
+                ("STEREO IMAGE", model.stereoImageText)
             ])
         }
     }
@@ -5573,7 +5569,7 @@ private struct MonitoringDashboardView: View {
                 FlowStatusRow(items: [
                     ("Source", inputName, model.isRunning ? .green : .secondary.opacity(0.75)),
                     ("Output", outputName, model.isRunning ? .green : .secondary.opacity(0.75)),
-                    ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75)),
+                    ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75))
                 ])
 
                 // Input levels — visible here so the operator can
@@ -5717,7 +5713,7 @@ private struct MonitoringDashboardView: View {
                 FlowStatusRow(items: [
                     ("AGC", agcPillText, agcDotColor),
                     ("Stereo", stereoPillText, .secondary.opacity(0.75)),
-                    ("Pre-Lim GR", preLimText, preLimDotColor),
+                    ("Pre-Lim GR", preLimText, preLimDotColor)
                 ])
 
                 ProcessingOverviewGrid(model: model, embedded: true)
@@ -5733,7 +5729,7 @@ private struct MonitoringDashboardView: View {
                 FlowStatusRow(items: [
                     ("PS", model.rdsPS.ifEmpty("—"), .secondary.opacity(0.75)),
                     ("PI", model.rdsPI.ifEmpty("—"), .secondary.opacity(0.75)),
-                    ("PTY", model.rdsPTY.ifEmpty("—"), .secondary.opacity(0.75)),
+                    ("PTY", model.rdsPTY.ifEmpty("—"), .secondary.opacity(0.75))
                 ])
 
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
@@ -5869,7 +5865,6 @@ private struct MonitoringDashboardView: View {
         return nil
     }
 }
-
 
 private struct DashboardMetricGrid<Content: View>: View {
     @ViewBuilder var content: Content
@@ -6273,7 +6268,7 @@ private struct MeterBar: View {
                 ScaleTick(position: Self.dbfsScalePosition(-12.0), label: "-12"),
                 ScaleTick(position: Self.dbfsScalePosition(-6.0), label: "-6"),
                 ScaleTick(position: Self.dbfsScalePosition(-3.0), label: "-3"),
-                ScaleTick(position: Self.dbfsScalePosition(0.0), label: "0 dBFS"),
+                ScaleTick(position: Self.dbfsScalePosition(0.0), label: "0 dBFS")
             ]
         case .modulation100kHz:
             return [
@@ -6281,7 +6276,7 @@ private struct MeterBar: View {
                 ScaleTick(position: 0.25, label: "25"),
                 ScaleTick(position: 0.5, label: "50"),
                 ScaleTick(position: 0.75, label: "75"),
-                ScaleTick(position: 1.0, label: "100 kHz"),
+                ScaleTick(position: 1.0, label: "100 kHz")
             ]
         case .none:
             return []
@@ -6373,7 +6368,7 @@ private struct MeterBar: View {
 
 struct ScopeView: View {
     let samples: [Float]
-    var secondarySamples: [Float]? = nil
+    var secondarySamples: [Float]?
 
     var body: some View {
         Canvas { context, size in
@@ -6535,7 +6530,7 @@ struct MPXSpectrumView: View {
                     Color.yellow.opacity(0.60),
                     Color.green.opacity(0.55),
                     Color.cyan.opacity(0.50),
-                    Color.blue.opacity(0.45),
+                    Color.blue.opacity(0.45)
                 ])
                 context.fill(
                     fill,
@@ -6638,7 +6633,7 @@ struct AudioBarSpectrumView: View {
     private static let isoCenters: [Double] = [
         31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250,
         315, 400, 500, 630, 800, 1_000, 1_250, 1_600, 2_000, 2_500,
-        3_150, 4_000, 5_000, 6_300, 8_000, 10_000, 12_500, 16_000,
+        3_150, 4_000, 5_000, 6_300, 8_000, 10_000, 12_500, 16_000
     ]
 
     var body: some View {
@@ -6714,7 +6709,7 @@ struct AudioBarSpectrumView: View {
                     Color.yellow.opacity(0.80),
                     Color.green.opacity(0.74),
                     Color.cyan.opacity(0.62),
-                    Color.blue.opacity(0.55),
+                    Color.blue.opacity(0.55)
                 ])
 
                 for (i, center) in usableCenters.enumerated() {
@@ -6732,8 +6727,8 @@ struct AudioBarSpectrumView: View {
                         )
                     )
                     var maxDB: Float = -100.0
-                    for b in lowBin...highBin {
-                        if dbBins[b] > maxDB { maxDB = dbBins[b] }
+                    for b in lowBin...highBin where dbBins[b] > maxDB {
+                        maxDB = dbBins[b]
                     }
                     // Floor for visual readability — a 1-pixel sliver at
                     // -100 is invisible; cap at -98 so very-quiet bands
@@ -6767,7 +6762,7 @@ struct AudioBarSpectrumView: View {
                     (100, "100 Hz"),
                     (1_000, "1 kHz"),
                     (10_000, "10 kHz"),
-                    (16_000, "16 kHz"),
+                    (16_000, "16 kHz")
                 ]
                 for (decadeHz, label) in decadeLabels where decadeHz <= nyquist {
                     if let idx = usableCenters.firstIndex(where: { abs($0 - decadeHz) < 0.5 }) {
@@ -7731,9 +7726,9 @@ private struct PSBankRow: View {
     var body: some View {
         let isActive = model.config.rdsPSActiveBank.uppercased() == letter
         HStack(spacing: 10) {
-            Button(action: {
+            Button {
                 model.setConfigValue(\.rdsPSActiveBank, letter, runtimeDisposition: .liveRDS)
-            }) {
+            } label: {
                 Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                     .imageScale(.large)
@@ -8419,12 +8414,10 @@ private struct AboutSectionView: View {
 private struct PendingApplyCard: View {
     @ObservedObject var model: MPXPrimeViewModel
 
-    
-
     var body: some View {
         // Empty view — never shown
         EmptyView()
-        
+
         // Or completely remove the if and Card, leaving just:
         // EmptyView()
     }
@@ -8443,8 +8436,6 @@ private struct PendingApplyCard: View {
     //         .hidden()
     //     }
 }
-    
-
 
 // Conditional `.help()` so an empty/nil tooltip does not clear tooltips set
 // elsewhere in the subtree — SwiftUI interprets `.help("")` as "remove help".
@@ -8464,8 +8455,8 @@ private struct DoubleSliderRow: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let format: String
-    var accessibilityLabel: String? = nil
-    var tooltip: String? = nil
+    var accessibilityLabel: String?
+    var tooltip: String?
 
     var body: some View {
         LabeledContent(title) {
@@ -8495,7 +8486,7 @@ private struct IntStepperRow: View {
     let range: ClosedRange<Int>
     let step: Int
     let format: String
-    var tooltip: String? = nil
+    var tooltip: String?
 
     var body: some View {
         LabeledContent(title) {

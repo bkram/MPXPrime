@@ -4,7 +4,10 @@ enum INIParserError: Error {
     case unreadableFile(String)
 }
 
-struct INIParser {
+// Caseless enum: this type only hosts static methods and shouldn't be
+// instantiated. Using an enum (vs a struct) lets the compiler enforce
+// "no init" via the absence of cases.
+enum INIParser {
     static func parseFile(_ path: String) throws -> [String: [String: String]] {
         guard let data = try? String(contentsOfFile: path, encoding: .utf8) else {
             throw INIParserError.unreadableFile(path)

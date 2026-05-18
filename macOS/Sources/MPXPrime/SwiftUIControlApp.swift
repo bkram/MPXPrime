@@ -2441,29 +2441,6 @@ final class MPXPrimeViewModel: ObservableObject {
         writeSnapshotsToDisk()
     }
 
-    // MARK: - Signal Flow Strip live GR
-
-    /// Returns the current GR in dB for stages that the strip has live
-    /// telemetry for, or nil for stages without dynamics (EQ-only, phase
-    /// rotation, bass enhancement) or for stages whose GR isn't yet
-    /// surfaced on the view model. Used by `SignalFlowStrip` to draw a
-    /// small GR fill bar inside each chip — chip stays the same width;
-    /// the bar grows as gain reduction increases.
-    func signalFlowGR(for stage: Stage) -> Float? {
-        switch stage {
-        case .processingLimiter:
-            return preEncodeLimiterGainReductionDBValue
-        case .processingCompositeClipper:
-            return max(
-                compositeClipperGainReductionDBValue,
-                compositeClipperLookaheadGainReductionDBValue
-            )
-        case .processingFinalStage:
-            return safetyLimiterGainReductionDBValue
-        default:
-            return nil
-        }
-    }
 
     /// One-line description of the currently selected format profile,
     /// or a fallback string if the stored ID doesn't match any known

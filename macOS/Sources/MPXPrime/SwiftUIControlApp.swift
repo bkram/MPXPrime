@@ -5054,15 +5054,6 @@ private struct StageProcessingContent: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Tab help text block — shown above every Processing
-                    // tab except the Overview grid (which is its own
-                    // self-describing layout). Brief 1-3 sentence
-                    // explanation of the DSP stage so operators can
-                    // anchor without leaving for documentation.
-                    if model.selectedProcessingTab != .overview {
-                        TabHelpBox(text: model.selectedProcessingTab.helpText)
-                    }
-
                     switch model.selectedProcessingTab {
                     case .overview:
                         ProcessingOverviewGrid(model: model)
@@ -5108,6 +5099,14 @@ private struct StageProcessingContent: View {
                             }
                             .buttonStyle(.bordered)
                         }
+
+                        // Tab help text as a footer block below the
+                        // controls and the Reset action — matches
+                        // System Settings / Xcode "explanation under
+                        // the controls" idiom rather than competing
+                        // with the controls visually at the top of
+                        // the tab.
+                        TabHelpBox(text: model.selectedProcessingTab.helpText)
                     }
                 }
                 .padding(20)
@@ -5124,11 +5123,6 @@ private struct StageRDSContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Tab help box — shown at the top of every RDS tab, same
-                // pattern as the Processing tabs. Brief 1-3 sentence
-                // anchor on what the tab covers and spec context.
-                TabHelpBox(text: model.selectedRDSTab.helpText)
-
                 switch model.selectedRDSTab {
                 case .control:
                     RDSStatusTab(model: model)
@@ -5153,6 +5147,12 @@ private struct StageRDSContent: View {
                     }
                     .buttonStyle(.bordered)
                 }
+
+                // Footer help block — same pattern as Processing tabs.
+                // Sits below the controls and the Reset action so it
+                // reads as explanatory text rather than competing with
+                // the controls at the top of the view.
+                TabHelpBox(text: model.selectedRDSTab.helpText)
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)
@@ -5248,8 +5248,6 @@ private struct SnapshotsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                TabHelpBox(text: "Eight named snapshot slots for the full configuration. Save the current setup into a slot, load it back later — survives app restart (stored as `<configPath>.snapshots.json`). Heavier than Format Profiles: snapshots capture every per-stage setting and RDS field, not just the DSP bundle.")
-
                 Card(title: "Snapshots") {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
@@ -5260,6 +5258,8 @@ private struct SnapshotsView: View {
                         }
                     }
                 }
+
+                TabHelpBox(text: "Eight named snapshot slots for the full configuration. Save the current setup into a slot, load it back later — survives app restart (stored as `<configPath>.snapshots.json`). Heavier than Format Profiles: snapshots capture every per-stage setting and RDS field, not just the DSP bundle.")
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)
@@ -5407,7 +5407,6 @@ private struct TestToneView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                TabHelpBox(text: "Internal signal generator that replaces the audio input. Sine for level / separation / encoder-bandwidth tests; pink and white noise for broadband response checks. Four stereo modes (mono / L=-R / left-only / right-only) cover common diagnostic needs. The rest of the chain (AGC, multiband, clippers, BS.412, encoder) processes the tone normally so you can observe each stage's response at calibrated input levels.")
                 enableCard
                 signalCard
                 if typeBinding.wrappedValue == "sine" {
@@ -5415,6 +5414,8 @@ private struct TestToneView: View {
                 }
                 levelCard
                 statusCard
+
+                TabHelpBox(text: "Internal signal generator that replaces the audio input. Sine for level / separation / encoder-bandwidth tests; pink and white noise for broadband response checks. Four stereo modes (mono / L=-R / left-only / right-only) cover common diagnostic needs. The rest of the chain (AGC, multiband, clippers, BS.412, encoder) processes the tone normally so you can observe each stage's response at calibrated input levels.")
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)

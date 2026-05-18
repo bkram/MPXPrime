@@ -234,7 +234,7 @@ Relevant config sections:
 
 ### Format Profiles (Station Format selector)
 
-For one-click "make this sound right for my format", MPX Prime ships with eight atomic Format Profiles, accessible from the picker at the top of **Processing → Overview**. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate.
+For one-click "make this sound right for my format", MPX Prime ships with eight atomic Format Profiles plus a `Custom` sentinel, accessible from the dedicated **Processing → Format Profile** tab. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate. Pick `Custom` to flag "my settings are bespoke — don't overwrite them" so re-visiting the picker won't reset your manual tuning.
 
 | Profile | Multiband | Intensity | Final Stage | PrimeBass | Widener | Clipper drive | Use case |
 |---|---|---|---|---|---|---|---|
@@ -246,8 +246,9 @@ For one-click "make this sound right for my format", MPX Prime ships with eight 
 | **Urban / Hip-Hop** | `5_urban` | normal | `chr` | `urban` (on) | `open_music` | +8 dB | Deep low end, urban-tuned PrimeBass |
 | **Jazz / Classical** | `5_classic` | light | `balanced` | off | `safe_fm` | +3 dB | Dynamic-preserving, no harmonic enhancement |
 | **News / Talk** | `5_talk` | light | `speech` | off | `safe_fm` | +4.5 dB | Speech-optimized multiband + final stage |
+| **Custom** | — | — | — | — | — | — | Sentinel — leaves all per-stage settings as you tuned them |
 
-Pick once, tune as needed. The selected profile is stored as `format_profile_id` in the INI; switching profiles overwrites the per-stage settings to the new format's defaults.
+Pick once, tune as needed. The selected profile is stored as `format_profile_id` in the INI; switching profiles overwrites the per-stage settings to the new format's defaults (except `custom`, which is a no-op label).
 
 ### Recommended DSP enablement (current default starting point)
 

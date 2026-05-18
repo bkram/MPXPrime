@@ -158,6 +158,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 enum ProcessingTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
+    case formatProfile = "Profile"
     case core = "Core"
     case phaseRotator = "Phase Rot"
     case agc = "AGC"
@@ -174,12 +175,57 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case bs412 = "BS.412"
     case finalStage = "Final Stage"
 
+    /// Short paragraph explaining what the stage on this tab does and how
+    /// it fits into the chain. Shown as a header block above the tab's
+    /// controls — anchors the operator without forcing them to read
+    /// documentation. Brief by design (1-3 sentences, ASCII-only).
+    var helpText: String {
+        switch self {
+        case .overview:
+            return "Bird's-eye view of every processing stage with its current state and one telling metric. Click a card's chevron to jump into its detail tab."
+        case .formatProfile:
+            return "Pick a station format to atomically apply matched multiband, final-stage, PrimeBass, widener, and composite-clipper settings. Per-stage knobs stay editable afterwards. Pick `Custom` to keep your manual tuning."
+        case .core:
+            return "Global engine controls: bypass, mono mode, input/output gains, pre-emphasis, audio HPF, program lowpass, HF trim. Most settings here are restart-required."
+        case .phaseRotator:
+            return "4-pole allpass chain that reduces waveform asymmetry — especially on voice — by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages."
+        case .agc:
+            return "Wideband Automatic Gain Control with optional K-weighted (BS.1770-style) detector and program-dependent release. Long-term level riding that brings quiet and loud sources to a similar perceived level before the multiband stage."
+        case .parametricEQ:
+            return "4-band parametric EQ (low shelf + 2 peaks + high shelf) applied in L/R domain before the multiband stage. Pre-multiband tonal shaping."
+        case .multiband:
+            return "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined."
+        case .expander:
+            return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
+        case .mbLimiter:
+            return "Per-band fast peak limiter sitting after the multiband compressor. Catches band-internal peaks before recombination, preserves the multiband target while controlling overshoots."
+        case .widener:
+            return "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe — energy-normalised so mono compatibility is preserved."
+        case .primeBass:
+            return "Bass enhancement via MaxxBass-style harmonic synthesis (US 5,930,373, expired) plus dynamic envelope extension (US 5,359,665). Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream."
+        case .bassClipper:
+            return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
+        case .dcClipper:
+            return "8x oversampled distortion-cancelled clipper on the audio band (Orban US 4,460,871 / US 5,737,434, expired). Cleans up audio-band peaks before pre-emphasis adds HF boost."
+        case .limiter:
+            return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and Dolby HF-subband detector (US 5,579,404, expired 2013). Catches HF transients that slip past everything upstream after pre-emphasis."
+        case .bs412:
+            return "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries."
+        case .compositeClipper:
+            return "16x oversampled differential composite clipper (Orban US 6,337,999, expired 2022) on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper IM via delta-based per-band substitution. Primary loudness lever."
+        case .finalStage:
+            return "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry."
+        }
+    }
+
     var id: String { rawValue }
 
     var resetButtonTitle: String {
         switch self {
         case .overview:
             return "Reset All Processing"
+        case .formatProfile:
+            return "Reset Format Profile"
         case .core:
             return "Reset Core Tab"
         case .agc:
@@ -217,6 +263,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview:
             return "Reset every processing tab to defaults"
+        case .formatProfile:
+            return "Reset format profile to default (Community Radio)"
         case .core:
             return "Reset processing core tab to defaults"
         case .agc:
@@ -299,6 +347,7 @@ enum Stage: String, CaseIterable, Identifiable {
 
     // Processing
     case processingOverview
+    case processingFormatProfile
     case processingCore
     case processingPhaseRotator
     case processingAGC
@@ -356,6 +405,7 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "Monitoring"
         case .processingOverview: return "Overview"
+        case .processingFormatProfile: return "Format Profile"
         case .processingCore: return "Core"
         case .processingAGC: return "AGC"
         case .processingPhaseRotator: return "Phase Rotator"
@@ -387,6 +437,7 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "waveform"
         case .processingOverview: return "square.grid.2x2"
+        case .processingFormatProfile: return "tag"
         case .processingCore: return "slider.horizontal.3"
         case .processingAGC: return "gauge.with.needle"
         case .processingPhaseRotator: return "arrow.triangle.2.circlepath"
@@ -421,6 +472,7 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "Overview and live status"
         case .processingOverview: return "DSP chain status at a glance"
+        case .processingFormatProfile: return "Station Format selector (atomic per-format DSP bundle)"
         case .processingCore: return "Bypass, mono, gains, HPF, LPF, HF trim"
         case .processingAGC: return "Wideband AGC with K-weighting"
         case .processingPhaseRotator: return "Allpass phase rotator"
@@ -469,6 +521,7 @@ enum Stage: String, CaseIterable, Identifiable {
     var legacyProcessingTab: ProcessingTab? {
         switch self {
         case .processingOverview: return .overview
+        case .processingFormatProfile: return .formatProfile
         case .processingCore: return .core
         case .processingAGC: return .agc
         case .processingPhaseRotator: return .phaseRotator
@@ -2109,6 +2162,19 @@ final class MPXPrimeViewModel: ObservableObject {
         publishConfigChange()
         config.formatProfileID = id
 
+        // "Custom" sentinel: just record the label, leave per-stage
+        // settings alone. Lets operators flag bespoke setups so the
+        // picker stops showing whichever profile was last applied even
+        // though knobs have drifted.
+        if id == "custom" {
+            saveConfig(restartRequired: false)
+            statusText =
+                isRunning
+                ? "Format profile set to Custom (no settings changed)."
+                : "Format profile set to Custom."
+            return
+        }
+
         applyMultibandPreset(id: profile.multibandPresetID, intensity: profile.multibandIntensity)
         applyFinalStagePreset(id: profile.finalStagePresetID)
 
@@ -2342,6 +2408,12 @@ final class MPXPrimeViewModel: ObservableObject {
         case .overview:
             // Overview has no detail parameters of its own — nothing to reset.
             return
+        case .formatProfile:
+            // Reset the format profile selector to the shipping default
+            // (Community Radio); applies the matching per-stage settings
+            // atomically through `applyFormatProfile`.
+            applyFormatProfile(defaults.formatProfileID)
+            return
         case .core:
             processingBypass = defaults.processingBypass
             inputGainDB = defaults.inputGainDB
@@ -2464,7 +2536,7 @@ final class MPXPrimeViewModel: ObservableObject {
         switch selectedProcessingTab {
         case .core:
             runtimeDisposition = .restart
-        case .overview,
+        case .overview, .formatProfile,
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .mbLimiter, .expander,
              .widener, .primeBass,
@@ -3906,6 +3978,26 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     static let formatProfiles: [FormatProfile] = [
+        // "Custom" is a sentinel — selecting it just records the label
+        // and leaves every per-stage setting alone. Use this after
+        // hand-tuning to flag "my settings are bespoke, don't auto-apply
+        // a format default if I re-pick this entry from the menu." The
+        // sentinel preset IDs below are placeholders; the apply path
+        // short-circuits on `id == "custom"` and never reads them.
+        FormatProfile(
+            id: "custom",
+            title: "Custom",
+            summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
+            multibandPresetID: "5_ac",
+            multibandIntensity: .normal,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: false,
+            primeBassPresetID: "ac",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 6.0
+        ),
         FormatProfile(
             id: "community_radio",
             title: "Community Radio",
@@ -4539,9 +4631,20 @@ private struct StageProcessingContent: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // Tab help text block — shown above every Processing
+                    // tab except the Overview grid (which is its own
+                    // self-describing layout). Brief 1-3 sentence
+                    // explanation of the DSP stage so operators can
+                    // anchor without leaving for documentation.
+                    if model.selectedProcessingTab != .overview {
+                        ProcessingTabHelpBox(text: model.selectedProcessingTab.helpText)
+                    }
+
                     switch model.selectedProcessingTab {
                     case .overview:
                         ProcessingOverviewGrid(model: model)
+                    case .formatProfile:
+                        ProcessingFormatProfileTab(model: model)
                     case .core:
                         ProcessingCoreTab(model: model)
                     case .agc:
@@ -6362,6 +6465,75 @@ private struct KeyValueGrid: View {
             }
         }
         .font(.callout)
+    }
+}
+
+/// One-paragraph help block shown at the top of each Processing detail
+/// tab (everything except the Overview grid). Intentionally muted /
+/// secondary styling so it reads as documentation rather than a control;
+/// stays out of the way once the operator knows the stage but is there
+/// when they need to anchor.
+private struct ProcessingTabHelpBox: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 0.5)
+        )
+    }
+}
+
+/// Dedicated tab hosting the top-level Station Format picker. Moved out
+/// of the Processing → Overview grid so the grid stays focused on per-
+/// stage status; the format selector gets its own breathing room and
+/// can show the full per-profile summary plus the standard tab help
+/// box without crowding the dashboard.
+private struct ProcessingFormatProfileTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Station Format") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("Profile")
+                        .foregroundStyle(.secondary)
+                    Picker("Station Format", selection: model.formatProfileBinding()) {
+                        ForEach(MPXPrimeViewModel.formatProfiles) { profile in
+                            Text(profile.title).tag(profile.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    Spacer()
+                }
+                Text(model.currentFormatProfileSummary)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Picking a profile overwrites Multiband, Final Stage, PrimeBass, Stereo Widener, and Composite Clipper settings. Per-stage knobs stay editable after — tune from the profile baseline, not from a blank slate. Pick `Custom` to keep your manual tuning when re-visiting this picker.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

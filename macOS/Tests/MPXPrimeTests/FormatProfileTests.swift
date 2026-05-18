@@ -140,6 +140,44 @@ struct FormatProfileTests {
             "default profile PrimeBass-enabled drifted from AppConfig default")
     }
 
+    // MARK: - Custom profile (sentinel — no settings changes)
+
+    @Test func customProfileDoesNotChangePerStageSettings() {
+        let model = makeViewModel()
+        // Apply Pop / AC first so we have a known non-default state.
+        model.applyFormatProfile("pop_ac")
+        let snapshotMultiband = model.config.multibandPresetID
+        let snapshotIntensity = model.config.multibandIntensity
+        let snapshotFinalStage = model.config.finalStagePresetID
+        let snapshotPrimeBassEnabled = model.config.primeBassEnabled
+        let snapshotPrimeBassID = model.config.primeBassPresetID
+        let snapshotWidenEnabled = model.config.stereoWidenEnabled
+        let snapshotClipperThreshold = model.config.compositeClipperThresholdDB
+        let snapshotClipperCeiling = model.config.compositeClipperCeilingDB
+        let snapshotFinalDrive = model.config.finalDriveDB
+
+        // Picking Custom must change ONLY the formatProfileID label.
+        model.applyFormatProfile("custom")
+
+        #expect(model.config.formatProfileID == "custom",
+            "Custom selection must record the label")
+        #expect(model.config.multibandPresetID == snapshotMultiband)
+        #expect(model.config.multibandIntensity == snapshotIntensity)
+        #expect(model.config.finalStagePresetID == snapshotFinalStage)
+        #expect(model.config.primeBassEnabled == snapshotPrimeBassEnabled)
+        #expect(model.config.primeBassPresetID == snapshotPrimeBassID)
+        #expect(model.config.stereoWidenEnabled == snapshotWidenEnabled)
+        #expect(abs(model.config.compositeClipperThresholdDB - snapshotClipperThreshold) < 1e-9)
+        #expect(abs(model.config.compositeClipperCeilingDB - snapshotClipperCeiling) < 1e-9)
+        #expect(abs(model.config.finalDriveDB - snapshotFinalDrive) < 1e-9)
+    }
+
+    @Test func customProfileIsListedInCatalogue() {
+        let custom = MPXPrimeViewModel.formatProfile(forID: "custom")
+        #expect(custom != nil, "Custom profile must exist in the catalogue")
+        #expect(custom?.title == "Custom")
+    }
+
     // MARK: - Unknown ID handling
 
     @Test func unknownProfileIsNoOp() {

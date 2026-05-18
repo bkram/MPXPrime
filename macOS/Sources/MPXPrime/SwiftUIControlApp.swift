@@ -1740,6 +1740,37 @@ final class MPXPrimeViewModel: ObservableObject {
         .rds: .rdsControl,
         .tools: .testTone
     ]
+    /// Whether a given sidebar stage has a "currently active" concept and,
+    /// if so, whether it is on. Returns nil for stages with no single
+    /// enable toggle (Monitoring, Overview, Core, Format Profile, Final
+    /// Stage, Snapshots, RDS sub-tabs that inherit the master) — those
+    /// rows never render an enabled-state dot. Mirrors Mail's pattern:
+    /// only the section landing carries the badge.
+    func isStageEnabled(_ stage: Stage) -> Bool? {
+        switch stage {
+        case .monitoring, .processingOverview, .processingFormatProfile,
+             .processingCore, .processingFinalStage, .snapshots,
+             .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsAF,
+             .rdsSchedule, .rdsCarrier:
+            return nil
+        case .processingPhaseRotator: return config.phaseRotationEnabled
+        case .processingAGC: return config.widebandAGCEnabled
+        case .processingParametricEQ: return config.parametricEQEnabled
+        case .processingMultiband: return config.multibandEnabled
+        case .processingExpander: return config.downwardExpanderEnabled
+        case .processingMBLimiter: return config.multibandLimiterEnabled
+        case .processingWidener: return config.stereoWidenEnabled
+        case .processingPrimeBass: return config.primeBassEnabled
+        case .processingBassClipper: return config.bassClipperEnabled
+        case .processingDCClipper: return config.dcClipperEnabled
+        case .processingLimiter: return config.preEncodeAudioLimiterEnabled
+        case .processingCompositeClipper: return config.compositeClipperEnabled
+        case .processingBS412: return config.bs412Enabled
+        case .rdsControl: return config.enRDS
+        case .testTone: return config.sourceMode == "tone"
+        }
+    }
+
     /// Jump to the given sidebar group. If the user has visited a
     /// sub-tab in that group during this session, restore it;
     /// otherwise land on the group's home stage.
@@ -4883,31 +4914,53 @@ private struct StageSidebar: View {
             ForEach(Stage.Group.allCases, id: \.rawValue) { group in
                 Section(group.rawValue) {
                     ForEach(Stage.allCases.filter { $0.group == group }) { stage in
-                        Label {
-                            Text(stage.label)
-                        } icon: {
-                            // Decorative — the adjacent Text(stage.label)
-                            // already conveys the row identity to VoiceOver.
-                            Image(systemName: stage.icon)
-                                .accessibilityHidden(true)
-                                // Explicit `.tint` foreground on the
-                                // *icon only* — keeps text in the
-                                // default sidebar foreground (white in
-                                // dark mode) while making icons pick
-                                // up the system accent (blue by
-                                // default). Hierarchical layering on
-                                // top gives the 3-level tonal depth
-                                // Apple's first-party sidebars use
-                                // (Music.app, Mail.app).
-                                .foregroundStyle(.tint)
-                                .symbolRenderingMode(.hierarchical)
-                        }
-                        .tag(stage)
+                        StageSidebarRow(model: model, stage: stage)
+                            .tag(stage)
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+}
+
+/// One sidebar row. Renders the existing Label (icon + text) and, when
+/// the stage has an enable toggle that is currently on, a small accent
+/// dot on the trailing edge — matches Mail's unread-count / Slack's
+/// online-status idiom: filled when on, nothing when off, no badge at
+/// all for stages with no enable concept (Monitoring, Overview, Core,
+/// Final Stage, RDS sub-tabs, Snapshots).
+private struct StageSidebarRow: View {
+    @ObservedObject var model: MPXPrimeViewModel
+    let stage: Stage
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label {
+                Text(stage.label)
+            } icon: {
+                // Decorative — the adjacent Text(stage.label)
+                // already conveys the row identity to VoiceOver.
+                Image(systemName: stage.icon)
+                    .accessibilityHidden(true)
+                    // Explicit `.tint` foreground on the *icon only* —
+                    // keeps text in the default sidebar foreground
+                    // (white in dark mode) while icons pick up the
+                    // system accent. Hierarchical layering gives the
+                    // 3-level tonal depth Apple's first-party sidebars
+                    // use (Music.app, Mail.app).
+                    .foregroundStyle(.tint)
+                    .symbolRenderingMode(.hierarchical)
+            }
+            Spacer(minLength: 0)
+            if model.isStageEnabled(stage) == true {
+                Circle()
+                    .fill(.tint)
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel("Enabled")
+                    .help("Enabled")
+            }
+        }
     }
 }
 

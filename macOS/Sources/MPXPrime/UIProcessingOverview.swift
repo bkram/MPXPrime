@@ -140,38 +140,57 @@ struct ProcessingOverviewGrid: View {
         let binding = model.configBinding(enabledPath, runtimeDisposition: .live)
         let enabled = model.config[keyPath: enabledPath]
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(enabled ? Color.primary : Color.secondary)
-                Spacer()
-                Button {
-                    model.selectedProcessingTab = tab
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
+            // Whole title+hero+subtitle region is one Button so clicking
+            // anywhere on the card (except the Enabled toggle) drills
+            // into the sidebar's detail row for this stage. Mirrors
+            // System Settings / Music navigation cards — the trailing
+            // chevron is the visual affordance, but the entire surface
+            // is the hit target.
+            Button {
+                model.selectedStage = tab.stage
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    if let heroValue {
+                        Text(heroValue)
+                            .font(BroadcastStyle.heroReadout)
+                            .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(subtitle)
+                        .font(BroadcastStyle.valueReadout)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .frame(minHeight: 32, alignment: .topLeading)
                 }
-                .buttonStyle(.plain)
-                .help("Open \(title) settings")
-                .accessibilityLabel("Open \(title) settings")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            if let heroValue {
-                Text(heroValue)
-                    .font(BroadcastStyle.heroReadout)
-                    .foregroundStyle(enabled ? Color.primary : Color.secondary)
-                    .lineLimit(1)
+            .buttonStyle(.plain)
+            .help("Open \(title) settings")
+            .accessibilityLabel("Open \(title) settings")
+            // Embedded cards (Monitoring dashboard's Signal Chain panel)
+            // drop the per-card Enable toggle — the sidebar's stage-row
+            // dot indicator and each stage's detail tab already expose
+            // the same control, so a third copy here is duplication
+            // operators have to scan past. Processing > Overview keeps
+            // its toggles because that surface is the configuration grid.
+            if !embedded {
+                Toggle("Enabled", isOn: binding)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            Text(subtitle)
-                .font(BroadcastStyle.valueReadout)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .frame(minHeight: 32, alignment: .topLeading)
-            Toggle("Enabled", isOn: binding)
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
-                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

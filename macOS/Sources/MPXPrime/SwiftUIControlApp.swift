@@ -179,6 +179,32 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case bs412 = "BS.412"
     case finalStage = "Final Stage"
 
+    /// Inverse of `Stage.legacyProcessingTab`. Cards in the
+    /// Processing Overview grid use this to jump the unified
+    /// `selectedStage` to the corresponding sidebar row when the
+    /// chevron button is clicked.
+    var stage: Stage {
+        switch self {
+        case .overview: return .processingOverview
+        case .formatProfile: return .processingFormatProfile
+        case .core: return .processingCore
+        case .phaseRotator: return .processingPhaseRotator
+        case .agc: return .processingAGC
+        case .parametricEQ: return .processingParametricEQ
+        case .multiband: return .processingMultiband
+        case .expander: return .processingExpander
+        case .mbLimiter: return .processingMBLimiter
+        case .widener: return .processingWidener
+        case .primeBass: return .processingPrimeBass
+        case .bassClipper: return .processingBassClipper
+        case .dcClipper: return .processingDCClipper
+        case .limiter: return .processingLimiter
+        case .compositeClipper: return .processingCompositeClipper
+        case .bs412: return .processingBS412
+        case .finalStage: return .processingFinalStage
+        }
+    }
+
     /// Short paragraph explaining what the stage on this tab does and how
     /// it fits into the chain. Shown as a header block above the tab's
     /// controls — anchors the operator without forcing them to read

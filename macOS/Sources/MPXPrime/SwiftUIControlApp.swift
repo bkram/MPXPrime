@@ -333,6 +333,29 @@ enum RDSTab: String, CaseIterable, Identifiable {
         case .carrier: return "Reset RDS carrier tab to defaults"
         }
     }
+
+    /// Short paragraph explaining what the controls on this tab cover.
+    /// Mirrors the `ProcessingTab.helpText` pattern; shown via the shared
+    /// `TabHelpBox` above the tab's controls so operators can anchor
+    /// without leaving the screen for documentation.
+    var helpText: String {
+        switch self {
+        case .control:
+            return "Master enable for the RDS subcarrier plus a live snapshot of what's currently on air (PS, RT, PTYN, Long PS). All RDS data fields here apply live — no engine restart required."
+        case .program:
+            return "Programme identification: PI code (RDI/EBU-assigned, NL prefix `8`), PTY genre code, optional PTYN extended programme type name, ECC (`E3` for NL), LIC (`1D` for Dutch), plus 4 PS banks and the runtime TP / TA / MS / DI flags. All live-apply."
+        case .radiotext:
+            return "64-character RadioText (Group 2A) plus RT+ tagging (Group 3A + 11A) for now-playing metadata. Manual buffers cycle on a timer; dynamic mode expands `{title} / {artist} / {now_playing}` macros from the now-playing script. Spec: EN 50067 + TR 307."
+        case .longPS:
+            return "32-character Long PS via Group 15A (IEC 62106-2:2018). Receivers that decode 15A show the full name; legacy receivers ignore the group and keep using the 8-char PS bank. Pairs with the basic PS bank — don't replace, augment."
+        case .af:
+            return "Alternative Frequencies (AF). Method A: flat list of all frequencies in the network. Method B: pairs each alternative with the tuned frequency so receivers can group regional variants. Max 25 frequencies for Method A, 12 pairs for Method B (EN 50067 Sec 3.2.1.6.4)."
+        case .schedule:
+            return "Group sequence (which RDS groups go on air and in what order) plus scheduler policy (auto / standard / custom). Clock-Time enable (Group 4A, minute-aligned MJD) and timezone offset for CT broadcasts also live here."
+        case .carrier:
+            return "RDS subcarrier physical-layer settings: injection level as % of total FM deviation (2.7 % default = 2 kHz, ITU-R BS.450 spec range 1.3-10 %). Carrier is fixed at 57 kHz locked to 3x pilot per EN 50067 Sec 2.1.4. Restart required."
+        }
+    }
 }
 
 /// Unified flat selection used by the new NavigationSplitView sidebar.
@@ -1619,6 +1642,21 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var statusText: String = "Idle"
     @Published var pendingRuntimeApply: Bool = false
 
+    // A/B compare workspace. In-memory only — not persisted across app
+    // launches. Operator captures the current config to slot A, tunes,
+    // captures to slot B, then taps the swap to alternate between them
+    // while listening. Pro workflow standard (Optimod / Stereotool / Omnia
+    // all have this). Tweaks while a slot is loaded are EPHEMERAL — the
+    // operator must re-capture to save changes into a slot. Swap restores
+    // the captured snapshot wholesale.
+    @Published var compareSlotA: AppConfig? = nil
+    @Published var compareSlotB: AppConfig? = nil
+    /// Identifies which slot is currently loaded, "a" or "b", or nil if
+    /// neither was ever captured. After the most recent capture the
+    /// captured slot is the active one; after a swap the just-loaded
+    /// slot becomes active.
+    @Published var compareActiveSlot: String? = nil
+
     @Published var sourceMode: String
     @Published var monitorEnabled: Bool
     @Published var processingBypass: Bool
@@ -2206,6 +2244,81 @@ final class MPXPrimeViewModel: ObservableObject {
             get: { self.config.formatProfileID },
             set: { self.applyFormatProfile($0) }
         )
+    }
+
+    // MARK: - A/B compare
+
+    /// Snapshot the current config into the named slot (`"a"` or `"b"`).
+    /// Marks that slot active. Tweaks made after this point are
+    /// ephemeral until the slot is re-captured.
+    func captureCurrentToCompareSlot(_ slot: String) {
+        publishConfigChange()
+        let snapshot = config
+        switch slot {
+        case "a":
+            compareSlotA = snapshot
+            compareActiveSlot = "a"
+            statusText = "Captured current state as A."
+        case "b":
+            compareSlotB = snapshot
+            compareActiveSlot = "b"
+            statusText = "Captured current state as B."
+        default:
+            return
+        }
+    }
+
+    /// Swap to the other captured slot. No-op when only one slot is
+    /// captured. Applies the loaded config via the existing save +
+    /// live-apply path so live-applicable fields take effect
+    /// immediately and restart-required fields surface the usual
+    /// pending-apply prompt.
+    func swapCompareSlot() {
+        guard compareSlotA != nil, compareSlotB != nil else { return }
+        publishConfigChange()
+        if compareActiveSlot == "a", let next = compareSlotB {
+            config = next
+            compareActiveSlot = "b"
+            statusText = "Compare: switched to B."
+        } else if let next = compareSlotA {
+            config = next
+            compareActiveSlot = "a"
+            statusText = "Compare: switched to A."
+        }
+        saveConfig(restartRequired: false)
+        applyLiveRuntimeConfigIfRunning()
+    }
+
+    /// Drop both captured slots.
+    func clearCompareSlots() {
+        compareSlotA = nil
+        compareSlotB = nil
+        compareActiveSlot = nil
+        statusText = "A/B compare slots cleared."
+    }
+
+    // MARK: - Signal Flow Strip live GR
+
+    /// Returns the current GR in dB for stages that the strip has live
+    /// telemetry for, or nil for stages without dynamics (EQ-only, phase
+    /// rotation, bass enhancement) or for stages whose GR isn't yet
+    /// surfaced on the view model. Used by `SignalFlowStrip` to draw a
+    /// small GR fill bar inside each chip — chip stays the same width;
+    /// the bar grows as gain reduction increases.
+    func signalFlowGR(for stage: Stage) -> Float? {
+        switch stage {
+        case .processingLimiter:
+            return preEncodeLimiterGainReductionDBValue
+        case .processingCompositeClipper:
+            return max(
+                compositeClipperGainReductionDBValue,
+                compositeClipperLookaheadGainReductionDBValue
+            )
+        case .processingFinalStage:
+            return safetyLimiterGainReductionDBValue
+        default:
+            return nil
+        }
     }
 
     /// One-line description of the currently selected format profile,
@@ -4637,7 +4750,7 @@ private struct StageProcessingContent: View {
                     // explanation of the DSP stage so operators can
                     // anchor without leaving for documentation.
                     if model.selectedProcessingTab != .overview {
-                        ProcessingTabHelpBox(text: model.selectedProcessingTab.helpText)
+                        TabHelpBox(text: model.selectedProcessingTab.helpText)
                     }
 
                     switch model.selectedProcessingTab {
@@ -4701,6 +4814,11 @@ private struct StageRDSContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // Tab help box — shown at the top of every RDS tab, same
+                // pattern as the Processing tabs. Brief 1-3 sentence
+                // anchor on what the tab covers and spec context.
+                TabHelpBox(text: model.selectedRDSTab.helpText)
+
                 switch model.selectedRDSTab {
                 case .control:
                     RDSStatusTab(model: model)
@@ -6473,7 +6591,7 @@ private struct KeyValueGrid: View {
 /// secondary styling so it reads as documentation rather than a control;
 /// stays out of the way once the operator knows the stage but is there
 /// when they need to anchor.
-private struct ProcessingTabHelpBox: View {
+private struct TabHelpBox: View {
     let text: String
 
     var body: some View {

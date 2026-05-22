@@ -9,6 +9,44 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30 — 2026-05-22
+
+### DSP — Dual-rate audio chain refactor, Phase 0 + Phase 1 (no-op boundary)
+
+First infrastructure step of the dual-rate refactor (plan.md "Next up" #1). The goal is to run audio-domain DSP stages at 48 kHz (where 48 kHz input content actually lives) while keeping MPX-domain stages at the high rate where pilot / L-R sidebands / 57 kHz RDS need bandwidth. This commit lands the foundation; Phase 2+ migrates individual stages across the boundary.
+
+**Phase 0 — Polyphase resampler primitive.** New `LinearPhaseFIRInterpolator` (1:L upsampler) in `MPXGenerator.swift`, sibling to the existing `LinearPhaseFIRDecimator`. Same primitives: Kaiser-windowed sinc + `vDSP_dotpr` polyphase commutator, kernel scaled by L for unity DC gain, double-buffered delay-line trick, real-time safe (no allocations on `push`). 7-test suite (`LinearPhaseFIRInterpolatorTests`) covers DC gain, group-delay accounting (OS vs input-rate), impulse-response peak placement, decim → interp round-trip identity (recovers band-limited signal to better than -75 dB RMS error after alignment), zero-stuffing image suppression (≥75 dB at the first image after polyphase upsample), reset/configure idempotence, disabled-state passthrough.
+
+**Phase 1 — No-op boundary wired into `processSampleDetailed`.** Adds `dualRateBoundaryEnabled` and `dualRateAudioRateHz` to AppConfig (INI keys `dual_rate_audio_domain_enabled`, `dual_rate_audio_domain_rate_hz`; defaults `false` / `48000.0`; restart-required). When enabled, the per-OS-sample input L/R is pushed through a decim → interp pair before the rest of the chain runs — audio stages do NOT yet migrate to the lower rate; the boundary just round-trips data to validate the resampler primitives at chain scale. Only integer engine:audio ratios are supported in Phase 1 (192/48 = 4, 96/48 = 2); non-integer ratios (176.4/48 = 3.675, 128/48 = 8/3) silently fall back to disabled. The boundary's combined kernel group delay is folded into `recomputeSubcarrierDelay()` so pilot/RDS stay phase-coherent with the audio composite. `DualRateBoundaryTests` regression-guards three properties: (1) default-disabled is BIT-IDENTICAL to the pre-refactor chain (no opt-out cost), (2) non-integer ratios fall back cleanly (no crash, no aliasing), (3) integer-ratio enable produces recognisable output with peak within ±20% of baseline.
+
+**Next: Phase 2** starts migrating individual audio-domain stages across the boundary. Smallest-first (pre-emphasis or stereo widener) as low-risk first moves, then bass clipper / DC clipper / multiband splitter for the bulk of the CPU win. Each baseline-gated against `--verify --baseline-strict` and re-run through `BenchmarkSuite` to confirm the predicted ~16-percentage-point real-time savings on M1 Pro (and proportionally larger on Intel hardware).
+
+## 0.30 — 2026-05-21
+
+### DSP — Composite clipper oversampling is operator-selectable
+
+`CompositeClipper` was hardcoded at 16× oversampling since post-0.29. It is now configurable to 8 / 16 / 32 via the new `mpx_clipper_oversampling` INI key (default 16, preserves shipping behaviour) and a segmented picker in the Composite Clipper inspector.
+
+Why each option exists:
+- **16× (default)** matches Optimod 8X00 / Omnia.11 / Stereotool industry practice. Sweet spot — pick this unless there is a specific reason to deviate.
+- **8×** halves this stage's CPU cost. Gives up ~6 dB alias suppression at hot drives — measurable but almost never audible on amateur program. The right answer when CPU headroom is the constraint (older Intel Macs, Pi-class hardware).
+- **32×** doubles this stage's CPU cost. Adds ~6 dB further alias suppression — Omnia.9-class spec-sheet number, mostly visible in measurement rather than audible. For operators who want the maximum-quality knob defended and have the CPU to spend.
+
+Restart-required (changes FIR decimator tap count, Lagrange interpolator step count, and per-host batch buffer sizes). `CompositeClipper.factor` is now an instance var assigned in `configure()`. Per-host batch buffers default-size to 32 (the supported maximum) so swapping to a smaller factor shrinks them without reallocating, and bumping back up is also non-allocating after first configure. `RuntimeConfig` carries the field so the live-apply structural-change detector picks up a mismatch (defense-in-depth — the UI uses `.restart` disposition so the engine fully rebuilds on change).
+
+Measured cost on M1 Pro (release, full chain, 192 kHz):
+- 8×:  35.1% of real-time (-6.2 pp vs 16×)
+- 16×: 41.3% of real-time  (reference)
+- 32×: 53.5% of real-time (+12.2 pp vs 16×)
+
+See `macOS/benchmarks/m1pro-v0.30-with-os-selector.md` for the full report. Reproducible with `MPXPRIME_BENCH=1 swift test -c release --filter Benchmark`.
+
+### DSP — opt-in benchmark suite (`BenchmarkSuite`)
+
+New env-gated test suite for measuring absolute DSP cost: rate sweep (96 / 128 / 176.4 / 192 kHz), per-stage A/B (multiband, AGC, EQ, PrimeBass, widener, mono bass, phase rotation, bass clipper, DCC, multiband limiter, pre-emphasis, pre-encode limiter, pre-encode look-ahead, composite clipper, BS.412, RDS), and composite-clipper oversampling sweep (8 / 16 / 32). Outputs a markdown report to stdout with machine info, build mode, and a first-order estimate of dual-rate refactor savings. Gated on `MPXPRIME_BENCH=1` so it does not slow normal `swift test` (returns early when the env var is absent — 374 default tests still pass cleanly).
+
+Purpose: capture a durable "before dual-rate" baseline (plan.md "Next up" #1) so the audio-domain → MPX-domain split can be validated against measured numbers rather than guessed at. Initial M1 Pro capture saved at `macOS/benchmarks/m1pro-v0.30-pre-dualrate.md`; post-OS-selector capture at `macOS/benchmarks/m1pro-v0.30-with-os-selector.md`.
+
 ## 0.30 — 2026-05-17
 
 ### UI — Format Profiles (atomic "Station Format" selector)

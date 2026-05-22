@@ -71,6 +71,24 @@ struct AppConfig {
     var sampleRate: Double = 192_000.0
     var fftWindow96kHz: Bool = true
     var blockSize: Int = 1024
+    // Dual-rate audio chain (plan.md "Next up" #1, Phase 1).
+    //
+    // When enabled, the input L/R is run through a Kaiser-windowed sinc
+    // polyphase resampler boundary (downsample to `dualRateAudioRateHz`
+    // and immediately upsample back to engine rate) before the audio
+    // chain runs at MPX rate. This is the no-op infrastructure step:
+    // audio stages do NOT yet migrate to the lower rate; the boundary
+    // only verifies the resampler works at chain scale. Output is
+    // recognisable but delayed by (decim + interp) group delay and has
+    // a tiny intra-cycle fractional-delay artifact.
+    //
+    // Phase 1 only supports INTEGER ratios between engine rate and
+    // audio rate (e.g. 192/48 = 4, 96/48 = 2). Non-integer ratios
+    // (176.4/48, 128/48) silently disable the boundary at engine start.
+    //
+    // Restart-required: allocates the resampler delay lines.
+    var dualRateAudioDomainEnabled: Bool = false
+    var dualRateAudioDomainRateHz: Double = 48_000.0
     var sourceMode: String = "input"
     var inputDeviceUID: String?
     var outputDeviceUID: String?
@@ -274,6 +292,15 @@ struct AppConfig {
     // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
     // See plan.md "Enterprise-parity status" / 0.26 release plan.
     var compositeClipperLookaheadMS: Double = 0.0
+    // Composite clipper oversampling factor. 16 (default) matches Optimod
+    // 8X00 / Omnia.11 / Stereotool industry practice. 8 trades some
+    // alias suppression for ~50% lower CPU on this stage (useful on weaker
+    // hardware). 32 gives ~6 dB further alias suppression at hot drives
+    // but roughly doubles this stage's CPU — recommended only with
+    // hardware headroom. Restart-required: changes the FIR decimator tap
+    // count, the Lagrange interpolator step count, and the per-host batch
+    // buffer sizes.
+    var compositeClipperOversampling: Int = 16
     var compositeMultibandClipperEnabled: Bool = false
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
@@ -628,6 +655,8 @@ struct AppConfig {
             "mpx_clipper_cancel_rds", defaultValue: cfg.compositeClipperCancelRDS)
         cfg.compositeClipperLookaheadMS = mpx.double(
             "mpx_clipper_lookahead_ms", defaultValue: cfg.compositeClipperLookaheadMS)
+        cfg.compositeClipperOversampling = mpx.int(
+            "mpx_clipper_oversampling", defaultValue: cfg.compositeClipperOversampling)
         cfg.compositeMultibandClipperEnabled = mpx.bool(
             "mpx_multiband_clipper_enabled",
             defaultValue: cfg.compositeMultibandClipperEnabled
@@ -710,6 +739,14 @@ struct AppConfig {
         cfg.sampleRate = interfaces.double("sample_rate", defaultValue: cfg.sampleRate)
         cfg.blockSize = interfaces.int("blocksize", defaultValue: cfg.blockSize)
         cfg.fftWindow96kHz = interfaces.bool("fft_window_92khz", defaultValue: cfg.fftWindow96kHz)
+        cfg.dualRateAudioDomainEnabled = interfaces.bool(
+            "dual_rate_audio_domain_enabled",
+            defaultValue: cfg.dualRateAudioDomainEnabled
+        )
+        cfg.dualRateAudioDomainRateHz = interfaces.double(
+            "dual_rate_audio_domain_rate_hz",
+            defaultValue: cfg.dualRateAudioDomainRateHz
+        )
         cfg.validate()
         return cfg
     }
@@ -863,9 +900,22 @@ struct AppConfig {
             compositeClipperCeilingDB = min(0.0, compositeClipperThresholdDB + 0.5)
         }
         compositeClipperLookaheadMS = max(0.0, min(5.0, compositeClipperLookaheadMS))
+        // Clamp oversampling to the supported set {8, 16, 32}. Snap to
+        // the nearest supported value rather than rejecting — INI typos
+        // or experimental values shouldn't break engine start.
+        switch compositeClipperOversampling {
+        case ...12: compositeClipperOversampling = 8
+        case 13...23: compositeClipperOversampling = 16
+        default: compositeClipperOversampling = 32
+        }
 
         // Engine
         sampleRate = max(44_100.0, min(384_000.0, sampleRate))
+        // Dual-rate audio domain rate. Clamp to the common audio rates;
+        // 48 kHz is the default and most likely operator choice. The
+        // engine-rate vs audio-rate ratio integer-check happens at engine
+        // configure time, not here — sanitize() doesn't have that context.
+        dualRateAudioDomainRateHz = max(32_000.0, min(96_000.0, dualRateAudioDomainRateHz))
         // 512-sample minimum: throughput-validated by `DSPThroughputTests`.
         // Lower than 512 hits AVAudioEngine HAL limits on most macOS devices
         // and pushes per-callback overhead past the per-sample DSP work.
@@ -1049,6 +1099,7 @@ struct AppConfig {
             "mpx_clipper_cancel_pilot = \(Self.boolString(compositeClipperCancelPilot))",
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
+            "mpx_clipper_oversampling = \(compositeClipperOversampling)",
             "mpx_multiband_clipper_enabled = \(Self.boolString(compositeMultibandClipperEnabled))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
@@ -1132,6 +1183,8 @@ struct AppConfig {
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             "blocksize = \(blockSize)",
             "fft_window_92khz = \(Self.boolString(fftWindow96kHz))",
+            "dual_rate_audio_domain_enabled = \(Self.boolString(dualRateAudioDomainEnabled))",
+            "dual_rate_audio_domain_rate_hz = \(Self.formatFloat(dualRateAudioDomainRateHz))",
             "input_device_uid = \(inputDeviceUID ?? "")",
             "output_device_uid = \(outputDeviceUID ?? "")",
             "monitor_device_uid = \(monitorDeviceUID ?? "")"

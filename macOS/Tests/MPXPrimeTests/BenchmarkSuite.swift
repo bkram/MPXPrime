@@ -200,11 +200,53 @@ struct BenchmarkSuite {
         out += "\n"
         out += oversamplingSweepSection()
         out += "\n"
+        out += dualRateBoundarySection()
+        out += "\n"
         out += perStageSection()
         out += "\n"
         out += summarySection()
 
         print(out)
+    }
+
+    /// Full chain @ 192 kHz, with the dual-rate audio boundary off
+    /// vs on. The Phase 2 cutover lands the audio domain at the lower
+    /// rate inside the boundary; the difference between these two
+    /// rows is the actual measured payoff of the dual-rate refactor.
+    /// Compare against the Phase 0/1 baseline (`*-with-os-selector.md`)
+    /// which had boundary on as a no-op roundtrip.
+    private func dualRateBoundarySection() -> String {
+        var lines = ["## Dual-rate boundary sweep (full chain @ 192 kHz, audio 48 kHz)"]
+        lines.append("")
+        lines.append("| Boundary | Wall (s) | Delta vs off | % of real-time |")
+        lines.append("| -------- | -------: | -----------: | -------------: |")
+
+        let rate = 192_000.0
+        let samples = Int(rate * durationSeconds)
+        let audio = Double(samples) / rate
+
+        var cfgOff = makeFullChain(sampleRate: rate, withRDSAndStereo: true)
+        cfgOff.dualRateAudioDomainEnabled = false
+        FileHandle.standardError.write(Data("[bench] dual-rate sweep: off\n".utf8))
+        let wallOff = medianWall(config: cfgOff, samples: samples)
+
+        var cfgOn = makeFullChain(sampleRate: rate, withRDSAndStereo: true)
+        cfgOn.dualRateAudioDomainEnabled = true
+        cfgOn.dualRateAudioDomainRateHz = 48_000.0
+        FileHandle.standardError.write(Data("[bench] dual-rate sweep: on (audio 48 kHz)\n".utf8))
+        let wallOn = medianWall(config: cfgOn, samples: samples)
+
+        let delta = wallOn - wallOff
+        let pctOff = wallOff / audio * 100.0
+        let pctOn = wallOn / audio * 100.0
+        lines.append("| \(pad("off", to: 8, right: false)) | \(String(format: "%8.4f", wallOff)) | \(pad("(reference)", to: 12, right: true)) | \(String(format: "%13.2f%%", pctOff)) |")
+        let deltaStr = String(format: "%+.2f ms/s", delta * 1000.0)
+        lines.append("| \(pad("on", to: 8, right: false)) | \(String(format: "%8.4f", wallOn)) | \(pad(deltaStr, to: 12, right: true)) | \(String(format: "%13.2f%%", pctOn)) |")
+        let savedPP = pctOff - pctOn
+        let relPct = (savedPP / max(0.001, pctOff)) * 100.0
+        lines.append("")
+        lines.append(String(format: "Savings: **%+.2f percentage points** (%+.1f%% relative).", -savedPP, -relPct))
+        return lines.joined(separator: "\n") + "\n"
     }
 
     /// Full chain @ 192 kHz, varying only the composite clipper

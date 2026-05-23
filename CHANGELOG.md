@@ -11,6 +11,35 @@ combination test suite. Newest first.
 
 ## 0.30 — 2026-05-23
 
+### DSP — Dual-rate audio chain, Phase 2 cutover (audio domain at 48 kHz)
+
+The big one. With this commit the dual-rate boundary is no longer a no-op — when enabled, the entire audio domain (`processProgramStereo` → stereo image protection → pre-emphasis → pre-encode limiter, including multiband splitter/compressors/limiters/expanders, PrimeBass, parametric EQ, stereo widener, phase rotator, wideband AGC, bass clipper, DCC) runs at 48 kHz inside the boundary instead of at the engine's MPX rate after a roundtrip. The MPX domain (composite assembly, BS.412, composite clipper, audio-composite bandwidth FIR, final-MPX safety limiter, pilot+RDS injection) stays at the high rate where pilot/L−R sidebands/57 kHz RDS need bandwidth.
+
+**Measured payoff on M1 Pro (release):**
+
+| | % of real-time |
+|---|---|
+| Boundary off (192 kHz everywhere) | 41.85% |
+| Boundary on (audio 48 kHz, MPX 192 kHz) | **24.26%** |
+| Savings | **-17.59 pp / -42.0% relative** |
+
+Matches the original projection (16.5 pp / 40% relative) from the pre-dualrate baseline. Full report at `macOS/benchmarks/m1pro-v0.30-phase2-cutover.md`. Stereo separation verified to match the boundary-off baseline at 1 / 10 / 14 kHz (42.9 / 26.1 / 33.4 dB on with boundary, 42.9 / 26.0 / 26.4 dB off — 14 kHz separation is slightly *better* with the boundary on).
+
+**Implementation:**
+
+- All audio-domain configure call sites (~15 helpers covering biquads, multiband splitter/compressor/limiter/expander, primeBass internals, stereo widener, bass clipper, DCC, pre-emphasis, pre-encode limiter, program LP, pilot notch, encoder HF guard) now use a new `audioDomainSampleRate` computed property. When the boundary is off, `audioDomainSampleRate == self.sampleRate` and behavior is bit-identical to pre-cutover; when on, the property returns `dualRateAudioRate` (typically 48 kHz) and every stage's coefficients land on the lower-rate grid.
+- `processSampleDetailed` dispatches: boundary-off runs `processAudioDomain` at MPX rate as before; boundary-on calls a restructured `applyDualRateBoundary` that runs `processAudioDomain` exactly once per L OS ticks (when decim emits), pushes the audio-domain output through interp, and serves the L upsampled MPX-rate samples to the MPX domain one per OS tick.
+- Side outputs (`analysisStereo` and `inputActivity`) are buffered between audio-rate ticks via new `latestAudioAnalysisStereo` / `latestAudioInputActivity` state so MPX-domain stages see consistent values every OS tick.
+
+**Two bugs caught + fixed during validation:**
+
+1. **Interp output buffer was being read in the wrong order.** With the original phase counter design, each L-cycle emitted `buffer[L-1], buffer[0], buffer[1], ..., buffer[L-2]` — a per-cycle temporal discontinuity that destroyed phase coherence and trashed stereo separation. Fix: reset `dualRateBoundaryPhase = 0` on every refill so the L outputs are read in chronological order (`[0], [1], ..., [L-1]`).
+2. **`recomputeSubcarrierDelay()` was over-delaying the pilot by the boundary delay.** The boundary sits upstream of the stereo encoder; the freshly-generated pilot and embedded 38 kHz subcarrier are both emitted by the encoder at the current OS tick and do NOT traverse the boundary. Adding boundary delay to the pilot side rotated the pilot ~94° at 19 kHz relative to the embedded carrier — the encoder-side sidebands stayed balanced (SideSum = Mono), but the production decoder's pilot PLL recovered a 38 kHz reference that was phase-rotated from the actual embedded carrier, dropping separation from ~43 dB to ~2 dB. Ideal-coherent decode (which uses the engine's 38 kHz reference directly, not the pilot) was unaffected — which is what initially diagnosed the issue. Fix: removed `dualRateBoundaryDelay` from `recomputeSubcarrierDelay()` (the boundary affects audio-modulation timing but not the encoder-side pilot/subcarrier emission timing).
+
+**Tests:** 384 default tests pass, including `DualRateBoundaryTests.defaultDisabledIsBitIdenticalToBaseline` (regression guard for the boundary-off path). `--verify-receiver` with boundary on confirms separation matches off baseline. Release build clean; swiftlint 0 violations.
+
+**Next:** validation work (real-program listening A/B with boundary on, accumulate hours of operation, refresh stored verifier baselines for the boundary-on path), then look at whether the audio-domain pre-emphasis at 48 kHz needs the planned response-measurement audit vs 192 kHz.
+
 ### UX / HIG — Codex review small-fix batch
 
 Four targeted fixes from the 0.30 codebase review (issues A8/A10/H1/H3/H8 + D2):

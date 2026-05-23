@@ -6831,12 +6831,20 @@ final class MPXGenerator {
 
         self.toneStep = 0.0
 
-        preL.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
-        preR.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
+        // Audio-domain stages run at `audioDomainSampleRate` — equal to
+        // `self.sampleRate` when the dual-rate boundary is disabled (so
+        // behavior is bit-identical to pre-cutover), but drops to
+        // `dualRateAudioRate` (typically 48 kHz) when the boundary is
+        // on so each stage's filter coefficients land on the lower-rate
+        // grid. Helpers like configureMultibandFilters() etc. read the
+        // property directly.
+        let audioRate = audioDomainSampleRate
+        preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
+        preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
         applyEncoderComplianceConfiguration(sampleRate: self.sampleRate)
 
         widebandAGC.configure(
-            sampleRate: self.sampleRate,
+            sampleRate: audioRate,
             targetDB: widebandAGCTargetDB,
             attackMS: widebandAGCAttackMS,
             releaseMS: widebandAGCReleaseMS,
@@ -6845,9 +6853,9 @@ final class MPXGenerator {
             kWeightingEnabled: widebandAGCKWeightingEnabled,
             programDependentRelease: widebandAGCReleaseProgramDependent
         )
-        inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: self.sampleRate)
-        hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: self.sampleRate)
-        phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: self.sampleRate)
+        inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: audioRate)
+        hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: audioRate)
+        phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: audioRate)
         configureParametricEQ()
         configurePrimeBassFilters()
         configureMultibandFilters()
@@ -6856,7 +6864,7 @@ final class MPXGenerator {
         configureDownwardExpanders()
         configureStereoWidener()
         bassClipper.configure(
-            sampleRate: self.sampleRate,
+            sampleRate: audioRate,
             crossoverHz: bassClipperCrossoverHz,
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
@@ -6874,7 +6882,7 @@ final class MPXGenerator {
         preEncodeLookaheadHFOnly = config.preEncodeLookaheadHFOnly
         preEncodeLookaheadHFCutoffHz = clampf(Float(config.preEncodeLookaheadHFCutoffHz), 1_000.0, 12_000.0)
         preEncodeAudioLimiter.configure(
-            sampleRate: self.sampleRate,
+            sampleRate: audioRate,
             threshold: preEncodeThreshold,
             releaseMS: preEncodeReleaseMS,
             bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
@@ -6978,9 +6986,17 @@ final class MPXGenerator {
     }
 
     /// Per-OS-sample dual-rate boundary application. Pushes input into the
-    /// decim → interp pair and reads back the corresponding OS-rate output.
-    /// Real-time safe; no allocations. Caller checks `dualRateBoundaryEnabled`
-    /// before invoking — this function does not re-check.
+    /// decim → audio-domain → interp pair and reads back the corresponding
+    /// OS-rate audio-domain output. When decim emits (every Lth OS tick),
+    /// the whole audio domain (`processAudioDomain`) runs at the lower
+    /// audio rate on the just-emitted sample, then its L/R output is
+    /// pushed through interp to produce L OS-rate samples that the MPX
+    /// domain consumes one-per-tick. Side outputs (analysisStereo,
+    /// inputActivity) are stored on the engine so the MPX domain can read
+    /// them every OS tick even though they only refresh once per L ticks.
+    ///
+    /// Real-time safe; no allocations. Caller checks
+    /// `dualRateBoundaryEnabled` before invoking.
     @inline(__always)
     private func applyDualRateBoundary(left: inout Float, right: inout Float) {
         let decimL = inputDecimL.push(left)
@@ -6988,17 +7004,34 @@ final class MPXGenerator {
         dualRateBoundaryPushCount += 1
         if dualRateBoundaryPushCount >= dualRateFactor {
             dualRateBoundaryPushCount = 0
-            // Decim just emitted; pump into the interpolator and refill
-            // the L-element output buffer.
+            // Decim just emitted one audio-rate L/R sample. Run the
+            // entire audio-domain chain on it at audio rate — every
+            // stage's filter coefficients were configured against
+            // `audioDomainSampleRate` at engine init.
+            let audio = processAudioDomain(leftIn: decimL, rightIn: decimR)
+            latestAudioAnalysisStereo = audio.analysisStereo
+            latestAudioInputActivity = audio.inputActivity
+            // Push audio-domain output through interp; refill the L-
+            // element output buffer with the upsampled MPX-rate samples.
             interpOutBufferL.withUnsafeMutableBufferPointer { lBuf in
                 // baseAddress non-nil for pre-allocated arrays.
                 // swiftlint:disable:next force_unwrapping
-                inputInterpL.push(decimL, into: lBuf.baseAddress!)
+                inputInterpL.push(audio.left, into: lBuf.baseAddress!)
             }
             interpOutBufferR.withUnsafeMutableBufferPointer { rBuf in
                 // swiftlint:disable:next force_unwrapping
-                inputInterpR.push(decimR, into: rBuf.baseAddress!)
+                inputInterpR.push(audio.right, into: rBuf.baseAddress!)
             }
+            // Reset the read phase to 0 on refill so the next L OS-rate
+            // reads walk buffer[0..L-1] in chronological order
+            // (out[0] is the earliest upsampled sample, out[L-1] is the
+            // latest — see LinearPhaseFIRInterpolator emission contract).
+            // Reading in any other order — e.g. starting from the just-
+            // filled buffer[L-1] and wrapping to [0] on the next tick —
+            // introduces a per-cycle L-1-sample temporal discontinuity
+            // that destroys phase coherence and trashes stereo
+            // separation at the receiver.
+            dualRateBoundaryPhase = 0
         }
         left = interpOutBufferL[dualRateBoundaryPhase]
         right = interpOutBufferR[dualRateBoundaryPhase]
@@ -7020,20 +7053,24 @@ final class MPXGenerator {
         let multibandClipperDelay = compositeMultibandClipperEnabled
             ? compositeMultibandClipper.groupDelaySamples : 0
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
-        // Dual-rate boundary group delay (only added when the boundary is
-        // active). When the audio chain has been roundtripped through the
-        // decim → interp pair at the input, the audio composite is
-        // delayed by their combined kernel midpoints; pilot/RDS must
-        // delay by the same amount to stay phase-coherent.
-        let dualRateBoundaryDelay = dualRateBoundaryEnabled
-            ? (inputDecimL.groupDelayOSSamples + inputInterpL.groupDelayOSSamples)
-            : 0
-        let total = compositeBandwidthDelay + clipperDelay + multibandClipperDelay + limiterDelay + dualRateBoundaryDelay
+        // NB: the dual-rate boundary's decim+interp delay is NOT added
+        // here. The boundary sits upstream of the stereo encoder; the
+        // 38 kHz subcarrier embedded in the audio composite is generated
+        // FRESH by the encoder at each OS tick, AFTER the boundary. So
+        // is the pilot. Both traverse only the post-encoder stages
+        // (audio-composite bandwidth FIR, composite clipper, composite
+        // multiband clipper, final-MPX safety limiter), and the pilot
+        // needs to delay by exactly those to stay phase-locked with the
+        // embedded carrier at the receiver. Adding the boundary delay
+        // here over-delays the pilot and trashes stereo separation at
+        // the production decoder (the encoder-side sidebands stay
+        // balanced, but the pilot PLL recovers a 38 kHz reference that
+        // is phase-rotated relative to the actual embedded carrier).
+        let total = compositeBandwidthDelay + clipperDelay + multibandClipperDelay + limiterDelay
         let capacity = compositeBandwidthDelay
             + clipperDelayCapacity
             + compositeMultibandClipper.groupDelaySamples
             + limiterDelay
-            + dualRateBoundaryDelay
         if total != subcarrierDelayActiveCount || capacity > subcarrierDelayLine.count {
             Self.resizeDelayPreservingContentsInPlace(
                 line: &subcarrierDelayLine,
@@ -7627,9 +7664,16 @@ final class MPXGenerator {
 
     private func applyEncoderComplianceConfiguration(sampleRate: Float) {
         let config = makeEncoderComplianceConfig()
-        programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: sampleRate)
-        encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: sampleRate)
-        encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: sampleRate)
+        let audioRate = audioDomainSampleRate
+        // Audio-domain L/R filters — programLP, encoderProgramLP,
+        // encoderProgramFIR, pilotNotchL/R, encoderHFGuardSplit — run at
+        // the audio rate when the dual-rate boundary is on.
+        programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: audioRate)
+        encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
+        encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
+        // audioCompositeBandwidthFIR sits AFTER the stereo encoder on
+        // the composite signal — it must stay at the MPX rate to cover
+        // 0-55 kHz including the L-R subcarrier sidebands.
         audioCompositeBandwidthFIR.configure(
             cutoffHz: 55_000.0,
             sampleRate: sampleRate,
@@ -7637,13 +7681,17 @@ final class MPXGenerator {
             transitionHz: 5_000.0
         )
         if preemphasisUS > 0 {
-            pilotNotchL.configureNotch(freqHz: 19_000.0, sampleRate: sampleRate, q: 50.0)
-            pilotNotchR.configureNotch(freqHz: 19_000.0, sampleRate: sampleRate, q: 50.0)
+            // 19 kHz pilot notch. At 48 kHz audio rate the notch sits at
+            // ~79% of Nyquist; bilinear-biquad shape is wider than at
+            // 192 kHz but still attenuates 19 kHz substantially. Receiver
+            // verification confirms cleanliness.
+            pilotNotchL.configureNotch(freqHz: 19_000.0, sampleRate: audioRate, q: 50.0)
+            pilotNotchR.configureNotch(freqHz: 19_000.0, sampleRate: audioRate, q: 50.0)
         } else {
             pilotNotchL.configureIdentity()
             pilotNotchR.configureIdentity()
         }
-        encoderHFGuardSplit.configure(cutoffHz: config.hfGuardCrossoverHz, sampleRate: sampleRate)
+        encoderHFGuardSplit.configure(cutoffHz: config.hfGuardCrossoverHz, sampleRate: audioRate)
     }
 
     var isProcessingBypassEnabled: Bool {
@@ -7740,6 +7788,8 @@ final class MPXGenerator {
     }
 
     private func updatePrimeBassDynamicRates() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let sr = max(8_000.0, sampleRate)
         let dt = 1.0 / sr
         // Slow level estimate, used by the gate-floor calculation at
@@ -7771,6 +7821,9 @@ final class MPXGenerator {
     }
 
     private func configureStereoWidener() {
+        // Audio-domain stage — runs at the audio rate when the dual-rate
+        // boundary is on, otherwise at the engine's MPX rate.
+        let sampleRate = audioDomainSampleRate
         let sr = max(8_000.0, sampleRate)
         monoBassSideLP.configureLowpass(cutoffHz: monoBassFreqHz, sampleRate: sr, q: 0.7071068)
         widenSideHP.configureHighpass(cutoffHz: 115.0, sampleRate: sr, q: 0.7071068)
@@ -7799,6 +7852,8 @@ final class MPXGenerator {
     }
 
     private func configurePrimeBassFilters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let nyquist = max(200.0, (sampleRate * 0.5) - 200.0)
         let bassCutoff = clampf(primeBassFreqHz, 45.0, nyquist)
         primeBassLP.configure(cutoffHz: bassCutoff, sampleRate: sampleRate)
@@ -7851,6 +7906,8 @@ final class MPXGenerator {
     }
 
     private func configureMultibandFilters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let x1 = clampf(multibandX1Hz, 40.0, max(60.0, (sampleRate * 0.5) - 300.0))
         let x2 = clampf(multibandX2Hz, x1 + 40.0, max(x1 + 60.0, (sampleRate * 0.5) - 200.0))
         let x3 = clampf(multibandX3Hz, x2 + 80.0, max(x2 + 100.0, (sampleRate * 0.5) - 120.0))
@@ -7887,6 +7944,9 @@ final class MPXGenerator {
     }
 
     private func configureMultibandCompressors() {
+        // Audio-domain stage — coupling time constants tied to audio
+        // rate so they scale correctly with the dual-rate boundary.
+        let sampleRate = audioDomainSampleRate
         multibandCouplingAttackCoeff = expf(-1.0 / (max(1.0, sampleRate) * 0.020))
         multibandCouplingReleaseCoeff = expf(-1.0 / (max(1.0, sampleRate) * 0.300))
         multibandCouplingGRDB = 0.0
@@ -8020,6 +8080,8 @@ final class MPXGenerator {
         releaseMS: Float,
         transientAwareAttackEnabled: Bool
     ) {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         left.configure(
             sampleRate: sampleRate,
             thresholdDB: thresholdDB,
@@ -8043,6 +8105,8 @@ final class MPXGenerator {
     }
 
     private func configureParametricEQ() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         parametricEQ.configure(
             sampleRate: sampleRate,
             b1FreqHz: peqB1FreqHz, b1GainDB: peqB1GainDB,
@@ -8053,6 +8117,8 @@ final class MPXGenerator {
     }
 
     private func configureMultibandLimiters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let thr = multibandLimiterThresholdDB
         let atk = multibandLimiterAttackMS
         let rel = multibandLimiterReleaseMS
@@ -8067,6 +8133,8 @@ final class MPXGenerator {
     }
 
     private func configureDownwardExpanders() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let thr = expanderThresholdDB
         let rat = expanderRatio
         let atk = expanderAttackMS
@@ -8082,6 +8150,8 @@ final class MPXGenerator {
     }
 
     private func configureDistortionCancelledClipper() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         dcClipper.configure(
             sampleRate: sampleRate,
             ceilingDB: dcClipperCeilingDB,
@@ -8360,15 +8430,31 @@ final class MPXGenerator {
 
     private func processSampleDetailed(leftIn: Float, rightIn: Float) -> (mpx: Float, analysisStereo: ProgramStereoState) {
         // High-level chain order:
-        // 0. Dual-rate audio chain boundary (Phase 1 — band-limit + roundtrip)
+        // 0. Dual-rate audio chain boundary (when enabled, audio domain
+        //    runs at the lower audio rate INSIDE the boundary; otherwise
+        //    the audio domain runs at the MPX rate after the boundary).
         // 1. Audio domain (AGC, multiband, EQ, image, pre-emphasis, pre-encode limiter)
         // 2. MPX domain (composite assembly, BS.412, composite clipper, pilot/RDS inject)
-        var l = leftIn
-        var r = rightIn
         if dualRateBoundaryEnabled {
+            // Audio domain runs once per L OS-rate ticks at audio rate
+            // inside applyDualRateBoundary; the returned l/r are the
+            // upsampled audio-domain output at MPX rate. Side outputs
+            // (analysisStereo, inputActivity) are buffered between
+            // audio-rate ticks via `latestAudio*` so MPX-domain stages
+            // see consistent values every OS tick.
+            var l = leftIn
+            var r = rightIn
             applyDualRateBoundary(left: &l, right: &r)
+            let mpx = processMPXDomain(
+                left: l,
+                right: r,
+                inputActivity: latestAudioInputActivity
+            )
+            return (mpx, latestAudioAnalysisStereo)
         }
-        let audio = processAudioDomain(leftIn: l, rightIn: r)
+        // Boundary off: audio domain runs at MPX rate as before
+        // (bit-identical to the pre-cutover chain).
+        let audio = processAudioDomain(leftIn: leftIn, rightIn: rightIn)
         let mpx = processMPXDomain(left: audio.left, right: audio.right, inputActivity: audio.inputActivity)
         return (mpx, audio.analysisStereo)
     }

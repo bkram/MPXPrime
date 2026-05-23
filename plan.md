@@ -257,6 +257,7 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 1. Validate PrimeBass, mono bass, widener, and multiband interaction on difficult real material.
 2. Refine calibration workflow only where real operator friction exists.
 3. Real-program listening A/B per Format Profile (the eight 0.30 profiles) to fine-tune per-profile clipper drives.
+4. **Intel benchmark capture (MBP16,1 i7-9750H / i9-9980HK).** `BenchmarkSuite` has only M1 Pro numbers; older Intel (AVX2 without AMX) is the hardware most likely to benefit from the 0.30 dual-rate cutover. Confirm the projected ~84% → ~48% RT improvement on a real 16,1 (or equivalent Coffee Lake-H machine) so the README guidance is backed by measurement. Reproduce via `MPXPRIME_BENCH=1 swift test -c release --filter Benchmark`.
 
 ### Medium-term
 1. Reduce duplicated filter configuration logic in biquad/crossover helpers.
@@ -268,11 +269,23 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 7. Harden config file watching/reload behavior against race conditions.
 8. Move RDS byte-string preparation off the audio render path.
 
+### UX / accessibility polish (0.30 codex-review residue)
+
+Items surfaced by the 0.30 codebase review that aren't immediate-fix but should land before the project is positioned as a polished amateur operator tool rather than a research console.
+
+1. **Rename implementation-language UI labels.** Cards still expose patent / phase / topology terms that read as developer notes: "Use New Band-limited Limiter Ceiling", "HF-Only Look-ahead Detector (Phase 2 / Dolby)", "Experimental Multiband Composite Clipping", "Cancel pilot guard (17-21 kHz)", "Cancel RDS guard (55-59 kHz)". Replace with outcome-language operator-friendly equivalents and move the patent / source detail into tooltips and CHANGELOG. Per-label product judgment required, not a mechanical rename.
+2. **Quiet the visible help prose.** `TabHelpBox` sits at the bottom of every Processing / RDS / Snapshots / Test Tone tab, plus several cards have explanatory `Text` blocks. Apple HIG-aligned pro apps keep primary control surfaces scannable. Move longer explanations into `.help()` tooltips, README, or an Advanced inspector; keep only safety-critical one-liners inline.
+3. **Stronger sidebar enabled-state affordance.** `StageSidebarRow` shows a 6 pt accent dot with `accessibilityLabel("Enabled")`. The dot is subtle on its own — consider a small native status badge, a secondary text label, or both. Verify contrast in light mode, dark mode, increased contrast, and grayscale.
+4. **Meter accessibility audit.** `UIBroadcastMeter` and `UIBroadcastStatusBar` have zero `accessibilityLabel/Element/Value` annotations. VoiceOver users get no meaningful summary of input level, output level, GR, budget, pilot/RDS state. Add semantic group summaries; mark high-frequency decorative visual updates as `accessibilityHidden` so they don't flood the announcer.
+5. **Control density review.** Final Stage, Audio Limiter, Multiband, RDS Program / Schedule / Carrier tabs are dense for amateur operators. Consider disclosure groups (`DisclosureGroup`) for advanced / experimental controls so the common workflow stays clean. Format Profile already does most of the work here; this is the per-tab polish that follows.
+
 ## Code-quality priorities
 
 ### P0 — Confidence and safety
 1. Add deterministic unit tests for AGC envelope behavior, filter primitives (PreemphasisFilter, DeemphasisFilter, Biquad, BiquadCascade6), stereo coding M/S round-trip sanity, and bypass-path null-signal tests.
 2. Fix the verifier bandwidth metric so RDS does not produce misleading occupied-width failures (`bright_dense` occ999 warning disappears when `en_rds = False`).
+3. **Render-path scratch growth is a real-time safety risk.** `AudioOutputEngine.ensureMonitorScratchCapacity(frames:)` and `ensureAnalysisScratchCapacity(frames:)` allocate arrays if the buffer is smaller than the render frame count. Normal operation uses the `preAllocateBuffers(maxFrames:)` path so it shouldn't fire, but the fallback exists and would allocate on the audio thread if CoreAudio delivers a larger-than-expected buffer (post device change, post hardware buffer duration change). Convert the runtime capacity check into a debug assertion or pre-start failure; track max observed frame count outside the render path.
+4. **Stored receiver baseline file.** `--verify --baseline-strict` now passes against the composite-side `default.json` (refreshed 0.30 default-on), but receiver-side metrics (separation @ 1/10/14 kHz, pilot level error, RDS-band RMS, stereo correlation, mono/no-pilot, sideband balance) are NOT pinned. Promote unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets, then add stored receiver baselines alongside the composite baseline.
 
 ### P1 — Structural cleanup
 1. Split `MPXGenerator.swift` (~7900 lines now) into stage-focused components.
@@ -285,6 +298,7 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 2. Re-tune final-stage composite headroom for vocal/transient stability (`sum_level` 1.0 → 0.9 investigation).
 3. Harden device and routing edge cases.
 4. Make error reporting more structured.
+5. **Consolidate `plan.md` and `FUTURE.md` overlap.** Both files describe current status and future DSP items; some items appear in one as landed and the other as remaining. Keep `plan.md` as the active prioritized roadmap; collapse `FUTURE.md` into pointers / "low-priority ideas only" or fold into `plan.md` directly. Remove status tables that duplicate `CHANGELOG.md`.
 
 ### P3 — Performance
 1. Further vDSP utilization where profiling shows value.

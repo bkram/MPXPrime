@@ -106,21 +106,32 @@ struct DualRateBoundaryTests {
         return l  // left == right == mpx after render
     }
 
-    // MARK: - (1) Default-off bit-identical regression
+    // MARK: - (1) Default state + boundary-off bit-identical regression
 
-    @Test func defaultDisabledIsBitIdenticalToBaseline() {
-        // Take an identical config, run it twice — once with the boundary
-        // field present in its default-disabled state, once with it
-        // explicitly set to false. Outputs must match exactly. Catches
-        // any case where simply mentioning the new field changes
-        // engine behaviour (e.g. forgetting a guard).
-        let cfgA = makeBaseConfig()
-        // Default value is .dualRateAudioDomainEnabled = false; assert.
-        #expect(cfgA.dualRateAudioDomainEnabled == false,
-                "boundary must default to disabled")
+    @Test func defaultIsDualRateEnabled() {
+        // Post-0.30 cutover the dual-rate boundary defaults ON, so a
+        // fresh AppConfig() runs the audio domain at 48 kHz inside the
+        // boundary instead of at the engine's MPX rate. Operators who
+        // want the legacy single-rate chain set this False explicitly
+        // in their INI. Regression-guards against accidentally
+        // reverting the default to false.
+        let cfg = AppConfig()
+        #expect(cfg.dualRateAudioDomainEnabled == true,
+                "dual-rate boundary should default ON since 0.30 cutover")
+    }
 
+    @Test func explicitlyDisabledIsStable() {
+        // The legacy single-rate path is still supported (operators can
+        // opt out by setting dual_rate_audio_domain_enabled = False in
+        // INI). Two engines configured identically with the boundary
+        // explicitly disabled must produce bit-identical output —
+        // catches accidental drift in the boundary-off code path,
+        // which is critical because operators relying on the legacy
+        // chain must be able to count on stable output.
+        var cfgA = makeBaseConfig()
+        cfgA.dualRateAudioDomainEnabled = false
         var cfgB = makeBaseConfig()
-        cfgB.dualRateAudioDomainEnabled = false  // explicit
+        cfgB.dualRateAudioDomainEnabled = false
 
         let frames = 8_192
         let outA = render(config: cfgA, frames: frames)
@@ -128,7 +139,7 @@ struct DualRateBoundaryTests {
         #expect(outA.count == outB.count)
         for i in 0..<min(outA.count, outB.count) {
             #expect(outA[i] == outB[i],
-                    "frame \(i): explicit-disabled \(outB[i]) must equal default \(outA[i])")
+                    "frame \(i): explicit-disabled run A \(outA[i]) must equal run B \(outB[i])")
         }
     }
 

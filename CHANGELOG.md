@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## 0.30 — 2026-05-23
 
+### DSP — Dual-rate audio chain is now default ON; baseline refreshed; README device-config section
+
+Following the same-day Phase 2 cutover commit, flipping `dualRateAudioDomainEnabled` from default-false to default-true. The savings are large (-17.6 percentage points / -42% relative on M1 Pro), receiver verification confirms stereo separation matches the off baseline, and the bigger relative benefit on older Intel hardware (AVX2 with no AMX) is exactly the audience that needs it most. Operators who want the legacy single-rate chain can set `dual_rate_audio_domain_enabled = False` in their INI.
+
+- **AppConfig default flipped** from `false` to `true`. Sample `MPXPrime.ini` reflects the new default with an inline comment block explaining the trade-off and how to opt out.
+- **Verifier baseline (`macOS/verifier_baselines/default.json`) recaptured** under the new default — `--verify --baseline-strict` now passes again (was reporting drift since the 0.28-era baseline + multiple unrelated 0.29/0.30 changes accumulated).
+- **`DualRateBoundaryTests` regression guards updated**: previous test `defaultDisabledIsBitIdenticalToBaseline` (which asserted `default == false`) split into two new guards — `defaultIsDualRateEnabled` (asserts `default == true`) and `explicitlyDisabledIsStable` (the legacy single-rate path still produces reproducible output, catches drift in that code path for operators who opt out).
+- **README** gains an input-device configuration subsection alongside the existing output-device guidance: input at **48 kHz / 24-bit** is the recommended sweet spot since the audio domain now processes at 48 kHz internally — matches the audio-domain rate without Core Audio upsampling on the way in, no information gain from higher input rates since audio source material has no useful content above ~20 kHz. The output device guidance for 192 kHz / 24-bit unchanged (required for RDS at 57 kHz).
+- **Engines at non-integer engine:audio rate ratios (176.4 / 128 kHz output)** continue to silently fall back to the legacy single-rate chain regardless of this flag — Phase 1's integer-ratio restriction stands. Phase 3 (non-integer polyphase resampler) is a future item.
+
+Tests: 385 default tests pass (one new regression guard added, one renamed). All verify modes pass (--verify --baseline-strict, --verify-presets, --verify-receiver, --verify-composite-multiband, --verify-multiband-coupling). Release build clean; swiftlint 0 violations.
+
 ### DSP — Dual-rate audio chain, Phase 2 cutover (audio domain at 48 kHz)
 
 The big one. With this commit the dual-rate boundary is no longer a no-op — when enabled, the entire audio domain (`processProgramStereo` → stereo image protection → pre-emphasis → pre-encode limiter, including multiband splitter/compressors/limiters/expanders, PrimeBass, parametric EQ, stereo widener, phase rotator, wideband AGC, bass clipper, DCC) runs at 48 kHz inside the boundary instead of at the engine's MPX rate after a roundtrip. The MPX domain (composite assembly, BS.412, composite clipper, audio-composite bandwidth FIR, final-MPX safety limiter, pilot+RDS injection) stays at the high rate where pilot/L−R sidebands/57 kHz RDS need bandwidth.

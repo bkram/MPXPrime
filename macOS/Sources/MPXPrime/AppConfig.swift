@@ -71,23 +71,31 @@ struct AppConfig {
     var sampleRate: Double = 192_000.0
     var fftWindow96kHz: Bool = true
     var blockSize: Int = 1024
-    // Dual-rate audio chain (plan.md "Next up" #1, Phase 1).
+    // Dual-rate audio chain (plan.md "Next up" #1, Phase 2 LANDED 0.30).
     //
-    // When enabled, the input L/R is run through a Kaiser-windowed sinc
-    // polyphase resampler boundary (downsample to `dualRateAudioRateHz`
-    // and immediately upsample back to engine rate) before the audio
-    // chain runs at MPX rate. This is the no-op infrastructure step:
-    // audio stages do NOT yet migrate to the lower rate; the boundary
-    // only verifies the resampler works at chain scale. Output is
-    // recognisable but delayed by (decim + interp) group delay and has
-    // a tiny intra-cycle fractional-delay artifact.
+    // When enabled, the entire audio domain (program stereo, multiband,
+    // AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs
+    // at `dualRateAudioDomainRateHz` (48 kHz default) inside a
+    // Kaiser-windowed sinc polyphase resampler boundary, while the MPX
+    // domain (composite assembly, BS.412, composite clipper, audio-
+    // composite bandwidth FIR, final-MPX safety limiter, pilot + RDS
+    // injection) stays at the engine's MPX rate. Measured payoff on
+    // M1 Pro: ~42% relative CPU saving at 192 kHz output, with stereo
+    // separation preserved (1k/10k/14k matches the boundary-off
+    // baseline within run-to-run noise).
     //
-    // Phase 1 only supports INTEGER ratios between engine rate and
-    // audio rate (e.g. 192/48 = 4, 96/48 = 2). Non-integer ratios
-    // (176.4/48, 128/48) silently disable the boundary at engine start.
+    // Only INTEGER engine:audio rate ratios are supported (192/48 = 4,
+    // 96/48 = 2). Non-integer ratios (176.4/48, 128/48) silently
+    // disable the boundary at engine start and run the audio domain at
+    // the MPX rate as in pre-Phase-2.
     //
-    // Restart-required: allocates the resampler delay lines.
-    var dualRateAudioDomainEnabled: Bool = false
+    // Restart-required: allocates the resampler delay lines and
+    // re-configures every audio-domain stage at the chosen audio rate.
+    //
+    // Default-ON since 0.30 (the 2026-05-23 cutover commit). Operators
+    // who want the legacy single-rate chain can set this to False in
+    // their INI.
+    var dualRateAudioDomainEnabled: Bool = true
     var dualRateAudioDomainRateHz: Double = 48_000.0
     var sourceMode: String = "input"
     var inputDeviceUID: String?

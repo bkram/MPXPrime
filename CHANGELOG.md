@@ -9,6 +9,20 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30 — 2026-05-23
+
+### UX / HIG — Codex review small-fix batch
+
+Four targeted fixes from the 0.30 codebase review (issues A8/A10/H1/H3/H8 + D2):
+
+- **In-app warning when RDS is enabled below 192 kHz output rate.** New chip in `BroadcastStatusBar` ("RDS WARNING — RATE < 192 kHz", orange `exclamationmark.triangle.fill`) appears whenever `enRDS = true` and the effective sample rate (running `renderHz` if engine is up, configured `sampleRate` otherwise) is below 192 kHz. Catches the most common amateur misconfiguration on built-in Mac audio (96 kHz default) where the RDS subcarrier at 57 kHz cannot be represented and folds back into the audio band — operators previously had no in-app cue and would debug RDS coder bugs that didn't exist. Tooltip explains the fix path (raise sample rate vs disable RDS).
+
+- **Global "Restart pending" chip.** New chip in `BroadcastStatusBar` ("PENDING — RESTART REQ.", yellow `arrow.triangle.2.circlepath`) appears whenever `runtimeApplyPending` is true. Single always-visible cue replaces (well, complements — the existing per-tab status text stays) the easy-to-miss in-content status messages. Tooltip enumerates which settings are restart-required.
+
+- **Replace `NavigationSplitView` with `HSplitView` for the root sidebar.** Repo HIG guidance is "HSplitView for static sidebars; NavigationSplitView only when sidebar collapse is required." The previous root view used NavigationSplitView pinned via `columnVisibility: .constant(.all)` + `toolbar(removing: .sidebarToggle)` — a workaround around a view type whose default behaviour included collapsibility. HSplitView is the correct primitive: no sidebar-toggle to remove, no autosaved-collapse state to fight, just a fixed-position stage list on the left and the active stage on the right. Sidebar width range preserved (220 min / 240 ideal / 320 max). Inspector behaviour unchanged. Closes H1 + H8.
+
+- **Explicit Release Validation checklist in AGENTS.md.** Adds a "Release validation checklist" subsection to "Release prep" with explicit checkboxes for swift test, release build, swiftlint, `--verify` / `--verify-presets` / `--verify-receiver` / `--baseline-strict`, release-build live smoke at 192 kHz, Audio MIDI Setup device-rate match, RDS receiver smoke matrix, manual VoiceOver pass for UI changes, and optional deep DSP suite. Previously the prep section was 5 narrative bullets; several validation items the review surfaced (receiver verifier, baseline-strict, accessibility pass) had no anchor in the release process.
+
 ## 0.30 — 2026-05-22
 
 ### DSP — Dual-rate audio chain refactor, Phase 0 + Phase 1 (no-op boundary)

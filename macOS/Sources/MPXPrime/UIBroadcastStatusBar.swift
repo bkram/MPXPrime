@@ -24,6 +24,14 @@ struct BroadcastStatusBar: View {
             sourceChip
             divider
             sampleRateChip
+            if model.runtimeApplyPending {
+                divider
+                restartPendingChip
+            }
+            if rdsAtInsufficientRate {
+                divider
+                rdsRateWarningChip
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
@@ -36,6 +44,62 @@ struct BroadcastStatusBar: View {
                 .frame(height: 0.5),
             alignment: .bottom
         )
+    }
+
+    // MARK: - RDS + sample-rate misconfiguration warning
+
+    /// RDS sits at 57 kHz; the upper RDS sideband at ~59 kHz needs a
+    /// sample rate of at least 192 kHz for the chain to represent it
+    /// without aliasing. The most common amateur misconfiguration is
+    /// running on built-in Mac audio (96 kHz) with RDS enabled — output
+    /// looks fine on the meters but the RDS subcarrier folds back into
+    /// the audio band, and no receiver will decode it. Surface a chip
+    /// the moment we detect that condition, whether the engine is
+    /// running (compare against the actual `renderHz`) or stopped
+    /// (compare against the configured `sampleRate`).
+    private var rdsAtInsufficientRate: Bool {
+        guard model.config.enRDS else { return false }
+        let effectiveRate: Int
+        if model.streamHealth.isRunning && model.streamHealth.renderHz > 0 {
+            effectiveRate = model.streamHealth.renderHz
+        } else {
+            effectiveRate = Int(model.config.sampleRate)
+        }
+        return effectiveRate < 192_000
+    }
+
+    private var rdsRateWarningChip: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            chipLabelledValue(
+                label: "RDS WARNING",
+                value: "RATE < 192 kHz",
+                tint: .orange
+            )
+        }
+        .help("RDS subcarrier at 57 kHz cannot be represented below 192 kHz output sample rate — the upper sideband at ~59 kHz aliases back into the audio band and no receiver will decode RDS. Either raise the output sample rate to 192 kHz (Audio MIDI Setup + the engine's `sample_rate`) or disable RDS for this output configuration.")
+    }
+
+    /// Globally visible "Restart pending" indicator. Shows whenever one
+    /// or more restart-required settings have been changed but the engine
+    /// is still running the old values (`runtimeApplyPending`). Single
+    /// always-visible chip is intentionally less invasive than per-card
+    /// badges, but more discoverable than the existing status-text
+    /// approach that operators were missing in dense tabs.
+    private var restartPendingChip: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.yellow)
+                .accessibilityHidden(true)
+            chipLabelledValue(
+                label: "PENDING",
+                value: "RESTART REQ.",
+                tint: .yellow
+            )
+        }
+        .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, pilot/sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
     }
 
     // MARK: - Chips

@@ -169,3 +169,20 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
 - Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.028`). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.
+
+### Release validation checklist
+
+Run before tagging. None of these should be skipped on a release commit; partial coverage is how regressions ship.
+
+- [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS` — full default suite passes
+- [ ] `swift build --package-path macOS -c release` — release build clean
+- [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint` — 0 violations (accessibility lint)
+- [ ] `swift run --package-path macOS MPXPrime --verify --seconds 5` — exit 0 (PASS)
+- [ ] `swift run --package-path macOS MPXPrime --verify-presets --seconds 5` — exit 0
+- [ ] `swift run --package-path macOS MPXPrime --verify-receiver --seconds 5` — exit 0 (separation @ 1/10/14 kHz, pilot, RDS)
+- [ ] `swift run --package-path macOS MPXPrime --verify --baseline-strict` — composite shape matches the captured baseline
+- [ ] **Release build live smoke**: run `macOS/.build/release/MPXPrime --gui` against a real 192 kHz output device (NOT debug, NOT 96 kHz) — RDS reads cleanly on a real receiver, no clicks/dropouts over 30+ seconds of dense program
+- [ ] **Device-rate match**: Audio MIDI Setup output format matches `sample_rate` in INI (see CLAUDE.md "buffer issues" diagnostic)
+- [ ] **RDS receiver smoke**: at minimum one car radio + one portable RDS receiver + one SDR decoder verify live PI / PS / PTY / RT A/B / TA edge / AF / CT / Long PS
+- [ ] **UI**: if any UI change in the release, manual VoiceOver pass + high-contrast appearance verification
+- [ ] **Optional but recommended**: `MPXPRIME_DEEP=1 swift test --filter Deep` (catches stage-interaction regressions; ~3 min)

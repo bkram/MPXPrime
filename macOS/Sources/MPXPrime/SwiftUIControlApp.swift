@@ -388,7 +388,7 @@ enum RDSTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// Unified flat selection used by the new NavigationSplitView sidebar.
+/// Unified flat selection used by the sidebar list.
 /// One case per top-level + sub-tab from the legacy AppSection / ProcessingTab
 /// / RDSTab enums. The view model derives the legacy enums from `selectedStage`
 /// so existing per-tab views (which still bind to selectedProcessingTab /
@@ -4817,27 +4817,22 @@ private struct RootView: View {
         VStack(spacing: 0) {
             // Always-visible broadcast status header — transport / peaks /
             // deviation / GR / budget / injections. Pinned above the
-            // NavigationSplitView so it spans every stage.
+            // HSplitView so it spans every stage.
             BroadcastStatusBar(model: model)
 
-            // Pinned-open sidebar: bind columnVisibility to `.constant(.all)`
-            // so the user can't toggle the sidebar away, and remove the
-            // toolbar's sidebarToggle button so there's no UI affordance to
-            // collapse it. Stage navigation is the primary surface — losing
-            // it would strand the user on whichever stage they last had
-            // selected.
-            NavigationSplitView(columnVisibility: .constant(.all)) {
+            // HSplitView is the right primitive for a static
+            // professional control surface: no sidebar-toggle affordance,
+            // no autosaved-collapse state to fight, just a fixed-position
+            // stage list on the left and the active stage on the right.
+            // Sidebar width range matches the previous NavigationSplitView
+            // settings — minimum 220 pt fits the longest label
+            // ("Composite Clipper", 17 chars) plus icon and padding without
+            // truncation.
+            HSplitView {
                 StageSidebar(model: model)
-                    // Minimum width sized to fit the longest label
-                    // ("Composite Clipper", 17 chars) plus icon and
-                    // padding. The previous 200 pt minimum let the OS
-                    // / autosaved state pin the sidebar narrow enough
-                    // to truncate "Composite Clipper" / "Alt. Frequencies"
-                    // on first launch of a fresh DMG.
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 320)
-                    .toolbar(removing: .sidebarToggle)
-            } detail: {
+                    .frame(minWidth: 220, idealWidth: 240, maxWidth: 320)
                 StageContentView(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .inspector(isPresented: $model.inspectorVisible) {
                         StageInspector(model: model)
                             .inspectorColumnWidth(min: 240, ideal: 280, max: 360)

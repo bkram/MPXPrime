@@ -1,6 +1,6 @@
 # MPX Prime
 
-Version: 0.29
+Version: 0.30
 
 MPX Prime is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -10,9 +10,9 @@ MPX Prime is experimental and not suitable for production broadcast use. It targ
 
 **Goal: be the best amateur-grade FM processor available** — for hobbyist LPFM, community radio, pirate, SDR-fed exciters, and DIY broadcast workflows. MPX Prime is *not* trying to be a $5–15k Optimod / Omnia / Stereo Tool replacement; it is trying to be the obvious choice where commercial processors are unaffordable or overkill. See [`plan.md`](plan.md) "Positioning" for the full scope-in / scope-out list.
 
-**Compared to open-source FM generators** (mpxgen, PiFmRds), MPX Prime runs a real processing chain in front of the encoder — phase rotator, wideband AGC with K-weighted detector + program-dependent release, 4-band parametric EQ, mono bass, 3- or 5-band multiband compressor with per-band expander and limiter (linear-phase FIR multiband crossovers in TX path), stereo widener, PrimeBass, bass clipper, audio-band distortion-cancelled clipper, L/R pre-emphasis, pre-encode L/R true-peak limiter, BS.412, and an 8× oversampled composite clipper with delta-based per-band IM cancellation plus an experimental default-off multiband composite clipper — and enforces the professional invariant that pilot and RDS bypass all peak control (post-clipper subcarrier injection). Stage ordering matches Optimod / Omnia / Stereotool canon at every load-bearing position (PrimeBass and stereo widener post-multiband; pre-emphasis L/R upstream of pre-encode limiter). Add to that linear-phase Kaiser-windowed FIR encoder lowpass with ≥80 dB stop-band, 19 kHz pilot notch on the audio path, pilot-locked RDS with 301-tap biphase + optional Gaussian shaping, lock-free real-time DSP with vDSP/vForce SIMD acceleration on hot loops, and an offline verification harness with scenario / stereo / width / receiver / composite-multiband A/B tables. Open-source generators typically emit a valid MPX waveform without any of that.
+**Compared to open-source FM generators** (mpxgen, PiFmRds), MPX Prime runs a real processing chain in front of the encoder — phase rotator, wideband AGC with K-weighted detector + program-dependent release, 4-band parametric EQ, mono bass, 3- or 5-band multiband compressor with per-band expander and limiter (linear-phase FIR multiband crossovers in TX path), stereo widener, PrimeBass, bass clipper, audio-band distortion-cancelled clipper, L/R pre-emphasis, pre-encode L/R true-peak limiter (0.30: with default-on look-ahead and Dolby HF-subband-aware detector per `US 5,579,404`), BS.412, and a 16× oversampled composite clipper with delta-based per-band IM cancellation plus an experimental default-off multiband composite clipper — and enforces the professional invariant that pilot and RDS bypass all peak control (post-clipper subcarrier injection). Stage ordering matches Optimod / Omnia / Stereotool canon at every load-bearing position (PrimeBass and stereo widener post-multiband; pre-emphasis L/R upstream of pre-encode limiter). Add to that linear-phase Kaiser-windowed FIR encoder lowpass with ≥80 dB stop-band, 19 kHz pilot notch on the audio path, pilot-locked RDS with 301-tap biphase + optional Gaussian shaping, lock-free real-time DSP with vDSP/vForce SIMD acceleration on hot loops, and an offline verification harness with scenario / stereo / width / receiver / composite-multiband A/B tables. Open-source generators typically emit a valid MPX waveform without any of that.
 
-**Compared to commercial processors**, MPX Prime's topology matches what Orban / Omnia / Stereo Tool publish, and individual stages (phase rotator, multiband with linear-phase FIR crossovers and stereo linking, post-clipper subcarrier injection, BS.412, delta-based per-band IM cancellation in the composite clipper, oversampled differential composite clipping, equal-loudness-weighted bass harmonic synthesis, transient-discriminate harmonic gain) are implemented at professional quality. The published claims used as design references are all expired (Orban [US 4,460,871](https://patents.google.com/patent/US4460871A) and [US 5,737,434](https://patents.google.com/patent/US5737434A) for distortion-cancelled composite clipping, [US 6,337,999](https://patents.google.com/patent/US6337999B1) for the differential topology, Waves [US 5,930,373](https://patents.google.com/patent/US5930373A) for MaxxBass-style equal-loudness harmonics, Aphex [US 4,150,253](https://patents.google.com/patent/US4150253A) for the pre-waveshaper allpass topology, and Werrbach [US 5,424,488](https://patents.google.com/patent/US5424488A) for transient-discriminate harmonic gain) — i.e., the techniques are public-domain prior art, not licensed reproductions. What's deliberately *out of scope* for amateur-grade: MPX-over-AES3 / Baseband192 transport, studio automation (Livewire/Dante/Ravenna), multi-site clustering, ITU-R SM.1268 RF-mask feedback at production grade, multipath mitigation. Lower-priority polish items still pending: heavier (16–32×) oversampling on the clipping nonlinearities, dynamic pre-emphasis, input-side restoration (declipper, dehumfilter). See [`plan.md`](plan.md) "Next up" for the current roadmap.
+**Compared to commercial processors**, MPX Prime's topology matches what Orban / Omnia / Stereo Tool publish, and individual stages (phase rotator, multiband with linear-phase FIR crossovers and stereo linking, post-clipper subcarrier injection, BS.412, delta-based per-band IM cancellation in the composite clipper, oversampled differential composite clipping, equal-loudness-weighted bass harmonic synthesis, transient-discriminate harmonic gain) are implemented at professional quality. The published claims used as design references are all expired (Orban [US 4,460,871](https://patents.google.com/patent/US4460871A) and [US 5,737,434](https://patents.google.com/patent/US5737434A) for distortion-cancelled composite clipping, [US 6,337,999](https://patents.google.com/patent/US6337999B1) for the differential topology, Waves [US 5,930,373](https://patents.google.com/patent/US5930373A) for MaxxBass-style equal-loudness harmonics, Aphex [US 4,150,253](https://patents.google.com/patent/US4150253A) for the pre-waveshaper allpass topology, and Werrbach [US 5,424,488](https://patents.google.com/patent/US5424488A) for transient-discriminate harmonic gain) — i.e., the techniques are public-domain prior art, not licensed reproductions. What's deliberately *out of scope* for amateur-grade: MPX-over-AES3 / Baseband192 transport, studio automation (Livewire/Dante/Ravenna), multi-site clustering, ITU-R SM.1268 RF-mask feedback at production grade, multipath mitigation. Lower-priority polish items still pending: heavier (16–32×) oversampling on the audio-band clippers (`BassClipper` and `DistortionCancelledClipper` — composite clipper is operator-selectable across 8/16/32 since 0.30), dynamic pre-emphasis, input-side restoration (declipper, dehumfilter). See [`plan.md`](plan.md) "Next up" for the current roadmap.
 
 In short: well past the hobbyist baseline, sized for amateur broadcast use. Use MPX Prime for LPFM, community radio, pirate, prosumer broadcast-style encoding, and study of FM signal processing — not for certified production broadcast.
 
@@ -34,7 +34,7 @@ The RDS detail tabs are organised per UECP message-class taxonomy
 toggled RDS setting applies live without restarting the transport —
 PI, PTY, PTYN, TP/TA/MS/DI flags, AF list, group sequence, CT
 enable, all RT/PS/Long PS text. Only physical-layer settings
-(`rds_level`, `rds_freq`, Gaussian shaping FIR taps/BW) require a
+(`rds_level`, Gaussian shaping FIR taps/BW) require a
 transport restart since they reconfigure the modulator.
 
 ## Features
@@ -45,7 +45,7 @@ transport restart since they reconfigure the modulator.
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
 - Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
 - Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing (including 0.28 opt-in transient-aware attack + inter-band gain coupling)
-- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter), feeding the 8× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control and experimental default-off multiband composite clipping) with live clipper telemetry
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter with default-on look-ahead and Dolby HF-subband-aware detector — `US 5,579,404`, expired 2013 — for audibly cleaner HF transients and preserved LF punch), feeding the 16× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control and experimental default-off multiband composite clipping) with live clipper telemetry
 - TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
 - Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
@@ -185,15 +185,21 @@ This is the minimum to hear MPX Prime processing your audio and feeding a transm
 
 > **External sound card required for RDS.** Apple's built-in audio output on Mac laptops and most desktops tops out at **96 kHz**, which cannot carry RDS — the 57 kHz subcarrier exceeds 48 kHz Nyquist. For any FM-with-RDS chain you need a USB / Thunderbolt audio interface that natively runs at **192 kHz**. Most pro and prosumer interfaces (RME, MOTU, Focusrite Scarlett 3rd-gen+, Apogee, etc.) support 192 kHz on at least the analog or AES outputs — check the spec sheet before ordering. The internal Mac speakers / headphone jack are fine for *listening to a test tone* through MPX Prime, but they cannot be the production output if RDS is in play.
 
-### Audio MIDI Setup — required output configuration
+### Audio MIDI Setup — required device configuration
 
 macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime tells the engine what rate it wants, but the device-side format and volume are owned by the OS — wrong values there silently corrupt the composite before it leaves the Mac.
 
-For the output device feeding your exciter / SDR / RF generator:
+**Output device** (feeding your exciter / SDR / RF generator):
 
-1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly.
+1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly. **Required for RDS** — the 57 kHz RDS subcarrier needs at least ~119 kHz Nyquist; 176.4 kHz is the lowest device rate that carries it correctly, 192 kHz is the canonical default. The in-app warning chip flags this misconfiguration but it shouldn't get that far in practice.
 2. **Bit depth**: **24-bit integer or 32-bit float**. Either is fine; 32-bit float is the AVAudioEngine native format. 16-bit also *works* for the composite (96 dB SNR is well above any FM receiver's noise floor and you cannot hear the difference at the listener), but 24/32-bit is best practice — no extra dither/truncation step at the chain output, and headroom for downstream tools that further process the composite (resamplers, SDR DSPs).
 3. **Volume / output gain**: **100 % (0 dB) on every channel**. This is the critical one. The macOS volume slider is post-mix — it scales the engine's already-finalised composite. If output volume is at, say, 75 %, the FM exciter receives a signal at 0.75× amplitude and your modulation undershoots by ~2.5 dB; the loudness target the chain just enforced is silently wrong. Audio MIDI Setup → device → "Master Stream" or per-channel volume sliders. Lock these at unity for any broadcast use.
+
+**Input device** (your audio source — interface, BlackHole loopback, or built-in audio):
+
+1. **Format / sample rate**: **48 000 Hz, 24-bit** is the recommended sweet spot. The reason is the dual-rate audio chain (default-on since 0.30) — the entire audio domain (multiband, AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs at 48 kHz internally, then upsamples to the MPX rate at the stereo encoder boundary. Setting the input device to 48 kHz means the source audio passes into the audio domain without any Core Audio upsampling on the way in (no information gain from higher input rates anyway — audio source material has zero useful content above ~20 kHz). 44.1 kHz also works fine; Core Audio's input-side SRC handles the small upsample to 48 kHz cleanly.
+2. **Bit depth**: **24-bit** is recommended. 16-bit is fine for the audio itself, but the chain runs in 32-bit float internally through many stages and 24-bit input keeps the noise margin below the audible threshold even under hot processing.
+3. **Volume**: per-device — set whatever produces a sensible input level on the `IN L/R` meter at the top of the app. Aim for peaks around -12 to -6 dBFS on the input meter so the wideband AGC has something to work with.
 
 If your output device is BlackHole or a virtual loopback, the same rules apply — check both the loopback device's format and the receiving app's input format. Mismatch there is the #1 cause of "the chain looks right but the receiver sounds wrong" reports.
 
@@ -231,6 +237,47 @@ Relevant config sections:
 - `INTERFACES`: input/output/monitor device UIDs, source mode, monitor enable, block size
 - `MPX`: processing, levels, stereo coding, limiter behavior
 - `RDS`: program service, radiotext, flags, carrier settings
+
+### Format Profiles (Station Format selector)
+
+For one-click "make this sound right for my format", MPX Prime ships with eight atomic Format Profiles plus a `Custom` sentinel, accessible from the dedicated **Processing → Format Profile** tab. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate. Pick `Custom` to flag "my settings are bespoke — don't overwrite them" so re-visiting the picker won't reset your manual tuning.
+
+| Profile | Multiband | Intensity | Final Stage | PrimeBass | Widener | Clipper drive | Use case |
+|---|---|---|---|---|---|---|---|
+| **Community Radio** (default) | `5_ac` | light | `balanced` | off | `safe_fm` | +4 dB | Conservative LPFM / community radio; broad source compatibility |
+| **Pop / Adult Contemporary** | `5_ac` | normal | `balanced` | `ac` (on) | `open_music` | +6 dB | Mainstream music — balanced, gentle bass enhancement |
+| **CHR / Top 40** | `5_chr` | normal | `chr` | `chr` (on) | `wide_chr` | +8 dB | Modern hits — bright, hot, wide stereo |
+| **Rock** | `5_rock` | normal | `punchy` | `rock` (on) | `open_music` | +7 dB | Punchy multiband preserves rock transients |
+| **EDM / Dance** | `5_dance` | heavy | `chr` | `chr` (on) | `wide_chr` | +9 dB | Peak loudness, deep bass, wide image |
+| **Urban / Hip-Hop** | `5_urban` | normal | `chr` | `urban` (on) | `open_music` | +8 dB | Deep low end, urban-tuned PrimeBass |
+| **Jazz / Classical** | `5_classic` | light | `balanced` | off | `safe_fm` | +3 dB | Dynamic-preserving, no harmonic enhancement |
+| **News / Talk** | `5_talk` | light | `speech` | off | `safe_fm` | +4.5 dB | Speech-optimized multiband + final stage |
+| **Custom** | — | — | — | — | — | — | Sentinel — leaves all per-stage settings as you tuned them |
+
+Pick once, tune as needed. The selected profile is stored as `format_profile_id` in the INI; switching profiles overwrites the per-stage settings to the new format's defaults (except `custom`, which is a no-op label).
+
+### Recommended DSP enablement (current default starting point)
+
+For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:
+
+- **Phase Rotator** — voice waveform symmetrization (f ≈ 200 Hz)
+- **Wideband AGC** — long-term level riding (target ≈ -14 dBLU, range ±10 dB, K-weighted, program-dependent release)
+- **Parametric EQ** — 4-band tonal shaping (shelf + 2 peaks + shelf)
+- **Multiband Compressor** — 3-band LR4 (or 5-band FIR on TX path); the `5_jazz` preset is a balanced starting point for mixed music + speech
+- **Downward Expander** — gates noise floor (threshold ≈ -45 dB, ratio 2.0:1)
+- **MB Limiter** — per-band peak control (threshold ≈ -3 dB, atk 0.5 ms, rel 50 ms)
+- **DC Clipper** — distortion-cancelled audio-band clipping with pilot/RDS protection
+- **Audio Limiter** — pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) — see 0.30 CHANGELOG
+- **Composite Clipper** — 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB). Oversampling factor is configurable (`mpx_clipper_oversampling`, default 16): 8 for older hardware that needs the CPU back, 32 for Omnia.9-class spec-sheet parity at roughly double this stage's CPU cost. See the comment block in the sample `MPXPrime.ini` for when each value makes sense.
+
+Recommended **off** by default (enable only when needed):
+
+- **Stereo Widener** — leave off unless the source program needs subtle width enhancement; aggressive widening risks mono-compatibility on FM (see "Stereo image control" below)
+- **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
+- **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
+- **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
+
+This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
 
 ### Setting levels — input, AGC, Final Drive, exciter
 
@@ -871,6 +918,10 @@ This appendix is a practical reference table for the published RDS country and a
 - The remaining three hex digits identify the programme service within the country or area allocation.
 - The United States uses `RBDS` PI allocation rules, so the country row above is only the country-area level identifier.
 - Australia commonly uses a state-based `PI` symbol scheme in practice, which is why the published list is shown by state and territory rather than one national symbol.
+
+## Acknowledgements
+
+The block-level RDS bit encoder in `BasicRDSCoder` — CRC (`0x5B9`), offset words, and the four-block group assembly shared by groups 0/2/3A/4A/10A/11A/15A — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). Everything around it is MPX Prime's own work: the 1187.5 bit/s biphase + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation, the audio-thread real-time pipeline (pre-allocated bit buffer, atomic CT cache, monotonic-clock timing), the `RDSRuntimeConfig` live-apply path, AF Method B, RT+ ODA (AID 0x4BD7), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, Group 1A ECC/LIC, the Stereotool-compatible text grammar, and the full FM composite chain that the encoder feeds into.
 
 ## License
 

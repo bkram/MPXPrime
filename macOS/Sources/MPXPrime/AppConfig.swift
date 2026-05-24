@@ -1,7 +1,7 @@
 import Foundation
 
 struct AppConfig {
-    static let appVersion: String = "0.29"
+    static let appVersion: String = "0.30"
 
     static var defaultINIPath: String {
         let fileManager = FileManager.default
@@ -28,6 +28,7 @@ struct AppConfig {
     //   inputGainDB, outputGainDB, finalDriveDB, mpxDeviationKHz,
     //   preEncodeAudioLimiterEnabled, preEncodeThreshold, preEncodeReleaseMS,
     //   preEncodeBandlimitedResidualEnabled/Taps/CutoffFraction,
+    //   preEncodeLookaheadMS, preEncodeLookaheadHFOnly, preEncodeLookaheadHFCutoffHz,
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
@@ -64,12 +65,38 @@ struct AppConfig {
     //   hpfHz, hfTrimDB/Hz,
     //   audioCompositeSoftClipEnabled, audioCompositeSmootherEnabled,
     //   finalMPXSoftClipEnabled,
-    //   RDS physical-layer: rdsLevel (injection kHz), rdsFreq (subcarrier),
+    //   RDS physical-layer: rdsLevel (injection kHz),
     //                       rdsGaussianEnabled/BWHZ/Taps (modulator FIR)
 
     var sampleRate: Double = 192_000.0
     var fftWindow96kHz: Bool = true
     var blockSize: Int = 1024
+    // Dual-rate audio chain (plan.md "Next up" #1, Phase 2 LANDED 0.30).
+    //
+    // When enabled, the entire audio domain (program stereo, multiband,
+    // AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs
+    // at `dualRateAudioDomainRateHz` (48 kHz default) inside a
+    // Kaiser-windowed sinc polyphase resampler boundary, while the MPX
+    // domain (composite assembly, BS.412, composite clipper, audio-
+    // composite bandwidth FIR, final-MPX safety limiter, pilot + RDS
+    // injection) stays at the engine's MPX rate. Measured payoff on
+    // M1 Pro: ~42% relative CPU saving at 192 kHz output, with stereo
+    // separation preserved (1k/10k/14k matches the boundary-off
+    // baseline within run-to-run noise).
+    //
+    // Only INTEGER engine:audio rate ratios are supported (192/48 = 4,
+    // 96/48 = 2). Non-integer ratios (176.4/48, 128/48) silently
+    // disable the boundary at engine start and run the audio domain at
+    // the MPX rate as in pre-Phase-2.
+    //
+    // Restart-required: allocates the resampler delay lines and
+    // re-configures every audio-domain stage at the chosen audio rate.
+    //
+    // Default-ON since 0.30 (the 2026-05-23 cutover commit). Operators
+    // who want the legacy single-rate chain can set this to False in
+    // their INI.
+    var dualRateAudioDomainEnabled: Bool = true
+    var dualRateAudioDomainRateHz: Double = 48_000.0
     var sourceMode: String = "input"
     var inputDeviceUID: String?
     var outputDeviceUID: String?
@@ -88,11 +115,18 @@ struct AppConfig {
     var outputGainDB: Double = 0.0
     var finalDriveDB: Double = 6.0
     var finalStagePresetID: String = "balanced"
+    // Top-level "Station Format" profile that atomically applies a coherent
+    // bundle of multiband / final-stage / PrimeBass / widener / composite-
+    // clipper settings per music format (Pop, Rock, CHR, EDM, Urban,
+    // Jazz/Classical, News/Talk, Community Radio). Cosmetic label only —
+    // the actual chain state is determined by the individual per-stage IDs
+    // set when the profile is applied. INI key: `format_profile_id`.
+    var formatProfileID: String = "community_radio"
     var preemphasisUS: Int = 50
     var hpfHz: Double = 30.0
     var hfTrimDB: Double = 0.0
     var hfTrimHz: Double = 4000.0
-    var programLowpassHz: Double = 16_400.0
+    var programLowpassHz: Double = 16_000.0
     var limitMPX: Bool = true
     var limitThreshold: Double = 0.98
     var limitLookaheadMS: Double = 5.0
@@ -103,6 +137,9 @@ struct AppConfig {
     var preEncodeBandlimitedResidualEnabled: Bool = false
     var preEncodeBandlimitedResidualTapCount: Int = 33
     var preEncodeBandlimitedResidualCutoffFraction: Double = 0.25
+    var preEncodeLookaheadMS: Double = 1.0
+    var preEncodeLookaheadHFOnly: Bool = true
+    var preEncodeLookaheadHFCutoffHz: Double = 4_000.0
     // TX-path encoder bandwidth guard: linear-phase FIR (~1.67 ms latency at
     // 192 kHz, >80 dB stop-band) instead of the default Butterworth (~0.2 ms
     // latency, ~40 dB stop-band). Only active when running in composite
@@ -263,6 +300,15 @@ struct AppConfig {
     // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
     // See plan.md "Enterprise-parity status" / 0.26 release plan.
     var compositeClipperLookaheadMS: Double = 0.0
+    // Composite clipper oversampling factor. 16 (default) matches Optimod
+    // 8X00 / Omnia.11 / Stereotool industry practice. 8 trades some
+    // alias suppression for ~50% lower CPU on this stage (useful on weaker
+    // hardware). 32 gives ~6 dB further alias suppression at hot drives
+    // but roughly doubles this stage's CPU — recommended only with
+    // hardware headroom. Restart-required: changes the FIR decimator tap
+    // count, the Lagrange interpolator step count, and the per-host batch
+    // buffer sizes.
+    var compositeClipperOversampling: Int = 16
     var compositeMultibandClipperEnabled: Bool = false
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
@@ -346,7 +392,6 @@ struct AppConfig {
     var rdsSchedulerAuto: Bool = true
     var rdsSchedulerStandard: Bool = true
     var rdsSchedulerStandardLPS: Bool = true
-    var rdsFreq: Double = 57_000.0
     var rdsGaussianEnabled: Bool = true
     var rdsGaussianBWHZ: Double = 2400.0
     var rdsGaussianTaps: Int = 81
@@ -382,6 +427,7 @@ struct AppConfig {
         cfg.outputGainDB = mpx.double("output_gain_db", defaultValue: cfg.outputGainDB)
         cfg.finalDriveDB = mpx.double("final_drive_db", defaultValue: cfg.finalDriveDB)
         cfg.finalStagePresetID = mpx.string("final_stage_preset_id", defaultValue: cfg.finalStagePresetID)
+        cfg.formatProfileID = mpx.string("format_profile_id", defaultValue: cfg.formatProfileID)
         cfg.preemphasisUS = mpx.int("preemphasis_us", defaultValue: cfg.preemphasisUS)
         cfg.hpfHz = mpx.double("hpf_hz", defaultValue: cfg.hpfHz)
         cfg.hfTrimDB = mpx.double("hf_trim_db", defaultValue: cfg.hfTrimDB)
@@ -409,6 +455,18 @@ struct AppConfig {
         cfg.preEncodeBandlimitedResidualCutoffFraction = mpx.double(
             "pre_encode_bandlimited_residual_cutoff_fraction",
             defaultValue: cfg.preEncodeBandlimitedResidualCutoffFraction
+        )
+        cfg.preEncodeLookaheadMS = mpx.double(
+            "pre_encode_lookahead_ms",
+            defaultValue: cfg.preEncodeLookaheadMS
+        )
+        cfg.preEncodeLookaheadHFOnly = mpx.bool(
+            "pre_encode_lookahead_hf_only",
+            defaultValue: cfg.preEncodeLookaheadHFOnly
+        )
+        cfg.preEncodeLookaheadHFCutoffHz = mpx.double(
+            "pre_encode_lookahead_hf_cutoff_hz",
+            defaultValue: cfg.preEncodeLookaheadHFCutoffHz
         )
         cfg.encoderFIREnabled = mpx.bool(
             "encoder_fir_enabled", defaultValue: cfg.encoderFIREnabled)
@@ -605,6 +663,8 @@ struct AppConfig {
             "mpx_clipper_cancel_rds", defaultValue: cfg.compositeClipperCancelRDS)
         cfg.compositeClipperLookaheadMS = mpx.double(
             "mpx_clipper_lookahead_ms", defaultValue: cfg.compositeClipperLookaheadMS)
+        cfg.compositeClipperOversampling = mpx.int(
+            "mpx_clipper_oversampling", defaultValue: cfg.compositeClipperOversampling)
         cfg.compositeMultibandClipperEnabled = mpx.bool(
             "mpx_multiband_clipper_enabled",
             defaultValue: cfg.compositeMultibandClipperEnabled
@@ -680,7 +740,6 @@ struct AppConfig {
             "scheduler_standard", defaultValue: cfg.rdsSchedulerStandard)
         cfg.rdsSchedulerStandardLPS = rds.bool(
             "scheduler_standard_lps", defaultValue: cfg.rdsSchedulerStandardLPS)
-        cfg.rdsFreq = rds.double("rds_freq", defaultValue: cfg.rdsFreq)
         cfg.rdsGaussianEnabled = rds.bool(
             "rds_gaussian_enabled", defaultValue: cfg.rdsGaussianEnabled)
         cfg.rdsGaussianBWHZ = rds.double("rds_gaussian_bw_hz", defaultValue: cfg.rdsGaussianBWHZ)
@@ -688,6 +747,14 @@ struct AppConfig {
         cfg.sampleRate = interfaces.double("sample_rate", defaultValue: cfg.sampleRate)
         cfg.blockSize = interfaces.int("blocksize", defaultValue: cfg.blockSize)
         cfg.fftWindow96kHz = interfaces.bool("fft_window_92khz", defaultValue: cfg.fftWindow96kHz)
+        cfg.dualRateAudioDomainEnabled = interfaces.bool(
+            "dual_rate_audio_domain_enabled",
+            defaultValue: cfg.dualRateAudioDomainEnabled
+        )
+        cfg.dualRateAudioDomainRateHz = interfaces.double(
+            "dual_rate_audio_domain_rate_hz",
+            defaultValue: cfg.dualRateAudioDomainRateHz
+        )
         cfg.validate()
         return cfg
     }
@@ -700,7 +767,7 @@ struct AppConfig {
         finalDriveDB = max(-20.0, min(20.0, finalDriveDB))
 
         // Pilot / sum / diff levels
-        pilotLevel = max(0.0, min(0.15, pilotLevel))
+        pilotLevel = max(0.0, min(0.12, pilotLevel))
         sumLevel = max(0.0, min(2.0, sumLevel))
         diffLevel = max(0.0, min(2.0, diffLevel))
 
@@ -723,7 +790,7 @@ struct AppConfig {
         hpfHz = max(10.0, min(200.0, hpfHz))
         hfTrimDB = max(-12.0, min(0.0, hfTrimDB))
         hfTrimHz = max(500.0, min(12_000.0, hfTrimHz))
-        programLowpassHz = max(8_000.0, min(20_000.0, programLowpassHz))
+        programLowpassHz = max(8_000.0, min(16_000.0, programLowpassHz))
 
         // Limiter
         limitThreshold = max(0.5, min(0.999, limitThreshold))
@@ -732,12 +799,16 @@ struct AppConfig {
         preEncodeReleaseMS = max(10.0, min(200.0, preEncodeReleaseMS))
         preEncodeBandlimitedResidualTapCount = max(5, min(129, preEncodeBandlimitedResidualTapCount | 1))
         preEncodeBandlimitedResidualCutoffFraction = max(0.05, min(0.49, preEncodeBandlimitedResidualCutoffFraction))
+        preEncodeLookaheadMS = max(0.0, min(5.0, preEncodeLookaheadMS))
+        preEncodeLookaheadHFCutoffHz = max(1_000.0, min(12_000.0, preEncodeLookaheadHFCutoffHz))
 
         // MPX deviation
         mpxDeviationKHz = max(25.0, min(100.0, mpxDeviationKHz))
 
-        // Pre-emphasis
-        if ![0, 25, 50, 75].contains(preemphasisUS) {
+        // Pre-emphasis — ITU-R BS.450-4 (50 us EU/ITU) and FCC 73.317
+        // (75 us US/Japan) are the only FM broadcast values; 0 disables
+        // pre-emphasis for already-flat program lines.
+        if ![0, 50, 75].contains(preemphasisUS) {
             preemphasisUS = 50
         }
 
@@ -827,16 +898,32 @@ struct AppConfig {
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
-        bs412WindowSeconds = max(1.0, min(120.0, bs412WindowSeconds))
+        // ITU-R BS.412-9 canonical rolling-average window is ~60 s.
+        // Allow ±30 s of regulator latitude; anything outside this range
+        // stops being BS.412 and becomes a generic fast AGC.
+        bs412WindowSeconds = max(30.0, min(90.0, bs412WindowSeconds))
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
         if compositeClipperCeilingDB <= compositeClipperThresholdDB + 0.2 {
             compositeClipperCeilingDB = min(0.0, compositeClipperThresholdDB + 0.5)
         }
         compositeClipperLookaheadMS = max(0.0, min(5.0, compositeClipperLookaheadMS))
+        // Clamp oversampling to the supported set {8, 16, 32}. Snap to
+        // the nearest supported value rather than rejecting — INI typos
+        // or experimental values shouldn't break engine start.
+        switch compositeClipperOversampling {
+        case ...12: compositeClipperOversampling = 8
+        case 13...23: compositeClipperOversampling = 16
+        default: compositeClipperOversampling = 32
+        }
 
         // Engine
         sampleRate = max(44_100.0, min(384_000.0, sampleRate))
+        // Dual-rate audio domain rate. Clamp to the common audio rates;
+        // 48 kHz is the default and most likely operator choice. The
+        // engine-rate vs audio-rate ratio integer-check happens at engine
+        // configure time, not here — sanitize() doesn't have that context.
+        dualRateAudioDomainRateHz = max(32_000.0, min(96_000.0, dualRateAudioDomainRateHz))
         // 512-sample minimum: throughput-validated by `DSPThroughputTests`.
         // Lower than 512 hits AVAudioEngine HAL limits on most macOS devices
         // and pushes per-callback overhead past the per-sample DSP work.
@@ -855,7 +942,6 @@ struct AppConfig {
         rdsLIC = Self.sanitizedHexByte(rdsLIC)
         rdsTZOffset = max(-12.0, min(14.0, rdsTZOffset))
         rdsLevel = max(0.0, min(7.5, rdsLevel))
-        rdsFreq = max(1_000.0, min(120_000.0, rdsFreq))
         rdsGaussianBWHZ = max(600.0, min(6_000.0, rdsGaussianBWHZ))
         rdsGaussianTaps = max(9, min(401, rdsGaussianTaps | 1))
         rdsNowPlayingPollSeconds = max(1.0, min(300.0, rdsNowPlayingPollSeconds))
@@ -864,6 +950,32 @@ struct AppConfig {
 
     static func resolvedINIPath(_ path: String, forWrite: Bool = false) -> String {
         resolveINIPath(path, forWrite: forWrite)
+    }
+
+    /// Returns the canonical INI representation as a string without
+    /// touching the filesystem. Used by the snapshot system (Snapshots
+    /// embed configs as INI text inside their JSON envelope so schema
+    /// migrations stay handled by the existing INI parser's defaults).
+    /// Implementation defers to `save(toINI:)` via a temp file rather
+    /// than duplicating the per-section line assembly.
+    func captureAsINIString() throws -> String {
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("MPXPrime-snapshot-\(UUID().uuidString).ini")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try save(toINI: tempURL.path)
+        return try String(contentsOf: tempURL, encoding: .utf8)
+    }
+
+    /// Inverse of `captureAsINIString` — parse a snapshot's embedded
+    /// INI text back into an `AppConfig`. Uses the existing
+    /// `load(fromINI:)` so missing-key defaults and validators apply
+    /// the same way as a normal disk load.
+    static func loadFromINIString(_ text: String) throws -> AppConfig {
+        let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("MPXPrime-snapshot-load-\(UUID().uuidString).ini")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try text.write(to: tempURL, atomically: true, encoding: .utf8)
+        return try AppConfig.load(fromINI: tempURL.path)
     }
 
     func save(toINI path: String) throws {
@@ -880,6 +992,7 @@ struct AppConfig {
             "output_gain_db = \(Self.formatFloat(outputGainDB))",
             "final_drive_db = \(Self.formatFloat(finalDriveDB))",
             "final_stage_preset_id = \(finalStagePresetID)",
+            "format_profile_id = \(formatProfileID)",
             "hpf_hz = \(Self.formatFloat(hpfHz))",
             "hf_trim_db = \(Self.formatFloat(hfTrimDB))",
             "hf_trim_hz = \(Self.formatFloat(hfTrimHz))",
@@ -893,6 +1006,9 @@ struct AppConfig {
             "pre_encode_bandlimited_residual_enabled = \(Self.boolString(preEncodeBandlimitedResidualEnabled))",
             "pre_encode_bandlimited_residual_taps = \(preEncodeBandlimitedResidualTapCount)",
             "pre_encode_bandlimited_residual_cutoff_fraction = \(Self.formatFloat(preEncodeBandlimitedResidualCutoffFraction))",
+            "pre_encode_lookahead_ms = \(Self.formatFloat(preEncodeLookaheadMS))",
+            "pre_encode_lookahead_hf_only = \(Self.boolString(preEncodeLookaheadHFOnly))",
+            "pre_encode_lookahead_hf_cutoff_hz = \(Self.formatFloat(preEncodeLookaheadHFCutoffHz))",
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",
@@ -991,11 +1107,12 @@ struct AppConfig {
             "mpx_clipper_cancel_pilot = \(Self.boolString(compositeClipperCancelPilot))",
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
+            "mpx_clipper_oversampling = \(compositeClipperOversampling)",
             "mpx_multiband_clipper_enabled = \(Self.boolString(compositeMultibandClipperEnabled))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
             "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",
-            "test_tone_type = \(testToneType)",
+            "test_tone_type = \(testToneType)"
         ]
         let rdsLines: [String] = [
             "[RDS]",
@@ -1063,10 +1180,9 @@ struct AppConfig {
             "scheduler_auto = \(Self.boolString(rdsSchedulerAuto))",
             "scheduler_standard = \(Self.boolString(rdsSchedulerStandard))",
             "scheduler_standard_lps = \(Self.boolString(rdsSchedulerStandardLPS))",
-            "rds_freq = \(Self.formatFloat(max(1_000.0, min(120_000.0, rdsFreq))))",
             "rds_gaussian_enabled = \(Self.boolString(rdsGaussianEnabled))",
             "rds_gaussian_bw_hz = \(Self.formatFloat(max(600.0, min(6_000.0, rdsGaussianBWHZ))))",
-            "rds_gaussian_taps = \(max(9, min(401, rdsGaussianTaps | 1)))",
+            "rds_gaussian_taps = \(max(9, min(401, rdsGaussianTaps | 1)))"
         ]
         let interfacesLines: [String] = [
             "[INTERFACES]",
@@ -1075,9 +1191,11 @@ struct AppConfig {
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             "blocksize = \(blockSize)",
             "fft_window_92khz = \(Self.boolString(fftWindow96kHz))",
+            "dual_rate_audio_domain_enabled = \(Self.boolString(dualRateAudioDomainEnabled))",
+            "dual_rate_audio_domain_rate_hz = \(Self.formatFloat(dualRateAudioDomainRateHz))",
             "input_device_uid = \(inputDeviceUID ?? "")",
             "output_device_uid = \(outputDeviceUID ?? "")",
-            "monitor_device_uid = \(monitorDeviceUID ?? "")",
+            "monitor_device_uid = \(monitorDeviceUID ?? "")"
         ]
         let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""]).joined(
             separator: "\n")

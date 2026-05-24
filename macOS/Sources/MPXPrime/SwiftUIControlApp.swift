@@ -30,6 +30,10 @@ private let kLevelsWindowAutosaveName = "MPXPrime.LevelsWindow"
 private let kAboutWindowAutosaveName = "MPXPrime.AboutWindow"
 private let kHelpWindowAutosaveName = "MPXPrime.HelpWindow"
 private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
+// Compile-time constant URL; literal is well-formed so the optional
+// returned by URL(string:) is guaranteed non-nil.
+// swiftlint:disable:next force_unwrapping
+private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
 private let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
 
@@ -51,7 +55,7 @@ private func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     let panelPath = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
     NSGradient(colors: [
         NSColor(calibratedRed: 0.12, green: 0.45, blue: 0.63, alpha: 1.0),
-        NSColor(calibratedRed: 0.04, green: 0.16, blue: 0.28, alpha: 1.0),
+        NSColor(calibratedRed: 0.04, green: 0.16, blue: 0.28, alpha: 1.0)
     ])?.draw(in: panelPath, angle: -90)
 
     NSGraphicsContext.current?.saveGraphicsState()
@@ -72,7 +76,7 @@ private func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     let symbolAttributes: [NSAttributedString.Key: Any] = [
         .font: symbolFont,
         .foregroundColor: NSColor(calibratedWhite: 0.98, alpha: 1.0),
-        .shadow: shadowStyle,
+        .shadow: shadowStyle
     ]
     let symbol = NSAttributedString(string: kMPXPrimeIconSymbol, attributes: symbolAttributes)
     let symbolSize = symbol.size()
@@ -158,6 +162,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 enum ProcessingTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
+    case formatProfile = "Profile"
     case core = "Core"
     case phaseRotator = "Phase Rot"
     case agc = "AGC"
@@ -174,12 +179,83 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case bs412 = "BS.412"
     case finalStage = "Final Stage"
 
+    /// Inverse of `Stage.legacyProcessingTab`. Cards in the
+    /// Processing Overview grid use this to jump the unified
+    /// `selectedStage` to the corresponding sidebar row when the
+    /// chevron button is clicked.
+    var stage: Stage {
+        switch self {
+        case .overview: return .processingOverview
+        case .formatProfile: return .processingFormatProfile
+        case .core: return .processingCore
+        case .phaseRotator: return .processingPhaseRotator
+        case .agc: return .processingAGC
+        case .parametricEQ: return .processingParametricEQ
+        case .multiband: return .processingMultiband
+        case .expander: return .processingExpander
+        case .mbLimiter: return .processingMBLimiter
+        case .widener: return .processingWidener
+        case .primeBass: return .processingPrimeBass
+        case .bassClipper: return .processingBassClipper
+        case .dcClipper: return .processingDCClipper
+        case .limiter: return .processingLimiter
+        case .compositeClipper: return .processingCompositeClipper
+        case .bs412: return .processingBS412
+        case .finalStage: return .processingFinalStage
+        }
+    }
+
+    /// Short paragraph explaining what the stage on this tab does and how
+    /// it fits into the chain. Shown as a header block above the tab's
+    /// controls — anchors the operator without forcing them to read
+    /// documentation. Brief by design (1-3 sentences, ASCII-only).
+    var helpText: String {
+        switch self {
+        case .overview:
+            return "Bird's-eye view of every processing stage with its current state and one telling metric. Click a card's chevron to jump into its detail tab."
+        case .formatProfile:
+            return "Pick a station format to atomically apply matched multiband, final-stage, PrimeBass, widener, and composite-clipper settings. Per-stage knobs stay editable afterwards. Pick `Custom` to keep your manual tuning."
+        case .core:
+            return "Global engine controls: bypass, mono mode, input/output gains, pre-emphasis, audio HPF, program lowpass, HF trim. Most settings here are restart-required."
+        case .phaseRotator:
+            return "4-pole allpass chain that reduces waveform asymmetry — especially on voice — by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages."
+        case .agc:
+            return "Wideband Automatic Gain Control with optional K-weighted (BS.1770-style) detector and program-dependent release. Long-term level riding that brings quiet and loud sources to a similar perceived level before the multiband stage."
+        case .parametricEQ:
+            return "4-band parametric EQ (low shelf + 2 peaks + high shelf) applied in L/R domain before the multiband stage. Pre-multiband tonal shaping."
+        case .multiband:
+            return "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined."
+        case .expander:
+            return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
+        case .mbLimiter:
+            return "Per-band fast peak limiter sitting after the multiband compressor. Catches band-internal peaks before recombination, preserves the multiband target while controlling overshoots."
+        case .widener:
+            return "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe — energy-normalised so mono compatibility is preserved."
+        case .primeBass:
+            return "Bass enhancement via MaxxBass-style harmonic synthesis (US 5,930,373, expired) plus dynamic envelope extension (US 5,359,665). Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream."
+        case .bassClipper:
+            return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
+        case .dcClipper:
+            return "8x oversampled distortion-cancelled clipper on the audio band (Orban US 4,460,871 / US 5,737,434, expired). Cleans up audio-band peaks before pre-emphasis adds HF boost."
+        case .limiter:
+            return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and Dolby HF-subband detector (US 5,579,404, expired 2013). Catches HF transients that slip past everything upstream after pre-emphasis."
+        case .bs412:
+            return "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries."
+        case .compositeClipper:
+            return "16x oversampled differential composite clipper (Orban US 6,337,999, expired 2022) on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper IM via delta-based per-band substitution. Primary loudness lever."
+        case .finalStage:
+            return "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry."
+        }
+    }
+
     var id: String { rawValue }
 
     var resetButtonTitle: String {
         switch self {
         case .overview:
             return "Reset All Processing"
+        case .formatProfile:
+            return "Reset Format Profile"
         case .core:
             return "Reset Core Tab"
         case .agc:
@@ -217,6 +293,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview:
             return "Reset every processing tab to defaults"
+        case .formatProfile:
+            return "Reset format profile to default (Community Radio)"
         case .core:
             return "Reset processing core tab to defaults"
         case .agc:
@@ -285,9 +363,32 @@ enum RDSTab: String, CaseIterable, Identifiable {
         case .carrier: return "Reset RDS carrier tab to defaults"
         }
     }
+
+    /// Short paragraph explaining what the controls on this tab cover.
+    /// Mirrors the `ProcessingTab.helpText` pattern; shown via the shared
+    /// `TabHelpBox` above the tab's controls so operators can anchor
+    /// without leaving the screen for documentation.
+    var helpText: String {
+        switch self {
+        case .control:
+            return "Master enable for the RDS subcarrier plus a live snapshot of what's currently on air (PS, RT, PTYN, Long PS). All RDS data fields here apply live — no engine restart required."
+        case .program:
+            return "Programme identification: PI code (RDI/EBU-assigned, NL prefix `8`), PTY genre code, optional PTYN extended programme type name, ECC (`E3` for NL), LIC (`1D` for Dutch), plus 4 PS banks and the runtime TP / TA / MS / DI flags. All live-apply."
+        case .radiotext:
+            return "64-character RadioText (Group 2A) plus RT+ tagging (Group 3A + 11A) for now-playing metadata. Manual buffers cycle on a timer; dynamic mode expands `{title} / {artist} / {now_playing}` macros from the now-playing script. Spec: EN 50067 + TR 307."
+        case .longPS:
+            return "32-character Long PS via Group 15A (IEC 62106-2:2018). Receivers that decode 15A show the full name; legacy receivers ignore the group and keep using the 8-char PS bank. Pairs with the basic PS bank — don't replace, augment."
+        case .af:
+            return "Alternative Frequencies (AF). Method A: flat list of all frequencies in the network. Method B: pairs each alternative with the tuned frequency so receivers can group regional variants. Max 25 frequencies for Method A, 12 pairs for Method B (EN 50067 Sec 3.2.1.6.4)."
+        case .schedule:
+            return "Group sequence (which RDS groups go on air and in what order) plus scheduler policy (auto / standard / custom). Clock-Time enable (Group 4A, minute-aligned MJD) and timezone offset for CT broadcasts also live here."
+        case .carrier:
+            return "RDS subcarrier physical-layer settings: injection level as % of total FM deviation (2.7 % default = 2 kHz, ITU-R BS.450 spec range 1.3-10 %). Carrier is fixed at 57 kHz locked to 3x pilot per EN 50067 Sec 2.1.4. Restart required."
+        }
+    }
 }
 
-/// Unified flat selection used by the new NavigationSplitView sidebar.
+/// Unified flat selection used by the sidebar list.
 /// One case per top-level + sub-tab from the legacy AppSection / ProcessingTab
 /// / RDSTab enums. The view model derives the legacy enums from `selectedStage`
 /// so existing per-tab views (which still bind to selectedProcessingTab /
@@ -299,6 +400,7 @@ enum Stage: String, CaseIterable, Identifiable {
 
     // Processing
     case processingOverview
+    case processingFormatProfile
     case processingCore
     case processingPhaseRotator
     case processingAGC
@@ -326,6 +428,7 @@ enum Stage: String, CaseIterable, Identifiable {
 
     // Tools
     case testTone
+    case snapshots
 
     var id: String { rawValue }
 
@@ -344,7 +447,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
              .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
-        case .testTone:
+        case .testTone, .snapshots:
             return .tools
         default:
             return .processing
@@ -356,6 +459,7 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "Monitoring"
         case .processingOverview: return "Overview"
+        case .processingFormatProfile: return "Format Profile"
         case .processingCore: return "Core"
         case .processingAGC: return "AGC"
         case .processingPhaseRotator: return "Phase Rotator"
@@ -379,6 +483,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Schedule"
         case .rdsCarrier: return "Subcarrier"
         case .testTone: return "Test Tone"
+        case .snapshots: return "Snapshots"
         }
     }
 
@@ -387,6 +492,7 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "waveform"
         case .processingOverview: return "square.grid.2x2"
+        case .processingFormatProfile: return "tag"
         case .processingCore: return "slider.horizontal.3"
         case .processingAGC: return "gauge.with.needle"
         case .processingPhaseRotator: return "arrow.triangle.2.circlepath"
@@ -410,6 +516,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "calendar.badge.clock"
         case .rdsCarrier: return "antenna.radiowaves.left.and.right"
         case .testTone: return "waveform.badge.plus"
+        case .snapshots: return "bookmark.fill"
         }
     }
 
@@ -421,6 +528,7 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring: return "Overview and live status"
         case .processingOverview: return "DSP chain status at a glance"
+        case .processingFormatProfile: return "Station Format selector (atomic per-format DSP bundle)"
         case .processingCore: return "Bypass, mono, gains, HPF, LPF, HF trim"
         case .processingAGC: return "Wideband AGC with K-weighting"
         case .processingPhaseRotator: return "Allpass phase rotator"
@@ -444,6 +552,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
         case .rdsCarrier: return "Injection level, subcarrier frequency, Gaussian shaping"
         case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
+        case .snapshots: return "Named save / recall slots for the full configuration"
         }
     }
 
@@ -469,6 +578,7 @@ enum Stage: String, CaseIterable, Identifiable {
     var legacyProcessingTab: ProcessingTab? {
         switch self {
         case .processingOverview: return .overview
+        case .processingFormatProfile: return .formatProfile
         case .processingCore: return .core
         case .processingAGC: return .agc
         case .processingPhaseRotator: return .phaseRotator
@@ -512,6 +622,26 @@ enum MonitoringBufferHealth: String {
     case ok = "OK"
     case warn = "Warn"
     case bad = "Dropouts"
+}
+
+/// One saved snapshot slot — name, save timestamp, and the configuration
+/// captured at save time. The config is stored as the same INI text the
+/// app already round-trips through `AppConfig.save(toINI:)` /
+/// `load(fromINI:)`, embedded in JSON. INI keeps schema migrations
+/// handled by the existing parser's defaults (missing keys fall back),
+/// so future AppConfig additions don't break older snapshot files.
+struct ConfigSnapshot: Identifiable, Codable {
+    let id: UUID
+    var name: String
+    var savedAt: Date
+    var configINIText: String
+}
+
+/// On-disk JSON envelope for `snapshots.json`. Wraps the slot array so
+/// future top-level fields (schema version, app version recorded at
+/// save, etc.) can be added without breaking old files.
+struct SnapshotFile: Codable {
+    var slots: [ConfigSnapshot?]
 }
 
 struct MonitoringStreamHealth {
@@ -654,12 +784,15 @@ private final class MPXSpectrumAnalyzer: @unchecked Sendable {
 
         real.withUnsafeMutableBufferPointer { realBP in
             imag.withUnsafeMutableBufferPointer { imagBP in
+                // baseAddress is non-nil for non-empty pre-allocated arrays.
+                // swiftlint:disable force_unwrapping
                 var split = DSPSplitComplex(realp: realBP.baseAddress!, imagp: imagBP.baseAddress!)
                 windowed.withUnsafeBufferPointer { src in
                     src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: n / 2) { complexSrc in
                         vDSP_ctoz(complexSrc, 2, &split, 1, vDSP_Length(n / 2))
                     }
                 }
+                // swiftlint:enable force_unwrapping
                 vDSP_fft_zrip(fftSetup, &split, 1, fftLog2, FFTDirection(FFT_FORWARD))
                 // Apple's real-input FFT packs DC into split.realp[0]
                 // and Nyquist into split.imagp[0] to save one slot.
@@ -958,7 +1091,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = makeMPXPrimeAppIcon()
         NSApp.activate(ignoringOtherApps: true)
-        
+
         let vm = MPXPrimeViewModel(configPath: configPath)
         model = vm
         setupMainMenu()
@@ -1035,6 +1168,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if menuItem.action == #selector(toggleInspector) {
             menuItem.state = (model?.inspectorVisible ?? false) ? .on : .off
+            return true
+        }
+        if let action = menuItem.action,
+           action == #selector(goToMonitoring) || action == #selector(goToProcessing)
+               || action == #selector(goToRDS) || action == #selector(goToTools) {
+            let targetGroup: Stage.Group
+            switch action {
+            case #selector(goToMonitoring): targetGroup = .monitoring
+            case #selector(goToProcessing): targetGroup = .processing
+            case #selector(goToRDS): targetGroup = .rds
+            default: targetGroup = .tools
+            }
+            menuItem.state = (model?.selectedStage.group == targetGroup) ? .on : .off
             return true
         }
         return true
@@ -1150,6 +1296,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
+        // Go Menu — ⌘1-⌘4 jump to a sidebar section. Matches the
+        // section-shortcut pattern in Mail, Music, Notes (sidebar-driven
+        // macOS apps). Each item remembers the last sub-tab visited
+        // in that group, so ⌘2 from RDS returns to the Processing
+        // sub-tab the operator was last editing.
+        let goItem = NSMenuItem(title: "Go", action: nil, keyEquivalent: "")
+        let goMenu = NSMenu(title: "Go")
+        let goMonitoring = goMenu.addItem(
+            withTitle: "Monitoring",
+            action: #selector(goToMonitoring),
+            keyEquivalent: "1")
+        goMonitoring.target = self
+        let goProcessing = goMenu.addItem(
+            withTitle: "Processing",
+            action: #selector(goToProcessing),
+            keyEquivalent: "2")
+        goProcessing.target = self
+        let goRDS = goMenu.addItem(
+            withTitle: "RDS",
+            action: #selector(goToRDS),
+            keyEquivalent: "3")
+        goRDS.target = self
+        let goTools = goMenu.addItem(
+            withTitle: "Tools",
+            action: #selector(goToTools),
+            keyEquivalent: "4")
+        goTools.target = self
+        goItem.submenu = goMenu
+        mainMenu.addItem(goItem)
+
         // Control Menu
         let transportItem = NSMenuItem(title: "Control", action: nil, keyEquivalent: "")
         let transportMenu = NSMenu(title: "Control")
@@ -1179,8 +1355,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Window Menu
         let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "Window")
-        
-        let mainWindowItem = windowMenu.addItem(withTitle: "Main", action: #selector(showMainWindow), keyEquivalent: "1")
+
+        // No keyEquivalent: ⌘1 is reserved by the Go menu for "Monitoring".
+        // Operators jump back to the main window via the Window menu or
+        // by clicking on it; this entry just brings it forward when it
+        // was hidden behind a detached window.
+        let mainWindowItem = windowMenu.addItem(withTitle: "Main", action: #selector(showMainWindow), keyEquivalent: "")
         mainWindowItem.target = self
         let preMPXSpectrumItem = windowMenu.addItem(withTitle: kAudioSpectrumWindowTitle, action: #selector(showPreMPXSpectrumWindow), keyEquivalent: "7")
         preMPXSpectrumItem.target = self
@@ -1193,35 +1373,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let scopesItem = windowMenu.addItem(withTitle: kScopesWindowTitle, action: #selector(showScopesWindow), keyEquivalent: "0")
         scopesItem.target = self
         scopesItem.keyEquivalentModifierMask = [.command, .shift]
-        
+
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        
+
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
         NSApp.windowsMenu = windowMenu
 
         let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
         let helpMenu = NSMenu(title: "Help")
-        
+
         let openHelp = NSMenuItem(title: "MPX Prime Help", action: #selector(showHelp), keyEquivalent: "/")
         openHelp.target = self
         openHelp.keyEquivalentModifierMask = [.command, .shift]
         helpMenu.addItem(openHelp)
-        
+
         helpMenu.addItem(NSMenuItem.separator())
-        
+
         let docs = NSMenuItem(title: "Online Documentation", action: #selector(openDocs), keyEquivalent: "")
         docs.target = self
         docs.isEnabled = true
         helpMenu.addItem(docs)
-        
+
         helpItem.submenu = helpMenu
         mainMenu.addItem(helpItem)
-        
+
         NSApp.helpMenu = helpMenu
 
         NSApp.mainMenu = mainMenu
@@ -1270,7 +1450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc private func openDocs() {
-        NSWorkspace.shared.open(URL(string: "https://github.com/bkram/MPXPrime")!)
+        NSWorkspace.shared.open(kProjectURL)
     }
 
     @objc private func showSettings() {
@@ -1322,6 +1502,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc private func resetPeaks() {
         model?.resetPeaks()
     }
+
+    @objc private func goToMonitoring() { model?.goToGroup(.monitoring) }
+    @objc private func goToProcessing() { model?.goToGroup(.processing) }
+    @objc private func goToRDS() { model?.goToGroup(.rds) }
+    @objc private func goToTools() { model?.goToGroup(.tools) }
 
     @objc private func saveConfig() {
         model?.saveCurrentConfig()
@@ -1515,7 +1700,11 @@ final class MPXPrimeViewModel: ObservableObject {
     // 30 Hz which is comfortably smooth for the dedicated detached
     // panels.
     private static let monitoringRefreshHzActive: Double = 30.0
-    private static let monitoringRefreshHzIdle: Double = 5.0
+    // Idle rate (window occluded / app backgrounded / minimized). 20 Hz
+    // keeps VU meters visibly responsive when glancing at the window from
+    // another app while adjusting source levels. Well below the 60 Hz
+    // preemption threshold for audio-thread safety.
+    private static let monitoringRefreshHzIdle: Double = 20.0
     private static let inlineMPXSpectrumRefreshHz: Double = 24.0
     private static let windowMPXSpectrumRefreshHz: Double = 30.0
     private static let windowPreMPXSpectrumRefreshHz: Double = 30.0
@@ -1539,15 +1728,72 @@ final class MPXPrimeViewModel: ObservableObject {
                 selectedSection = selectedStage.legacySection
             }
             if let pt = selectedStage.legacyProcessingTab,
-               selectedProcessingTab != pt
-            {
+               selectedProcessingTab != pt {
                 selectedProcessingTab = pt
             }
             if let rt = selectedStage.legacyRDSTab,
-               selectedRDSTab != rt
-            {
+               selectedRDSTab != rt {
                 selectedRDSTab = rt
             }
+            lastStageInGroup[selectedStage.group] = selectedStage
+        }
+    }
+    /// Remembers the last visited stage per sidebar group so the
+    /// ⌘1-⌘4 "Go to <Section>" shortcuts restore the sub-tab the user
+    /// was last on in that group instead of always snapping to the
+    /// group home. Seeded with each group's landing stage so a first
+    /// jump lands somewhere sensible.
+    private var lastStageInGroup: [Stage.Group: Stage] = [
+        .monitoring: .monitoring,
+        .processing: .processingOverview,
+        .rds: .rdsControl,
+        .tools: .testTone
+    ]
+    /// Whether a given sidebar stage has a "currently active" concept and,
+    /// if so, whether it is on. Returns nil for stages with no single
+    /// enable toggle (Monitoring, Overview, Core, Format Profile, Final
+    /// Stage, Snapshots, RDS sub-tabs that inherit the master) — those
+    /// rows never render an enabled-state dot. Mirrors Mail's pattern:
+    /// only the section landing carries the badge.
+    func isStageEnabled(_ stage: Stage) -> Bool? {
+        switch stage {
+        case .monitoring, .processingOverview, .processingFormatProfile,
+             .processingCore, .processingFinalStage, .snapshots,
+             .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsAF,
+             .rdsSchedule, .rdsCarrier:
+            return nil
+        case .processingPhaseRotator: return config.phaseRotationEnabled
+        case .processingAGC: return config.widebandAGCEnabled
+        case .processingParametricEQ: return config.parametricEQEnabled
+        case .processingMultiband: return config.multibandEnabled
+        case .processingExpander: return config.downwardExpanderEnabled
+        case .processingMBLimiter: return config.multibandLimiterEnabled
+        case .processingWidener: return config.stereoWidenEnabled
+        case .processingPrimeBass: return config.primeBassEnabled
+        case .processingBassClipper: return config.bassClipperEnabled
+        case .processingDCClipper: return config.dcClipperEnabled
+        case .processingLimiter: return config.preEncodeAudioLimiterEnabled
+        case .processingCompositeClipper: return config.compositeClipperEnabled
+        case .processingBS412: return config.bs412Enabled
+        case .rdsControl: return config.enRDS
+        case .testTone: return config.sourceMode == "tone"
+        }
+    }
+
+    /// Jump to the given sidebar group. If the user has visited a
+    /// sub-tab in that group during this session, restore it;
+    /// otherwise land on the group's home stage.
+    func goToGroup(_ group: Stage.Group) {
+        let target = lastStageInGroup[group] ?? {
+            switch group {
+            case .monitoring: return .monitoring
+            case .processing: return .processingOverview
+            case .rds: return .rdsControl
+            case .tools: return .testTone
+            }
+        }()
+        if selectedStage != target {
+            selectedStage = target
         }
     }
     /// Phase 3 inspector visibility. Toggleable from View > Inspector.
@@ -1561,6 +1807,24 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var activeMultibandBand: Int = 1
     @Published var statusText: String = "Idle"
     @Published var pendingRuntimeApply: Bool = false
+
+    // Named snapshot slots — persistent operator-saved setups beyond
+    // format profiles. Stored on disk as JSON alongside the INI; survive
+    // app upgrades. 8 fixed slots; nil = empty. Operator names each save
+    // ("Morning Show", "Saturday Night", "Live Sports").
+    @Published var snapshots: [ConfigSnapshot?] = Array(repeating: nil, count: MPXPrimeViewModel.snapshotSlotCount)
+
+    static let snapshotSlotCount: Int = 8
+
+    /// Snapshot file path derived from the config file path. Sibling
+    /// file with `.snapshots.json` suffix so each distinct config gets
+    /// its own snapshot file — important for `--config` overrides and
+    /// for test isolation (concurrent tests with unique temp config
+    /// paths get isolated snapshot files, not a shared one in the
+    /// directory).
+    var snapshotsFilePath: String {
+        configPath + ".snapshots.json"
+    }
 
     @Published var sourceMode: String
     @Published var monitorEnabled: Bool
@@ -1767,6 +2031,7 @@ final class MPXPrimeViewModel: ObservableObject {
         refreshDevices()
         nowPlayingRunner.updateConfig(loadedConfig)
         startConfigWatcher()
+        loadSnapshotsFromDisk()
         refreshMonitoringSnapshot()
     }
 
@@ -1816,7 +2081,7 @@ final class MPXPrimeViewModel: ObservableObject {
             ("RT+ App ID", rdsAID),
             ("Long PS", rdsLongPS),
             ("Radiotext", rdsRadiotext),
-            ("Now Playing", rdsNowPlayingStatus.replacingOccurrences(of: "Now Playing: ", with: "")),
+            ("Now Playing", rdsNowPlayingStatus.replacingOccurrences(of: "Now Playing: ", with: ""))
         ]
     }
 
@@ -1966,6 +2231,37 @@ final class MPXPrimeViewModel: ObservableObject {
         )
     }
 
+    /// RDS injection level expressed as % of total FM deviation. Industry
+    /// convention is to talk about RDS as "4 %", "5 %" etc. (Inovonics,
+    /// Audemat, DEVA, BW Broadcast displays all use %). The INI key
+    /// `rds_level` stays in kHz per EN 50067 / IEC 62106-2 so existing
+    /// configs are back-compat; the GUI just shows the user-friendly unit.
+    /// Mapping: % = kHz / 75 * 100 (75 kHz is total FM deviation).
+    func rdsLevelPercentBinding() -> Binding<Double> {
+        Binding(
+            get: { self.config.rdsLevel / 75.0 * 100.0 },
+            set: { newPercent in
+                let kHz = max(0.0, min(7.5, newPercent / 100.0 * 75.0))
+                self.setConfigValue(\.rdsLevel, kHz, runtimeDisposition: .restart)
+            }
+        )
+    }
+
+    /// Pilot tone level expressed as % of total FM deviation. ITU-R
+    /// BS.450 / FCC §73.322 / EN 50067 all specify 8-10 % deviation;
+    /// pro processors display this in %. The INI key `pilot_level` stays
+    /// as the linear amplitude fraction (0.0..0.12) for back-compat with
+    /// the underlying audio math. Mapping: % = fraction * 100.
+    func pilotLevelPercentBinding() -> Binding<Double> {
+        Binding(
+            get: { self.config.pilotLevel * 100.0 },
+            set: { newPercent in
+                let fraction = max(0.0, min(0.12, newPercent / 100.0))
+                self.setConfigValue(\.pilotLevel, fraction, runtimeDisposition: .restart)
+            }
+        )
+    }
+
     func oddTapBinding() -> Binding<Int> {
         Binding(
             get: { self.config.rdsGaussianTaps },
@@ -2053,6 +2349,182 @@ final class MPXPrimeViewModel: ObservableObject {
         }
         saveConfig(restartRequired: false)
         applyLiveRDSConfigIfRunning()
+    }
+
+    /// Apply a top-level "Station Format" profile. Atomic across the four
+    /// per-stage preset systems (multiband / final-stage / PrimeBass /
+    /// stereo widener) plus composite-clipper threshold/ceiling and final
+    /// drive. Each per-stage apply call already routes through saveConfig
+    /// + applyLiveRuntimeConfigIfRunning, so the chain is fully reconciled
+    /// when this method returns.
+    ///
+    /// Per-stage knobs remain editable after a profile is applied; the
+    /// stored `formatProfileID` is a cosmetic label (no "dirty" / modified
+    /// indicator in v1 — the operator can re-pick the profile to restore
+    /// its defaults).
+    func applyFormatProfile(_ id: String) {
+        guard let profile = Self.formatProfile(forID: id) else {
+            statusText = "Unknown format profile: \(id)"
+            return
+        }
+        publishConfigChange()
+        config.formatProfileID = id
+
+        // "Custom" sentinel: just record the label, leave per-stage
+        // settings alone. Lets operators flag bespoke setups so the
+        // picker stops showing whichever profile was last applied even
+        // though knobs have drifted.
+        if id == "custom" {
+            saveConfig(restartRequired: false)
+            statusText =
+                isRunning
+                ? "Format profile set to Custom (no settings changed)."
+                : "Format profile set to Custom."
+            return
+        }
+
+        applyMultibandPreset(id: profile.multibandPresetID, intensity: profile.multibandIntensity)
+        applyFinalStagePreset(id: profile.finalStagePresetID)
+
+        config.primeBassEnabled = profile.primeBassEnabled
+        if profile.primeBassEnabled {
+            applyPrimeBassPreset(id: profile.primeBassPresetID)
+        } else {
+            // Still record the per-stage preset ID so toggling PrimeBass
+            // back on uses the format-appropriate flavour.
+            config.primeBassPresetID = profile.primeBassPresetID
+        }
+
+        applyWidenerPreset(id: profile.widenerPresetID)
+
+        config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
+        config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
+        config.finalDriveDB = profile.finalDriveDB
+
+        saveConfig(restartRequired: false)
+        applyLiveRuntimeConfigIfRunning()
+        statusText =
+            isRunning
+            ? "Loaded format profile \(profile.title) live."
+            : "Loaded format profile \(profile.title)."
+    }
+
+    func formatProfileBinding() -> Binding<String> {
+        Binding(
+            get: { self.config.formatProfileID },
+            set: { self.applyFormatProfile($0) }
+        )
+    }
+
+    // MARK: - A/B compare
+
+    // MARK: - Named snapshots
+
+    /// Load persisted snapshots from disk into the in-memory `snapshots`
+    /// array. Called from init. Missing or corrupt file → silent reset
+    /// to empty slots (operator can still save new ones).
+    func loadSnapshotsFromDisk() {
+        let path = snapshotsFilePath
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let file = try decoder.decode(SnapshotFile.self, from: data)
+            // Defensive: pad/truncate to our slot count so future schema
+            // changes don't break existing on-disk files.
+            var slots: [ConfigSnapshot?] = Array(
+                repeating: nil, count: Self.snapshotSlotCount)
+            let count = min(file.slots.count, slots.count)
+            for i in 0..<count { slots[i] = file.slots[i] }
+            self.snapshots = slots
+        } catch {
+            statusText = "Failed to load snapshots: \(error.localizedDescription)"
+        }
+    }
+
+    /// Persist all slots to disk. JSON envelope wraps the per-slot
+    /// `ConfigSnapshot` objects (which embed the config as INI text so
+    /// schema migrations stay handled by the existing INI parser's
+    /// defaults).
+    func writeSnapshotsToDisk() {
+        let file = SnapshotFile(slots: snapshots)
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(file)
+            try data.write(
+                to: URL(fileURLWithPath: snapshotsFilePath), options: [.atomic])
+        } catch {
+            statusText = "Failed to write snapshots: \(error.localizedDescription)"
+        }
+    }
+
+    /// Capture the current config into slot `slot` with the given name
+    /// (empty → "Snapshot N"). Writes the file immediately so a crash
+    /// doesn't lose the operator's save.
+    func saveSnapshot(slot: Int, name: String) {
+        guard (0..<snapshots.count).contains(slot) else { return }
+        publishConfigChange()
+        do {
+            let ini = try config.captureAsINIString()
+            let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            snapshots[slot] = ConfigSnapshot(
+                id: UUID(),
+                name: resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName,
+                savedAt: Date(),
+                configINIText: ini
+            )
+            writeSnapshotsToDisk()
+            statusText = "Saved snapshot to slot \(slot + 1)."
+        } catch {
+            statusText = "Failed to save snapshot: \(error.localizedDescription)"
+        }
+    }
+
+    /// Apply the snapshot in `slot` to the current config. Routes
+    /// through `applyLoadedConfig` so live-apply / restart-required
+    /// dispatching matches a normal disk load.
+    func loadSnapshot(slot: Int) {
+        guard (0..<snapshots.count).contains(slot),
+              let snapshot = snapshots[slot] else { return }
+        do {
+            let loaded = try AppConfig.loadFromINIString(snapshot.configINIText)
+            applyLoadedConfig(loaded, origin: .manual)
+            statusText = "Loaded snapshot \"\(snapshot.name)\"."
+        } catch {
+            statusText = "Failed to load snapshot: \(error.localizedDescription)"
+        }
+    }
+
+    /// Drop the snapshot in `slot` and persist the empty state.
+    func clearSnapshot(slot: Int) {
+        guard (0..<snapshots.count).contains(slot) else { return }
+        snapshots[slot] = nil
+        writeSnapshotsToDisk()
+        statusText = "Cleared snapshot slot \(slot + 1)."
+    }
+
+    /// Rename an existing snapshot in place (doesn't touch the stored
+    /// config text — just the operator-facing label). Persists on
+    /// every keystroke; the operator gets immediate save semantics
+    /// without an explicit confirm button.
+    func renameSnapshot(slot: Int, name: String) {
+        guard (0..<snapshots.count).contains(slot),
+              var snapshot = snapshots[slot] else { return }
+        let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        snapshot.name = resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName
+        snapshots[slot] = snapshot
+        writeSnapshotsToDisk()
+    }
+
+    /// One-line description of the currently selected format profile,
+    /// or a fallback string if the stored ID doesn't match any known
+    /// profile (operator typed a custom value into INI).
+    var currentFormatProfileSummary: String {
+        Self.formatProfile(forID: config.formatProfileID)?.summary
+            ?? "Custom (no matching format profile)."
     }
 
     func applyPrimeBassPreset(id: String) {
@@ -2247,6 +2719,12 @@ final class MPXPrimeViewModel: ObservableObject {
         case .overview:
             // Overview has no detail parameters of its own — nothing to reset.
             return
+        case .formatProfile:
+            // Reset the format profile selector to the shipping default
+            // (Community Radio); applies the matching per-stage settings
+            // atomically through `applyFormatProfile`.
+            applyFormatProfile(defaults.formatProfileID)
+            return
         case .core:
             processingBypass = defaults.processingBypass
             inputGainDB = defaults.inputGainDB
@@ -2312,6 +2790,9 @@ final class MPXPrimeViewModel: ObservableObject {
             config.preEncodeAudioLimiterEnabled = defaults.preEncodeAudioLimiterEnabled
             config.preEncodeThreshold = defaults.preEncodeThreshold
             config.preEncodeReleaseMS = defaults.preEncodeReleaseMS
+            config.preEncodeLookaheadMS = defaults.preEncodeLookaheadMS
+            config.preEncodeLookaheadHFOnly = defaults.preEncodeLookaheadHFOnly
+            config.preEncodeLookaheadHFCutoffHz = defaults.preEncodeLookaheadHFCutoffHz
         case .finalStage:
             config.finalStagePresetID = defaults.finalStagePresetID
             config.finalDriveDB = defaults.finalDriveDB
@@ -2366,7 +2847,7 @@ final class MPXPrimeViewModel: ObservableObject {
         switch selectedProcessingTab {
         case .core:
             runtimeDisposition = .restart
-        case .overview,
+        case .overview, .formatProfile,
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .mbLimiter, .expander,
              .widener, .primeBass,
@@ -2461,7 +2942,6 @@ final class MPXPrimeViewModel: ObservableObject {
             config.rdsLIC = defaults.rdsLIC
         case .carrier:
             config.rdsLevel = defaults.rdsLevel
-            config.rdsFreq = defaults.rdsFreq
             config.rdsGaussianEnabled = defaults.rdsGaussianEnabled
             config.rdsGaussianBWHZ = defaults.rdsGaussianBWHZ
             config.rdsGaussianTaps = defaults.rdsGaussianTaps
@@ -3474,8 +3954,7 @@ final class MPXPrimeViewModel: ObservableObject {
                     let ns = p as NSString
                     if let match = prefixRegex.firstMatch(
                         in: p, options: [], range: NSRange(location: 0, length: ns.length)),
-                        match.range.location == 0
-                    {
+                        match.range.location == 0 {
                         let dur = Double(ns.substring(with: match.range(at: 1))) ?? 2.5
                         let textStart = match.range.location + match.range.length
                         let text = textStart < ns.length ? ns.substring(from: textStart) : ""
@@ -3522,7 +4001,7 @@ final class MPXPrimeViewModel: ObservableObject {
         "Other Music", "Weather", "Finance", "Children's", "Social Affairs", "Religion", "Phone-In",
         "Travel", "Leisure", "Jazz", "Country", "National Music", "Oldies", "Folk Music",
         "Documentary",
-        "Alarm Test", "Alarm",
+        "Alarm Test", "Alarm"
     ]
 
     private static let primeBassPresets: [PrimeBassPreset] = [
@@ -3540,7 +4019,7 @@ final class MPXPrimeViewModel: ObservableObject {
             drive: 0.68, density: 0.36, subharmonicsEnabled: false, subharmonicsAmount: 0.06),
         .init(
             id: "talk", title: "Talk", enabled: true, amount: 0.08, freqHz: 120, harmonics: 0.04,
-            drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0),
+            drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0)
     ]
 
     private static let widenerPresets: [WidenerPreset] = [
@@ -3573,7 +4052,7 @@ final class MPXPrimeViewModel: ObservableObject {
             width: 0.46,
             center: 0.50,
             mix: 0.76
-        ),
+        )
     ]
 
     private static let multibandPresets: [MultibandPreset] = [
@@ -3726,7 +4205,7 @@ final class MPXPrimeViewModel: ObservableObject {
             x2Hz: 340, x3Hz: 1450, x4Hz: 5600, lowThresholdDB: -20, lowRatio: 1.8, lowAttackMS: 26,
             lowReleaseMS: 360, midThresholdDB: -18, midRatio: 1.7, midAttackMS: 18,
             midReleaseMS: 280, highThresholdDB: -17, highRatio: 1.45, highAttackMS: 11,
-            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true),
+            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true)
     ]
 
     private static let finalStagePresets: [FinalStagePreset] = [
@@ -3777,8 +4256,175 @@ final class MPXPrimeViewModel: ObservableObject {
             agcMinGainDB: -8.0,
             finalDriveDB: 4.5,
             preEncodeAudioLimiterEnabled: true
-        ),
+        )
     ]
+
+    // MARK: - Format Profiles (top-level "Station Format" selector)
+
+    /// A `FormatProfile` is a top-level "Station Format" bundle that
+    /// atomically wires multiband / final-stage / PrimeBass / stereo
+    /// widener / composite-clipper settings to a coherent target for one
+    /// programming format. The operator picks once; downstream stages all
+    /// receive matching settings. Per-stage knobs remain editable; the
+    /// profile selection stays as a cosmetic label until the operator
+    /// picks a different one.
+    ///
+    /// All `*PresetID` fields reference existing per-stage preset IDs —
+    /// the profile system is a wrapper over the existing per-stage
+    /// preset infrastructure, not a parallel one.
+    struct FormatProfile: Identifiable {
+        let id: String
+        let title: String
+        let summary: String
+        let multibandPresetID: String
+        let multibandIntensity: MultibandPresetIntensity
+        let finalStagePresetID: String
+        let primeBassEnabled: Bool
+        let primeBassPresetID: String      // ignored when primeBassEnabled == false
+        let widenerPresetID: String
+        let compositeClipperThresholdDB: Double
+        let compositeClipperCeilingDB: Double
+        let finalDriveDB: Double
+    }
+
+    static let formatProfiles: [FormatProfile] = [
+        // "Custom" is a sentinel — selecting it just records the label
+        // and leaves every per-stage setting alone. Use this after
+        // hand-tuning to flag "my settings are bespoke, don't auto-apply
+        // a format default if I re-pick this entry from the menu." The
+        // sentinel preset IDs below are placeholders; the apply path
+        // short-circuits on `id == "custom"` and never reads them.
+        FormatProfile(
+            id: "custom",
+            title: "Custom",
+            summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
+            multibandPresetID: "5_ac",
+            multibandIntensity: .normal,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: false,
+            primeBassPresetID: "ac",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 6.0
+        ),
+        FormatProfile(
+            id: "community_radio",
+            title: "Community Radio",
+            summary: "Conservative LPFM / community-radio default — clean output, low loudness, broad source compatibility.",
+            multibandPresetID: "5_ac",
+            multibandIntensity: .light,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: false,
+            primeBassPresetID: "ac",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 4.0
+        ),
+        FormatProfile(
+            id: "pop_ac",
+            title: "Pop / Adult Contemporary",
+            summary: "Mainstream music — balanced multiband, gentle PrimeBass, open widener, moderate drive.",
+            multibandPresetID: "5_ac",
+            multibandIntensity: .normal,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: true,
+            primeBassPresetID: "ac",
+            widenerPresetID: "open_music",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 6.0
+        ),
+        FormatProfile(
+            id: "chr_top40",
+            title: "CHR / Top 40",
+            summary: "Modern hits — bright multiband, hot drive, wide stereo image, competitive loudness.",
+            multibandPresetID: "5_chr",
+            multibandIntensity: .normal,
+            finalStagePresetID: "chr",
+            primeBassEnabled: true,
+            primeBassPresetID: "chr",
+            widenerPresetID: "wide_chr",
+            compositeClipperThresholdDB: -0.8,
+            compositeClipperCeilingDB: -0.2,
+            finalDriveDB: 8.0
+        ),
+        FormatProfile(
+            id: "rock",
+            title: "Rock",
+            summary: "Punchy multiband, rock-tuned PrimeBass, open widener — preserves transient impact.",
+            multibandPresetID: "5_rock",
+            multibandIntensity: .normal,
+            finalStagePresetID: "punchy",
+            primeBassEnabled: true,
+            primeBassPresetID: "rock",
+            widenerPresetID: "open_music",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 7.0
+        ),
+        FormatProfile(
+            id: "edm_dance",
+            title: "EDM / Dance",
+            summary: "Heavy multiband, hot drive, deep bass, wide image — peak loudness for dance formats.",
+            multibandPresetID: "5_dance",
+            multibandIntensity: .heavy,
+            finalStagePresetID: "chr",
+            primeBassEnabled: true,
+            primeBassPresetID: "chr",
+            widenerPresetID: "wide_chr",
+            compositeClipperThresholdDB: -0.7,
+            compositeClipperCeilingDB: -0.2,
+            finalDriveDB: 9.0
+        ),
+        FormatProfile(
+            id: "urban_hiphop",
+            title: "Urban / Hip-Hop",
+            summary: "Deep low end, urban-tuned PrimeBass, hot drive — bass-forward urban contemporary.",
+            multibandPresetID: "5_urban",
+            multibandIntensity: .normal,
+            finalStagePresetID: "chr",
+            primeBassEnabled: true,
+            primeBassPresetID: "urban",
+            widenerPresetID: "open_music",
+            compositeClipperThresholdDB: -0.8,
+            compositeClipperCeilingDB: -0.2,
+            finalDriveDB: 8.0
+        ),
+        FormatProfile(
+            id: "jazz_classical",
+            title: "Jazz / Classical",
+            summary: "Dynamic-preserving — light multiband, no PrimeBass, safe widener, conservative drive.",
+            multibandPresetID: "5_classic",
+            multibandIntensity: .light,
+            finalStagePresetID: "balanced",
+            primeBassEnabled: false,
+            primeBassPresetID: "ac",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.2,
+            compositeClipperCeilingDB: -0.4,
+            finalDriveDB: 3.0
+        ),
+        FormatProfile(
+            id: "news_talk",
+            title: "News / Talk",
+            summary: "Speech-optimized multiband + final-stage, no PrimeBass, safe widener, low drive.",
+            multibandPresetID: "5_talk",
+            multibandIntensity: .light,
+            finalStagePresetID: "speech",
+            primeBassEnabled: false,
+            primeBassPresetID: "talk",
+            widenerPresetID: "safe_fm",
+            compositeClipperThresholdDB: -1.0,
+            compositeClipperCeilingDB: -0.3,
+            finalDriveDB: 4.5
+        )
+    ]
+
+    static func formatProfile(forID id: String) -> FormatProfile? {
+        formatProfiles.first(where: { $0.id == id })
+    }
 
     private static func ptyName(for pty: Int) -> String {
         if ptyNames.indices.contains(pty) {
@@ -3828,7 +4474,7 @@ final class MPXPrimeViewModel: ObservableObject {
         nowPlayingRunner.updateConfig(config)
     }
 
-    private enum ConfigReloadOrigin {
+    enum ConfigReloadOrigin {
         case manual
         case external
     }
@@ -3845,7 +4491,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case none
     }
 
-    private func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) {
+    func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) {
         config = loadedConfig
         sourceMode = config.sourceMode
         monitorEnabled = config.monitorEnabled
@@ -4171,27 +4817,22 @@ private struct RootView: View {
         VStack(spacing: 0) {
             // Always-visible broadcast status header — transport / peaks /
             // deviation / GR / budget / injections. Pinned above the
-            // NavigationSplitView so it spans every stage.
+            // HSplitView so it spans every stage.
             BroadcastStatusBar(model: model)
 
-            // Pinned-open sidebar: bind columnVisibility to `.constant(.all)`
-            // so the user can't toggle the sidebar away, and remove the
-            // toolbar's sidebarToggle button so there's no UI affordance to
-            // collapse it. Stage navigation is the primary surface — losing
-            // it would strand the user on whichever stage they last had
-            // selected.
-            NavigationSplitView(columnVisibility: .constant(.all)) {
+            // HSplitView is the right primitive for a static
+            // professional control surface: no sidebar-toggle affordance,
+            // no autosaved-collapse state to fight, just a fixed-position
+            // stage list on the left and the active stage on the right.
+            // Sidebar width range matches the previous NavigationSplitView
+            // settings — minimum 220 pt fits the longest label
+            // ("Composite Clipper", 17 chars) plus icon and padding without
+            // truncation.
+            HSplitView {
                 StageSidebar(model: model)
-                    // Minimum width sized to fit the longest label
-                    // ("Composite Clipper", 17 chars) plus icon and
-                    // padding. The previous 200 pt minimum let the OS
-                    // / autosaved state pin the sidebar narrow enough
-                    // to truncate "Composite Clipper" / "Alt. Frequencies"
-                    // on first launch of a fresh DMG.
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 320)
-                    .toolbar(removing: .sidebarToggle)
-            } detail: {
+                    .frame(minWidth: 220, idealWidth: 240, maxWidth: 320)
                 StageContentView(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .inspector(isPresented: $model.inspectorVisible) {
                         StageInspector(model: model)
                             .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
@@ -4213,28 +4854,53 @@ private struct StageSidebar: View {
             ForEach(Stage.Group.allCases, id: \.rawValue) { group in
                 Section(group.rawValue) {
                     ForEach(Stage.allCases.filter { $0.group == group }) { stage in
-                        Label {
-                            Text(stage.label)
-                        } icon: {
-                            Image(systemName: stage.icon)
-                                // Explicit `.tint` foreground on the
-                                // *icon only* — keeps text in the
-                                // default sidebar foreground (white in
-                                // dark mode) while making icons pick
-                                // up the system accent (blue by
-                                // default). Hierarchical layering on
-                                // top gives the 3-level tonal depth
-                                // Apple's first-party sidebars use
-                                // (Music.app, Mail.app).
-                                .foregroundStyle(.tint)
-                                .symbolRenderingMode(.hierarchical)
-                        }
-                        .tag(stage)
+                        StageSidebarRow(model: model, stage: stage)
+                            .tag(stage)
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+}
+
+/// One sidebar row. Renders the existing Label (icon + text) and, when
+/// the stage has an enable toggle that is currently on, a small accent
+/// dot on the trailing edge — matches Mail's unread-count / Slack's
+/// online-status idiom: filled when on, nothing when off, no badge at
+/// all for stages with no enable concept (Monitoring, Overview, Core,
+/// Final Stage, RDS sub-tabs, Snapshots).
+private struct StageSidebarRow: View {
+    @ObservedObject var model: MPXPrimeViewModel
+    let stage: Stage
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label {
+                Text(stage.label)
+            } icon: {
+                // Decorative — the adjacent Text(stage.label)
+                // already conveys the row identity to VoiceOver.
+                Image(systemName: stage.icon)
+                    .accessibilityHidden(true)
+                    // Explicit `.tint` foreground on the *icon only* —
+                    // keeps text in the default sidebar foreground
+                    // (white in dark mode) while icons pick up the
+                    // system accent. Hierarchical layering gives the
+                    // 3-level tonal depth Apple's first-party sidebars
+                    // use (Music.app, Mail.app).
+                    .foregroundStyle(.tint)
+                    .symbolRenderingMode(.hierarchical)
+            }
+            Spacer(minLength: 0)
+            if model.isStageEnabled(stage) == true {
+                Circle()
+                    .fill(.tint)
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel("Enabled")
+                    .help("Enabled")
+            }
+        }
     }
 }
 
@@ -4267,9 +4933,11 @@ private struct StageContentView: View {
                     MonitoringDashboardView(model: model)
                 } else if model.selectedStage == .testTone {
                     TestToneView(model: model)
-                } else if let _ = model.selectedStage.legacyProcessingTab {
+                } else if model.selectedStage == .snapshots {
+                    SnapshotsView(model: model)
+                } else if model.selectedStage.legacyProcessingTab != nil {
                     StageProcessingContent(model: model)
-                } else if let _ = model.selectedStage.legacyRDSTab {
+                } else if model.selectedStage.legacyRDSTab != nil {
                     StageRDSContent(model: model)
                 }
             }
@@ -4291,13 +4959,20 @@ private struct StageProcessingContent: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.selectedStage != .processingOverview {
+                // Cap to the same 1120 pt width as the content column
+                // below so the strip sits horizontally centered over its
+                // content. Default `.frame(maxWidth:)` alignment is
+                // `.center`, so no extra alignment argument needed.
                 SignalFlowStrip(model: model)
+                    .frame(maxWidth: 1120)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     switch model.selectedProcessingTab {
                     case .overview:
                         ProcessingOverviewGrid(model: model)
+                    case .formatProfile:
+                        ProcessingFormatProfileTab(model: model)
                     case .core:
                         ProcessingCoreTab(model: model)
                     case .agc:
@@ -4338,6 +5013,14 @@ private struct StageProcessingContent: View {
                             }
                             .buttonStyle(.bordered)
                         }
+
+                        // Tab help text as a footer block below the
+                        // controls and the Reset action — matches
+                        // System Settings / Xcode "explanation under
+                        // the controls" idiom rather than competing
+                        // with the controls visually at the top of
+                        // the tab.
+                        TabHelpBox(text: model.selectedProcessingTab.helpText)
                     }
                 }
                 .padding(20)
@@ -4378,6 +5061,12 @@ private struct StageRDSContent: View {
                     }
                     .buttonStyle(.bordered)
                 }
+
+                // Footer help block — same pattern as Processing tabs.
+                // Sits below the controls and the Reset action so it
+                // reads as explanatory text rather than competing with
+                // the controls at the top of the view.
+                TabHelpBox(text: model.selectedRDSTab.helpText)
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)
@@ -4457,11 +5146,126 @@ private struct Card<Content: View>: View {
 /// All controls are live-applicable via the existing RuntimeConfig
 /// path; no engine restart required when toggling enable, type,
 /// mode, frequency, or level.
+/// Named-snapshot manager. 8 fixed slots saved to `<configPath>.snapshots.json`
+/// alongside the INI. Each slot row: name field + Save (capture current
+/// config into this slot, overwrites) + Load (apply this slot's config
+/// to the live engine) + Clear (delete this slot). The saved-at
+/// timestamp reads "saved <date>" once the slot is occupied.
+///
+/// Snapshots are heavier than format profiles (full config capture vs
+/// per-stage preset bundle) and meant for "Saturday Night vs Morning
+/// Show" type setups operators want to flip between without recomposing
+/// every stage by hand.
+private struct SnapshotsView: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Card(title: "Snapshots") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
+                            SnapshotSlotRow(model: model, slot: slot)
+                            if slot < MPXPrimeViewModel.snapshotSlotCount - 1 {
+                                Divider().opacity(0.4)
+                            }
+                        }
+                    }
+                }
+
+                TabHelpBox(text: "Eight named snapshot slots for the full configuration. Save the current setup into a slot, load it back later — survives app restart (stored as `<configPath>.snapshots.json`). Heavier than Format Profiles: snapshots capture every per-stage setting and RDS field, not just the DSP bundle.")
+            }
+            .padding(20)
+            .frame(maxWidth: 1120, alignment: .topLeading)
+        }
+    }
+}
+
+private struct SnapshotSlotRow: View {
+    @ObservedObject var model: MPXPrimeViewModel
+    let slot: Int
+    @State private var draftName: String = ""
+
+    private var snapshot: ConfigSnapshot? { model.snapshots[slot] }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text("\(slot + 1).")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, alignment: .trailing)
+
+            VStack(alignment: .leading, spacing: 2) {
+                TextField(snapshot?.name ?? "Snapshot \(slot + 1)", text: $draftName, onCommit: {
+                    if snapshot != nil {
+                        model.renameSnapshot(slot: slot, name: draftName)
+                    } else {
+                        model.saveSnapshot(slot: slot, name: draftName)
+                        draftName = ""
+                    }
+                })
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .frame(maxWidth: 260)
+
+                if let snap = snapshot {
+                    Text("saved \(Self.relativeDateString(snap.savedAt))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("empty")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button("Save") {
+                    let nameToUse = !draftName.isEmpty ? draftName : (snapshot?.name ?? "")
+                    model.saveSnapshot(slot: slot, name: nameToUse)
+                    draftName = ""
+                }
+                .help("Capture the current full configuration into this slot. Overwrites any existing snapshot here.")
+
+                Button("Load") {
+                    model.loadSnapshot(slot: slot)
+                }
+                .disabled(snapshot == nil)
+                .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
+
+                Button("Clear") {
+                    model.clearSnapshot(slot: slot)
+                    draftName = ""
+                }
+                .disabled(snapshot == nil)
+                .help("Delete this slot. Cannot be undone.")
+            }
+            .controlSize(.small)
+        }
+        .onAppear {
+            draftName = snapshot?.name ?? ""
+        }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f
+    }()
+
+    private static func relativeDateString(_ date: Date) -> String {
+        dateFormatter.string(from: date)
+    }
+}
+
 private struct TestToneView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     private static let frequencyPresets: [Double] = [
-        50, 100, 400, 1_000, 5_000, 10_000, 12_000, 15_000,
+        50, 100, 400, 1_000, 5_000, 10_000, 12_000, 15_000
     ]
 
     private var isEnabled: Binding<Bool> {
@@ -4524,9 +5328,11 @@ private struct TestToneView: View {
                 }
                 levelCard
                 statusCard
+
+                TabHelpBox(text: "Internal signal generator that replaces the audio input. Sine for level / separation / encoder-bandwidth tests; pink and white noise for broadband response checks. Four stereo modes (mono / L=-R / left-only / right-only) cover common diagnostic needs. The rest of the chain (AGC, multiband, clippers, BS.412, encoder) processes the tone normally so you can observe each stage's response at calibrated input levels.")
             }
             .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: 1120, alignment: .topLeading)
         }
     }
 
@@ -4739,7 +5545,7 @@ private struct MonitoringDashboardView: View {
                 ("OUTPUT", model.outputText.ifEmpty("—")),
                 ("AUDIO COMPOSITE", audioCompositeText),
                 ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
-                ("MODULATION", modulationText),
+                ("MODULATION", modulationText)
             ])
         }
     }
@@ -4750,7 +5556,7 @@ private struct MonitoringDashboardView: View {
                 ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
                 ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
                 ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
-                ("BS.412 BUDGET", budgetText),
+                ("BS.412 BUDGET", budgetText)
             ])
         }
     }
@@ -4760,7 +5566,7 @@ private struct MonitoringDashboardView: View {
             metricsGrid([
                 ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
                 ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
-                ("STEREO IMAGE", model.stereoImageText),
+                ("STEREO IMAGE", model.stereoImageText)
             ])
         }
     }
@@ -4829,7 +5635,10 @@ private struct MonitoringDashboardView: View {
                         model.startOrStopTransport()
                     } label: {
                         HStack {
+                            // Decorative — the adjacent "Start" / "Stop"
+                            // text conveys the action to VoiceOver.
                             Image(systemName: model.isRunning ? "stop.fill" : "play.fill")
+                                .accessibilityHidden(true)
                             Text(model.isRunning ? "Stop" : "Start")
                         }
                         .frame(maxWidth: .infinity)
@@ -4842,7 +5651,10 @@ private struct MonitoringDashboardView: View {
                         model.toggleBypass()
                     } label: {
                         HStack {
+                            // Decorative — the adjacent "Bypass On / Off"
+                            // text conveys the action to VoiceOver.
                             Image(systemName: model.processingBypass ? "bolt.slash.fill" : "bolt.fill")
+                                .accessibilityHidden(true)
                             Text(model.processingBypass ? "Bypass On" : "Bypass Off")
                         }
                         .frame(maxWidth: .infinity)
@@ -4855,7 +5667,7 @@ private struct MonitoringDashboardView: View {
                 FlowStatusRow(items: [
                     ("Source", inputName, model.isRunning ? .green : .secondary.opacity(0.75)),
                     ("Output", outputName, model.isRunning ? .green : .secondary.opacity(0.75)),
-                    ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75)),
+                    ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75))
                 ])
 
                 // Input levels — visible here so the operator can
@@ -4999,7 +5811,7 @@ private struct MonitoringDashboardView: View {
                 FlowStatusRow(items: [
                     ("AGC", agcPillText, agcDotColor),
                     ("Stereo", stereoPillText, .secondary.opacity(0.75)),
-                    ("Pre-Lim GR", preLimText, preLimDotColor),
+                    ("Pre-Lim GR", preLimText, preLimDotColor)
                 ])
 
                 ProcessingOverviewGrid(model: model, embedded: true)
@@ -5015,7 +5827,7 @@ private struct MonitoringDashboardView: View {
                 FlowStatusRow(items: [
                     ("PS", model.rdsPS.ifEmpty("—"), .secondary.opacity(0.75)),
                     ("PI", model.rdsPI.ifEmpty("—"), .secondary.opacity(0.75)),
-                    ("PTY", model.rdsPTY.ifEmpty("—"), .secondary.opacity(0.75)),
+                    ("PTY", model.rdsPTY.ifEmpty("—"), .secondary.opacity(0.75))
                 ])
 
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
@@ -5151,7 +5963,6 @@ private struct MonitoringDashboardView: View {
         return nil
     }
 }
-
 
 private struct DashboardMetricGrid<Content: View>: View {
     @ViewBuilder var content: Content
@@ -5471,20 +6282,11 @@ struct LevelsCardView: View {
                     peakLevel: model.modulationPeakHoldLevel,
                     scale: .modulationKHz(limit: model.config.mpxDeviationKHz)
                 )
-                VerticalMeterStrip(
-                    label: "GR",
-                    valueText: String(format: "%.1f dB", Double(model.compositeClipperGainReductionDBValue)),
-                    level: max(0.0, min(1.0, Double(model.compositeClipperGainReductionDBValue) / 16.0)),
-                    peakLevel: nil,
-                    scale: .gainReductionDB
-                )
-                VerticalMeterStrip(
-                    label: "SAFE",
-                    valueText: String(format: "%.1f dB", Double(model.safetyLimiterGainReductionDBValue)),
-                    level: max(0.0, min(1.0, Double(model.safetyLimiterGainReductionDBValue) / 16.0)),
-                    peakLevel: nil,
-                    scale: .gainReductionDB
-                )
+                // GR + SAFE removed in 0.30 — peak-control gain-reduction
+                // data is already surfaced by the Monitoring tab's Headroom
+                // card (PRE-ENCODE / COMPOSITE / SAFETY GR + BS.412 budget)
+                // and per-stage in the Signal Chain strip. The detached
+                // Levels window is now purely VU-style level metering.
                 Spacer(minLength: 0)
             }
             .frame(height: 340)
@@ -5564,7 +6366,7 @@ private struct MeterBar: View {
                 ScaleTick(position: Self.dbfsScalePosition(-12.0), label: "-12"),
                 ScaleTick(position: Self.dbfsScalePosition(-6.0), label: "-6"),
                 ScaleTick(position: Self.dbfsScalePosition(-3.0), label: "-3"),
-                ScaleTick(position: Self.dbfsScalePosition(0.0), label: "0 dBFS"),
+                ScaleTick(position: Self.dbfsScalePosition(0.0), label: "0 dBFS")
             ]
         case .modulation100kHz:
             return [
@@ -5572,7 +6374,7 @@ private struct MeterBar: View {
                 ScaleTick(position: 0.25, label: "25"),
                 ScaleTick(position: 0.5, label: "50"),
                 ScaleTick(position: 0.75, label: "75"),
-                ScaleTick(position: 1.0, label: "100 kHz"),
+                ScaleTick(position: 1.0, label: "100 kHz")
             ]
         case .none:
             return []
@@ -5664,7 +6466,7 @@ private struct MeterBar: View {
 
 struct ScopeView: View {
     let samples: [Float]
-    var secondarySamples: [Float]? = nil
+    var secondarySamples: [Float]?
 
     var body: some View {
         Canvas { context, size in
@@ -5826,7 +6628,7 @@ struct MPXSpectrumView: View {
                     Color.yellow.opacity(0.60),
                     Color.green.opacity(0.55),
                     Color.cyan.opacity(0.50),
-                    Color.blue.opacity(0.45),
+                    Color.blue.opacity(0.45)
                 ])
                 context.fill(
                     fill,
@@ -5867,6 +6669,15 @@ struct MPXSpectrumView: View {
             .font(.system(.caption, design: .monospaced).weight(.medium))
             .foregroundStyle(.secondary)
         }
+        // Disable SwiftUI implicit animations on @Published dbBins updates.
+        // Without this, frame-to-frame interpolation queues accumulated
+        // when 30 Hz spectrum updates were interrupted mid-interpolation —
+        // visible as growing lag in the Audio Spectrum / MPX Spectrum
+        // windows after several minutes. Matches the inline spectrum view
+        // which already has this transaction modifier.
+        .transaction { txn in
+            txn.animation = nil
+        }
     }
 
     private func yPosition(forDB db: Float, height: CGFloat) -> CGFloat {
@@ -5900,6 +6711,208 @@ struct MPXSpectrumView: View {
     }
 }
 
+/// Bar-style 1/3-octave RTA visualization. Used for the Audio Spectrum
+/// window — more representative of how pro broadcast processors
+/// (Optimod / Omnia / Stereotool) show audio program spectrum than a
+/// line/area FFT plot. Same underlying `dbBins` source as
+/// `MPXSpectrumView`; this view just remaps to ISO 1/3-octave bands and
+/// renders each as a gradient-filled bar.
+struct AudioBarSpectrumView: View {
+    let dbBins: [Float]
+    let maxHz: Double
+    let nyquistHz: Double
+
+    private let dbMin: Float = -100.0
+    private let dbMax: Float = 0.0
+
+    /// ISO 1/3-octave center frequencies (Hz). Covers the FM audio
+    /// program band; bands above the actual display Nyquist are filtered
+    /// out at render time.
+    private static let isoCenters: [Double] = [
+        31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250,
+        315, 400, 500, 630, 800, 1_000, 1_250, 1_600, 2_000, 2_500,
+        3_150, 4_000, 5_000, 6_300, 8_000, 10_000, 12_500, 16_000
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Canvas { context, size in
+                let rect = CGRect(origin: .zero, size: size)
+                context.fill(
+                    Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius),
+                    with: .color(.black.opacity(0.30))
+                )
+                let leftAxisWidth: CGFloat = 42
+                let rightAxisWidth: CGFloat = 42
+                let topInset: CGFloat = 8
+                let bottomInset: CGFloat = 20
+                let plotRect = CGRect(
+                    x: leftAxisWidth,
+                    y: topInset,
+                    width: max(10, size.width - leftAxisWidth - rightAxisWidth),
+                    height: max(10, size.height - topInset - bottomInset)
+                )
+
+                // dB grid + border.
+                var grid = Path()
+                for db in stride(from: -100, through: 0, by: 10) {
+                    let y = yPosition(forDB: Float(db), in: plotRect)
+                    grid.move(to: CGPoint(x: plotRect.minX, y: y))
+                    grid.addLine(to: CGPoint(x: plotRect.maxX, y: y))
+                }
+                context.stroke(grid, with: .color(.white.opacity(0.18)), lineWidth: 0.9)
+                context.stroke(
+                    Path(plotRect),
+                    with: .color(.white.opacity(0.40)),
+                    lineWidth: 1.0
+                )
+
+                // dB axis labels (both sides).
+                for db in stride(from: -100, through: 0, by: 10) {
+                    let y = yPosition(forDB: Float(db), in: plotRect)
+                    let label = db == 0 ? "0 dB" : "\(db) dB"
+                    let text = Text(label)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    context.draw(text, at: CGPoint(x: 18, y: y))
+                    context.draw(text, at: CGPoint(x: size.width - 18, y: y))
+                }
+
+                // Filter ISO bands by display Nyquist so we don't draw
+                // bars whose center is beyond the actual analyzed range.
+                // Inclusive comparison: a 16 kHz band at exactly maxHz
+                // still shows — the upper half of its 1/3-octave window
+                // extends past maxHz but its lower half (14.25-16 kHz)
+                // has valid FFT data and the bar reflects that energy.
+                let displayMaxHz = max(1_000.0, maxHz)
+                let nyquist = nyquistHz > 0 ? min(nyquistHz, displayMaxHz) : displayMaxHz
+                let usableCenters = Self.isoCenters.filter { $0 <= nyquist }
+                guard !usableCenters.isEmpty, dbBins.count > 1 else { return }
+
+                let barCount = usableCenters.count
+                let interBarGap: CGFloat = max(1.0, plotRect.width * 0.004)
+                let barWidth = max(
+                    2.0,
+                    (plotRect.width - interBarGap * CGFloat(barCount - 1)) / CGFloat(barCount)
+                )
+
+                // For each ISO band, pull max of FFT bins falling in
+                // [center * 2^(-1/6), center * 2^(1/6)] — standard
+                // 1/3-octave window.
+                let binCount = dbBins.count
+                let oneSixthOctave = pow(2.0, 1.0 / 6.0)
+
+                let gradient = Gradient(colors: [
+                    Color.red.opacity(0.88),
+                    Color.yellow.opacity(0.80),
+                    Color.green.opacity(0.74),
+                    Color.cyan.opacity(0.62),
+                    Color.blue.opacity(0.55)
+                ])
+
+                for (i, center) in usableCenters.enumerated() {
+                    let lowHz = center / oneSixthOctave
+                    let highHz = center * oneSixthOctave
+                    let lowBin = max(
+                        0,
+                        min(binCount - 1, Int((lowHz / displayMaxHz) * Double(binCount - 1)))
+                    )
+                    let highBin = max(
+                        lowBin,
+                        min(
+                            binCount - 1,
+                            Int(ceil((highHz / displayMaxHz) * Double(binCount - 1)))
+                        )
+                    )
+                    var maxDB: Float = -100.0
+                    for b in lowBin...highBin where dbBins[b] > maxDB {
+                        maxDB = dbBins[b]
+                    }
+                    // Floor for visual readability — a 1-pixel sliver at
+                    // -100 is invisible; cap at -98 so very-quiet bands
+                    // still show a faint base.
+                    maxDB = max(-98.0, maxDB)
+
+                    let xLeft = plotRect.minX + CGFloat(i) * (barWidth + interBarGap)
+                    let yTop = yPosition(forDB: maxDB, in: plotRect)
+                    let barRect = CGRect(
+                        x: xLeft,
+                        y: yTop,
+                        width: barWidth,
+                        height: max(0, plotRect.maxY - yTop)
+                    )
+                    context.fill(
+                        Path(
+                            roundedRect: barRect,
+                            cornerRadius: max(1.0, min(3.5, barWidth * 0.18))
+                        ),
+                        with: .linearGradient(
+                            gradient,
+                            startPoint: CGPoint(x: barRect.midX, y: plotRect.minY),
+                            endPoint: CGPoint(x: barRect.midX, y: plotRect.maxY)
+                        )
+                    )
+                }
+
+                // Decade labels along the X-axis at 100 Hz, 1 kHz, 10 kHz,
+                // plus a 16 kHz marker at the audio-program ceiling.
+                let decadeLabels: [(Double, String)] = [
+                    (100, "100 Hz"),
+                    (1_000, "1 kHz"),
+                    (10_000, "10 kHz"),
+                    (16_000, "16 kHz")
+                ]
+                for (decadeHz, label) in decadeLabels where decadeHz <= nyquist {
+                    if let idx = usableCenters.firstIndex(where: { abs($0 - decadeHz) < 0.5 }) {
+                        let xCenter =
+                            plotRect.minX
+                            + CGFloat(idx) * (barWidth + interBarGap)
+                            + barWidth * 0.5
+                        let text = Text(label)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        context.draw(text, at: CGPoint(x: xCenter, y: plotRect.maxY + 12))
+                    }
+                }
+            }
+            .frame(minHeight: 190, idealHeight: 220)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: BroadcastStyle.panelInsetCornerRadius,
+                    style: .continuous
+                )
+            )
+
+            HStack(spacing: 14) {
+                Text("RTA: 1/3-octave (ISO) bars, log frequency, max in band")
+                Spacer()
+                if nyquistHz > 0.0, nyquistHz < maxHz {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.orange.opacity(0.9))
+                            .frame(width: 6, height: 6)
+                        Text("Nyquist \(Int((nyquistHz / 1000.0).rounded())) kHz")
+                    }
+                }
+            }
+            .font(.system(.caption, design: .monospaced).weight(.medium))
+            .foregroundStyle(.secondary)
+        }
+        // Discrete updates — no implicit interpolation between frames
+        // (matches the line spectrum's transaction modifier; prevents
+        // animation queue buildup at 30 Hz refresh).
+        .transaction { txn in
+            txn.animation = nil
+        }
+    }
+
+    private func yPosition(forDB db: Float, in rect: CGRect) -> CGFloat {
+        let clamped = max(dbMin, min(dbMax, db))
+        let norm = (clamped - dbMin) / (dbMax - dbMin)
+        return rect.minY + (1.0 - CGFloat(norm)) * rect.height
+    }
+}
+
 private struct KeyValueGrid: View {
     let rows: [(String, String)]
 
@@ -5916,6 +6929,80 @@ private struct KeyValueGrid: View {
             }
         }
         .font(.callout)
+    }
+}
+
+/// One-paragraph help block shown at the top of each Processing detail
+/// tab (everything except the Overview grid). Intentionally muted /
+/// secondary styling so it reads as documentation rather than a control;
+/// stays out of the way once the operator knows the stage but is there
+/// when they need to anchor.
+private struct TabHelpBox: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Decorative info-icon — the Text alongside it carries the
+            // entire content to VoiceOver. Hide the icon from the
+            // accessibility tree so screen readers don't announce
+            // "info circle" before every tab help block.
+            Image(systemName: "info.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 0.5)
+        )
+    }
+}
+
+/// Dedicated tab hosting the top-level Station Format picker. Moved out
+/// of the Processing → Overview grid so the grid stays focused on per-
+/// stage status; the format selector gets its own breathing room and
+/// can show the full per-profile summary plus the standard tab help
+/// box without crowding the dashboard.
+private struct ProcessingFormatProfileTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Station Format") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("Profile")
+                        .foregroundStyle(.secondary)
+                    Picker("Station Format", selection: model.formatProfileBinding()) {
+                        ForEach(MPXPrimeViewModel.formatProfiles) { profile in
+                            Text(profile.title).tag(profile.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    Spacer()
+                }
+                Text(model.currentFormatProfileSummary)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Picking a profile overwrites Multiband, Final Stage, PrimeBass, Stereo Widener, and Composite Clipper settings. Per-stage knobs stay editable after — tune from the profile baseline, not from a blank slate. Pick `Custom` to keep your manual tuning when re-visiting this picker.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 
@@ -5944,20 +7031,26 @@ private struct ProcessingCoreTab: View {
                 set: {
                     model.setInputGainLive($0)
                 }
-            ), range: -24...24, format: "%.1f dB")
+            ), range: -24...24, format: "%.1f dB",
+            tooltip: "Pre-chain trim on the L/R input. Use to land your typical source peaks around -6 to -3 dBFS on the input meters. NOT the loudness knob — use AGC target + final drive + composite clipper drive for that.")
             DoubleSliderRow(
                 title: "MPX Output Level",
                 value: model.configBinding(\.outputGainDB, runtimeDisposition: .live),
                 range: -18...18,
-                format: "%.1f dB"
+                format: "%.1f dB",
+                tooltip: "Final post-chain gain trim on the composite output before the audio device. Use for calibration into the exciter's MPX input — set so the exciter's deviation meter reads the licensed peak. Doesn't add loudness; the chain already drives the composite to 100% modulation."
             )
             Text("Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz")
-            DoubleSliderRow(title: "HF Trim", value: model.configBinding(\.hfTrimDB), range: -12...12, format: "%.1f dB")
-            DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz")
-            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...17_000, format: "%.0f Hz")
+            DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz",
+                tooltip: "High-pass filter cutoff on the L/R input. Removes DC, rumble, and very-low-end energy that would otherwise eat headroom downstream. 30 Hz is the ITU-R BS.450 audio-bandwidth lower bound; raise to 50-80 Hz for ground-loop or rumble-heavy sources.")
+            DoubleSliderRow(title: "HF Trim", value: model.configBinding(\.hfTrimDB), range: -12...12, format: "%.1f dB",
+                tooltip: "Pre-multiband shelf cut/boost at HF Trim Freq. Negative values tame harsh sources before they hit the multiband; positive values brighten dull material. Apply sparingly — global tonal shaping is the Parametric EQ stage's job.")
+            DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz",
+                tooltip: "Centre frequency for the HF Trim shelf above. 4 kHz default targets vocal presence and cymbal sheen.")
+            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...16_000, format: "%.0f Hz",
+                tooltip: "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")
         }
         Card(title: "Engine — TX path") {
             Toggle("Encoder Lowpass: linear-phase FIR", isOn: model.configBinding(\.encoderFIREnabled))
@@ -6216,7 +7309,27 @@ private struct ProcessingLimiterTab: View {
             )
             .help("Switches the pre-encode limiter ceiling from the classic tanh soft ceiling to the experimental 0.27 band-limited residual ceiling. Off = old/current chain. On = new patent-style candidate.")
             .disabled(disabled)
-            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Switch off for the old/current tanh ceiling; switch on for the new 0.27 band-limited residual ceiling candidate.")
+            DoubleSliderRow(
+                title: "Look-ahead",
+                value: model.configBinding(\.preEncodeLookaheadMS, runtimeDisposition: .restart),
+                range: 0...5,
+                format: "%.2f ms",
+                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = legacy feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
+            ).disabled(disabled)
+            Toggle(
+                "HF-Only Look-ahead Detector (Phase 2 / Dolby)",
+                isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)
+            )
+            .help("Phase 2: high-pass the detector path so look-ahead engages only on HF transients (where pre-emphasis concentrates peaks). Audio path stays full-band. LF dynamics / punch are not subject to the look-ahead gain ramp. Patent: US 5,579,404 / EP 0685130 (Dolby, expired 2013). Restart-required.")
+            .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
+            DoubleSliderRow(
+                title: "HF Detector Cutoff",
+                value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
+                range: 1_000...12_000,
+                format: "%.0f Hz",
+                tooltip: "High-pass cutoff for the HF-only look-ahead detector. 4 kHz default matches the Dolby spec where pre-emphasis-induced peaks start dominating. Lower (2-3 kHz) catches more vocal sibilance; higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required."
+            ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
+            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Look-ahead and HF-only detector (Phase 2, Dolby US 5,579,404) are opt-in via the controls above; the band-limited residual toggle is the 0.27 patent-style ceiling candidate.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -6439,8 +7552,8 @@ private struct ProcessingBS412Tab: View {
             let disabled = !model.config.bs412Enabled
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.bs412ThresholdDB, runtimeDisposition: .live), range: -20...0, format: "%.1f dB",
                 tooltip: "MPX average-power ceiling per ITU-R BS.412. Required for EU regulatory compliance (DE, AT, CH, SE, CZ, SI, etc).").disabled(disabled)
-            DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 1...120, format: "%.0f s",
-                tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default.").disabled(disabled)
+            DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 30...90, format: "%.0f s",
+                tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default; values outside ~30-90 s stop being BS.412 and become a generic AGC.").disabled(disabled)
             Text("ITU-R BS.412 rolling average power limiter for European regulatory compliance (DE, AT, CH, SE, CZ, SI). Limits MPX power over a sliding time window.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -6538,23 +7651,20 @@ private struct SystemSettingsSectionContent: View {
                 "Auto Start at Launch",
                 isOn: model.configBinding(\.rdsAutoStart, runtimeDisposition: .none))
 
-            // Mono Mode lives in the sidebar footer (single source of
-            // truth across the whole window). Pilot / Sum / Diff stay
-            // here because they're encoder-structure parameters.
+            // Mono Mode lives in the sidebar footer. Pilot Level is the
+            // only stereo-encoder-structure parameter exposed here.
+            // Sum/diff matrix gains are spec-fixed (M=(L+R)/2, S=(L-R)/2
+            // per ITU-R BS.450 / EN 50067) and not user-configurable;
+            // INI keys `sum_level` / `diff_level` remain for lab/debug use.
+            // Pilot Level range follows ITU-R BS.450-4 / FCC 73.322 (8-10%
+            // deviation); slider permits 0-12% for headroom and 0 = mute.
             DoubleSliderRow(
-                title: "Pilot Level", value: model.configBinding(\.pilotLevel),
-                range: 0...0.2, format: "%.3f")
-            .disabled(model.config.monoMode)
-            DoubleSliderRow(
-                title: "Sum Level", value: model.configBinding(\.sumLevel),
-                range: 0...1.5, format: "%.2f")
-            DoubleSliderRow(
-                title: "Diff Level", value: model.configBinding(\.diffLevel),
-                range: 0...1.5, format: "%.2f")
+                title: "Pilot Level", value: model.pilotLevelPercentBinding(),
+                range: 0...12, format: "%.1f %%")
             .disabled(model.config.monoMode)
 
             InlineRestartRequiredNote(
-                text: "Sample rate, block size, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
+                text: "Sample rate, block size, mono mode, pre-emphasis, pilot level, program lowpass, and other encoder-structure changes."
             )
         }
     }
@@ -6714,9 +7824,9 @@ private struct PSBankRow: View {
     var body: some View {
         let isActive = model.config.rdsPSActiveBank.uppercased() == letter
         HStack(spacing: 10) {
-            Button(action: {
+            Button {
                 model.setConfigValue(\.rdsPSActiveBank, letter, runtimeDisposition: .liveRDS)
-            }) {
+            } label: {
                 Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                     .imageScale(.large)
@@ -6880,19 +7990,9 @@ private struct RDSCarrierTab: View {
         Card(title: "Subcarrier") {
             DoubleSliderRow(
                 title: "Injection Level",
-                value: model.configBinding(\.rdsLevel),
-                range: 0...7.5, format: "%.2f kHz")
-            DoubleSliderRow(
-                title: "Subcarrier Frequency", value: model.configBinding(\.rdsFreq),
-                range: 40_000...80_000, format: "%.0f Hz")
-            Toggle("Gaussian Shaping", isOn: model.configBinding(\.rdsGaussianEnabled))
-            DoubleSliderRow(
-                title: "Gaussian BW", value: model.configBinding(\.rdsGaussianBWHZ),
-                range: 600...6_000, format: "%.0f Hz")
-            IntStepperRow(
-                title: "Gaussian Taps", value: model.oddTapBinding(), range: 9...401,
-                step: 2, format: "%d")
-            Text("Subcarrier physical-layer settings: injection level + frequency + FIR shaping. All require a transport restart to take effect.")
+                value: model.rdsLevelPercentBinding(),
+                range: 0...10, format: "%.1f %%")
+            Text("Subcarrier physical-layer settings: injection level only. Carrier is fixed at 57 kHz, locked to 3x pilot per EN 50067 Sec 2.1.4. Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`. Restart required.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -7384,8 +8484,7 @@ private struct AboutSectionView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
-            Link("github.com/bkram/MPXPrime",
-                 destination: URL(string: "https://github.com/bkram/MPXPrime")!)
+            Link("github.com/bkram/MPXPrime", destination: kProjectURL)
                 .font(.system(size: 11))
 
             Divider()
@@ -7412,12 +8511,10 @@ private struct AboutSectionView: View {
 private struct PendingApplyCard: View {
     @ObservedObject var model: MPXPrimeViewModel
 
-    
-
     var body: some View {
         // Empty view — never shown
         EmptyView()
-        
+
         // Or completely remove the if and Card, leaving just:
         // EmptyView()
     }
@@ -7436,8 +8533,6 @@ private struct PendingApplyCard: View {
     //         .hidden()
     //     }
 }
-    
-
 
 // Conditional `.help()` so an empty/nil tooltip does not clear tooltips set
 // elsewhere in the subtree — SwiftUI interprets `.help("")` as "remove help".
@@ -7457,8 +8552,8 @@ private struct DoubleSliderRow: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let format: String
-    var accessibilityLabel: String? = nil
-    var tooltip: String? = nil
+    var accessibilityLabel: String?
+    var tooltip: String?
 
     var body: some View {
         LabeledContent(title) {
@@ -7488,7 +8583,7 @@ private struct IntStepperRow: View {
     let range: ClosedRange<Int>
     let step: Int
     let format: String
-    var tooltip: String? = nil
+    var tooltip: String?
 
     var body: some View {
         LabeledContent(title) {
@@ -7629,7 +8724,7 @@ private struct StereoPreMPXSpectrumView: View {
                 Text("Left")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                MPXSpectrumView(
+                AudioBarSpectrumView(
                     dbBins: leftBins,
                     maxHz: maxHz,
                     nyquistHz: nyquistHz
@@ -7640,7 +8735,7 @@ private struct StereoPreMPXSpectrumView: View {
                 Text("Right")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                MPXSpectrumView(
+                AudioBarSpectrumView(
                     dbBins: rightBins,
                     maxHz: maxHz,
                     nyquistHz: nyquistHz

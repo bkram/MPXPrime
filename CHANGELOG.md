@@ -9,6 +9,172 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30 — 2026-05-24
+
+### Tooling — `MPXPrime --bench` CLI + Intel benchmark captured
+
+Two related pieces:
+
+**`MPXPrime --bench` CLI.** The benchmark previously lived as a Swift Testing `@Test` gated on `MPXPRIME_BENCH=1`, which means it needed full Xcode (for `Testing.framework`) to run. That blocked running it on machines with only Command Line Tools — including Intel Macs accessed over SSH for the long-pending plan.md A11 Intel benchmark item. Refactored: bench logic moved from `Tests/MPXPrimeTests/BenchmarkSuite.swift` to `Sources/MPXPrime/BenchmarkRunner.swift`; `BenchmarkSuite` becomes a thin `@Test` wrapper that delegates; new `--bench` CLI command in `main.swift` runs the same logic on any machine. The MPXPRIME_BENCH `swift test` workflow on the dev machine continues to work.
+
+**MBP16,1 i7-9750H benchmark captured (closes plan.md A11).** Ran `MPXPrime --bench` on a real Coffee Lake-H Intel Mac to confirm the projected dual-rate payoff on Intel hardware. Measured:
+
+| | M1 Pro (defaults) | Intel i7-9750H (defaults) |
+| --- | --- | --- |
+| Full chain @ 192 kHz, dual-rate off (legacy) | 41.9% RT | **59.1% RT** |
+| Full chain @ 192 kHz, dual-rate on (shipping default) | 24.3% RT | **38.5% RT** |
+| Savings | -17.6 pp / -42% relative | **-20.6 pp / -34.8% relative** |
+| Composite clipper @ 16x | 14.3% RT | **24.6% RT** |
+
+The Intel savings are larger in absolute terms than M1 Pro — exactly the audience the dual-rate refactor was aimed at. Composite clipper at 16x is the single heaviest stage on Intel; the 8x option drops it by ~12 pp. Stacking dual-rate on + 8x clipper gets the i7-9750H full chain to ~27% RT — roughly M1-Pro-with-defaults headroom. Full report at `macOS/benchmarks/mbp16-1-i7-9750h-v0.30.md`.
+
+## 0.30 — 2026-05-23
+
+### DSP — Dual-rate audio chain is now default ON; baseline refreshed; README device-config section
+
+Following the same-day Phase 2 cutover commit, flipping `dualRateAudioDomainEnabled` from default-false to default-true. The savings are large (-17.6 percentage points / -42% relative on M1 Pro), receiver verification confirms stereo separation matches the off baseline, and the bigger relative benefit on older Intel hardware (AVX2 with no AMX) is exactly the audience that needs it most. Operators who want the legacy single-rate chain can set `dual_rate_audio_domain_enabled = False` in their INI.
+
+- **AppConfig default flipped** from `false` to `true`. Sample `MPXPrime.ini` reflects the new default with an inline comment block explaining the trade-off and how to opt out.
+- **Verifier baseline (`macOS/verifier_baselines/default.json`) recaptured** under the new default — `--verify --baseline-strict` now passes again (was reporting drift since the 0.28-era baseline + multiple unrelated 0.29/0.30 changes accumulated).
+- **`DualRateBoundaryTests` regression guards updated**: previous test `defaultDisabledIsBitIdenticalToBaseline` (which asserted `default == false`) split into two new guards — `defaultIsDualRateEnabled` (asserts `default == true`) and `explicitlyDisabledIsStable` (the legacy single-rate path still produces reproducible output, catches drift in that code path for operators who opt out).
+- **README** gains an input-device configuration subsection alongside the existing output-device guidance: input at **48 kHz / 24-bit** is the recommended sweet spot since the audio domain now processes at 48 kHz internally — matches the audio-domain rate without Core Audio upsampling on the way in, no information gain from higher input rates since audio source material has no useful content above ~20 kHz. The output device guidance for 192 kHz / 24-bit unchanged (required for RDS at 57 kHz).
+- **Engines at non-integer engine:audio rate ratios (176.4 / 128 kHz output)** continue to silently fall back to the legacy single-rate chain regardless of this flag — Phase 1's integer-ratio restriction stands. Phase 3 (non-integer polyphase resampler) is a future item.
+
+Tests: 385 default tests pass (one new regression guard added, one renamed). All verify modes pass (--verify --baseline-strict, --verify-presets, --verify-receiver, --verify-composite-multiband, --verify-multiband-coupling). Release build clean; swiftlint 0 violations.
+
+### DSP — Dual-rate audio chain, Phase 2 cutover (audio domain at 48 kHz)
+
+The big one. With this commit the dual-rate boundary is no longer a no-op — when enabled, the entire audio domain (`processProgramStereo` → stereo image protection → pre-emphasis → pre-encode limiter, including multiband splitter/compressors/limiters/expanders, PrimeBass, parametric EQ, stereo widener, phase rotator, wideband AGC, bass clipper, DCC) runs at 48 kHz inside the boundary instead of at the engine's MPX rate after a roundtrip. The MPX domain (composite assembly, BS.412, composite clipper, audio-composite bandwidth FIR, final-MPX safety limiter, pilot+RDS injection) stays at the high rate where pilot/L−R sidebands/57 kHz RDS need bandwidth.
+
+**Measured payoff on M1 Pro (release):**
+
+| | % of real-time |
+|---|---|
+| Boundary off (192 kHz everywhere) | 41.85% |
+| Boundary on (audio 48 kHz, MPX 192 kHz) | **24.26%** |
+| Savings | **-17.59 pp / -42.0% relative** |
+
+Matches the original projection (16.5 pp / 40% relative) from the pre-dualrate baseline. Full report at `macOS/benchmarks/m1pro-v0.30-phase2-cutover.md`. Stereo separation verified to match the boundary-off baseline at 1 / 10 / 14 kHz (42.9 / 26.1 / 33.4 dB on with boundary, 42.9 / 26.0 / 26.4 dB off — 14 kHz separation is slightly *better* with the boundary on).
+
+**Implementation:**
+
+- All audio-domain configure call sites (~15 helpers covering biquads, multiband splitter/compressor/limiter/expander, primeBass internals, stereo widener, bass clipper, DCC, pre-emphasis, pre-encode limiter, program LP, pilot notch, encoder HF guard) now use a new `audioDomainSampleRate` computed property. When the boundary is off, `audioDomainSampleRate == self.sampleRate` and behavior is bit-identical to pre-cutover; when on, the property returns `dualRateAudioRate` (typically 48 kHz) and every stage's coefficients land on the lower-rate grid.
+- `processSampleDetailed` dispatches: boundary-off runs `processAudioDomain` at MPX rate as before; boundary-on calls a restructured `applyDualRateBoundary` that runs `processAudioDomain` exactly once per L OS ticks (when decim emits), pushes the audio-domain output through interp, and serves the L upsampled MPX-rate samples to the MPX domain one per OS tick.
+- Side outputs (`analysisStereo` and `inputActivity`) are buffered between audio-rate ticks via new `latestAudioAnalysisStereo` / `latestAudioInputActivity` state so MPX-domain stages see consistent values every OS tick.
+
+**Two bugs caught + fixed during validation:**
+
+1. **Interp output buffer was being read in the wrong order.** With the original phase counter design, each L-cycle emitted `buffer[L-1], buffer[0], buffer[1], ..., buffer[L-2]` — a per-cycle temporal discontinuity that destroyed phase coherence and trashed stereo separation. Fix: reset `dualRateBoundaryPhase = 0` on every refill so the L outputs are read in chronological order (`[0], [1], ..., [L-1]`).
+2. **`recomputeSubcarrierDelay()` was over-delaying the pilot by the boundary delay.** The boundary sits upstream of the stereo encoder; the freshly-generated pilot and embedded 38 kHz subcarrier are both emitted by the encoder at the current OS tick and do NOT traverse the boundary. Adding boundary delay to the pilot side rotated the pilot ~94° at 19 kHz relative to the embedded carrier — the encoder-side sidebands stayed balanced (SideSum = Mono), but the production decoder's pilot PLL recovered a 38 kHz reference that was phase-rotated from the actual embedded carrier, dropping separation from ~43 dB to ~2 dB. Ideal-coherent decode (which uses the engine's 38 kHz reference directly, not the pilot) was unaffected — which is what initially diagnosed the issue. Fix: removed `dualRateBoundaryDelay` from `recomputeSubcarrierDelay()` (the boundary affects audio-modulation timing but not the encoder-side pilot/subcarrier emission timing).
+
+**Tests:** 384 default tests pass, including `DualRateBoundaryTests.defaultDisabledIsBitIdenticalToBaseline` (regression guard for the boundary-off path). `--verify-receiver` with boundary on confirms separation matches off baseline. Release build clean; swiftlint 0 violations.
+
+**Next:** validation work (real-program listening A/B with boundary on, accumulate hours of operation, refresh stored verifier baselines for the boundary-on path), then look at whether the audio-domain pre-emphasis at 48 kHz needs the planned response-measurement audit vs 192 kHz.
+
+### UX / HIG — Codex review small-fix batch
+
+Four targeted fixes from the 0.30 codebase review (issues A8/A10/H1/H3/H8 + D2):
+
+- **In-app warning when RDS is enabled below 192 kHz output rate.** New chip in `BroadcastStatusBar` ("RDS WARNING — RATE < 192 kHz", orange `exclamationmark.triangle.fill`) appears whenever `enRDS = true` and the effective sample rate (running `renderHz` if engine is up, configured `sampleRate` otherwise) is below 192 kHz. Catches the most common amateur misconfiguration on built-in Mac audio (96 kHz default) where the RDS subcarrier at 57 kHz cannot be represented and folds back into the audio band — operators previously had no in-app cue and would debug RDS coder bugs that didn't exist. Tooltip explains the fix path (raise sample rate vs disable RDS).
+
+- **Global "Restart pending" chip.** New chip in `BroadcastStatusBar` ("PENDING — RESTART REQ.", yellow `arrow.triangle.2.circlepath`) appears whenever `runtimeApplyPending` is true. Single always-visible cue replaces (well, complements — the existing per-tab status text stays) the easy-to-miss in-content status messages. Tooltip enumerates which settings are restart-required.
+
+- **Replace `NavigationSplitView` with `HSplitView` for the root sidebar.** Repo HIG guidance is "HSplitView for static sidebars; NavigationSplitView only when sidebar collapse is required." The previous root view used NavigationSplitView pinned via `columnVisibility: .constant(.all)` + `toolbar(removing: .sidebarToggle)` — a workaround around a view type whose default behaviour included collapsibility. HSplitView is the correct primitive: no sidebar-toggle to remove, no autosaved-collapse state to fight, just a fixed-position stage list on the left and the active stage on the right. Sidebar width range preserved (220 min / 240 ideal / 320 max). Inspector behaviour unchanged. Closes H1 + H8.
+
+- **Explicit Release Validation checklist in AGENTS.md.** Adds a "Release validation checklist" subsection to "Release prep" with explicit checkboxes for swift test, release build, swiftlint, `--verify` / `--verify-presets` / `--verify-receiver` / `--baseline-strict`, release-build live smoke at 192 kHz, Audio MIDI Setup device-rate match, RDS receiver smoke matrix, manual VoiceOver pass for UI changes, and optional deep DSP suite. Previously the prep section was 5 narrative bullets; several validation items the review surfaced (receiver verifier, baseline-strict, accessibility pass) had no anchor in the release process.
+
+## 0.30 — 2026-05-22
+
+### DSP — Dual-rate audio chain refactor, Phase 0 + Phase 1 (no-op boundary)
+
+First infrastructure step of the dual-rate refactor (plan.md "Next up" #1). The goal is to run audio-domain DSP stages at 48 kHz (where 48 kHz input content actually lives) while keeping MPX-domain stages at the high rate where pilot / L-R sidebands / 57 kHz RDS need bandwidth. This commit lands the foundation; Phase 2+ migrates individual stages across the boundary.
+
+**Phase 0 — Polyphase resampler primitive.** New `LinearPhaseFIRInterpolator` (1:L upsampler) in `MPXGenerator.swift`, sibling to the existing `LinearPhaseFIRDecimator`. Same primitives: Kaiser-windowed sinc + `vDSP_dotpr` polyphase commutator, kernel scaled by L for unity DC gain, double-buffered delay-line trick, real-time safe (no allocations on `push`). 7-test suite (`LinearPhaseFIRInterpolatorTests`) covers DC gain, group-delay accounting (OS vs input-rate), impulse-response peak placement, decim → interp round-trip identity (recovers band-limited signal to better than -75 dB RMS error after alignment), zero-stuffing image suppression (≥75 dB at the first image after polyphase upsample), reset/configure idempotence, disabled-state passthrough.
+
+**Phase 1 — No-op boundary wired into `processSampleDetailed`.** Adds `dualRateBoundaryEnabled` and `dualRateAudioRateHz` to AppConfig (INI keys `dual_rate_audio_domain_enabled`, `dual_rate_audio_domain_rate_hz`; defaults `false` / `48000.0`; restart-required). When enabled, the per-OS-sample input L/R is pushed through a decim → interp pair before the rest of the chain runs — audio stages do NOT yet migrate to the lower rate; the boundary just round-trips data to validate the resampler primitives at chain scale. Only integer engine:audio ratios are supported in Phase 1 (192/48 = 4, 96/48 = 2); non-integer ratios (176.4/48 = 3.675, 128/48 = 8/3) silently fall back to disabled. The boundary's combined kernel group delay is folded into `recomputeSubcarrierDelay()` so pilot/RDS stay phase-coherent with the audio composite. `DualRateBoundaryTests` regression-guards three properties: (1) default-disabled is BIT-IDENTICAL to the pre-refactor chain (no opt-out cost), (2) non-integer ratios fall back cleanly (no crash, no aliasing), (3) integer-ratio enable produces recognisable output with peak within ±20% of baseline.
+
+**Next: Phase 2** starts migrating individual audio-domain stages across the boundary. Smallest-first (pre-emphasis or stereo widener) as low-risk first moves, then bass clipper / DC clipper / multiband splitter for the bulk of the CPU win. Each baseline-gated against `--verify --baseline-strict` and re-run through `BenchmarkSuite` to confirm the predicted ~16-percentage-point real-time savings on M1 Pro (and proportionally larger on Intel hardware).
+
+## 0.30 — 2026-05-21
+
+### DSP — Composite clipper oversampling is operator-selectable
+
+`CompositeClipper` was hardcoded at 16× oversampling since post-0.29. It is now configurable to 8 / 16 / 32 via the new `mpx_clipper_oversampling` INI key (default 16, preserves shipping behaviour) and a segmented picker in the Composite Clipper inspector.
+
+Why each option exists:
+- **16× (default)** matches Optimod 8X00 / Omnia.11 / Stereotool industry practice. Sweet spot — pick this unless there is a specific reason to deviate.
+- **8×** halves this stage's CPU cost. Gives up ~6 dB alias suppression at hot drives — measurable but almost never audible on amateur program. The right answer when CPU headroom is the constraint (older Intel Macs, Pi-class hardware).
+- **32×** doubles this stage's CPU cost. Adds ~6 dB further alias suppression — Omnia.9-class spec-sheet number, mostly visible in measurement rather than audible. For operators who want the maximum-quality knob defended and have the CPU to spend.
+
+Restart-required (changes FIR decimator tap count, Lagrange interpolator step count, and per-host batch buffer sizes). `CompositeClipper.factor` is now an instance var assigned in `configure()`. Per-host batch buffers default-size to 32 (the supported maximum) so swapping to a smaller factor shrinks them without reallocating, and bumping back up is also non-allocating after first configure. `RuntimeConfig` carries the field so the live-apply structural-change detector picks up a mismatch (defense-in-depth — the UI uses `.restart` disposition so the engine fully rebuilds on change).
+
+Measured cost on M1 Pro (release, full chain, 192 kHz):
+- 8×:  35.1% of real-time (-6.2 pp vs 16×)
+- 16×: 41.3% of real-time  (reference)
+- 32×: 53.5% of real-time (+12.2 pp vs 16×)
+
+See `macOS/benchmarks/m1pro-v0.30-with-os-selector.md` for the full report. Reproducible with `MPXPRIME_BENCH=1 swift test -c release --filter Benchmark`.
+
+### DSP — opt-in benchmark suite (`BenchmarkSuite`)
+
+New env-gated test suite for measuring absolute DSP cost: rate sweep (96 / 128 / 176.4 / 192 kHz), per-stage A/B (multiband, AGC, EQ, PrimeBass, widener, mono bass, phase rotation, bass clipper, DCC, multiband limiter, pre-emphasis, pre-encode limiter, pre-encode look-ahead, composite clipper, BS.412, RDS), and composite-clipper oversampling sweep (8 / 16 / 32). Outputs a markdown report to stdout with machine info, build mode, and a first-order estimate of dual-rate refactor savings. Gated on `MPXPRIME_BENCH=1` so it does not slow normal `swift test` (returns early when the env var is absent — 374 default tests still pass cleanly).
+
+Purpose: capture a durable "before dual-rate" baseline (plan.md "Next up" #1) so the audio-domain → MPX-domain split can be validated against measured numbers rather than guessed at. Initial M1 Pro capture saved at `macOS/benchmarks/m1pro-v0.30-pre-dualrate.md`; post-OS-selector capture at `macOS/benchmarks/m1pro-v0.30-with-os-selector.md`.
+
+## 0.30 — 2026-05-17
+
+### UI — Format Profiles (atomic "Station Format" selector)
+
+Top-of-Processing-Overview Format Profile picker that atomically applies a coherent bundle of multiband + final-stage + PrimeBass + stereo widener + composite-clipper settings per programming format. One-click "make this sound right for my format" — operator picks the format, downstream stages all receive matching settings. Per-stage knobs remain editable after; the profile is a cosmetic label that stays selected until the operator picks a different one.
+
+Eight format profiles ship:
+- **Community Radio** (default) — `5_ac` light + `balanced` + no PrimeBass + `safe_fm` + +4 dB drive
+- **Pop / Adult Contemporary** — `5_ac` normal + `balanced` + PrimeBass `ac` + `open_music` + +6 dB
+- **CHR / Top 40** — `5_chr` normal + `chr` + PrimeBass `chr` + `wide_chr` + +8 dB
+- **Rock** — `5_rock` normal + `punchy` + PrimeBass `rock` + `open_music` + +7 dB
+- **EDM / Dance** — `5_dance` heavy + `chr` + PrimeBass `chr` + `wide_chr` + +9 dB
+- **Urban / Hip-Hop** — `5_urban` normal + `chr` + PrimeBass `urban` + `open_music` + +8 dB
+- **Jazz / Classical** — `5_classic` light + `balanced` + no PrimeBass + `safe_fm` + +3 dB
+- **News / Talk** — `5_talk` light + `speech` + no PrimeBass + `safe_fm` + +4.5 dB
+
+The "Community Radio" default produces a chain state equivalent to the shipping defaults (regression-guarded by `defaultProfileMatchesShippingDefaults` test) so the new default is a rename, not a behavioural change at first install. Closes "Next up #3" in plan.md (open since 0.26). All eight profiles reuse the existing per-stage preset IDs — no new multiband / final-stage / PrimeBass / widener entries.
+
+New surface:
+- `MPXPrimeViewModel.FormatProfile` struct + `formatProfiles` static catalogue + `applyFormatProfile(_:)` + `formatProfileBinding()` + `currentFormatProfileSummary`
+- `AppConfig.formatProfileID` (INI key `format_profile_id`, default `community_radio`)
+- `ProcessingOverviewGrid` picker card above the existing stage grid
+
+11 new tests in `FormatProfileTests`: catalogue uniqueness, all referenced per-stage IDs exist, atomic apply for `pop_ac` / `edm_dance` / `news_talk`, default profile matches shipping defaults, unknown ID is a no-op, INI round-trip, summary helper. 344 total tests pass (was 333).
+
+## 0.30 — 2026-05-16
+
+### DSP — pre-encode L/R limiter look-ahead (Phase 1 + Phase 2 both default-on)
+
+Two-phase rollout of look-ahead peak control on the pre-encode L/R limiter (`StereoLinkedOversampledPeakLimiter`), closing the last major audible gap versus pro-tier chains on HF transient handling.
+
+- **Phase 1 — basic delay+detector look-ahead, default 1.0 ms.** Audio-rate delay buffer (`lookaheadSamples`, `lDelay` / `rDelay`) added inside the stereo-linked limiter struct. The detector reads the un-delayed input and computes a `futurePeak = max(|left|, |right|)`; the audio path processes the delayed sample; `stereoStep` now uses `peak = max(osPeak, futurePeakHint)` so the gain ramp begins ahead of the actual peak arrival. With attack constant at 0.25 ms, a 1.0 ms lookahead (4x attack time) yields a smooth gain ride instead of the prior reactive tanh squash. `lookaheadMS = 0` short-circuits to the bit-identical legacy path (regression-guarded by test). Restart-required (allocates delay buffer at configure time). New INI key `pre_encode_lookahead_ms`, clamp 0-5 ms, default 1.0. New slider on the Audio Limiter card. Pre-1980 prior art (`US 4,208,548`, expired ~1997); no patent citation required.
+- **Phase 2 — Dolby HF-subband-aware detector, default-on with 4 kHz cutoff.** Per `US 5,579,404` / `EP 0685130 B1` (Dolby Laboratories Licensing Corp, expired 2013-11 US / 2014-02 EP). When `lookaheadHFOnly` is true, the detector path runs through a 2nd-order Butterworth high-pass biquad (`hfDetectorL` / `hfDetectorR`) before computing `futurePeak`. Audio path stays full-band — only the gain envelope changes. Rationale: pre-emphasis adds +10-12 dB specifically to HF before the pre-encode limiter sees the signal, so the peaks the limiter actually fights are concentrated above ~3 kHz. Targeting the lookahead detector at HF leaves LF perceived loudness / punch untouched while preserving the HF-reach improvement that real-program listening A/B validated in Phase 1. New INI keys `pre_encode_lookahead_hf_only` (bool, default True) and `pre_encode_lookahead_hf_cutoff_hz` (float, clamp 1000-12000, default 4000). Both restart-required. New UI toggle + cutoff slider on the Audio Limiter card with cascading disabled-state (cutoff requires HF-only on; HF-only requires lookahead > 0).
+- **Live-apply path preserves all look-ahead settings.** `applyRuntimeConfig` now passes `lookaheadMS` / `lookaheadHFOnly` / `lookaheadHFCutoffHz` through the `preEncodeLimiterChanged` reconfigure so that operator slider moves on threshold / release / residual settings don't silently reset the look-ahead config. Regression-guarded by `liveApplyReconfigurePreservesLookahead` test.
+- **Listening validation:** real-program A/B with HF-rich content (cymbal-heavy mix, sibilant vocal, dense pop) confirmed audibly cleaner HF transients with Phase 1, and improved HF reach (cymbal tails breathe, sibilance no longer "tssk", snare/kick attacks survive). Phase 2 default-on is the architectural completion — focuses the detector on the band that drives the look-ahead path.
+- **Tests** (7 new in `PreEncodeLookaheadTests`): bit-identical regression at lookahead=0, peak overshoot reduction at lookahead>0, mono-link discipline holds with lookahead, live-apply preserves lookahead, Phase 2 LF transients trigger less GR with HF-only on, Phase 2 HF transients still trigger comparable GR, Phase 2 HF-only=false is bit-identical to Phase 1. 329 total tests pass.
+
+### Standards-conformance pass — remove non-spec config knobs and tighten ranges
+
+Audit pass against EN 50067 / IEC 62106-2 / ITU-R BS.450-4 / FCC §73.317 / §73.322 / CEPT FM22 working-group docs. Every knob that allowed a non-spec value or had a range wider than the regulator allows was either removed entirely or tightened to the spec ceiling. INI keys retained where applicable for back-compat; INIParser silently ignores keys that no longer exist in `AppConfig`.
+
+- **`rds_freq` removed entirely.** The 57 kHz RDS subcarrier frequency is spec-fixed at 57 kHz ± 6 Hz, locked to 3x pilot (EN 50067 §2.1.4). The previous GUI slider and INI key allowed values from 40 to 80 kHz which had no operational meaning — the production render path always used `nextSampleWithPilotLock()` (which forces 3x pilot) and ignored the configured value. Removed from `AppConfig`, INI parser, GUI slider, and sample INI files; kept the `nextSample()` free-running path internally with a hardcoded 57 kHz for the tests that use it.
+- **25 µs pre-emphasis removed from accepted values.** No FM broadcast standard uses 25 µs; ITU-R BS.450-4 mandates 50 µs (Europe / ITU), FCC §73.317 / Japan mandates 75 µs, 0 disables. The GUI segmented picker was already correctly limited to Off / 50 / 75; `AppConfig.normalise` was still accepting 25 from legacy INIs. Now snaps to 50 µs.
+- **Sum / Diff Level sliders pulled from GUI.** The FM stereo matrix `M=(L+R)/2`, `S=(L-R)/2` is spec-fixed (ITU-R BS.450-4 / EN 50067 §1.3.1). Setting either knob to anything other than 1.0 produces a non-compliant signal — the receiver's demodulator recovers L and R at wrong levels. INI keys `sum_level` / `diff_level` retained at clamp range `0..2.0` for lab / debug use, but no longer exposed as operator controls. The proper stereo widener (`stereoWidenEnabled`) is the right path for stereo image work.
+- **Pilot Level GUI range tightened to 0...12%.** ITU-R BS.450-4 / FCC §73.322 / EN 50067 specify 8-10% deviation; the prior slider went to 20%. Default stays at 8.0%. INI clamp also tightened to 12%.
+- **Program lowpass range tightened to 8000...16000 Hz, default 16000.** ITU-R BS.450-4 specifies 30 Hz – 15 kHz audio bandwidth for stereo. Prior default 16400 and clamp upper 20000 allowed entering the 17-19 kHz pilot guard region. New default and upper bound stay safely below the encoder FIR rolloff.
+- **BS.412 window tightened to 30...90 s.** ITU-R BS.412-9 / national regulators (DE BNetzA, AT RTR, CH OFCOM, SE PTS, CZ ČTÚ, SI AKOS) all use a 60 s rolling-average window canonically. The prior 1...120 s slider range allowed configurations that aren't BS.412 anymore (1 s window = fast AGC). Default stays at 60 s; tooltip clarified.
+
+Documents updated alongside: `AGENTS.md` / `CLAUDE.md` (RDS restart-only list no longer mentions `rds_freq`), `README.md` ("restart-only physical-layer settings" line), `ARCHITECTURE.md` (RDS disposition table no longer lists `rds_freq` as a row), `plan.md` (P8 patent backlog entry added for `US 5,579,404` and follow-up roadmap for Phase 1 + Phase 2 look-ahead).
+
+### Diagnostics — device-rate mismatch as second-tier buffer-issue cause
+
+`AGENTS.md` / `CLAUDE.md` two-step diagnostic for buffer-overrun / silent-output / 1M+ OVR reports: (1) ask debug-vs-release build; (2) check that Audio MIDI Setup's device format (e.g. "24-bit 192 kHz") matches the configured `sample_rate` in the INI. CoreAudio's implicit SRC bridges any mismatch internally; if the device's nominal rate doesn't match what the chain expects, the render thread starves and the input ring overflows in seconds. Same end-state symptom as a DSP fault (input meters work, output silent, all GR at 0 dB) but very different root cause.
+
 ## 0.29 — 2026-05-14
 
 ### DSP — multiband inter-band coupling (experimental, opt-in)

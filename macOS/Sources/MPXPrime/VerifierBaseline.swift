@@ -143,7 +143,7 @@ func compareBaseline(
         Probe(name: "rmsDeltaDB", unit: "dB", tolerance: tolerances.rmsDeltaDB, get: { $0.rmsDeltaDB }),
         Probe(name: "occupied999Hz", unit: "Hz", tolerance: tolerances.occupied999Hz, get: { $0.occupied999Hz }),
         Probe(name: "above60kRatioDB", unit: "dB", tolerance: tolerances.above60kRatioDB, get: { $0.above60kRatioDB }),
-        Probe(name: "above67kRatioDB", unit: "dB", tolerance: tolerances.above67kRatioDB, get: { $0.above67kRatioDB }),
+        Probe(name: "above67kRatioDB", unit: "dB", tolerance: tolerances.above67kRatioDB, get: { $0.above67kRatioDB })
     ]
 
     // Report missing scenarios (new in measured, or dropped from baseline).

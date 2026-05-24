@@ -43,8 +43,11 @@ explicitly enabled.
 | -------- | ---------------------------------------------------------------- | ------------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **P0 — VALIDATE / PHASE C** | [US 6,937,912](https://patents.google.com/patent/US6937912B1/en) | Anti-aliased clipping with band-limited step functions | 2025-09 | `OversampledPeakLimiter` (pre-encode L/R) landed opt-in; `audioCompositeSoftClipEnabled` shaper still candidate | Phase A/B landed, opt-in via `pre_encode_bandlimited_residual_enabled`. Remaining: program-material validation, then optional Phase C on the audio-composite shaper. |
 | **P1** | [US 6,434,241](https://patents.google.com/patent/US6434241B1/en) | Half-cosine signal peak control | 2014-08 (lapsed) | Same stages as P0, alternative kernel | Continuous-first-derivative half-cosine peak; overshoot drops from ~10 % to 0.1–0.2 %. Less effective than US 6,937,912 for IM rejection but lower CPU. Useful as a selectable kernel or fallback. |
-| **P2 — LANDED** | [US 5,737,434](https://patents.google.com/patent/US5737434A/en) | Multi-band audio compressor with cross-band coupling | Expired | `MonoCompressor` per-band logic in multiband stage | Inter-band gain coupling landed opt-in in 0.28 via `multiband_inter_band_coupling_enabled`. Validation/listening pending. |
 | **P3** | [US 5,892,833](https://patents.google.com/patent/US5892833A/en) | Gain calibration for audio compressors | Expired | `MonoCompressor` makeup-gain stage | Algorithmic gain-staging that tracks compressor's average GR to keep makeup gain roughly compensating. Polish item — low priority. |
+| **P4** | [US 4,249,042](https://patents.google.com/patent/US4249042A/en) | Multiband cross-coupled compressor (FIG. 6 wideband variant) | Expired 1999-08-06 | `WidebandAGCRider` sidechain | Bass-desensitised wideband AGC: clip LF energy out of the AGC sidechain before the detector sees it, so kicks/bass don't drag the whole chain down. Distinct from the landed inter-band coupling (US 5,737,434, P2) — that couples *multiband-band* GR; this desensitises the *wideband* AGC. Ties into "Open gaps #2 — AGC validation." Pairs with P5. |
+| **P5** | [US 3,790,896](https://patents.google.com/patent/US3790896A/en) | Automatic gain control circuit (duration-aware recovery) | Expired (1974 grant) | `WidebandAGCRider` release stage | Multiple time constants → short events recover fast, sustained reductions recover slow. Cheap detector tweak that complements P4 on the same AGC track; together they target "kick drum doesn't pump the chain" from sidechain shape + recovery curve. Extension: the same detector naturally covers **silence-sense freeze** ([US 4,500,753](https://patents.google.com/patent/US4500753A/en), Gentner, expired 2003) — at the long-duration end, freeze recovery during near-silence so the wideband AGC doesn't creep gain up during quiet intros / talk pauses. Land as a third tier of the same time-constant ladder, not a separate stage. |
+| **P6** | [US 7,076,071](https://patents.google.com/patent/US7076071B2/en) | Process for enhancing ambience / imaging (mono-null enhancement bus) | Expired | Stereo widener | Invariant rule: any added enhancement term must algebraically cancel in `L+R`. Land first as a verifier metric (mono-sum delta widener-on vs widener-off), then constrain the widener algorithm to meet it. The FM-safe framing for any future widener work, and the right answer to "stereo image validation" (Open gaps #3). |
+| **P7** | [US 4,567,607](https://patents.google.com/patent/US4567607A/en) | Stereo image recovery (frequency-bounded crossfeed) | Expired 2003-01-28 | Stereo widener | Crossfeed limited to below ~1-5 kHz; phase difference bounded; shaped mono dip around 200-900 Hz. Pairs with P6 as widener guardrails — prevents HF crossfeed hash and mono collapse while still giving perceived width. |
 
 ### Already implemented or structurally equivalent (do not re-implement)
 
@@ -54,6 +57,8 @@ explicitly enabled.
 | [US 6,618,486](https://patents.google.com/patent/US6618486B2/en) (= [US 2003/0142840](https://patents.google.com/patent/US20030142840A1/en)) | BS.412 dual-integrator MPX power controller               | `BS412PowerLimiter` ([`MPXGenerator.swift:1167`](macOS/Sources/MPXPrime/MPXGenerator.swift)) | Functionally equivalent: power-detect → first integrator (rolling 60-s window) → sample-and-hold (per-block flush) → second integrator (currentGain attack/release smoothing) → feedback gain ride. We use a flat rolling-average window instead of a leaky integrator (gives a harder, more compliance-predictable boundary). Lapsed 2015-09-09.                                                              |
 | [US 5,913,152](https://patents.google.com/patent/US5913152A/en)                                                                              | FM composite signal processor with pilot extract / re-sum | Different architecture, same end-state                                                       | We achieve pilot protection through (1) post-clipper subcarrier injection (the project invariant — pilot is never IN the audio composite when the clipper sees it) and (2) RBJ bandpass cancellation in the 17-21 kHz pilot guard inside `CompositeClipper`. Both end-results: clipper IM does not corrupt the pilot. Adopting the patent's extract/re-sum path on top would be redundant. Expired 2015-12-29. |
 | [US 4,737,725](https://patents.google.com/patent/US4737725A/en)                                                                              | Pre-LPF overshoot compensation (Inovonics analog circuit) | `OversampledPeakLimiter` (4× oversampled)                                                    | The patent's analog technique (clip → phase-lag → re-clip → recover clippings → re-inject) is what modern oversampled true-peak limiters achieve digitally. We have one. Expired 1996-04-17.                                                                                                                                                                                                                   |
+| [US 5,737,434](https://patents.google.com/patent/US5737434A/en) | Multi-band audio compressor with cross-band coupling | `MonoCompressor` per-band logic | Inter-band gain coupling landed opt-in in 0.28 via `multiband_inter_band_coupling_enabled`. Listening validation pending; lives in `--verify-multiband-coupling` and "Open ranked impact-per-effort" table. Expired. |
+| [US 5,579,404](https://patents.google.com/patent/US5579404A/en) / [EP 0685130 B1](https://patents.google.com/patent/EP0685130B1/en) | Digital audio limiter — subband-aware look-ahead | `StereoLinkedOversampledPeakLimiter` (pre-encode L/R) | Both phases landed default-on in 0.30. Phase 1 = textbook delay+detector look-ahead (US 4,208,548 prior art, 1 ms default). Phase 2 = Dolby split-band variant, 4 kHz HF detector cutoff. Dolby; US expired ~2013-11, EP ~2014-02. |
 
 ### Bass enhancement (PrimeBass) — secondary backlog
 
@@ -83,20 +88,32 @@ PrimeBass is the adaptive low-band enhancer; goal is to lift perceived bass whil
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [US 7,295,628](https://patents.google.com/patent/US7295628B2/en)      | DSP MPX with sample-frequency-aligned vestigial sideband                                          | Expired 2024-07-30 (full term)                               | Requires `fs = 2 × fmod` (76 kHz chain rate) so the DAC reconstruction filter does half the SSB shaping for free. Our chain runs at 192 kHz throughout; adopting this means a complete chain-rate refactor or a dedicated SRC + secondary path just for the stereo subcarrier. Niche AM/SSB-broadcast technique; FM stereo's DSB-SC is what receivers expect and what IEC 62106 mandates. |
 | [WO 2017/186756](https://patents.google.com/patent/WO2017186756A1/en) | Frequency-domain L+R/L−R protector                                                                | PCT ceased; **CA3021918 potentially enforceable until 2037** | Dual blockers. Legal: Canadian national-phase application may still be enforceable through 2037 (verify before any CA distribution). Technical: OLA-block FFT both M and S each block is CPU-expensive on the audio thread and adds OLA-block latency; M/S domain dynamic L−R limiter (Stereotool style) achieves similar mono-compatibility without FFTs.                                |
-| [US 4,412,100](https://patents.google.com/patent/US4412100A/en)       | Audio limiter using FET attenuator                                                                | Expired                                                      | Analog circuit patent (1981, JFET as voltage-controlled resistor). Pre-DSP era; the modern DSP equivalent (envelope-driven gain reduction with attack/release) is how every compressor in this codebase already works.                                                                                                                                                                    |
+| [US 4,412,100](https://patents.google.com/patent/US4412100A/en)       | Multiband signal processor (Orban)                                                                | Expired 2001-09-21                                           | Distributed-crossover multiband peak-to-RMS processor with embedded clippers (1981 filing). Structurally the prior art for everything we already ship: FIR multiband + per-band `MonoCompressor` + differential composite clipper. The 1981 distributed-clipping concept is at a less modern level than the current chain — nothing to adopt. *(Description was wrong in earlier revisions: "Audio limiter using FET attenuator" is not this patent.)*                                       |
 | [US 7,587,254](https://patents.google.com/patent/US7587254B2/en)      | Dynamic range processor with auxiliary decorrelation in slowly-time-varying L+R limiter sidechain | ~2029                                                        | Filed 2004; not yet expired. Revisit post-2029.                                                                                                                                                                                                                                                                                                                                           |
 
 ## Next up
 
-1. **Anti-aliased clipping kernel (US 6,937,912; Orban; expired Sept 2025).** Phase A/B are landed behind `pre_encode_bandlimited_residual_enabled = False`. Goal remains the same: stop alias/IM products at the clipping event itself rather than relying on oversampling, decimation, and the composite cleanup FIR to remove them after they exist. Remaining:
+1. **Dual-rate audio chain — 48 kHz audio domain, >=176.4 kHz MPX domain.** The entire chain currently runs at the device rate (192 kHz default), but input is universally 48 kHz and audio-domain content carries no information above 24 kHz. The 48 -> 192 kHz upsample at the input boundary makes everything above 24 kHz interpolated zeros - L/R EQ, multiband FIR splitter, pre-emphasis, and pre-encode limiter all process those zeros at 4x the necessary rate. Splitting into an audio domain (48 kHz, where the signal information lives) and an MPX domain (>=176.4 kHz, where pilot / L-R sidebands / 57 kHz RDS need bandwidth) is the textbook pro-encoder architecture (Orban, Stereotool, Omnia).
+   - **Measured before-state on M1 Pro (release, develop/v.030)**: full chain @ 192 kHz = **41.54% of real-time**; audio-domain stages contribute ~23.75% RT, MPX-domain stages ~14.97% RT. Rate sweep is near-linear (96/128/176.4/192 kHz = 21.3 / 27.7 / 38.1 / 41.6% RT). Heaviest stages: **composite clipper 16x = 14.23% RT (MPX, stays at high rate)**, DC clipper = 5.67%, bass clipper = 5.10%, multiband FIR = 4.80%, pre-encode limiter = 3.90%, PrimeBass = 2.29%. Full report at `macOS/benchmarks/m1pro-v0.30-pre-dualrate.md`. Reproduce with `MPXPRIME_BENCH=1 swift test -c release --filter Benchmark` (suite is `BenchmarkSuite`, env-gated so it doesn't run in normal `swift test`).
+   - **Estimated win**: dual-rate brings full chain @ 192 kHz from 41.54% RT down to ~25.80% RT on M1 Pro - **15.74 percentage points / 38% relative reduction** (audio stages drop to ~1/4 cost; MPX stages and ~5% resampler overhead remain). Smaller than the initial "multiband is the bottleneck" framing implied: composite clipper at 14.23% RT is the single heaviest stage and stays at MPX rate. On older Intel (MBP16,1, Coffee Lake-H, AVX2 no AMX), the audio-domain stages are expected to be relatively heavier than on M1 Pro, so dual-rate should save proportionally more there - benchmark needs to run on the 16,1 to confirm.
+   - **Stages that move to 48 kHz**: input -> EQ -> multiband (FIR splitter) -> bass clipper outer rate -> DCC outer rate -> pre-emphasis -> pre-encode limiter -> PrimeBass -> wideband AGC -> stereo widener -> mono bass -> phase rotation -> multiband limiter. The 4x / 8x / 16x internal oversampling on `BassClipper`, `DistortionCancelledClipper`, `CompositeClipper` reaches the same final internal rates (192k, 384k, 3.07 MHz); only the outer rate changes. Anti-aliasing quality unchanged.
+   - **Boundary**: polyphase Kaiser-windowed sinc resampler at the stereo encoder input, mirroring `LinearPhaseFIRDecimator` design (Kaiser-windowed sinc + `vDSP_dotpr` polyphase). Group delay folded into subcarrier-delay alignment and look-ahead sizing. Resampler overhead budget: <5% RT.
+   - **Open risks**: (1) pre-emphasis at 48 kHz - RC-shelf bilinear biquad is fractionally less accurate near Nyquist than at 192 kHz; within broadcast tolerance (every professional plant does it at 48 kHz) but needs one-time response measurement against current behavior; (2) verifier baselines all move on re-render - capture pre-refactor baselines, then `--baseline-strict` gates each stage migration, refresh defaults after the resampler lands; (3) boundary audit - any non-linearity introduced after the lower-rate audio chain but before upsampling would alias; (4) look-ahead delay buffer sizing moves with the outer rate (restart-only setting already; no live-apply change needed).
+   - **Approach**: introduce the resampler + boundary first as a no-op (audio stages still run at MPX rate, resampler only converts at engine boundary), then migrate stages across one at a time, baseline-gated. Bass clipper + DC clipper + multiband splitter are the largest single wins; PrimeBass and pre-encode limiter follow. Re-run `BenchmarkSuite` after each stage migration to confirm the predicted reduction.
+   - **Phase 0 + Phase 1 LANDED (2026-05-22)**: `LinearPhaseFIRInterpolator` (1:L polyphase upsampler) primitive + tests landed; resampler boundary wired into `processSampleDetailed` as a no-op (off by default; opt-in via `dual_rate_audio_domain_enabled = true` with integer-ratio engine rates like 192/48 = 4 or 96/48 = 2). Non-integer engine rates (176.4 / 128 kHz with 48k audio) silently fall back to disabled — Phase 1 integer-ratio only.
+   - **Phase 2 LANDED (2026-05-23)**: cutover complete — when boundary is on, the entire audio domain runs at 48 kHz inside the boundary instead of MPX rate after a roundtrip. Measured payoff on M1 Pro: full chain 41.85% RT → 24.26% RT, **-17.59 pp / -42.0% relative savings**. Matches the original projection. Stereo separation preserved (1k/10k/14k = 42.9/26.1/33.4 dB matches the off baseline). Two cutover bugs caught + fixed: interp buffer read order, and pilot over-delay via `recomputeSubcarrierDelay`. See CHANGELOG 0.30 (2026-05-23 entry) for the detailed implementation + bug post-mortems. Full benchmark at `macOS/benchmarks/m1pro-v0.30-phase2-cutover.md`.
+   - **Default-ON LANDED (2026-05-23)**: `dualRateAudioDomainEnabled` flipped from default-false to default-true. Verifier baseline (`macOS/verifier_baselines/default.json`) recaptured under the new default; `--verify --baseline-strict` now passes. `DualRateBoundaryTests` regression guards updated. README gains the matching input-device configuration recommendation (48 kHz / 24-bit). 385 tests pass; all verifier modes OK.
+   - **Open follow-ups**: real-program listening A/B at the new default (operator confirmation that 48 kHz audio-domain doesn't reveal audible regressions vs the legacy chain on dense / sibilant program), measure pre-emphasis bilinear-biquad response at 48 kHz vs 192 kHz to confirm broadcast-tolerance, Phase 3 (non-integer ratio polyphase resampler) for engine rates like 176.4 / 128 kHz that currently fall back to the legacy chain.
+   - **Composite clipper acceleration is a separate, complementary track** - at 14.23% RT it's the single largest cost in the chain and dual-rate does not directly reduce it (stays at MPX rate). Worth investigating separately whether the 16x oversampling + LinearPhaseFIRDecimator path can be tightened.
+   - **Scope**: target 0.31 / 0.32. ~1-2 weeks engineering + verifier baseline refresh.
+
+2. **Anti-aliased clipping kernel (US 6,937,912; Orban; expired Sept 2025).** Phase A/B are landed behind `pre_encode_bandlimited_residual_enabled = False`. Goal remains the same: stop alias/IM products at the clipping event itself rather than relying on oversampling, decimation, and the composite cleanup FIR to remove them after they exist. Remaining:
    - **B finish.** A/B real program material with `pre_encode_bandlimited_residual_enabled = True`; decide whether any loud preset should enable the residual path.
    - **C. Apply same primitive to `softClipSafety` calls inside `processFinalComposite`** only if B proves benefit. Keep pilot/RDS injection post-processing and preserve the composite budget governor invariant.
    - **D. Refresh verifier baselines and listen on real program.** Do not relax current verifier thresholds unless measurement proves they are overfitting.
    References: Välimäki "Discrete-Time Modelling..." (1995), Brandt "Hard Sync without Aliasing" (2001), Stilson/Smith "Alias-Free Digital Synthesis..." (1996).
 
-2. **Tune and validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped (0.26) and silent live-resize shipped (0.27); listening work remains. Dense real-program A/B at 0.5 / 1 / 2 ms via the live slider; verify pilot and RDS guard cleanliness; decide whether loud presets ship with a small non-zero default. Captured WAVs land in `macOS/.audit-out/lookahead/` via the env-gated `MPXPRIME_AUDIT_CAPTURE=1` capture driver (directory is gitignored). Runs in parallel with #1 — listening is a separate track from DSP.
-
-3. **Preset tuning — make it sound great out of the box.** Composite clipper now ships clean (delta-based per-band substitution + optional look-ahead; subcarrier sidebands within ~1 dB across the audio band) and the chain is in canonical industry order. Tune `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, `mpx_clipper_lookahead_ms`, AGC density curve, and stereo widener defaults so a fresh install with no operator knowledge already sounds noticeably better than `mpxgen` / PiFmRds. Add a small set of named presets (e.g. `clean`, `loud`, `community-radio`, `lpfm-conservative`) as INI fragments. Best done after #1 + #2 land so presets can bake in both the anti-aliased clipper behaviour and a tuned look-ahead default.
+3. **Tune and validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped (0.26) and silent live-resize shipped (0.27); listening work remains. Dense real-program A/B at 0.5 / 1 / 2 ms via the live slider; verify pilot and RDS guard cleanliness; decide whether loud presets ship with a small non-zero default. Captured WAVs land in `macOS/.audit-out/lookahead/` via the env-gated `MPXPRIME_AUDIT_CAPTURE=1` capture driver (directory is gitignored). Runs in parallel with #1 — listening is a separate track from DSP.
 
 4. **Smoke-test pass.** Validate live-apply vs restart-required settings on difficult real material. Catch any transients / clicks / dropouts on toggle changes. Pre-release blocking item. The new RDS live-apply paths (PI / PTY / flags / AF / scheduler) need particular attention — most are tested at the bit-stream level but not against real receivers.
 
@@ -104,27 +121,59 @@ PrimeBass is the adaptive low-band enhancer; goal is to lift perceived bass whil
 
 6. **Receiver-model verifier hardening.** The receiver verifier is now implemented and reports coherent decode, PLL external-style decode, ideal raw M/S decode, raw sideband balance, stage-isolation rows, mono/no-pilot behavior, and pilot/RDS spectral health. Next work is hardening: promote budget invariants such as unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets, then add stored baselines for receiver metrics.
 
-### High-frequency stereo separation — landed in 0.28
+### High-frequency stereo separation — `MPXDecoder` audit (only remaining thread)
 
-Default-config receiver decode at **1 kHz 65 dB / 10 kHz 50.5 dB / 14 kHz 43.4 dB** (coherent and PLL agree within 0.1 dB), exceeding the original ≥35 / ≥30 / ≥25-30 dB targets by 13-31 dB. Investigation infrastructure (`--verify-receiver` raw sideband analyzer + stage-isolation sweep + ideal-receiver A/B), root-cause fixes (`audio_composite_smoother_enabled` default off, `MPXDecoder.diffDecodeGain` back to 1.0), and PLL refactor all in. See CHANGELOG 0.28 for the audit.
+Receiver decode landed clean in 0.28 (1 kHz 65 dB / 10 kHz 50.5 dB / 14 kHz 43.4 dB, see CHANGELOG 0.28 for the audit). Outstanding: audit `MPXDecoder` deemphasis / notch / 15.5 kHz lowpass contribution if production decode needs to close further on the ideal-coherent ceiling. Receiver-verifier hardening ("Next up" #6) is the structural complement.
 
-Only remaining thread: audit `MPXDecoder` deemphasis / notch / 15.5 kHz lowpass contribution if production decode needs to close further on the ideal-coherent ceiling. Receiver-verifier hardening ("Next up" #6) is the structural complement.
+### MPX Prime Meter — companion MPX analyzer app
 
-### Extended MPX monitoring
+A standalone macOS companion app that consumes external MPX composite input (192 kHz preferred, 96 kHz supported with RDS warnings) from a tuner's MPX output, an SDR demod, or a virtual loopback, and shows the live measurements an operator needs to validate an air-chain.
 
-MPX Prime should treat "monitoring" as a real receive path, not only as a convenience downmix. The same reusable MPX decoder should support both internal generated-MPX monitoring and external MPX input monitoring from a high-rate USB audio interface.
+**Scope: core basics only — not a full receiver replacement.** Reference points are MpxTool (the discontinued Windows freeware: stereo encoder/decoder, MPX waveform + spectrum + RDS displays), Pira FM Scope (MPX oscilloscope, audio scope, stereo balance, MPX spectrum, pilot + RDS level + phase), and DEVA DB4005 / Band Scanner Pro (MPX input + decoded L/R + RDS data + pilot level). MPX Prime Meter aims for the subset of those features that an amateur operator actually uses during air-chain calibration and on-air monitoring.
 
-Scope for the first phase:
+**Architecture decision (separate app, not a tab in MPX Prime).**
+- Operator mental model: MPX Prime = transmit chain, MPX Prime Meter = receive / analyze. No confusion about which path a control affects.
+- Independent lifecycle: an operator can monitor a deployed air-chain (running on different hardware) without booting MPX Prime's full DSP at the same time.
+- Code reuse: refactor `MPXDecoder` + the pilot PLL + the analysis helpers (currently in `MPXGenerator.swift` and `MPXDecoder.swift`) into a shared `MPXPrimeCore` SPM library target inside `macOS/Package.swift`. Both `MPXPrime` (transmit) and `MPXPrimeMeter` (receive) depend on it. The shared library is also where the RDS *decoder* lives — `BasicRDSCoder` today is encode-only; the symmetric decoder for the meter is new code, ~300 lines, but lives next to the encoder so the two stay in lockstep.
 
-- **Generated MPX monitor.** Continue decoding our own generated composite MPX back to L/R monitor audio through the shared `MPXDecoder`, so what the operator hears represents what an FM stereo receiver would recover, not a separate shortcut path.
-- **External USB MPX monitor.** Add an `MPX Input Analyzer` mode that treats the selected USB audio input as composite MPX, decodes it to monitor L/R audio, and exposes receiver-style health metrics.
-- **Shared analyzer metrics.** Report pilot level, pilot lock confidence, composite RMS/peak, decoded L/R levels, stereo correlation, side/mid balance, and RDS-band energy around 57 kHz.
-- **Pilot-PLL receive mode.** Internal generated monitoring may use a known reference, but external USB MPX must use a real pilot-locked receive path. Add a stronger PLL mode to `MPXDecoder` for arbitrary input.
-- **Real-time safety.** The analyzer path must obey the same audio-thread rules as the transmit chain: no allocations, locks, dispatch, logging, string formatting, or wall-clock calls in the render callback.
-- **USB input expectations.** Target 192 kHz USB capture first. Warn in the UI when the selected input rate is too low for useful MPX analysis.
-- **Deferred.** WAV/file analysis and full RDS group/text decoding are future receiver features. Phase 1 only measures RDS-band presence and level.
+**Core basics scope (minimum viable v1):**
 
-Implementation shape: keep this separate from the transmit DSP chain. Analyzer mode receives MPX, decodes it, meters it, and sends decoded L/R to monitor output; it must not reprocess external MPX through the generator chain.
+1. **Input device picker.** Same UI affordance as MPX Prime's output device picker. Validate that the device runs at 192 kHz (preferred) or 96 kHz. At 96 kHz the meter shows an "RDS band not representable" warning chip (Nyquist 48 < 57); pilot + audio + stereo subcarrier still meter correctly.
+2. **MPX spectrum (FFT 0–100 kHz).** 4096-point real-input FFT at the input rate, ~47 Hz bin width at 192 kHz, 30 fps refresh. Magnitude in dBFS. Cyan slow-decay peak-hold overlay (250 ms). Annotated frequency markers at 19 kHz (pilot), 38 kHz (suppressed carrier), 57 kHz (RDS), 67 / 92 kHz (SCA — if present).
+3. **Pilot detector card.** 19 kHz pilot level shown as % of total FM deviation (target 8–10 %), lock status (locked / searching / unlocked) from the existing `MPXDecoder.pilotLockConfidence`, pilot phase relative to internal reference in degrees.
+4. **Peak-deviation meter.** Sample-by-sample composite peak with 1.5 s hold marker, calibrated to display kHz of FM deviation. Green 0–72 kHz, yellow 72–75 kHz, red >75 kHz (FCC / ITU spec line).
+5. **L / R / Mid / Side level meters.** PPM-style stereo meters on the post-`MPXDecoder` decoded audio. Mid/Side correlation indicator (1.0 = mono-compatible, <0 = phase-inverted).
+6. **Stereo separation reading.** When the input contains a stable single-frequency tone (>2 s of dominant content at 1 / 10 / 14 kHz, auto-detected), report separation in dB. Most recent reading sticks until a new test tone is detected.
+7. **RDS basic readout.** PI code (hex), PS (current bank, auto-scrolled if dynamic), PTY (numeric + standard label), TP and TA flags. Full RT / RT+ / AF / Long PS / scheduler decode is OUT OF SCOPE for v1 — the operator's real receiver already handles those for listening; the meter is for protocol-correctness verification, not for full receiver replacement.
+8. **Composite oscilloscope.** Free-running or trigger-on-pilot waveform display at ~10 ms timebase. Useful for quick "is the composite the right shape" sanity check during exciter calibration.
+
+**Explicitly OUT OF SCOPE for v1** (defer or skip):
+- RDS group-level statistics or decode logging
+- WAV / file analysis (live input only)
+- Multipath / RF-level indication (the meter takes baseband composite, not RF)
+- Recording of MPX input streams
+- Test signal generation (MPX Prime's job)
+- Stokkemask / RF mask estimation
+- SCA decode
+
+**Real-time safety.** The analyzer's audio thread obeys the same rules as MPX Prime's transmit thread: no allocations, locks, dispatch, logging, string formatting, or wall-clock calls in the render callback. FFT and meter updates use the standard double-buffered "audio thread writes, main thread reads" pattern.
+
+**Shared library refactor (prerequisite — also the first concrete step of the wider modularization push, see Code-quality priorities → P1):**
+1. New SPM target `MPXPrimeCore` in `macOS/Package.swift`. Move `MPXDecoder.swift`, pilot PLL primitives, `MPXAnalysisTap` (if extracted), and the new symmetric RDS decoder there. `AppConfig` stays in `MPXPrime` (transmit-specific).
+2. `MPXPrime` and `MPXPrimeMeter` both declare `MPXPrimeCore` as a dependency.
+3. ~1–2 days for the extraction. Existing 385-test suite must still pass against the extracted module.
+4. This is the forcing function for the wider P1 structural cleanup: once `MPXPrimeCore` proves the SPM-target boundary pattern, the bigger transmit-side splits (`MPXGenerator.swift` → stage-focused files, `AudioOutputEngine.swift` → concern-focused files, `SwiftUIControlApp.swift` → one-card-per-file) follow with established conventions. Modularization stops being "should-do cleanup" and starts being "the way new code lands."
+
+**Distribution.**
+- Sibling `.app` in `macOS/dist/MPXPrimeMeter.app`, signed with the same developer certificate, packaged as a separate DMG (`MPXPrimeMeter-<version>.dmg`).
+- `build-release.sh` extended to optionally build both products; default builds both.
+- One README and one CHANGELOG cover both; both apps versioned together (v0.30 ships with v0.30 of the meter).
+
+**Estimated scope:** 1–2 weeks for v1 ship-ready. The shared-library refactor is the riskiest piece; once that's in, the analyzer UI is mostly SwiftUI + Accelerate `vDSP_fft_zrip` plumbing.
+
+### Generated-MPX monitoring (existing — keeps living in MPX Prime)
+
+Separate from the analyzer app: MPX Prime continues to support decoding its own generated composite back to L/R monitor audio through the shared `MPXDecoder`. The monitor output already represents what an FM stereo receiver would recover, not a shortcut downmix. The "External MPX monitoring" mode that earlier plan.md revisions described as a tab inside MPX Prime is superseded by `MPXPrimeMeter` — operators wanting to inspect external MPX use the companion app.
 
 7. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. Pre-emphasis is now in L/R upstream of the pre-encode limiter, so dynamic relaxation can either modulate the existing `preL` / `preR` filters in place or build a dedicated sidechain detector — both paths are now compatible with the production chain. Lower priority for amateur-grade; this is a polish item.
 
@@ -156,9 +205,9 @@ direction; ASCII Long PS is correct for amateur-grade use):
 
 These close the gap from "best amateur-grade" toward prosumer/lower-commercial. Stretch goals — preset tuning + smoke-testing + README still come first since the amateur-grade audience benefits more from those than from any of these. Listed in rough priority order.
 
-### Multiband DSP modernisation
+### Multiband DSP modernisation — Phase 3 (only remaining)
 
-Phases 1, 2, and 4 are landed. Phase 1 (linear-phase FIR crossovers) is default-on; Phases 2 (transient-aware attack) and 4 (inter-band coupling) are opt-in via INI flags with verifier A/B coverage. See CHANGELOG for the detail. Only remaining open phase:
+Phases 1 / 2 / 4 already shipped (see CHANGELOG). Only open phase:
 
 - **Phase 3: Per-band look-ahead.** Reuse `LookaheadLimiter`'s ring-buffer pattern per band so each band's compressor sees its peaks ~1–5 ms before they arrive. Largely redundant with Phase 2 once that's in. Scope: ~3–5 days. Probably skip unless listening shows Phase 2 isn't enough on dense percussive program.
 
@@ -166,7 +215,28 @@ Phases 1, 2, and 4 are landed. Phase 1 (linear-phase FIR crossovers) is default-
 
 1. **Multiband composite clipping.** Phase 1 landed opt-in (`mpx_multiband_clipper_enabled`, host-rate linear-phase low/mid/high splitting with per-band ceilings, verifier A/B via `--verify-composite-multiband`). Remaining: dense-program listening, oversampling refinement if HF aliasing turns out audible, preset decision.
 
-2. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #1 says the residual cross-domain IM is audible at amateur drive levels.
+2. **Stereo-band cancellation depth via FIR bandpass.** *Optional / depth-only.* The delta-based per-band substitution gets ~5–10 dB cancellation in the stereo subband — bounded by LR4 phase rolloff in the protected bands. A linear-phase FIR bandpass for the substitution would push this to 20+ dB without affecting subcarrier preservation. Worth doing only if listening evaluation in "Next up" #2 says the residual cross-domain IM is audible at amateur drive levels.
+
+### Audio-clipper oversampling refinement
+
+`CompositeClipper` was raised from 8× to 16× post-0.29 for industry-standard parity (Optimod 8X00, Omnia 11, Stereotool all run their composite clipper at 16× or higher). 0.30 made the factor operator-selectable across {8, 16, 32} via `mpx_clipper_oversampling` (default 16) — 8× for CPU-constrained machines, 32× for Omnia.9-class spec-sheet parity. The same argument applies to the audio-domain clippers, which currently sit one tier below pro:
+
+- **`BassClipper`** — 4× now; pro chains run 16×+ on the bass clipper.
+- **`DistortionCancelledClipper`** — 8× now; pro chains run 16–32× on the audio-band clipper, often with look-ahead.
+
+Both currently use `Lagrange4Interp` + `BiquadCascade6` (12th-order Butterworth decimation LP). Raising the OS rate likely also wants a switch to `LinearPhaseFIRDecimator` (Kaiser-windowed sinc + `vDSP_dotpr` polyphase) — same primitive the composite clipper now uses — for tighter stopband at the higher OS rate. The historical `DistortionCancelledClipper` aliasing test (5111 Hz × 5th harmonic landing at 25555 Hz, near native Nyquist) is the most stringent measurement gate; current threshold is −38 dBFS in `DistortionCancelledClipperTests.aliasingEnergy`, but pro chains push this past −75 dBFS.
+
+**Why polish, not next-up**: at typical amateur drive levels the aliasing is already inaudible — the current 8× DC clipper + LR4 cancellation path measures cleanly on real program. The win is industry-standard headroom for hot-driven HF content and a defensible parity story against the pro chains. Diminishing returns; verify with `--verify --baseline-strict` and the aliasing-energy tests before committing to a tap-count increase.
+
+**Scope estimate**: 1–2 days per clipper for the OS bump + decimation-filter swap + benchmark + verifier baseline refresh. The chain currently has ~70% real-time headroom (per `DSPThroughputTests`) so absolute CPU cost is comfortably absorbed.
+
+### HF look-ahead clipper (mention)
+
+Omnia.9 / Stereotool ship a dedicated HF clipper stage with predictive sidechain — a separate clipper sitting on top of the multiband chain that look-aheads on the high band only, shaving HF transients before they hit the broadband composite clipper. MPX Prime currently relies on the broadband composite clipper's look-ahead (`mpx_clipper_lookahead_ms`, 0.26) and the per-band multiband expander/limiter; there is no dedicated HF clipper stage.
+
+Audible mostly on dense EDM / contemporary pop where HF transients hit the composite clipper hard enough to cost loudness or cleanliness. Marginal on top-shelf program material. One of the two real audible gaps versus a $15k Optimod (the other is dynamic pre-emphasis, "Next up" #7).
+
+Implementation shape would be a new `HFClipper` stage between the multiband recombine and pre-emphasis, with its own oversampled tanh kernel + sliding-window-max detector (same primitive as the composite clipper's look-ahead). Significant algorithm + listening-validation effort; polish-tier, not next-up.
 
 ### Enterprise-parity status
 
@@ -181,7 +251,7 @@ Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereot
 | **3** | Multiband composite clipping validation | `mpx_multiband_clipper_enabled` / `--verify-composite-multiband` | 1 day | High - implementation and verifier A/B are in; next step is dense-program listening before preset use |
 | **4** | Receiver verifier hardening | "Next up" #6 | 2–4 days | High — receiver verifier exists; next step is stored receiver baselines and harder failures for budget invariants |
 | **5** | Inter-band gain coupling validation ("loud bass softens highs") | `multiband_inter_band_coupling_enabled` / `--verify-multiband-coupling` | 1 day | Medium — implementation and verifier A/B are in; next step is listening before preset use |
-| 6 | Composite look-ahead default tuning (listening) | "Next up" #2 | ~3–5 days | Medium — turns the 0.26-landed feature into operator-visible loudness improvement |
+| 6 | Composite look-ahead default tuning (listening) | "Next up" #3 | ~3–5 days | Medium — turns the 0.26-landed feature into operator-visible loudness improvement |
 
 **Honest rating, today, structurally:**
 - vs. **Optimod 8500/8600**: ~70–80% of audible chain quality. Look-ahead composite peak control landed in 0.26 and Phase 1 multiband composite clipping landed opt-in in 0.28; the remaining real loudness-architecture gap is validation, preset tuning, and deeper refinements rather than basic topology.
@@ -203,10 +273,10 @@ The amateur-grade goal is structurally complete. Remaining work is validation, p
 ## Phase 7 — remaining items
 
 ### 7.6. Dynamic pre-emphasis
-See "Next up" #4. Pre-emphasis itself is now in L/R upstream of the pre-encode limiter (post-0.24 chain-order modernization, see "Broadcast-tier follow-ups → Chain-order audit"). A dynamic / lookahead-driven HF envelope follower that relaxes the pre-emphasis curve during transients is still future work. If implemented, it can either modulate `preL`/`preR` in place, or — for a sidechain-only HF-boost feed — be built as a dedicated detector path that doesn't disturb the audio-domain `preL`/`preR` filters. The previous `DSPThroughputTests.preEmphasisDoesNotExplodeFullChainCost` constraint (which guarded the b806053 M/S→L/R relocation against budget overrun) is now historical — the current chain has ~70% real-time headroom and the relocation it guarded against is now what ships.
+See "Next up" #7. Pre-emphasis itself is now in L/R upstream of the pre-encode limiter (post-0.24 chain-order modernization, see "Broadcast-tier follow-ups → Chain-order audit"). A dynamic / lookahead-driven HF envelope follower that relaxes the pre-emphasis curve during transients is still future work. If implemented, it can either modulate `preL`/`preR` in place, or — for a sidechain-only HF-boost feed — be built as a dedicated detector path that doesn't disturb the audio-domain `preL`/`preR` filters. The previous `DSPThroughputTests.preEmphasisDoesNotExplodeFullChainCost` constraint (which guarded the b806053 M/S→L/R relocation against budget overrun) is now historical — the current chain has ~70% real-time headroom and the relocation it guarded against is now what ships.
 
 ### 7.7. Pilot-synchronized clipper control
-Defer indefinitely. If the composite clipper's gain-reduction envelope modulates near 19 kHz, it can induce sidebands around the pilot. The 8x oversampling + 12th-order Butterworth decimation already keeps clipper-band IM out of 17–21 kHz, but a control-envelope coupling could in principle reintroduce it. Measure first, then phase-lock the clipper's release to a pilot subharmonic if needed. Likely below the audibility threshold for amateur use; revisit only if a real operator complaint surfaces.
+Defer indefinitely. If the composite clipper's gain-reduction envelope modulates near 19 kHz, it can induce sidebands around the pilot. The 16× oversampling + linear-phase Kaiser FIR decimation already keeps clipper-band IM out of 17–21 kHz (and the pilot guard's RBJ-BPF residual cancellation removes whatever leaks through), but a control-envelope coupling could in principle reintroduce it. Measure first, then phase-lock the clipper's release to a pilot subharmonic if needed. Likely below the audibility threshold for amateur use; revisit only if a real operator complaint surfaces.
 
 ### 7.9. Input-side restoration
 Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (Omnia.9 "Undo"-class). Out of scope for amateur-grade — most amateur operators have control over their source material and don't need source restoration. Revisit only if MPX Prime starts being used for degraded streaming sources at scale.
@@ -220,7 +290,8 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 ### Sprint
 1. Validate PrimeBass, mono bass, widener, and multiband interaction on difficult real material.
 2. Refine calibration workflow only where real operator friction exists.
-3. Build a small set of named presets (`clean`, `loud`, `community-radio`, `lpfm-conservative`) — INI fragments shipped alongside the binary.
+3. Real-program listening A/B per Format Profile (the eight 0.30 profiles) to fine-tune per-profile clipper drives.
+4. **Intel benchmark capture (MBP16,1 i7-9750H / i9-9980HK).** LANDED 2026-05-24. Captured on a real MBP16,1 i7-9750H (Coffee Lake-H, AVX2 no AMX). Measured savings: legacy single-rate chain at 59.1% RT, dual-rate on 38.5% RT — **-20.6 pp / -34.8% relative**. Better than the projected ~84% → ~48%. Composite clipper at 16x is the single heaviest stage on Intel (24.6% RT); stacking dual-rate on + 8x composite clipper drops full chain to ~27% RT, equivalent to M1-Pro-with-defaults headroom. Full report at `macOS/benchmarks/mbp16-1-i7-9750h-v0.30.md`. The capture was enabled by extracting `BenchmarkRunner` to `Sources/MPXPrime/` and exposing it via `MPXPrime --bench` so CLT-only machines can run it without full Xcode.
 
 ### Medium-term
 1. Reduce duplicated filter configuration logic in biquad/crossover helpers.
@@ -232,23 +303,40 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 7. Harden config file watching/reload behavior against race conditions.
 8. Move RDS byte-string preparation off the audio render path.
 
+### UX / accessibility polish (0.30 codex-review residue)
+
+Items surfaced by the 0.30 codebase review that aren't immediate-fix but should land before the project is positioned as a polished amateur operator tool rather than a research console.
+
+1. **Rename implementation-language UI labels.** Cards still expose patent / phase / topology terms that read as developer notes: "Use New Band-limited Limiter Ceiling", "HF-Only Look-ahead Detector (Phase 2 / Dolby)", "Experimental Multiband Composite Clipping", "Cancel pilot guard (17-21 kHz)", "Cancel RDS guard (55-59 kHz)". Replace with outcome-language operator-friendly equivalents and move the patent / source detail into tooltips and CHANGELOG. Per-label product judgment required, not a mechanical rename.
+2. **Quiet the visible help prose.** `TabHelpBox` sits at the bottom of every Processing / RDS / Snapshots / Test Tone tab, plus several cards have explanatory `Text` blocks. Apple HIG-aligned pro apps keep primary control surfaces scannable. Move longer explanations into `.help()` tooltips, README, or an Advanced inspector; keep only safety-critical one-liners inline.
+3. **Stronger sidebar enabled-state affordance.** `StageSidebarRow` shows a 6 pt accent dot with `accessibilityLabel("Enabled")`. The dot is subtle on its own — consider a small native status badge, a secondary text label, or both. Verify contrast in light mode, dark mode, increased contrast, and grayscale.
+4. **Meter accessibility audit.** `UIBroadcastMeter` and `UIBroadcastStatusBar` have zero `accessibilityLabel/Element/Value` annotations. VoiceOver users get no meaningful summary of input level, output level, GR, budget, pilot/RDS state. Add semantic group summaries; mark high-frequency decorative visual updates as `accessibilityHidden` so they don't flood the announcer.
+5. **Control density review.** Final Stage, Audio Limiter, Multiband, RDS Program / Schedule / Carrier tabs are dense for amateur operators. Consider disclosure groups (`DisclosureGroup`) for advanced / experimental controls so the common workflow stays clean. Format Profile already does most of the work here; this is the per-tab polish that follows.
+
 ## Code-quality priorities
 
 ### P0 — Confidence and safety
 1. Add deterministic unit tests for AGC envelope behavior, filter primitives (PreemphasisFilter, DeemphasisFilter, Biquad, BiquadCascade6), stereo coding M/S round-trip sanity, and bypass-path null-signal tests.
 2. Fix the verifier bandwidth metric so RDS does not produce misleading occupied-width failures (`bright_dense` occ999 warning disappears when `en_rds = False`).
+3. **Render-path scratch growth is a real-time safety risk.** `AudioOutputEngine.ensureMonitorScratchCapacity(frames:)` and `ensureAnalysisScratchCapacity(frames:)` allocate arrays if the buffer is smaller than the render frame count. Normal operation uses the `preAllocateBuffers(maxFrames:)` path so it shouldn't fire, but the fallback exists and would allocate on the audio thread if CoreAudio delivers a larger-than-expected buffer (post device change, post hardware buffer duration change). Convert the runtime capacity check into a debug assertion or pre-start failure; track max observed frame count outside the render path.
+4. **Stored receiver baseline file.** `--verify --baseline-strict` now passes against the composite-side `default.json` (refreshed 0.30 default-on), but receiver-side metrics (separation @ 1/10/14 kHz, pilot level error, RDS-band RMS, stereo correlation, mono/no-pilot, sideband balance) are NOT pinned. Promote unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets, then add stored receiver baselines alongside the composite baseline.
 
 ### P1 — Structural cleanup
-1. Split `MPXGenerator.swift` (~7900 lines now) into stage-focused components.
-2. Split `AudioOutputEngine.swift` by concern (device routing, capture, render loop, metering, monitoring).
-3. Split `SwiftUIControlApp.swift` (~7600 lines now) into smaller views and state holders.
-4. Reduce hidden coupling between engine, config, generator, and UI state.
+
+The MPX Prime Meter companion app (see "Companion app" subsection above) is the **forcing function** that turns this tier from "should-do-someday cleanup" into actual work with a concrete consumer. Module boundaries that have to exist for the meter (clean `MPXDecoder`, pilot PLL, RDS decoder, analysis tap) are exactly the boundaries that the existing 8 000-line `MPXGenerator.swift` has been hiding. The order below puts the meter-driven extraction first; the bigger transmit-side splits follow once `MPXPrimeCore` proves the SPM-target pattern works for this repo.
+
+1. **Carve out `MPXPrimeCore` SPM library target** (driven by MPX Prime Meter). Move `MPXDecoder.swift`, the pilot PLL primitives currently embedded in `MPXGenerator`, the new symmetric RDS decoder (encoder-only today), and FFT / analysis helpers into a new library target in `macOS/Package.swift`. Both `MPXPrime` and `MPXPrimeMeter` depend on it. The 385-test suite must still pass against the extracted module. **~1-2 days, first concrete modularization step.**
+2. Split `MPXGenerator.swift` (~8 000 lines today) into stage-focused files. After the `MPXPrimeCore` extraction lands, what remains is the transmit-side audio chain + composite assembly + MPX-domain stages. Suggested split: one file per major stage (`Multiband.swift`, `PrimeBass.swift`, `BassClipper.swift`, `DistortionCancelledClipper.swift`, `CompositeClipper.swift`, `Filters.swift` for shared biquad/FIR primitives, etc.). Pure mechanical move once the file is small enough to safely cut.
+3. Split `AudioOutputEngine.swift` by concern (device routing, capture, render loop, metering, monitoring). Cross-checks against the meter's much simpler "input device → MPXDecoder → meters → optional monitor output" pipeline make the right boundaries obvious — the transmit engine has been doing too much in one class.
+4. Split `SwiftUIControlApp.swift` (~7 600 lines now) into smaller views and state holders. The MPX Prime Meter UI is a much smaller surface (8 measurement cards + spectrum + scope) so it's a good place to establish the "one card per file" SwiftUI pattern before retrofitting the transmit app.
+5. Reduce hidden coupling between engine, config, generator, and UI state. Easier to see what's coupled once the files are right-sized.
 
 ### P2 — Harden behavior
 1. Strengthen `AppConfig` validation (invalid ranges, illegal combinations, impossible sample-rate/block-size).
 2. Re-tune final-stage composite headroom for vocal/transient stability (`sum_level` 1.0 → 0.9 investigation).
 3. Harden device and routing edge cases.
 4. Make error reporting more structured.
+5. **Consolidate `plan.md` and `FUTURE.md` overlap.** Both files describe current status and future DSP items; some items appear in one as landed and the other as remaining. Keep `plan.md` as the active prioritized roadmap; collapse `FUTURE.md` into pointers / "low-priority ideas only" or fold into `plan.md` directly. Remove status tables that duplicate `CHANGELOG.md`.
 
 ### P3 — Performance
 1. Further vDSP utilization where profiling shows value.
@@ -383,6 +471,8 @@ Ships in L/R, immediately upstream of the pre-encode limiter (canonical Optimod 
 - [US 5,737,434 — Multi-band audio compressor (Orban, expired)](https://patents.google.com/patent/US5737434A/en)
 - [US 6,434,241 — Half-cosine interpolation composite limiter (Orban, expired)](https://patents.google.com/patent/US6434241B1/en)
 - [US 6,937,912 — Anti-aliased clipping with band-limited step functions (Orban, expired)](https://patents.google.com/patent/US6937912B1/en)
+- [US 5,579,404 / EP 0685130 — Digital audio limiter with subband-aware look-ahead (Dolby, expired 2013-2014)](https://patents.google.com/patent/US5579404A/en)
+- [US 4,208,548 — Peak-limiting audio frequency signals (delay+detector prior art, expired ~1997)](https://patents.google.com/patent/US4208548A/en)
 - [Stereotool — Limiting and Clipping documentation](https://www.thimeo.com/documentation/limiting_and_clipping.html)
 - [Telos RDS guidance](https://docs.telosalliance.com/docs/rds)
 

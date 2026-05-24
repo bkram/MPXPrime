@@ -280,13 +280,38 @@ struct StereoLinkedOversampledPeakLimiter {
     private var rResidualClipper = AcceleratedBandlimitedResidualClipper()
     private var initialized: Bool = false
 
+    // Look-ahead: audio-rate delay so the detector sees the incoming peak
+    // before it reaches the gain stage, letting the attack ramp engage
+    // ahead of the audio. lookaheadSamples == 0 → bit-identical to the
+    // no-lookahead path (cheap regression guard). Prior art: US 4,208,548
+    // (delay+detector primitive, expired ~1997).
+    private var lookaheadSamples: Int = 0
+    private var lDelay: [Float] = []
+    private var rDelay: [Float] = []
+    private var delayWriteIndex: Int = 0
+
+    // Phase 2: HF-subband-aware look-ahead per US 5,579,404 / EP 0685130
+    // (Dolby, expired 2013). When `lookaheadHFOnly` is true, the detector
+    // path runs through a 2nd-order Butterworth high-pass at ~4 kHz so
+    // futurePeak only fires on HF transients. Audio path stays full-band.
+    // Architecturally clean: pre-emphasis concentrates peaks above ~3 kHz,
+    // so the detector matches the band where the limiter actually fights.
+    // LF dynamics (kick, bass) are not subject to the look-ahead's gain
+    // ramp and retain their punch.
+    private var lookaheadHFOnly: Bool = false
+    private var hfDetectorL = Biquad()
+    private var hfDetectorR = Biquad()
+
     mutating func configure(
         sampleRate: Float,
         threshold: Float,
         releaseMS: Float = 35.0,
         bandlimitedResidualEnabled: Bool = false,
         residualTapCount: Int = 33,
-        residualCutoffFraction: Float = 0.25
+        residualCutoffFraction: Float = 0.25,
+        lookaheadMS: Float = 0.0,
+        lookaheadHFOnly: Bool = false,
+        lookaheadHFCutoffHz: Float = 4_000.0
     ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
@@ -318,47 +343,104 @@ struct StereoLinkedOversampledPeakLimiter {
             tapCount: residualTapCount,
             cutoffFraction: residualCutoffFraction
         )
+
+        // Look-ahead delay buffers (audio-rate). Clamp 0-5 ms — anything
+        // above ~3 ms is past the point of diminishing returns for HF
+        // transient capture on this stage and starts costing real chain
+        // latency.
+        let clampedLookahead = clampf(lookaheadMS, 0.0, 5.0)
+        let newLookaheadSamples = max(0, Int((sampleRate * clampedLookahead * 0.001).rounded()))
+        if newLookaheadSamples != lookaheadSamples {
+            lookaheadSamples = newLookaheadSamples
+            lDelay = lookaheadSamples > 0 ? Array(repeating: 0.0, count: lookaheadSamples) : []
+            rDelay = lookaheadSamples > 0 ? Array(repeating: 0.0, count: lookaheadSamples) : []
+            delayWriteIndex = 0
+        }
+
+        // Phase 2 detector HP at host rate. Clamp cutoff 1-12 kHz; default
+        // 4 kHz matches the Dolby spec where pre-emphasis-induced peaks
+        // start dominating. Reset filter state on each reconfigure.
+        self.lookaheadHFOnly = lookaheadHFOnly
+        let hfCutoff = clampf(lookaheadHFCutoffHz, 1_000.0, 12_000.0)
+        hfDetectorL.configureHighpass(cutoffHz: hfCutoff, sampleRate: sampleRate)
+        hfDetectorR.configureHighpass(cutoffHz: hfCutoff, sampleRate: sampleRate)
+        hfDetectorL.reset()
+        hfDetectorR.reset()
+
         initialized = false
     }
 
     mutating func process(left: Float, right: Float) -> (Float, Float) {
+        // Look-ahead: the detector reads the un-delayed input while the
+        // audio path processes the delayed sample. With attack time
+        // calibrated near lookaheadSamples / sampleRate the gain ramp is
+        // already fully engaged when the actual peak reaches the gain
+        // stage. lookaheadSamples == 0 short-circuits to the legacy path
+        // for bit-identical regression behavior.
+        var procL = left
+        var procR = right
+        var futurePeak: Float = 0.0
+        if lookaheadSamples > 0, !lDelay.isEmpty {
+            // Detector input: full-band (Phase 1) or HF-filtered (Phase 2).
+            // HF mode high-passes a COPY of the input through a biquad so
+            // futurePeak only triggers on HF transients (the band where
+            // pre-emphasis concentrates peaks). Audio path stays full-band.
+            if lookaheadHFOnly {
+                let hpL = hfDetectorL.process(left)
+                let hpR = hfDetectorR.process(right)
+                futurePeak = max(fabsf(hpL), fabsf(hpR))
+            } else {
+                futurePeak = max(fabsf(left), fabsf(right))
+            }
+            procL = lDelay[delayWriteIndex]
+            procR = rDelay[delayWriteIndex]
+            lDelay[delayWriteIndex] = left
+            rDelay[delayWriteIndex] = right
+            delayWriteIndex += 1
+            if delayWriteIndex >= lookaheadSamples {
+                delayWriteIndex = 0
+            }
+        }
+
         if !initialized {
             initialized = true
-            lPrev3 = left; lPrev2 = left; lPrev1 = left
-            rPrev3 = right; rPrev2 = right; rPrev1 = right
-            let (qL, qR) = stereoStep(lOS: left, rOS: right)
+            lPrev3 = procL; lPrev2 = procL; lPrev1 = procL
+            rPrev3 = procR; rPrev2 = procR; rPrev1 = procR
+            let (qL, qR) = stereoStep(lOS: procL, rOS: procR, futurePeakHint: futurePeak)
             return (decimate(qL, qL, qL, qL, ch: .left),
                     decimate(qR, qR, qR, qR, ch: .right))
         }
 
         // 4x upsample both channels via Lagrange interp.
-        let l1 = interpolateLagrange4(t: 0.25, current: left,
+        let l1 = interpolateLagrange4(t: 0.25, current: procL,
                                       p3: lPrev3, p2: lPrev2, p1: lPrev1)
-        let l2 = interpolateLagrange4(t: 0.50, current: left,
+        let l2 = interpolateLagrange4(t: 0.50, current: procL,
                                       p3: lPrev3, p2: lPrev2, p1: lPrev1)
-        let l3 = interpolateLagrange4(t: 0.75, current: left,
+        let l3 = interpolateLagrange4(t: 0.75, current: procL,
                                       p3: lPrev3, p2: lPrev2, p1: lPrev1)
-        let l4 = left
-        let r1 = interpolateLagrange4(t: 0.25, current: right,
+        let l4 = procL
+        let r1 = interpolateLagrange4(t: 0.25, current: procR,
                                       p3: rPrev3, p2: rPrev2, p1: rPrev1)
-        let r2 = interpolateLagrange4(t: 0.50, current: right,
+        let r2 = interpolateLagrange4(t: 0.50, current: procR,
                                       p3: rPrev3, p2: rPrev2, p1: rPrev1)
-        let r3 = interpolateLagrange4(t: 0.75, current: right,
+        let r3 = interpolateLagrange4(t: 0.75, current: procR,
                                       p3: rPrev3, p2: rPrev2, p1: rPrev1)
-        let r4 = right
+        let r4 = procR
 
         // Stereo-linked gain step at each OS position. Same gain
-        // applied to both channels each step.
-        let (qL1, qR1) = stereoStep(lOS: l1, rOS: r1)
-        let (qL2, qR2) = stereoStep(lOS: l2, rOS: r2)
-        let (qL3, qR3) = stereoStep(lOS: l3, rOS: r3)
-        let (qL4, qR4) = stereoStep(lOS: l4, rOS: r4)
+        // applied to both channels each step. The future-peak hint biases
+        // the detector toward an incoming (un-delayed) peak so the
+        // attack engages early.
+        let (qL1, qR1) = stereoStep(lOS: l1, rOS: r1, futurePeakHint: futurePeak)
+        let (qL2, qR2) = stereoStep(lOS: l2, rOS: r2, futurePeakHint: futurePeak)
+        let (qL3, qR3) = stereoStep(lOS: l3, rOS: r3, futurePeakHint: futurePeak)
+        let (qL4, qR4) = stereoStep(lOS: l4, rOS: r4, futurePeakHint: futurePeak)
 
         let outL = decimate(qL1, qL2, qL3, qL4, ch: .left)
         let outR = decimate(qR1, qR2, qR3, qR4, ch: .right)
 
-        lPrev3 = lPrev2; lPrev2 = lPrev1; lPrev1 = left
-        rPrev3 = rPrev2; rPrev2 = rPrev1; rPrev1 = right
+        lPrev3 = lPrev2; lPrev2 = lPrev1; lPrev1 = procL
+        rPrev3 = rPrev2; rPrev2 = rPrev1; rPrev1 = procR
         return (outL, outR)
     }
 
@@ -368,11 +450,15 @@ struct StereoLinkedOversampledPeakLimiter {
     }
 
     @inline(__always)
-    private mutating func stereoStep(lOS: Float, rOS: Float) -> (Float, Float) {
+    private mutating func stereoStep(lOS: Float, rOS: Float, futurePeakHint: Float = 0.0) -> (Float, Float) {
         // Stereo-linked detector: peak of either channel drives the
         // shared gain envelope. This is the core of the stereo-link
         // discipline — both channels see the same multiplicative gain.
-        let peak = max(fabsf(lOS), fabsf(rOS))
+        // `futurePeakHint` (look-ahead path) is the un-delayed input
+        // peak; using max() ensures we never under-detect when a peak
+        // is incoming but not yet at the gain stage.
+        let osPeak = max(fabsf(lOS), fabsf(rOS))
+        let peak = max(osPeak, futurePeakHint)
         var targetGain: Float = 1.0
         if peak > threshold {
             targetGain = threshold / max(1e-9, peak)
@@ -452,7 +538,10 @@ struct PreEncodeAudioLimiter {
         releaseMS: Float = 50.0,
         bandlimitedResidualEnabled: Bool = false,
         residualTapCount: Int = 33,
-        residualCutoffFraction: Float = 0.25
+        residualCutoffFraction: Float = 0.25,
+        lookaheadMS: Float = 0.0,
+        lookaheadHFOnly: Bool = false,
+        lookaheadHFCutoffHz: Float = 4_000.0
     ) {
         limiter.configure(
             sampleRate: sampleRate,
@@ -460,7 +549,10 @@ struct PreEncodeAudioLimiter {
             releaseMS: releaseMS,
             bandlimitedResidualEnabled: bandlimitedResidualEnabled,
             residualTapCount: residualTapCount,
-            residualCutoffFraction: residualCutoffFraction
+            residualCutoffFraction: residualCutoffFraction,
+            lookaheadMS: lookaheadMS,
+            lookaheadHFOnly: lookaheadHFOnly,
+            lookaheadHFCutoffHz: lookaheadHFCutoffHz
         )
         gainReduction = 0.0
     }
@@ -942,7 +1034,10 @@ struct BassClipper {
         var n = Int32(f * 2)
         clipDrivenBatch.withUnsafeMutableBufferPointer { dPtr in
             clipTanhBatch.withUnsafeMutableBufferPointer { tPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
                 vvtanhf(tPtr.baseAddress!, dPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
             }
         }
         for i in 0..<(f * 2) {
@@ -1026,7 +1121,10 @@ struct DistortionCancelledClipper {
         var n = Int32(f * 2)
         clipExcessBatch.withUnsafeMutableBufferPointer { exPtr in
             clipTanhBatch.withUnsafeMutableBufferPointer { thPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
                 vvtanhf(thPtr.baseAddress!, exPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
             }
         }
         for i in 0..<(f * 2) {
@@ -1108,7 +1206,16 @@ struct CompositeClipper {
     /// decimation; the wanted signal rides a 1× delay-matched bypass.
     /// Inspired by Orban US 6,337,999 (expired 2022).
     private var decimLP = LinearPhaseFIRDecimator()
-    private static let factor: Int = 8
+    /// Oversampling factor (8 / 16 / 32). Configurable since 0.31 via
+    /// `mpx_clipper_oversampling`. Changing it reconfigures the FIR
+    /// decimator, the Lagrange interpolator state, and the per-host
+    /// batch buffers — restart-required.
+    private var factor: Int = 16
+    /// Default factor used for stack-allocated batch sizing before
+    /// `configure()` runs. Keep aligned with the highest factor in the
+    /// valid set so the default-init buffers can hold the largest
+    /// configuration without reallocation if a caller later up-sizes.
+    private static let defaultFactor: Int = 32
 
     /// Host-rate bypass delay line. Holds the wanted (clean) input
     /// delayed by the FIR's group delay so it aligns with the
@@ -1163,12 +1270,13 @@ struct CompositeClipper {
     private var peakDecayCoeff: Float = 0.0
 
     // Stack-allocated batch buffers for vvtanhf-accelerated soft-clipping.
-    // 8 elements = `Self.factor` oversample steps. Pre-allocated at
-    // configure time so the audio thread never allocates.
-    private var upBatch: [Float] = Array(repeating: 0.0, count: factor)
-    private var clipBatch: [Float] = Array(repeating: 0.0, count: factor)
-    private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: factor)
-    private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: factor)
+    // `factor` elements = one oversample step per host sample.
+    // Pre-allocated to `defaultFactor` so the audio thread never allocates
+    // even before configure() runs; resized to the active factor in configure().
+    private var upBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
+    private var clipBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
+    private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
+    private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
 
     // === Look-ahead peak control (0.26) ===
     // Predictive sidechain that knows the future peak amplitude over the
@@ -1188,8 +1296,8 @@ struct CompositeClipper {
     private var lookaheadDelayWriteIdx: Int = 0
 
     // Lemire monotonic deque (sliding-window max) over OS-rate samples.
-    // Operating at OS rate (8x host) so the detector sees Lagrange-
-    // interpolated intersample peaks — closes the gap where a host-rate
+    // Operating at OS rate (`factor` × host) so the detector sees
+    // Lagrange-interpolated intersample peaks — closes the gap where a host-rate
     // detector misses the 0.3-1.0 dB intersample peaks above |x| and
     // lets them through after pre-clip gain scaling. deqValues /
     // deqIndices are pre-allocated to the 5 ms maximum window at configure
@@ -1205,7 +1313,7 @@ struct CompositeClipper {
     // un-delayed input `x` so the deque sees OS samples that the audio
     // path will encounter `lookaheadHostSamples` host samples from now.
     private var detLag = Lagrange4Interp()
-    private var detOSBatch: [Float] = Array(repeating: 0.0, count: factor)
+    private var detOSBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
 
     // Gain state machine: exponential attack toward gTarget (rate tied
     // to lookaheadHostSamples so gain reaches ~98% by the time the
@@ -1230,17 +1338,39 @@ struct CompositeClipper {
     mutating func configure(sampleRate: Float, thresholdDB: Float, ceilingDB: Float,
                             cancelAudio: Bool = false, cancelStereo: Bool = true,
                             cancelPilot: Bool = true, cancelRDS: Bool = true,
-                            lookaheadMS: Float = 0.0) {
+                            lookaheadMS: Float = 0.0,
+                            oversamplingFactor: Int = 16) {
+        // Only accept 8 / 16 / 32. Clamp to the nearest valid value
+        // rather than rejecting — keeps callers simple and matches
+        // AppConfig.sanitize() which also clamps.
+        let validFactor: Int
+        switch oversamplingFactor {
+        case ...8:        validFactor = 8
+        case 9...16:      validFactor = 16
+        default:          validFactor = 32
+        }
+        self.factor = validFactor
+        // Resize batch buffers to match the active factor. Default-init
+        // size was `defaultFactor` (= 32, the max), so going to a smaller
+        // factor shrinks; going larger is a no-op shape-wise but the
+        // count change is needed so loop bounds match.
+        if upBatch.count != validFactor { upBatch = [Float](repeating: 0.0, count: validFactor) }
+        if clipBatch.count != validFactor { clipBatch = [Float](repeating: 0.0, count: validFactor) }
+        if clipExcessBatch.count != validFactor { clipExcessBatch = [Float](repeating: 0.0, count: validFactor) }
+        if clipTanhBatch.count != validFactor { clipTanhBatch = [Float](repeating: 0.0, count: validFactor) }
+        if detOSBatch.count != validFactor { detOSBatch = [Float](repeating: 0.0, count: validFactor) }
+
         thresholdLin = clampf(powf(10.0, min(0.0, thresholdDB) / 20.0), 0.1, 0.995)
         let cMin: Float = thresholdLin + 0.02
         ceilingLin = clampf(powf(10.0, min(0.0, ceilingDB) / 20.0), cMin, 0.999)
         knee = max(1e-4, ceilingLin - thresholdLin)
-        let osRate = sampleRate * Float(Self.factor)
+        let osRate = sampleRate * Float(self.factor)
         // FIR decimator passband must contain the entire audio
         // composite (0–53 kHz: M, S subcarrier sidebands at 38±15
-        // kHz). Cutoff at 53 kHz with a wide transition band — at OS
-        // rate 1.536 MHz (8× × 192 kHz) the available stopband region
-        // is so wide that even a moderate transition gives ≥90 dB
+        // kHz). Cutoff at 53 kHz with a wide transition band — at the
+        // default OS rate 3.072 MHz (16× × 192 kHz, factor configurable
+        // to 8 / 16 / 32 since 0.30) the available stopband region is
+        // so wide that even a moderate transition gives ≥90 dB
         // rejection at the first IM target (64 kHz). Kaiser-sinc
         // designs to the stopBand target; tap count auto-sizes.
         let firPassband = clampf(53_000.0, 20_000.0, osRate * 0.45)
@@ -1248,7 +1378,7 @@ struct CompositeClipper {
         decimLP.configure(
             cutoffHz: firPassband,
             sampleRateOS: osRate,
-            decimateFactor: Self.factor,
+            decimateFactor: self.factor,
             stopBandDB: 90.0,
             transitionHz: firTransition
         )
@@ -1293,7 +1423,7 @@ struct CompositeClipper {
         lookaheadEnabled = n > 0
         lookaheadDelay = [Float](repeating: 0.0, count: cap)
         lookaheadResizeScratch = [Float](repeating: 0.0, count: cap)
-        let maxWindowOS = cap * Self.factor
+        let maxWindowOS = cap * self.factor
         deqCapacity = maxWindowOS + 2
         deqValues = [Float](repeating: 0.0, count: deqCapacity)
         deqIndices = [Int](repeating: 0, count: deqCapacity)
@@ -1350,7 +1480,7 @@ struct CompositeClipper {
     }
 
     /// Focused live-update for the look-ahead window size only. Skips the
-    /// FIR decimator / bypass delay / 8 bandpass filter reconfiguration
+    /// FIR decimator / bypass delay / bandpass filter reconfiguration
     /// that `configure(...)` does, and preserves the ducking state
     /// (`lookaheadGain` / `lookaheadGainEnv` / `lookaheadLPState`) so a
     /// GUI slider drag doesn't snap gain back to 1.0 on every tick.
@@ -1445,12 +1575,12 @@ struct CompositeClipper {
         if lookaheadEnabled {
             // 1. OS-rate sliding-window-max push. The detector's
             //    Lagrange interpolator runs on the un-delayed input x;
-            //    we compute 8 OS samples between the previous host
-            //    sample and x, then push each to the deque. This sees
+            //    we compute `factor` OS samples between the previous
+            //    host sample and x, then push each to the deque. This sees
             //    Lagrange-interpolated intersample peaks that a
             //    host-rate detector would miss.
             if !detLag.isPrimed { detLag.prime(x) }
-            let f = Self.factor
+            let f = self.factor
             let stepDet = 1.0 / Float(f)
             for i in 0..<f {
                 let t = stepDet * Float(i + 1)
@@ -1551,10 +1681,10 @@ struct CompositeClipper {
         }
 
         if !lag.isPrimed { lag.prime(xPath) }
-        let f = Self.factor
+        let f = self.factor
         let step = 1.0 / Float(f)
 
-        // Phase 1: pre-compute all 8 oversampled inputs via Lagrange interp.
+        // Phase 1: pre-compute all `f` oversampled inputs via Lagrange interp.
         // Lagrange state advances only at lag.advance(x) below, so this
         // is safe to do as a batch up front.
         for i in 0..<f {
@@ -1562,8 +1692,8 @@ struct CompositeClipper {
             upBatch[i] = (i == f - 1) ? xPath : lag.interpolate(t: t, cur: xPath)
         }
 
-        // Phase 2: batched soft-clip via vvtanhf. Replaces 8 scalar tanhf
-        // calls with one vvtanhf call on an 8-element vector — reduces
+        // Phase 2: batched soft-clip via vvtanhf. Replaces `f` scalar tanhf
+        // calls with one vvtanhf call on an `f`-element vector — reduces
         // libm tanhf overhead and uses Apple Silicon's vector exp/log
         // pipeline. Below-threshold samples bypass the tanh result entirely
         // (the tanh is still computed in the batch but its result is
@@ -1577,7 +1707,10 @@ struct CompositeClipper {
         var n = Int32(f)
         clipExcessBatch.withUnsafeMutableBufferPointer { excessPtr in
             clipTanhBatch.withUnsafeMutableBufferPointer { tanhPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
                 vvtanhf(tanhPtr.baseAddress!, excessPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
             }
         }
         var sampleClipGain: Float = 1.0
@@ -1666,7 +1799,7 @@ struct CompositeClipper {
 
             // Push residual into FIR decimator. Returns the most-
             // recent emitted decimated value; the value updates only
-            // on the 8th push of each host sample, so the value read
+            // on the f-th push of each host sample, so the value read
             // after the loop is the freshly-decimated residual.
             residualDecimated = decimLP.push(residual)
         }
@@ -2065,6 +2198,8 @@ struct LinearPhaseFIRLowpass {
         var outR: Float = 0
         let n = vDSP_Length(lengthTaps)
         coeffs.withUnsafeBufferPointer { coeffPtr in
+            // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+            // swiftlint:disable force_unwrapping
             delayL.withUnsafeBufferPointer { delayPtr in
                 vDSP_dotpr(
                     coeffPtr.baseAddress!, 1,
@@ -2081,6 +2216,7 @@ struct LinearPhaseFIRLowpass {
                     n
                 )
             }
+            // swiftlint:enable force_unwrapping
         }
 
         writeIdx += 1
@@ -2199,17 +2335,152 @@ struct LinearPhaseFIRDecimator {
             let n = vDSP_Length(lengthTaps)
             coeffs.withUnsafeBufferPointer { c in
                 delay.withUnsafeBufferPointer { d in
+                    // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+                    // swiftlint:disable force_unwrapping
                     vDSP_dotpr(
                         c.baseAddress!, 1,
                         d.baseAddress!.advanced(by: writeIdx), 1,
                         &out,
                         n
                     )
+                    // swiftlint:enable force_unwrapping
                 }
             }
             lastOutput = out
         }
         return lastOutput
+    }
+}
+
+/// Linear-phase 1:L FIR interpolator. Companion to `LinearPhaseFIRDecimator`.
+///
+/// **Purpose.** Feeds the dual-rate audio chain boundary planned for 0.31:
+/// when the audio domain runs at 48 kHz and the MPX domain at >= 176.4 kHz,
+/// this primitive performs the upsample at the boundary. Designed at OS
+/// (output) rate so the stopband sits cleanly above the wanted band and
+/// alias images from zero-stuffing land below the noise floor.
+///
+/// **Polyphase decomposition.** A direct 1:L interpolator zero-stuffs the
+/// input by L and runs an N-tap FIR at OS rate — most multiplies are by
+/// zero. Polyphase reorganises into L sub-filters (phases), each of length
+/// `tapsPerPhase = ceil(N / L)`, operating at the *input* rate. Per input
+/// sample we emit L outputs, each costing one `tapsPerPhase`-length dot
+/// product against the input-rate delay line. Total work per input is
+/// L × tapsPerPhase ≈ N multiplies — the same as direct OS-rate
+/// convolution, but with no wasted multiplies by zero and a single shared
+/// delay line.
+///
+/// **Coefficient orientation.** The kernel `h[0..N-1]` is the Kaiser-sinc
+/// designed at OS rate, scaled by L to preserve unity DC gain (each output
+/// sample sums only the 1/L of the kernel that falls under a non-zero
+/// input). Phase p contains taps `h[p], h[p+L], h[p+2L], ...` in
+/// chronological order — i.e. tap 0 weights the *newest* input. Because
+/// our shared delay-line convention puts the *oldest* sample at the start
+/// of the read window (matching `LinearPhaseFIRDecimator`'s
+/// `delay.baseAddress! + writeIdx` layout), the stored phases are reversed
+/// at configure() time so `vDSP_dotpr` against the oldest-first window
+/// produces the correct result.
+///
+/// **Emission order.** Per `push(x)`, the L emitted samples are at OS-rate
+/// times `Lx(n - groupDelay) + 0, +1, ..., +L-1` — i.e. `out[0]` is
+/// chronologically earliest, `out[L-1]` is latest.
+struct LinearPhaseFIRInterpolator {
+    private var phaseCoeffs: [[Float]] = []  // L arrays, each `tapsPerPhase` long, REVERSED
+    private var delay: [Float] = []          // input-rate, double-buffered (size = 2 × tapsPerPhase)
+    private var writeIdx: Int = 0
+    private var tapsPerPhase: Int = 0
+    private var totalTaps: Int = 0
+    private var interpolateFactor: Int = 1
+
+    var tapCount: Int { totalTaps }
+    /// Group delay measured in OS-rate (output) samples = kernel midpoint.
+    var groupDelayOSSamples: Int { max(0, (totalTaps - 1) / 2) }
+    /// Group delay measured in input-rate samples, rounded to nearest integer.
+    /// The ±0.5 OS-sample residual is sub-microsecond at typical rates.
+    var groupDelayInputSamples: Int {
+        guard interpolateFactor > 0 else { return 0 }
+        return (groupDelayOSSamples + interpolateFactor / 2) / interpolateFactor
+    }
+    var factor: Int { interpolateFactor }
+    var enabled: Bool { tapsPerPhase > 0 }
+
+    mutating func configure(
+        cutoffHz: Float,
+        sampleRateOS: Float,
+        interpolateFactor: Int,
+        stopBandDB: Float = 90.0,
+        transitionHz: Float = 60_000.0
+    ) {
+        let L = max(1, interpolateFactor)
+        // Kaiser-sinc designed at OS rate. Same coefficient kernel as the
+        // decimator — symmetric, linear-phase, configurable stopband.
+        let kernel = kaiserSincLowpassCoefficients(
+            cutoffHz: cutoffHz,
+            sampleRate: sampleRateOS,
+            stopBandDB: stopBandDB,
+            transitionHz: transitionHz
+        )
+        // Scale by L so the DC gain stays unity: each output sample sums
+        // contributions from at most 1/L of the kernel under the polyphase
+        // decomposition.
+        let scaled = kernel.map { $0 * Float(L) }
+        let N = scaled.count
+        let T = (N + L - 1) / L
+        // Build phase tables, stored REVERSED so the dot-product against
+        // the shared oldest-first delay window gives the natural newest-
+        // weighted-by-tap-0 result.
+        var phases = [[Float]](repeating: [Float](repeating: 0.0, count: T), count: L)
+        for n in 0..<N {
+            let p = n % L
+            let k = n / L
+            phases[p][T - 1 - k] = scaled[n]
+        }
+        self.phaseCoeffs = phases
+        self.totalTaps = N
+        self.tapsPerPhase = T
+        self.interpolateFactor = L
+        delay = [Float](repeating: 0.0, count: max(1, T) * 2)
+        writeIdx = 0
+    }
+
+    mutating func reset() {
+        guard tapsPerPhase > 0 else { return }
+        for i in 0..<delay.count { delay[i] = 0 }
+        writeIdx = 0
+    }
+
+    /// Push one input sample. Emits `factor` output samples into the
+    /// caller-supplied buffer `out`, which MUST be at least `factor`
+    /// elements long. Real-time-safe: no allocations.
+    @inline(__always)
+    mutating func push(_ x: Float, into out: UnsafeMutablePointer<Float>) {
+        guard tapsPerPhase > 0 else {
+            // Disabled — passthrough: emit `factor` copies of input.
+            for i in 0..<interpolateFactor { out[i] = x }
+            return
+        }
+        // Write into both halves of the double-buffer so the read window
+        // is contiguous regardless of writeIdx wrap.
+        delay[writeIdx] = x
+        delay[writeIdx + tapsPerPhase] = x
+        writeIdx += 1
+        if writeIdx >= tapsPerPhase { writeIdx = 0 }
+
+        let n = vDSP_Length(tapsPerPhase)
+        let L = interpolateFactor
+        delay.withUnsafeBufferPointer { d in
+            // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+            // swiftlint:disable force_unwrapping
+            let dStart = d.baseAddress!.advanced(by: writeIdx)
+            for p in 0..<L {
+                phaseCoeffs[p].withUnsafeBufferPointer { c in
+                    var y: Float = 0
+                    vDSP_dotpr(c.baseAddress!, 1, dStart, 1, &y, n)
+                    out[p] = y
+                }
+            }
+            // swiftlint:enable force_unwrapping
+        }
     }
 }
 
@@ -2256,8 +2527,7 @@ struct LinearPhaseFIRSplitter {
     /// Returns `(low_l, low_r, high_l, high_r)` with both outputs delayed
     /// by `groupDelaySamples` relative to the unfiltered input.
     mutating func process(left: Float, right: Float)
-        -> (lowL: Float, lowR: Float, highL: Float, highR: Float)
-    {
+        -> (lowL: Float, lowR: Float, highL: Float, highR: Float) {
         guard lengthTaps > 0 else { return (left, right, 0, 0) }
         delayL[writeIdx] = left
         delayR[writeIdx] = right
@@ -2361,8 +2631,7 @@ struct LinearPhaseMultibandSplitter5 {
     /// Returns 5 stereo bands `(b1L, b1R) ... (b5L, b5R)`, all delayed by
     /// `groupDelaySamples` relative to the input.
     mutating func process(left: Float, right: Float)
-        -> ((Float, Float), (Float, Float), (Float, Float), (Float, Float), (Float, Float))
-    {
+        -> ((Float, Float), (Float, Float), (Float, Float), (Float, Float), (Float, Float)) {
         let n = delayL.count
         guard n > 0 else {
             return ((0, 0), (0, 0), (left, right), (0, 0), (0, 0))
@@ -2500,8 +2769,7 @@ struct LinearPhaseMultibandSplitter3 {
     /// Returns 3 stereo bands `(low, mid, high)`, all delayed by
     /// `groupDelaySamples` relative to the input.
     mutating func process(left: Float, right: Float)
-        -> ((Float, Float), (Float, Float), (Float, Float))
-    {
+        -> ((Float, Float), (Float, Float), (Float, Float)) {
         let n = delayL.count
         guard n > 0 else { return ((0, 0), (left, right), (0, 0)) }
         let (l1L, l1R) = lp1.process(left: left, right: right)
@@ -2981,8 +3249,7 @@ struct LookaheadLimiter {
     var holdSamples: Int = 0
     var holdCounter: Int = 0
 
-    mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool)
-    {
+    mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool) {
         self.enabled = enabled
         self.threshold = clampf(threshold, 0.5, 0.999)
 
@@ -3072,6 +3339,14 @@ struct TimedTextFrame: Equatable {
     }
 }
 
+// Block-level encoder (CRC, offset words, four-block group assembly,
+// and the segment-counter patterns in groups 0/2) is an initial port
+// of the Python `RDSHelper` in ryanginn/rds-master
+// (https://github.com/ryanginn/rds-master). The shaping FIRs, the
+// pilot-locked 57 kHz subcarrier generator, the real-time live-apply
+// pipeline, RT+ ODA, AF Method B, CT/PTYN/Long PS/ECC group builders,
+// and the audio-thread safety work (pre-allocated bit buffer, atomic
+// CT cache, monotonic-clock timing) are MPX Prime's own additions.
 final class BasicRDSCoder {
     private static let bitrate = Float(1187.5)
     private static let crcPoly = 0x5B9
@@ -3122,7 +3397,6 @@ final class BasicRDSCoder {
     private var rtCycleTime: Double
     private let rtActiveBuffer: Int
     private var rtABCycleCount: Int
-    private let rdsFreqHz: Float
     private let gaussianEnabled: Bool
     private let gaussianBWHZ: Float
     private let gaussianTaps: Int
@@ -3253,9 +3527,9 @@ final class BasicRDSCoder {
     // Cheap-to-compute "should we bother rebuilding?" keys so the audio
     // thread can skip expandNowPlayingMacros (which does DateFormatter work
     // and multiple string replacements) when nothing relevant has changed.
-    private var rtDynamicCacheRevision: UInt64 = UInt64.max
-    private var rtDynamicCacheMinuteEpoch: Int64 = Int64.min
-    private var rtDynamicCacheDayEpoch: Int64 = Int64.min
+    private var rtDynamicCacheRevision = UInt64.max
+    private var rtDynamicCacheMinuteEpoch = Int64.min
+    private var rtDynamicCacheDayEpoch = Int64.min
 
     private var biphaseKernel: [Float] = []
     private var gaussianKernel: [Float] = []
@@ -3332,7 +3606,7 @@ final class BasicRDSCoder {
             config.rdsRTBufferAEnabled,
             config.rdsRTBufferBEnabled,
             config.rdsRTBufferCEnabled,
-            config.rdsRTBufferDEnabled,
+            config.rdsRTBufferDEnabled
         ]
         self.rtCR = config.rdsRTCR
         self.rtCentered = config.rdsRTCentered
@@ -3341,7 +3615,6 @@ final class BasicRDSCoder {
         self.rtCycleTime = max(1.0, config.rdsRTCycleTime)
         self.rtActiveBuffer = max(0, min(3, config.rdsRTActiveBuffer))
         self.rtABCycleCount = max(1, config.rdsRTABCycleCount)
-        self.rdsFreqHz = clampf(Float(config.rdsFreq), 1000.0, 120_000.0)
         self.gaussianEnabled = config.rdsGaussianEnabled
         self.gaussianBWHZ = clampf(Float(config.rdsGaussianBWHZ), 600.0, 6000.0)
         self.gaussianTaps = max(9, config.rdsGaussianTaps | 1)
@@ -3513,8 +3786,7 @@ final class BasicRDSCoder {
         if psBanks != previousBanks
             || psActiveBankIndex != previousActive
             || psCentered != previousCentered
-            || psFrameSeconds != previousPSFrameSeconds
-        {
+            || psFrameSeconds != previousPSFrameSeconds {
             rebuildPSSequence()
         }
 
@@ -3603,8 +3875,7 @@ final class BasicRDSCoder {
         // if the schedule shape changed (different cached groups apply).
         if rtMode2B != previousRTMode2B
             || rtPlusEnabled != previousRTPlusEnabled
-            || scheduleChanged || schedulerFlagsChanged
-        {
+            || scheduleChanged || schedulerFlagsChanged {
             rebuildScheduleCaches()
         }
 
@@ -3688,7 +3959,11 @@ final class BasicRDSCoder {
     }
 
     private func updateDerivedRates() {
-        carrierStep = twoPi * rdsFreqHz / sampleRate
+        // EN 50067 Sec 2.1.4: RDS subcarrier is 57 kHz, locked to 3x pilot.
+        // The production render path uses `nextSampleWithPilotLock()` which
+        // derives the carrier from the pilot phase directly; this constant
+        // exists only for the free-running `nextSample()` path used by tests.
+        carrierStep = twoPi * 57_000.0 / sampleRate
         pilotStepForRDS = twoPi * 19_000.0 / sampleRate
     }
 
@@ -3796,8 +4071,7 @@ final class BasicRDSCoder {
     }
 
     private static func biphaseShapingTaps(sampleRate: Float, bitrate: Float, tapCount: Int)
-        -> [Float]
-    {
+        -> [Float] {
         // Match Python path intent: firwin2-shaped EN50067 biphase impulse response.
         let count = max(9, tapCount | 1)
         let sr = max(8_000.0, sampleRate)
@@ -3851,8 +4125,7 @@ final class BasicRDSCoder {
     }
 
     private static func gaussianTaps(sampleRate: Float, bandwidthHz: Float, tapCount: Int)
-        -> [Float]
-    {
+        -> [Float] {
         let count = max(9, tapCount | 1)
         let sr = max(8_000.0, sampleRate)
         let bw = max(100.0, bandwidthHz)
@@ -4082,7 +4355,7 @@ final class BasicRDSCoder {
         var t2Length = 0
 
         let orderedTags = Array(rtPlusTags.prefix(2))
-        if orderedTags.count > 0 {
+        if !orderedTags.isEmpty {
             t1Type = orderedTags[0].contentType
             t1Start = max(0, min(63, orderedTags[0].start))
             t1Length = max(0, min(63, orderedTags[0].length > 0 ? orderedTags[0].length - 1 : 0))
@@ -4223,7 +4496,7 @@ final class BasicRDSCoder {
             RDSGroupSpec(type: 2, versionB: rtMode2B),
             RDSGroupSpec(type: 0, versionB: false),
             RDSGroupSpec(type: 2, versionB: rtMode2B),
-            RDSGroupSpec(type: 0, versionB: false),
+            RDSGroupSpec(type: 0, versionB: false)
         ]
         if lpsEnabled {
             seq.append(RDSGroupSpec(type: 15, versionB: false))
@@ -4273,7 +4546,7 @@ final class BasicRDSCoder {
             RDSGroupSpec(type: 0, versionB: false),
             RDSGroupSpec(type: 2, versionB: rtMode2B),
             RDSGroupSpec(type: 0, versionB: false),
-            RDSGroupSpec(type: 0, versionB: false),
+            RDSGroupSpec(type: 0, versionB: false)
         ]
         if enID {
             seq.append(RDSGroupSpec(type: 1, versionB: false))
@@ -4520,8 +4793,7 @@ final class BasicRDSCoder {
     }
 
     private func currentManualRTFrame(limit: Int, snapshot: NowPlayingSnapshot)
-        -> (index: Int, text: String, bytes: [UInt8])
-    {
+        -> (index: Int, text: String, bytes: [UInt8]) {
         let enabledBuffers = enabledManualRTBuffers()
         guard !enabledBuffers.isEmpty else {
             let frame = Self.prepareRTFrame("", width: limit, centered: rtCentered, appendCR: rtCR)
@@ -4830,8 +5102,7 @@ final class BasicRDSCoder {
             let versionB = (groupType == 0 || groupType == 2) && suffix == "B"
             if groupType == 0 || groupType == 1 || groupType == 2 || groupType == 3
                 || groupType == 4
-                || groupType == 10 || groupType == 11 || groupType == 15
-            {
+                || groupType == 10 || groupType == 11 || groupType == 15 {
                 out.append(RDSGroupSpec(type: groupType, versionB: versionB))
             }
         }
@@ -4840,7 +5111,7 @@ final class BasicRDSCoder {
                 RDSGroupSpec(type: 0, versionB: false),
                 RDSGroupSpec(type: 0, versionB: false),
                 RDSGroupSpec(type: 2, versionB: false),
-                RDSGroupSpec(type: 0, versionB: false),
+                RDSGroupSpec(type: 0, versionB: false)
             ]
         }
         return out
@@ -4968,11 +5239,18 @@ final class BasicRDSCoder {
             }
         }
 
-        let startsTimed = RDSTextParser.startsWithTimingPrefix(stripped)
+        // Split on '/' separators once. A leading '/' (operator wrote
+        // "/2s:A/2s:B" for symmetry with the inter-segment separators)
+        // produces an empty first part which is filtered out — we still
+        // recognise the input as a timed sequence as long as any
+        // non-empty part starts with a timing prefix.
+        let slashParts = RDSTextParser.splitTopLevel(stripped)
+            .filter { !$0.isEmpty }
+        let startsTimed =
+            RDSTextParser.startsWithTimingPrefix(stripped)
+            || slashParts.contains { RDSTextParser.startsWithTimingPrefix($0) }
 
         if startsTimed {
-            let slashParts = RDSTextParser.splitTopLevel(stripped)
-                .filter { !$0.isEmpty }
             if slashParts.count > 1 {
                 for part in slashParts {
                     let (timing, body) = RDSTextParser.parseTimingPrefix(
@@ -5050,8 +5328,7 @@ final class BasicRDSCoder {
     }
 
     private static func splitAndPad(_ raw: String, width: Int, uppercase: Bool, center: Bool)
-        -> [String]
-    {
+        -> [String] {
         let normalized = sanitizeText(raw, uppercase: uppercase)
         let words = normalized.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         if words.isEmpty {
@@ -5124,7 +5401,7 @@ final class BasicRDSCoder {
 
     private static let rdsDirectByteMap: [UInt32: UInt8] = [
         0x00D8: 0xE7,
-        0x00F8: 0xF7,
+        0x00F8: 0xF7
     ]
 
     private static let rdsTransliterationMap: [UInt32: String] = [
@@ -5144,7 +5421,7 @@ final class BasicRDSCoder {
         0x0152: "OE", 0x0153: "oe",
         0x00DF: "ss",
         0x20AC: "E",
-        0x00B0: " ", 0x2122: " ", 0x00AE: " ",
+        0x00B0: " ", 0x2122: " ", 0x00AE: " "
     ]
 
     private static func resolveTextMarkers(_ text: String) -> String? {
@@ -5255,8 +5532,7 @@ final class BasicRDSCoder {
                 var appended = false
                 for foldedScalar in folded.unicodeScalars {
                     if foldedScalar.value == 0x0D
-                        || (foldedScalar.value >= 0x20 && foldedScalar.value <= 0x7E)
-                    {
+                        || (foldedScalar.value >= 0x20 && foldedScalar.value <= 0x7E) {
                         out.append(Character(foldedScalar))
                         appended = true
                     }
@@ -5285,8 +5561,7 @@ final class BasicRDSCoder {
     }
 
     private static func prepareRTFrame(_ raw: String, width: Int, centered: Bool, appendCR: Bool)
-        -> String
-    {
+        -> String {
         let sanitized = sanitizeText(raw, uppercase: false)
         let limited = String(sanitized.prefix(width))
         if appendCR {
@@ -5678,6 +5953,7 @@ final class MPXGenerator {
         let compositeClipperCancelPilot: Bool
         let compositeClipperCancelRDS: Bool
         let compositeClipperLookaheadMS: Float
+        let compositeClipperOversampling: Int
         let compositeMultibandClipperEnabled: Bool
 
         // Tone-generator parameters. Live-applicable so the Test Tone
@@ -5791,6 +6067,7 @@ final class MPXGenerator {
             compositeClipperCancelPilot: config.compositeClipperCancelPilot,
             compositeClipperCancelRDS: config.compositeClipperCancelRDS,
             compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
+            compositeClipperOversampling: config.compositeClipperOversampling,
             compositeMultibandClipperEnabled: config.compositeMultibandClipperEnabled,
             sourceMode: config.sourceMode,
             testToneType: config.testToneType,
@@ -5905,7 +6182,7 @@ final class MPXGenerator {
                     config.rdsRTBufferAEnabled,
                     config.rdsRTBufferBEnabled,
                     config.rdsRTBufferCEnabled,
-                    config.rdsRTBufferDEnabled,
+                    config.rdsRTBufferDEnabled
                 ],
                 rtCR: config.rdsRTCR,
                 rtCentered: config.rdsRTCentered,
@@ -6192,10 +6469,57 @@ final class MPXGenerator {
     private var compositeClipperCancelPilot: Bool = true
     private var compositeClipperCancelRDS: Bool = true
     private var compositeClipperLookaheadMS: Float = 0.0
+    private var compositeClipperOversampling: Int = 16
     private var compositeMultibandClipperEnabled: Bool = false
     private var compositeClipper = CompositeClipper()
     private var compositeMultibandClipper = CompositeMultibandClipper()
     private var audioCompositeBandwidthFIR = LinearPhaseFIRLowpass()
+
+    // === Dual-rate audio chain boundary (Phase 1, no-op infrastructure) ===
+    //
+    // When `dualRateBoundaryEnabled` is true, per-OS-sample input gets
+    // pushed through a decim → interp pair so the downstream chain sees
+    // band-limited and roundtripped input. Phase 1 keeps the audio chain
+    // at MPX rate — no stages move below the boundary yet. The point of
+    // this step is to validate the resampler primitives at chain scale
+    // and surface any latency / bit-difference issues before Phase 2
+    // starts migrating stages.
+    private var dualRateBoundaryEnabled: Bool = false
+    private var dualRateAudioRate: Float = 48_000.0
+    private var dualRateFactor: Int = 1
+    private var inputDecimL = LinearPhaseFIRDecimator()
+    private var inputDecimR = LinearPhaseFIRDecimator()
+    private var inputInterpL = LinearPhaseFIRInterpolator()
+    private var inputInterpR = LinearPhaseFIRInterpolator()
+    /// L OS-rate samples emitted by the most recent interp push; consumed
+    /// round-robin via `dualRateBoundaryPhase`.
+    private var interpOutBufferL: [Float] = []
+    private var interpOutBufferR: [Float] = []
+    /// Counts pushes into the decimator since its last emit. When it
+    /// reaches `dualRateFactor`, the decimator has just emitted and we
+    /// pump that sample into the interpolator (refilling the buffers).
+    private var dualRateBoundaryPushCount: Int = 0
+    /// Position 0..L-1 to read next from `interpOutBuffer{L,R}`.
+    private var dualRateBoundaryPhase: Int = 0
+    /// Most recent `processAudioDomain` analysis snapshot. Held between
+    /// audio-rate ticks so MPX-domain stages can read it on every OS
+    /// tick even though audio domain only runs once per L OS ticks.
+    private var latestAudioAnalysisStereo = ProgramStereoState(
+        left: 0, right: 0, referenceLeft: 0, referenceRight: 0,
+        postAGCLeft: 0, postAGCRight: 0, inputActivity: 0
+    )
+    /// Most recent input activity from the audio domain (carried across
+    /// OS ticks between audio-rate refreshes).
+    private var latestAudioInputActivity: Float = 0
+
+    /// Audio-domain sample rate. When the dual-rate boundary is on, audio
+    /// stages run at the lower `dualRateAudioRate`; otherwise they run
+    /// at the engine's `sampleRate`. All audio-domain stage configures
+    /// must use this property so the cutover is a one-line change inside
+    /// each configure helper.
+    private var audioDomainSampleRate: Float {
+        dualRateBoundaryEnabled ? dualRateAudioRate : sampleRate
+    }
 
     // Subcarrier delay line — keeps pilot+RDS phase-aligned with the
     // delayed audio composite. Pilot and the embedded 38 kHz stereo
@@ -6243,6 +6567,9 @@ final class MPXGenerator {
     private var preEncodeBandlimitedResidualEnabled: Bool = false
     private var preEncodeBandlimitedResidualTapCount: Int = 33
     private var preEncodeBandlimitedResidualCutoffFraction: Float = 0.25
+    private var preEncodeLookaheadMS: Float = 0.0
+    private var preEncodeLookaheadHFOnly: Bool = false
+    private var preEncodeLookaheadHFCutoffHz: Float = 4_000.0
 
     private var toneStep: Float
     private var tonePhase: Float = 0.0
@@ -6476,7 +6803,19 @@ final class MPXGenerator {
         self.compositeClipperCancelPilot = config.compositeClipperCancelPilot
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
+        self.compositeClipperOversampling = config.compositeClipperOversampling
         self.compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
+
+        // Dual-rate audio chain boundary. Only enable if the requested
+        // audio rate divides the engine rate evenly (Phase 1 integer-
+        // ratio only). Non-integer ratios (176.4k → 48k) silently fall
+        // back to disabled.
+        let audioRateRequest = Float(max(8_000.0, config.dualRateAudioDomainRateHz))
+        let factor = Int((self.sampleRate / audioRateRequest).rounded())
+        let ratioIsClean = factor >= 2 && abs(self.sampleRate - Float(factor) * audioRateRequest) < 0.5
+        self.dualRateBoundaryEnabled = config.dualRateAudioDomainEnabled && ratioIsClean
+        self.dualRateAudioRate = ratioIsClean ? audioRateRequest : self.sampleRate
+        self.dualRateFactor = ratioIsClean ? factor : 1
 
         self.stereoWidenEnabled = config.stereoWidenEnabled
         self.monoBassEnabled = config.monoBassEnabled
@@ -6492,12 +6831,20 @@ final class MPXGenerator {
 
         self.toneStep = 0.0
 
-        preL.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
-        preR.configure(tauUS: preemphasisUS, sampleRate: self.sampleRate)
+        // Audio-domain stages run at `audioDomainSampleRate` — equal to
+        // `self.sampleRate` when the dual-rate boundary is disabled (so
+        // behavior is bit-identical to pre-cutover), but drops to
+        // `dualRateAudioRate` (typically 48 kHz) when the boundary is
+        // on so each stage's filter coefficients land on the lower-rate
+        // grid. Helpers like configureMultibandFilters() etc. read the
+        // property directly.
+        let audioRate = audioDomainSampleRate
+        preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
+        preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
         applyEncoderComplianceConfiguration(sampleRate: self.sampleRate)
 
         widebandAGC.configure(
-            sampleRate: self.sampleRate,
+            sampleRate: audioRate,
             targetDB: widebandAGCTargetDB,
             attackMS: widebandAGCAttackMS,
             releaseMS: widebandAGCReleaseMS,
@@ -6506,9 +6853,9 @@ final class MPXGenerator {
             kWeightingEnabled: widebandAGCKWeightingEnabled,
             programDependentRelease: widebandAGCReleaseProgramDependent
         )
-        inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: self.sampleRate)
-        hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: self.sampleRate)
-        phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: self.sampleRate)
+        inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: audioRate)
+        hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: audioRate)
+        phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: audioRate)
         configureParametricEQ()
         configurePrimeBassFilters()
         configureMultibandFilters()
@@ -6517,7 +6864,7 @@ final class MPXGenerator {
         configureDownwardExpanders()
         configureStereoWidener()
         bassClipper.configure(
-            sampleRate: self.sampleRate,
+            sampleRate: audioRate,
             crossoverHz: bassClipperCrossoverHz,
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
@@ -6531,13 +6878,19 @@ final class MPXGenerator {
         )
         preEncodeThreshold = clampf(Float(config.preEncodeThreshold), 0.5, 0.999)
         preEncodeReleaseMS = clampf(Float(config.preEncodeReleaseMS), 10.0, 200.0)
+        preEncodeLookaheadMS = clampf(Float(config.preEncodeLookaheadMS), 0.0, 5.0)
+        preEncodeLookaheadHFOnly = config.preEncodeLookaheadHFOnly
+        preEncodeLookaheadHFCutoffHz = clampf(Float(config.preEncodeLookaheadHFCutoffHz), 1_000.0, 12_000.0)
         preEncodeAudioLimiter.configure(
-            sampleRate: self.sampleRate,
+            sampleRate: audioRate,
             threshold: preEncodeThreshold,
             releaseMS: preEncodeReleaseMS,
             bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
             residualTapCount: preEncodeBandlimitedResidualTapCount,
-            residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction
+            residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
+            lookaheadMS: preEncodeLookaheadMS,
+            lookaheadHFOnly: preEncodeLookaheadHFOnly,
+            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
         )
         bs412Limiter.configure(
             sampleRate: self.sampleRate,
@@ -6552,12 +6905,138 @@ final class MPXGenerator {
             cancelStereo: compositeClipperCancelStereo,
             cancelPilot: compositeClipperCancelPilot,
             cancelRDS: compositeClipperCancelRDS,
-            lookaheadMS: compositeClipperLookaheadMS
+            lookaheadMS: compositeClipperLookaheadMS,
+            oversamplingFactor: compositeClipperOversampling
         )
         compositeMultibandClipper.configure(sampleRate: self.sampleRate)
+        configureDualRateBoundary()
         recomputeSubcarrierDelay()
         updateDerivedRates()
         configureMonitorDemod()
+    }
+
+    /// Configure (or disable) the dual-rate audio chain boundary. Called
+    /// at engine init and on any AppConfig change that touches the
+    /// boundary. Allocates / resizes the decimator + interpolator state
+    /// — restart-required from the operator's perspective.
+    private func configureDualRateBoundary() {
+        guard dualRateBoundaryEnabled && dualRateFactor >= 2 else {
+            // Disabled: clear state so the boundary path no-ops cleanly.
+            inputDecimL.reset()
+            inputDecimR.reset()
+            inputInterpL.reset()
+            inputInterpR.reset()
+            if interpOutBufferL.count != max(1, dualRateFactor) {
+                interpOutBufferL = [Float](repeating: 0.0, count: max(1, dualRateFactor))
+                interpOutBufferR = [Float](repeating: 0.0, count: max(1, dualRateFactor))
+            } else {
+                for i in 0..<interpOutBufferL.count {
+                    interpOutBufferL[i] = 0
+                    interpOutBufferR[i] = 0
+                }
+            }
+            dualRateBoundaryPushCount = 0
+            dualRateBoundaryPhase = 0
+            return
+        }
+        // Cutoff at 90% of audio-rate Nyquist so the transition band sits
+        // safely below the audio-rate Nyquist; 4 kHz transition width.
+        // Stopband 90 dB matches the composite clipper's decimator.
+        let cutoffHz = dualRateAudioRate * 0.5 * 0.9
+        let transitionHz: Float = 4_000.0
+        inputDecimL.configure(
+            cutoffHz: cutoffHz,
+            sampleRateOS: self.sampleRate,
+            decimateFactor: dualRateFactor,
+            stopBandDB: 90.0,
+            transitionHz: transitionHz
+        )
+        inputDecimR.configure(
+            cutoffHz: cutoffHz,
+            sampleRateOS: self.sampleRate,
+            decimateFactor: dualRateFactor,
+            stopBandDB: 90.0,
+            transitionHz: transitionHz
+        )
+        inputInterpL.configure(
+            cutoffHz: cutoffHz,
+            sampleRateOS: self.sampleRate,
+            interpolateFactor: dualRateFactor,
+            stopBandDB: 90.0,
+            transitionHz: transitionHz
+        )
+        inputInterpR.configure(
+            cutoffHz: cutoffHz,
+            sampleRateOS: self.sampleRate,
+            interpolateFactor: dualRateFactor,
+            stopBandDB: 90.0,
+            transitionHz: transitionHz
+        )
+        if interpOutBufferL.count != dualRateFactor {
+            interpOutBufferL = [Float](repeating: 0.0, count: dualRateFactor)
+            interpOutBufferR = [Float](repeating: 0.0, count: dualRateFactor)
+        } else {
+            for i in 0..<dualRateFactor {
+                interpOutBufferL[i] = 0
+                interpOutBufferR[i] = 0
+            }
+        }
+        dualRateBoundaryPushCount = 0
+        dualRateBoundaryPhase = 0
+    }
+
+    /// Per-OS-sample dual-rate boundary application. Pushes input into the
+    /// decim → audio-domain → interp pair and reads back the corresponding
+    /// OS-rate audio-domain output. When decim emits (every Lth OS tick),
+    /// the whole audio domain (`processAudioDomain`) runs at the lower
+    /// audio rate on the just-emitted sample, then its L/R output is
+    /// pushed through interp to produce L OS-rate samples that the MPX
+    /// domain consumes one-per-tick. Side outputs (analysisStereo,
+    /// inputActivity) are stored on the engine so the MPX domain can read
+    /// them every OS tick even though they only refresh once per L ticks.
+    ///
+    /// Real-time safe; no allocations. Caller checks
+    /// `dualRateBoundaryEnabled` before invoking.
+    @inline(__always)
+    private func applyDualRateBoundary(left: inout Float, right: inout Float) {
+        let decimL = inputDecimL.push(left)
+        let decimR = inputDecimR.push(right)
+        dualRateBoundaryPushCount += 1
+        if dualRateBoundaryPushCount >= dualRateFactor {
+            dualRateBoundaryPushCount = 0
+            // Decim just emitted one audio-rate L/R sample. Run the
+            // entire audio-domain chain on it at audio rate — every
+            // stage's filter coefficients were configured against
+            // `audioDomainSampleRate` at engine init.
+            let audio = processAudioDomain(leftIn: decimL, rightIn: decimR)
+            latestAudioAnalysisStereo = audio.analysisStereo
+            latestAudioInputActivity = audio.inputActivity
+            // Push audio-domain output through interp; refill the L-
+            // element output buffer with the upsampled MPX-rate samples.
+            interpOutBufferL.withUnsafeMutableBufferPointer { lBuf in
+                // baseAddress non-nil for pre-allocated arrays.
+                // swiftlint:disable:next force_unwrapping
+                inputInterpL.push(audio.left, into: lBuf.baseAddress!)
+            }
+            interpOutBufferR.withUnsafeMutableBufferPointer { rBuf in
+                // swiftlint:disable:next force_unwrapping
+                inputInterpR.push(audio.right, into: rBuf.baseAddress!)
+            }
+            // Reset the read phase to 0 on refill so the next L OS-rate
+            // reads walk buffer[0..L-1] in chronological order
+            // (out[0] is the earliest upsampled sample, out[L-1] is the
+            // latest — see LinearPhaseFIRInterpolator emission contract).
+            // Reading in any other order — e.g. starting from the just-
+            // filled buffer[L-1] and wrapping to [0] on the next tick —
+            // introduces a per-cycle L-1-sample temporal discontinuity
+            // that destroys phase coherence and trashes stereo
+            // separation at the receiver.
+            dualRateBoundaryPhase = 0
+        }
+        left = interpOutBufferL[dualRateBoundaryPhase]
+        right = interpOutBufferR[dualRateBoundaryPhase]
+        dualRateBoundaryPhase += 1
+        if dualRateBoundaryPhase >= dualRateFactor { dualRateBoundaryPhase = 0 }
     }
 
     /// Recompute the pilot+RDS delay-line length so it matches the audio
@@ -6574,6 +7053,19 @@ final class MPXGenerator {
         let multibandClipperDelay = compositeMultibandClipperEnabled
             ? compositeMultibandClipper.groupDelaySamples : 0
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
+        // NB: the dual-rate boundary's decim+interp delay is NOT added
+        // here. The boundary sits upstream of the stereo encoder; the
+        // 38 kHz subcarrier embedded in the audio composite is generated
+        // FRESH by the encoder at each OS tick, AFTER the boundary. So
+        // is the pilot. Both traverse only the post-encoder stages
+        // (audio-composite bandwidth FIR, composite clipper, composite
+        // multiband clipper, final-MPX safety limiter), and the pilot
+        // needs to delay by exactly those to stay phase-locked with the
+        // embedded carrier at the receiver. Adding the boundary delay
+        // here over-delays the pilot and trashes stereo separation at
+        // the production decoder (the encoder-side sidebands stay
+        // balanced, but the pilot PLL recovers a 38 kHz reference that
+        // is phase-rotated relative to the actual embedded carrier).
         let total = compositeBandwidthDelay + clipperDelay + multibandClipperDelay + limiterDelay
         let capacity = compositeBandwidthDelay
             + clipperDelayCapacity
@@ -6754,7 +7246,10 @@ final class MPXGenerator {
             releaseMS: preEncodeReleaseMS,
             bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
             residualTapCount: preEncodeBandlimitedResidualTapCount,
-            residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction
+            residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
+            lookaheadMS: preEncodeLookaheadMS,
+            lookaheadHFOnly: preEncodeLookaheadHFOnly,
+            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
         )
         bs412Limiter.configure(
             sampleRate: sampleRate,
@@ -6769,7 +7264,8 @@ final class MPXGenerator {
             cancelStereo: compositeClipperCancelStereo,
             cancelPilot: compositeClipperCancelPilot,
             cancelRDS: compositeClipperCancelRDS,
-            lookaheadMS: compositeClipperLookaheadMS
+            lookaheadMS: compositeClipperLookaheadMS,
+            oversamplingFactor: compositeClipperOversampling
         )
         compositeMultibandClipper.configure(sampleRate: sampleRate)
         recomputeSubcarrierDelay()
@@ -6797,13 +7293,22 @@ final class MPXGenerator {
         preEncodeBandlimitedResidualTapCount = max(5, min(129, config.preEncodeBandlimitedResidualTapCount | 1))
         preEncodeBandlimitedResidualCutoffFraction = clampf(config.preEncodeBandlimitedResidualCutoffFraction, 0.05, 0.49)
         if preEncodeLimiterChanged {
+            // Preserve the existing lookahead settings on live-apply
+            // reconfigure. lookahead + HF-only + HF cutoff are restart-only
+            // (not in RuntimeConfig), so the current values held on the audio
+            // thread are authoritative; without passing them explicitly the
+            // limiter would reset to defaults and silently drop the
+            // operator's lookahead config.
             preEncodeAudioLimiter.configure(
                 sampleRate: sampleRate,
                 threshold: preEncodeThreshold,
                 releaseMS: preEncodeReleaseMS,
                 bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
                 residualTapCount: preEncodeBandlimitedResidualTapCount,
-                residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction
+                residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
+                lookaheadMS: preEncodeLookaheadMS,
+                lookaheadHFOnly: preEncodeLookaheadHFOnly,
+                lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
             )
         }
 
@@ -7063,6 +7568,7 @@ final class MPXGenerator {
             || compositeClipperCancelStereo != config.compositeClipperCancelStereo
             || compositeClipperCancelPilot != config.compositeClipperCancelPilot
             || compositeClipperCancelRDS != config.compositeClipperCancelRDS
+            || compositeClipperOversampling != config.compositeClipperOversampling
         let compClipLookaheadChanged =
             fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
         let compositeMultibandClipperChanged =
@@ -7075,6 +7581,7 @@ final class MPXGenerator {
         compositeClipperCancelPilot = config.compositeClipperCancelPilot
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
         compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
+        compositeClipperOversampling = config.compositeClipperOversampling
         compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
         if compClipStructuralChanged {
             compositeClipper.configure(
@@ -7085,7 +7592,8 @@ final class MPXGenerator {
                 cancelStereo: compositeClipperCancelStereo,
                 cancelPilot: compositeClipperCancelPilot,
                 cancelRDS: compositeClipperCancelRDS,
-                lookaheadMS: compositeClipperLookaheadMS
+                lookaheadMS: compositeClipperLookaheadMS,
+                oversamplingFactor: compositeClipperOversampling
             )
             recomputeSubcarrierDelay()
         } else if compClipLookaheadChanged {
@@ -7156,9 +7664,16 @@ final class MPXGenerator {
 
     private func applyEncoderComplianceConfiguration(sampleRate: Float) {
         let config = makeEncoderComplianceConfig()
-        programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: sampleRate)
-        encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: sampleRate)
-        encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: sampleRate)
+        let audioRate = audioDomainSampleRate
+        // Audio-domain L/R filters — programLP, encoderProgramLP,
+        // encoderProgramFIR, pilotNotchL/R, encoderHFGuardSplit — run at
+        // the audio rate when the dual-rate boundary is on.
+        programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: audioRate)
+        encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
+        encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
+        // audioCompositeBandwidthFIR sits AFTER the stereo encoder on
+        // the composite signal — it must stay at the MPX rate to cover
+        // 0-55 kHz including the L-R subcarrier sidebands.
         audioCompositeBandwidthFIR.configure(
             cutoffHz: 55_000.0,
             sampleRate: sampleRate,
@@ -7166,13 +7681,17 @@ final class MPXGenerator {
             transitionHz: 5_000.0
         )
         if preemphasisUS > 0 {
-            pilotNotchL.configureNotch(freqHz: 19_000.0, sampleRate: sampleRate, q: 50.0)
-            pilotNotchR.configureNotch(freqHz: 19_000.0, sampleRate: sampleRate, q: 50.0)
+            // 19 kHz pilot notch. At 48 kHz audio rate the notch sits at
+            // ~79% of Nyquist; bilinear-biquad shape is wider than at
+            // 192 kHz but still attenuates 19 kHz substantially. Receiver
+            // verification confirms cleanliness.
+            pilotNotchL.configureNotch(freqHz: 19_000.0, sampleRate: audioRate, q: 50.0)
+            pilotNotchR.configureNotch(freqHz: 19_000.0, sampleRate: audioRate, q: 50.0)
         } else {
             pilotNotchL.configureIdentity()
             pilotNotchR.configureIdentity()
         }
-        encoderHFGuardSplit.configure(cutoffHz: config.hfGuardCrossoverHz, sampleRate: sampleRate)
+        encoderHFGuardSplit.configure(cutoffHz: config.hfGuardCrossoverHz, sampleRate: audioRate)
     }
 
     var isProcessingBypassEnabled: Bool {
@@ -7269,6 +7788,8 @@ final class MPXGenerator {
     }
 
     private func updatePrimeBassDynamicRates() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let sr = max(8_000.0, sampleRate)
         let dt = 1.0 / sr
         // Slow level estimate, used by the gate-floor calculation at
@@ -7300,6 +7821,9 @@ final class MPXGenerator {
     }
 
     private func configureStereoWidener() {
+        // Audio-domain stage — runs at the audio rate when the dual-rate
+        // boundary is on, otherwise at the engine's MPX rate.
+        let sampleRate = audioDomainSampleRate
         let sr = max(8_000.0, sampleRate)
         monoBassSideLP.configureLowpass(cutoffHz: monoBassFreqHz, sampleRate: sr, q: 0.7071068)
         widenSideHP.configureHighpass(cutoffHz: 115.0, sampleRate: sr, q: 0.7071068)
@@ -7328,6 +7852,8 @@ final class MPXGenerator {
     }
 
     private func configurePrimeBassFilters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let nyquist = max(200.0, (sampleRate * 0.5) - 200.0)
         let bassCutoff = clampf(primeBassFreqHz, 45.0, nyquist)
         primeBassLP.configure(cutoffHz: bassCutoff, sampleRate: sampleRate)
@@ -7380,6 +7906,8 @@ final class MPXGenerator {
     }
 
     private func configureMultibandFilters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let x1 = clampf(multibandX1Hz, 40.0, max(60.0, (sampleRate * 0.5) - 300.0))
         let x2 = clampf(multibandX2Hz, x1 + 40.0, max(x1 + 60.0, (sampleRate * 0.5) - 200.0))
         let x3 = clampf(multibandX3Hz, x2 + 80.0, max(x2 + 100.0, (sampleRate * 0.5) - 120.0))
@@ -7416,6 +7944,9 @@ final class MPXGenerator {
     }
 
     private func configureMultibandCompressors() {
+        // Audio-domain stage — coupling time constants tied to audio
+        // rate so they scale correctly with the dual-rate boundary.
+        let sampleRate = audioDomainSampleRate
         multibandCouplingAttackCoeff = expf(-1.0 / (max(1.0, sampleRate) * 0.020))
         multibandCouplingReleaseCoeff = expf(-1.0 / (max(1.0, sampleRate) * 0.300))
         multibandCouplingGRDB = 0.0
@@ -7549,6 +8080,8 @@ final class MPXGenerator {
         releaseMS: Float,
         transientAwareAttackEnabled: Bool
     ) {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         left.configure(
             sampleRate: sampleRate,
             thresholdDB: thresholdDB,
@@ -7572,6 +8105,8 @@ final class MPXGenerator {
     }
 
     private func configureParametricEQ() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         parametricEQ.configure(
             sampleRate: sampleRate,
             b1FreqHz: peqB1FreqHz, b1GainDB: peqB1GainDB,
@@ -7582,6 +8117,8 @@ final class MPXGenerator {
     }
 
     private func configureMultibandLimiters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let thr = multibandLimiterThresholdDB
         let atk = multibandLimiterAttackMS
         let rel = multibandLimiterReleaseMS
@@ -7596,6 +8133,8 @@ final class MPXGenerator {
     }
 
     private func configureDownwardExpanders() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         let thr = expanderThresholdDB
         let rat = expanderRatio
         let atk = expanderAttackMS
@@ -7611,6 +8150,8 @@ final class MPXGenerator {
     }
 
     private func configureDistortionCancelledClipper() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
         dcClipper.configure(
             sampleRate: sampleRate,
             ceilingDB: dcClipperCeilingDB,
@@ -7877,12 +8418,53 @@ final class MPXGenerator {
         processSampleDetailed(leftIn: leftIn, rightIn: rightIn).mpx
     }
 
+    /// Output of one audio-domain pass. Carries the L/R signal plus the
+    /// metering / activity side outputs that the MPX-domain composite
+    /// encoder needs downstream.
+    private struct AudioDomainOutput {
+        var left: Float
+        var right: Float
+        var analysisStereo: ProgramStereoState
+        var inputActivity: Float
+    }
+
     private func processSampleDetailed(leftIn: Float, rightIn: Float) -> (mpx: Float, analysisStereo: ProgramStereoState) {
         // High-level chain order:
-        // 1. Program-domain stereo processing (AGC, filtering, enhancement, multiband)
-        // 2. Stereo-image protection and monitoring
-        // 3. Composite component assembly (L+R, L-R, pilot, stereo subcarrier, RDS)
-        // 4. Final composite loudness and safety limiting
+        // 0. Dual-rate audio chain boundary (when enabled, audio domain
+        //    runs at the lower audio rate INSIDE the boundary; otherwise
+        //    the audio domain runs at the MPX rate after the boundary).
+        // 1. Audio domain (AGC, multiband, EQ, image, pre-emphasis, pre-encode limiter)
+        // 2. MPX domain (composite assembly, BS.412, composite clipper, pilot/RDS inject)
+        if dualRateBoundaryEnabled {
+            // Audio domain runs once per L OS-rate ticks at audio rate
+            // inside applyDualRateBoundary; the returned l/r are the
+            // upsampled audio-domain output at MPX rate. Side outputs
+            // (analysisStereo, inputActivity) are buffered between
+            // audio-rate ticks via `latestAudio*` so MPX-domain stages
+            // see consistent values every OS tick.
+            var l = leftIn
+            var r = rightIn
+            applyDualRateBoundary(left: &l, right: &r)
+            let mpx = processMPXDomain(
+                left: l,
+                right: r,
+                inputActivity: latestAudioInputActivity
+            )
+            return (mpx, latestAudioAnalysisStereo)
+        }
+        // Boundary off: audio domain runs at MPX rate as before
+        // (bit-identical to the pre-cutover chain).
+        let audio = processAudioDomain(leftIn: leftIn, rightIn: rightIn)
+        let mpx = processMPXDomain(left: audio.left, right: audio.right, inputActivity: audio.inputActivity)
+        return (mpx, audio.analysisStereo)
+    }
+
+    /// All audio-domain (L/R) processing: program-stereo block (AGC,
+    /// multiband, EQ, image, etc.), stereo-image protection, pre-emphasis,
+    /// pre-encode limiter. Returns the post-limiter L/R signal plus the
+    /// metering snapshots (`analysisStereo` taken before stereo-image
+    /// protection, and `inputActivity` from the raw input).
+    private func processAudioDomain(leftIn: Float, rightIn: Float) -> AudioDomainOutput {
         var stereo = processProgramStereo(leftIn: leftIn, rightIn: rightIn)
         // Snapshot the program-stereo state BEFORE stereo-image protection so
         // analysis and metering callers see the unprotected program signal.
@@ -7914,20 +8496,31 @@ final class MPXGenerator {
             stereo.right = limited.1
         }
 
-        let composite = makeCompositeComponents(
+        return AudioDomainOutput(
             left: stereo.left,
             right: stereo.right,
+            analysisStereo: analysisStereo,
             inputActivity: stereo.inputActivity
         )
+    }
 
-        let mpx = processFinalComposite(
+    /// MPX-domain composite assembly and final loudness/safety stages.
+    /// Runs at the engine's MPX rate regardless of dual-rate boundary
+    /// state (the boundary is upstream; pilot / L-R sidebands / RDS need
+    /// the high rate's bandwidth).
+    private func processMPXDomain(left: Float, right: Float, inputActivity: Float) -> Float {
+        let composite = makeCompositeComponents(
+            left: left,
+            right: right,
+            inputActivity: inputActivity
+        )
+        return processFinalComposite(
             base: composite.base,
             diff: composite.diff,
             sub: composite.sub,
             pilot: composite.pilot,
             rds: composite.rds
         )
-        return (mpx, analysisStereo)
     }
 
     private func processProgramStereo(leftIn: Float, rightIn: Float) -> ProgramStereoState {
@@ -8134,8 +8727,7 @@ final class MPXGenerator {
     }
 
     private func makeCompositeComponents(left: Float, right: Float, inputActivity: Float)
-        -> CompositeComponents
-    {
+        -> CompositeComponents {
         let base = ((left + right) * 0.5) * sumLevel
         let diff = monoMode ? 0.0 : (((right - left) * 0.5) * diffLevel)
         // Pre-emphasis ran here pre-2026-05; it now runs in L/R domain
@@ -8546,7 +9138,6 @@ final class MPXGenerator {
         let combinedSide = highSide
         return (mid + combinedSide, mid - combinedSide)
     }
-
 
     private func processPrimeBass(left: Float, right: Float) -> (Float, Float) {
         let mid = (left + right) * 0.5

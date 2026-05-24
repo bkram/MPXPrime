@@ -76,6 +76,85 @@ struct RDSTextOrchestrationTests {
         #expect(out[1].text.hasPrefix("Second"))
     }
 
+    /// Stereotool-style RDS text input uses a leading '/' separator
+    /// for visual symmetry with the inter-segment separators:
+    /// `/2s:A/2s:B/2s:C`. The old parser checked `startsWithTimingPrefix`
+    /// on the full string and rejected leading-'/' inputs, treating the
+    /// whole thing as a single literal body so the `/Ns:` markers showed
+    /// up as PS text. Fixed to recognise any slash-separated part that
+    /// starts with a timing prefix.
+    @Test func leadingSlashSeparatorStereotoolCompatibility() {
+        // Stereotool RDS-text grammar accepts a leading '/' for visual
+        // symmetry with inter-segment separators. Fictional content;
+        // mirrors the typical decorated PS pattern with `*` accents and
+        // a long-then-short segment to exercise chunk splitting.
+        // Note: segments longer than `width` get split into multiple
+        // chunks, each carrying the parent segment's duration. We check
+        // that all expected substrings appear somewhere in the output
+        // and that the parser doesn't treat the input as plain literal
+        // text.
+        let out = BasicRDSCoder.parseTimedSequence(
+            "/2s:* ALPHA * /2s: * BETA RADIO */2s: HELLO!",
+            width: 8, uppercase: false, center: false)
+        #expect(out.count >= 3, "expected at least three timed frames, got \(out.count)")
+        // All frames are 2-second segments (no plain-literal fallback
+        // would produce 2-second timings — they default to 10s holds).
+        for frame in out {
+            #expect(abs(frame.duration - 2.0) < 1e-6,
+                "frame `\(frame.text)` had duration \(frame.duration), expected 2.0")
+        }
+        // All three text fragments must appear in the output sequence.
+        let joined = out.map(\.text).joined()
+        #expect(joined.contains("ALPHA"), "expected ALPHA in output")
+        #expect(joined.contains("BETA"), "expected BETA in output")
+        #expect(joined.contains("HELLO"), "expected HELLO in output")
+        // No frame should contain the literal "2s:" marker (regression
+        // guard against the old "fell to plain literal" path).
+        for frame in out {
+            #expect(!frame.text.contains("2s:"),
+                "frame `\(frame.text)` should not contain literal 2s: marker")
+        }
+    }
+
+    /// Confirms that multi-`<` scroll markers (Stereotool speed-N grammar)
+    /// strip cleanly — none of the leading `<` chars should leak into any
+    /// of the generated PS window frames. User reported seeing `<<` in
+    /// the transmitted PS; this test verifies the parser path doesn't
+    /// produce them.
+    @Test func psScrollSpeed2StripsAllAngleBrackets() {
+        let out = BasicRDSCoder.parseTimedSequence(
+            "<<ALPHA RADIO", width: 8, uppercase: true, center: false,
+            allowScroll: true)
+        #expect(out.count > 1, "expected multiple scroll-window frames")
+        for frame in out {
+            #expect(!frame.text.contains("<"),
+                "frame `\(frame.text)` unexpectedly contains '<' marker")
+        }
+    }
+
+    @Test func psScrollSpeed3StripsAllAngleBrackets() {
+        let out = BasicRDSCoder.parseTimedSequence(
+            "<<<BETA RADIO", width: 8, uppercase: true, center: false,
+            allowScroll: true)
+        #expect(out.count > 1)
+        for frame in out {
+            #expect(!frame.text.contains("<"),
+                "frame `\(frame.text)` unexpectedly contains '<' marker (speed 3)")
+        }
+    }
+
+    @Test func leadingSlashWithTrailingEmptySegment() {
+        // Trailing `/2s:` with no body emits a blank-for-2s frame —
+        // intentional behaviour (operator can insert a deliberate pause)
+        // and the parser must not crash or skip the prior segments.
+        let out = BasicRDSCoder.parseTimedSequence(
+            "/2s:A/2s:B/2s:",
+            width: 8, uppercase: false, center: false)
+        #expect(out.count >= 2)
+        #expect(out[0].text.hasPrefix("A"))
+        #expect(out[1].text.hasPrefix("B"))
+    }
+
     // MARK: - Transmits timing
 
     @Test func singleTransmitsSegment() {

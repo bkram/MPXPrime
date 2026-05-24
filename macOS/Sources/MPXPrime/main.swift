@@ -27,6 +27,7 @@ struct CLIOptions {
     var verifyMultibandCoupling: Bool = false
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
+    var bench: Bool = false
 }
 
 func defaultVerificationConfigPath() -> String {
@@ -36,7 +37,7 @@ func defaultVerificationConfigPath() -> String {
         ((launchDirectory as NSString).appendingPathComponent("macOS/Verification.ini")
             as NSString).standardizingPath,
         ((launchDirectory as NSString).appendingPathComponent("Verification.ini")
-            as NSString).standardizingPath,
+            as NSString).standardizingPath
     ]
     for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
         return candidate
@@ -107,6 +108,9 @@ func parseCLI() -> CLIOptions {
             options.gui = false
         case "--baseline-strict":
             options.strictBaseline = true
+        case "--bench":
+            options.bench = true
+            options.gui = false
         default:
             break
         }
@@ -127,6 +131,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-receiver [--seconds 5]
           MPXPrime [--config <path>] --verify-composite-multiband [--seconds 5]
           MPXPrime [--config <path>] --verify-multiband-coupling [--seconds 5]
+          MPXPrime --bench
 
         Options:
           --config   Path to macOS INI config (default: ~/Library/Application Support/MPX Prime/MPX Prime.ini)
@@ -143,13 +148,14 @@ func printUsage() {
           --verify-receiver  Run offline receiver-model decode checks
           --verify-composite-multiband  A/B the experimental composite multiband clipper toggle
           --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
+          --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
+                     prints a markdown report to stdout. Use a release build for valid numbers.
         """
     print(text)
 }
 
 func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevices: [AudioDevice])
-    -> String
-{
+    -> String {
     var parts: [String] = []
     if let inputID = inputID {
         if let device = allDevices.first(where: { $0.id == inputID }) {
@@ -178,6 +184,11 @@ let configPath = options.configPathExplicit
     : (options.verify ? defaultVerificationConfigPath() : AppConfig.defaultINIPath)
 
 do {
+    if options.bench {
+        let report = BenchmarkRunner().run()
+        print(report)
+        exit(0)
+    }
     if options.verify {
         let defaultDuration = options.verifyLong ? 30.0 : 5.0
         let duration = max(1.0, options.runSeconds ?? defaultDuration)
@@ -222,8 +233,8 @@ do {
 
     // Minimize blocking before audio engine start: do device lookup with minimal I/O and NO logging
     var allDevices: [AudioDevice] = []
-    var inputID: AudioDeviceID? = nil
-    var outputID: AudioDeviceID? = nil
+    var inputID: AudioDeviceID?
+    var outputID: AudioDeviceID?
 
     do {
         allDevices = try AudioDevices.list()

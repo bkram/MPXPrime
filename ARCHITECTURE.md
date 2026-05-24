@@ -77,14 +77,21 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │        so the limiter peak-controls the +10..12 dB HF-boosted signal
 │        (canonical Optimod / Stereotool placement)
 │
-├──► Pre-encode audio limiter (L/R domain, stereo-linked oversampled)
+├──► Pre-encode audio limiter (L/R domain, stereo-linked oversampled, look-ahead)
 │    └── True-peak limiter on L/R before stereo encoding —
 │        `StereoLinkedOversampledPeakLimiter` uses a max(|L|, |R|)
 │        detector so both channels receive identical gain reduction
-│        (no asymmetric pumping). Optional band-limited residual ceiling
-│        uses the 33-tap / 0.25-cutoff kernel when enabled. Threshold,
+│        (no asymmetric pumping). Default 1.0 ms look-ahead (Phase 1,
+│        delay+detector primitive, US 4,208,548 prior art) so the
+│        gain ramp engages before the peak reaches the gain stage.
+│        Default-on Dolby HF-subband-aware detector (Phase 2, US 5,579,404
+│        / EP 0685130, expired 2013) high-passes the detector at 4 kHz
+│        so look-ahead engages only on HF transients (where pre-emphasis
+│        concentrates peaks), leaving LF punch untouched. Audio path
+│        stays full-band. Optional band-limited residual ceiling uses
+│        the 33-tap / 0.25-cutoff kernel when enabled. Threshold,
 │        release, residual enable, and residual kernel shape live-apply
-│        via `RuntimeConfig`.
+│        via `RuntimeConfig`; look-ahead settings are restart-required.
 │
 
 ├──► Stereo encoder (phase-coherent)
@@ -99,7 +106,7 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │
 ├──► Final MPX chain (audio composite only)
 │    ├── Final Drive (audio-composite domain)
-│    ├── Composite clipper (8x oversampled tanh soft-clip, delta-based
+│    ├── Composite clipper (16x oversampled tanh soft-clip, delta-based
 │    │   per-band substitution: pilot/stereo/RDS guards kept clean via
 │    │   bandpass-isolated clip-residual subtraction; vvtanhf-batched;
 │    │   optional OS-rate sliding-window-max look-ahead peak control
@@ -180,9 +187,9 @@ Within the main audio path, MPX Prime runs:
 15. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor
 16. Stereo-image protection
 17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal)
-18. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically)
+18. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`)
 19. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
-20. Composite clipper (8× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead)
+20. Composite clipper (16× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead)
 21. Audio composite bandwidth FIR (linear-phase HF cleanup before pilot/RDS injection)
 22. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
 23. Final-MPX safety limiter (audio composite only)
@@ -231,7 +238,7 @@ ITU-R BS.412 rolling average power measurement with slow gain reduction for Euro
 Structurally a **dual-integrator power AGC**: power-detect (square sample) → first integrator (per-block sum + 60-s rolling window) → sample-and-hold (per-64-sample boundary flush) → second integrator (gain smoothing with 1 s attack / 5 s release) → feedback gain ride. Functionally equivalent to the topology described in US 6,618,486 (CRL Systems / Harman, expired 2015-09-09). We use a flat rolling-average window instead of the patent's leaky-integrator first stage — gives a harder, more compliance-predictable boundary at the 60-s mark, generally preferred for type-approval testing.
 
 ### Composite Clipper (differential topology with delta-based per-band substitution)
-8× oversampled tanh soft-clipper on the audio composite, sitting after the pre-encode audio limiter and before BS.412 / final-MPX safety limiter. Since 0.11 this is the **only** non-linearity on the audio composite — the prior `CompositeTruePeakLimiter` (memoryless tanh on `|composite|` peak detection) was deleted because its IM bled into the 38 kHz stereo sidebands and demodulated as `(L−R)` cancellation. As of 0.20 the clipper runs the **differential topology** of Orban US 6,337,999 (expired 2022, public domain): only the *clipping residual* (input − clipped) goes through decimation, while the wanted signal rides a 1× delay-matched bypass and the residual is subtracted at the output. The decimator's stopband leakage and any phase non-flatness now only colour the residual subtracted at output, not the wanted (L−R) sideband content. Decimation itself uses `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband, flat passband 0–53 kHz) — replaces the prior `BiquadCascade6` 12th-order Butterworth which had ~70-80 dB stopband and 1-2 dB rolloff at the upper subcarrier edge. Cost: ~9 host samples (~47 µs at 192 kHz) of TX-path latency. The clipper does double duty: peak control plus loudness, the same role Orban's "Half-Cosine" / "Smart Clipper" stages play in the 8500/8600 line.
+Oversampled tanh soft-clipper on the audio composite, sitting after the pre-encode audio limiter and before BS.412 / final-MPX safety limiter. The oversampling factor is operator-selectable across {8, 16, 32} via `mpx_clipper_oversampling` (default 16; restart-required) — 8× for CPU-constrained hardware, 16× for industry-standard parity (Optimod 8X00 / Omnia.11 / Stereotool default), 32× for Omnia.9-class spec-sheet defence at roughly double this stage's CPU cost. Numbers in the rest of this section assume the 16× default unless stated otherwise; tap counts, batch sizes, and internal rates scale linearly with the active factor. Since 0.11 this is the **only** non-linearity on the audio composite — the prior `CompositeTruePeakLimiter` (memoryless tanh on `|composite|` peak detection) was deleted because its IM bled into the 38 kHz stereo sidebands and demodulated as `(L−R)` cancellation. As of 0.20 the clipper runs the **differential topology** of Orban US 6,337,999 (expired 2022, public domain): only the *clipping residual* (input − clipped) goes through decimation, while the wanted signal rides a 1× delay-matched bypass and the residual is subtracted at the output. The decimator's stopband leakage and any phase non-flatness now only colour the residual subtracted at output, not the wanted (L−R) sideband content. Decimation itself uses `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband, flat passband 0–53 kHz) — replaces the prior `BiquadCascade6` 12th-order Butterworth which had ~70-80 dB stopband and 1-2 dB rolloff at the upper subcarrier edge. Cost: ~9 host samples (~47 µs at 192 kHz) of TX-path latency. The clipper does double duty: peak control plus loudness, the same role Orban's "Half-Cosine" / "Smart Clipper" stages play in the 8500/8600 line.
 
 The bare clipper produces cubic IM that scatters across the FM baseband: M^n self-products in the audio band, M²·S / M·S² cross-products in the 23–53 kHz stereo sidebands, and broadband harmonic energy that lands inside the pilot guard band (17–21 kHz) and RDS guard band (55–59 kHz). The stereo-sideband products demodulate as audio in the S channel ("breathing") and the guard-band products vector-sum with the cleanly-injected pilot/RDS, degrading stereo decoding and RDS BCH integrity.
 
@@ -256,13 +263,13 @@ The four guard bands and their default behaviour:
 
 The pilot and RDS guards use narrow RBJ bandpass biquads (constant 0 dB peak gain, Q tuned to match the actual subcarrier guard width) rather than LP-pair difference math — at the narrow bandwidths required (4 kHz at 19 kHz, 4 kHz at 57 kHz) the LP-pair approach has poor stop-band rejection and would partially cancel the audio composite content immediately adjacent to the guard band.
 
-Soft-clip via `vvtanhf` (vForce SIMD) batched in 8-element groups: per OS-step the upsampled inputs are pre-computed into a batch buffer, the tanh is run as a vector op, then the per-OS-step state-dependent work (linear-phase FIR decimation push, bandpass updates) runs sequentially. ~5–9× faster than scalar `tanhf` per call — see `TanhBatchSizeBench` for the curve. The FIR convolution itself runs through `vDSP_dotpr` for the polyphase commutator path.
+Soft-clip via `vvtanhf` (vForce SIMD) batched in 16-element groups (one batch per host sample at 16× OS): per OS-step the upsampled inputs are pre-computed into a batch buffer, the tanh is run as a vector op, then the per-OS-step state-dependent work (linear-phase FIR decimation push, bandpass updates) runs sequentially. At batch=16 `vvtanhf` is ~9× faster than scalar `tanhf` per call — see `TanhBatchSizeBench` for the curve; this partially offsets the doubled per-host work the 16× OS rate would otherwise impose on the soft-clip stage. The FIR convolution itself runs through `vDSP_dotpr` for the polyphase commutator path.
 
-Topologically inspired by three expired Orban patents: US 4,460,871 (1984) introduced the delta-cancellation primitive on a single audio band; US 5,737,434 (1998) layered it across multiple guard bands for FM composite; US 6,337,999 (1998 / expired 2022) added the differential-clipper topology where only the residual is decimated. Per-band RBJ bandpass implementation, the linear-phase FIR decimator, and the `vvtanhf`-batched 8× oversampled core are project-specific.
+Topologically inspired by three expired Orban patents: US 4,460,871 (1984) introduced the delta-cancellation primitive on a single audio band; US 5,737,434 (1998) layered it across multiple guard bands for FM composite; US 6,337,999 (1998 / expired 2022) added the differential-clipper topology where only the residual is decimated. Per-band RBJ bandpass implementation, the linear-phase FIR decimator, and the `vvtanhf`-batched 16× oversampled core are project-specific.
 
 Live-apply via `RuntimeConfig`. INI keys `mpx_clipper_enabled`, `mpx_clipper_threshold_db`, `mpx_clipper_ceiling_db`, `mpx_clipper_cancel_audio`, `mpx_clipper_cancel_pilot`, `mpx_clipper_cancel_stereo`, `mpx_clipper_cancel_rds`, and (0.26) `mpx_clipper_lookahead_ms`. The legacy `composite_clipper_enabled` key (which used to control the now-deleted composite *limiter*) was removed in 0.11 — see the Verification.ini key-collision warning in AGENTS.md.
 
-**Look-ahead peak control (0.26, optional).** When `mpx_clipper_lookahead_ms > 0`, an OS-rate (1.536 MHz at 192 kHz × 8) sliding-window-max detector with Lagrange-interpolated intersample peak detection feeds a gain envelope smoothed by a 200 Hz one-pole LP. The gain is applied identically to both the clipper's `up` input and the per-band `orig*` filters, so the differential-topology cancellation linearity holds. A separate `lookaheadGainReductionDB` telemetry value distinguishes clean predictive ducking from soft-clip distortion-producing GR on the meter. Single INI knob; attack/release/smoother cutoff are hardcoded (exponential attack tied to the look-ahead window, ~80 ms release, 200 Hz smoother). 0.0 disables (default); 2.0 ms is the recommended value for loudness-priority presets. Algorithmic primitives — Lemire monotonic deque (sliding-window max), half-cosine attack LUT (US 6,434,241, expired 2014), 200 Hz gain-modulation smoother (US 5,737,434, expired ~2017) — are expired or public-domain.
+**Look-ahead peak control (0.26, optional).** When `mpx_clipper_lookahead_ms > 0`, an OS-rate (3.072 MHz at 192 kHz × 16) sliding-window-max detector with Lagrange-interpolated intersample peak detection feeds a gain envelope smoothed by a 200 Hz one-pole LP. The gain is applied identically to both the clipper's `up` input and the per-band `orig*` filters, so the differential-topology cancellation linearity holds. A separate `lookaheadGainReductionDB` telemetry value distinguishes clean predictive ducking from soft-clip distortion-producing GR on the meter. Single INI knob; attack/release/smoother cutoff are hardcoded (exponential attack tied to the look-ahead window, ~80 ms release, 200 Hz smoother). 0.0 disables (default); 2.0 ms is the recommended value for loudness-priority presets. Algorithmic primitives — Lemire monotonic deque (sliding-window max), half-cosine attack LUT (US 6,434,241, expired 2014), 200 Hz gain-modulation smoother (US 5,737,434, expired ~2017) — are expired or public-domain.
 
 **Multiband composite clipping (experimental, off by default).** `mpx_multiband_clipper_enabled` inserts `CompositeMultibandClipper` after the broadband composite clipper and before the audio-composite bandwidth FIR. It uses two `LinearPhaseFIRLowpass` instances with shared tap count to form low, mid, and high composite bands (`LP180`, `LP4200 - LP180`, delayed input minus `LP4200`), clips each band independently (current fixed ceilings: low 0.90, mid 0.62, high 0.38), then recombines. Its group delay is included in `recomputeSubcarrierDelay()` only when enabled, while delay-line capacity is reserved at configure time so live toggling does not allocate on the audio thread. `--verify-composite-multiband` A/Bs dense/HF verifier scenarios with the toggle off/on. This is a loudness experiment, not a preset default: it still needs dense-program listening before any shipped preset uses it.
 
@@ -294,6 +301,12 @@ The choice is resolved once per engine start by `AudioOutputEngine.start()` via 
 `DSPThroughputTests.preEmphasisDoesNotExplodeFullChainCost` and `EncoderBandwidthTests` guard this stage: the former catches any regression in the combined limiter+encoder cost on HF-rich program, the latter characterises the FIR's stop-band depth directly and asserts a ≥20 dB gap over the Butterworth baseline.
 
 ## RDS encoder (`BasicRDSCoder`)
+
+### Origin and scope
+
+The block-level bit encoder — `crc` / `withCheckword` / `buildGroupBits` and the B1/B2/B3/B4 layout — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). The CRC polynomial (`0x5B9`), offset words A/B/C/D, the `(groupType << 12) | (versionB << 11) | (tp << 10) | (pty << 5) | b2Tail` B2 composition, and the segment-counter patterns in Group 0 (mod 4, DI bit) and Group 2 (mod 16, A/B flag) all follow the Python implementation's structure. The Cp offset value diverged during the port (Python uses `0x350`, this implementation uses `0x1E0`).
+
+Everything else in this section — the 1187.5 bit/s biphase impulse + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation (`nextSampleWithPilotLock`), the real-time audio-thread safety work (pre-allocated `bitBuffer`, atomic CT cache, `monotonicSeconds()` timing), the `RDSRuntimeConfig` live-apply pipeline, AF Method B encoding, RT+ ODA registration (AID `0x4BD7`, group 3A/11A), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, and Group 1A ECC/LIC variants — is MPX Prime's own work and has no counterpart in the source Python project.
 
 ### Group repertoire
 
@@ -346,7 +359,6 @@ TZ offset, scheduler enables) are direct assignments.
 | Alternative frequencies + method | Live |
 | Group sequence + scheduler policy + CT/ID/TZ | Live |
 | RDS injection level (`rds_level`) | Restart-only |
-| Subcarrier frequency (`rds_freq`) | Restart-only |
 | Gaussian shaping (BW + taps) | Restart-only |
 
 The restart-only settings reconfigure the modulator FIR at engine

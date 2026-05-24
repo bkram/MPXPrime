@@ -120,8 +120,7 @@ enum AudioDevices {
     }
 
     private static func readChannelCount(deviceID: AudioDeviceID, scope: AudioObjectPropertyScope)
-        -> Int
-    {
+        -> Int {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: scope,

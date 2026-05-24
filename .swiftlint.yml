@@ -1,0 +1,86 @@
+# MPX Prime SwiftLint configuration
+#
+# Two-tier scope:
+#
+# 1. Accessibility rules (HIG-adjacent) — catch missing image labels
+#    and missing button traits. These are the closest thing to
+#    automated HIG validation for SwiftUI on macOS.
+#
+# 2. Bug-catcher opt-in rules — surface real issues (force unwraps,
+#    dead code, redundant patterns, common-bug shapes) without
+#    forcing aesthetic cleanup. Domain-style rules that fight the
+#    DSP code (single-letter math variables, large source files,
+#    long help strings) stay off.
+#
+# How to run:
+#
+#   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint
+#
+# (DEVELOPER_DIR must point at Xcode, not the CommandLineTools shim,
+# because SwiftLint uses SourceKitten which loads `sourcekitdInProc`
+# from the Xcode toolchain.)
+
+included:
+  - macOS/Sources
+
+excluded:
+  - macOS/.build
+  - macOS/dist
+  - macOS/Tests
+
+opt_in_rules:
+  # ── Accessibility (HIG) ────────────────────────────────────────
+  - accessibility_label_for_image
+  - accessibility_trait_for_button
+
+  # ── Bug catchers ───────────────────────────────────────────────
+  - force_unwrapping                 # `!` access can crash
+  - empty_count                      # prefer isEmpty over count == 0
+  - empty_string                     # prefer isEmpty over == ""
+  - first_where                      # prefer .first(where:) over .filter().first
+  - last_where                       # prefer .last(where:) over .filter().last
+  - contains_over_first_not_nil      # prefer .contains over .first(where:) != nil
+  - contains_over_filter_count       # prefer .contains over .filter().count > 0
+  - contains_over_filter_is_empty    # prefer .contains over .filter().isEmpty
+  - contains_over_range_nil_comparison
+  - redundant_nil_coalescing
+  - redundant_set_access_control
+  - redundant_string_enum_value
+  - redundant_type_annotation
+  - redundant_void_return
+  - toggle_bool                      # `x = !x` → `x.toggle()`
+  - unowned_variable_capture         # crashes if captured ref deallocates
+  - unused_setter_value              # setter that doesn't use newValue
+  - sorted_first_last                # prefer .min()/.max() over .sorted().first/.last
+  - reduce_into                      # prefer reduce(into:) for collections
+  - explicit_init                    # remove unnecessary .init()
+  - unneeded_parentheses_in_closure_argument
+  - untyped_error_in_catch
+  - convenience_type                 # types that should be caseless enums
+
+disabled_rules:
+  # DSP code uses single-letter math variables (x, y, n, b0, a1, q)
+  # and short identifiers (s, m, dx, dy) — domain-standard, not bugs.
+  - identifier_name
+  # Long descriptive strings in tooltips, help text, status messages,
+  # and inline comments. Most line_length violations are documentation,
+  # not hard-to-read code.
+  - line_length
+  # MPXGenerator.swift (~9000 lines) and SwiftUIControlApp.swift
+  # (~7700 lines) are intentionally large per AGENTS.md ("Keep them
+  # splittable-in-principle"). Don't warn on every build.
+  - file_length
+  - type_body_length
+  - function_body_length
+  # DSP returns and configure() functions naturally produce large
+  # tuples (stereo pairs, multi-stage params) and long parameter lists.
+  - large_tuple
+  - function_parameter_count
+  # DSP inner loops are inherently branchy.
+  - cyclomatic_complexity
+  # CoreAudio render callbacks have long typed parameter lists
+  # (`AVAudioSourceNodeRenderBlock`, `AURenderCallback`) that read
+  # more clearly with parameters on their own line after `{`. Two
+  # legitimate occurrences in the codebase; not worth per-line
+  # suppression.
+  - closure_parameter_position

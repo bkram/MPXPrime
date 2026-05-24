@@ -97,6 +97,30 @@ private struct CompositeClipperInspector: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
+
+            Divider()
+
+            Text("Oversampling factor")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            Picker(
+                "",
+                selection: model.configBinding(\.compositeClipperOversampling, runtimeDisposition: .restart)
+            ) {
+                Text("8x").tag(8)
+                Text("16x").tag(16)
+                Text("32x").tag(32)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help("Composite clipper oversampling factor. Restart required.")
+
+            Text("16x is the industry-standard default (Optimod 8X00, Omnia.11, Stereotool). 8x halves this stage's CPU with a small alias-suppression tradeoff — pick it on older hardware. 32x doubles CPU for a further small alias-suppression improvement — pick it only with hardware headroom. See `mpx_clipper_oversampling` in the sample INI for the full rationale.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
         }
     }
 }

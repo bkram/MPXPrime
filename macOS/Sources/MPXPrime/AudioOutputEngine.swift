@@ -290,8 +290,7 @@ final class AudioOutputEngine {
             let needsAnalysisBuffers = throttled || capturePreMPXHistory
             if buffers.count >= 2,
                 let leftData = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-                let rightData = buffers[1].mData?.assumingMemoryBound(to: Float.self)
-            {
+                let rightData = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
                 if self.useInputSource, let ring = self.inputRing {
                     if !self.inputPrimed {
                         if ring.bufferedFrames() < self.inputPrimeThresholdFrames {
@@ -471,8 +470,7 @@ final class AudioOutputEngine {
                 return noErr
             }
             if buffers.count == 1,
-                let data = buffers[0].mData?.assumingMemoryBound(to: Float.self)
-            {
+                let data = buffers[0].mData?.assumingMemoryBound(to: Float.self) {
                 // Interleaved fallback path.
                 for i in 0..<(frames * 2) {
                     data[i] = 0.0
@@ -649,7 +647,11 @@ final class AudioOutputEngine {
         // through `[unowned self]`. The frame sink is invoked from
         // the AUHAL real-time thread; closure body must stay
         // allocation-free and lock-free (matches the prior tap
-        // contract).
+        // contract). `[weak self]` would add an optional-unwrap on
+        // every render slice — `unowned` is intentional and safe
+        // because the AudioOutputEngine instance owns inputAU and
+        // clears frameSink before deinit.
+        // swiftlint:disable:next unowned_variable_capture
         inputAU.frameSink = { [unowned self] left, right, frames in
             if firstFrameLogged.compareExchange(
                 expected: false,
@@ -878,8 +880,7 @@ final class AudioOutputEngine {
     }
 
     private func setCurrentDevice(_ deviceID: AudioDeviceID, for node: AVAudioIONode, role: String)
-        throws
-    {
+        throws {
         guard let audioUnit = node.audioUnit else {
             throw AudioEngineError.deviceSelectionFailed("\(role) audio unit unavailable")
         }
@@ -895,10 +896,10 @@ final class AudioOutputEngine {
         )
         if status != noErr {
             let be = UInt32(bitPattern: status)
-            let c1 = Character(UnicodeScalar((be >> 24) & 0xFF)!)
-            let c2 = Character(UnicodeScalar((be >> 16) & 0xFF)!)
-            let c3 = Character(UnicodeScalar((be >> 8) & 0xFF)!)
-            let c4 = Character(UnicodeScalar(be & 0xFF)!)
+            let c1 = Character(UnicodeScalar(UInt8((be >> 24) & 0xFF)))
+            let c2 = Character(UnicodeScalar(UInt8((be >> 16) & 0xFF)))
+            let c3 = Character(UnicodeScalar(UInt8((be >> 8) & 0xFF)))
+            let c4 = Character(UnicodeScalar(UInt8(be & 0xFF)))
             throw AudioEngineError.deviceSelectionFailed(
                 "\(role) device set failed status=\(status) fourcc=\(c1)\(c2)\(c3)\(c4)"
             )
@@ -1250,8 +1251,7 @@ final class AudioOutputEngine {
             frameCount: frameCount
         )
         if let postAGCLeft = analysis.postAGCLeft,
-            let postAGCRight = analysis.postAGCRight
-        {
+            let postAGCRight = analysis.postAGCRight {
             let agcMeter = Self.computeStereoLevels(
                 left: postAGCLeft,
                 right: postAGCRight,
@@ -1287,8 +1287,7 @@ final class AudioOutputEngine {
         }
         if capturePreMPXHistory,
             let preLeft = analysis.preMPXLeft,
-            let preRight = analysis.preMPXRight
-        {
+            let preRight = analysis.preMPXRight {
             updatePreMPXHistory(
                 left: preLeft,
                 right: preRight,
@@ -1747,13 +1746,13 @@ final class AudioOutputEngine {
         frameCount: Int
     ) -> (rms: Float, peak: Float) {
         guard frameCount > 0 else { return (0.0, 0.0) }
-        
+
         var sum: Float = 0.0
         var peak: Float = 0.0
-        
+
         vDSP_svesq(samples, 1, &sum, vDSP_Length(frameCount))
         vDSP_maxmgv(samples, 1, &peak, vDSP_Length(frameCount))
-        
+
         return (sqrtf(sum / Float(frameCount)), peak)
     }
 
@@ -1764,15 +1763,13 @@ final class AudioOutputEngine {
         guard frameCount > 0 else { return }
         if buffers.count >= 2,
             let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-            let right = buffers[1].mData?.assumingMemoryBound(to: Float.self)
-        {
+            let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
             vDSP_vclr(left, 1, vDSP_Length(frameCount))
             vDSP_vclr(right, 1, vDSP_Length(frameCount))
             return
         }
         if buffers.count == 1,
-            let mono = buffers[0].mData?.assumingMemoryBound(to: Float.self)
-        {
+            let mono = buffers[0].mData?.assumingMemoryBound(to: Float.self) {
             vDSP_vclr(mono, 1, vDSP_Length(frameCount * 2))
         }
     }

@@ -49,7 +49,7 @@ MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   swift test --package-path macOS --filter Deep
 ```
 
-**Debug builds are not real-time capable.** `swift build` / `swift run` produce a debug binary without optimizer pass; the meter / scope / spectrum work in `refreshMonitoringSnapshot` runs slow enough to preempt the audio thread on a debug build, producing clicks, buffer underruns, or input-ring overflows. Use debug for development, unit tests, and `--verify` (which doesn't touch real audio devices). For any test that involves live audio I/O — bug-reproducing on real hardware, listening tests, regression checks of the actual chain — build release first: `swift build --package-path macOS -c release` and run `macOS/.build/release/MPXPrime`, or use the `./build-release.sh` DMG. If a user reports buffer issues, ask whether they're on a debug or release build before chasing a DSP regression.
+**Debug builds are not real-time capable.** `swift build` / `swift run` produce a debug binary without optimizer pass; the meter / scope / spectrum work in `refreshMonitoringSnapshot` runs slow enough to preempt the audio thread on a debug build, producing clicks, buffer underruns, or input-ring overflows. Use debug for development, unit tests, and `--verify` (which doesn't touch real audio devices). For any test that involves live audio I/O — bug-reproducing on real hardware, listening tests, regression checks of the actual chain — build release first: `swift build --package-path macOS -c release` and run `macOS/.build/release/MPXPrime`, or use the `./build-release.sh` DMG. If a user reports buffer issues, ask whether they're on a debug or release build before chasing a DSP regression. If buffer issues persist on a release build, check that Audio MIDI Setup's device format matches the configured `sample_rate` in the INI — CoreAudio's implicit SRC will starve the render thread on a mismatch, producing input-ring overflows and silent output that look identical to a DSP fault.
 
 Verifier exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN.
 
@@ -80,7 +80,7 @@ For DSP differences, prefer measurement-first validation wherever technically po
   - `VerificationHarness.swift` / `VerifierBaseline.swift` — offline scenario renderer + baseline compare
   - `NowPlayingSupport.swift` — external script polling for RDS RT metadata
 - `macOS/Tests/MPXPrimeTests/` — Swift Testing suite (DSP primitives, ring buffer, analysis helpers, RDS bitstream + live-apply)
-- `macOS/verifier_baselines/` — JSON baselines + `ClipperAliasingBaseline.md` documenting pre-Phase-7.1 aliasing so post-refactor deltas are attributable
+- `macOS/verifier_baselines/` — JSON baselines for `--verify --baseline-strict`
 - `macOS/{MPXPrime.ini,Verification.ini}` — sample configs; user config lives at `~/Library/Application Support/MPX Prime/MPX Prime.ini`
 - `documents/` — standards PDFs (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
 - `.vscode/settings.json` — sets `swift.searchSubfoldersForPackages: true` so sourcekit-lsp discovers `macOS/Package.swift` (workspace root is the repo root, package lives one level down)
@@ -93,13 +93,13 @@ The audio path runs ~24 stages, ending with **post-clipper pilot + RDS injection
 2. **Pre-emphasis runs in L/R domain immediately upstream of the pre-encode limiter** (canonical Optimod / Stereotool placement; relocated post-0.24). The limiter peak-controls the +10..12 dB HF-boosted signal before composite assembly. The pre-2026 M/S placement and the b806053 cost-regression history that originally motivated it are recorded in plan.md "Pre-emphasis placement (history)"; the b806053 regression class is no longer reproducible on the current chain.
 
 Peak control:
-- **Pre-encode audio limiter** — L/R, stereo-linked, after pre-emphasis, before stereo encoding. Uses `OversampledPeakLimiter` per channel (4× oversampled true-peak with tanh ceiling).
-- **Composite clipper** — 8× oversampled tanh soft-clipper on the audio composite, **differential topology** (only the clipping residual goes through decimation; wanted signal rides a 1× delay-matched bypass), with delta-based per-band substitution that protects audio (0–17 kHz, opt-in), pilot guard (17–21 kHz), stereo subcarrier (22–53 kHz), and RDS guard (55–59 kHz) bands. Decimation via `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, ≥90 dB stopband). Replaces the old `CompositeTruePeakLimiter` (deleted in 0.11) which used `|composite|` peak detection + memoryless tanh and produced intermod that demodulated as `(L-R)` cancellation. Inspired by Orban US 4,460,871 + US 5,737,434 (delta-cancellation primitive, expired) and US 6,337,999 (differential topology, expired 2022 — landed in 0.20).
+- **Pre-encode audio limiter** — L/R, stereo-linked, after pre-emphasis, before stereo encoding. Uses `StereoLinkedOversampledPeakLimiter` (4× oversampled true-peak with tanh ceiling, shared gain envelope from `max(|L|, |R|)`). 0.30: default-on look-ahead (`pre_encode_lookahead_ms = 1.0`, audio-rate delay + un-delayed `futurePeak` detector into `stereoStep`, US 4,208,548 prior art) and default-on Dolby HF-subband-aware detector (`pre_encode_lookahead_hf_only = True`, `pre_encode_lookahead_hf_cutoff_hz = 4000`, US 5,579,404 / EP 0685130, expired 2013) — detector path high-passes input so look-ahead engages only on HF transients where pre-emphasis concentrates peaks; audio path stays full-band. Look-ahead settings are restart-required (allocate delay buffer / reconfigure detector biquad).
+- **Composite clipper** — 16× oversampled tanh soft-clipper on the audio composite, **differential topology** (only the clipping residual goes through decimation; wanted signal rides a 1× delay-matched bypass), with delta-based per-band substitution that protects audio (0–17 kHz, opt-in), pilot guard (17–21 kHz), stereo subcarrier (22–53 kHz), and RDS guard (55–59 kHz) bands. Decimation via `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, auto-sized to OS rate, `vDSP_dotpr` polyphase, ≥90 dB stopband). Replaces the old `CompositeTruePeakLimiter` (deleted in 0.11) which used `|composite|` peak detection + memoryless tanh and produced intermod that demodulated as `(L-R)` cancellation. Inspired by Orban US 4,460,871 + US 5,737,434 (delta-cancellation primitive, expired) and US 6,337,999 (differential topology, expired 2022 — landed in 0.20).
 - **Multiband composite clipper** — experimental, off by default via `mpx_multiband_clipper_enabled`. Runs after the broadband composite clipper and before the audio-composite bandwidth FIR, using linear-phase low/mid/high splitting (`LP180`, `LP4200 - LP180`, delayed input minus `LP4200`) and independent band clipping with current ceilings 0.90 / 0.62 / 0.38. `--verify-composite-multiband` and `DSPThroughputTests.compositeMultibandClipperCostStaysBounded` provide the current measurement gate; dense-program listening and preset A/B are still required before using it in presets.
 
 `Mono Mode` suppresses pilot, stereo subcarrier, and RDS — true mono composite.
 
-Oversampled clippers (BassClipper 4×, DistortionCancelledClipper 8×, CompositeClipper 8×) share a `Lagrange4Interp` + `BiquadCascade6` pattern (12th-order Butterworth decimation LP). Soft-clip `tanhf` calls inside these clippers are batched through `vvtanhf` (vForce SIMD) for ~5–9× speedup vs scalar tanhf at 8/16-element batches — see `TanhBatchSizeBench` for the curve. Follow these patterns for any new oversampled nonlinearity.
+Oversampled clippers: `BassClipper` 4× and `DistortionCancelledClipper` 8× share a `Lagrange4Interp` + `BiquadCascade6` decimation pattern (12th-order Butterworth LP). `CompositeClipper` runs at the `mpx_clipper_oversampling` rate (default 16×, operator-selectable across {8, 16, 32} since 0.30; restart-required) with `Lagrange4Interp` + `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, `vDSP_dotpr` polyphase) — linear phase and tighter stopband than the Butterworth cascade, at the cost of group-delay latency folded into `subcarrierDelayLine`. Per-host batch buffers default-size to 32 elements (the supported max) so swapping between factors is non-allocating after first `configure()`. Soft-clip `tanhf` calls in all three are batched through `vvtanhf` (vForce SIMD) for ~5–9× speedup vs scalar tanhf at 8/16-element batches — see `TanhBatchSizeBench` for the curve. Follow these patterns for any new oversampled nonlinearity.
 
 The multiband compressor has two crossover backends, picked at engine start by output mode:
 - **TX path** uses `LinearPhaseMultibandSplitter5` / `3` — Kaiser-windowed-sinc FIR splitters with parallel-cumulative-LP topology, all bands sharing group delay so summed bands reconstruct the input delayed-by-`groupDelaySamples` exactly (sum-to-flat at –155 dB). Eliminates IIR-LR4's transient smear and inter-band pumping. ~5.3 ms latency at 192 kHz with the default 90 Hz lowest crossover. Convolution runs through `vDSP_dotpr` (double-buffered delay line) — without that the FIR path overruns real-time budget on most machines (manifests as audio crackle + RDS BCH corruption from sample dropouts).
@@ -122,7 +122,7 @@ Three live-apply dispositions:
 - `.restart` — requires transport stop/start. Use this for physical-layer settings that reconfigure the modulator FIR / oversampler / sample-rate plumbing.
 - `.none` — handled via a side channel (e.g. now-playing script reload), no runtime apply needed.
 
-RDS settings that stay restart-only: `rds_level` (injection kHz), `rds_freq` (subcarrier frequency), `rds_gaussian_*` (FIR taps + BW). Everything else — master enable, PI, PTY, PTYN, ECC, LIC, TP/TA/MS/DI, AF list/method, group sequence, scheduler, CT/ID/TZ, all RT/PS/Long PS text — applies live.
+RDS settings that stay restart-only: `rds_level` (injection kHz), `rds_gaussian_*` (FIR taps + BW). Everything else — master enable, PI, PTY, PTYN, ECC, LIC, TP/TA/MS/DI, AF list/method, group sequence, scheduler, CT/ID/TZ, all RT/PS/Long PS text — applies live. The 57 kHz subcarrier frequency is spec-fixed (EN 50067 Sec 2.1.4, locked to 3x pilot) and is not user-configurable.
 
 When toggling `rds_ta` live, `BasicRDSCoder.applyRDSRuntimeConfig` sets `forceNextGroupForTAEdge`. The next `nextGroupBits()` call honours it by emitting a forced 0A ahead of the schedule (UECP §2.5.1.1). CT (4A, minute-aligned) keeps higher priority than the TA-edge force flag.
 
@@ -159,6 +159,7 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - Cards use `LabeledContent`, 10pt corner radius, 16pt spacing.
 - `.buttonStyle(.bordered)` / `.buttonStyle(.borderedProminent)` for buttons.
 - `.pickerStyle(.segmented)` for tab pickers within sections; `.pickerStyle(.menu)` for dropdowns.
+- **Accessibility lint** — the project ships a `.swiftlint.yml` that runs only `accessibility_label_for_image` and `accessibility_trait_for_button` (no broader style enforcement; DSP code uses many intentional patterns that fight the default SwiftLint rule pack). Run with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint` from the project root before committing UI changes. Decorative SF Symbols (icons next to descriptive text, info-circle in help boxes) should use `.accessibilityHidden(true)`; icon-only buttons need `.accessibilityLabel(...)`.
 
 ## Release prep
 
@@ -168,3 +169,20 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
 - Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.028`). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.
+
+### Release validation checklist
+
+Run before tagging. None of these should be skipped on a release commit; partial coverage is how regressions ship.
+
+- [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS` — full default suite passes
+- [ ] `swift build --package-path macOS -c release` — release build clean
+- [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint` — 0 violations (accessibility lint)
+- [ ] `swift run --package-path macOS MPXPrime --verify --seconds 5` — exit 0 (PASS)
+- [ ] `swift run --package-path macOS MPXPrime --verify-presets --seconds 5` — exit 0
+- [ ] `swift run --package-path macOS MPXPrime --verify-receiver --seconds 5` — exit 0 (separation @ 1/10/14 kHz, pilot, RDS)
+- [ ] `swift run --package-path macOS MPXPrime --verify --baseline-strict` — composite shape matches the captured baseline
+- [ ] **Release build live smoke**: run `macOS/.build/release/MPXPrime --gui` against a real 192 kHz output device (NOT debug, NOT 96 kHz) — RDS reads cleanly on a real receiver, no clicks/dropouts over 30+ seconds of dense program
+- [ ] **Device-rate match**: Audio MIDI Setup output format matches `sample_rate` in INI (see CLAUDE.md "buffer issues" diagnostic)
+- [ ] **RDS receiver smoke**: at minimum one car radio + one portable RDS receiver + one SDR decoder verify live PI / PS / PTY / RT A/B / TA edge / AF / CT / Long PS
+- [ ] **UI**: if any UI change in the release, manual VoiceOver pass + high-contrast appearance verification
+- [ ] **Optional but recommended**: `MPXPRIME_DEEP=1 swift test --filter Deep` (catches stage-interaction regressions; ~3 min)

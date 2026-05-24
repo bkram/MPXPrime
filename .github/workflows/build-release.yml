@@ -22,8 +22,15 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
       - name: Build Release (Universal Binary)
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          VERSION=${VERSION:-${GITHUB_REF#refs/tags/v}}
+          # Prefer workflow_dispatch input; fall back to the tag-derived
+          # version. Previously the dispatched value was silently dropped
+          # because INPUT_VERSION wasn't passed to the step env — the
+          # substitution against GITHUB_REF then produced a path with
+          # "refs/heads/develop/v.NNN" in it and hdiutil failed.
+          VERSION="${INPUT_VERSION:-${GITHUB_REF#refs/tags/v}}"
           ./build-release.sh "$VERSION"
 
       - name: Upload DMG

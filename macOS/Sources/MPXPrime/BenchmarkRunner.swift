@@ -32,10 +32,10 @@ struct BenchmarkRunner {
         let rdsAndStereo: Bool
     }
     private static let sweepRates: [SweepRate] = [
-        SweepRate(hz: 96_000,  label: "96.0",  rdsAndStereo: false),
+        SweepRate(hz: 96_000, label: "96.0", rdsAndStereo: false),
         SweepRate(hz: 128_000, label: "128.0", rdsAndStereo: true),
         SweepRate(hz: 176_400, label: "176.4", rdsAndStereo: true),
-        SweepRate(hz: 192_000, label: "192.0", rdsAndStereo: true),
+        SweepRate(hz: 192_000, label: "192.0", rdsAndStereo: true)
     ]
 
     private let blockSize: Int = 512
@@ -129,12 +129,14 @@ struct BenchmarkRunner {
         var warmR = [Float](repeating: 0.0, count: blockSize)
         warmL.withUnsafeMutableBufferPointer { lBuf in
             warmR.withUnsafeMutableBufferPointer { rBuf in
-                // swiftlint:disable:next force_unwrapping
+                // swiftlint:disable force_unwrapping
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
                 gen.renderFromInputInPlace(
                     frameCount: blockSize,
                     left: lBuf.baseAddress!,
                     right: rBuf.baseAddress!
                 )
+                // swiftlint:enable force_unwrapping
             }
         }
 
@@ -147,12 +149,14 @@ struct BenchmarkRunner {
                     let remain = samples - offset
                     let frames = min(blockSize, remain)
                     guard frames > 0 else { break }
-                    // swiftlint:disable:next force_unwrapping
+                    // swiftlint:disable force_unwrapping
+                    // baseAddress is non-nil for non-empty pre-allocated arrays.
                     gen.renderFromInputInPlace(
                         frameCount: frames,
                         left: lBuf.baseAddress!.advanced(by: offset),
                         right: rBuf.baseAddress!.advanced(by: offset)
                     )
+                    // swiftlint:enable force_unwrapping
                     offset += frames
                 }
             }
@@ -190,22 +194,22 @@ struct BenchmarkRunner {
     }
 
     private static let stageProbes: [StageProbe] = [
-        StageProbe(name: "Multiband (5-band, FIR)",  domain: .audio, mutate: { $0.multibandEnabled = false }),
-        StageProbe(name: "Wideband AGC",             domain: .audio, mutate: { $0.widebandAGCEnabled = false }),
-        StageProbe(name: "Parametric EQ",            domain: .audio, mutate: { $0.parametricEQEnabled = false }),
-        StageProbe(name: "PrimeBass",                domain: .audio, mutate: { $0.primeBassEnabled = false }),
-        StageProbe(name: "Stereo widener",           domain: .audio, mutate: { $0.stereoWidenEnabled = false }),
-        StageProbe(name: "Mono bass",                domain: .audio, mutate: { $0.monoBassEnabled = false }),
-        StageProbe(name: "Phase rotation",           domain: .audio, mutate: { $0.phaseRotationEnabled = false }),
-        StageProbe(name: "Bass clipper",             domain: .audio, mutate: { $0.bassClipperEnabled = false }),
-        StageProbe(name: "DC clipper",               domain: .audio, mutate: { $0.dcClipperEnabled = false }),
-        StageProbe(name: "Multiband limiter",        domain: .audio, mutate: { $0.multibandLimiterEnabled = false }),
-        StageProbe(name: "Pre-emphasis",             domain: .audio, mutate: { $0.preemphasisUS = 0 }),
-        StageProbe(name: "Pre-encode limiter",       domain: .audio, mutate: { $0.preEncodeAudioLimiterEnabled = false }),
-        StageProbe(name: "Pre-encode look-ahead",    domain: .audio, mutate: { $0.preEncodeLookaheadMS = 0.0 }),
-        StageProbe(name: "Composite clipper",        domain: .mpx,   mutate: { $0.compositeClipperEnabled = false }),
-        StageProbe(name: "BS.412",                   domain: .mpx,   mutate: { $0.bs412Enabled = false }),
-        StageProbe(name: "RDS encoder",              domain: .mpx,   mutate: { $0.enRDS = false; $0.rdsLevel = 0.0 }),
+        StageProbe(name: "Multiband (5-band, FIR)", domain: .audio, mutate: { $0.multibandEnabled = false }),
+        StageProbe(name: "Wideband AGC", domain: .audio, mutate: { $0.widebandAGCEnabled = false }),
+        StageProbe(name: "Parametric EQ", domain: .audio, mutate: { $0.parametricEQEnabled = false }),
+        StageProbe(name: "PrimeBass", domain: .audio, mutate: { $0.primeBassEnabled = false }),
+        StageProbe(name: "Stereo widener", domain: .audio, mutate: { $0.stereoWidenEnabled = false }),
+        StageProbe(name: "Mono bass", domain: .audio, mutate: { $0.monoBassEnabled = false }),
+        StageProbe(name: "Phase rotation", domain: .audio, mutate: { $0.phaseRotationEnabled = false }),
+        StageProbe(name: "Bass clipper", domain: .audio, mutate: { $0.bassClipperEnabled = false }),
+        StageProbe(name: "DC clipper", domain: .audio, mutate: { $0.dcClipperEnabled = false }),
+        StageProbe(name: "Multiband limiter", domain: .audio, mutate: { $0.multibandLimiterEnabled = false }),
+        StageProbe(name: "Pre-emphasis", domain: .audio, mutate: { $0.preemphasisUS = 0 }),
+        StageProbe(name: "Pre-encode limiter", domain: .audio, mutate: { $0.preEncodeAudioLimiterEnabled = false }),
+        StageProbe(name: "Pre-encode look-ahead", domain: .audio, mutate: { $0.preEncodeLookaheadMS = 0.0 }),
+        StageProbe(name: "Composite clipper", domain: .mpx, mutate: { $0.compositeClipperEnabled = false }),
+        StageProbe(name: "BS.412", domain: .mpx, mutate: { $0.bs412Enabled = false }),
+        StageProbe(name: "RDS encoder", domain: .mpx, mutate: { $0.enRDS = false; $0.rdsLevel = 0.0 })
     ]
 
     // MARK: - Sections
@@ -447,6 +451,6 @@ struct BenchmarkRunner {
         var buf = [UInt8](repeating: 0, count: size)
         if sysctlbyname(name, &buf, &size, nil, 0) != 0 { return "?" }
         let nullIdx = buf.firstIndex(of: 0) ?? buf.endIndex
-        return String(decoding: buf[..<nullIdx], as: UTF8.self)
+        return String(bytes: buf[..<nullIdx], encoding: .utf8) ?? "?"
     }
 }

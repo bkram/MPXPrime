@@ -257,7 +257,7 @@ Defer. Declipper / dehumfilter / delossifier are genuinely complex algorithms (O
 1. Validate PrimeBass, mono bass, widener, and multiband interaction on difficult real material.
 2. Refine calibration workflow only where real operator friction exists.
 3. Real-program listening A/B per Format Profile (the eight 0.30 profiles) to fine-tune per-profile clipper drives.
-4. **Intel benchmark capture (MBP16,1 i7-9750H / i9-9980HK).** `BenchmarkSuite` has only M1 Pro numbers; older Intel (AVX2 without AMX) is the hardware most likely to benefit from the 0.30 dual-rate cutover. Confirm the projected ~84% → ~48% RT improvement on a real 16,1 (or equivalent Coffee Lake-H machine) so the README guidance is backed by measurement. Reproduce via `MPXPRIME_BENCH=1 swift test -c release --filter Benchmark`.
+4. **Intel benchmark capture (MBP16,1 i7-9750H / i9-9980HK).** LANDED 2026-05-24. Captured on a real MBP16,1 i7-9750H (Coffee Lake-H, AVX2 no AMX). Measured savings: legacy single-rate chain at 59.1% RT, dual-rate on 38.5% RT — **-20.6 pp / -34.8% relative**. Better than the projected ~84% → ~48%. Composite clipper at 16x is the single heaviest stage on Intel (24.6% RT); stacking dual-rate on + 8x composite clipper drops full chain to ~27% RT, equivalent to M1-Pro-with-defaults headroom. Full report at `macOS/benchmarks/mbp16-1-i7-9750h-v0.30.md`. The capture was enabled by extracting `BenchmarkRunner` to `Sources/MPXPrime/` and exposing it via `MPXPrime --bench` so CLT-only machines can run it without full Xcode.
 
 ### Medium-term
 1. Reduce duplicated filter configuration logic in biquad/crossover helpers.

@@ -9,6 +9,25 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30 — 2026-05-24
+
+### Tooling — `MPXPrime --bench` CLI + Intel benchmark captured
+
+Two related pieces:
+
+**`MPXPrime --bench` CLI.** The benchmark previously lived as a Swift Testing `@Test` gated on `MPXPRIME_BENCH=1`, which means it needed full Xcode (for `Testing.framework`) to run. That blocked running it on machines with only Command Line Tools — including Intel Macs accessed over SSH for the long-pending plan.md A11 Intel benchmark item. Refactored: bench logic moved from `Tests/MPXPrimeTests/BenchmarkSuite.swift` to `Sources/MPXPrime/BenchmarkRunner.swift`; `BenchmarkSuite` becomes a thin `@Test` wrapper that delegates; new `--bench` CLI command in `main.swift` runs the same logic on any machine. The MPXPRIME_BENCH `swift test` workflow on the dev machine continues to work.
+
+**MBP16,1 i7-9750H benchmark captured (closes plan.md A11).** Ran `MPXPrime --bench` on a real Coffee Lake-H Intel Mac to confirm the projected dual-rate payoff on Intel hardware. Measured:
+
+| | M1 Pro (defaults) | Intel i7-9750H (defaults) |
+| --- | --- | --- |
+| Full chain @ 192 kHz, dual-rate off (legacy) | 41.9% RT | **59.1% RT** |
+| Full chain @ 192 kHz, dual-rate on (shipping default) | 24.3% RT | **38.5% RT** |
+| Savings | -17.6 pp / -42% relative | **-20.6 pp / -34.8% relative** |
+| Composite clipper @ 16x | 14.3% RT | **24.6% RT** |
+
+The Intel savings are larger in absolute terms than M1 Pro — exactly the audience the dual-rate refactor was aimed at. Composite clipper at 16x is the single heaviest stage on Intel; the 8x option drops it by ~12 pp. Stacking dual-rate on + 8x clipper gets the i7-9750H full chain to ~27% RT — roughly M1-Pro-with-defaults headroom. Full report at `macOS/benchmarks/mbp16-1-i7-9750h-v0.30.md`.
+
 ## 0.30 — 2026-05-23
 
 ### DSP — Dual-rate audio chain is now default ON; baseline refreshed; README device-config section

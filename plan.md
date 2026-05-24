@@ -158,10 +158,11 @@ A standalone macOS companion app that consumes external MPX composite input (192
 
 **Real-time safety.** The analyzer's audio thread obeys the same rules as MPX Prime's transmit thread: no allocations, locks, dispatch, logging, string formatting, or wall-clock calls in the render callback. FFT and meter updates use the standard double-buffered "audio thread writes, main thread reads" pattern.
 
-**Shared library refactor (prerequisite):**
+**Shared library refactor (prerequisite — also the first concrete step of the wider modularization push, see Code-quality priorities → P1):**
 1. New SPM target `MPXPrimeCore` in `macOS/Package.swift`. Move `MPXDecoder.swift`, pilot PLL primitives, `MPXAnalysisTap` (if extracted), and the new symmetric RDS decoder there. `AppConfig` stays in `MPXPrime` (transmit-specific).
 2. `MPXPrime` and `MPXPrimeMeter` both declare `MPXPrimeCore` as a dependency.
 3. ~1–2 days for the extraction. Existing 385-test suite must still pass against the extracted module.
+4. This is the forcing function for the wider P1 structural cleanup: once `MPXPrimeCore` proves the SPM-target boundary pattern, the bigger transmit-side splits (`MPXGenerator.swift` → stage-focused files, `AudioOutputEngine.swift` → concern-focused files, `SwiftUIControlApp.swift` → one-card-per-file) follow with established conventions. Modularization stops being "should-do cleanup" and starts being "the way new code lands."
 
 **Distribution.**
 - Sibling `.app` in `macOS/dist/MPXPrimeMeter.app`, signed with the same developer certificate, packaged as a separate DMG (`MPXPrimeMeter-<version>.dmg`).
@@ -321,10 +322,14 @@ Items surfaced by the 0.30 codebase review that aren't immediate-fix but should 
 4. **Stored receiver baseline file.** `--verify --baseline-strict` now passes against the composite-side `default.json` (refreshed 0.30 default-on), but receiver-side metrics (separation @ 1/10/14 kHz, pilot level error, RDS-band RMS, stereo correlation, mono/no-pilot, sideband balance) are NOT pinned. Promote unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets, then add stored receiver baselines alongside the composite baseline.
 
 ### P1 — Structural cleanup
-1. Split `MPXGenerator.swift` (~7900 lines now) into stage-focused components.
-2. Split `AudioOutputEngine.swift` by concern (device routing, capture, render loop, metering, monitoring).
-3. Split `SwiftUIControlApp.swift` (~7600 lines now) into smaller views and state holders.
-4. Reduce hidden coupling between engine, config, generator, and UI state.
+
+The MPX Prime Meter companion app (see "Companion app" subsection above) is the **forcing function** that turns this tier from "should-do-someday cleanup" into actual work with a concrete consumer. Module boundaries that have to exist for the meter (clean `MPXDecoder`, pilot PLL, RDS decoder, analysis tap) are exactly the boundaries that the existing 8 000-line `MPXGenerator.swift` has been hiding. The order below puts the meter-driven extraction first; the bigger transmit-side splits follow once `MPXPrimeCore` proves the SPM-target pattern works for this repo.
+
+1. **Carve out `MPXPrimeCore` SPM library target** (driven by MPX Prime Meter). Move `MPXDecoder.swift`, the pilot PLL primitives currently embedded in `MPXGenerator`, the new symmetric RDS decoder (encoder-only today), and FFT / analysis helpers into a new library target in `macOS/Package.swift`. Both `MPXPrime` and `MPXPrimeMeter` depend on it. The 385-test suite must still pass against the extracted module. **~1-2 days, first concrete modularization step.**
+2. Split `MPXGenerator.swift` (~8 000 lines today) into stage-focused files. After the `MPXPrimeCore` extraction lands, what remains is the transmit-side audio chain + composite assembly + MPX-domain stages. Suggested split: one file per major stage (`Multiband.swift`, `PrimeBass.swift`, `BassClipper.swift`, `DistortionCancelledClipper.swift`, `CompositeClipper.swift`, `Filters.swift` for shared biquad/FIR primitives, etc.). Pure mechanical move once the file is small enough to safely cut.
+3. Split `AudioOutputEngine.swift` by concern (device routing, capture, render loop, metering, monitoring). Cross-checks against the meter's much simpler "input device → MPXDecoder → meters → optional monitor output" pipeline make the right boundaries obvious — the transmit engine has been doing too much in one class.
+4. Split `SwiftUIControlApp.swift` (~7 600 lines now) into smaller views and state holders. The MPX Prime Meter UI is a much smaller surface (8 measurement cards + spectrum + scope) so it's a good place to establish the "one card per file" SwiftUI pattern before retrofitting the transmit app.
+5. Reduce hidden coupling between engine, config, generator, and UI state. Easier to see what's coupled once the files are right-sized.
 
 ### P2 — Harden behavior
 1. Strengthen `AppConfig` validation (invalid ranges, illegal combinations, impossible sample-rate/block-size).

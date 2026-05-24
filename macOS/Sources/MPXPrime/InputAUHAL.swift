@@ -1,6 +1,7 @@
 import AudioToolbox
 import CoreAudio
 import Foundation
+import MPXPrimeNative
 import os
 
 /// Direct AUHAL (`kAudioUnitSubType_HALOutput`) input-capture wrapper.
@@ -429,6 +430,13 @@ final class InputAUHAL {
 
 private let auhalInputProc: AURenderCallback = {
     inRefCon, ioActionFlags, inTimeStamp, _, inNumberFrames, _ in
+    // Mirror the FTZ/DAZ setting from AudioOutputEngine's source-node
+    // callback. CoreAudio's input thread is a separate high-priority
+    // thread; MXCSR / FPCR are per-thread, so we set them here too.
+    // See MPXPrimeNative.h for the rationale (denormal accumulation
+    // → x86 slow path → audio dropout → "white noise after a couple
+    // of songs" on Intel).
+    mpx_enable_flush_to_zero()
     let state = Unmanaged<InputAUHAL>.fromOpaque(inRefCon)
         .takeUnretainedValue()
     return state.handleInput(

@@ -3,6 +3,7 @@ import AudioToolbox
 import Foundation
 import Accelerate
 import Atomics
+import MPXPrimeNative
 import os
 
 private let captureLog = Logger(subsystem: "com.mpxprime.app", category: "input-capture")
@@ -265,6 +266,21 @@ final class AudioOutputEngine {
         }
         let node = AVAudioSourceNode(format: sourceFormat) {
             [weak self] _, _, frameCount, audioBufferList -> OSStatus in
+            // FTZ + DAZ on the audio thread, every callback. Without
+            // these flags on Intel (x86_64) denormal floats are
+            // processed 10-100x slower than normal-range math, and
+            // long-running envelope/integrator state in the chain
+            // eventually drifts into denormal territory after minutes
+            // of operation — the render thread then misses the
+            // CoreAudio deadline, samples are dropped, and the output
+            // goes to broadband noise / silence at the receiver. The
+            // bug reproduces on a real i7-9750H after "a couple of
+            // songs" and recovers on engine restart (which resets the
+            // accumulated state). Setting MXCSR FTZ + DAZ in hardware
+            // bypasses the slow denormal path. ARM64 (Apple Silicon)
+            // doesn't suffer from this but setting FPCR FZ here keeps
+            // behaviour consistent across architectures.
+            mpx_enable_flush_to_zero()
             guard let self else {
                 Self.clearBuffers(audioBufferList, frameCount: Int(frameCount))
                 return noErr

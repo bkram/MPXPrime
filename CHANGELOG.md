@@ -9,6 +9,30 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30.2 — 2026-05-24 (hotfix)
+
+### Real-time safety — FTZ/DAZ flags on the audio thread
+
+Second same-day hotfix for an Intel-only "white noise after a couple of songs" bug. The chain produced correct MPX initially, but after minutes of operation the audio thread would stop producing meaningful output and the receiver would hear broadband noise. Engine stop → start recovered it temporarily. M1 Pro / Apple Silicon did not reproduce.
+
+**Root cause: denormal-float accumulation on x86_64.** Long-running envelope followers, exponential integrators, biquad allpass states, and the BS.412 rolling-window in the chain slowly drift their internal state toward zero. Eventually some of those values cross into denormal (subnormal) Float range (< ~1.175e-38). On Intel without FTZ (Flush-to-Zero) + DAZ (Denormals-Are-Zero) flags set, denormal floating-point arithmetic is handled by microcoded slow paths at 10-100x the normal-range cost. Once enough of the chain's state is denormal-heavy, the audio thread misses CoreAudio's deadline, samples are dropped, and the output goes to garbage. Standard textbook real-time-DSP gotcha on x86.
+
+Apple Silicon's NEON / AMX handle denormals at full speed so the failure mode is invisible there — only the production Intel install reproduced it.
+
+**Fix.** New `MPXPrimeNative` C target (Swift can't write MXCSR / FPCR control registers directly). Exposes `mpx_enable_flush_to_zero()`:
+- **x86_64**: MXCSR FTZ (bit 15) + DAZ (bit 6) via `_MM_SET_FLUSH_ZERO_MODE` / `_MM_SET_DENORMALS_ZERO_MODE` from the SSE / SSE3 platform headers.
+- **arm64**: FPCR FZ (bit 24) via `mrs` / `msr` inline asm. Defensive on Apple Silicon (NEON handles denormals fine) but keeps behaviour consistent across architectures.
+
+Call sites: top of the `AVAudioSourceNode` render callback in `AudioOutputEngine.swift`, top of the AUHAL input proc in `InputAUHAL.swift`. Both per-callback (cost ~1 ns) because CoreAudio may swap audio threads on device events and these flags are per-thread.
+
+`DenormalGuardTests` regression guard: forces a runtime denormal multiplication and asserts the result is exactly zero (without FTZ the denormal arithmetic produces a non-zero subnormal). If someone removes the guard in a future commit, this test fails immediately.
+
+**Why the 0.30 / 0.30.1 verifier didn't catch it**. The verifier runs offline `MPXGenerator.renderFromInputInPlace(...)` directly, not through the AVAudioSourceNode callback. The denormal slowdown only manifests under real-time deadline pressure — the synthetic test loop has no per-callback deadline, so the slow denormal arithmetic is invisible (it just adds a few microseconds the test doesn't notice). The fix is also untestable in pure-Swift unit tests by direct timing; `DenormalGuardTests` validates the flag's *effect* (denormal → zero) rather than its timing impact.
+
+Tests: 390 default tests pass (388 + 2 new denormal-guard tests). Release build clean. swiftlint 0 violations.
+
+**Operator impact**: v0.30 / v0.30.1 Intel users should upgrade to v0.30.2. The symptom is "after some time the receiver loses the signal and just hears broadband noise" — that's the audio thread starving on denormal arithmetic. v0.30.2 hardens against this; no more long-session dropouts.
+
 ## 0.30.1 — 2026-05-24 (hotfix)
 
 ### DSP — fix HF amplitude regression from 0.30 dual-rate cutover

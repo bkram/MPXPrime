@@ -125,21 +125,54 @@ PrimeBass is the adaptive low-band enhancer; goal is to lift perceived bass whil
 
 Receiver decode landed clean in 0.28 (1 kHz 65 dB / 10 kHz 50.5 dB / 14 kHz 43.4 dB, see CHANGELOG 0.28 for the audit). Outstanding: audit `MPXDecoder` deemphasis / notch / 15.5 kHz lowpass contribution if production decode needs to close further on the ideal-coherent ceiling. Receiver-verifier hardening ("Next up" #6) is the structural complement.
 
-### Extended MPX monitoring
+### MPX Prime Meter — companion MPX analyzer app
 
-MPX Prime should treat "monitoring" as a real receive path, not only as a convenience downmix. The same reusable MPX decoder should support both internal generated-MPX monitoring and external MPX input monitoring from a high-rate USB audio interface.
+A standalone macOS companion app that consumes external MPX composite input (192 kHz preferred, 96 kHz supported with RDS warnings) from a tuner's MPX output, an SDR demod, or a virtual loopback, and shows the live measurements an operator needs to validate an air-chain.
 
-Scope for the first phase:
+**Scope: core basics only — not a full receiver replacement.** Reference points are MpxTool (the discontinued Windows freeware: stereo encoder/decoder, MPX waveform + spectrum + RDS displays), Pira FM Scope (MPX oscilloscope, audio scope, stereo balance, MPX spectrum, pilot + RDS level + phase), and DEVA DB4005 / Band Scanner Pro (MPX input + decoded L/R + RDS data + pilot level). MPX Prime Meter aims for the subset of those features that an amateur operator actually uses during air-chain calibration and on-air monitoring.
 
-- **Generated MPX monitor.** Continue decoding our own generated composite MPX back to L/R monitor audio through the shared `MPXDecoder`, so what the operator hears represents what an FM stereo receiver would recover, not a separate shortcut path.
-- **External USB MPX monitor.** Add an `MPX Input Analyzer` mode that treats the selected USB audio input as composite MPX, decodes it to monitor L/R audio, and exposes receiver-style health metrics.
-- **Shared analyzer metrics.** Report pilot level, pilot lock confidence, composite RMS/peak, decoded L/R levels, stereo correlation, side/mid balance, and RDS-band energy around 57 kHz.
-- **Pilot-PLL receive mode.** Internal generated monitoring may use a known reference, but external USB MPX must use a real pilot-locked receive path. Add a stronger PLL mode to `MPXDecoder` for arbitrary input.
-- **Real-time safety.** The analyzer path must obey the same audio-thread rules as the transmit chain: no allocations, locks, dispatch, logging, string formatting, or wall-clock calls in the render callback.
-- **USB input expectations.** Target 192 kHz USB capture first. Warn in the UI when the selected input rate is too low for useful MPX analysis.
-- **Deferred.** WAV/file analysis and full RDS group/text decoding are future receiver features. Phase 1 only measures RDS-band presence and level.
+**Architecture decision (separate app, not a tab in MPX Prime).**
+- Operator mental model: MPX Prime = transmit chain, MPX Prime Meter = receive / analyze. No confusion about which path a control affects.
+- Independent lifecycle: an operator can monitor a deployed air-chain (running on different hardware) without booting MPX Prime's full DSP at the same time.
+- Code reuse: refactor `MPXDecoder` + the pilot PLL + the analysis helpers (currently in `MPXGenerator.swift` and `MPXDecoder.swift`) into a shared `MPXPrimeCore` SPM library target inside `macOS/Package.swift`. Both `MPXPrime` (transmit) and `MPXPrimeMeter` (receive) depend on it. The shared library is also where the RDS *decoder* lives — `BasicRDSCoder` today is encode-only; the symmetric decoder for the meter is new code, ~300 lines, but lives next to the encoder so the two stay in lockstep.
 
-Implementation shape: keep this separate from the transmit DSP chain. Analyzer mode receives MPX, decodes it, meters it, and sends decoded L/R to monitor output; it must not reprocess external MPX through the generator chain.
+**Core basics scope (minimum viable v1):**
+
+1. **Input device picker.** Same UI affordance as MPX Prime's output device picker. Validate that the device runs at 192 kHz (preferred) or 96 kHz. At 96 kHz the meter shows an "RDS band not representable" warning chip (Nyquist 48 < 57); pilot + audio + stereo subcarrier still meter correctly.
+2. **MPX spectrum (FFT 0–100 kHz).** 4096-point real-input FFT at the input rate, ~47 Hz bin width at 192 kHz, 30 fps refresh. Magnitude in dBFS. Cyan slow-decay peak-hold overlay (250 ms). Annotated frequency markers at 19 kHz (pilot), 38 kHz (suppressed carrier), 57 kHz (RDS), 67 / 92 kHz (SCA — if present).
+3. **Pilot detector card.** 19 kHz pilot level shown as % of total FM deviation (target 8–10 %), lock status (locked / searching / unlocked) from the existing `MPXDecoder.pilotLockConfidence`, pilot phase relative to internal reference in degrees.
+4. **Peak-deviation meter.** Sample-by-sample composite peak with 1.5 s hold marker, calibrated to display kHz of FM deviation. Green 0–72 kHz, yellow 72–75 kHz, red >75 kHz (FCC / ITU spec line).
+5. **L / R / Mid / Side level meters.** PPM-style stereo meters on the post-`MPXDecoder` decoded audio. Mid/Side correlation indicator (1.0 = mono-compatible, <0 = phase-inverted).
+6. **Stereo separation reading.** When the input contains a stable single-frequency tone (>2 s of dominant content at 1 / 10 / 14 kHz, auto-detected), report separation in dB. Most recent reading sticks until a new test tone is detected.
+7. **RDS basic readout.** PI code (hex), PS (current bank, auto-scrolled if dynamic), PTY (numeric + standard label), TP and TA flags. Full RT / RT+ / AF / Long PS / scheduler decode is OUT OF SCOPE for v1 — the operator's real receiver already handles those for listening; the meter is for protocol-correctness verification, not for full receiver replacement.
+8. **Composite oscilloscope.** Free-running or trigger-on-pilot waveform display at ~10 ms timebase. Useful for quick "is the composite the right shape" sanity check during exciter calibration.
+
+**Explicitly OUT OF SCOPE for v1** (defer or skip):
+- RDS group-level statistics or decode logging
+- WAV / file analysis (live input only)
+- Multipath / RF-level indication (the meter takes baseband composite, not RF)
+- Recording of MPX input streams
+- Test signal generation (MPX Prime's job)
+- Stokkemask / RF mask estimation
+- SCA decode
+
+**Real-time safety.** The analyzer's audio thread obeys the same rules as MPX Prime's transmit thread: no allocations, locks, dispatch, logging, string formatting, or wall-clock calls in the render callback. FFT and meter updates use the standard double-buffered "audio thread writes, main thread reads" pattern.
+
+**Shared library refactor (prerequisite):**
+1. New SPM target `MPXPrimeCore` in `macOS/Package.swift`. Move `MPXDecoder.swift`, pilot PLL primitives, `MPXAnalysisTap` (if extracted), and the new symmetric RDS decoder there. `AppConfig` stays in `MPXPrime` (transmit-specific).
+2. `MPXPrime` and `MPXPrimeMeter` both declare `MPXPrimeCore` as a dependency.
+3. ~1–2 days for the extraction. Existing 385-test suite must still pass against the extracted module.
+
+**Distribution.**
+- Sibling `.app` in `macOS/dist/MPXPrimeMeter.app`, signed with the same developer certificate, packaged as a separate DMG (`MPXPrimeMeter-<version>.dmg`).
+- `build-release.sh` extended to optionally build both products; default builds both.
+- One README and one CHANGELOG cover both; both apps versioned together (v0.30 ships with v0.30 of the meter).
+
+**Estimated scope:** 1–2 weeks for v1 ship-ready. The shared-library refactor is the riskiest piece; once that's in, the analyzer UI is mostly SwiftUI + Accelerate `vDSP_fft_zrip` plumbing.
+
+### Generated-MPX monitoring (existing — keeps living in MPX Prime)
+
+Separate from the analyzer app: MPX Prime continues to support decoding its own generated composite back to L/R monitor audio through the shared `MPXDecoder`. The monitor output already represents what an FM stereo receiver would recover, not a shortcut downmix. The "External MPX monitoring" mode that earlier plan.md revisions described as a tab inside MPX Prime is superseded by `MPXPrimeMeter` — operators wanting to inspect external MPX use the companion app.
 
 7. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. Pre-emphasis is now in L/R upstream of the pre-encode limiter, so dynamic relaxation can either modulate the existing `preL` / `preR` filters in place or build a dedicated sidechain detector — both paths are now compatible with the production chain. Lower priority for amateur-grade; this is a polish item.
 

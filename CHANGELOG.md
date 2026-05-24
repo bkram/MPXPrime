@@ -9,6 +9,43 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30.1 — 2026-05-24 (hotfix)
+
+### DSP — fix HF amplitude regression from 0.30 dual-rate cutover
+
+Single-commit hotfix for the v0.30 regression "lost a lot of high frequencies" — confirmed via a new HF amplitude sweep test that the v0.30 chain attenuated content above 4 kHz by 18+ dB, with everything above 6 kHz at the noise floor (-100+ dB) when the dual-rate boundary was on (the v0.30 default) and the encoder FIR was enabled (the production default).
+
+**Root cause.** `setEncoderFIREnabled(_:)` and `setSampleRate(_:)` re-configured several audio-domain stages at `self.sampleRate` (the engine's MPX rate, 192 kHz) AFTER `applyEncoderComplianceConfiguration` had correctly configured them at `audioDomainSampleRate` (the audio rate, 48 kHz when the boundary is on). The production startup flow was:
+
+1. `MPXGenerator.init()` → `applyEncoderComplianceConfiguration(sampleRate: self.sampleRate)` → internally uses `audioDomainSampleRate` → encoder LP/FIR configured at 48 kHz. ✓
+2. `AudioOutputEngine.start()` → `gen.setEncoderFIREnabled(true)` → clobbers the encoder LP/FIR back to 192 kHz. ✗
+
+When a FIR's 14.9 kHz cutoff is designed at `fcNorm = 14.9 / 96 = 0.0776` (target 192 kHz Nyquist) but the convolution is then applied to a 48 kHz sample stream — because the audio domain runs at 48 kHz when the boundary is on — the effective digital cutoff becomes `0.0776 × 24 kHz = 1.86 kHz`. A 1.9 kHz brick-wall lowpass masquerading as a 14.9 kHz encoder bandwidth guard.
+
+`setSampleRate(_:)` had the same bug pattern: it re-configured every audio-domain stage (pre-emphasis L/R, wideband AGC, input HPF, HF trim, phase rotator, bass clipper, pre-encode L/R limiter) at `self.sampleRate`. Fixed all of them to use `audioDomainSampleRate`.
+
+**Why the 0.30 verifier suite missed it.** `--verify-receiver` tested stereo separation at 1 / 10 / 14 kHz via the internal `MPXDecoder`, which itself runs deemphasis + bandwidth-limiting filters that masked the encoder-side HF loss. The receiver-decoded "Wanted" levels matched the off baseline within 0.3 dB — looked clean. But the encoder-side audio composite was missing all HF; the receiver was deemphasizing an already-deemphasized signal and finding nothing where the deemphasis curve put it. The HF amplitude response of the audio chain *itself* was never measured.
+
+**Regression guard.** New `DualRateHFResponseTests` with two default-on (not env-gated) tests:
+- `dualRateOnMatchesOffInAudioPassbandWithProductionFIR` — sweep 1 / 2 / 4 / 8 / 10 / 12 kHz with encoder FIR enabled (production default), fail if delta vs boundary-off exceeds ±0.5 dB.
+- `dualRateOnMatchesOffNearEncoderCutoff` — same at 13 / 14 / 15 kHz with ±2.5 dB tolerance (closer to FIR rolloff).
+
+Plus the existing `MPXPRIME_HF_RESPONSE=1`-gated full-sweep markdown report stays available for diagnostics.
+
+**Measured.** Post-fix HF sweep with the production FIR path (delta of boundary-on vs boundary-off, M1 Pro release build):
+
+| Freq | Pre-fix Δ | Post-fix Δ |
+|---:|---:|---:|
+| 1 kHz | 0 dB | 0 dB |
+| 4 kHz | **-18 dB** | -0.06 dB |
+| 6 kHz | **-106 dB** | +0.01 dB |
+| 10 kHz | **-109 dB** | -0.04 dB |
+| 14 kHz | **-112 dB** | -0.34 dB |
+
+Tests: 386 default tests pass (was 385 — added the 2 new HF regression guards). Release build clean. Tested on a real Intel i7-9750H (MBP16,1) — DMG installed locally + `--bench` validation confirmed identical CPU savings as v0.30 (the bug was HF amplitude, not CPU cost).
+
+**Operator impact.** v0.30 users should upgrade. The audible HF loss is dramatic — basically everything above ~3 kHz was being silently removed. v0.30.1 restores the v0.29-equivalent audio with the dual-rate refactor's CPU savings intact.
+
 ## 0.30 — 2026-05-24
 
 ### Tooling — `MPXPrime --bench` CLI + Intel benchmark captured

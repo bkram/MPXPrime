@@ -7170,13 +7170,25 @@ final class MPXGenerator {
     func setEncoderFIREnabled(_ enabled: Bool) {
         if enabled == useEncoderFIR { return }
         useEncoderFIR = enabled
+        // CRITICAL: encoderProgramLP / encoderProgramFIR are AUDIO-DOMAIN
+        // stages — they run at `audioDomainSampleRate`, which is the
+        // engine's MPX sample rate when the dual-rate boundary is off but
+        // drops to `dualRateAudioRate` (48 kHz default) when on. Using
+        // `self.sampleRate` here would clobber the correct configuration
+        // applied in `applyEncoderComplianceConfiguration(sampleRate:)`
+        // and produce a filter designed for the wrong rate — at boundary-
+        // on the 14.9 kHz cutoff would effectively become 14.9/4 ≈ 3.7 kHz
+        // when applied to 48 kHz data, catastrophically destroying HF.
+        // Pre-0.30.1 this was the v0.30 "lost a lot of high frequencies"
+        // regression.
+        let audioRate = audioDomainSampleRate
         encoderProgramLP.configure(
             cutoffHz: effectiveEncoderLowpassHz(configured: programLowpassHz, preemphasisUS: preemphasisUS),
-            sampleRate: sampleRate
+            sampleRate: audioRate
         )
         encoderProgramFIR.configure(
             cutoffHz: effectiveEncoderLowpassHz(configured: programLowpassHz, preemphasisUS: preemphasisUS),
-            sampleRate: sampleRate
+            sampleRate: audioRate
         )
     }
 
@@ -7206,20 +7218,27 @@ final class MPXGenerator {
             return
         }
         sampleRate = sr
-        preL.configure(tauUS: preemphasisUS, sampleRate: sampleRate)
-        preR.configure(tauUS: preemphasisUS, sampleRate: sampleRate)
+        // Audio-domain stages run at `audioDomainSampleRate` (= MPX rate
+        // when the dual-rate boundary is off, audio rate when on). Using
+        // `self.sampleRate` here would clobber the correct configuration
+        // applied at engine init and produce filters designed for the
+        // wrong rate — same root cause as the pre-0.30.1 setEncoderFIR
+        // regression.
+        let audioRate = audioDomainSampleRate
+        preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
+        preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
         applyEncoderComplianceConfiguration(sampleRate: sampleRate)
         widebandAGC.configure(
-            sampleRate: sampleRate,
+            sampleRate: audioRate,
             targetDB: widebandAGCTargetDB,
             attackMS: widebandAGCAttackMS,
             releaseMS: widebandAGCReleaseMS,
             minGainDB: widebandAGCMinGainDB,
             maxGainDB: widebandAGCMaxGainDB
         )
-        inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: sampleRate)
-        hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: sampleRate)
-        phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: sampleRate)
+        inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: audioRate)
+        hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: audioRate)
+        phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: audioRate)
         configureParametricEQ()
         configurePrimeBassFilters()
         configureMultibandFilters()
@@ -7228,7 +7247,7 @@ final class MPXGenerator {
         configureDownwardExpanders()
         configureStereoWidener()
         bassClipper.configure(
-            sampleRate: sampleRate,
+            sampleRate: audioRate,
             crossoverHz: bassClipperCrossoverHz,
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
@@ -7240,8 +7259,11 @@ final class MPXGenerator {
             threshold: threshold,
             enabled: limitEnabled && limitLookaheadEnabled
         )
+        // preEncodeAudioLimiter is audio-domain (L/R, runs before stereo
+        // encode) → audioRate. lookaheadLimiter and bs412Limiter are
+        // MPX-domain (composite-side) → sampleRate.
         preEncodeAudioLimiter.configure(
-            sampleRate: sampleRate,
+            sampleRate: audioRate,
             threshold: preEncodeThreshold,
             releaseMS: preEncodeReleaseMS,
             bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,

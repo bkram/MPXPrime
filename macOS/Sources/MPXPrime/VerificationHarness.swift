@@ -1,5 +1,6 @@
 import Accelerate
 import Foundation
+import MPXPrimeCore
 
 private struct StereoSignalMetrics {
     var rms: Float = 0.0

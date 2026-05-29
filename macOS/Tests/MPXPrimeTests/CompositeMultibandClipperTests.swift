@@ -168,6 +168,39 @@ struct CompositeMultibandClipperTests {
         #expect(enabledAsym <= disabledAsym + 1.0)
     }
 
+    // Regression: a release-build SIGILL crash. configure() used to
+    // precondition(lpLow.tapCount == lpMid.tapCount). At a degenerate
+    // sample rate (e.g. an output device briefly reporting ~0 Hz on
+    // engine restart, floored to 8 kHz) the 4.2 kHz band's Kaiser
+    // transition clamps against Nyquist while the 180 Hz band's does
+    // not, so the tap counts diverge and the precondition took the whole
+    // app down on the main thread (observed on an Intel MBP16,1 running
+    // v0.30.2 with mpx_multiband_clipper_enabled = True). configure()
+    // must now degrade to pass-through at such rates, never crash.
+    @Test(arguments: [Float(0.0), 8_000.0, 11_025.0, 22_050.0, 31_999.0])
+    func degenerateRateDegradesToPassThroughInsteadOfCrashing(rate: Float) {
+        var clipper = CompositeMultibandClipper()
+        clipper.configure(sampleRate: rate)
+        // Below the 32 kHz floor the stage disables itself: zero group
+        // delay and exact pass-through.
+        #expect(clipper.groupDelaySamples == 0)
+        for value in [Float(-0.8), -0.1, 0.0, 0.37, 1.25] {
+            #expect(clipper.process(value) == value)
+        }
+    }
+
+    @Test func saneRateConfiguresActiveStageWithMatchedBands() {
+        var clipper = CompositeMultibandClipper()
+        clipper.configure(sampleRate: 192_000.0)
+        #expect(clipper.groupDelaySamples > 0)
+        // Reconfiguring down to a degenerate rate and back must not
+        // crash and must restore an active stage.
+        clipper.configure(sampleRate: 8_000.0)
+        #expect(clipper.groupDelaySamples == 0)
+        clipper.configure(sampleRate: 96_000.0)
+        #expect(clipper.groupDelaySamples > 0)
+    }
+
     @Test func enabledChainReducesHFEdgePeakWithoutBudgetOvershoot() {
         let disabled = renderHFEdgeMetrics(config: makeChainConfig(multibandClipperEnabled: false))
         let enabled = renderHFEdgeMetrics(config: makeChainConfig(multibandClipperEnabled: true))

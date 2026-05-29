@@ -7,7 +7,13 @@ import Foundation
 /// reference for low latency and exact phase. Standalone analysis can omit the
 /// reference and let the lightweight pilot-locked oscillator recover it from
 /// the 19 kHz pilot.
-struct MPXDecoder {
+///
+/// Moved into MPXPrimeCore in the v0.31 modularization step so both the
+/// transmit app (MPXPrime, monitor path) and the future MPXPrimeMeter
+/// companion app can share one decoder. Body is unchanged from the prior
+/// MPXPrime-internal version; only the type / init / configure / process
+/// surface is now public.
+public struct MPXDecoder {
     private static let pilotHz: Float = 19_000.0
     private static let rdsHz: Float = 57_000.0
     private static let diffDecodeGain: Float = 1.0
@@ -48,7 +54,9 @@ struct MPXDecoder {
     private var collapseHoldThresholdSamples: Int = 0
     private var collapseCooldownResetSamples: Int = 0
 
-    mutating func configure(sampleRate: Float, preemphasisUS: Int) {
+    public init() {}
+
+    public mutating func configure(sampleRate: Float, preemphasisUS: Int) {
         let sr = max(8_000.0, sampleRate)
         self.sampleRate = sr
         self.preemphasisUS = preemphasisUS
@@ -102,7 +110,7 @@ struct MPXDecoder {
     }
 
     @inline(__always)
-    mutating func process(
+    public mutating func process(
         _ mpx: Float,
         referenceSubcarrier: Float? = nil,
         programActivity: Float,

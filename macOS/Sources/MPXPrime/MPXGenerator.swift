@@ -2,8 +2,14 @@ import Accelerate
 import Atomics
 import Darwin
 import Foundation
+import MPXPrimeCore
 import os
 
+// Biquad, BiquadCascade6, and DeemphasisFilter were moved to the shared
+// MPXPrimeCore target in the v0.31 modularization step (imported above).
+// twoPi / clampf / zapDenorm are retained here as module-private copies
+// because they are used pervasively across the rest of this file; the
+// copies in MPXPrimeCore are module-private there and do not collide.
 private let twoPi = Float.pi * 2.0
 private let pilotFreq = Float(19_000.0)
 private let subcarrierFreq = Float(38_000.0)
@@ -581,227 +587,6 @@ struct OnePoleLP {
         state += alpha * (x - state)
         state = zapDenorm(state)
         return state
-    }
-}
-
-struct Biquad {
-    var b0: Float = 1.0
-    var b1: Float = 0.0
-    var b2: Float = 0.0
-    var a1: Float = 0.0
-    var a2: Float = 0.0
-    var z1: Float = 0.0
-    var z2: Float = 0.0
-
-    mutating func reset() {
-        z1 = 0.0
-        z2 = 0.0
-    }
-
-    mutating func configureIdentity() {
-        b0 = 1.0
-        b1 = 0.0
-        b2 = 0.0
-        a1 = 0.0
-        a2 = 0.0
-        reset()
-    }
-
-    mutating func configureLowpass(cutoffHz: Float, sampleRate: Float, q: Float = 0.7071068) {
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 10.0
-        let fc = clampf(cutoffHz, 8.0, max(16.0, nyquist))
-        let w0 = twoPi * fc / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let alpha = s / (2.0 * max(0.1, q))
-
-        let pb0 = (1.0 - c) * 0.5
-        let pb1 = 1.0 - c
-        let pb2 = (1.0 - c) * 0.5
-        let pa0 = 1.0 + alpha
-        let pa1 = -2.0 * c
-        let pa2 = 1.0 - alpha
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configureHighpass(cutoffHz: Float, sampleRate: Float, q: Float = 0.7071068) {
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 10.0
-        let fc = clampf(cutoffHz, 8.0, max(16.0, nyquist))
-        let w0 = twoPi * fc / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let alpha = s / (2.0 * max(0.1, q))
-
-        let pb0 = (1.0 + c) * 0.5
-        let pb1 = -(1.0 + c)
-        let pb2 = (1.0 + c) * 0.5
-        let pa0 = 1.0 + alpha
-        let pa1 = -2.0 * c
-        let pa2 = 1.0 - alpha
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configureNotch(freqHz: Float, sampleRate: Float, q: Float = 12.0) {
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 10.0
-        let f0 = clampf(freqHz, 8.0, max(16.0, nyquist))
-        let w0 = twoPi * f0 / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let alpha = s / (2.0 * max(0.1, q))
-
-        let pb0: Float = 1.0
-        let pb1: Float = -2.0 * c
-        let pb2: Float = 1.0
-        let pa0: Float = 1.0 + alpha
-        let pa1: Float = -2.0 * c
-        let pa2: Float = 1.0 - alpha
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configureBandpass(freqHz: Float, sampleRate: Float, q: Float = 4.0) {
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 10.0
-        let f0 = clampf(freqHz, 8.0, max(16.0, nyquist))
-        let w0 = twoPi * f0 / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let alpha = s / (2.0 * max(0.1, q))
-
-        let pb0: Float = alpha
-        let pb1: Float = 0.0
-        let pb2: Float = -alpha
-        let pa0: Float = 1.0 + alpha
-        let pa1: Float = -2.0 * c
-        let pa2: Float = 1.0 - alpha
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configureAllpass(freqHz: Float, sampleRate: Float, q: Float = 0.7071068) {
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 10.0
-        let f0 = clampf(freqHz, 8.0, max(16.0, nyquist))
-        let w0 = twoPi * f0 / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let alpha = s / (2.0 * max(0.1, q))
-
-        let pb0 = 1.0 - alpha
-        let pb1 = -2.0 * c
-        let pb2 = 1.0 + alpha
-        let pa0 = 1.0 + alpha
-        let pa1 = -2.0 * c
-        let pa2 = 1.0 - alpha
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configurePeakingEQ(freqHz: Float, gainDB: Float, sampleRate: Float, q: Float = 1.0) {
-        if fabsf(gainDB) < 0.01 {
-            configureIdentity()
-            return
-        }
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 10.0
-        let f0 = clampf(freqHz, 8.0, max(16.0, nyquist))
-        let w0 = twoPi * f0 / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let A = powf(10.0, gainDB / 40.0)
-        let alpha = s / (2.0 * max(0.1, q))
-
-        let pb0 = 1.0 + (alpha * A)
-        let pb1 = -2.0 * c
-        let pb2 = 1.0 - (alpha * A)
-        let pa0 = 1.0 + (alpha / A)
-        let pa1 = -2.0 * c
-        let pa2 = 1.0 - (alpha / A)
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configureLowShelf(
-        gainDB: Float, cutoffHz: Float, sampleRate: Float, slope: Float = 1.0
-    ) {
-        if fabsf(gainDB) < 0.01 {
-            configureIdentity()
-            return
-        }
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 200.0
-        let fc = clampf(cutoffHz, 20.0, max(40.0, nyquist))
-        let w0 = twoPi * fc / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let A = powf(10.0, gainDB / 40.0)
-        let invA = 1.0 / max(1e-6, A)
-        let slopeSafe = max(0.1, slope)
-        let alphaTerm = max(0.0, ((A + invA) * ((1.0 / slopeSafe) - 1.0)) + 2.0)
-        let alpha = (s * 0.5) * sqrtf(alphaTerm)
-        let sqrtA = sqrtf(max(1e-6, A))
-
-        let pb0 = A * ((A + 1.0) - ((A - 1.0) * c) + (2.0 * sqrtA * alpha))
-        let pb1 = 2.0 * A * ((A - 1.0) - ((A + 1.0) * c))
-        let pb2 = A * ((A + 1.0) - ((A - 1.0) * c) - (2.0 * sqrtA * alpha))
-        let pa0 = (A + 1.0) + ((A - 1.0) * c) + (2.0 * sqrtA * alpha)
-        let pa1 = -2.0 * ((A - 1.0) + ((A + 1.0) * c))
-        let pa2 = (A + 1.0) + ((A - 1.0) * c) - (2.0 * sqrtA * alpha)
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func configureHighShelf(
-        gainDB: Float, cutoffHz: Float, sampleRate: Float, slope: Float = 1.0
-    ) {
-        if fabsf(gainDB) < 0.01 {
-            configureIdentity()
-            return
-        }
-        let sr = max(8_000.0, sampleRate)
-        let nyquist = (sr * 0.5) - 200.0
-        let fc = clampf(cutoffHz, 500.0, max(520.0, nyquist))
-        let w0 = twoPi * fc / sr
-        let c = cosf(w0)
-        let s = sinf(w0)
-        let A = powf(10.0, gainDB / 40.0)
-        let invA = 1.0 / max(1e-6, A)
-        let slopeSafe = max(0.1, slope)
-        let alphaTerm = max(0.0, ((A + invA) * ((1.0 / slopeSafe) - 1.0)) + 2.0)
-        let alpha = (s * 0.5) * sqrtf(alphaTerm)
-        let sqrtA = sqrtf(max(1e-6, A))
-
-        let pb0 = A * ((A + 1.0) + ((A - 1.0) * c) + (2.0 * sqrtA * alpha))
-        let pb1 = -2.0 * A * ((A - 1.0) + ((A + 1.0) * c))
-        let pb2 = A * ((A + 1.0) + ((A - 1.0) * c) - (2.0 * sqrtA * alpha))
-        let pa0 = (A + 1.0) - ((A - 1.0) * c) + (2.0 * sqrtA * alpha)
-        let pa1 = 2.0 * ((A - 1.0) - ((A + 1.0) * c))
-        let pa2 = (A + 1.0) - ((A - 1.0) * c) - (2.0 * sqrtA * alpha)
-        setNormalized(pb0, pb1, pb2, pa0, pa1, pa2)
-    }
-
-    mutating func process(_ x: Float) -> Float {
-        let y = (b0 * x) + z1
-        z1 = (b1 * x) - (a1 * y) + z2
-        z2 = (b2 * x) - (a2 * y)
-        z1 = zapDenorm(z1)
-        z2 = zapDenorm(z2)
-        return y
-    }
-
-    private mutating func setNormalized(
-        _ pb0: Float,
-        _ pb1: Float,
-        _ pb2: Float,
-        _ pa0: Float,
-        _ pa1: Float,
-        _ pa2: Float
-    ) {
-        let a0 = fabsf(pa0) < 1e-8 ? 1.0 : pa0
-        b0 = pb0 / a0
-        b1 = pb1 / a0
-        b2 = pb2 / a0
-        a1 = pa1 / a0
-        a2 = pa2 / a0
-        reset()
     }
 }
 
@@ -1991,37 +1776,6 @@ struct StereoLinkwitzRiley4 {
     }
 }
 
-struct BiquadCascade6 {
-    private static let butterworthQ: (Float, Float, Float) = (0.5176381, 0.7071068, 1.9318517)
-    var s1 = Biquad()
-    var s2 = Biquad()
-    var s3 = Biquad()
-
-    mutating func configureIdentity() {
-        s1.configureIdentity()
-        s2.configureIdentity()
-        s3.configureIdentity()
-    }
-
-    mutating func configureLowpass(cutoffHz: Float, sampleRate: Float) {
-        let q = Self.butterworthQ
-        s1.configureLowpass(cutoffHz: cutoffHz, sampleRate: sampleRate, q: q.0)
-        s2.configureLowpass(cutoffHz: cutoffHz, sampleRate: sampleRate, q: q.1)
-        s3.configureLowpass(cutoffHz: cutoffHz, sampleRate: sampleRate, q: q.2)
-    }
-
-    mutating func configureHighpass(cutoffHz: Float, sampleRate: Float) {
-        let q = Self.butterworthQ
-        s1.configureHighpass(cutoffHz: cutoffHz, sampleRate: sampleRate, q: q.0)
-        s2.configureHighpass(cutoffHz: cutoffHz, sampleRate: sampleRate, q: q.1)
-        s3.configureHighpass(cutoffHz: cutoffHz, sampleRate: sampleRate, q: q.2)
-    }
-
-    mutating func process(_ x: Float) -> Float {
-        return s3.process(s2.process(s1.process(x)))
-    }
-}
-
 struct ProgramLowpass {
     var left = BiquadCascade6()
     var right = BiquadCascade6()
@@ -2687,7 +2441,25 @@ struct CompositeMultibandClipper {
             stopBandDB: 70.0,
             transitionHz: 1_500.0
         )
-        precondition(lpLow.tapCount == lpMid.tapCount)
+        // The 3-band linear-phase reconstruction (mid = lowMid - low,
+        // high = delayed - lowMid) is only valid when both FIR lowpasses
+        // and the bypass delay share the same group delay. The Kaiser tap
+        // count is independent of cutoff at any sane MPX/composite rate,
+        // but at a degenerate sample rate the 4.2 kHz band's transition
+        // gets clamped against Nyquist while the 180 Hz band's does not,
+        // so the tap counts diverge. That used to be a precondition() —
+        // which, since this is an experimental opt-in stage, would take
+        // the whole app down with a SIGILL if the engine was (re)started
+        // while the output device briefly reported ~0 Hz (floored to
+        // 8 kHz here). Degrade to pass-through instead: leave the delay
+        // line empty so process() returns the input untouched, and the
+        // group-delay accounting upstream sees 0.
+        guard sampleRate >= 32_000.0, lpLow.tapCount == lpMid.tapCount else {
+            halfLength = 0
+            delayLine = []
+            writeIdx = 0
+            return
+        }
         halfLength = lpLow.groupDelaySamples
         delayLine = [Float](repeating: 0.0, count: max(1, halfLength + 1))
         writeIdx = 0
@@ -2834,35 +2606,6 @@ struct PreemphasisFilter {
     }
 
     mutating func reset() { x1 = 0.0 }
-}
-
-struct DeemphasisFilter {
-    var enabled: Bool = false
-    private var a: Float = 0.0
-    private var y1: Float = 0.0
-
-    mutating func configure(tauUS: Int, sampleRate: Float) {
-        guard tauUS > 0 else {
-            enabled = false
-            a = 0.0
-            y1 = 0.0
-            return
-        }
-        enabled = true
-        let sr = max(8_000.0 as Float, sampleRate)
-        let tau = Float(tauUS) * 1e-6
-        a = expf(-1.0 / (tau * sr))
-        y1 = 0.0
-    }
-
-    mutating func process(_ x: Float) -> Float {
-        guard enabled else { return x }
-        let y = (1.0 - a) * x + a * y1
-        y1 = zapDenorm(y)
-        return y
-    }
-
-    mutating func reset() { y1 = 0.0 }
 }
 
 struct EnvelopeFollower {

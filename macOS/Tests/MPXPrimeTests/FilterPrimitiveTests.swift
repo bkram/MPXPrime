@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import MPXPrime
+import MPXPrimeCore
 
 // Isolated unit tests for the foundational filter primitives.
 // These structs are exercised heavily by the chain (oversampled

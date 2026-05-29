@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import MPXPrime
+import MPXPrimeCore
 
 // Three small but load-bearing test groups:
 //

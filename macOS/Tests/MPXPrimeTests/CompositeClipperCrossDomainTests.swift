@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import Accelerate
 @testable import MPXPrime
+import MPXPrimeCore
 
 // Diagnostic + regression tests for the cross-domain IM distortion of
 // `CompositeClipper`.

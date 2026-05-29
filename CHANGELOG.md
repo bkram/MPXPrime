@@ -9,6 +9,22 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.30.3 — 2026-05-29 (hotfix)
+
+### Crash fix — CompositeMultibandClipper SIGILL at degenerate sample rates
+
+Found during the v0.30.2 Intel soak: an MBP16,1 (Coffee Lake-H) running with the experimental `mpx_multiband_clipper_enabled = True` crashed with `EXC_BAD_INSTRUCTION` / SIGILL on the main thread after several hours, on an engine restart (`MPXPrimeViewModel.startEngine()` -> `AudioOutputEngine.start()` -> `MPXGenerator.setSampleRate()` -> `CompositeMultibandClipper.configure()`). It traps only on *some* restarts, which matches the operator habit of stop-starting the engine to clear an audio glitch.
+
+**Root cause.** `CompositeMultibandClipper.configure()` ended with `precondition(lpLow.tapCount == lpMid.tapCount)`. `precondition()` is NOT stripped in release builds, so a failure compiles to a trapping instruction. The two split bands (180 Hz and 4.2 kHz cutoffs) normally get identical Kaiser tap counts — the count depends on the transition band, not the cutoff. But the transition is clamped by `(nyquist - fc)`, and at a degenerate sample rate the 4.2 kHz band's transition clamps against Nyquist while the 180 Hz band's does not, so the counts diverge. The trigger is `setSampleRate` flooring a momentarily-~0-Hz device rate to `max(8000, rate)` = 8 kHz during a (re)start: at 4 kHz Nyquist the bands no longer match and the precondition kills the app.
+
+**Fix.** An experimental, opt-in stage must never be able to take the whole app down. `configure()` now degrades to clean pass-through (empty delay line -> `process()` returns the input untouched; zero group delay so the upstream subcarrier alignment stays correct) when `sampleRate < 32 kHz` or the tap counts somehow still differ, instead of asserting. Behaviour at real MPX/composite rates (>=96 kHz) is unchanged — `--verify --baseline-strict` is identical to the captured baseline. New regression guards: `degenerateRateDegradesToPassThroughInsteadOfCrashing` (parameterized over 0 / 8k / 11.025k / 22.05k / 31.999k) and `saneRateConfiguresActiveStageWithMatchedBands`.
+
+Severity note: `configure()` runs on **every** engine start, unconditionally — the `mpx_multiband_clipper_enabled` flag only gates whether the stage *processes* audio, not whether it is configured. So the crash was reachable by **any** operator whose output device briefly reported ~0 Hz on a (re)start, not only those who had enabled the experimental stage. The machine where it was observed happened to have the stage on, but the enable flag is not a precondition for the trap. Separately, the verifier confirmed the stage (when enabled) degrades decoded-audio quality on dense/bass program — consistent with its experimental, not-yet-preset-validated status, and the reason it stays off by default.
+
+### Internal — MPXPrimeCore shared DSP target (modularization step 1)
+
+First concrete step of the modularization push and the prerequisite for the planned MPX Prime Meter companion app. New `MPXPrimeCore` SPM library target holds the reusable decode-side DSP — `MPXDecoder` plus the foundational `Biquad` / `BiquadCascade6` / `DeemphasisFilter` primitives — moved verbatim out of the ~9.6k-line `MPXGenerator.swift` (which drops ~280 lines). Only the public surface and cross-module-inlining annotations changed; the hot per-sample `process()` methods are `@inlinable` so they still inline across the new module boundary in release builds. Verified output-identical (`--verify --baseline-strict`) and CPU-neutral (`--bench` 28.33% RT vs 28.40% pre-extraction on M1 Pro). No user-visible change.
+
 ## 0.30.2 — 2026-05-24 (hotfix)
 
 ### Real-time safety — FTZ/DAZ flags on the audio thread

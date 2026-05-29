@@ -32,7 +32,6 @@ private let kHelpWindowAutosaveName = "MPXPrime.HelpWindow"
 private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
 // Compile-time constant URL; literal is well-formed so the optional
 // returned by URL(string:) is guaranteed non-nil.
-// swiftlint:disable:next force_unwrapping
 private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
 private let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."

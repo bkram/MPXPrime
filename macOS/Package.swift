@@ -22,17 +22,29 @@ let package = Package(
             path: "Sources/MPXPrimeNative",
             publicHeadersPath: "include"
         ),
+        // Shared DSP library: foundational filter primitives (Biquad,
+        // BiquadCascade6, DeemphasisFilter) + the reusable MPXDecoder.
+        // Depended on by the transmit app (MPXPrime) and, in future, the
+        // MPXPrimeMeter companion analyzer. Hot per-sample process()
+        // methods are @inlinable so they still inline across this module
+        // boundary in release builds. See DSPPrimitives.swift for the
+        // cross-module-inlining rationale.
+        .target(
+            name: "MPXPrimeCore",
+            path: "Sources/MPXPrimeCore"
+        ),
         .executableTarget(
             name: "MPXPrime",
             dependencies: [
                 .product(name: "Atomics", package: "swift-atomics"),
-                "MPXPrimeNative"
+                "MPXPrimeNative",
+                "MPXPrimeCore"
             ],
             path: "Sources/MPXPrime"
         ),
         .testTarget(
             name: "MPXPrimeTests",
-            dependencies: ["MPXPrime", "MPXPrimeNative"],
+            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore"],
             path: "Tests/MPXPrimeTests"
         )
     ]

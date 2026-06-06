@@ -262,6 +262,10 @@ struct StereoLinkedOversampledPeakLimiter {
     var releaseMS: Float = 35.0
     var ceiling: Float = 0.985
     var bandlimitedResidualEnabled: Bool = false
+    // Precomputed soft-knee width (ceiling - threshold, floored at 1e-4).
+    // Depends only on configure() inputs, so it is computed once there
+    // instead of per over-threshold sample in clipToCeiling.
+    private var ceilingKnee: Float = 1e-4
 
     // Shared envelope state (the load-bearing change vs the prior pair
     // of independent OversampledPeakLimiters: same gain for both L/R).
@@ -325,6 +329,7 @@ struct StereoLinkedOversampledPeakLimiter {
         self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
         let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
         ceiling = min(0.999, self.threshold + ceilingMargin)
+        ceilingKnee = max(1e-4, ceiling - threshold)
 
         let attackS = 0.00025 as Float
         let relS = max(0.008, Double(self.releaseMS) * 0.001)
@@ -528,8 +533,7 @@ struct StereoLinkedOversampledPeakLimiter {
         }
         let ax = fabsf(x)
         if ax <= threshold { return x }
-        let knee = max(1e-4, ceiling - threshold)
-        let clipped = threshold + ((ceiling - threshold) * tanhf((ax - threshold) / knee))
+        let clipped = threshold + ((ceiling - threshold) * tanhf((ax - threshold) / ceilingKnee))
         return copysignf(min(clipped, ceiling), x)
     }
 }
@@ -2707,6 +2711,16 @@ struct WidebandAGCRider {
     /// Smoothed density value in dB. ~0 dB on flat program, several
     /// dB on busy program.
     private var density: Float = 0.0
+    /// Cache for the density-scaled release coefficients. `density` is
+    /// smoothed over ~0.5 s, so the two expf() that map it to release
+    /// coefficients are recomputed only when it moves past a small delta
+    /// rather than every sample. The mapping is monotonic and continuous,
+    /// so a 0.01 dB recompute threshold keeps the coefficients within
+    /// float noise of the per-sample result while removing two transcendentals
+    /// per sample from this default-on stage.
+    private var cachedDensityForCoeffs: Float = .nan
+    private var cachedEffectiveReleaseCoeff: Float = 0.0
+    private var cachedEffectiveFastMakeupCoeff: Float = 0.0
 
     mutating func configure(
         sampleRate: Float,
@@ -2797,12 +2811,20 @@ struct WidebandAGCRider {
         let effectiveReleaseCoeff: Float
         let effectiveFastMakeupCoeff: Float
         if programDependentRelease {
-            let densityClamped = max(0.0, min(4.0, Double(density)))
-            let densityScale = 1.0 + densityClamped * 0.5   // 1x…3x
-            let scaledReleaseS = configuredReleaseS * densityScale
-            let scaledFastS = max(0.120, min(scaledReleaseS * 0.35, 0.450))
-            effectiveReleaseCoeff = expf(-1.0 / Float(scaledReleaseS * Double(sampleRate)))
-            effectiveFastMakeupCoeff = expf(-1.0 / Float(scaledFastS * Double(sampleRate)))
+            // Recompute the density-scaled coefficients only when the
+            // smoothed density has actually moved; otherwise reuse the
+            // cached pair. Saves two expf()/sample on the steady-state path.
+            if !(fabsf(density - cachedDensityForCoeffs) < 0.01) {
+                let densityClamped = max(0.0, min(4.0, Double(density)))
+                let densityScale = 1.0 + densityClamped * 0.5   // 1x…3x
+                let scaledReleaseS = configuredReleaseS * densityScale
+                let scaledFastS = max(0.120, min(scaledReleaseS * 0.35, 0.450))
+                cachedEffectiveReleaseCoeff = expf(-1.0 / Float(scaledReleaseS * Double(sampleRate)))
+                cachedEffectiveFastMakeupCoeff = expf(-1.0 / Float(scaledFastS * Double(sampleRate)))
+                cachedDensityForCoeffs = density
+            }
+            effectiveReleaseCoeff = cachedEffectiveReleaseCoeff
+            effectiveFastMakeupCoeff = cachedEffectiveFastMakeupCoeff
         } else {
             effectiveReleaseCoeff = releaseCoeff
             effectiveFastMakeupCoeff = fastMakeupCoeff
@@ -2843,6 +2865,7 @@ struct WidebandAGCRider {
         density = 0.0
         fastEnv = 0.0
         slowEnv = 0.0
+        cachedDensityForCoeffs = .nan
         kWeightL.reset()
         kWeightR.reset()
     }

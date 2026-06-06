@@ -3207,6 +3207,22 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// Assign only when the value actually changed, so the slow-moving
+    /// readout strings refreshed every monitor tick (20-30 Hz) don't fire
+    /// objectWillChange when nothing moved -- Combine does not diff Equatable
+    /// @Published values, so an unchanged write still invalidates every
+    /// observing view. KeyPath-based rather than inout: an inout helper would
+    /// write back through the @Published setter on every call and defeat the
+    /// guard.
+    @inline(__always)
+    private func assignIfChanged<T: Equatable>(
+        _ keyPath: ReferenceWritableKeyPath<MPXPrimeViewModel, T>, _ value: T
+    ) {
+        if self[keyPath: keyPath] != value {
+            self[keyPath: keyPath] = value
+        }
+    }
+
     private func refreshMonitoringSnapshot() {
         let now = Date().timeIntervalSinceReferenceDate
         let activeHz = desiredMonitoringRefreshHz
@@ -3585,58 +3601,64 @@ final class MPXPrimeViewModel: ObservableObject {
         let limiterState =
             config.preEncodeAudioLimiterEnabled
             ? (preEncodeAudioLimiterGainReductionDB >= 0.2 ? "Active" : "Idle") : "Off"
-        limiterStateText = limiterState
-        limiterDetailText = String(
+        assignIfChanged(\.limiterStateText, limiterState)
+        assignIfChanged(\.limiterDetailText, String(
             format: "Drive %.1f dB • Pre-Enc GR %.1f dB • Max %.1f dB • Safe %.1f dB • Peak %@",
             config.finalDriveDB,
             preEncodeAudioLimiterGainReductionDB,
             limiterGRPeakHold,
             mpxSafetyLimiterGainReductionDB,
             Self.dbfsString(outputPeak)
-        )
+        ))
+        let compositeBudgetState: String
         if !isRunning {
-            compositeBudgetStateText = "Off"
+            compositeBudgetState = "Off"
         } else if compositeBudgetMarginDB >= 3.0 {
-            compositeBudgetStateText = "Safe"
+            compositeBudgetState = "Safe"
         } else if compositeBudgetMarginDB >= 1.0 {
-            compositeBudgetStateText = "Tight"
+            compositeBudgetState = "Tight"
         } else {
-            compositeBudgetStateText = "Risk"
+            compositeBudgetState = "Risk"
         }
-        compositeCalibrationText = String(
+        assignIfChanged(\.compositeBudgetStateText, compositeBudgetState)
+        assignIfChanged(\.compositeCalibrationText, String(
             format: "Pilot %.1f%% • RDS %.1f%% • Audio %@ • Margin %.1f dB",
             pilotInjectionPercent,
             rdsInjectionPercent,
             Self.dbfsString(audioCompositePeak),
             compositeBudgetMarginDB
-        )
-        stereoImageText = String(
+        ))
+        assignIfChanged(\.stereoImageText, String(
             format: "Corr %@%.2f • Side %.2fx",
             outputStereoCorrelation >= 0 ? "+" : "",
             outputStereoCorrelation,
             outputSideToMidRatio
-        )
+        ))
+        let agcState: String
         if config.widebandAGCEnabled && !processingBypass {
-            agcStateText = agcGateActive ? "Gate" : "On"
+            agcState = agcGateActive ? "Gate" : "On"
         } else {
-            agcStateText = "Off"
+            agcState = "Off"
         }
-        agcDetailText = String(
+        assignIfChanged(\.agcStateText, agcState)
+        assignIfChanged(\.agcDetailText, String(
             format: "Detector %.1f dB • Gain %.1f dB",
             agcDetectorDB,
             agcGainDB
-        ) + (agcGateActive ? " • Gate" : "")
-        multibandStateText = config.multibandEnabled ? "On" : "Off"
-        primeBassStateText = config.primeBassEnabled ? "On" : "Off"
+        ) + (agcGateActive ? " • Gate" : ""))
+        assignIfChanged(\.multibandStateText, config.multibandEnabled ? "On" : "Off")
+        assignIfChanged(\.primeBassStateText, config.primeBassEnabled ? "On" : "Off")
+        let widenerState: String
         if !config.stereoWidenEnabled || config.monoMode {
-            widenerStateText = "Off"
+            widenerState = "Off"
         } else if outputStereoCorrelation < 0.0 || outputSideToMidRatio > 0.85 {
-            widenerStateText = "Risk"
+            widenerState = "Risk"
         } else if outputStereoCorrelation < 0.30 || outputSideToMidRatio > 0.55 {
-            widenerStateText = "Wide"
+            widenerState = "Wide"
         } else {
-            widenerStateText = "Safe"
+            widenerState = "Safe"
         }
+        assignIfChanged(\.widenerStateText, widenerState)
 
         let elapsed = max(0.0, now - (engineStartReference ?? now))
         updateRDSFields(elapsed: elapsed)
@@ -3831,32 +3853,32 @@ final class MPXPrimeViewModel: ObservableObject {
         let live = runningEngine?.currentRDSLiveSnapshot
 
         if let live, !live.ps.isEmpty {
-            rdsPS = live.ps
+            assignIfChanged(\.rdsPS, live.ps)
         } else {
-            rdsPS = Self.currentTimedDisplayText(config.activePSBankText, elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsPS, Self.currentTimedDisplayText(config.activePSBankText, elapsed: elapsed).ifEmpty("-"))
         }
-        rdsPI = config.rdsPI
-        rdsPTY = Self.ptyName(for: config.rdsPTY)
+        assignIfChanged(\.rdsPI, config.rdsPI)
+        assignIfChanged(\.rdsPTY, Self.ptyName(for: config.rdsPTY))
         if let live, !live.ptyn.isEmpty {
-            rdsPTYN = live.ptyn
+            assignIfChanged(\.rdsPTYN, live.ptyn)
         } else {
-            rdsPTYN = Self.currentTimedDisplayText(config.rdsPTYN, elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsPTYN, Self.currentTimedDisplayText(config.rdsPTYN, elapsed: elapsed).ifEmpty("-"))
         }
-        rdsAID = config.rdsEnableRTPlus ? "AID: 4BD7 (GROUP 11A)" : "AID: OFF"
+        assignIfChanged(\.rdsAID, config.rdsEnableRTPlus ? "AID: 4BD7 (GROUP 11A)" : "AID: OFF")
         if let live, !live.longPS.isEmpty {
-            rdsLongPS = live.longPS
+            assignIfChanged(\.rdsLongPS, live.longPS)
         } else {
-            rdsLongPS = Self.currentTimedDisplayText(config.rdsLongPS32, elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsLongPS, Self.currentTimedDisplayText(config.rdsLongPS32, elapsed: elapsed).ifEmpty("-"))
         }
         if let live, !live.rt.isEmpty {
             // Trim trailing CR terminator (0x0D) that prepareRTFrame appends
             // for the 2A "end of text" marker so the on-screen readout is clean.
-            rdsRadiotext = live.rt
+            assignIfChanged(\.rdsRadiotext, live.rt
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-                .ifEmpty("-")
+                .ifEmpty("-"))
         } else {
-            rdsRadiotext = currentRTText(elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsRadiotext, currentRTText(elapsed: elapsed).ifEmpty("-"))
         }
     }
 

@@ -11,6 +11,27 @@ emulate -L zsh
 # events), so when VLC is not running the script reports nothing and exits 1.
 # The AppleScript `tell` blocks run only when VLC is already running.
 
+# Strip parenthetical suffixes like "(Radio Edit)" / "(feat. X)" from the title --
+# they often push the RDS RadioText / PS over length. On by default; set
+# STRIP_TITLE_PARENS=0 in the environment to keep the full title.
+STRIP_TITLE_PARENS=${STRIP_TITLE_PARENS:-1}
+strip_parens() {
+  if [[ "$STRIP_TITLE_PARENS" != 1 ]]; then
+    print -r -- "$1"
+    return
+  fi
+  local out
+  out=$(print -r -- "$1" | sed -E 's/[[:space:]]*\([^()]*\)//g')
+  out="${out## }"
+  out="${out%% }"
+  # Keep the original if the title was entirely parenthetical.
+  if [[ -n "$out" ]]; then
+    print -r -- "$out"
+  else
+    print -r -- "$1"
+  fi
+}
+
 if ! pgrep -x VLC >/dev/null 2>&1; then
   exit 1
 fi
@@ -90,8 +111,15 @@ artist="${artist## }"
 artist="${artist%% }"
 title="${title## }"
 title="${title%% }"
+title=$(strip_parens "$title")
 
-print -r -- "display=$track"
+if [[ -n "$artist" ]]; then
+  display="$artist - $title"
+else
+  display="$title"
+fi
+
+print -r -- "display=$display"
 if [[ -n "$artist" ]]; then
   print -r -- "artist=$artist"
 fi

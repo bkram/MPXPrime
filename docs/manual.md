@@ -279,6 +279,12 @@ Two ready-to-use example pollers ship with MPX Prime, both in the DMG's
   (`currentEntry`). Note: Cog exposes no play/pause state to scripts, so it
   reports the loaded track even while paused (it clears the entry on Stop).
 
+Both example scripts strip parenthetical suffixes from the title — e.g.
+`Song Title (Radio Edit)` / `Song (feat. X)` become `Song Title` / `Song` —
+because those tails routinely push the RadioText / PS over length. This is **on by
+default**; set `STRIP_TITLE_PARENS=0` in the script's environment to keep the full
+title.
+
 Copy one somewhere stable (for example your home folder) and point the
 Radiotext now-playing script setting at it, or use it as a template for
 another player. The first run prompts once for Automation permission to

@@ -27,6 +27,27 @@ if ! pgrep -x Cog >/dev/null 2>&1; then
   exit 1
 fi
 
+# Strip parenthetical suffixes like "(Radio Edit)" / "(feat. X)" from the title --
+# they often push the RDS RadioText / PS over length. On by default; set
+# STRIP_TITLE_PARENS=0 in the environment to keep the full title.
+STRIP_TITLE_PARENS=${STRIP_TITLE_PARENS:-1}
+strip_parens() {
+  if [[ "$STRIP_TITLE_PARENS" != 1 ]]; then
+    print -r -- "$1"
+    return
+  fi
+  local out
+  out=$(print -r -- "$1" | sed -E 's/[[:space:]]*\([^()]*\)//g')
+  out="${out## }"
+  out="${out%% }"
+  # Keep the original if the title was entirely parenthetical.
+  if [[ -n "$out" ]]; then
+    print -r -- "$out"
+  else
+    print -r -- "$1"
+  fi
+}
+
 # Pull artist + title in one round-trip, tab-delimited. Each property is read
 # inline off `currentEntry` -- storing it in a variable and re-referencing it
 # fails with AppleEvent error -10000, since Cog hands back a fresh specifier
@@ -84,6 +105,8 @@ fi
 if [[ -z "$artist" && -z "$title" ]]; then
   exit 1
 fi
+
+title=$(strip_parens "$title")
 
 if [[ -n "$artist" ]]; then
   display="$artist - $title"

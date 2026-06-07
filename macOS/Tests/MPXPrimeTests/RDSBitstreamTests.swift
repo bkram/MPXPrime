@@ -58,6 +58,134 @@ struct RDSBitstreamTests {
         BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
     }
 
+    // MARK: - RT+ (now-playing) via an RT macro
+
+    @Test("RT+ tags emit when the now-playing macro is placed in the RadioText")
+    func rtPlusTagsFromNowPlayingMacro() {
+        // RT+ markers point at positions inside the RadioText (RT+ spec), so the
+        // operator must place the now-playing in a RadioText message via the
+        // {artist}/{title} macros. Here the main rt_text carries that macro.
+        var cfg = makeConfig(rtText: "Now: {artist} - {title}")
+        cfg.rdsEnableRTPlus = true
+        cfg.rdsNowPlayingEnabled = true
+        cfg.rdsRTPlusFormatA = "{artist} - {title}"
+        // Automatic (standard) schedule -> includes 2A + 3A + 11A.
+        cfg.rdsSchedulerStandard = true
+        cfg.rdsSchedulerAuto = true
+
+        // Realistic ordering: the coder/engine starts with NO song, the RT
+        // cache warms up on the static template, and the now-playing snapshot
+        // only arrives later (the script runner polls every few seconds). This
+        // exercises cache invalidation on snapshot arrival -- the live path.
+        let nowPlaying = NowPlayingState()
+        let coder = BasicRDSCoder(
+            config: cfg, sampleRate: 192_000.0, nowPlayingState: nowPlaying)
+        for _ in 0..<120 { _ = coder.nextGroupBits() }  // warm up, no song yet
+        nowPlaying.update(
+            display: "Laura Branigan - Self control",
+            artist: "Laura Branigan",
+            title: "Self control")
+
+        var saw3AWithAID = false
+        var any11A = false
+        // contentType -> (start, additionalLength) from the most recent 11A.
+        var tags: [Int: (start: Int, length: Int)] = [:]
+        // Reassemble the transmitted RadioText from the 2A segments so we can
+        // confirm the tag markers point at the actual on-air characters.
+        var rt = [Character](repeating: " ", count: 64)
+
+        for _ in 0..<400 {
+            let g = RDSGroupDecoder.decode(coder.nextGroupBits())
+            if g.groupType == 3, !g.versionB, g.block4 == 0x4BD7 {
+                saw3AWithAID = true
+            }
+            if g.groupType == 2, !g.versionB {
+                let seg = g.b2Tail & 0x0F
+                let chars = [
+                    Character(UnicodeScalar(UInt8((g.block3 >> 8) & 0xFF))),
+                    Character(UnicodeScalar(UInt8(g.block3 & 0xFF))),
+                    Character(UnicodeScalar(UInt8((g.block4 >> 8) & 0xFF))),
+                    Character(UnicodeScalar(UInt8(g.block4 & 0xFF))),
+                ]
+                for (i, ch) in chars.enumerated() where seg * 4 + i < 64 {
+                    rt[seg * 4 + i] = ch
+                }
+            }
+            if g.groupType == 11, !g.versionB {
+                any11A = true
+                // Per RT+ spec bit layout (see buildGroup11A):
+                // tag1: ct = b2Tail[2:0]<<3 | block3[15:13], start = block3[12:7],
+                //       len = block3[6:1]; tag2: ct = block3[0]<<5 | block4[15:11],
+                //       start = block4[10:5], len = block4[4:0].
+                let ct1 = ((g.b2Tail & 0x07) << 3) | ((g.block3 >> 13) & 0x07)
+                let st1 = (g.block3 >> 7) & 0x3F
+                let ln1 = (g.block3 >> 1) & 0x3F
+                let ct2 = ((g.block3 & 0x01) << 5) | ((g.block4 >> 11) & 0x1F)
+                let st2 = (g.block4 >> 5) & 0x3F
+                let ln2 = g.block4 & 0x1F
+                if ct1 != 0 { tags[ct1] = (st1, ln1) }
+                if ct2 != 0 { tags[ct2] = (st2, ln2) }
+            }
+        }
+
+        func substring(_ start: Int, _ additionalLength: Int) -> String {
+            let lo = max(0, min(63, start))
+            let hi = min(64, lo + additionalLength + 1)  // length marker = extra chars
+            guard hi > lo else { return "" }
+            return String(rt[lo..<hi])
+        }
+
+        #expect(saw3AWithAID, "3A ODA group carrying RT+ AID 0x4BD7 should be scheduled")
+        #expect(any11A, "11A RT+ tag group should be emitted with a macro-free RT")
+        #expect(tags[1] != nil, "RT+ should tag ITEM.TITLE (content type 1)")
+        #expect(tags[4] != nil, "RT+ should tag ITEM.ARTIST (content type 4)")
+        // The markers must point at the real characters in the transmitted RT.
+        if let artist = tags[4] {
+            #expect(substring(artist.start, artist.length) == "Laura Branigan",
+                    "ARTIST marker must point at the artist text in the RT")
+        }
+        if let title = tags[1] {
+            #expect(substring(title.start, title.length) == "Self control",
+                    "TITLE marker must point at the title text in the RT")
+        }
+    }
+
+    @Test("RT+ does not clip a long title to 32 chars (longer element uses tag 1)")
+    func rtPlusLongTitleNotClippedTo32() {
+        let longTitle = "A Very Long Track Title That Exceeds Thirty-Two"  // 47 chars
+        var cfg = makeConfig(rtText: "{artist} - {title}")
+        cfg.rdsEnableRTPlus = true
+        cfg.rdsNowPlayingEnabled = true
+        cfg.rdsSchedulerStandard = true
+        cfg.rdsSchedulerAuto = true
+
+        let nowPlaying = NowPlayingState()
+        let coder = BasicRDSCoder(
+            config: cfg, sampleRate: 192_000.0, nowPlayingState: nowPlaying)
+        nowPlaying.update(display: "X - \(longTitle)", artist: "X", title: longTitle)
+
+        // Additional-length marker for the TITLE tag (content type 1), from
+        // whichever group slot it lands in. tag 1 length is 6-bit, tag 2 5-bit.
+        var titleAdditionalLen: Int?
+        for _ in 0..<400 {
+            let g = RDSGroupDecoder.decode(coder.nextGroupBits())
+            guard g.groupType == 11, !g.versionB else { continue }
+            let ct1 = ((g.b2Tail & 0x07) << 3) | ((g.block3 >> 13) & 0x07)
+            let ln1 = (g.block3 >> 1) & 0x3F
+            let ct2 = ((g.block3 & 0x01) << 5) | ((g.block4 >> 11) & 0x1F)
+            let ln2 = g.block4 & 0x1F
+            if ct1 == 1 { titleAdditionalLen = ln1 } else if ct2 == 1 { titleAdditionalLen = ln2 }
+        }
+
+        #expect(titleAdditionalLen != nil, "title tag (content type 1) should be emitted")
+        if let add = titleAdditionalLen {
+            // additional length + 1 = actual character count; must cover the
+            // whole 47-char title, not be clipped to 32 (which 5-bit tag-2 does).
+            #expect(add + 1 == longTitle.count,
+                    "title length marker must cover the full \(longTitle.count)-char title, got \(add + 1)")
+        }
+    }
+
     // MARK: - CRC integrity
 
     @Test func allBlockCRCsValid() {

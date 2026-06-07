@@ -2711,16 +2711,6 @@ struct WidebandAGCRider {
     /// Smoothed density value in dB. ~0 dB on flat program, several
     /// dB on busy program.
     private var density: Float = 0.0
-    /// Cache for the density-scaled release coefficients. `density` is
-    /// smoothed over ~0.5 s, so the two expf() that map it to release
-    /// coefficients are recomputed only when it moves past a small delta
-    /// rather than every sample. The mapping is monotonic and continuous,
-    /// so a 0.01 dB recompute threshold keeps the coefficients within
-    /// float noise of the per-sample result while removing two transcendentals
-    /// per sample from this default-on stage.
-    private var cachedDensityForCoeffs: Float = .nan
-    private var cachedEffectiveReleaseCoeff: Float = 0.0
-    private var cachedEffectiveFastMakeupCoeff: Float = 0.0
 
     mutating func configure(
         sampleRate: Float,
@@ -2804,32 +2794,6 @@ struct WidebandAGCRider {
 
         let desiredGainDB = clampf(targetDB - levelDB, minGainDB, maxGainDB)
 
-        // Scale effective release coefficient by program density when
-        // enabled. Density 0 → configured release; density ≥4 dB → 3x
-        // slower release. Linear mapping in between; saturates at 3x
-        // so very busy program can't stall the AGC completely.
-        let effectiveReleaseCoeff: Float
-        let effectiveFastMakeupCoeff: Float
-        if programDependentRelease {
-            // Recompute the density-scaled coefficients only when the
-            // smoothed density has actually moved; otherwise reuse the
-            // cached pair. Saves two expf()/sample on the steady-state path.
-            if !(fabsf(density - cachedDensityForCoeffs) < 0.01) {
-                let densityClamped = max(0.0, min(4.0, Double(density)))
-                let densityScale = 1.0 + densityClamped * 0.5   // 1x…3x
-                let scaledReleaseS = configuredReleaseS * densityScale
-                let scaledFastS = max(0.120, min(scaledReleaseS * 0.35, 0.450))
-                cachedEffectiveReleaseCoeff = expf(-1.0 / Float(scaledReleaseS * Double(sampleRate)))
-                cachedEffectiveFastMakeupCoeff = expf(-1.0 / Float(scaledFastS * Double(sampleRate)))
-                cachedDensityForCoeffs = density
-            }
-            effectiveReleaseCoeff = cachedEffectiveReleaseCoeff
-            effectiveFastMakeupCoeff = cachedEffectiveFastMakeupCoeff
-        } else {
-            effectiveReleaseCoeff = releaseCoeff
-            effectiveFastMakeupCoeff = fastMakeupCoeff
-        }
-
         let targetGainDB: Float
         let coeff: Float
         if levelDB < gateThresholdDB {
@@ -2847,7 +2811,28 @@ struct WidebandAGCRider {
             gateActive = false
         } else {
             targetGainDB = desiredGainDB
-            coeff = levelDB < makeupThresholdDB ? effectiveFastMakeupCoeff : effectiveReleaseCoeff
+            // Release/makeup is the only branch that uses the density-scaled
+            // coefficient, so compute it lazily here -- the two expf() are
+            // skipped on attack, hold, gate, and in-window samples (most of
+            // steady state). Bit-identical to computing it every sample: the
+            // formula is unchanged and the other branches never observed it.
+            // Density 0 -> configured release; density >=4 dB -> 3x slower
+            // release (linear between, saturating at 3x so very busy program
+            // can't stall the AGC completely).
+            let useFastMakeup = levelDB < makeupThresholdDB
+            if programDependentRelease {
+                let densityClamped = max(0.0, min(4.0, Double(density)))
+                let densityScale = 1.0 + densityClamped * 0.5   // 1x…3x
+                let scaledReleaseS = configuredReleaseS * densityScale
+                if useFastMakeup {
+                    let scaledFastS = max(0.120, min(scaledReleaseS * 0.35, 0.450))
+                    coeff = expf(-1.0 / Float(scaledFastS * Double(sampleRate)))
+                } else {
+                    coeff = expf(-1.0 / Float(scaledReleaseS * Double(sampleRate)))
+                }
+            } else {
+                coeff = useFastMakeup ? fastMakeupCoeff : releaseCoeff
+            }
             gateActive = false
         }
 
@@ -2865,7 +2850,6 @@ struct WidebandAGCRider {
         density = 0.0
         fastEnv = 0.0
         slowEnv = 0.0
-        cachedDensityForCoeffs = .nan
         kWeightL.reset()
         kWeightR.reset()
     }
@@ -5479,11 +5463,21 @@ final class BasicRDSCoder {
         if let artistTag = makeTag(name: "artist", contentType: 4) {
             tags.append(artistTag)
         }
+        // Order so the longer element becomes tag 1: the 11A tag-2 length
+        // marker is only 5 bits (max 32 chars), while tag 1 is 6 bits (max 64).
+        // Putting the longer element (e.g. a long title) in tag 1 avoids
+        // clipping it to 32 chars; per the RT+ spec at most one element may
+        // exceed 32 chars, so this guarantees it lands in tag 1. Tag order
+        // within the group does not affect receivers -- each tag carries its
+        // own content type, start and length.
         return tags.sorted {
-            if $0.start == $1.start {
-                return $0.contentType < $1.contentType
+            if $0.length != $1.length {
+                return $0.length > $1.length
             }
-            return $0.start < $1.start
+            if $0.start != $1.start {
+                return $0.start < $1.start
+            }
+            return $0.contentType < $1.contentType
         }
     }
 
@@ -5526,11 +5520,21 @@ final class BasicRDSCoder {
             tags.append(displayTag)
         }
 
+        // Order so the longer element becomes tag 1: the 11A tag-2 length
+        // marker is only 5 bits (max 32 chars), while tag 1 is 6 bits (max 64).
+        // Putting the longer element (e.g. a long title) in tag 1 avoids
+        // clipping it to 32 chars; per the RT+ spec at most one element may
+        // exceed 32 chars, so this guarantees it lands in tag 1. Tag order
+        // within the group does not affect receivers -- each tag carries its
+        // own content type, start and length.
         return tags.sorted {
-            if $0.start == $1.start {
-                return $0.contentType < $1.contentType
+            if $0.length != $1.length {
+                return $0.length > $1.length
             }
-            return $0.start < $1.start
+            if $0.start != $1.start {
+                return $0.start < $1.start
+            }
+            return $0.contentType < $1.contentType
         }
     }
 }

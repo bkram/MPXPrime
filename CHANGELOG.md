@@ -9,6 +9,74 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.32 — 2026-06-07
+
+Carries everything since 0.30.3, including the unreleased 0.31 work
+(symmetric RDS decoder, cross-module-inlining perf pass). The headline of
+this release is a full Apple HIG sweep of the UI, real-time-safety
+hardening, and RDS/RT+ correctness + guidance work.
+
+### RDS / RT+
+
+- **Symmetric RDS decoder (`RDSStreamDecoder`).** Receive-side counterpart to
+  `BasicRDSCoder` in `MPXPrimeCore`: BCH offset-word block synchronization,
+  per-block CRC, and accumulated PI / PTY / TP / TA / MS / PS state. Round-trip
+  tested against the encoder.
+- **RT+ tag ordering fix.** RT+ 11A tags are now ordered so the longer element
+  uses tag 1 (6-bit length marker, up to 64 chars) and the shorter uses tag 2
+  (5-bit, up to 32). Previously sorted by start position, so a title longer
+  than 32 characters landed in tag 2 and was clipped to 32 on the receiver.
+- **RT+ guidance.** The Radiotext card now explains how to surface Artist/Title
+  via RT+: RT+ tags text inside the RadioText (per the RDS standard), so the
+  now-playing must appear in an RT message via `{artist}`/`{title}` macros.
+  Station identity belongs in PS / Long PS.
+- **Cog now-playing poller.** New `scripts/cog-nowplaying.sh` reads the current
+  track from Cog (https://github.com/losnoco/cog) via its AppleScript
+  dictionary, mirroring the VLC poller's output contract. Both pollers now gate
+  on `pgrep` (a pure process check that sends no Apple events) so they never
+  launch the player when it is not running. Both example scripts ship in the
+  app bundle (`Contents/Resources/Scripts/`) and the DMG.
+- **Scheduler UX.** The RDS Schedule tab is now a single "Custom group
+  sequence" advanced toggle; automatic IEC 62106 scheduling (derived from the
+  enabled features) is the clear default.
+
+### UI — Apple HIG sweep
+
+- **Navigation.** `HSplitView` -> `NavigationSplitView` with a standard
+  collapsible sidebar and a unified title-bar toolbar (transport / bypass /
+  config / scopes / spectrum / levels). Main window hosted via
+  `NSHostingController` with `sizingOptions = []` so the tall sidebar no longer
+  drives the window size past the screen.
+- **Accessibility.** Parameter sliders and steppers expose unit-bearing
+  VoiceOver values; meter strips, scopes and spectra became labelled elements;
+  the dropout pill and status chips encode state as text (not color alone);
+  About-panel text uses Dynamic Type styles.
+- **Terminology / controls.** Patent/jargon control labels reworded to
+  outcome language; experimental limiter controls moved under a disclosure
+  group; destructive snapshot Clear gained a confirmation; AF Method picker is
+  segmented.
+- **App name.** The unbundled binary now shows "MPX Prime" in the Apple menu
+  and Dock (embedded `Info.plist` linker section), matching the bundled app.
+
+### Real-time safety / performance
+
+- **Render-thread hardening.** Monitor/analysis scratch buffers no longer
+  allocate on the audio thread (debug-assert + tracked release-only fallback);
+  runtime config handoff uses a try-lock so the render thread never blocks;
+  the first-AUHAL-frame scalar peak loop + `os_log` moved off the render path.
+- **Cross-module inlining.** `MPXDecoder` hot `process()` made `@inlinable`
+  so it inlines across the `MPXPrimeCore` boundary in release builds; denormal
+  guards added to its leaky integrators.
+- **AGC.** Density-scaled release coefficient computed lazily in the only
+  branch that uses it (bit-identical to the prior per-sample result, verified
+  by an old-vs-new A/B on the rendered composite), removing two `expf()` per
+  sample on attack / hold / gate / in-window samples.
+
+### Docs
+
+- Corrected the UI/UX HIG rules in `AGENTS.md` (toolbars are HIG-endorsed;
+  prefer `NavigationSplitView`; "cards" reclassified as house style).
+
 ## 0.30.3 — 2026-05-29 (hotfix)
 
 ### Crash fix — CompositeMultibandClipper SIGILL at degenerate sample rates

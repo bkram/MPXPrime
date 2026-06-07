@@ -1,7 +1,7 @@
 import Foundation
 
 struct AppConfig {
-    static let appVersion: String = "0.30.3"
+    static let appVersion: String = "0.32"
 
     static var defaultINIPath: String {
         let fileManager = FileManager.default

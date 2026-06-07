@@ -9,7 +9,7 @@ Native macOS FM composite (MPX) generator — real-time broadcast-style stereo e
 - Primary entrypoint: `macOS/Package.swift`
 - Default user config: `~/Library/Application Support/MPX Prime/MPX Prime.ini`
 
-See also: `ARCHITECTURE.md` (detailed DSP chain and stage descriptions), `plan.md` (roadmap).
+See also: `docs/manual.md` (user manual: usage / configuration / RDS / reference tables), `docs/ARCHITECTURE.md` (detailed DSP chain and stage descriptions), `docs/BUILDING.md` (build / run / test / package from source), `plan.md` (roadmap).
 
 ## Commands
 

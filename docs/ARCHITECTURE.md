@@ -138,9 +138,47 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 ├──► Output formatting
 │    └── Output: PCM to DAC via AVAudioEngine
 │
-└──► Monitor path (optional)
-     └── Demodulated L/R for headphone monitoring
+├──► Monitor path (optional)
+│    └── Demodulated L/R for headphone monitoring
+│
+└──► Processed-audio output (optional, `processedAudio` mode)
+     └── Post-pre-encode-limiter stereo L/R (no composite/pilot/RDS), for
+         feeding an external stereo coder. Skips composite assembly entirely;
+         runs at the audio device rate (e.g. 48 kHz). Pre-emphasis selectable.
 ```
+
+## Output modes
+
+`AudioOutputMode` (`AudioOutputEngine.swift`) has three cases; the engine resolves
+which to use at `start()` from config and routes the render callback accordingly.
+
+- **`mpxComposite`** (default): the per-sample render is `processSampleDetailed`
+  -> `processAudioDomain` (audio half) -> `processMPXDomain` (stereo encode,
+  composite clipper, BS.412, pilot/RDS injection). Output device runs at the
+  configured MPX rate (>=110 kHz required, 192 kHz standard so the 57 kHz RDS
+  sideband is representable). This is the canonical FM-composite path.
+- **`monitorAudio`**: generates the composite internally and demodulates it back to
+  L/R via `MPXDecoder` for headphone monitoring on a second device. Low-latency
+  IIR filtering (Butterworth encoder lowpass, LR4 multiband). A listening aid, not
+  the on-air signal.
+- **`processedAudio`** (0.33): emits the processed stereo L/R after the pre-encode
+  limiter and **skips `processMPXDomain` entirely** — no stereo encode, composite
+  clipper, BS.412, pilot, or RDS. Render path `renderAudioOnly*` calls
+  `processAudioDomain` directly (dual-rate boundary forced off; whole engine runs
+  at the audio device rate, typically 48 kHz). The composite path is byte-identical
+  to before — the audio-only path simply branches off the existing `preMPX` tap.
+  Two audio-domain stages still run for output quality: the encoder lowpass FIR (the
+  15 kHz band-limit) and the FIR multiband crossovers. The post-limiter level is
+  normalized so the binding ceiling maps to ~0 dBFS times the operator output gain.
+  Pre-emphasis is selectable (`preemphasis_us`); an optional final loudness clipper
+  (a dedicated `DistortionCancelledClipper` instance driven by
+  `processed_audio_final_clip_drive_db`) engages only when the operator marks the
+  external coder as having no clipper of its own
+  (`processed_audio_coder_has_clipper = false`) — the one-clipper rule, mirroring
+  pre-emphasis ownership. Config: `processed_audio_output` (restart-required). The
+  UI hides every composite/RDS surface in this mode (RDS section, Composite Clipper
+  / BS.412 / Final Stage tabs, pilot level, deviation/modulation meters, MPX
+  Spectrum + Scopes windows, composite signal-flow pills).
 
 ## Major Components
 
@@ -293,10 +331,10 @@ A new host-rate `subcarrierDelayLine` ring buffer delays pilot+RDS by the compos
 ### Encoder program lowpass (FIR / Butterworth split)
 Final audio-bandwidth guard sitting immediately before stereo encoding. Two implementations co-exist and the engine picks per output mode:
 
-- **Transmit mode (`mpxComposite`)**: Kaiser-windowed linear-phase FIR with ~80 dB stop-band attenuation. Tap count is derived from sample rate to maintain ~1.5 kHz transition at 15 kHz cutoff (≈641 taps at 192 kHz, ≈160 taps at 48 kHz). Group delay ~1.67 ms. The steep roll-off prevents downstream nonlinear stages (DC clipper, composite clipper) from re-broadening audio content into the 19 kHz pilot region, bringing DC-clipper aliasing from ≈-38 dBFS (Butterworth) to below -75 dBFS.
+- **Transmit / processed-audio (`mpxComposite` / `processedAudio`)**: Kaiser-windowed linear-phase FIR with ~80 dB stop-band attenuation. Tap count is derived from sample rate to maintain ~1.5 kHz transition at 15 kHz cutoff (≈641 taps at 192 kHz, ≈160 taps at 48 kHz). Group delay ~1.67 ms. The steep roll-off prevents downstream nonlinear stages (DC clipper, composite clipper) from re-broadening audio content into the 19 kHz pilot region, bringing DC-clipper aliasing from ≈-38 dBFS (Butterworth) to below -75 dBFS. In processed-audio output this same FIR is the 15 kHz band-limit on the L/R feed.
 - **Monitor mode (`monitorAudio`)**: 12th-order Butterworth cascade (six biquads). ~0.2 ms latency, ~13 dB attenuation at 17 kHz. Intentionally shallower for low-latency live monitoring. The monitor is documented as "an idea of how it would sound" — the transmitted composite uses the FIR.
 
-The choice is resolved once per engine start by `AudioOutputEngine.start()` via `MPXGenerator.setEncoderFIREnabled(_:)`. Both filters remain configured so toggling output mode on engine restart is immediate. The AppConfig `encoder_fir_enabled` flag allows bypassing the FIR entirely (defaults to true).
+The choice is resolved once per engine start by `AudioOutputEngine.start()` via `MPXGenerator.setEncoderFIREnabled(_:)` (enabled for everything except the low-latency monitor). Both filters remain configured so toggling output mode on engine restart is immediate. The AppConfig `encoder_fir_enabled` flag allows bypassing the FIR entirely (defaults to true).
 
 `DSPThroughputTests.preEmphasisDoesNotExplodeFullChainCost` and `EncoderBandwidthTests` guard this stage: the former catches any regression in the combined limiter+encoder cost on HF-rich program, the latter characterises the FIR's stop-band depth directly and asserts a ≥20 dB gap over the Butterworth baseline.
 

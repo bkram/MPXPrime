@@ -26,6 +26,28 @@ MPX Prime is *not* trying to be a $5–15k Optimod / Omnia / Stereotool replacem
 
 When evaluating a new feature, the test is "does this make MPX Prime sound or feel better for an amateur operator?" Features that only matter to a station with a $3M tower stack are out.
 
+## Status (current)
+
+Released: **0.32** (2026-06-07). Integration branch: **develop/v.033**.
+
+Landed on develop/v.033 since 0.32 (uncommitted/unreleased unless noted):
+- **Processed-audio output mode** + optional final loudness clipper + full UI
+  gating (see the dedicated chapter below; status LANDED).
+- **Composite clipper CPU optimization** — per-band IM cancellation rewritten via
+  LTI superposition (one residual filter per band instead of clipped+original);
+  Intel x86_64 clipper stage 23.2% -> 10.6% RT (-54%), full chain 37.5% -> 25.8%
+  RT (-31%); output delta -78 dBFS (inaudible); baseline-strict PASS.
+- **PTY region toggle** (RDS vs RBDS genre table; `pty_rbds`).
+- **Docs restructure** — operator usage/config/reference split out of README into
+  `docs/manual.md`; README slimmed to an overview; ARCHITECTURE gained an
+  "Output modes" section.
+
+Already shipped (don't re-plan as pending): the dual-rate audio-domain chain
+(0.30, default-on), composite clipper 16x + operator-selectable {8,16,32} OS
+(0.30), pre-encode look-ahead + Dolby HF-subband detector (0.30), symmetric RDS
+decoder `RDSStreamDecoder` (0.31). The "Next up" / backlog entries below predate
+these and some are historical — cross-check against CHANGELOG before acting.
+
 ## Patent-backed improvements backlog
 
 Expired patents (public domain) that map onto specific stages of the
@@ -93,7 +115,7 @@ PrimeBass is the adaptive low-band enhancer; goal is to lift perceived bass whil
 
 ## Next up
 
-1. **Dual-rate audio chain — 48 kHz audio domain, >=176.4 kHz MPX domain.** The entire chain currently runs at the device rate (192 kHz default), but input is universally 48 kHz and audio-domain content carries no information above 24 kHz. The 48 -> 192 kHz upsample at the input boundary makes everything above 24 kHz interpolated zeros - L/R EQ, multiband FIR splitter, pre-emphasis, and pre-encode limiter all process those zeros at 4x the necessary rate. Splitting into an audio domain (48 kHz, where the signal information lives) and an MPX domain (>=176.4 kHz, where pilot / L-R sidebands / 57 kHz RDS need bandwidth) is the textbook pro-encoder architecture (Orban, Stereotool, Omnia).
+1. **Dual-rate audio chain — 48 kHz audio domain, >=176.4 kHz MPX domain.** **[SHIPPED 0.30, default-on — retained below for history / Phase 3 follow-up only.]** The entire chain currently runs at the device rate (192 kHz default), but input is universally 48 kHz and audio-domain content carries no information above 24 kHz. The 48 -> 192 kHz upsample at the input boundary makes everything above 24 kHz interpolated zeros - L/R EQ, multiband FIR splitter, pre-emphasis, and pre-encode limiter all process those zeros at 4x the necessary rate. Splitting into an audio domain (48 kHz, where the signal information lives) and an MPX domain (>=176.4 kHz, where pilot / L-R sidebands / 57 kHz RDS need bandwidth) is the textbook pro-encoder architecture (Orban, Stereotool, Omnia).
    - **Measured before-state on M1 Pro (release, develop/v.030)**: full chain @ 192 kHz = **41.54% of real-time**; audio-domain stages contribute ~23.75% RT, MPX-domain stages ~14.97% RT. Rate sweep is near-linear (96/128/176.4/192 kHz = 21.3 / 27.7 / 38.1 / 41.6% RT). Heaviest stages: **composite clipper 16x = 14.23% RT (MPX, stays at high rate)**, DC clipper = 5.67%, bass clipper = 5.10%, multiband FIR = 4.80%, pre-encode limiter = 3.90%, PrimeBass = 2.29%. Full report at `macOS/benchmarks/m1pro-v0.30-pre-dualrate.md`. Reproduce with `MPXPRIME_BENCH=1 swift test -c release --filter Benchmark` (suite is `BenchmarkSuite`, env-gated so it doesn't run in normal `swift test`).
    - **Estimated win**: dual-rate brings full chain @ 192 kHz from 41.54% RT down to ~25.80% RT on M1 Pro - **15.74 percentage points / 38% relative reduction** (audio stages drop to ~1/4 cost; MPX stages and ~5% resampler overhead remain). Smaller than the initial "multiband is the bottleneck" framing implied: composite clipper at 14.23% RT is the single heaviest stage and stays at MPX rate. On older Intel (MBP16,1, Coffee Lake-H, AVX2 no AMX), the audio-domain stages are expected to be relatively heavier than on M1 Pro, so dual-rate should save proportionally more there - benchmark needs to run on the 16,1 to confirm.
    - **Stages that move to 48 kHz**: input -> EQ -> multiband (FIR splitter) -> bass clipper outer rate -> DCC outer rate -> pre-emphasis -> pre-encode limiter -> PrimeBass -> wideband AGC -> stereo widener -> mono bass -> phase rotation -> multiband limiter. The 4x / 8x / 16x internal oversampling on `BassClipper`, `DistortionCancelledClipper`, `CompositeClipper` reaches the same final internal rates (192k, 384k, 3.07 MHz); only the outer rate changes. Anti-aliasing quality unchanged.
@@ -262,6 +284,81 @@ Where MPX Prime stands today against Optimod 8500/8600, Omnia.9/.11, and Stereot
 The amateur-grade goal is structurally complete. Remaining work is validation, preset tuning, receiver-verifier hardening, inter-band coupling, and listening-tuning, not architectural rewiring.
 
 *Linux port — deferred. See the "Cross-platform" section below for scoping; revisit once the macOS preset / smoke-test / README work has landed.*
+
+## Processed-audio output mode (processor in front of an external stereo coder)
+
+**Status: LANDED (develop/v.033).** `AudioOutputMode.processedAudio` /
+`processed_audio_output`, with the audio-only render branching off
+`processAudioDomain` (no new DSP), Settings selector + pre-emphasis guidance, UI
+gating of composite/RDS surfaces, `ProcessedAudioOutputTests` + nav-gating tests,
+and Intel x86_64 verification. Design summary below; full operator/internals docs
+in `docs/manual.md` + `docs/ARCHITECTURE.md`. Lets MPX Prime
+run as a standalone audio processor that emits processed stereo L/R into an
+**external stereo generator + RDS encoder** — the classic separate-processor topology
+(Optimod-8000-style) that many good-sounding stations ran for years. Useful on
+transmitters that only accept L/R / AES3 audio (no composite/MPX input), and
+across a mixed fleet (composite-direct where the exciter takes MPX, processed-L/R
+where it does not).
+
+**What it delivers and what it cedes.** The chain splits cleanly into an audio
+half and a composite half. This mode ships the audio half — phase rotator,
+wideband AGC, parametric EQ, multiband compressor (linear-phase FIR splitters),
+stereo widener, PrimeBass / mono bass, bass clipper, distortion-cancelled
+audio-band clipper, pre-emphasis (optional), and the look-ahead pre-encode
+true-peak limiter — and skips the composite half (stereo encode, composite
+clipper, BS.412, pilot + post-clipper RDS injection, final-MPX safety limiter).
+Net: large gain in loudness consistency / spectral balance / image / bass; gives
+up the composite clipper's final competitive loudness, BS.412 MPX power control,
+and the pilot-locked RDS (the external box's RDS is used instead).
+
+**Secondary benefit — clean audition / preset-tuning aid.** Because the output is
+plain L/R, it can be routed to any headphones / monitors / DAW for real-time A/B of
+the *audio-processing* decisions (AGC, multiband, EQ, width, bass, audio-band
+clippers) with no SDR / receiver / composite-capable hardware. This directly helps
+the validation / preset-tuning gap (see Open gaps). Caveats: (1) this tap is
+*before* composite assembly, so it is NOT the final on-air sound — for that, the
+existing "Decoded MPX Simulation" monitor (full composite demod + deemphasis) is
+representative; the two are complementary. (2) Audition with **pre-emphasis off**,
+or the monitored L/R is pre-emphasized and sounds bright/harsh — not representative.
+
+**The load-bearing decision is pre-emphasis ownership** — exactly one device in
+the path may apply it, and MPX Prime must let the operator pick which. This is
+not optional polish: **many basic / hobby stereo coders have no pre-emphasis stage
+at all, or it can be switched off**, so MPX Prime has to be able to supply it.
+Pre-emphasis selection (off / 50 us / 75 us) is therefore a first-class control in
+this mode, reusing the existing `preemphasis_us`. The three real-world cases:
+- *External coder has NO pre-emphasis (or it is disabled)* → **MPX Prime applies
+  it** (`preemphasis_us = 50` or `75`). MPX Prime outputs pre-emphasized L/R; the
+  pre-emphasis-aware look-ahead limiter (`StereoLinkedOversampledPeakLimiter`)
+  controls the post-pre-emphasis peaks, so the HF peak-control advantage is kept.
+  This is the common case for the cheap exciters this mode targets.
+- *External coder applies pre-emphasis (fixed on)* → **MPX Prime stays flat**
+  (`preemphasis_us = 0`). Audio-band clippers / limiter act on the flat signal; the
+  coder re-boosts HF and owns final HF/deviation control. Still a big win in the
+  body of the signal, but cedes the top-end loudness trick.
+- *Region* — 50 us (EU/ITU) vs 75 us (US/Japan) is the operator's choice whenever
+  MPX Prime owns pre-emphasis.
+- **Invariant: never two pre-emphasis stages in series** (MPX Prime on + coder on)
+  — that double-boosts HF and over-deviates. The UI should make the
+  one-and-only-one rule obvious.
+
+### Landed details
+
+Implemented as designed: a third `AudioOutputMode.processedAudio`; the audio-only
+render (`renderAudioOnly*`) branches off `processAudioDomain` so the composite path
+stays byte-identical; output normalized so the binding ceiling maps to ~0 dBFS
+times `output_gain_db`; selectable pre-emphasis (`preemphasis_us`); an optional
+final loudness clipper (a dedicated `DistortionCancelledClipper` driven by
+`processed_audio_final_clip_drive_db`, engaged when
+`processed_audio_coder_has_clipper = false` — the one-clipper rule); recommended
+48 kHz / 24-bit; and full UI gating of every composite/RDS surface. Operator docs:
+`docs/manual.md` ("Processed-audio output mode"); internals: `docs/ARCHITECTURE.md`
+("Output modes"). Tests: `ProcessedAudioOutputTests` + nav-gating in
+`SectionNavigationTests`. Verified on Apple Silicon + Intel x86_64.
+
+**Remaining (optional):** reframe the Final Stage tab as an "Output" pane in
+processed-audio mode (output level currently lives on the Core tab); program-material
+listening to tune the final-clipper drive default.
 
 ## Open gaps
 

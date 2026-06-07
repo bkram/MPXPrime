@@ -9,7 +9,7 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased — develop/v.033
+## 0.33 — 2026-06-07
 
 ### Processed-audio output mode
 

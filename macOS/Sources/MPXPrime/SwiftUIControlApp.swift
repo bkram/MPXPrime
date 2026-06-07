@@ -13,10 +13,13 @@ private let kWindowWidth: CGFloat = 860
 private let kWindowHeight: CGFloat = 440
 private let kWindowMinWidth: CGFloat = 760
 private let kWindowMinHeight: CGFloat = 380
-private let kLevelsWindowWidth: CGFloat = 860
+// Six 64 pt meter strips (~444 pt) + card/window padding fit comfortably in
+// ~560 pt; the prior 860/760 defaults left half the window empty (the meters
+// are left-aligned, not stretched).
+private let kLevelsWindowWidth: CGFloat = 560
 private let kLevelsWindowHeight: CGFloat = 560
-private let kLevelsWindowMinWidth: CGFloat = 760
-private let kLevelsWindowMinHeight: CGFloat = 500
+private let kLevelsWindowMinWidth: CGFloat = 480
+private let kLevelsWindowMinHeight: CGFloat = 460
 private let kMPXPrimeIconSymbol = "\u{1F3A7}"
 private let kScopesWindowTitle = "Scopes"
 private let kMPXSpectrumWindowTitle = "MPX Spectrum"
@@ -450,6 +453,21 @@ enum Stage: String, CaseIterable, Identifiable {
             return .tools
         default:
             return .processing
+        }
+    }
+
+    /// Stages that operate only in the composite domain and are therefore
+    /// meaningless in processed-audio output mode (no pilot / subcarrier / RDS /
+    /// composite): the whole RDS group plus the composite clipper, BS.412, and the
+    /// Final Stage (final drive, MPX deviation, composite safety limiter, budget).
+    /// The UI hides these when processed-audio output is selected. The Core tab
+    /// stays (input gain, mono, pre-emphasis, output level all still apply).
+    var hiddenInProcessedAudio: Bool {
+        switch self {
+        case .processingCompositeClipper, .processingBS412, .processingFinalStage:
+            return true
+        default:
+            return group == .rds
         }
     }
 
@@ -1180,6 +1198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             menuItem.state = (model?.inspectorVisible ?? false) ? .on : .off
             return true
         }
+        // Composite-domain windows are meaningless in processed-audio output;
+        // disable them (and the RDS section jump). Use the Audio Spectrum window
+        // for the processed L/R spectrum.
+        if let action = menuItem.action, model?.processedAudioOutputActive == true {
+            if action == #selector(showSpectrumWindow) || action == #selector(showScopesWindow)
+                || action == #selector(goToRDS) {
+                return false
+            }
+        }
         if let action = menuItem.action,
            action == #selector(goToMonitoring) || action == #selector(goToProcessing)
                || action == #selector(goToRDS) || action == #selector(goToTools) {
@@ -1557,6 +1584,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc fileprivate func showScopesWindow() {
+        // Composite scope is meaningless in processed-audio output.
+        if model?.processedAudioOutputActive == true { return }
         if let existing = scopesWindow {
             revealWindow(existing)
             model?.scopesWindowVisible = true
@@ -1579,7 +1608,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
+    /// Close the composite-only auxiliary windows (MPX Spectrum, Scopes). Invoked
+    /// when the engine (re)starts in processed-audio mode so a window left open
+    /// from composite mode doesn't keep showing a now-meaningless view.
+    @objc fileprivate func closeCompositeOnlyAuxWindows() {
+        scopesWindow?.close()
+        spectrumWindow?.close()
+    }
+
     @objc fileprivate func showSpectrumWindow() {
+        // The composite (MPX) spectrum is meaningless in processed-audio output;
+        // the Audio Spectrum window shows the processed L/R spectrum instead.
+        if model?.processedAudioOutputActive == true { return }
         if let existing = spectrumWindow {
             revealWindow(existing)
             model?.spectrumWindowVisible = true
@@ -1602,7 +1642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    @objc private func showPreMPXSpectrumWindow() {
+    @objc fileprivate func showPreMPXSpectrumWindow() {
         if let existing = preMPXSpectrumWindow {
             revealWindow(existing)
             model?.preMPXSpectrumWindowVisible = true
@@ -1750,6 +1790,26 @@ final class MPXPrimeViewModel: ObservableObject {
                 selectedRDSTab = rt
             }
             lastStageInGroup[selectedStage.group] = selectedStage
+        }
+    }
+
+    /// Whether processed-audio output mode is the selected output (drives UI
+    /// gating of composite/RDS surfaces). Reflects the persisted config value.
+    var processedAudioOutputActive: Bool { config.processedAudioOutput }
+
+    /// A sidebar stage is hidden when processed-audio output is active and the
+    /// stage only makes sense in the composite domain (RDS, composite clipper,
+    /// BS.412). See `Stage.hiddenInProcessedAudio`.
+    func isStageVisible(_ stage: Stage) -> Bool {
+        !(processedAudioOutputActive && stage.hiddenInProcessedAudio)
+    }
+
+    /// If the current selection points at a stage hidden by the active output
+    /// mode, snap back to the Processing overview. Called on engine (re)start so
+    /// switching into processed-audio mode never leaves a stale RDS/composite pane.
+    func normalizeSelectionForOutputMode() {
+        if !isStageVisible(selectedStage) {
+            selectedStage = .processingOverview
         }
     }
     /// Remembers the last visited stage per sidebar group so the
@@ -2066,7 +2126,7 @@ final class MPXPrimeViewModel: ObservableObject {
     var restartRequiredSettingsListText: String { kRestartRequiredSettingsListText }
 
     var ptyChoices: [(Int, String)] {
-        Self.ptyNames.enumerated().map { ($0.offset, $0.element) }
+        Self.ptyNames(rbds: config.rdsPtyRBDS).enumerated().map { ($0.offset, $0.element) }
     }
 
     var primeBassPresetChoices: [PresetChoice] {
@@ -3150,9 +3210,15 @@ final class MPXPrimeViewModel: ObservableObject {
             return inputDevices.first(where: { $0.uid == selectedInputUID })?.id
         }()
 
-        let selectedOutUID = monitorEnabled ? selectedMonitorUID : selectedOutputUID
+        // Processed-audio output takes precedence over the decoded-MPX monitor
+        // (the monitor is meaningless when no composite is generated). It uses the
+        // main output device, not the monitor device.
+        let processedAudio = runConfig.processedAudioOutput
+        let useMonitor = monitorEnabled && !processedAudio
+        let selectedOutUID = useMonitor ? selectedMonitorUID : selectedOutputUID
         let outputID: AudioDeviceID? = outputDevices.first(where: { $0.uid == selectedOutUID })?.id
-        let outputMode: AudioOutputMode = monitorEnabled ? .monitorAudio : .mpxComposite
+        let outputMode: AudioOutputMode =
+            processedAudio ? .processedAudio : (useMonitor ? .monitorAudio : .mpxComposite)
 
         let generator = MPXGenerator(
             config: runConfig,
@@ -3176,9 +3242,13 @@ final class MPXPrimeViewModel: ObservableObject {
             runningEngine = engine
             isRunning = true
             pendingRuntimeApply = false
+            normalizeSelectionForOutputMode()
+            if runConfig.processedAudioOutput {
+                NSApp.sendAction(#selector(AppDelegate.closeCompositeOnlyAuxWindows), to: nil, from: nil)
+            }
             activeRuntimeSnapshot = captureRuntimeSnapshot()
             engineStartReference = Date().timeIntervalSinceReferenceDate
-            let mode = monitorEnabled ? "monitor" : "output"
+            let mode = processedAudio ? "processed-audio" : (useMonitor ? "monitor" : "output")
             var line =
                 "Running source=\(runConfig.sourceMode) mode=\(mode) "
                 + "render=\(Int(engine.renderSampleRate))Hz hw=\(Int(engine.hardwareSampleRate))Hz"
@@ -3873,7 +3943,7 @@ final class MPXPrimeViewModel: ObservableObject {
             assignIfChanged(\.rdsPS, Self.currentTimedDisplayText(config.activePSBankText, elapsed: elapsed).ifEmpty("-"))
         }
         assignIfChanged(\.rdsPI, config.rdsPI)
-        assignIfChanged(\.rdsPTY, Self.ptyName(for: config.rdsPTY))
+        assignIfChanged(\.rdsPTY, Self.ptyName(for: config.rdsPTY, rbds: config.rdsPtyRBDS))
         if let live, !live.ptyn.isEmpty {
             assignIfChanged(\.rdsPTYN, live.ptyn)
         } else {
@@ -4030,7 +4100,8 @@ final class MPXPrimeViewModel: ObservableObject {
         return [(10.0, trimmed)]
     }
 
-    private static let ptyNames: [String] = [
+    // Europe (RDS, EN 50067 / IEC 62106) PTY 0..31.
+    private static let ptyNamesRDS: [String] = [
         "None", "News", "Current Affairs", "Information", "Sport", "Education", "Drama", "Culture",
         "Science", "Varied", "Pop Music", "Rock Music", "Easy Music", "Light Classical",
         "Serious Classical",
@@ -4039,6 +4110,19 @@ final class MPXPrimeViewModel: ObservableObject {
         "Documentary",
         "Alarm Test", "Alarm"
     ]
+
+    // North America (RBDS, NRSC-4-B) PTY 0..31. Same 5-bit code as RDS, but
+    // receivers in the US / Canada / Mexico / South Korea label it from this
+    // table. Selected via the PTY region toggle (config.rdsPtyRBDS).
+    private static let ptyNamesRBDS: [String] = [
+        "None", "News", "Information", "Sports", "Talk", "Rock", "Classic Rock",
+        "Adult Hits", "Soft Rock", "Top 40", "Country", "Oldies", "Soft", "Nostalgia", "Jazz",
+        "Classical", "Rhythm and Blues", "Soft R&B", "Language", "Religious Music",
+        "Religious Talk", "Personality", "Public", "College", "Spanish Talk", "Spanish Music",
+        "Hip-Hop", "Unassigned", "Unassigned", "Weather", "Emergency Test", "Emergency"
+    ]
+
+    static func ptyNames(rbds: Bool) -> [String] { rbds ? ptyNamesRBDS : ptyNamesRDS }
 
     private static let primeBassPresets: [PrimeBassPreset] = [
         .init(
@@ -4462,11 +4546,12 @@ final class MPXPrimeViewModel: ObservableObject {
         formatProfiles.first(where: { $0.id == id })
     }
 
-    private static func ptyName(for pty: Int) -> String {
-        if ptyNames.indices.contains(pty) {
-            return ptyNames[pty]
+    private static func ptyName(for pty: Int, rbds: Bool) -> String {
+        let names = ptyNames(rbds: rbds)
+        if names.indices.contains(pty) {
+            return names[pty]
         }
-        return "None"
+        return names[0]
     }
 
     private static func clamp(_ value: Double, min: Double, max: Double) -> Double {
@@ -4906,19 +4991,28 @@ private struct RootView: View {
                 }
                 .help("Save the current configuration (Command-S)")
 
-                Button {
-                    NSApp.sendAction(#selector(AppDelegate.showScopesWindow), to: nil, from: nil)
-                } label: {
-                    Label("Scopes", systemImage: "waveform.path")
+                // Composite scope is meaningless without an MPX composite.
+                if !model.processedAudioOutputActive {
+                    Button {
+                        NSApp.sendAction(#selector(AppDelegate.showScopesWindow), to: nil, from: nil)
+                    } label: {
+                        Label("Scopes", systemImage: "waveform.path")
+                    }
+                    .help("Open the Scopes window")
                 }
-                .help("Open the Scopes window")
 
+                // In processed-audio mode the MPX spectrum is meaningless; the
+                // Spectrum button opens the Audio (pre-MPX) spectrum instead.
                 Button {
-                    NSApp.sendAction(#selector(AppDelegate.showSpectrumWindow), to: nil, from: nil)
+                    if model.processedAudioOutputActive {
+                        NSApp.sendAction(#selector(AppDelegate.showPreMPXSpectrumWindow), to: nil, from: nil)
+                    } else {
+                        NSApp.sendAction(#selector(AppDelegate.showSpectrumWindow), to: nil, from: nil)
+                    }
                 } label: {
                     Label("Spectrum", systemImage: "chart.bar.xaxis")
                 }
-                .help("Open the MPX Spectrum window")
+                .help(model.processedAudioOutputActive ? "Open the Audio Spectrum window" : "Open the MPX Spectrum window")
 
                 Button {
                     NSApp.sendAction(#selector(AppDelegate.showLevelsWindow), to: nil, from: nil)
@@ -4941,10 +5035,15 @@ private struct StageSidebar: View {
     var body: some View {
         List(selection: $model.selectedStage) {
             ForEach(Stage.Group.allCases, id: \.rawValue) { group in
-                Section(group.rawValue) {
-                    ForEach(Stage.allCases.filter { $0.group == group }) { stage in
-                        StageSidebarRow(model: model, stage: stage)
-                            .tag(stage)
+                // Processed-audio output hides the RDS group and the
+                // composite-domain Processing stages (composite clipper, BS.412).
+                let stages = Stage.allCases.filter { $0.group == group && model.isStageVisible($0) }
+                if !stages.isEmpty {
+                    Section(group.rawValue) {
+                        ForEach(stages) { stage in
+                            StageSidebarRow(model: model, stage: stage)
+                                .tag(stage)
+                        }
                     }
                 }
             }
@@ -5001,9 +5100,13 @@ private struct StageContentView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // If the selection is hidden by the active output mode (e.g. an RDS or
+        // composite stage while processed-audio output is on), display the
+        // Processing overview instead of a stale pane.
+        let stage = model.isStageVisible(model.selectedStage) ? model.selectedStage : .processingOverview
+        return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(model.selectedStage.detailTitle)
+                Text(stage.detailTitle)
                     .font(.title2.weight(.semibold))
                 Spacer()
             }
@@ -5011,22 +5114,24 @@ private struct StageContentView: View {
             .padding(.horizontal, 22)
             .padding(.bottom, 8)
 
-            Text(model.selectedStage.detailSubtitle)
+            Text(stage.detailSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 22)
                 .padding(.bottom, 16)
 
             Group {
-                if model.selectedStage == .monitoring {
+                if stage == .monitoring {
                     MonitoringDashboardView(model: model)
-                } else if model.selectedStage == .testTone {
+                } else if stage == .testTone {
                     TestToneView(model: model)
-                } else if model.selectedStage == .snapshots {
+                } else if stage == .snapshots {
                     SnapshotsView(model: model)
-                } else if model.selectedStage.legacyProcessingTab != nil {
+                } else if !model.isStageVisible(model.selectedStage) {
+                    ProcessingOverviewGrid(model: model)
+                } else if stage.legacyProcessingTab != nil {
                     StageProcessingContent(model: model)
-                } else if model.selectedStage.legacyRDSTab != nil {
+                } else if stage.legacyRDSTab != nil {
                     StageRDSContent(model: model)
                 }
             }
@@ -5617,7 +5722,10 @@ private struct MonitoringDashboardView: View {
                 transportPanel
                 metricsPanels
                 chainPanel
-                rdsPanel
+                // No RDS in processed-audio output (no subcarrier carries it).
+                if !model.processedAudioOutputActive {
+                    rdsPanel
+                }
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -5636,35 +5744,59 @@ private struct MonitoringDashboardView: View {
             HStack(alignment: .top, spacing: 12) {
                 mpxPanel.frame(maxWidth: .infinity)
                 headroomPanel.frame(maxWidth: .infinity)
-                subcarriersPanel.frame(maxWidth: .infinity)
+                // Pilot/RDS injection is composite-only; in processed-audio the
+                // panel would be all N/A, so omit it.
+                if !model.processedAudioOutputActive {
+                    subcarriersPanel.frame(maxWidth: .infinity)
+                }
             }
             VStack(alignment: .leading, spacing: 12) {
                 mpxPanel
                 headroomPanel
-                subcarriersPanel
+                if !model.processedAudioOutputActive {
+                    subcarriersPanel
+                }
             }
         }
     }
 
     private var mpxPanel: some View {
-        Card(title: "MPX") {
-            metricsGrid([
-                ("OUTPUT", model.outputText.ifEmpty("—")),
-                ("AUDIO COMPOSITE", audioCompositeText),
-                ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
-                ("MODULATION", modulationText)
-            ])
+        // In processed-audio mode there is no composite: deviation / modulation /
+        // audio-composite peak are all meaningless. Show the output level and the
+        // (still-valid) stereo image instead.
+        Card(title: model.processedAudioOutputActive ? "Output" : "MPX") {
+            if model.processedAudioOutputActive {
+                metricsGrid([
+                    ("OUTPUT", model.outputText.ifEmpty("—")),
+                    ("STEREO IMAGE", model.stereoImageText)
+                ])
+            } else {
+                metricsGrid([
+                    ("OUTPUT", model.outputText.ifEmpty("—")),
+                    ("AUDIO COMPOSITE", audioCompositeText),
+                    ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
+                    ("MODULATION", modulationText)
+                ])
+            }
         }
     }
 
     private var headroomPanel: some View {
+        // Composite clipper / safety limiter / BS.412 don't run in processed-audio
+        // output — only the pre-encode limiter does.
         Card(title: "Headroom") {
-            metricsGrid([
-                ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
-                ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
-                ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
-                ("BS.412 BUDGET", budgetText)
-            ])
+            if model.processedAudioOutputActive {
+                metricsGrid([
+                    ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
+                ])
+            } else {
+                metricsGrid([
+                    ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
+                    ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
+                    ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
+                    ("BS.412 BUDGET", budgetText)
+                ])
+            }
         }
     }
 
@@ -6387,19 +6519,24 @@ struct LevelsCardView: View {
                     scale: .dbfs
                 )
                 VerticalMeterStrip(
-                    label: "MPX",
+                    label: model.processedAudioOutputActive ? "OUT" : "MPX",
                     valueText: model.outputText.meterCurrentOnly,
                     level: model.outputLevel,
                     peakLevel: model.outputPeakHoldLevel,
                     scale: .dbfs
                 )
-                VerticalMeterStrip(
-                    label: "MOD",
-                    valueText: model.modulationText,
-                    level: model.modulationLevel,
-                    peakLevel: model.modulationPeakHoldLevel,
-                    scale: .modulationKHz(limit: model.config.mpxDeviationKHz)
-                )
+                // Modulation/deviation is a composite-domain quantity. In
+                // processed-audio output there is no FM composite, so the MOD
+                // (kHz deviation) meter is meaningless — hide it.
+                if !model.processedAudioOutputActive {
+                    VerticalMeterStrip(
+                        label: "MOD",
+                        valueText: model.modulationText,
+                        level: model.modulationLevel,
+                        peakLevel: model.modulationPeakHoldLevel,
+                        scale: .modulationKHz(limit: model.config.mpxDeviationKHz)
+                    )
+                }
                 // GR + SAFE removed in 0.30 — peak-control gain-reduction
                 // data is already surfaced by the Monitoring tab's Headroom
                 // card (PRE-ENCODE / COMPOSITE / SAFETY GR + BS.412 budget)
@@ -7154,7 +7291,9 @@ private struct ProcessingCoreTab: View {
                 set: { _ in model.toggleBypass() }
             ))
             Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
-            Text("Mono Mode transmits true mono composite. The full DSP chain (AGC, multiband, clippers, limiters) still runs; only the 19 kHz pilot, 38 kHz stereo subcarrier, and RDS are suppressed at composite assembly.")
+            Text(model.processedAudioOutputActive
+                ? "Mono Mode sums L+R to mono. The full DSP chain still runs; the processed output is identical on both channels."
+                : "Mono Mode transmits true mono composite. The full DSP chain (AGC, multiband, clippers, limiters) still runs; only the 19 kHz pilot, 38 kHz stereo subcarrier, and RDS are suppressed at composite assembly.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
@@ -7171,13 +7310,17 @@ private struct ProcessingCoreTab: View {
             ), range: -24...24, format: "%.1f dB",
             tooltip: "Pre-chain trim on the L/R input. Use to land your typical source peaks around -6 to -3 dBFS on the input meters. NOT the loudness knob — use AGC target + final drive + composite clipper drive for that.")
             DoubleSliderRow(
-                title: "MPX Output Level",
+                title: model.processedAudioOutputActive ? "Output Level" : "MPX Output Level",
                 value: model.configBinding(\.outputGainDB, runtimeDisposition: .live),
                 range: -18...18,
                 format: "%.1f dB",
-                tooltip: "Final post-chain gain trim on the composite output before the audio device. Use for calibration into the exciter's MPX input — set so the exciter's deviation meter reads the licensed peak. Doesn't add loudness; the chain already drives the composite to 100% modulation."
+                tooltip: model.processedAudioOutputActive
+                    ? "Output level trim for the processed stereo L/R feed. The pre-encode limiter ceiling is normalized to ~0 dBFS at 0 dB; lower it to match your external coder's input reference, raise it for a hotter feed."
+                    : "Final post-chain gain trim on the composite output before the audio device. Use for calibration into the exciter's MPX input — set so the exciter's deviation meter reads the licensed peak. Doesn't add loudness; the chain already drives the composite to 100% modulation."
             )
-            Text("Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")
+            Text(model.processedAudioOutputActive
+                ? "Output Level sets the processed stereo line level into your external coder."
+                : "Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz",
@@ -7187,14 +7330,18 @@ private struct ProcessingCoreTab: View {
             DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz",
                 tooltip: "Centre frequency for the HF Trim shelf above. 4 kHz default targets vocal presence and cymbal sheen.")
             DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...16_000, format: "%.0f Hz",
-                tooltip: "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")
+                tooltip: model.processedAudioOutputActive
+                    ? "Audio-bandwidth lowpass on the L/R output. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM; 16 kHz default. This band-limits the feed to your external coder. Lower for narrower bandwidth (talk)."
+                    : "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")
         }
-        Card(title: "Engine — TX path") {
+        Card(title: "Engine — Filters") {
             Toggle("Encoder Lowpass: linear-phase FIR", isOn: model.configBinding(\.encoderFIREnabled))
-                .help("Transmit-mode encoder bandwidth guard. On (default): Kaiser-windowed linear-phase FIR, >80 dB stop-band, ~1.67 ms latency at 192 kHz. Off: 12th-order Butterworth cascade, ~0.2 ms latency, ~40 dB stop-band. Monitor mode always uses Butterworth. Restart-required.")
+                .help("Audio-bandwidth (15 kHz) lowpass. On (default): Kaiser-windowed linear-phase FIR, >80 dB stop-band, ~1.67 ms latency at 192 kHz. Off: 12th-order Butterworth cascade, ~0.2 ms latency, ~40 dB stop-band. Monitor mode always uses Butterworth. Restart-required.")
             Toggle("Multiband Crossovers: linear-phase FIR", isOn: model.configBinding(\.multibandFIREnabled))
-                .help("Transmit-mode multiband splitters. On (default): Kaiser-windowed FIR splitters, sum-to-flat at -155 dB, all bands share group delay (no transient smear / inter-band pumping), ~5.3 ms latency at 192 kHz. Off: IIR Linkwitz-Riley 4th-order cascade, low latency but with the IIR-LR4 phase artefacts. Monitor mode always uses LR4. Restart-required.")
-            Text("Both toggles only affect the transmit (composite) path. Restart engine to apply.")
+                .help("Multiband splitters. On (default): Kaiser-windowed FIR splitters, sum-to-flat at -155 dB, all bands share group delay (no transient smear / inter-band pumping), ~5.3 ms latency at 192 kHz. Off: IIR Linkwitz-Riley 4th-order cascade, low latency but with the IIR-LR4 phase artefacts. Monitor mode always uses LR4. Restart-required.")
+            Text(model.processedAudioOutputActive
+                ? "Both filters apply to the processed L/R output (the encoder lowpass is the 15 kHz band-limit). Restart engine to apply."
+                : "Both toggles affect the transmit (composite) path. Restart engine to apply.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -7792,13 +7939,18 @@ private struct SystemSettingsSectionContent: View {
             // INI keys `sum_level` / `diff_level` remain for lab/debug use.
             // Pilot Level range follows ITU-R BS.450-4 / FCC 73.322 (8-10%
             // deviation); slider permits 0-12% for headroom and 0 = mute.
-            DoubleSliderRow(
-                title: "Pilot Level", value: model.pilotLevelPercentBinding(),
-                range: 0...12, format: "%.1f %%")
-            .disabled(model.config.monoMode)
+            // Pilot is a composite-only subcarrier; no pilot in processed-audio output.
+            if !model.processedAudioOutputActive {
+                DoubleSliderRow(
+                    title: "Pilot Level", value: model.pilotLevelPercentBinding(),
+                    range: 0...12, format: "%.1f %%")
+                .disabled(model.config.monoMode)
+            }
 
             InlineRestartRequiredNote(
-                text: "Sample rate, block size, mono mode, pre-emphasis, pilot level, program lowpass, and other encoder-structure changes."
+                text: model.processedAudioOutputActive
+                    ? "Sample rate, block size, output mode, pre-emphasis, program lowpass, and other encoder-structure changes."
+                    : "Sample rate, block size, mono mode, pre-emphasis, pilot level, program lowpass, and other encoder-structure changes."
             )
         }
     }
@@ -7912,6 +8064,12 @@ private struct RDSProgramTab: View {
             LabeledContent("ECC") {
                 HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
             }
+            Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
+                Text("Europe (RDS)").tag(false)
+                Text("USA (RBDS)").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .help("Selects which genre table labels the PTY code below. The transmitted 5-bit PTY value is identical either way -- Europe (RDS, EN 50067) and North America (RBDS, NRSC-4) just name the same code differently, and receivers pick the table by region. Same number, different genre: e.g. 10 reads as Pop Music on RDS but Country on RBDS.")
             Picker("Program Type (PTY)", selection: model.ptyBinding()) {
                 ForEach(model.ptyChoices, id: \.0) { pty in
                     Text("\(pty.0) · \(pty.1)").tag(pty.0)
@@ -8262,6 +8420,60 @@ private struct RDSStatusTab: View {
     }
 }
 
+/// Output-mode selector: FM composite (default) vs processed stereo audio for
+/// feeding an external stereo coder. Restart-required. When processed-audio is
+/// selected, the composite clipper / BS.412 / RDS surfaces are hidden elsewhere
+/// in the UI, and the pre-emphasis-ownership guidance below becomes critical.
+private struct OutputModeSettingsSectionContent: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Picker(
+            "Output",
+            selection: model.configBinding(\.processedAudioOutput, runtimeDisposition: .restart)
+        ) {
+            Text("MPX Composite").tag(false)
+            Text("Processed Audio").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .help("MPX Composite: the FM multiplex (pilot + stereo + RDS) for a transmitter / exciter that accepts composite. Processed Audio: processed stereo L/R for an external stereo coder + RDS encoder. Restart required.")
+
+        if model.processedAudioOutputActive {
+            Text("Emitting processed stereo L/R for an external stereo coder. The composite clipper, BS.412, pilot, and RDS are bypassed and hidden. Recommended output: 48 kHz / 24-bit.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
+                Text("Off (coder applies it)").tag(0)
+                Text("50 us (EU)").tag(50)
+                Text("75 us (US)").tag(75)
+            }
+            .pickerStyle(.segmented)
+            Text("Exactly one device may apply pre-emphasis. If your stereo coder has none (or it is switched off), pick 50/75 us here so MPX Prime applies it. If the coder applies pre-emphasis, pick Off. Never both \u{2014} two stages in series over-deviate.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            Toggle("External coder has its own clipper",
+                   isOn: model.configBinding(\.processedAudioCoderHasClipper, runtimeDisposition: .live))
+                .help("Same one-stage rule as pre-emphasis, for clipping. Leave ON if your stereo coder clips/limits its own input. Turn OFF only if it does not \u{2014} then MPX Prime adds a final loudness clipper so the feed is denser. Two clippers in series sound harsh.")
+
+            if !model.config.processedAudioCoderHasClipper {
+                DoubleSliderRow(
+                    title: "Final Clipper Drive",
+                    value: model.configBinding(\.processedAudioFinalClipDriveDB, runtimeDisposition: .live),
+                    range: 0...12,
+                    format: "%.1f dB",
+                    tooltip: "How hard the processed L/R is driven into MPX Prime's final loudness clipper. More drive = louder/denser but more clipping character. Start low and listen on a receiver.")
+                Text("MPX Prime is applying a final loudness clipper to the processed-audio feed. Make sure your external coder is NOT also clipping the input.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 private struct SettingsSectionView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
@@ -8286,6 +8498,10 @@ private struct SettingsSectionView: View {
 
             Section("Interfaces") {
                 InterfacesSettingsSectionContent(model: model)
+            }
+
+            Section("Output Mode") {
+                OutputModeSettingsSectionContent(model: model)
             }
 
             Section("Audio Engine") {

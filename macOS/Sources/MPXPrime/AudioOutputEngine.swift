@@ -117,9 +117,21 @@ final class AudioOutputEngine {
     private var captureFrameCount: UInt64 = 0
     private var captureFrameCounter: Int = 0
     private let meterLock = NSLock()
-    private let runtimeConfigLock = NSLock()
+    // Render-thread config handoff. The two consumers run on the audio
+    // render thread and must never block, so they take the lock with
+    // `lockIfAvailable()` (try-lock) and skip-apply-this-block on
+    // contention -- the pending flag stays set and the apply lands on the
+    // next block. Producers (UI thread) and stop() take it with the
+    // blocking `lock()`. os_unfair_lock avoids the NSLock priority-
+    // inversion window the render thread previously had.
+    private let runtimeConfigLock = OSAllocatedUnfairLock()
     private let runtimeConfigPending = ManagedAtomic<Bool>(false)
     private let rdsRuntimeConfigPending = ManagedAtomic<Bool>(false)
+    /// Largest render-block frame count CoreAudio has actually delivered,
+    /// tracked lock-free for out-of-band visibility into whether the
+    /// engine-start pre-allocation (preAllocateBuffers) was sized large
+    /// enough. Read off the render path via `maxObservedRenderFrameCount`.
+    private let maxObservedRenderFrames = ManagedAtomic<Int>(0)
     private var meterSnapshot = MeterSnapshot(
         inputRMS: 0.0,
         inputPeak: 0.0,
@@ -669,17 +681,13 @@ final class AudioOutputEngine {
         // clears frameSink before deinit.
         // swiftlint:disable:next unowned_variable_capture
         inputAU.frameSink = { [unowned self] left, right, frames in
-            if firstFrameLogged.compareExchange(
-                expected: false,
-                desired: true,
-                ordering: .acquiringAndReleasing
-            ).exchanged {
-                var peak: Float = 0
-                for i in 0..<frames {
-                    peak = max(peak, fabsf(left[i]))
-                }
-                captureLog.info("first AUHAL render frames=\(frames, privacy: .public) leftPeak=\(peak, privacy: .public)")
-            }
+            // RT-safe first-frame marker for the off-thread 2 s watchdog
+            // below: a single releasing store, no scalar peak loop or
+            // os_log on the AUHAL render thread. Input level is already
+            // metered on the throttled path (handleInputAUHALFrames ->
+            // computeStereoLevels), so the prior per-first-frame leftPeak
+            // log was redundant with the normal input meters.
+            firstFrameLogged.store(true, ordering: .releasing)
             self.handleInputAUHALFrames(left: left, right: right, frameCount: frames)
         }
 
@@ -808,8 +816,41 @@ final class AudioOutputEngine {
         }
     }
 
+    /// Largest render-block frame count seen since engine start. Safe to
+    /// read from any thread; updated lock-free on the render path.
+    var maxObservedRenderFrameCount: Int {
+        maxObservedRenderFrames.load(ordering: .relaxed)
+    }
+
+    /// Lock-free monotonic max-tracking of the render block size, so an
+    /// under-sized pre-allocation is diagnosable without touching the
+    /// fast-path. Called on the render thread.
+    @inline(__always)
+    private func recordObservedRenderFrames(_ frames: Int) {
+        var current = maxObservedRenderFrames.load(ordering: .relaxed)
+        while frames > current {
+            let (exchanged, original) = maxObservedRenderFrames.compareExchange(
+                expected: current, desired: frames, ordering: .relaxed)
+            if exchanged { break }
+            current = original
+        }
+    }
+
     private func ensureMonitorScratchCapacity(frames: Int) {
         guard frames > 0 else { return }
+        recordObservedRenderFrames(frames)
+        guard monitorMPXLeftScratch.count < frames || monitorMPXRightScratch.count < frames
+        else { return }
+        // preAllocateBuffers(maxFrames:) sizes these to ~100 ms of audio at
+        // engine start -- far above any real CoreAudio block -- so this
+        // branch is meant to be unreachable. Reaching it means we are about
+        // to allocate on the render thread. Trap in debug so an under-sized
+        // pre-allocation is fixed at the source; in release, grow once as a
+        // graceful fallback (a single malloc beats glitching the monitor
+        // block) -- maxObservedRenderFrameCount surfaces that it happened.
+        assertionFailure(
+            "render-thread monitor scratch grow: frames=\(frames) "
+            + "cap=\(monitorMPXLeftScratch.count); raise preAllocateBuffers")
         if monitorMPXLeftScratch.count < frames {
             monitorMPXLeftScratch = Array(repeating: 0.0, count: frames)
         }
@@ -820,6 +861,15 @@ final class AudioOutputEngine {
 
     private func ensureAnalysisScratchCapacity(frames: Int) {
         guard frames > 0 else { return }
+        recordObservedRenderFrames(frames)
+        guard postAGCLeftScratch.count < frames || postAGCRightScratch.count < frames
+            || preMPXLeftScratch.count < frames || preMPXRightScratch.count < frames
+        else { return }
+        // See ensureMonitorScratchCapacity: meant to be unreachable; debug
+        // trap + release-only graceful grow.
+        assertionFailure(
+            "render-thread analysis scratch grow: frames=\(frames) "
+            + "cap=\(postAGCLeftScratch.count); raise preAllocateBuffers")
         if postAGCLeftScratch.count < frames {
             postAGCLeftScratch = Array(repeating: 0.0, count: frames)
         }
@@ -1337,7 +1387,11 @@ final class AudioOutputEngine {
 
     private func applyPendingRuntimeConfigIfNeeded() {
         guard runtimeConfigPending.load(ordering: .acquiring) else { return }
-        runtimeConfigLock.lock()
+        // Never block the render thread: if a producer holds the lock
+        // mid-write, skip this block. The pending flag stays set, so the
+        // apply retries on the next render block (already the "lands within
+        // ~one block" semantics).
+        guard runtimeConfigLock.lockIfAvailable() else { return }
         let runtime = pendingRuntimeConfig
         pendingRuntimeConfig = nil
         if runtime == lastQueuedRuntimeConfig {
@@ -1370,7 +1424,9 @@ final class AudioOutputEngine {
 
     private func applyPendingRDSRuntimeConfigIfNeeded() {
         guard rdsRuntimeConfigPending.load(ordering: .acquiring) else { return }
-        runtimeConfigLock.lock()
+        // Try-lock only; never block the render thread (see
+        // applyPendingRuntimeConfigIfNeeded).
+        guard runtimeConfigLock.lockIfAvailable() else { return }
         let runtime = pendingRDSRuntimeConfig
         pendingRDSRuntimeConfig = nil
         if runtime == lastQueuedRDSRuntimeConfig {

@@ -67,8 +67,13 @@ combination test suite. Newest first.
 - **PTY region toggle (RDS / RBDS).** New `pty_rbds` switch + UI control: the PTY
   picker and status label show the European RDS or North American RBDS genre table
   (same transmitted 5-bit code, region-specific labels).
-
-## 0.32 — 2026-06-07
+- **Arch-tiered GUI refresh profile for Intel.** The scope/spectrum/meter draw is
+  main-thread/SwiftUI-bound and pegged one core on older Intel Macs (e.g. i7-9750H).
+  The x86_64 binary slice now runs a lighter refresh profile (20 Hz active / 12 Hz
+  idle, 15 Hz inline spectrum, 256 inline bins) while the arm64 slice keeps the full
+  profile unchanged (compile-time, zero Apple-Silicon impact). Measured ~100% ->
+  ~85% of one core on the i7-9750H with responsive meters; the audio render thread
+  was never affected.
 
 Carries everything since 0.30.3, including the unreleased 0.31 work
 (symmetric RDS decoder, cross-module-inlining perf pass). The headline of

@@ -1753,6 +1753,24 @@ final class MPXPrimeViewModel: ObservableObject {
     // without doubling main-thread cost; windowed visualizers stay at
     // 30 Hz which is comfortably smooth for the dedicated detached
     // panels.
+    // GUI refresh profile is arch-tiered. SwiftUI scope/spectrum Path drawing is
+    // main-thread bound, and older Intel Macs (every x86_64 host here) have far
+    // lower per-core throughput than Apple Silicon, so the full-rate profile pegs
+    // one core and the graphs lag (observed on an i7-9750H). The x86_64 slice
+    // therefore runs a lighter profile (lower refresh rates + fewer inline spectrum
+    // points); the arm64 slice keeps the original full-rate profile unchanged. This
+    // is compile-time per universal-binary slice, so Apple Silicon carries zero
+    // runtime cost or behaviour change.
+    #if arch(x86_64)
+    private static let monitoringRefreshHzActive: Double = 20.0
+    private static let monitoringRefreshHzIdle: Double = 12.0
+    private static let inlineMPXSpectrumRefreshHz: Double = 15.0
+    private static let windowMPXSpectrumRefreshHz: Double = 20.0
+    private static let windowPreMPXSpectrumRefreshHz: Double = 20.0
+    private static let inlineMPXSpectrumBins: Int = 256
+    private static let windowMPXSpectrumBins: Int = 384
+    private static let preMPXSpectrumBins: Int = 128
+    #else
     private static let monitoringRefreshHzActive: Double = 30.0
     // Idle rate (window occluded / app backgrounded / minimized). 20 Hz
     // keeps VU meters visibly responsive when glancing at the window from
@@ -1765,6 +1783,7 @@ final class MPXPrimeViewModel: ObservableObject {
     private static let inlineMPXSpectrumBins: Int = 384
     private static let windowMPXSpectrumBins: Int = 512
     private static let preMPXSpectrumBins: Int = 128
+    #endif
     private static let meterAttackMS: Float = 18.0
     private static let meterReleaseMS: Float = 110.0
     private static let audioPeakMeterAttackMS: Float = 1.0

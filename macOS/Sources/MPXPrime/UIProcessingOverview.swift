@@ -44,7 +44,7 @@ struct ProcessingOverviewGrid: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 stageCard(
                     .phaseRotator,
-                    title: "Phase Rot",
+                    title: "Phase Rotator",
                     subtitle: phaseRotatorSubtitle,
                     enabledPath: \.phaseRotationEnabled
                 )
@@ -74,7 +74,7 @@ struct ProcessingOverviewGrid: View {
                 )
                 stageCard(
                     .mbLimiter,
-                    title: "MB Limiter",
+                    title: "Multiband Limiter",
                     subtitle: mbLimiterSubtitle,
                     enabledPath: \.multibandLimiterEnabled
                 )

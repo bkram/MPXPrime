@@ -115,6 +115,12 @@ struct VerticalMeterStrip: View {
                 .frame(maxWidth: .infinity)
         }
         .frame(width: 64)
+        // The bar/peak-hold/ticks are decorative to VoiceOver; collapse the
+        // strip into one element that announces its name and current reading
+        // (e.g. "IN L, -6.2 dB") instead of two disconnected text fragments.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(valueText)
     }
 
     // MARK: - Scale helpers

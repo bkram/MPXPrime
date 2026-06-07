@@ -152,13 +152,13 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 
 ## UI/UX (Apple HIG)
 
-- **No buttons in title bars / toolbars.** All controls live in the content area.
 - Use native macOS window chrome (standard close / minimize / zoom).
-- Use `HSplitView` for static sidebars; `NavigationSplitView` only when sidebar collapse is required.
+- A toolbar is the HIG-endorsed home for frequently used commands, controls, navigation, and search; on macOS it occupies the unified title bar. Put the app's primary, frequently-used actions there rather than forcing every control into the content area. (An earlier revision of this file banned toolbar buttons outright -- that contradicted the HIG ("a toolbar provides convenient access to frequently used commands") and was removed. Do not re-add the ban.)
+- Prefer `NavigationSplitView` for sidebar navigation: a collapsible sidebar (toggle + Cmd-Opt-S) is standard, expected macOS behavior. `HSplitView` is only the legacy fallback for a genuinely fixed, non-collapsing two-pane split.
 - `.listStyle(.sidebar)` for sidebar navigation.
-- Cards use `LabeledContent`, 10pt corner radius, 16pt spacing.
-- `.buttonStyle(.bordered)` / `.buttonStyle(.borderedProminent)` for buttons.
-- `.pickerStyle(.segmented)` for tab pickers within sections; `.pickerStyle(.menu)` for dropdowns.
+- `.buttonStyle(.bordered)` for buttons; `.buttonStyle(.borderedProminent)` for the single default / primary action in a given context.
+- `.pickerStyle(.segmented)` for small mutually-exclusive option sets / view switchers; `.pickerStyle(.menu)` for dropdowns (pop-up buttons).
+- Project visual convention (house style, NOT a HIG rule): content "cards" use `LabeledContent` with 10pt corner radius and 16pt spacing. `LabeledContent` is the native control; the radius/spacing are ours. macOS-native grouping (`GroupBox`, `Form` sections) is equally acceptable and is what the HIG actually prescribes.
 - **Accessibility lint** — the project ships a `.swiftlint.yml` that runs only `accessibility_label_for_image` and `accessibility_trait_for_button` (no broader style enforcement; DSP code uses many intentional patterns that fight the default SwiftLint rule pack). Run with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint` from the project root before committing UI changes. Decorative SF Symbols (icons next to descriptive text, info-circle in help boxes) should use `.accessibilityHidden(true)`; icon-only buttons need `.accessibilityLabel(...)`.
 
 ## Release prep

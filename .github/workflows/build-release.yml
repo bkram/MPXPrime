@@ -34,14 +34,14 @@ jobs:
           ./build-release.sh "$VERSION"
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: MPXPrime
           path: macOS/dist/MPX_Prime-*.dmg
           retention-days: 90
 
       - name: Upload App Bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: MPXPrime.app
           path: macOS/dist/MPX Prime.app

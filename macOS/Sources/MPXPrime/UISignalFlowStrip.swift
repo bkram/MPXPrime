@@ -61,7 +61,10 @@ struct SignalFlowStrip: View {
             HStack(spacing: 4) {
                 chip(text: "IN", kind: .terminal)
                 connector
-                ForEach(Array(Self.chainStages.enumerated()), id: \.element) { _, stage in
+                // Processed-audio output drops the composite-domain stages
+                // (composite clipper, BS.412, final stage) — they aren't in the
+                // chain and their sidebar entries are hidden.
+                ForEach(Self.chainStages.filter { model.isStageVisible($0) }, id: \.self) { stage in
                     chip(
                         text: Self.chipLabels[stage] ?? stage.label,
                         kind: stage == model.selectedStage ? .active : .stage,
@@ -69,7 +72,7 @@ struct SignalFlowStrip: View {
                     )
                     connector
                 }
-                chip(text: "OUT", kind: .terminal)
+                chip(text: model.processedAudioOutputActive ? "CODER" : "OUT", kind: .terminal)
             }
             .padding(.vertical, 2)
         }

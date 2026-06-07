@@ -24,6 +24,8 @@ struct BroadcastStatusBar: View {
             sourceChip
             divider
             sampleRateChip
+            divider
+            outputModeChip
             if model.runtimeApplyPending {
                 divider
                 restartPendingChip
@@ -58,6 +60,8 @@ struct BroadcastStatusBar: View {
     /// running (compare against the actual `renderHz`) or stopped
     /// (compare against the configured `sampleRate`).
     private var rdsAtInsufficientRate: Bool {
+        // No RDS subcarrier exists in processed-audio output, so the warning is moot.
+        guard !model.processedAudioOutputActive else { return false }
         guard model.config.enRDS else { return false }
         let effectiveRate: Int
         if model.streamHealth.isRunning && model.streamHealth.renderHz > 0 {
@@ -136,6 +140,25 @@ struct BroadcastStatusBar: View {
             value: value,
             tint: .primary
         )
+    }
+
+    /// Current output mode: the FM composite (default), the decoded-MPX monitor,
+    /// or processed stereo audio for an external coder. Reflects the selected
+    /// config; restart-required changes show the pending-restart chip alongside.
+    private var outputModeChip: some View {
+        let value: String
+        let tint: Color
+        if model.processedAudioOutputActive {
+            value = "PROC AUDIO"
+            tint = BroadcastStyle.safeGreen
+        } else if model.monitorEnabled {
+            value = "MONITOR"
+            tint = .primary
+        } else {
+            value = "COMPOSITE"
+            tint = .primary
+        }
+        return chipLabelledValue(label: "MODE", value: value, tint: tint)
     }
 
     /// Compact label-over-value chip. Single small font for the value;

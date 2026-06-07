@@ -254,7 +254,8 @@ do {
         generator: generator,
         config: config,
         inputDeviceID: inputID,
-        outputDeviceID: outputID
+        outputDeviceID: outputID,
+        outputMode: config.processedAudioOutput ? .processedAudio : .mpxComposite
     )
     try audioEngine.start()
 

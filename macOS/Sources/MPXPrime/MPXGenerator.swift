@@ -1018,27 +1018,27 @@ struct CompositeClipper {
     private var bypassDelay: [Float] = [0.0]
     private var bypassWriteIdx: Int = 0
 
-    // Audio + stereo bands use LR4 splits (sum-to-flat property at the
-    // shared crossover means substitution is phase-coherent across the
-    // wide passbands these bands need).
-    private var clipped15 = LinkwitzRiley4()
-    private var orig15 = LinkwitzRiley4()
-    private var clipped53 = LinkwitzRiley4()
-    private var orig53 = LinkwitzRiley4()
-    private var clippedStereoHP = LinkwitzRiley4()
-    private var origStereoHP = LinkwitzRiley4()
-    // Pilot (19 kHz) and RDS (57 kHz) guards use RBJ bandpass biquads
-    // tuned to the subcarrier centre frequency. RBJ BPF has 0 dB peak
-    // and zero phase shift at fc, so subtracting BP(clipped) from the
-    // unfiltered clipped signal cleanly cancels clipper IM at the
-    // protected centre frequency. Wider LR4-style splits don't work
-    // here — the 17–21 kHz / 55–59 kHz windows are too narrow to give
-    // the LR4 bandpass any flat passband, so the band-edge attenuation
-    // bounds achievable cancellation depth to a few dB.
-    private var clippedPilotBP = Biquad()
-    private var origPilotBP = Biquad()
-    private var clippedRDSBP = Biquad()
-    private var origRDSBP = Biquad()
+    // Per-band extraction filters run on the *residual* (up - clipped).
+    // The band cancellation needs bandpass(up) - bandpass(clipped); since
+    // every filter here is LTI, by superposition that equals
+    // bandpass(up - clipped) exactly. So one filter per band on the residual
+    // replaces the prior clipped+orig filter pair, halving the per-OS-step
+    // band-filter cost (the composite clipper is the single heaviest stage).
+    //
+    // Audio + stereo bands use LR4 splits (sum-to-flat at the shared
+    // crossover keeps substitution phase-coherent across their wide
+    // passbands).
+    private var residualAudio15 = LinkwitzRiley4()
+    private var residualStereo53 = LinkwitzRiley4()
+    private var residualStereoHP = LinkwitzRiley4()
+    // Pilot (19 kHz) and RDS (57 kHz) guards use RBJ bandpass biquads tuned
+    // to the subcarrier centre frequency. RBJ BPF has 0 dB peak and zero
+    // phase shift at fc, so subtracting BP(residual) cleanly cancels clipper
+    // IM at the protected centre. Wider LR4-style splits don't work here --
+    // the 17-21 kHz / 55-59 kHz windows are too narrow for a flat LR4
+    // passband, bounding achievable cancellation depth to a few dB.
+    private var residualPilotBP = Biquad()
+    private var residualRDSBP = Biquad()
 
     private var cancelAudio: Bool = false
     private var cancelStereo: Bool = true
@@ -1179,21 +1179,16 @@ struct CompositeClipper {
         bypassDelay = [Float](repeating: 0.0, count: bypassLen)
         bypassWriteIdx = 0
 
-        clipped15.configure(cutoffHz: 15_000.0, sampleRate: osRate)
-        orig15.configure(cutoffHz: 15_000.0, sampleRate: osRate)
-        clipped53.configure(cutoffHz: 53_000.0, sampleRate: osRate)
-        orig53.configure(cutoffHz: 53_000.0, sampleRate: osRate)
-        clippedStereoHP.configure(cutoffHz: 22_000.0, sampleRate: osRate)
-        origStereoHP.configure(cutoffHz: 22_000.0, sampleRate: osRate)
+        residualAudio15.configure(cutoffHz: 15_000.0, sampleRate: osRate)
+        residualStereo53.configure(cutoffHz: 53_000.0, sampleRate: osRate)
+        residualStereoHP.configure(cutoffHz: 22_000.0, sampleRate: osRate)
         // Pilot guard: BPF centred at 19 kHz, Q=4 → ~4.75 kHz half-power
         // bandwidth (17–21 kHz). RDS guard: BPF centred at 57 kHz, Q=14
         // → ~4 kHz bandwidth (55–59 kHz). Q values keep the bandpasses
         // from bleeding into the adjacent audio (≤15 kHz) and stereo
         // (23–53 kHz) bands respectively.
-        clippedPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: osRate, q: 4.0)
-        origPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: osRate, q: 4.0)
-        clippedRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
-        origRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
+        residualPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: osRate, q: 4.0)
+        residualRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
 
         self.cancelAudio = cancelAudio
         self.cancelStereo = cancelStereo
@@ -1541,49 +1536,28 @@ struct CompositeClipper {
         // decimator off the wanted-signal path entirely.
         var residualDecimated: Float = 0.0
         for i in 0..<f {
-            let up = upBatch[i]
-            let clipped = clipBatch[i]
-
-            // Run all filter instances every oversample step to keep
-            // state advancing in lockstep — required even when their
-            // outputs are gated by the cancel flags so the parallel
-            // chains stay phase-aligned for cancellation in subsequent
-            // samples.
-            let cAudio = clipped15.process(clipped).low
-            let oAudio = orig15.process(up).low
-
-            let cPilot = clippedPilotBP.process(clipped)
-            let oPilot = origPilotBP.process(up)
-
-            let split53C = clipped53.process(clipped)
-            let split53O = orig53.process(up)
-            let cStereo = clippedStereoHP.process(split53C.low).high
-            let oStereo = origStereoHP.process(split53O.low).high
-            _ = split53O.high   // keep state consistent; not needed for output
-
-            let cRDS = clippedRDSBP.process(clipped)
-            let oRDS = origRDSBP.process(up)
-
-            // Build the residual-to-decimate. Start with the naked
-            // residual (up − clipped) and subtract the band-extracted
-            // residual for each cancelled band so those bands don't
-            // contribute to the residual that reaches the output.
-            // (oBand − cBand) = bandpass(up) − bandpass(clipped) =
-            // bandpass(up − clipped) by linearity, so this exactly
-            // matches the classical "add band delta to clipped" form
-            // when the decimator is ideal.
-            var residual = up - clipped
+            // Naked clipping residual. Each protected band subtracts its
+            // bandpass(residual) so the clipper IM in that band isn't
+            // reflected to the output. By LTI superposition,
+            // bandpass(residual) == bandpass(up) - bandpass(clipped), so a
+            // single filter per band on the residual is exact -- and an
+            // off band is skipped entirely (its filter would only need a
+            // few OS samples to settle on a later live enable, which is
+            // sub-millisecond and inaudible in a guard band).
+            let r0 = upBatch[i] - clipBatch[i]
+            var residual = r0
             if cancelAudio {
-                residual -= (oAudio - cAudio)
+                residual -= residualAudio15.process(r0).low
             }
             if cancelPilot {
-                residual -= (oPilot - cPilot)
+                residual -= residualPilotBP.process(r0)
             }
             if cancelStereo {
-                residual -= (oStereo - cStereo)
+                let split = residualStereo53.process(r0)
+                residual -= residualStereoHP.process(split.low).high
             }
             if cancelRDS {
-                residual -= (oRDS - cRDS)
+                residual -= residualRDSBP.process(r0)
             }
 
             // Push residual into FIR decimator. Returns the most-
@@ -5712,6 +5686,8 @@ final class MPXGenerator {
         let dcClipperEnabled: Bool
         let dcClipperCeilingDB: Float
         let dcClipperCancelFreqHz: Float
+        let processedAudioCoderHasClipper: Bool
+        let processedAudioFinalClipDriveDB: Float
         let bs412Enabled: Bool
         let bs412ThresholdDB: Float
         let bs412WindowSeconds: Float
@@ -5826,6 +5802,8 @@ final class MPXGenerator {
             dcClipperEnabled: config.dcClipperEnabled,
             dcClipperCeilingDB: Float(config.dcClipperCeilingDB),
             dcClipperCancelFreqHz: Float(config.dcClipperCancelFreqHz),
+            processedAudioCoderHasClipper: config.processedAudioCoderHasClipper,
+            processedAudioFinalClipDriveDB: Float(config.processedAudioFinalClipDriveDB),
             bs412Enabled: config.bs412Enabled,
             bs412ThresholdDB: Float(config.bs412ThresholdDB),
             bs412WindowSeconds: Float(config.bs412WindowSeconds),
@@ -6225,6 +6203,16 @@ final class MPXGenerator {
     private var dcClipperCancelFreqHz: Float
     private var dcClipper = DistortionCancelledClipper()
 
+    // Processed-audio output: optional final loudness clipper on the L/R feed.
+    // A dedicated DistortionCancelledClipper instance fed by `processedAudioFinalClipDrive`
+    // (drive pre-gain). Only applied in the audio-only render path, so the composite
+    // chain is untouched. Engaged when in processed-audio mode AND the external coder
+    // has no clipper of its own.
+    private var processedAudioCoderHasClipper: Bool
+    private var processedAudioFinalClipDrive: Float = 1.0
+    private var processedAudioFinalClipper = DistortionCancelledClipper()
+    private static let processedAudioFinalClipCeilingDB: Float = -0.3
+
     // BS.412 MPX power limiter
     private var bs412Enabled: Bool
     private var bs412ThresholdDB: Float
@@ -6257,6 +6245,11 @@ final class MPXGenerator {
     private var dualRateBoundaryEnabled: Bool = false
     private var dualRateAudioRate: Float = 48_000.0
     private var dualRateFactor: Int = 1
+    // Processed-audio output mode: the render path emits the post-pre-encode-limiter
+    // L/R instead of building the FM composite (no stereo encode / composite clipper
+    // / BS.412 / pilot / RDS). Set by the engine via `setAudioOutputOnly`. Forces the
+    // dual-rate boundary off (the whole engine runs at the audio rate in this mode).
+    private(set) var audioOutputOnly: Bool = false
     private var inputDecimL = LinearPhaseFIRDecimator()
     private var inputDecimR = LinearPhaseFIRDecimator()
     private var inputInterpL = LinearPhaseFIRInterpolator()
@@ -6561,6 +6554,9 @@ final class MPXGenerator {
         self.dcClipperEnabled = config.dcClipperEnabled
         self.dcClipperCeilingDB = clampf(Float(config.dcClipperCeilingDB), -6.0, 0.0)
         self.dcClipperCancelFreqHz = clampf(Float(config.dcClipperCancelFreqHz), 500.0, 4000.0)
+        self.processedAudioCoderHasClipper = config.processedAudioCoderHasClipper
+        self.processedAudioFinalClipDrive =
+            powf(10.0, clampf(Float(config.processedAudioFinalClipDriveDB), 0.0, 12.0) / 20.0)
 
         self.bs412Enabled = config.bs412Enabled
         self.bs412ThresholdDB = clampf(Float(config.bs412ThresholdDB), -20.0, 0.0)
@@ -6583,7 +6579,7 @@ final class MPXGenerator {
         let audioRateRequest = Float(max(8_000.0, config.dualRateAudioDomainRateHz))
         let factor = Int((self.sampleRate / audioRateRequest).rounded())
         let ratioIsClean = factor >= 2 && abs(self.sampleRate - Float(factor) * audioRateRequest) < 0.5
-        self.dualRateBoundaryEnabled = config.dualRateAudioDomainEnabled && ratioIsClean
+        self.dualRateBoundaryEnabled = config.dualRateAudioDomainEnabled && ratioIsClean && !audioOutputOnly
         self.dualRateAudioRate = ratioIsClean ? audioRateRequest : self.sampleRate
         self.dualRateFactor = ratioIsClean ? factor : 1
 
@@ -6640,6 +6636,7 @@ final class MPXGenerator {
             drive: bassClipperDrive
         )
         configureDistortionCancelledClipper()
+        configureProcessedAudioFinalClipper()
         lookaheadLimiter.configure(
             sampleRate: self.sampleRate,
             lookaheadMS: limitLookaheadMS,
@@ -6937,6 +6934,17 @@ final class MPXGenerator {
     /// Called by AudioOutputEngine at start() to pick the TX-grade FIR or
     /// low-latency Butterworth for the encoder program lowpass, based on the
     /// engine's output mode (composite/monitor) and the user's config toggle.
+    /// Enable processed-audio output mode. Must be set before `setSampleRate` /
+    /// config application so the dual-rate boundary is computed with it off.
+    func setAudioOutputOnly(_ enabled: Bool) {
+        audioOutputOnly = enabled
+        if enabled {
+            // The whole engine runs at the audio rate in this mode; no MPX-rate
+            // upsampling boundary.
+            dualRateBoundaryEnabled = false
+        }
+    }
+
     func setEncoderFIREnabled(_ enabled: Bool) {
         if enabled == useEncoderFIR { return }
         useEncoderFIR = enabled
@@ -7023,6 +7031,7 @@ final class MPXGenerator {
             drive: bassClipperDrive
         )
         configureDistortionCancelledClipper()
+        configureProcessedAudioFinalClipper()
         lookaheadLimiter.configure(
             sampleRate: sampleRate,
             lookaheadMS: limitLookaheadMS,
@@ -7330,6 +7339,13 @@ final class MPXGenerator {
         if dcClipChanged {
             configureDistortionCancelledClipper()
         }
+
+        // Processed-audio final loudness clipper (drive + coder-has-clipper flag).
+        // The clipper config (rate/ceiling) is fixed, so only the drive pre-gain and
+        // the engage flag change live — no reconfigure needed.
+        processedAudioCoderHasClipper = config.processedAudioCoderHasClipper
+        processedAudioFinalClipDrive =
+            powf(10.0, clampf(config.processedAudioFinalClipDriveDB, 0.0, 12.0) / 20.0)
 
         // BS.412
         let bs412Changed =
@@ -7951,6 +7967,16 @@ final class MPXGenerator {
         )
     }
 
+    private func configureProcessedAudioFinalClipper() {
+        // Processed-audio final loudness clipper. Fixed near-0 dBFS ceiling; the
+        // drive pre-gain (applied in the audio-only render loop) sets the density.
+        processedAudioFinalClipper.configure(
+            sampleRate: audioDomainSampleRate,
+            ceilingDB: Self.processedAudioFinalClipCeilingDB,
+            cancelFreqHz: 2000.0
+        )
+    }
+
     /// Generate one tone-source sample. Switches between sine /
     /// pink / white based on `toneType`. Sine advances `tonePhase` by
     /// `toneStep` and wraps; noise paths use the engine's xorshift RNG
@@ -8087,6 +8113,127 @@ final class MPXGenerator {
             let mpx = detail.mpx
             left[i] = mpx
             right[i] = mpx
+        }
+    }
+
+    /// True when the optional processed-audio final loudness clipper should run:
+    /// only in processed-audio output, and only when the external coder has no
+    /// clipper of its own (otherwise we would double-clip).
+    @inline(__always)
+    private var processedAudioFinalClipActive: Bool {
+        audioOutputOnly && !processedAudioCoderHasClipper
+    }
+
+    /// Drive the L/R into the final loudness clipper (drive pre-gain sets density;
+    /// the clipper caps peaks at its fixed ceiling).
+    @inline(__always)
+    private func processedAudioFinalClip(_ l: Float, _ r: Float) -> (Float, Float) {
+        processedAudioFinalClipper.process(
+            left: l * processedAudioFinalClipDrive,
+            right: r * processedAudioFinalClipDrive)
+    }
+
+    /// Output makeup for processed-audio mode. The composite path applies output
+    /// gain / final drive / deviation scaling downstream of the pre-encode limiter
+    /// (in the MPX domain, skipped here), so without compensation the audio-only
+    /// output sits at the limiter ceiling (~-1.4 dBFS) and reads quiet. Normalize
+    /// so the binding ceiling maps to full scale (peaks reach ~0 dBFS), then apply
+    /// the operator output gain. The clamp in the render loop catches any overs.
+    @inline(__always)
+    private func audioOnlyOutputMakeup() -> Float {
+        if processedAudioFinalClipActive {
+            // Peaks are capped by the final clipper; normalize its ceiling to full scale.
+            let ceilLin = powf(10.0, Self.processedAudioFinalClipCeilingDB / 20.0)
+            return outputGain / max(0.1, ceilLin)
+        }
+        let ceilingNorm = preEncodeAudioLimiterEnabled ? (1.0 / max(0.1, preEncodeThreshold)) : 1.0
+        return outputGain * ceilingNorm
+    }
+
+    /// Processed-audio output: emit the post-pre-encode-limiter L/R (the exact
+    /// signal captured as `preMPX*` for metering) and SKIP all composite-domain
+    /// work (stereo encode, composite clipper, BS.412, pilot/RDS injection). Used
+    /// when feeding an external stereo coder. Runs the full audio-domain chain via
+    /// `processAudioDomain`, bypassing the dual-rate boundary entirely.
+    func renderAudioOnlyFromInputInPlace(
+        frameCount: Int,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        analysis: AnalysisBuffers = .none
+    ) {
+        guard frameCount > 0 else { return }
+        let makeup = audioOnlyOutputMakeup()
+        let finalClip = processedAudioFinalClipActive
+        for i in 0..<frameCount {
+            let audio = processAudioDomain(leftIn: left[i], rightIn: right[i])
+            var l = audio.left
+            var r = audio.right
+            if finalClip {
+                let c = processedAudioFinalClip(l, r)
+                l = c.0
+                r = c.1
+            }
+            let outL = clampf(l * makeup, -1.0, 1.0)
+            let outR = clampf(r * makeup, -1.0, 1.0)
+            writeAnalysisSample(
+                index: i,
+                postAGCLeft: audio.analysisStereo.postAGCLeft,
+                postAGCRight: audio.analysisStereo.postAGCRight,
+                preMPXLeft: outL,
+                preMPXRight: outR,
+                analysis: analysis)
+            left[i] = outL
+            right[i] = outR
+        }
+    }
+
+    func renderAudioOnlyToneNonInterleaved(
+        frameCount: Int,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        analysis: AnalysisBuffers = .none
+    ) {
+        guard frameCount > 0 else { return }
+        let makeup = audioOnlyOutputMakeup()
+        let finalClip = processedAudioFinalClipActive
+        for i in 0..<frameCount {
+            let raw = nextToneRawSample()
+            let tone = raw * toneLevel
+            var l: Float
+            var r: Float
+            switch toneMode {
+            case "left":
+                l = tone
+                r = 0.0
+            case "right":
+                l = 0.0
+                r = tone
+            case "stereo":
+                l = tone
+                r = -tone
+            default:
+                l = tone
+                r = tone
+            }
+            let audio = processAudioDomain(leftIn: l, rightIn: r)
+            var pl = audio.left
+            var pr = audio.right
+            if finalClip {
+                let c = processedAudioFinalClip(pl, pr)
+                pl = c.0
+                pr = c.1
+            }
+            let outL = clampf(pl * makeup, -1.0, 1.0)
+            let outR = clampf(pr * makeup, -1.0, 1.0)
+            writeAnalysisSample(
+                index: i,
+                postAGCLeft: audio.analysisStereo.postAGCLeft,
+                postAGCRight: audio.analysisStereo.postAGCRight,
+                preMPXLeft: outL,
+                preMPXRight: outR,
+                analysis: analysis)
+            left[i] = outL
+            right[i] = outR
         }
     }
 

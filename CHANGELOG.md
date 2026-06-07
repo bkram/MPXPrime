@@ -9,7 +9,71 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## 0.32 — 2026-06-07
+## 0.33 — 2026-06-07
+
+### Processed-audio output mode
+
+- **New output mode: processed stereo L/R for an external stereo coder.** A third
+  `AudioOutputMode` (`processedAudio`, INI `processed_audio_output`, restart-required)
+  emits the post-pre-encode-limiter L/R audio instead of the FM composite — for
+  transmitters / exciters that only accept L/R / AES3 audio and have their own
+  stereo generator + RDS encoder (the classic separate-processor topology). The
+  whole audio chain runs (phase rotator, AGC, EQ, multiband with linear-phase FIR
+  crossovers, widener, PrimeBass, bass/audio-band clippers, pre-emphasis,
+  look-ahead pre-encode limiter, 15 kHz FIR band-limit); the composite half
+  (stereo encode, composite clipper, BS.412, pilot/RDS injection) is skipped. The
+  composite output path stays byte-identical (the audio-only path branches off
+  `processAudioDomain`, reusing the existing `preMPX` tap; no new DSP).
+- **Selectable pre-emphasis ownership.** Reuses `preemphasis_us` (Off / 50 / 75) so
+  MPX Prime can apply pre-emphasis when the external coder has none (or it is
+  disabled), or stay flat when the coder applies it. The Settings UI explains the
+  one-and-only-one rule.
+- **Runs at the audio device rate** (e.g. 48 kHz / 24-bit recommended), not the
+  >=110 kHz composite minimum. Doubles as a clean, real-time audition path for the
+  audio-processing chain on any output device.
+- **Output level normalized** to full scale (the pre-encode limiter ceiling maps to
+  ~0 dBFS) times the operator output gain, so the feed is at a proper line level
+  rather than the raw ~-1.4 dBFS ceiling.
+- **Optional final loudness clipper** for transmitters whose coder has no clipper:
+  a Settings toggle "External coder has its own clipper" (default on, next to the
+  pre-emphasis selector). When off, MPX Prime applies an 8x-oversampled
+  distortion-cancelled final clipper (with a drive control) so the processed feed
+  can be made denser; the one-clipper rule mirrors the pre-emphasis ownership rule.
+  Default-on keeps the feed clean to avoid double-clipping.
+- **UI gating + mode awareness.** A **MODE** chip in the status bar shows
+  COMPOSITE / MONITOR / PROC AUDIO. When processed-audio is active, everything that
+  is meaningless without an MPX composite is hidden or adapted: the RDS sidebar
+  group and the composite Processing stages (Composite Clipper, BS.412, Final Stage)
+  are hidden; the Core "MPX Output Level" relabels to "Output Level"; the Levels
+  window hides the MOD (deviation) meter and relabels MPX -> OUT; the Monitoring
+  dashboard drops the deviation/modulation/composite-GR/BS.412/pilot/RDS readouts;
+  and the composite-only **MPX Spectrum** and **Scopes** windows are disabled (the
+  Spectrum toolbar button opens the Audio Spectrum instead), auto-closing on switch.
+  Selection normalizes to the Processing overview on (re)start.
+- **Levels window default size** reduced (860 -> 560 wide) so the six meter strips
+  no longer leave half the window empty.
+- Verified on Apple Silicon and Intel x86_64: new `ProcessedAudioOutputTests`
+  (no pilot / 38 kHz / 57 kHz, true-stereo preservation, 15 kHz band-limit,
+  pre-encode peak ceiling, config round-trip) + navigation-gating tests; Intel
+  release build + `--verify` PASS + headless 48 kHz processed-audio run clean.
+
+### Performance / RDS
+
+- **Composite clipper optimization.** Per-band IM cancellation rewritten via LTI
+  superposition (one filter on the residual per band instead of one on the clipped
+  and one on the original) — half the per-band filtering. Intel x86_64: composite
+  clipper stage 23.2% -> 10.6% of real-time (-54%), full chain 37.5% -> 25.8% RT
+  (-31%). Output delta -78 dBFS (inaudible); baseline-strict PASS.
+- **PTY region toggle (RDS / RBDS).** New `pty_rbds` switch + UI control: the PTY
+  picker and status label show the European RDS or North American RBDS genre table
+  (same transmitted 5-bit code, region-specific labels).
+- **Arch-tiered GUI refresh profile for Intel.** The scope/spectrum/meter draw is
+  main-thread/SwiftUI-bound and pegged one core on older Intel Macs (e.g. i7-9750H).
+  The x86_64 binary slice now runs a lighter refresh profile (20 Hz active / 12 Hz
+  idle, 15 Hz inline spectrum, 256 inline bins) while the arm64 slice keeps the full
+  profile unchanged (compile-time, zero Apple-Silicon impact). Measured ~100% ->
+  ~85% of one core on the i7-9750H with responsive meters; the audio render thread
+  was never affected.
 
 Carries everything since 0.30.3, including the unreleased 0.31 work
 (symmetric RDS decoder, cross-module-inlining perf pass). The headline of

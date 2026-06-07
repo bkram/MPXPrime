@@ -78,4 +78,48 @@ struct SectionNavigationTests {
         model.goToGroup(.processing)
         #expect(model.selectedStage == .processingMultiband)
     }
+
+    // MARK: - Processed-audio output mode hides composite/RDS surfaces
+
+    @Test func compositeOutputShowsAllStages() {
+        let model = makeViewModel()
+        model.config.processedAudioOutput = false
+        for stage in Stage.allCases {
+            #expect(model.isStageVisible(stage), "\(stage) should be visible in composite mode")
+        }
+    }
+
+    @Test func processedAudioHidesCompositeAndRDSStages() {
+        let model = makeViewModel()
+        model.config.processedAudioOutput = true
+        // Hidden: composite clipper, BS.412, and every RDS stage.
+        for stage in Stage.allCases where stage.group == .rds {
+            #expect(!model.isStageVisible(stage), "RDS stage \(stage) should be hidden")
+        }
+        #expect(!model.isStageVisible(.processingCompositeClipper))
+        #expect(!model.isStageVisible(.processingBS412))
+        #expect(!model.isStageVisible(.processingFinalStage))
+        // Audio-domain stages and the monitor/tools stay visible.
+        for stage: Stage in [.monitoring, .processingOverview, .processingAGC,
+                             .processingMultiband, .processingLimiter, .testTone] {
+            #expect(model.isStageVisible(stage), "\(stage) should remain visible")
+        }
+    }
+
+    @Test func switchingToProcessedAudioNormalizesAStaleRDSSelection() {
+        let model = makeViewModel()
+        model.selectedStage = .rdsRadiotext
+        model.config.processedAudioOutput = true
+        model.normalizeSelectionForOutputMode()
+        #expect(model.selectedStage == .processingOverview,
+            "a hidden RDS selection should snap back to the Processing overview")
+    }
+
+    @Test func compositeStageSelectionSurvivesInCompositeMode() {
+        let model = makeViewModel()
+        model.selectedStage = .processingCompositeClipper
+        model.config.processedAudioOutput = false
+        model.normalizeSelectionForOutputMode()
+        #expect(model.selectedStage == .processingCompositeClipper)
+    }
 }

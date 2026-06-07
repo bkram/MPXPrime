@@ -19,6 +19,9 @@ enum AudioEngineError: Error {
 enum AudioOutputMode {
     case mpxComposite
     case monitorAudio
+    // Processed stereo L/R audio (post pre-encode limiter), for feeding an
+    // external stereo coder. No composite / pilot / subcarrier / RDS.
+    case processedAudio
 }
 
 final class AudioOutputEngine {
@@ -253,17 +256,32 @@ final class AudioOutputEngine {
                 "Monitor hardware is \(Int(outputRate.rounded())) Hz; internal MPX render remains \(Int(renderRate.rounded())) Hz."
             )
         }
+        if outputMode == .processedAudio {
+            appendRoutingNote(
+                "Processed-audio output: emitting stereo L/R (no composite/pilot/RDS) at \(Int(outputRate.rounded())) Hz for an external stereo coder."
+            )
+        }
         configuredRenderSampleRate = renderRate
+        // Audio-only mode must be set before setSampleRate so the dual-rate
+        // boundary is computed with it off (whole engine runs at the audio rate).
+        generator.setAudioOutputOnly(outputMode == .processedAudio)
         generator.setSampleRate(renderRate)
         // TX-grade FIR encoder bandwidth guard only runs in composite output
         // mode; monitor mode keeps the low-latency Butterworth so operator
         // monitoring stays snappy.
-        generator.setEncoderFIREnabled(outputMode == .mpxComposite && encoderFIREnabled)
-        // Linear-phase FIR multiband crossovers — same TX-only pattern as
-        // the encoder FIR. Phase-flat band reconstruction prevents the
-        // transient smear / inter-band pumping that makes IIR-LR4
-        // multiband sound worse than single-band on percussive content.
-        generator.setMultibandFIREnabled(outputMode == .mpxComposite && multibandFIREnabled)
+        // The encoder program lowpass is the audio-domain 15 kHz band-limit (it
+        // runs in `processProgramStereo`, upstream of composite assembly), so the
+        // linear-phase FIR brickwall is wanted in processed-audio mode too — the
+        // output handed to an external coder must be cleanly band-limited. Only the
+        // low-latency monitor keeps the gentle IIR fallback.
+        generator.setEncoderFIREnabled(outputMode != .monitorAudio && encoderFIREnabled)
+        // Linear-phase FIR multiband crossovers — phase-flat band reconstruction
+        // prevents the transient smear / inter-band pumping that makes IIR-LR4
+        // multiband sound worse than single-band on percussive content. This is an
+        // audio-domain quality stage, so it runs in both composite AND
+        // processed-audio output (a real TX-feeding output deserves the FIR path);
+        // only the low-latency monitor keeps the IIR crossovers.
+        generator.setMultibandFIREnabled(outputMode != .monitorAudio && multibandFIREnabled)
         configureScopeHistory(renderRate: renderRate, inputRate: configuredInputSampleRate)
         preAllocateBuffers(maxFrames: Int(max(renderRate, 192000.0) * 0.1))
 
@@ -348,7 +366,25 @@ final class AudioOutputEngine {
                         self.inputPrimed = false
                     }
                     self.withOptionalAnalysisBuffers(frames: frames, enabled: needsAnalysisBuffers) { analysis in
-                        if self.outputMode == .monitorAudio {
+                        if self.outputMode == .processedAudio {
+                            self.generator.renderAudioOnlyFromInputInPlace(
+                                frameCount: frames,
+                                left: leftData,
+                                right: rightData,
+                                analysis: analysis
+                            )
+                            if throttled {
+                                self.updateThrottledRenderAnalysis(
+                                    outputLeft: leftData,
+                                    outputRight: rightData,
+                                    frameCount: frames,
+                                    analysis: analysis,
+                                    captureOutputImageMetrics: captureOutputImageMetrics,
+                                    captureOutputHistory: captureOutputHistory,
+                                    capturePreMPXHistory: capturePreMPXHistory
+                                )
+                            }
+                        } else if self.outputMode == .monitorAudio {
                             if self.generator.isProcessingBypassEnabled {
                                 self.generator.renderMonitorFromInputInPlace(
                                     frameCount: frames,
@@ -422,7 +458,25 @@ final class AudioOutputEngine {
                     }
                 } else {
                     self.withOptionalAnalysisBuffers(frames: frames, enabled: needsAnalysisBuffers) { analysis in
-                        if self.outputMode == .monitorAudio {
+                        if self.outputMode == .processedAudio {
+                            self.generator.renderAudioOnlyToneNonInterleaved(
+                                frameCount: frames,
+                                left: leftData,
+                                right: rightData,
+                                analysis: analysis
+                            )
+                            if throttled {
+                                self.updateThrottledRenderAnalysis(
+                                    outputLeft: leftData,
+                                    outputRight: rightData,
+                                    frameCount: frames,
+                                    analysis: analysis,
+                                    captureOutputImageMetrics: captureOutputImageMetrics,
+                                    captureOutputHistory: captureOutputHistory,
+                                    capturePreMPXHistory: capturePreMPXHistory
+                                )
+                            }
+                        } else if self.outputMode == .monitorAudio {
                             if self.generator.isProcessingBypassEnabled {
                                 self.generator.renderMonitorToneNonInterleaved(
                                     frameCount: frames,

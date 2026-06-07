@@ -1,7 +1,7 @@
 import Foundation
 
 struct AppConfig {
-    static let appVersion: String = "0.32"
+    static let appVersion: String = "0.33"
 
     static var defaultINIPath: String {
         let fileManager = FileManager.default
@@ -102,6 +102,13 @@ struct AppConfig {
     var outputDeviceUID: String?
     var monitorDeviceUID: String?
     var monitorEnabled: Bool = false
+    // Output mode. When true, the MPX output device emits processed stereo L/R
+    // audio (post pre-encode limiter) instead of the FM composite — for feeding
+    // an external stereo coder / RDS encoder. No pilot / subcarrier / RDS /
+    // composite clipper / BS.412 in this mode. Restart-required (changes render
+    // rate, device format, and FIR plumbing). Takes precedence over
+    // `monitorEnabled` (the decoded-MPX monitor is meaningless without a composite).
+    var processedAudioOutput: Bool = false
     var processingBypass: Bool = false
     var testToneMode: String = "mono"
     var testToneFreq: Double = 1000.0
@@ -272,6 +279,13 @@ struct AppConfig {
     var dcClipperEnabled: Bool = false
     var dcClipperCeilingDB: Double = -1.0
     var dcClipperCancelFreqHz: Double = 2000.0
+    // Processed-audio output: optional final loudness clipper for the L/R feed.
+    // Framed around the external coder: when it has its OWN clipper (default), MPX
+    // Prime stays clean (no extra clip) to avoid double-clipping; when it does not,
+    // MPX Prime applies an oversampled final clipper driven by the drive control to
+    // add density. Only active in processed-audio output mode.
+    var processedAudioCoderHasClipper: Bool = true
+    var processedAudioFinalClipDriveDB: Double = 6.0
     var bs412Enabled: Bool = false
     var bs412ThresholdDB: Double = -10.0
     var bs412WindowSeconds: Double = 60.0
@@ -313,6 +327,12 @@ struct AppConfig {
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
     var rdsPTY: Int = 8
+    // PTY genre-table region for the UI picker / status label only. The
+    // transmitted 5-bit PTY code is identical either way; Europe (RDS,
+    // EN 50067) and North America (RBDS, NRSC-4) just label the same code
+    // with different genres and receivers pick the table by region. UI /
+    // authoring preference only -- no on-air effect (runtimeDisposition .none).
+    var rdsPtyRBDS: Bool = false
     var rdsTP: Bool = false
     var rdsTA: Bool = false
     var rdsMS: Bool = true
@@ -413,6 +433,8 @@ struct AppConfig {
         cfg.outputDeviceUID = interfaces.optionalString("output_device_uid")
         cfg.monitorDeviceUID = interfaces.optionalString("monitor_device_uid")
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
+        cfg.processedAudioOutput = interfaces.bool(
+            "processed_audio_output", defaultValue: cfg.processedAudioOutput)
         cfg.processingBypass = mpx.bool("processing_bypass", defaultValue: cfg.processingBypass)
         cfg.testToneMode = mpx.string("test_tone_mode", defaultValue: cfg.testToneMode)
         cfg.testToneFreq = mpx.double("test_tone_freq", defaultValue: cfg.testToneFreq)
@@ -642,6 +664,10 @@ struct AppConfig {
             "dc_clipper_ceiling_db", defaultValue: cfg.dcClipperCeilingDB)
         cfg.dcClipperCancelFreqHz = mpx.double(
             "dc_clipper_cancel_freq_hz", defaultValue: cfg.dcClipperCancelFreqHz)
+        cfg.processedAudioCoderHasClipper = mpx.bool(
+            "processed_audio_coder_has_clipper", defaultValue: cfg.processedAudioCoderHasClipper)
+        cfg.processedAudioFinalClipDriveDB = mpx.double(
+            "processed_audio_final_clip_drive_db", defaultValue: cfg.processedAudioFinalClipDriveDB)
         cfg.bs412Enabled = mpx.bool("bs412_enabled", defaultValue: cfg.bs412Enabled)
         cfg.bs412ThresholdDB = mpx.double(
             "bs412_threshold_db", defaultValue: cfg.bs412ThresholdDB)
@@ -672,6 +698,7 @@ struct AppConfig {
         cfg.rdsLevel = rds.double("rds_level", defaultValue: cfg.rdsLevel)
         cfg.rdsPI = rds.string("pi", defaultValue: cfg.rdsPI)
         cfg.rdsPTY = rds.int("pty", defaultValue: cfg.rdsPTY)
+        cfg.rdsPtyRBDS = rds.bool("pty_rbds", defaultValue: cfg.rdsPtyRBDS)
         cfg.rdsTP = rds.bool("tp", defaultValue: cfg.rdsTP)
         cfg.rdsTA = rds.bool("ta", defaultValue: cfg.rdsTA)
         cfg.rdsMS = rds.bool("ms", defaultValue: cfg.rdsMS)
@@ -895,6 +922,7 @@ struct AppConfig {
         // Distortion-cancelled clipper
         dcClipperCeilingDB = max(-6.0, min(0.0, dcClipperCeilingDB))
         dcClipperCancelFreqHz = max(500.0, min(4000.0, dcClipperCancelFreqHz))
+        processedAudioFinalClipDriveDB = max(0.0, min(12.0, processedAudioFinalClipDriveDB))
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
@@ -1096,6 +1124,8 @@ struct AppConfig {
             "dc_clipper_enabled = \(Self.boolString(dcClipperEnabled))",
             "dc_clipper_ceiling_db = \(Self.formatFloat(dcClipperCeilingDB))",
             "dc_clipper_cancel_freq_hz = \(Self.formatFloat(dcClipperCancelFreqHz))",
+            "processed_audio_coder_has_clipper = \(Self.boolString(processedAudioCoderHasClipper))",
+            "processed_audio_final_clip_drive_db = \(Self.formatFloat(processedAudioFinalClipDriveDB))",
             "bs412_enabled = \(Self.boolString(bs412Enabled))",
             "bs412_threshold_db = \(Self.formatFloat(bs412ThresholdDB))",
             "bs412_window_seconds = \(Self.formatFloat(bs412WindowSeconds))",
@@ -1120,6 +1150,7 @@ struct AppConfig {
             "rds_level = \(Self.formatFloat(rdsLevel))",
             "pi = \(Self.sanitizedPICode(rdsPI))",
             "pty = \(max(0, min(31, rdsPTY)))",
+            "pty_rbds = \(Self.boolString(rdsPtyRBDS))",
             "tp = \(Self.boolString(rdsTP))",
             "ta = \(Self.boolString(rdsTA))",
             "ms = \(Self.boolString(rdsMS))",
@@ -1188,6 +1219,7 @@ struct AppConfig {
             "[INTERFACES]",
             "source_mode = \(sourceMode)",
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
+            "processed_audio_output = \(Self.boolString(processedAudioOutput))",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             "blocksize = \(blockSize)",
             "fft_window_92khz = \(Self.boolString(fftWindow96kHz))",

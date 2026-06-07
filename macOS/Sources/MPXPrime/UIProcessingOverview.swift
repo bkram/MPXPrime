@@ -108,18 +108,21 @@ struct ProcessingOverviewGrid: View {
                     subtitle: limiterSubtitle,
                     enabledPath: \.preEncodeAudioLimiterEnabled
                 )
-                stageCard(
-                    .compositeClipper,
-                    title: "Composite Clipper",
-                    subtitle: compositeClipperSubtitle,
-                    enabledPath: \.compositeClipperEnabled
-                )
-                stageCard(
-                    .bs412,
-                    title: "BS.412 Power",
-                    subtitle: bs412Subtitle,
-                    enabledPath: \.bs412Enabled
-                )
+                // Composite-domain stages are absent in processed-audio output.
+                if !model.processedAudioOutputActive {
+                    stageCard(
+                        .compositeClipper,
+                        title: "Composite Clipper",
+                        subtitle: compositeClipperSubtitle,
+                        enabledPath: \.compositeClipperEnabled
+                    )
+                    stageCard(
+                        .bs412,
+                        title: "BS.412 Power",
+                        subtitle: bs412Subtitle,
+                        enabledPath: \.bs412Enabled
+                    )
+                }
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 4)

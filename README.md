@@ -421,6 +421,21 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 The RDS Radiotext section can poll an external script for now-playing metadata.
 
+Two ready-to-use example pollers ship with MPX Prime, both in the DMG's
+`Now Playing Scripts/` folder and inside the app at
+`MPX Prime.app/Contents/Resources/Scripts/`:
+
+- `vlc-nowplaying.sh` — reads the current item from VLC via AppleScript.
+- `cog-nowplaying.sh` — reads the current entry's artist / title from
+  [Cog](https://github.com/losnoco/cog) via its AppleScript dictionary
+  (`currentEntry`). Note: Cog exposes no play/pause state to scripts, so it
+  reports the loaded track even while paused (it clears the entry on Stop).
+
+Copy one somewhere stable (for example your home folder) and point the
+Radiotext now-playing script setting at it, or use it as a template for
+another player. The first run prompts once for Automation permission to
+control the player.
+
 Expected script behavior:
 
 - Exit with status `0` only when active playback metadata is available

@@ -98,6 +98,13 @@ cp "macOS/MPXPrime.ini" "$OUTPUT_DIR/$CONFIG_NAME"
 # Copy default config to app resources
 cp "$OUTPUT_DIR/$CONFIG_NAME" "$APP_DIR/Contents/Resources/"
 
+# Ship the example RDS now-playing poller scripts (VLC + Cog) inside the
+# bundle so they always travel with the app. They are also placed at the top
+# level of the DMG (below) for easy discovery.
+mkdir -p "$APP_DIR/Contents/Resources/Scripts"
+cp scripts/vlc-nowplaying.sh scripts/cog-nowplaying.sh "$APP_DIR/Contents/Resources/Scripts/"
+chmod +x "$APP_DIR/Contents/Resources/Scripts/"*.sh
+
 # Ad-hoc sign the completed app bundle so macOS sees a valid bundle structure.
 echo "Ad-hoc signing app bundle..."
 codesign --force --deep --sign - "$APP_DIR"
@@ -118,6 +125,9 @@ rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_DIR" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
+mkdir -p "$DMG_STAGING/Now Playing Scripts"
+cp scripts/vlc-nowplaying.sh scripts/cog-nowplaying.sh "$DMG_STAGING/Now Playing Scripts/"
+chmod +x "$DMG_STAGING/Now Playing Scripts/"*.sh
 hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH" || {
     echo "Failed to create DMG, keeping .app bundle"
 }

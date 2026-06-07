@@ -158,6 +158,10 @@ struct BroadcastStatusBar: View {
                 .foregroundStyle(tint)
                 .lineLimit(1)
         }
+        // Read each chip as one item ("Transport, Running") rather than two
+        // separate text fragments. State is carried by the value text, not
+        // the transport LED alone, so this is color-independent.
+        .accessibilityElement(children: .combine)
     }
 
     private var divider: some View {

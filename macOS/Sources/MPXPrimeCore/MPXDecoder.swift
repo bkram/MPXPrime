@@ -16,43 +16,48 @@ import Foundation
 public struct MPXDecoder {
     private static let pilotHz: Float = 19_000.0
     private static let rdsHz: Float = 57_000.0
-    private static let diffDecodeGain: Float = 1.0
+    // process() is @inlinable so it can inline across the MPXPrimeCore module
+    // boundary into the transmit app's per-sample monitor loop. Every stored
+    // member it (or its inlinable callee) touches must therefore be
+    // @usableFromInline; pilotHz/rdsHz stay private because only the
+    // non-inlinable configure() reads them.
+    @usableFromInline static let diffDecodeGain: Float = 1.0
 
-    private var sampleRate: Float = 192_000.0
-    private var preemphasisUS: Int = 50
+    @usableFromInline var sampleRate: Float = 192_000.0
+    @usableFromInline var preemphasisUS: Int = 50
 
-    private var lprLP = BiquadCascade6()
-    private var diffBandHP = BiquadCascade6()
-    private var diffBandLP = BiquadCascade6()
-    private var diffLP = BiquadCascade6()
-    private var rfNotchPilot = Biquad()
-    private var rfNotchRDS = Biquad()
-    private var pilotNotchL = Biquad()
-    private var pilotNotchR = Biquad()
-    private var deemphasisL = DeemphasisFilter()
-    private var deemphasisR = DeemphasisFilter()
+    @usableFromInline var lprLP = BiquadCascade6()
+    @usableFromInline var diffBandHP = BiquadCascade6()
+    @usableFromInline var diffBandLP = BiquadCascade6()
+    @usableFromInline var diffLP = BiquadCascade6()
+    @usableFromInline var rfNotchPilot = Biquad()
+    @usableFromInline var rfNotchRDS = Biquad()
+    @usableFromInline var pilotNotchL = Biquad()
+    @usableFromInline var pilotNotchR = Biquad()
+    @usableFromInline var deemphasisL = DeemphasisFilter()
+    @usableFromInline var deemphasisR = DeemphasisFilter()
 
-    private var pllPhase: Float = 0.0
-    private var pllStep: Float = 0.0
-    private var pilotLockI: Float = 0.0
-    private var pilotLockQ: Float = 0.0
-    private var pilotLockCoeff: Float = 0.0
+    @usableFromInline var pllPhase: Float = 0.0
+    @usableFromInline var pllStep: Float = 0.0
+    @usableFromInline var pilotLockI: Float = 0.0
+    @usableFromInline var pilotLockQ: Float = 0.0
+    @usableFromInline var pilotLockCoeff: Float = 0.0
 
-    private var noiseGateGain: Float = 0.0
-    private var noiseGateOpen: Bool = false
-    private var programEnv: Float = 0.0
-    private var programNoiseFloor: Float = 0.0
-    private var collapseHoldSamples: Int = 0
-    private var collapseCooldownSamples: Int = 0
+    @usableFromInline var noiseGateGain: Float = 0.0
+    @usableFromInline var noiseGateOpen: Bool = false
+    @usableFromInline var programEnv: Float = 0.0
+    @usableFromInline var programNoiseFloor: Float = 0.0
+    @usableFromInline var collapseHoldSamples: Int = 0
+    @usableFromInline var collapseCooldownSamples: Int = 0
 
-    private var programEnvAttackCoeff: Float = 0.0
-    private var programEnvReleaseCoeff: Float = 0.0
-    private var noiseFloorRiseCoeff: Float = 0.0
-    private var noiseFloorFallCoeff: Float = 0.0
-    private var noiseGateAttackCoeff: Float = 0.0
-    private var noiseGateReleaseCoeff: Float = 0.0
-    private var collapseHoldThresholdSamples: Int = 0
-    private var collapseCooldownResetSamples: Int = 0
+    @usableFromInline var programEnvAttackCoeff: Float = 0.0
+    @usableFromInline var programEnvReleaseCoeff: Float = 0.0
+    @usableFromInline var noiseFloorRiseCoeff: Float = 0.0
+    @usableFromInline var noiseFloorFallCoeff: Float = 0.0
+    @usableFromInline var noiseGateAttackCoeff: Float = 0.0
+    @usableFromInline var noiseGateReleaseCoeff: Float = 0.0
+    @usableFromInline var collapseHoldThresholdSamples: Int = 0
+    @usableFromInline var collapseCooldownResetSamples: Int = 0
 
     public init() {}
 
@@ -109,6 +114,7 @@ public struct MPXDecoder {
         collapseCooldownSamples = 0
     }
 
+    @inlinable
     @inline(__always)
     public mutating func process(
         _ mpx: Float,
@@ -137,12 +143,12 @@ public struct MPXDecoder {
 
         let activity = max(0.0, programActivity)
         let envCoeff = activity > programEnv ? programEnvAttackCoeff : programEnvReleaseCoeff
-        programEnv = (envCoeff * programEnv) + ((1.0 - envCoeff) * activity)
+        programEnv = zapDenorm((envCoeff * programEnv) + ((1.0 - envCoeff) * activity))
 
         let floorTarget = programEnv
         if !noiseGateOpen || floorTarget <= (programNoiseFloor * 1.4) {
             let floorCoeff = floorTarget > programNoiseFloor ? noiseFloorRiseCoeff : noiseFloorFallCoeff
-            programNoiseFloor = (floorCoeff * programNoiseFloor) + ((1.0 - floorCoeff) * floorTarget)
+            programNoiseFloor = zapDenorm((floorCoeff * programNoiseFloor) + ((1.0 - floorCoeff) * floorTarget))
         }
 
         let openThreshold = max(0.00016, programNoiseFloor * 2.3)
@@ -156,7 +162,7 @@ public struct MPXDecoder {
         }
         let targetGain: Float = noiseGateOpen ? 1.0 : 0.0
         let gateCoeff = targetGain > noiseGateGain ? noiseGateAttackCoeff : noiseGateReleaseCoeff
-        noiseGateGain = (gateCoeff * noiseGateGain) + ((1.0 - gateCoeff) * targetGain)
+        noiseGateGain = zapDenorm((gateCoeff * noiseGateGain) + ((1.0 - gateCoeff) * targetGain))
         left *= noiseGateGain
         right *= noiseGateGain
 
@@ -180,12 +186,13 @@ public struct MPXDecoder {
         return (max(-1.0, min(1.0, left)), max(-1.0, min(1.0, right)))
     }
 
+    @inlinable
     @inline(__always)
-    private mutating func pilotLockedSubcarrier(from mpx: Float) -> Float {
+    mutating func pilotLockedSubcarrier(from mpx: Float) -> Float {
         let oscSin = sinf(pllPhase)
         let oscCos = cosf(pllPhase)
-        pilotLockI = (pilotLockCoeff * pilotLockI) + ((1.0 - pilotLockCoeff) * (mpx * oscSin))
-        pilotLockQ = (pilotLockCoeff * pilotLockQ) + ((1.0 - pilotLockCoeff) * (mpx * oscCos))
+        pilotLockI = zapDenorm((pilotLockCoeff * pilotLockI) + ((1.0 - pilotLockCoeff) * (mpx * oscSin)))
+        pilotLockQ = zapDenorm((pilotLockCoeff * pilotLockQ) + ((1.0 - pilotLockCoeff) * (mpx * oscCos)))
 
         let mag2 = (pilotLockI * pilotLockI) + (pilotLockQ * pilotLockQ)
         let subcarrier: Float

@@ -1,6 +1,13 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+// Absolute path to this manifest's directory (the package root), so the
+// embedded-Info.plist linker flag below resolves regardless of the shell
+// CWD that `swift build` was invoked from.
+let packageDir = #filePath.hasSuffix("/Package.swift")
+    ? String(#filePath.dropLast("/Package.swift".count))
+    : "."
+
 let package = Package(
     name: "MPXPrime",
     platforms: [
@@ -40,7 +47,20 @@ let package = Package(
                 "MPXPrimeNative",
                 "MPXPrimeCore"
             ],
-            path: "Sources/MPXPrime"
+            path: "Sources/MPXPrime",
+            linkerSettings: [
+                // Embed an Info.plist into the Mach-O so LaunchServices shows
+                // "MPX Prime" (CFBundleName) in the Apple menu / Dock even for
+                // the unbundled binary (swift run / .build/release/MPXPrime).
+                // The shipped .app bundle's own Info.plist takes precedence
+                // when bundled.
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "\(packageDir)/Resources/MPXPrime-Info.plist",
+                ])
+            ]
         ),
         .testTarget(
             name: "MPXPrimeTests",

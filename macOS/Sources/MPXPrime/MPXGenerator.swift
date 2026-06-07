@@ -262,6 +262,10 @@ struct StereoLinkedOversampledPeakLimiter {
     var releaseMS: Float = 35.0
     var ceiling: Float = 0.985
     var bandlimitedResidualEnabled: Bool = false
+    // Precomputed soft-knee width (ceiling - threshold, floored at 1e-4).
+    // Depends only on configure() inputs, so it is computed once there
+    // instead of per over-threshold sample in clipToCeiling.
+    private var ceilingKnee: Float = 1e-4
 
     // Shared envelope state (the load-bearing change vs the prior pair
     // of independent OversampledPeakLimiters: same gain for both L/R).
@@ -325,6 +329,7 @@ struct StereoLinkedOversampledPeakLimiter {
         self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
         let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
         ceiling = min(0.999, self.threshold + ceilingMargin)
+        ceilingKnee = max(1e-4, ceiling - threshold)
 
         let attackS = 0.00025 as Float
         let relS = max(0.008, Double(self.releaseMS) * 0.001)
@@ -528,8 +533,7 @@ struct StereoLinkedOversampledPeakLimiter {
         }
         let ax = fabsf(x)
         if ax <= threshold { return x }
-        let knee = max(1e-4, ceiling - threshold)
-        let clipped = threshold + ((ceiling - threshold) * tanhf((ax - threshold) / knee))
+        let clipped = threshold + ((ceiling - threshold) * tanhf((ax - threshold) / ceilingKnee))
         return copysignf(min(clipped, ceiling), x)
     }
 }
@@ -2790,24 +2794,6 @@ struct WidebandAGCRider {
 
         let desiredGainDB = clampf(targetDB - levelDB, minGainDB, maxGainDB)
 
-        // Scale effective release coefficient by program density when
-        // enabled. Density 0 → configured release; density ≥4 dB → 3x
-        // slower release. Linear mapping in between; saturates at 3x
-        // so very busy program can't stall the AGC completely.
-        let effectiveReleaseCoeff: Float
-        let effectiveFastMakeupCoeff: Float
-        if programDependentRelease {
-            let densityClamped = max(0.0, min(4.0, Double(density)))
-            let densityScale = 1.0 + densityClamped * 0.5   // 1x…3x
-            let scaledReleaseS = configuredReleaseS * densityScale
-            let scaledFastS = max(0.120, min(scaledReleaseS * 0.35, 0.450))
-            effectiveReleaseCoeff = expf(-1.0 / Float(scaledReleaseS * Double(sampleRate)))
-            effectiveFastMakeupCoeff = expf(-1.0 / Float(scaledFastS * Double(sampleRate)))
-        } else {
-            effectiveReleaseCoeff = releaseCoeff
-            effectiveFastMakeupCoeff = fastMakeupCoeff
-        }
-
         let targetGainDB: Float
         let coeff: Float
         if levelDB < gateThresholdDB {
@@ -2825,7 +2811,28 @@ struct WidebandAGCRider {
             gateActive = false
         } else {
             targetGainDB = desiredGainDB
-            coeff = levelDB < makeupThresholdDB ? effectiveFastMakeupCoeff : effectiveReleaseCoeff
+            // Release/makeup is the only branch that uses the density-scaled
+            // coefficient, so compute it lazily here -- the two expf() are
+            // skipped on attack, hold, gate, and in-window samples (most of
+            // steady state). Bit-identical to computing it every sample: the
+            // formula is unchanged and the other branches never observed it.
+            // Density 0 -> configured release; density >=4 dB -> 3x slower
+            // release (linear between, saturating at 3x so very busy program
+            // can't stall the AGC completely).
+            let useFastMakeup = levelDB < makeupThresholdDB
+            if programDependentRelease {
+                let densityClamped = max(0.0, min(4.0, Double(density)))
+                let densityScale = 1.0 + densityClamped * 0.5   // 1x…3x
+                let scaledReleaseS = configuredReleaseS * densityScale
+                if useFastMakeup {
+                    let scaledFastS = max(0.120, min(scaledReleaseS * 0.35, 0.450))
+                    coeff = expf(-1.0 / Float(scaledFastS * Double(sampleRate)))
+                } else {
+                    coeff = expf(-1.0 / Float(scaledReleaseS * Double(sampleRate)))
+                }
+            } else {
+                coeff = useFastMakeup ? fastMakeupCoeff : releaseCoeff
+            }
             gateActive = false
         }
 
@@ -5456,11 +5463,21 @@ final class BasicRDSCoder {
         if let artistTag = makeTag(name: "artist", contentType: 4) {
             tags.append(artistTag)
         }
+        // Order so the longer element becomes tag 1: the 11A tag-2 length
+        // marker is only 5 bits (max 32 chars), while tag 1 is 6 bits (max 64).
+        // Putting the longer element (e.g. a long title) in tag 1 avoids
+        // clipping it to 32 chars; per the RT+ spec at most one element may
+        // exceed 32 chars, so this guarantees it lands in tag 1. Tag order
+        // within the group does not affect receivers -- each tag carries its
+        // own content type, start and length.
         return tags.sorted {
-            if $0.start == $1.start {
-                return $0.contentType < $1.contentType
+            if $0.length != $1.length {
+                return $0.length > $1.length
             }
-            return $0.start < $1.start
+            if $0.start != $1.start {
+                return $0.start < $1.start
+            }
+            return $0.contentType < $1.contentType
         }
     }
 
@@ -5503,11 +5520,21 @@ final class BasicRDSCoder {
             tags.append(displayTag)
         }
 
+        // Order so the longer element becomes tag 1: the 11A tag-2 length
+        // marker is only 5 bits (max 32 chars), while tag 1 is 6 bits (max 64).
+        // Putting the longer element (e.g. a long title) in tag 1 avoids
+        // clipping it to 32 chars; per the RT+ spec at most one element may
+        // exceed 32 chars, so this guarantees it lands in tag 1. Tag order
+        // within the group does not affect receivers -- each tag carries its
+        // own content type, start and length.
         return tags.sorted {
-            if $0.start == $1.start {
-                return $0.contentType < $1.contentType
+            if $0.length != $1.length {
+                return $0.length > $1.length
             }
-            return $0.start < $1.start
+            if $0.start != $1.start {
+                return $0.start < $1.start
+            }
+            return $0.contentType < $1.contentType
         }
     }
 }

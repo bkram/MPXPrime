@@ -231,17 +231,17 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .widener:
             return "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe — energy-normalised so mono compatibility is preserved."
         case .primeBass:
-            return "Bass enhancement via MaxxBass-style harmonic synthesis (US 5,930,373, expired) plus dynamic envelope extension (US 5,359,665). Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream."
+            return "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream."
         case .bassClipper:
             return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
         case .dcClipper:
-            return "8x oversampled distortion-cancelled clipper on the audio band (Orban US 4,460,871 / US 5,737,434, expired). Cleans up audio-band peaks before pre-emphasis adds HF boost."
+            return "8x oversampled distortion-cancelled clipper on the audio band. Cleans up audio-band peaks before pre-emphasis adds HF boost."
         case .limiter:
-            return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and Dolby HF-subband detector (US 5,579,404, expired 2013). Catches HF transients that slip past everything upstream after pre-emphasis."
+            return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
         case .bs412:
             return "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries."
         case .compositeClipper:
-            return "16x oversampled differential composite clipper (Orban US 6,337,999, expired 2022) on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper IM via delta-based per-band substitution. Primary loudness lever."
+            return "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever."
         case .finalStage:
             return "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry."
         }
@@ -1096,7 +1096,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setupMainMenu()
 
         let root = RootView(model: vm)
-        let host = NSHostingView(rootView: root)
 
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
@@ -1109,8 +1108,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         w.titleVisibility = .visible
         w.minSize = NSSize(width: 900, height: 620)
         w.delegate = self
+        // Host via contentViewController (not a bare contentView) so the
+        // SwiftUI .toolbar content in RootView bridges to the window's
+        // unified title-bar toolbar and NavigationSplitView's sidebar-collapse
+        // toggle appears. Matches how the secondary windows are hosted.
+        w.toolbarStyle = .unified
+        let mainHost = NSHostingController(rootView: root)
+        // Do NOT let the hosting controller drive the window size from the
+        // SwiftUI content's ideal size (the default .preferredContentSize):
+        // the tall NavigationSplitView would otherwise push the window past
+        // the screen and the sidebar would scroll beyond the window. The
+        // window manages its own frame; the content fills and scrolls within.
+        mainHost.sizingOptions = []
         restoreFrame(for: w, autosaveName: kMainWindowAutosaveName)
-        w.contentView = host
+        w.contentViewController = mainHost
         w.makeKeyAndOrderFront(nil)
         window = w
 
@@ -1522,7 +1533,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         guard let vm = model else { return }
         let root = RootView(model: vm)
-        let host = NSHostingView(rootView: root)
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -1534,8 +1544,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         w.titleVisibility = .visible
         w.minSize = NSSize(width: 900, height: 620)
         w.delegate = self
+        w.toolbarStyle = .unified
+        let mainHost = NSHostingController(rootView: root)
+        // See applicationDidFinishLaunching: keep the window sizing itself,
+        // not driven by the SwiftUI content's ideal size.
+        mainHost.sizingOptions = []
         restoreFrame(for: w, autosaveName: kMainWindowAutosaveName)
-        w.contentView = host
+        w.contentViewController = mainHost
         w.makeKeyAndOrderFront(nil)
         window = w
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -1610,7 +1625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    @objc private func showLevelsWindow() {
+    @objc fileprivate func showLevelsWindow() {
         if let existing = levelsWindow {
             revealWindow(existing)
             model?.levelsWindowVisible = true
@@ -1633,7 +1648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    @objc private func openConfig() {
+    @objc fileprivate func openConfig() {
         let openPanel = NSOpenPanel()
         openPanel.allowedContentTypes = Self.iniContentTypes
         openPanel.message = "Choose a configuration file to open"
@@ -3207,6 +3222,22 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// Assign only when the value actually changed, so the slow-moving
+    /// readout strings refreshed every monitor tick (20-30 Hz) don't fire
+    /// objectWillChange when nothing moved -- Combine does not diff Equatable
+    /// @Published values, so an unchanged write still invalidates every
+    /// observing view. KeyPath-based rather than inout: an inout helper would
+    /// write back through the @Published setter on every call and defeat the
+    /// guard.
+    @inline(__always)
+    private func assignIfChanged<T: Equatable>(
+        _ keyPath: ReferenceWritableKeyPath<MPXPrimeViewModel, T>, _ value: T
+    ) {
+        if self[keyPath: keyPath] != value {
+            self[keyPath: keyPath] = value
+        }
+    }
+
     private func refreshMonitoringSnapshot() {
         let now = Date().timeIntervalSinceReferenceDate
         let activeHz = desiredMonitoringRefreshHz
@@ -3585,58 +3616,64 @@ final class MPXPrimeViewModel: ObservableObject {
         let limiterState =
             config.preEncodeAudioLimiterEnabled
             ? (preEncodeAudioLimiterGainReductionDB >= 0.2 ? "Active" : "Idle") : "Off"
-        limiterStateText = limiterState
-        limiterDetailText = String(
+        assignIfChanged(\.limiterStateText, limiterState)
+        assignIfChanged(\.limiterDetailText, String(
             format: "Drive %.1f dB • Pre-Enc GR %.1f dB • Max %.1f dB • Safe %.1f dB • Peak %@",
             config.finalDriveDB,
             preEncodeAudioLimiterGainReductionDB,
             limiterGRPeakHold,
             mpxSafetyLimiterGainReductionDB,
             Self.dbfsString(outputPeak)
-        )
+        ))
+        let compositeBudgetState: String
         if !isRunning {
-            compositeBudgetStateText = "Off"
+            compositeBudgetState = "Off"
         } else if compositeBudgetMarginDB >= 3.0 {
-            compositeBudgetStateText = "Safe"
+            compositeBudgetState = "Safe"
         } else if compositeBudgetMarginDB >= 1.0 {
-            compositeBudgetStateText = "Tight"
+            compositeBudgetState = "Tight"
         } else {
-            compositeBudgetStateText = "Risk"
+            compositeBudgetState = "Risk"
         }
-        compositeCalibrationText = String(
+        assignIfChanged(\.compositeBudgetStateText, compositeBudgetState)
+        assignIfChanged(\.compositeCalibrationText, String(
             format: "Pilot %.1f%% • RDS %.1f%% • Audio %@ • Margin %.1f dB",
             pilotInjectionPercent,
             rdsInjectionPercent,
             Self.dbfsString(audioCompositePeak),
             compositeBudgetMarginDB
-        )
-        stereoImageText = String(
+        ))
+        assignIfChanged(\.stereoImageText, String(
             format: "Corr %@%.2f • Side %.2fx",
             outputStereoCorrelation >= 0 ? "+" : "",
             outputStereoCorrelation,
             outputSideToMidRatio
-        )
+        ))
+        let agcState: String
         if config.widebandAGCEnabled && !processingBypass {
-            agcStateText = agcGateActive ? "Gate" : "On"
+            agcState = agcGateActive ? "Gate" : "On"
         } else {
-            agcStateText = "Off"
+            agcState = "Off"
         }
-        agcDetailText = String(
+        assignIfChanged(\.agcStateText, agcState)
+        assignIfChanged(\.agcDetailText, String(
             format: "Detector %.1f dB • Gain %.1f dB",
             agcDetectorDB,
             agcGainDB
-        ) + (agcGateActive ? " • Gate" : "")
-        multibandStateText = config.multibandEnabled ? "On" : "Off"
-        primeBassStateText = config.primeBassEnabled ? "On" : "Off"
+        ) + (agcGateActive ? " • Gate" : ""))
+        assignIfChanged(\.multibandStateText, config.multibandEnabled ? "On" : "Off")
+        assignIfChanged(\.primeBassStateText, config.primeBassEnabled ? "On" : "Off")
+        let widenerState: String
         if !config.stereoWidenEnabled || config.monoMode {
-            widenerStateText = "Off"
+            widenerState = "Off"
         } else if outputStereoCorrelation < 0.0 || outputSideToMidRatio > 0.85 {
-            widenerStateText = "Risk"
+            widenerState = "Risk"
         } else if outputStereoCorrelation < 0.30 || outputSideToMidRatio > 0.55 {
-            widenerStateText = "Wide"
+            widenerState = "Wide"
         } else {
-            widenerStateText = "Safe"
+            widenerState = "Safe"
         }
+        assignIfChanged(\.widenerStateText, widenerState)
 
         let elapsed = max(0.0, now - (engineStartReference ?? now))
         updateRDSFields(elapsed: elapsed)
@@ -3831,32 +3868,32 @@ final class MPXPrimeViewModel: ObservableObject {
         let live = runningEngine?.currentRDSLiveSnapshot
 
         if let live, !live.ps.isEmpty {
-            rdsPS = live.ps
+            assignIfChanged(\.rdsPS, live.ps)
         } else {
-            rdsPS = Self.currentTimedDisplayText(config.activePSBankText, elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsPS, Self.currentTimedDisplayText(config.activePSBankText, elapsed: elapsed).ifEmpty("-"))
         }
-        rdsPI = config.rdsPI
-        rdsPTY = Self.ptyName(for: config.rdsPTY)
+        assignIfChanged(\.rdsPI, config.rdsPI)
+        assignIfChanged(\.rdsPTY, Self.ptyName(for: config.rdsPTY))
         if let live, !live.ptyn.isEmpty {
-            rdsPTYN = live.ptyn
+            assignIfChanged(\.rdsPTYN, live.ptyn)
         } else {
-            rdsPTYN = Self.currentTimedDisplayText(config.rdsPTYN, elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsPTYN, Self.currentTimedDisplayText(config.rdsPTYN, elapsed: elapsed).ifEmpty("-"))
         }
-        rdsAID = config.rdsEnableRTPlus ? "AID: 4BD7 (GROUP 11A)" : "AID: OFF"
+        assignIfChanged(\.rdsAID, config.rdsEnableRTPlus ? "AID: 4BD7 (GROUP 11A)" : "AID: OFF")
         if let live, !live.longPS.isEmpty {
-            rdsLongPS = live.longPS
+            assignIfChanged(\.rdsLongPS, live.longPS)
         } else {
-            rdsLongPS = Self.currentTimedDisplayText(config.rdsLongPS32, elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsLongPS, Self.currentTimedDisplayText(config.rdsLongPS32, elapsed: elapsed).ifEmpty("-"))
         }
         if let live, !live.rt.isEmpty {
             // Trim trailing CR terminator (0x0D) that prepareRTFrame appends
             // for the 2A "end of text" marker so the on-screen readout is clean.
-            rdsRadiotext = live.rt
+            assignIfChanged(\.rdsRadiotext, live.rt
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-                .ifEmpty("-")
+                .ifEmpty("-"))
         } else {
-            rdsRadiotext = currentRTText(elapsed: elapsed).ifEmpty("-")
+            assignIfChanged(\.rdsRadiotext, currentRTText(elapsed: elapsed).ifEmpty("-"))
         }
     }
 
@@ -4729,19 +4766,14 @@ final class MPXPrimeViewModel: ObservableObject {
         dt: Double,
         releaseMS: Float
     ) -> Float {
-        let clampedTarget = max(0.0, min(1.0, target.isFinite ? target : 0.0))
-        if clampedTarget >= current {
-            return smoothMeter(
-                current: current,
-                target: clampedTarget,
-                dt: dt,
-                attackMS: Self.audioPeakMeterAttackMS,
-                releaseMS: releaseMS
-            )
-        }
-        return smoothMeter(
+        // Peak-program ballistics: fixed fast attack, configurable release.
+        // smoothMeter() already selects attack-vs-release internally from the
+        // rising/falling direction and clamps the target, so this is a thin
+        // wrapper that pins the attack to the peak-meter constant. (The prior
+        // if/else had two identical branches.)
+        smoothMeter(
             current: current,
-            target: clampedTarget,
+            target: target,
             dt: dt,
             attackMS: Self.audioPeakMeterAttackMS,
             releaseMS: releaseMS
@@ -4813,29 +4845,87 @@ private struct RootView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Always-visible broadcast status header — transport / peaks /
-            // deviation / GR / budget / injections. Pinned above the
-            // HSplitView so it spans every stage.
-            BroadcastStatusBar(model: model)
+        // NavigationSplitView gives the standard macOS collapsible sidebar
+        // (toggle auto-provided in the toolbar, plus View > Toggle Sidebar /
+        // Cmd-Ctrl-S). Minimum 220 pt fits the longest label ("Composite
+        // Clipper") with icon + padding without truncation.
+        NavigationSplitView {
+            StageSidebar(model: model)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 320)
+        } detail: {
+            StageContentView(model: model)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Always-visible broadcast status header (transport / peaks /
+                // deviation / GR / budget / injections). On the detail column
+                // so the sidebar runs full height under the title bar, the
+                // standard macOS sidebar layout. It still spans every stage
+                // because the detail hosts them all.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    BroadcastStatusBar(model: model)
+                }
+                .inspector(isPresented: $model.inspectorVisible) {
+                    StageInspector(model: model)
+                        .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+                }
+        }
+        .toolbar {
+            // Frequently used commands belong in the toolbar (HIG). The
+            // sidebar-collapse toggle is added automatically by
+            // NavigationSplitView at the leading edge.
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    model.startOrStopTransport()
+                } label: {
+                    Label(model.isRunning ? "Stop" : "Start",
+                          systemImage: model.isRunning ? "stop.fill" : "play.fill")
+                }
+                .help(model.isRunning
+                      ? "Stop the encoder (Command-Return)"
+                      : "Start the encoder (Command-Return)")
 
-            // HSplitView is the right primitive for a static
-            // professional control surface: no sidebar-toggle affordance,
-            // no autosaved-collapse state to fight, just a fixed-position
-            // stage list on the left and the active stage on the right.
-            // Sidebar width range matches the previous NavigationSplitView
-            // settings — minimum 220 pt fits the longest label
-            // ("Composite Clipper", 17 chars) plus icon and padding without
-            // truncation.
-            HSplitView {
-                StageSidebar(model: model)
-                    .frame(minWidth: 220, idealWidth: 240, maxWidth: 320)
-                StageContentView(model: model)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .inspector(isPresented: $model.inspectorVisible) {
-                        StageInspector(model: model)
-                            .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
-                    }
+                Button {
+                    model.toggleBypass()
+                } label: {
+                    Label("Bypass",
+                          systemImage: model.processingBypass ? "waveform.slash" : "waveform")
+                }
+                .help("Toggle processing bypass (Command-B)")
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.openConfig), to: nil, from: nil)
+                } label: {
+                    Label("Open", systemImage: "folder")
+                }
+                .help("Open a configuration file (Command-O)")
+
+                Button {
+                    model.saveCurrentConfig()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .help("Save the current configuration (Command-S)")
+
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.showScopesWindow), to: nil, from: nil)
+                } label: {
+                    Label("Scopes", systemImage: "waveform.path")
+                }
+                .help("Open the Scopes window")
+
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.showSpectrumWindow), to: nil, from: nil)
+                } label: {
+                    Label("Spectrum", systemImage: "chart.bar.xaxis")
+                }
+                .help("Open the MPX Spectrum window")
+
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.showLevelsWindow), to: nil, from: nil)
+                } label: {
+                    Label("Levels", systemImage: "slider.vertical.3")
+                }
+                .help("Open the Levels window")
             }
         }
     }
@@ -5136,11 +5226,11 @@ private struct Card<Content: View>: View {
 /// engine's tone source. Enable replaces the audio input live; the
 /// rest of the chain (AGC, multiband, clippers, encoder, BS.412)
 /// processes the tone normally so operators can observe response at
-/// calibrated input levels (default −20 dBFS, broadcast line
+/// calibrated input levels (default -20 dBFS, broadcast line
 /// reference). Three signal types — sine for level / separation /
 /// encoder-bandwidth tests, pink and white noise for broadband
 /// response checks. Stereo modes cover the operator's diagnostic
-/// needs (mono / L=−R / L-only / R-only).
+/// needs (mono / L=-R / L-only / R-only).
 ///
 /// All controls are live-applicable via the existing RuntimeConfig
 /// path; no engine restart required when toggling enable, type,
@@ -5184,6 +5274,7 @@ private struct SnapshotSlotRow: View {
     @ObservedObject var model: MPXPrimeViewModel
     let slot: Int
     @State private var draftName: String = ""
+    @State private var confirmingClear = false
 
     private var snapshot: ConfigSnapshot? { model.snapshots[slot] }
 
@@ -5234,9 +5325,8 @@ private struct SnapshotSlotRow: View {
                 .disabled(snapshot == nil)
                 .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
 
-                Button("Clear") {
-                    model.clearSnapshot(slot: slot)
-                    draftName = ""
+                Button("Clear", role: .destructive) {
+                    confirmingClear = true
                 }
                 .disabled(snapshot == nil)
                 .help("Delete this slot. Cannot be undone.")
@@ -5245,6 +5335,21 @@ private struct SnapshotSlotRow: View {
         }
         .onAppear {
             draftName = snapshot?.name ?? ""
+        }
+        // Deleting a saved slot is irreversible -- confirm first (HIG: confirm
+        // destructive actions that can't be undone).
+        .confirmationDialog(
+            "Clear snapshot \(slot + 1)?",
+            isPresented: $confirmingClear,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Snapshot", role: .destructive) {
+                model.clearSnapshot(slot: slot)
+                draftName = ""
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\"\(snapshot?.name ?? "Snapshot \(slot + 1)")\" will be deleted. This cannot be undone.")
         }
     }
 
@@ -5374,7 +5479,7 @@ private struct TestToneView: View {
                 LabeledContent("Stereo mode") {
                     Picker("Stereo mode", selection: modeBinding) {
                         Text("Mono").tag("mono")
-                        Text("L=−R").tag("stereo")
+                        Text("L=-R").tag("stereo")
                         Text("Left").tag("left")
                         Text("Right").tag("right")
                     }
@@ -5424,13 +5529,16 @@ private struct TestToneView: View {
                         in: -60.0 ... 0.0,
                         step: 0.5
                     )
+                    .accessibilityLabel("Output level")
+                    .accessibilityValue(
+                        Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB)))
                 } label: {
                     Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB))
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 96, alignment: .leading)
                 }
                 Text(
-                    "Default −20 dBFS matches broadcast line-level reference. "
+                    "Default -20 dBFS matches broadcast line-level reference. "
                     + "Tone enters the chain pre-AGC, so the input meter on "
                     + "the Monitoring tab will read the configured level "
                     + "(modulo the chain's response to the signal)."
@@ -5492,7 +5600,7 @@ private struct TestToneView: View {
 
     private func modeLabel(_ mode: String) -> String {
         switch mode {
-        case "stereo": return "Stereo (L=−R)"
+        case "stereo": return "Stereo (L=-R)"
         case "left":   return "Left only"
         case "right":  return "Right only"
         default:       return "Mono"
@@ -5790,16 +5898,23 @@ private struct MonitoringDashboardView: View {
 
     private func dropoutPill(label: String, count: Int) -> some View {
         let tint: Color = count == 0 ? .green : (count < 3 ? .orange : .red)
+        let state = count == 0 ? "ok" : (count < 3 ? "warning" : "error")
         return HStack(spacing: 4) {
             Circle()
                 .fill(tint)
                 .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
             Text(label)
                 .font(BroadcastStyle.scaleLabel)
                 .foregroundStyle(.secondary)
             Text("\(count)")
                 .font(BroadcastStyle.valueReadout)
         }
+        // The dot's red/orange/green is the only visual state cue; carry that
+        // state as words for VoiceOver and Differentiate-Without-Color users.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue("\(count), \(state)")
     }
 
     // MARK: - Panel B: DSP chain (3-pill context strip + 13-stage grid)
@@ -6025,6 +6140,10 @@ private struct DSPStatusPill: View {
                 .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+        // Read as one item ("AGC, On") instead of LED + two text fragments.
+        // The value text already states the status word, so it is not
+        // color-only; this only fixes the fragmentation.
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -6334,6 +6453,12 @@ private struct MeterRow: View {
             MeterBar(level: level, peakLevel: peakLevel, scaleStyle: scaleStyle)
         }
         .font(.callout)
+        // Collapse the label / readout / bar into one VoiceOver element so it
+        // announces "<name>, <value>" rather than two stray text fragments
+        // with a meaningless bar in between.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(valueText)
     }
 }
 
@@ -6518,6 +6643,11 @@ struct ScopeView: View {
         }
         .frame(minHeight: 130, idealHeight: 150)
         .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+        // A Canvas exposes no children; without this it is silent noise to
+        // VoiceOver. Give the region a name + image role.
+        .accessibilityElement()
+        .accessibilityLabel("Waveform scope")
+        .accessibilityAddTraits(.isImage)
     }
 }
 
@@ -6677,6 +6807,10 @@ struct MPXSpectrumView: View {
         .transaction { txn in
             txn.animation = nil
         }
+        // Canvas content is invisible to VoiceOver; name the region.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("MPX spectrum, 0 to \(Int((maxHz / 1000.0).rounded())) kHz")
+        .accessibilityAddTraits(.isImage)
     }
 
     private func yPosition(forDB db: Float, height: CGFloat) -> CGFloat {
@@ -6903,6 +7037,10 @@ struct AudioBarSpectrumView: View {
         .transaction { txn in
             txn.animation = nil
         }
+        // Canvas content is invisible to VoiceOver; name the region.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Audio spectrum, one-third octave RTA")
+        .accessibilityAddTraits(.isImage)
     }
 
     private func yPosition(forDB db: Float, in rect: CGRect) -> CGFloat {
@@ -7302,35 +7440,35 @@ private struct ProcessingLimiterTab: View {
                 format: "%.0f ms",
                 tooltip: "Release time of the limiter envelope. Faster (lower ms) recovers loudness quicker but may pump; slower is cleaner but holds gain reduction longer."
             ).disabled(disabled)
-            Toggle(
-                "Use New Band-limited Limiter Ceiling",
-                isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
-            )
-            .help("Switches the pre-encode limiter ceiling from the classic tanh soft ceiling to the experimental 0.27 band-limited residual ceiling. Off = old/current chain. On = new patent-style candidate.")
-            .disabled(disabled)
             DoubleSliderRow(
                 title: "Look-ahead",
                 value: model.configBinding(\.preEncodeLookaheadMS, runtimeDisposition: .restart),
                 range: 0...5,
                 format: "%.2f ms",
-                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = legacy feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
+                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
             ).disabled(disabled)
-            Toggle(
-                "HF-Only Look-ahead Detector (Phase 2 / Dolby)",
-                isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)
-            )
-            .help("Phase 2: high-pass the detector path so look-ahead engages only on HF transients (where pre-emphasis concentrates peaks). Audio path stays full-band. LF dynamics / punch are not subject to the look-ahead gain ramp. Patent: US 5,579,404 / EP 0685130 (Dolby, expired 2013). Restart-required.")
-            .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
-            DoubleSliderRow(
-                title: "HF Detector Cutoff",
-                value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
-                range: 1_000...12_000,
-                format: "%.0f Hz",
-                tooltip: "High-pass cutoff for the HF-only look-ahead detector. 4 kHz default matches the Dolby spec where pre-emphasis-induced peaks start dominating. Lower (2-3 kHz) catches more vocal sibilance; higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required."
-            ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
-            Text("Pre-encode peak limiter on L/R audio. 4x oversampled true-peak detector with stereo-linked gain. Look-ahead and HF-only detector (Phase 2, Dolby US 5,579,404) are opt-in via the controls above; the band-limited residual toggle is the 0.27 patent-style ceiling candidate.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            DisclosureGroup("Advanced") {
+                Toggle(
+                    "Cleaner Limiter Ceiling",
+                    isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
+                )
+                .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Experimental; off keeps the current behavior.")
+                .disabled(disabled)
+                Toggle(
+                    "High-Frequency Transient Look-ahead",
+                    isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)
+                )
+                .help("Engages look-ahead only on high-frequency transients (where pre-emphasis concentrates peaks), leaving low-frequency punch untouched. Requires Look-ahead above 0. Restart-required.")
+                .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
+                DoubleSliderRow(
+                    title: "HF Detector Cutoff",
+                    value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
+                    range: 1_000...12_000,
+                    format: "%.0f Hz",
+                    tooltip: "High-pass cutoff for the HF transient look-ahead detector. 4 kHz default; lower (2-3 kHz) catches more vocal sibilance, higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required."
+                ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
+            }
+            .disabled(disabled)
         }
     }
 }
@@ -7566,8 +7704,8 @@ private struct ProcessingCompositeClipperTab: View {
     var body: some View {
         Card(title: "Composite Clipper") {
             Toggle("Enable Composite Clipper", isOn: model.configBinding(\.compositeClipperEnabled, runtimeDisposition: .live))
-            Toggle("Experimental Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
-                .help("Additional off-by-default loudness stage after the broadband composite clipper. Splits the audio composite into low/mid/high bands, clips the bands independently, then recombines before pilot/RDS injection.")
+            Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
+                .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
             let disabled = !model.config.compositeClipperEnabled
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.compositeClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)
@@ -7581,25 +7719,22 @@ private struct ProcessingCompositeClipperTab: View {
                     .foregroundStyle(.secondary)
             }
             Divider()
-            Text("Per-band cancellation")
+            Text("Subcarrier Protection")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Toggle("Cancel audio band (0-17 kHz)", isOn: model.configBinding(\.compositeClipperCancelAudio, runtimeDisposition: .live))
-                .help("Off (default): full clipping in the audio band — maximum loudness. On: subtracts in-band clip residual to keep highs cleaner at the cost of peak control / loudness. Enable when high-frequency harshness is the bigger concern.")
+            Toggle("Protect Audio Highs", isOn: model.configBinding(\.compositeClipperCancelAudio, runtimeDisposition: .live))
+                .help("Off (default): full clipping in the audio band for maximum loudness. On: subtracts in-band clip residual to keep highs cleaner, at the cost of some peak control / loudness. Enable when high-frequency harshness is the bigger concern.")
                 .disabled(disabled)
-            Toggle("Cancel pilot guard (17-21 kHz)", isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live))
-                .help("Removes clipping IM from the 19 kHz pilot region so the receiver decodes stereo cleanly. Leave on except for diagnostic A/B.")
+            Toggle("Protect Stereo Pilot", isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live))
+                .help("Removes clipping distortion from the 19 kHz pilot region so the receiver decodes stereo cleanly. Leave on except for diagnostic A/B.")
                 .disabled(disabled)
-            Toggle("Cancel stereo subcarrier (23-53 kHz)", isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live))
-                .help("Removes clipping IM from the 38 kHz DSB-SC L-R subcarrier so stereo separation is preserved. Leave on except for diagnostic A/B.")
+            Toggle("Protect Stereo Subcarrier", isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live))
+                .help("Removes clipping distortion from the 38 kHz L-R subcarrier so stereo separation is preserved. Leave on except for diagnostic A/B.")
                 .disabled(disabled)
-            Toggle("Cancel RDS guard (55-59 kHz)", isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live))
-                .help("Removes clipping IM from the 57 kHz RDS region so receivers don't see clipper noise vector-summed with RDS. Leave on except for diagnostic A/B.")
+            Toggle("Protect RDS", isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live))
+                .help("Removes clipping distortion from the 57 kHz RDS region so receivers don't see clipper noise summed with the RDS subcarrier. Leave on except for diagnostic A/B.")
                 .disabled(disabled)
-            Text("8x oversampled tanh soft-clip on audio composite with additive distortion cancellation (Orban US 4,460,871 / 5,737,434). Primary loudness lever: peaks above Threshold are shaped toward Ceiling. Bandpass-isolated clip residual is subtracted from the 17-21 kHz pilot guard, 23-53 kHz stereo subcarrier, and 55-59 kHz RDS guard so those bands stay clean. Placed before BS.412 and safety limiter. Pilot and RDS are injected after this stage.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Tip: leave the composite clipper off when loudness isn't critical — it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Cancel audio band\" recovers HF detail at the cost of some loudness.")
+            Text("Tip: leave the composite clipper off when loudness isn't critical -- it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Protect Audio Highs\" recovers HF detail at the cost of some loudness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -7919,6 +8054,17 @@ private struct RDSRadiotextTab: View {
             Toggle("Center RT", isOn: model.configBinding(\.rdsRTCentered, runtimeDisposition: .liveRDS))
             Toggle("Append CR", isOn: model.configBinding(\.rdsRTCR, runtimeDisposition: .liveRDS))
             Toggle("Enable RT+", isOn: model.configBinding(\.rdsEnableRTPlus, runtimeDisposition: .liveRDS))
+            Text(
+                "RT+ tags the song inside the RadioText -- by the RDS standard it cannot send "
+                + "Artist/Title unless that text is actually in an RT message. To show Artist/Title "
+                + "on receivers: (1) enable the Now Playing Script below, and (2) put "
+                + "\"{artist} - {title}\" (or {now_playing}) in the Single Radiotext field or one of "
+                + "the RT Buffer messages above. RT+ receivers then show Artist and Title in their "
+                + "own fields (and cache them while other messages scroll). Tip: keep always-on "
+                + "station identity in PS / Long PS, not RadioText."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
             Divider()
             Toggle(
                 "Enable Now Playing Script",
@@ -7951,7 +8097,7 @@ private struct RDSRadiotextTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if model.value(for: \.rdsNowPlayingEnabled) {
-                Text("RT+ tags are derived from the structured script output when now playing is enabled.")
+                Text("The now-playing script fills the {artist} / {title} macros; RT+ tags them wherever they appear in your RadioText (Single Radiotext or an RT Buffer).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -8005,23 +8151,38 @@ private struct RDSCarrierTab: View {
 private struct RDSScheduleTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
+    // Automatic (recommended) vs Custom. Automatic uses the standard
+    // IEC 62106 schedule, auto-derived from the enabled RDS features; Custom
+    // uses the manual group sequence. Mapped onto the existing scheduler
+    // flags so existing INIs keep working unchanged -- the manual sequence is
+    // active only when both Standard and Auto are off.
+    private var useCustomSequence: Binding<Bool> {
+        Binding(
+            get: { !model.config.rdsSchedulerStandard && !model.config.rdsSchedulerAuto },
+            set: { custom in
+                model.setConfigValue(\.rdsSchedulerStandard, !custom, runtimeDisposition: .liveRDS)
+                model.setConfigValue(\.rdsSchedulerAuto, !custom, runtimeDisposition: .liveRDS)
+            }
+        )
+    }
+
     var body: some View {
         Card(title: "Group Schedule") {
-            TextField(
-                "Group Sequence",
-                text: model.configBinding(\.rdsGroupSequence, runtimeDisposition: .liveRDS))
-            Toggle(
-                "Scheduler Auto",
-                isOn: model.configBinding(\.rdsSchedulerAuto, runtimeDisposition: .liveRDS))
-            Toggle(
-                "Use Standard Schedule",
-                isOn: model.configBinding(\.rdsSchedulerStandard, runtimeDisposition: .liveRDS))
-            Toggle(
-                "Include LPS in Standard",
-                isOn: model.configBinding(\.rdsSchedulerStandardLPS, runtimeDisposition: .liveRDS))
-            Text("Custom sequence is used when Scheduler Auto and Use Standard are both off. Standard schedule covers IEC 62106 Table 14 group rates.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Toggle("Custom group sequence", isOn: useCustomSequence)
+                .help("Off (recommended): MPX Prime schedules RDS groups automatically at IEC 62106 group rates, derived from the features you enable (PS, RadioText, RT+, Clock-Time, AF, PTYN, Long PS). On: transmit exactly the group list you specify.")
+            if useCustomSequence.wrappedValue {
+                TextField(
+                    "Group Sequence",
+                    text: model.configBinding(\.rdsGroupSequence, runtimeDisposition: .liveRDS))
+                    .textFieldStyle(.roundedBorder)
+                Text("Space-separated groups, e.g. 0A 0A 2A 3A 11A. Advanced override -- you are responsible for including every group your enabled features need.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Automatic (recommended): the group mix follows IEC 62106 group rates and updates as you enable RDS features.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
 
         Card(title: "Clock Time (4A)") {
@@ -8057,7 +8218,8 @@ private struct RDSAFTab: View {
                     Text("Method A").tag("A")
                     Text("Method B").tag("B")
                 }
-                .frame(width: 130)
+                .pickerStyle(.segmented)
+                .fixedSize()
                 TextField(
                     "AF List",
                     text: model.configBinding(\.rdsAFList, runtimeDisposition: .liveRDS)
@@ -8475,16 +8637,16 @@ private struct AboutSectionView: View {
                 .font(.title2.weight(.semibold))
 
             Text("Version \(AppConfig.appVersion)")
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
             Text("Copyright © 2026 Bkram Developments")
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(.secondary)
 
             Link("github.com/bkram/MPXPrime", destination: kProjectURL)
-                .font(.system(size: 11))
+                .font(.caption)
 
             Divider()
                 .padding(.vertical, 4)
@@ -8497,7 +8659,7 @@ private struct AboutSectionView: View {
                 Text("Released under GPL-3.0.")
                     .foregroundStyle(.secondary)
             }
-            .font(.system(size: 11))
+            .font(.footnote)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -8560,6 +8722,9 @@ private struct DoubleSliderRow: View {
                 Slider(value: $value, in: range)
                     .controlSize(.small)
                     .accessibilityLabel(accessibilityLabel ?? title)
+                    // VoiceOver otherwise reads the slider as a bare 0-100%;
+                    // surface the real unit-bearing readout instead.
+                    .accessibilityValue(Text(String(format: format, value)))
                 Text(String(format: format, value))
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -8589,6 +8754,10 @@ private struct IntStepperRow: View {
             HStack(spacing: 12) {
                 Stepper("", value: $value, in: range, step: step)
                     .labelsHidden()
+                    // labelsHidden() drops the visual label; restore an
+                    // explicit name + the unit-bearing value for VoiceOver.
+                    .accessibilityLabel(title)
+                    .accessibilityValue(Text(String(format: format, value)))
                 Text(String(format: format, value))
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)

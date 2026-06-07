@@ -1,6 +1,6 @@
 # MPX Prime
 
-Version: 0.30
+Version: 0.32
 
 MPX Prime is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -420,6 +420,21 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 ### Now Playing script output
 
 The RDS Radiotext section can poll an external script for now-playing metadata.
+
+Two ready-to-use example pollers ship with MPX Prime, both in the DMG's
+`Now Playing Scripts/` folder and inside the app at
+`MPX Prime.app/Contents/Resources/Scripts/`:
+
+- `vlc-nowplaying.sh` — reads the current item from VLC via AppleScript.
+- `cog-nowplaying.sh` — reads the current entry's artist / title from
+  [Cog](https://github.com/losnoco/cog) via its AppleScript dictionary
+  (`currentEntry`). Note: Cog exposes no play/pause state to scripts, so it
+  reports the loaded track even while paused (it clears the entry on Stop).
+
+Copy one somewhere stable (for example your home folder) and point the
+Radiotext now-playing script setting at it, or use it as a template for
+another player. The first run prompts once for Automation permission to
+control the player.
 
 Expected script behavior:
 

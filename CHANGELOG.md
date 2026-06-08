@@ -9,6 +9,21 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## Unreleased — develop/v.034
+
+- **Bass-desensitised wideband AGC** (opt-in, default off; `wideband_agc_bass_desensitize`,
+  AGC tab toggle). A kick / heavy bass line no longer pumps the whole chain: P4
+  (US 4,249,042) low-shelf-cuts the LF band out of the detector *sidechain* (audio
+  untouched) so bass can't drive the loudness reading; P5 (US 3,790,896) recovers
+  fast from brief reductions. Verifier-backed (`BassDesensitizedAGCTests`: bass no
+  longer drives the AGC; config round-trip).
+- **Now-playing scripts unified** into a single auto-detecting `nowplaying.sh` (VLC
+  then Cog) — shared title cleanup / output written once. Strips parenthetical
+  `(Radio Edit)` and bracketed `[Official Video]` title decorations (both default-on,
+  `STRIP_TITLE_PARENS` / `STRIP_TITLE_BRACKETS`) that overflow RT / PS.
+- **Platform support tiers** documented: Apple Silicon (arm64) Tier 1; Intel
+  (x86_64) Tier 2, best-effort.
+
 ## 0.33 — 2026-06-07
 
 ### Processed-audio output mode

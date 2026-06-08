@@ -2686,6 +2686,26 @@ struct WidebandAGCRider {
     /// dB on busy program.
     private var density: Float = 0.0
 
+    // Bass-desensitised AGC (opt-in, default off). Two complementary effects on
+    // the AGC sidechain so a kick / heavy bass line doesn't pump the whole chain:
+    //   P4 (US 4,249,042): attenuate the LF band in the *sidechain* (not the audio)
+    //     so bass / kick energy can't dominate the loudness detector and drag the
+    //     whole chain down. The detector tracks the mid/HF program instead.
+    //   P5 (US 3,790,896): duration-aware recovery -- a *brief* reduction (a
+    //     transient duck) recovers fast; a sustained reduction recovers at the
+    //     normal (density-scaled) rate. Stops a momentary duck from pumping.
+    private var bassDesensEnabled: Bool = false
+    private var bassShelfL = Biquad()
+    private var bassShelfR = Biquad()
+    private var bassFastRecoveryCoeff: Float = 0.0
+    private var dtPerSample: Float = 0.0
+    private var reductionDurationS: Float = 0.0
+    // Low-shelf cut applied to the *sidechain* LF (a decisive -14 dB below the
+    // crossover) so bass / kicks don't drive the loudness detector. Audio is
+    // untouched. A shelf gives the correct magnitude rolloff -- a subtract-lowpass
+    // would phase-cancel poorly on tones.
+    private static let bassShelfGainDB: Float = -14.0
+
     mutating func configure(
         sampleRate: Float,
         targetDB: Float,
@@ -2694,7 +2714,9 @@ struct WidebandAGCRider {
         minGainDB: Float,
         maxGainDB: Float,
         kWeightingEnabled: Bool = true,
-        programDependentRelease: Bool = true
+        programDependentRelease: Bool = true,
+        bassDesensitizeEnabled: Bool = false,
+        bassDesensitizeFreqHz: Float = 150.0
     ) {
         let sr = max(8_000.0, sampleRate)
         self.sampleRate = sr
@@ -2730,19 +2752,36 @@ struct WidebandAGCRider {
         self.programDependentRelease = programDependentRelease
         kWeightL.configure(sampleRate: sr)
         kWeightR.configure(sampleRate: sr)
+
+        // Bass-desensitise sidechain setup.
+        self.bassDesensEnabled = bassDesensitizeEnabled
+        let bassFreq = clampf(bassDesensitizeFreqHz, 60.0, 300.0)
+        bassShelfL.configureLowShelf(gainDB: Self.bassShelfGainDB, cutoffHz: bassFreq, sampleRate: sr)
+        bassShelfR.configureLowShelf(gainDB: Self.bassShelfGainDB, cutoffHz: bassFreq, sampleRate: sr)
+        // Brief reductions recover at ~100 ms (P5).
+        bassFastRecoveryCoeff = expf(-1.0 / Float(0.100 * Double(sr)))
+        dtPerSample = 1.0 / sr
     }
 
     mutating func process(left: Float, right: Float) -> (Float, Float) {
         // Sidechain feed — audio path stays pristine, only the
         // detector sees the K-weighted signal.
-        let sideL: Float
-        let sideR: Float
+        var sideL: Float
+        var sideR: Float
         if kWeightingEnabled {
             sideL = kWeightL.process(left)
             sideR = kWeightR.process(right)
         } else {
             sideL = left
             sideR = right
+        }
+
+        if bassDesensEnabled {
+            // P4: low-shelf-cut the LF band in the sidechain so bass / kick energy
+            // can't dominate the loudness detector. Audio path is untouched -- only
+            // the detector is desensitised.
+            sideL = bassShelfL.process(sideL)
+            sideR = bassShelfR.process(sideR)
         }
 
         let monoPower = max(1e-12, 0.5 * ((sideL * sideL) + (sideR * sideR)))
@@ -2769,7 +2808,7 @@ struct WidebandAGCRider {
         let desiredGainDB = clampf(targetDB - levelDB, minGainDB, maxGainDB)
 
         let targetGainDB: Float
-        let coeff: Float
+        var coeff: Float
         if levelDB < gateThresholdDB {
             // Do not lift room noise or codec hash; drift back toward unity instead.
             targetGainDB = 0.0
@@ -2807,11 +2846,25 @@ struct WidebandAGCRider {
             } else {
                 coeff = useFastMakeup ? fastMakeupCoeff : releaseCoeff
             }
+            if bassDesensEnabled && reductionDurationS < 0.35 {
+                // P5: the reduction has only been active briefly (a transient
+                // duck), so recover fast -- smaller coeff = faster approach.
+                coeff = min(coeff, bassFastRecoveryCoeff)
+            }
             gateActive = false
         }
 
         gainDB = (coeff * gainDB) + ((1.0 - coeff) * targetGainDB)
         gainDB = clampf(gainDB, minGainDB, maxGainDB)
+
+        if bassDesensEnabled {
+            // Track how long the AGC has been actively reduced, for P5 recovery.
+            if gainDB < -0.5 {
+                reductionDurationS = min(reductionDurationS + dtPerSample, 5.0)
+            } else {
+                reductionDurationS = max(0.0, reductionDurationS - dtPerSample)
+            }
+        }
 
         let gain = powf(10.0, gainDB / 20.0)
         return (left * gain, right * gain)
@@ -2824,6 +2877,9 @@ struct WidebandAGCRider {
         density = 0.0
         fastEnv = 0.0
         slowEnv = 0.0
+        reductionDurationS = 0.0
+        bassShelfL.reset()
+        bassShelfR.reset()
         kWeightL.reset()
         kWeightR.reset()
     }
@@ -5611,6 +5667,7 @@ final class MPXGenerator {
         let widebandAGCReleaseMS: Float
         let widebandAGCKWeightingEnabled: Bool
         let widebandAGCReleaseProgramDependent: Bool
+        let widebandAGCBassDesensitizeEnabled: Bool
         let preEncodeAudioLimiterEnabled: Bool
         let preEncodeThreshold: Float
         let preEncodeReleaseMS: Float
@@ -5728,6 +5785,7 @@ final class MPXGenerator {
             widebandAGCReleaseMS: Float(config.widebandAGCReleaseMS),
             widebandAGCKWeightingEnabled: config.widebandAGCKWeightingEnabled,
             widebandAGCReleaseProgramDependent: config.widebandAGCReleaseProgramDependent,
+            widebandAGCBassDesensitizeEnabled: config.widebandAGCBassDesensitizeEnabled,
             preEncodeAudioLimiterEnabled: config.preEncodeAudioLimiterEnabled,
             preEncodeThreshold: Float(config.preEncodeThreshold),
             preEncodeReleaseMS: Float(config.preEncodeReleaseMS),
@@ -5989,6 +6047,7 @@ final class MPXGenerator {
     private var widebandAGCReleaseMS: Float
     private var widebandAGCKWeightingEnabled: Bool = true
     private var widebandAGCReleaseProgramDependent: Bool = true
+    private var widebandAGCBassDesensitizeEnabled: Bool = false
     private var widebandAGC = WidebandAGCRider()
 
     private var phaseRotationEnabled: Bool
@@ -6464,6 +6523,7 @@ final class MPXGenerator {
         self.widebandAGCReleaseMS = Float(config.widebandAGCReleaseMS)
         self.widebandAGCKWeightingEnabled = config.widebandAGCKWeightingEnabled
         self.widebandAGCReleaseProgramDependent = config.widebandAGCReleaseProgramDependent
+        self.widebandAGCBassDesensitizeEnabled = config.widebandAGCBassDesensitizeEnabled
 
         self.phaseRotationEnabled = config.phaseRotationEnabled
         self.phaseRotationFreqHz = clampf(Float(config.phaseRotationFreqHz), 50.0, 500.0)
@@ -6617,7 +6677,8 @@ final class MPXGenerator {
             minGainDB: widebandAGCMinGainDB,
             maxGainDB: widebandAGCMaxGainDB,
             kWeightingEnabled: widebandAGCKWeightingEnabled,
-            programDependentRelease: widebandAGCReleaseProgramDependent
+            programDependentRelease: widebandAGCReleaseProgramDependent,
+            bassDesensitizeEnabled: widebandAGCBassDesensitizeEnabled
         )
         inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: audioRate)
         hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: audioRate)
@@ -7012,7 +7073,10 @@ final class MPXGenerator {
             attackMS: widebandAGCAttackMS,
             releaseMS: widebandAGCReleaseMS,
             minGainDB: widebandAGCMinGainDB,
-            maxGainDB: widebandAGCMaxGainDB
+            maxGainDB: widebandAGCMaxGainDB,
+            kWeightingEnabled: widebandAGCKWeightingEnabled,
+            programDependentRelease: widebandAGCReleaseProgramDependent,
+            bassDesensitizeEnabled: widebandAGCBassDesensitizeEnabled
         )
         inputHPF.configureHighpass(cutoffHz: hpfHz, sampleRate: audioRate)
         hfTrim.configureHighShelf(gainDB: hfTrimDB, cutoffHz: hfTrimHz, sampleRate: audioRate)
@@ -7131,8 +7195,10 @@ final class MPXGenerator {
         let agcFlagsChanged =
             widebandAGCKWeightingEnabled != config.widebandAGCKWeightingEnabled
             || widebandAGCReleaseProgramDependent != config.widebandAGCReleaseProgramDependent
+            || widebandAGCBassDesensitizeEnabled != config.widebandAGCBassDesensitizeEnabled
         widebandAGCKWeightingEnabled = config.widebandAGCKWeightingEnabled
         widebandAGCReleaseProgramDependent = config.widebandAGCReleaseProgramDependent
+        widebandAGCBassDesensitizeEnabled = config.widebandAGCBassDesensitizeEnabled
 
         if agcChanged || agcFlagsChanged {
             widebandAGC.configure(
@@ -7143,7 +7209,8 @@ final class MPXGenerator {
                 minGainDB: widebandAGCMinGainDB,
                 maxGainDB: widebandAGCMaxGainDB,
                 kWeightingEnabled: widebandAGCKWeightingEnabled,
-                programDependentRelease: widebandAGCReleaseProgramDependent
+                programDependentRelease: widebandAGCReleaseProgramDependent,
+                bassDesensitizeEnabled: widebandAGCBassDesensitizeEnabled
             )
         }
 

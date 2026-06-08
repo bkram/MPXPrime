@@ -194,6 +194,11 @@ struct AppConfig {
     /// program. Scales the effective release coefficient up to 3x
     /// based on a 0.5 s density estimate of the detector envelope.
     var widebandAGCReleaseProgramDependent: Bool = true
+    /// Bass-desensitise the AGC sidechain (opt-in, default off): clip LF transient
+    /// peaks out of the detector (US 4,249,042) + duration-aware fast recovery for
+    /// brief reductions (US 3,790,896), so a kick / heavy bass line doesn't pump
+    /// the whole chain.
+    var widebandAGCBassDesensitizeEnabled: Bool = false
     var primeBassEnabled: Bool = false
     var primeBassPresetID: String = "ac"
     var primeBassAmount: Double = 0.22
@@ -521,6 +526,9 @@ struct AppConfig {
         cfg.widebandAGCReleaseProgramDependent = mpx.bool(
             "wideband_agc_release_program_dependent",
             defaultValue: cfg.widebandAGCReleaseProgramDependent)
+        cfg.widebandAGCBassDesensitizeEnabled = mpx.bool(
+            "wideband_agc_bass_desensitize",
+            defaultValue: cfg.widebandAGCBassDesensitizeEnabled)
         cfg.widebandAGCMaxGainDB = mpx.double(
             "wideband_agc_max_gain_db", defaultValue: cfg.widebandAGCMaxGainDB)
         cfg.widebandAGCMinGainDB = mpx.double(
@@ -1050,6 +1058,7 @@ struct AppConfig {
             "wideband_agc_release_ms = \(Self.formatFloat(widebandAGCReleaseMS))",
             "wideband_agc_k_weighting = \(Self.boolString(widebandAGCKWeightingEnabled))",
             "wideband_agc_release_program_dependent = \(Self.boolString(widebandAGCReleaseProgramDependent))",
+            "wideband_agc_bass_desensitize = \(Self.boolString(widebandAGCBassDesensitizeEnabled))",
             "wideband_agc_max_gain_db = \(Self.formatFloat(widebandAGCMaxGainDB))",
             "wideband_agc_min_gain_db = \(Self.formatFloat(widebandAGCMinGainDB))",
             "primebass_enabled = \(Self.boolString(primeBassEnabled))",

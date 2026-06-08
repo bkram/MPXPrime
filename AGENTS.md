@@ -8,6 +8,7 @@ Native macOS FM composite (MPX) generator — real-time broadcast-style stereo e
 
 - Primary entrypoint: `macOS/Package.swift`
 - Default user config: `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- **Platform tiers: Apple Silicon (arm64) is Tier 1** (primary, fully-supported, optimization target). **Intel (x86_64) is Tier 2, best-effort** — ships in the universal binary with an identical audio chain, but perf work targets arm64 first; give Intel lighter-weight fallbacks where cheap (e.g. the arch-tiered GUI refresh profile), don't block on Intel-only optimization.
 
 See also: `docs/manual.md` (user manual: usage / configuration / RDS / reference tables), `docs/ARCHITECTURE.md` (detailed DSP chain and stage descriptions), `docs/BUILDING.md` (build / run / test / package from source), `plan.md` (roadmap).
 

@@ -69,6 +69,7 @@ listening aid, not the on-air signal.
 ## Requirements
 
 - macOS 15+
+- **Platform support tiers:** **Apple Silicon (arm64) is Tier 1** — the primary, fully-supported target. **Intel (x86_64) is Tier 2, best-effort** — the universal binary runs and the audio chain is identical, but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first; Intel gets lighter-weight fallbacks where they help but is not the optimization priority.
 - Xcode command line tools / Swift 6 toolchain (only needed for building from source — download the DMG below if you just want to run it)
 - **Audio output device — depends on the output mode (see above):**
   - *MPX Composite with RDS:* an external USB / Thunderbolt interface that runs

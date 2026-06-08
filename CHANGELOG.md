@@ -11,6 +11,16 @@ combination test suite. Newest first.
 
 ## Unreleased — develop/v.034
 
+- **Lower cold-start input latency.** On a cold start the render path outputs
+  silence until the input ring primes, but the input device free-runs and
+  overshoots the ring well past prime depth in the meantime, leaving ~100 ms of
+  standing latency that a warm (tone->input) restart didn't have. The ring now
+  snaps to prime depth the instant it primes (same RT-safe call the warm path
+  uses), so cold start settles at the same low latency as a warm restart
+  (measured ~300 ms -> ~200 ms at block 1024 / 192 kHz). Note: the input ring
+  target is floor-limited at 100 ms, so block sizes at or below ~512 give the
+  same ring depth -- 256 buys no latency over 512, only higher callback load.
+
 - **Long-run GUI stall — monitoring-overhead reduction (ARM and Intel).** The
   GUI progressively bogged down (UI near-frozen) when a monitoring window was
   left open for hours; the audio render, on its own real-time thread, was never

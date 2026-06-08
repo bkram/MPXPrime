@@ -122,24 +122,33 @@ struct BroadcastStatusBar: View {
         }
     }
 
+    // SOURCE / RATE come from streamHealth, which is populated by the
+    // monitoring refresh (now on LiveTelemetry, not the view model). Observe
+    // telemetry directly so these chips fill in after the engine starts;
+    // otherwise the always-visible header would only refresh on a view-model
+    // change and read a stale "-" until the next one.
     private var sourceChip: some View {
-        let raw = model.streamHealth.inputName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = (model.streamHealth.isRunning && !raw.isEmpty) ? raw : "—"
-        return chipLabelledValue(
-            label: "SOURCE",
-            value: value,
-            tint: .primary
-        )
+        LiveTelemetryView(telemetry: model.telemetry) { t in
+            let raw = t.streamHealth.inputName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = (t.streamHealth.isRunning && !raw.isEmpty) ? raw : "—"
+            chipLabelledValue(
+                label: "SOURCE",
+                value: value,
+                tint: .primary
+            )
+        }
     }
 
     private var sampleRateChip: some View {
-        let rate = model.streamHealth.renderHz
-        let value = rate > 0 ? "\(rate / 1_000) kHz" : "—"
-        return chipLabelledValue(
-            label: "RATE",
-            value: value,
-            tint: .primary
-        )
+        LiveTelemetryView(telemetry: model.telemetry) { t in
+            let rate = t.streamHealth.renderHz
+            let value = rate > 0 ? "\(rate / 1_000) kHz" : "—"
+            chipLabelledValue(
+                label: "RATE",
+                value: value,
+                tint: .primary
+            )
+        }
     }
 
     /// Current output mode: the FM composite (default), the decoded-MPX monitor,

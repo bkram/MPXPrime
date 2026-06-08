@@ -11,15 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased — develop/v.034
 
-- **Long-run GUI stall fixed (ARM and Intel).** The vertical meter strips (Levels
-  window) and horizontal meter bars (Monitoring dashboard / status bar) drew their
-  level fill / peak / target as SwiftUI subviews whose `.frame(width:/height:)`
-  tracked the value, so every refresh tick (up to 30 Hz) re-ran a full-window
-  AppKit Auto Layout pass. With a meter window left open for hours this
-  progressively loaded the main thread until the UI was near-frozen (audio, on its
-  own real-time thread, was never affected). Both are now drawn in a `Canvas` — a
-  value change is a repaint, never a layout pass. Diagnosed from a main-thread
-  `sample` showing ~40% of time in `NSView _layoutSubtreeWithOldSize:`.
+- **Long-run GUI stall — monitoring-overhead reduction (ARM and Intel).** The
+  GUI progressively bogged down (UI near-frozen) when a monitoring window was
+  left open for hours; the audio render, on its own real-time thread, was never
+  affected. A main-thread `sample` traced it to the per-tick AppKit/SwiftUI
+  layout pass driven by the 30 Hz metering refresh. Two changes cut that load:
+  - Meters now draw in a `Canvas` (vertical strips on the Levels window,
+    horizontal bars on the dashboard / status bar) instead of SwiftUI subviews
+    whose `.frame(width:/height:)` tracked the value — a value change is now a
+    repaint, not a layout invalidation.
+  - High-frequency telemetry (≈65 live values) moved off `MPXPrimeViewModel`
+    into a dedicated `LiveTelemetry` observable; only the live readouts (wrapped
+    in `LiveTelemetryView`) observe it, so a metering tick no longer fires the
+    view model's `objectWillChange` and re-evaluates the whole monitoring tree.
+    The view model keeps one-line forwarding properties, so the writer code in
+    the update methods is unchanged.
+
+    A residual per-tick SwiftUI layout cost remains (variable-width live text
+    readouts ripple size changes up the stack hierarchy); finer-grained leaf
+    wrapping + fixed-footprint readouts are the next step.
 
 - **Bass-desensitised wideband AGC** (opt-in, default off; `wideband_agc_bass_desensitize`,
   AGC tab toggle). A kick / heavy bass line no longer pumps the whole chain: P4

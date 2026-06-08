@@ -30,6 +30,14 @@ combination test suite. Newest first.
   - Fixed-footprint meter readouts: the `MeterRow` value text is now a
     fixed-width monospaced-digit frame, so a per-tick value change repaints in
     place instead of resizing and re-solving the enclosing stack.
+  - The detached high-refresh windows (Levels, Scopes, MPX Spectrum, Audio
+    Spectrum) set `NSHostingController.sizingOptions = []`: the window drives
+    the size and the SwiftUI content fills it, so the hosting controller no
+    longer adds/recomputes min/intrinsic/max Auto Layout constraints on every
+    content update -- guarding against constraint accumulation in AppKit's
+    layout engine over a long-open window (a documented SwiftUI-on-macOS
+    long-running slowdown, closely related to the toolbar-recreation leak that
+    the telemetry split above also defuses).
 
   These cut the steady per-tick monitoring overhead measurably (the view model
   no longer republishes every tick), but a residual steady SwiftUI layout cost

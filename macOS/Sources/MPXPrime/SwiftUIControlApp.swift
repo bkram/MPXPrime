@@ -1594,6 +1594,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let scopesView = ScopesOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: scopesView)
+        // Flexibly sized: the window drives the size and the SwiftUI content
+        // fills it, so suppress the hosting controller's auto-added min /
+        // intrinsic / max Auto Layout constraints. On a high-refresh window
+        // this avoids per-update constraint recomputation piling up in AppKit's
+        // layout engine -- a documented long-running SwiftUI-on-macOS slowdown.
+        hostingController.sizingOptions = []
         let w = NSWindow(contentViewController: hostingController)
         w.title = kScopesWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1628,6 +1634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let spectrumView = SpectrumOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: spectrumView)
+        hostingController.sizingOptions = []  // window drives size; avoid per-update constraint churn (see Scopes window)
         let w = NSWindow(contentViewController: hostingController)
         w.title = kMPXSpectrumWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1651,6 +1658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let spectrumView = PreMPXSpectrumOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: spectrumView)
+        hostingController.sizingOptions = []  // window drives size; avoid per-update constraint churn (see Scopes window)
         let w = NSWindow(contentViewController: hostingController)
         w.title = kAudioSpectrumWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1674,6 +1682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let levelsView = LevelsOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: levelsView)
+        hostingController.sizingOptions = []  // window drives size; avoid per-update constraint churn (see Scopes window)
         let w = NSWindow(contentViewController: hostingController)
         w.title = kLevelsWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]

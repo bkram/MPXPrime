@@ -27,9 +27,21 @@ combination test suite. Newest first.
     The view model keeps one-line forwarding properties, so the writer code in
     the update methods is unchanged.
 
-    A residual per-tick SwiftUI layout cost remains (variable-width live text
-    readouts ripple size changes up the stack hierarchy); finer-grained leaf
-    wrapping + fixed-footprint readouts are the next step.
+  - Fixed-footprint meter readouts: the `MeterRow` value text is now a
+    fixed-width monospaced-digit frame, so a per-tick value change repaints in
+    place instead of resizing and re-solving the enclosing stack.
+
+  These cut the steady per-tick monitoring overhead measurably (the view model
+  no longer republishes every tick), but a residual steady SwiftUI layout cost
+  remains: the text/metric panels re-solve their stacks/grids on each update,
+  which is inherent to laying out that many live readouts. Crucially, profiling
+  showed the steady cost is *not* what produces the multi-hour stall — that is
+  progressive growth (the main thread becomes increasingly layout-bound the
+  longer a monitoring window stays open). Root-causing the growth needs an
+  Instruments soak (SwiftUI + Allocations/Leaks); a future pass may migrate the
+  monitoring state to the Observation framework (`@Observable`, macOS 15+) and
+  drive the Canvas meters from `TimelineView`, which is the idiomatic structure
+  for this.
 
 - **Bass-desensitised wideband AGC** (opt-in, default off; `wideband_agc_bass_desensitize`,
   AGC tab toggle). A kick / heavy bass line no longer pumps the whole chain: P4

@@ -6639,6 +6639,11 @@ private struct MeterRow: View {
                 Text(valueText)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    // Fixed footprint so a per-tick value change (e.g.
+                    // "-6.2 dB" -> "-12.4 dB") repaints in place instead of
+                    // resizing and re-solving the enclosing stack layout.
+                    .frame(width: 68, alignment: .trailing)
             }
             MeterBar(level: level, peakLevel: peakLevel, scaleStyle: scaleStyle)
         }

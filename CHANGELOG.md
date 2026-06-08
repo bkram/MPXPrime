@@ -11,6 +11,16 @@ combination test suite. Newest first.
 
 ## Unreleased — develop/v.034
 
+- **Long-run GUI stall fixed (ARM and Intel).** The vertical meter strips (Levels
+  window) and horizontal meter bars (Monitoring dashboard / status bar) drew their
+  level fill / peak / target as SwiftUI subviews whose `.frame(width:/height:)`
+  tracked the value, so every refresh tick (up to 30 Hz) re-ran a full-window
+  AppKit Auto Layout pass. With a meter window left open for hours this
+  progressively loaded the main thread until the UI was near-frozen (audio, on its
+  own real-time thread, was never affected). Both are now drawn in a `Canvas` — a
+  value change is a repaint, never a layout pass. Diagnosed from a main-thread
+  `sample` showing ~40% of time in `NSView _layoutSubtreeWithOldSize:`.
+
 - **Bass-desensitised wideband AGC** (opt-in, default off; `wideband_agc_bass_desensitize`,
   AGC tab toggle). A kick / heavy bass line no longer pumps the whole chain: P4
   (US 4,249,042) low-shelf-cuts the LF band out of the detector *sidechain* (audio

@@ -6681,39 +6681,38 @@ private struct MeterBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            GeometryReader { geo in
-                let width = max(0.0, min(1.0, level)) * geo.size.width
-                let peakX = (peakLevel.map { max(0.0, min(1.0, $0)) } ?? 0.0) * geo.size.width
-                let targetX = (targetLevel.map { max(0.0, min(1.0, $0)) } ?? 0.0) * geo.size.width
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.secondary.opacity(0.18))
-                    ForEach(scaleTicks) { tick in
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.15))
-                            .frame(width: 1)
-                            .offset(x: (tick.position * geo.size.width) - 0.5)
-                    }
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(meterTint.opacity(0.75))
-                        .frame(width: max(0.0, width))
-                    if targetLevel != nil {
-                        Rectangle()
-                            .fill(Color.accentColor.opacity(0.95))
-                            .frame(width: 2, height: 14)
-                            .offset(
-                                x: min(
-                                    max(0.0, targetX - 1.0),
-                                    max(0.0, geo.size.width - 2.0)
-                                )
-                            )
-                    }
-                    if peakLevel != nil {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.98))
-                            .frame(width: 2, height: 14)
-                            .offset(x: min(max(0.0, peakX - 1.0), max(0.0, geo.size.width - 2.0)))
-                    }
+            // Drawn in a Canvas, not laid-out subviews: the fill width / peak / target
+            // change every frame, and a `.frame(width:)` tracking the level would
+            // re-run Auto Layout on every update at the refresh rate (the cause of the
+            // long-run GUI stall). A Canvas just repaints.
+            Canvas { ctx, size in
+                let w = size.width
+                let h = size.height
+                let radius: CGFloat = 3
+                let track = Path(roundedRect: CGRect(x: 0, y: 0, width: w, height: h),
+                                 cornerRadius: radius, style: .continuous)
+                ctx.fill(track, with: .color(Color.secondary.opacity(0.18)))
+                for tick in scaleTicks {
+                    let x = tick.position * w
+                    ctx.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: h)),
+                             with: .color(Color.primary.opacity(0.15)))
+                }
+                let fw = max(0.0, min(1.0, level)) * w
+                if fw > 0.5 {
+                    ctx.fill(
+                        Path(roundedRect: CGRect(x: 0, y: 0, width: fw, height: h),
+                             cornerRadius: radius, style: .continuous),
+                        with: .color(meterTint.opacity(0.75)))
+                }
+                if let target = targetLevel {
+                    let x = min(max(0.0, (max(0.0, min(1.0, target)) * w) - 1.0), max(0.0, w - 2.0))
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)),
+                             with: .color(Color.accentColor.opacity(0.95)))
+                }
+                if let peak = peakLevel {
+                    let x = min(max(0.0, (max(0.0, min(1.0, peak)) * w) - 1.0), max(0.0, w - 2.0))
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)),
+                             with: .color(Color.primary.opacity(0.98)))
                 }
             }
             .frame(height: 14)

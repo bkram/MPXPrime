@@ -347,6 +347,14 @@ final class AudioOutputEngine {
                             return noErr
                         }
                         self.inputPrimed = true
+                        // While we output silence waiting to prime, the input
+                        // device free-runs and piles frames into the ring, so
+                        // it overshoots well past the prime depth by the time
+                        // we notice. Snap back to prime depth (same RT-safe
+                        // call the tone->input warm restart uses) so a cold
+                        // start settles at the same low latency instead of
+                        // carrying the startup overshoot as standing delay.
+                        ring.dropToTargetBufferedFrames(self.inputPrimeThresholdFrames)
                     }
                     let missing = ring.readAdaptive(
                         intoLeft: leftData,

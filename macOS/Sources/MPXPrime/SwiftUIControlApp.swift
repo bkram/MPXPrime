@@ -7369,9 +7369,6 @@ private struct ProcessingFormatProfileTab: View {
                     .font(.callout)
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Picking a profile overwrites Multiband, Final Stage, PrimeBass, Stereo Widener, and Composite Clipper settings. Per-stage knobs stay editable after — tune from the profile baseline, not from a blank slate. Pick `Custom` to keep your manual tuning when re-visiting this picker.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -7762,9 +7759,6 @@ private struct ProcessingFinalStageTab: View {
                 .disabled(disabled)
             DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
                 tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
-            Text("Final guardrail on the audio composite after the composite clipper and BS.412. Pilot and RDS subcarriers are injected after this stage at constant amplitude. Restart-required.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
       }
     }
@@ -7860,9 +7854,6 @@ private struct ProcessingMultibandLimiterTab: View {
                 tooltip: "Limiter release in ms. Short release = more density; long release = more transparent."
             )
             .disabled(!model.config.multibandLimiterEnabled)
-            Text("Per-band fast peak limiter operating after multiband compression. Controls instantaneous transient peaks independently from the compressor ratio.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7882,9 +7873,6 @@ private struct ProcessingExpanderTab: View {
                 tooltip: "Time to re-open the gate once program re-exceeds the threshold. Fast attack preserves initial transients.").disabled(disabled)
             DoubleSliderRow(title: "Release", value: model.configBinding(\.expanderReleaseMS, runtimeDisposition: .live), range: 10...2000, format: "%.0f ms",
                 tooltip: "Time to close the gate once program falls below the threshold. Longer release avoids chattering on sustained-but-quiet sources.").disabled(disabled)
-            Text("Per-band noise reduction within the multiband compressor. Reduces gain on quiet bands to prevent AGC from lifting the noise floor.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7902,9 +7890,6 @@ private struct ProcessingBassClipperTab: View {
                 tooltip: "Clipping threshold for the low band. Lower = more aggressive bass clipping, reducing bass-induced IMD in downstream stages.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.bassClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
                 tooltip: "Pre-clipping gain applied to the low band. Higher drive increases density but also clipping distortion.").disabled(disabled)
-            Text("Pre-clips bass peaks independently before the final limiter, dramatically reducing bass-induced intermodulation distortion.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7937,9 +7922,6 @@ private struct ProcessingDCClipperTab: View {
                 tooltip: "Clipping ceiling for the distortion-cancelled clipper. Lower ceiling = more audible density but more clipping artifacts.").disabled(disabled)
             DoubleSliderRow(title: "Cancel Freq", value: model.configBinding(\.dcClipperCancelFreqHz, runtimeDisposition: .live), range: 500...4000, format: "%.0f Hz",
                 tooltip: "Cutoff of the LF error-extraction filter. Clipping distortion below this frequency is subtracted; above, it is left for masking.").disabled(disabled)
-            Text("Audio clipper with low-frequency distortion cancellation (Orban principle). Clips signal, extracts LF error below cancel frequency, and subtracts it \u{2014} leaving only psychoacoustically masked HF distortion.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7955,9 +7937,6 @@ private struct ProcessingBS412Tab: View {
                 tooltip: "MPX average-power ceiling per ITU-R BS.412. Required for EU regulatory compliance (DE, AT, CH, SE, CZ, SI, etc).").disabled(disabled)
             DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 30...90, format: "%.0f s",
                 tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default; values outside ~30-90 s stop being BS.412 and become a generic AGC.").disabled(disabled)
-            Text("ITU-R BS.412 rolling average power limiter for European regulatory compliance (DE, AT, CH, SE, CZ, SI). Limits MPX power over a sliding time window.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }

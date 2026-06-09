@@ -9,7 +9,7 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased — develop/v.034
+## 0.34 — 2026-06-09
 
 - **Lower cold-start input latency.** On a cold start the render path outputs
   silence until the input ring primes, but the input device free-runs and
@@ -49,17 +49,20 @@ combination test suite. Newest first.
     long-running slowdown, closely related to the toolbar-recreation leak that
     the telemetry split above also defuses).
 
-  These cut the steady per-tick monitoring overhead measurably (the view model
-  no longer republishes every tick), but a residual steady SwiftUI layout cost
-  remains: the text/metric panels re-solve their stacks/grids on each update,
-  which is inherent to laying out that many live readouts. Crucially, profiling
-  showed the steady cost is *not* what produces the multi-hour stall — that is
-  progressive growth (the main thread becomes increasingly layout-bound the
-  longer a monitoring window stays open). Root-causing the growth needs an
-  Instruments soak (SwiftUI + Allocations/Leaks); a future pass may migrate the
+  Root cause was the documented SwiftUI-on-macOS defect where a high-frequency
+  state-change storm (the 30 Hz metering refresh firing the view model's
+  `objectWillChange`) recreates the window's `.toolbar` hierarchy every tick and
+  leaks the copies, so the main thread becomes progressively layout-bound until
+  the UI is near-frozen. Moving the telemetry off the view model severs that
+  driver: a tick no longer invalidates the `RootView` / toolbar scope. Confirmed
+  by a ~10-hour soak on a single instance with a monitoring window open the whole
+  time — resident memory trended *down* (156 MB -> 103 MB), the per-tick layout
+  pass stayed flat, and there was no visible lag, versus the old build's steady
+  climb to a near-freeze. A residual steady layout cost remains (the text/metric
+  panels re-solve their stacks on each update, inherent to that many live
+  readouts) but it is bounded and not the stall; a future pass may migrate the
   monitoring state to the Observation framework (`@Observable`, macOS 15+) and
-  drive the Canvas meters from `TimelineView`, which is the idiomatic structure
-  for this.
+  drive the Canvas meters from `TimelineView` as the idiomatic structure.
 
 - **Bass-desensitised wideband AGC** (opt-in, default off; `wideband_agc_bass_desensitize`,
   AGC tab toggle). A kick / heavy bass line no longer pumps the whole chain: P4

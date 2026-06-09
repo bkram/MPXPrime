@@ -9,7 +9,21 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased — develop/v.035
+## 0.35 — 2026-06-09
+
+- **Pre-emphasis-aware HF clipper (new; opt-in, default off).** A dedicated clipper
+  on the high band of the *pre-emphasised* L/R signal, placed between pre-emphasis
+  and the pre-encode limiter, so HF transients are tamed by a focused stage instead
+  of forcing the broadband limiter to pull gain across the whole signal (the classic
+  FM "dulling"). De-emphasis-correct: it limits the pre-emphasised HF, so the
+  receiver's fixed de-emphasis restores the curve -- the trade is HF density, not
+  the curve mismatch that dynamic pre-emphasis would cause (the approach Orban /
+  Omnia / Stereotool take; web-researched, see plan.md). Anti-aliased oversampled
+  tanh soft-clip on an LR4-split high band (mirrors `BassClipper`). Config, all
+  live-apply: `hf_clipper_enabled` (false), `hf_clipper_crossover_hz` (5000),
+  `hf_clipper_threshold_db` (-3), `hf_clipper_drive` (1.2); dedicated HF Clipper
+  Processing tab. Validated on the receiver model -- pilot / RDS / sub-crossover
+  separation are bit-identical off->on. Ships off pending real-program listening.
 
 - **Composite-clipper acceleration (~56% off the heaviest stage).** The composite
   clipper was the single heaviest stage (~9% of real-time / ~46% of the chain). A
@@ -33,6 +47,17 @@ combination test suite. Newest first.
     RDS guard levels are unchanged on the receiver-model verifier; the only
     composite-baseline drift is a +1.2% side/mid nudge on the single most extreme
     (hard-panned HF) scenario. Verifier baseline recaptured accordingly.
+
+- **Steadier numeric readouts.** Live numeric fields (levels, gain reduction,
+  deviation, pilot / RDS %, etc.) are right-justified to constant character widths,
+  so a value moving between 1 / 2 / 3-digit magnitudes ("-6.2" -> "-12.4" ->
+  "-120.0") no longer shifts the surrounding layout on every refresh. The readout
+  fonts are monospaced, so fixed-width fields keep everything still.
+
+- **Tidier tab help.** Removed the in-card captions that duplicated the bottom help
+  box across the Processing / RDS / Test-Tone tabs (the same stage description was
+  shown twice); kept the in-card notes that give distinct actionable guidance. The
+  one-source-of-tab-help rule is now recorded in the agent instructions.
 
 ## 0.34 — 2026-06-09
 

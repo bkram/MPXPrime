@@ -1217,14 +1217,22 @@ struct CompositeClipper {
         bypassWriteIdx = 0
 
         residualAudio15.configure(cutoffHz: 15_000.0, sampleRate: osRate)
-        residualStereo53.configure(cutoffHz: 53_000.0, sampleRate: osRate)
-        residualStereoHP.configure(cutoffHz: 22_000.0, sampleRate: osRate)
+        // Stereo guard (22-53 kHz) cancellation also runs at HOST rate on the
+        // decimated residual. 53 kHz is the FIR passband edge -- the riskiest
+        // band for decimate<->bandpass commuting -- so this move is gated by the
+        // receiver separation @ 10/14 kHz, which exercise the stereo subcarrier.
+        residualStereo53.configure(cutoffHz: 53_000.0, sampleRate: sampleRate)
+        residualStereoHP.configure(cutoffHz: 22_000.0, sampleRate: sampleRate)
         // Pilot guard: BPF centred at 19 kHz, Q=4 → ~4.75 kHz half-power
         // bandwidth (17–21 kHz). RDS guard: BPF centred at 57 kHz, Q=14
         // → ~4 kHz bandwidth (55–59 kHz). Q values keep the bandpasses
         // from bleeding into the adjacent audio (≤15 kHz) and stereo
         // (23–53 kHz) bands respectively.
-        residualPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: osRate, q: 4.0)
+        // Pilot guard cancellation runs at HOST rate on the decimated residual
+        // (see process()) -- 19 kHz sits deep inside the FIR's 53 kHz passband,
+        // so decimate and bandpass commute and the per-OS-step filter is
+        // redundant. Configured at the host sample rate accordingly.
+        residualPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: sampleRate, q: 4.0)
         residualRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
 
         self.cancelAudio = cancelAudio
@@ -1593,13 +1601,7 @@ struct CompositeClipper {
             if cancelAudio {
                 residual -= residualAudio15.process(r0).low
             }
-            if cancelPilot {
-                residual -= residualPilotBP.process(r0)
-            }
-            if cancelStereo {
-                let split = residualStereo53.process(r0)
-                residual -= residualStereoHP.process(split.low).high
-            }
+            // Pilot + stereo guards handled at host rate after decimation (below).
             if cancelRDS {
                 residual -= residualRDSBP.process(r0)
             }
@@ -1609,6 +1611,18 @@ struct CompositeClipper {
             // on the f-th push of each host sample, so the value read
             // after the loop is the freshly-decimated residual.
             residualDecimated = decimLP.push(residual)
+        }
+        // Pilot (19 kHz) guard cancellation at host rate: 19 kHz is deep within
+        // the FIR's 53 kHz passband, so cancelling on the decimated residual
+        // once per host sample is equivalent to the former per-OS-step path by
+        // LTI commuting -- but ~factor x cheaper. Stereo and RDS stay at OS rate
+        // (stereo rides the FIR passband edge; RDS at 57 kHz is outside it).
+        if cancelPilot {
+            residualDecimated -= residualPilotBP.process(residualDecimated)
+        }
+        if cancelStereo {
+            let split = residualStereo53.process(residualDecimated)
+            residualDecimated -= residualStereoHP.process(split.low).high
         }
         lag.advance(xPath)
 

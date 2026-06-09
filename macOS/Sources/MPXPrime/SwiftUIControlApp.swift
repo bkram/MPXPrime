@@ -176,6 +176,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "DC Clipper"
+    case hfClipper = "HF Clip"
     case limiter = "Audio Limiter"
     case compositeClipper = "Comp Clip"
     case bs412 = "BS.412"
@@ -200,6 +201,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .primeBass: return .processingPrimeBass
         case .bassClipper: return .processingBassClipper
         case .dcClipper: return .processingDCClipper
+        case .hfClipper: return .processingHFClipper
         case .limiter: return .processingLimiter
         case .compositeClipper: return .processingCompositeClipper
         case .bs412: return .processingBS412
@@ -239,6 +241,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
         case .dcClipper:
             return "8x oversampled distortion-cancelled clipper on the audio band. Cleans up audio-band peaks before pre-emphasis adds HF boost."
+        case .hfClipper:
+            return "Pre-emphasis-aware HF clipper on the high band of the pre-emphasized signal. Tames HF transients with a dedicated stage so the broadband limiter doesn't pull gain across the whole signal and dull it. De-emphasis-correct; default off."
         case .limiter:
             return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
         case .bs412:
@@ -278,6 +282,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset Bass Clipper Tab"
         case .dcClipper:
             return "Reset DC Clipper Tab"
+        case .hfClipper:
+            return "Reset HF Clipper Tab"
         case .widener:
             return "Reset Widener Tab"
         case .limiter:
@@ -317,6 +323,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset bass clipper tab to defaults"
         case .dcClipper:
             return "Reset DC clipper tab to defaults"
+        case .hfClipper:
+            return "Reset HF clipper tab to defaults"
         case .widener:
             return "Reset Widener tab to defaults"
         case .limiter:
@@ -414,6 +422,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingPrimeBass
     case processingBassClipper
     case processingDCClipper
+    case processingHFClipper
     case processingLimiter
     case processingCompositeClipper
     case processingBS412
@@ -488,6 +497,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "DC Clipper"
+        case .processingHFClipper: return "HF Clipper"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
         case .processingCompositeClipper: return "Composite Clipper"
@@ -521,6 +531,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "arrow.up.right.and.arrow.down.left"
         case .processingBassClipper: return "speaker.wave.1"
         case .processingDCClipper: return "scissors"
+        case .processingHFClipper: return "speaker.wave.3"
         case .processingLimiter: return "rectangle.compress.vertical"
         case .processingBS412: return "doc.badge.gearshape"
         case .processingCompositeClipper: return "rectangle.stack"
@@ -557,6 +568,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
         case .processingDCClipper: return "Distortion-cancelled audio clipper"
+        case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
@@ -607,6 +619,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return .expander
         case .processingBassClipper: return .bassClipper
         case .processingDCClipper: return .dcClipper
+        case .processingHFClipper: return .hfClipper
         case .processingLimiter: return .limiter
         case .processingBS412: return .bs412
         case .processingCompositeClipper: return .compositeClipper
@@ -1874,6 +1887,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
         case .processingDCClipper: return config.dcClipperEnabled
+        case .processingHFClipper: return config.hfClipperEnabled
         case .processingLimiter: return config.preEncodeAudioLimiterEnabled
         case .processingCompositeClipper: return config.compositeClipperEnabled
         case .processingBS412: return config.bs412Enabled
@@ -2938,6 +2952,11 @@ final class MPXPrimeViewModel: ObservableObject {
             config.dcClipperEnabled = defaults.dcClipperEnabled
             config.dcClipperCeilingDB = defaults.dcClipperCeilingDB
             config.dcClipperCancelFreqHz = defaults.dcClipperCancelFreqHz
+        case .hfClipper:
+            config.hfClipperEnabled = defaults.hfClipperEnabled
+            config.hfClipperCrossoverHz = defaults.hfClipperCrossoverHz
+            config.hfClipperThresholdDB = defaults.hfClipperThresholdDB
+            config.hfClipperDrive = defaults.hfClipperDrive
         case .bs412:
             config.bs412Enabled = defaults.bs412Enabled
             config.bs412ThresholdDB = defaults.bs412ThresholdDB
@@ -2957,7 +2976,7 @@ final class MPXPrimeViewModel: ObservableObject {
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .mbLimiter, .expander,
              .widener, .primeBass,
-             .bassClipper, .dcClipper, .limiter,
+             .bassClipper, .dcClipper, .hfClipper, .limiter,
              .compositeClipper, .bs412,
              .finalStage:
             runtimeDisposition = .live
@@ -3702,7 +3721,7 @@ final class MPXPrimeViewModel: ObservableObject {
         agcOutputLText = Self.peakMeterString(currentPeak: currentAGCOutputLeftPeak, peakHoldDB: agcOutputLPeakHoldDB)
         agcOutputRText = Self.peakMeterString(currentPeak: currentAGCOutputRightPeak, peakHoldDB: agcOutputRPeakHoldDB)
         outputText = Self.peakMeterString(currentPeak: currentOutputPeak, peakHoldDB: outputPeakHoldDB)
-        modulationText = String(format: "%.1f kHz", deviationKHz)
+        modulationText = String(format: "%5.1f kHz", deviationKHz)
         estimatedDeviationPeakKHz = deviationKHz
         pilotInjectionPercentValue = pilotInjectionPercent
         rdsInjectionPercentValue = rdsInjectionPercent
@@ -4913,9 +4932,13 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private static func dbfsString(_ linear: Float) -> String {
-        guard linear > 1e-9 else { return "-inf dBFS" }
+        // Right-justified to a constant 6-char numeric field so the
+        // monospaced readout never changes width as the value moves between
+        // 1/2/3-digit magnitudes ("-6.2" vs "-12.4" vs "-120.0") -- avoids
+        // the layout jitter that variable-length numbers cause.
+        guard linear > 1e-9 else { return "  -inf dBFS" }
         let db = 20.0 * log10(Double(linear))
-        return String(format: "%.1f dBFS", db)
+        return String(format: "%6.1f dBFS", db)
     }
 
     private static func meterMetaString(rms: Float, peak: Float, peakHoldDB: Float? = nil) -> String {
@@ -4926,13 +4949,13 @@ final class MPXPrimeViewModel: ObservableObject {
         } else {
             displayPeakDB = peak > 1e-9 ? (20.0 * log10(Double(peak))) : -120.0
         }
-        return "\(rmsString)   \(String(format: "%.1f", displayPeakDB)) pk"
+        return "\(rmsString)   \(String(format: "%6.1f", displayPeakDB)) pk"
     }
 
     private static func peakMeterString(currentPeak: Float, peakHoldDB: Float? = nil) -> String {
         let currentString = dbfsString(currentPeak)
         guard let peakHoldDB else { return currentString }
-        return "\(currentString)   \(String(format: "%.1f", peakHoldDB)) pk"
+        return "\(currentString)   \(String(format: "%6.1f", peakHoldDB)) pk"
     }
 
     private static func lufsString(_ value: Float) -> String {
@@ -4953,6 +4976,11 @@ extension String {
     /// so duplicating it as text only adds clutter and overflows the
     /// 58 pt column.
     fileprivate var meterCurrentOnly: String {
+        // The current value ends at its unit suffix; split there so leading
+        // field-padding spaces in the value (now right-justified to a fixed
+        // width) aren't mistaken for the "   " peak separator.
+        if let r = range(of: " dBFS") { return String(self[..<r.upperBound]) }
+        if let r = range(of: " LUFS") { return String(self[..<r.upperBound]) }
         if let r = range(of: "   ") { return String(self[..<r.lowerBound]) }
         return self
     }
@@ -5219,6 +5247,8 @@ private struct StageProcessingContent: View {
                         ProcessingBassClipperTab(model: model)
                     case .dcClipper:
                         ProcessingDCClipperTab(model: model)
+                    case .hfClipper:
+                        ProcessingHFClipperTab(model: model)
                     case .widener:
                         ProcessingWidenerTab(model: model)
                     case .limiter:
@@ -5583,16 +5613,7 @@ private struct TestToneView: View {
         Card(title: "Test Tone Source") {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle(isOn: isEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Enable Test Tone").font(.body)
-                        Text(
-                            "Replaces the audio input. The rest of the chain "
-                            + "(AGC, multiband, clippers, BS.412, composite "
-                            + "clipper) processes the generated tone normally."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
+                    Text("Enable Test Tone").font(.body)
                 }
                 .toggleStyle(.switch)
             }
@@ -5807,7 +5828,7 @@ private struct MonitoringDashboardView: View {
                     metricsGrid([
                         ("OUTPUT", model.outputText.ifEmpty("—")),
                         ("AUDIO COMPOSITE", audioCompositeText),
-                        ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
+                        ("DEVIATION", String(format: "%5.1f kHz", model.estimatedDeviationPeakKHz)),
                         ("MODULATION", modulationText)
                     ])
                 }
@@ -5840,8 +5861,8 @@ private struct MonitoringDashboardView: View {
         Card(title: "Subcarriers") {
             LiveTelemetryView(telemetry: model.telemetry) { _ in
                 metricsGrid([
-                    ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
-                    ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
+                    ("PILOT", String(format: "%5.1f%%", model.pilotInjectionPercentValue)),
+                    ("RDS", String(format: "%5.1f%%", model.rdsInjectionPercentValue)),
                     ("STEREO IMAGE", model.stereoImageText)
                 ])
             }
@@ -5874,7 +5895,7 @@ private struct MonitoringDashboardView: View {
     private var audioCompositeText: String {
         let v = Double(model.audioCompositePeakLinear)
         guard v > 1e-6 else { return "-120.0 dBFS" }
-        return String(format: "%.1f dBFS", 20.0 * log10(v))
+        return String(format: "%6.1f dBFS", 20.0 * log10(v))
     }
 
     /// Modulation percentage: peak deviation as a fraction of the
@@ -5884,7 +5905,7 @@ private struct MonitoringDashboardView: View {
     private var modulationText: String {
         let peak = Double(model.estimatedDeviationPeakKHz)
         let target = max(1.0, model.config.mpxDeviationKHz)
-        return String(format: "%.1f%%", (peak / target) * 100.0)
+        return String(format: "%6.1f%%", (peak / target) * 100.0)
     }
 
     /// Budget margin + state. ON shown in tail when BS.412 is engaged;
@@ -5893,13 +5914,15 @@ private struct MonitoringDashboardView: View {
     private var budgetText: String {
         let margin = Double(model.compositeBudgetMarginDBValue)
         let state = model.compositeBudgetStateText
-        let core = String(format: "%+.1f dB", margin)
+        let core = String(format: "%+5.1f dB", margin)
         return state.isEmpty || state == "Off" ? core : "\(core) · \(state)"
     }
 
     private func grText(_ valueDB: Float) -> String {
+        // 5-char numeric field (covers " 0.0".."16.0", and "-NN.N") so the GR
+        // readout stays a constant width as gain reduction varies.
         let db = Double(valueDB)
-        return db < 0.05 ? "0.0 dB" : String(format: "%.1f dB", db)
+        return String(format: "%5.1f dB", db < 0.05 ? 0.0 : db)
     }
 
     // MARK: - Panel A: Transport + Devices
@@ -6232,7 +6255,7 @@ private struct MonitoringDashboardView: View {
     }
 
     private var preLimText: String {
-        String(format: "%.1f dB", Double(model.preEncodeLimiterGainReductionDBValue))
+        String(format: "%5.1f dB", Double(model.preEncodeLimiterGainReductionDBValue))
     }
 
     private var preLimDotColor: Color {
@@ -7337,9 +7360,6 @@ private struct ProcessingFormatProfileTab: View {
                     .font(.callout)
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Picking a profile overwrites Multiband, Final Stage, PrimeBass, Stereo Widener, and Composite Clipper settings. Per-stage knobs stay editable after — tune from the profile baseline, not from a blank slate. Pick `Custom` to keep your manual tuning when re-visiting this picker.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -7730,9 +7750,6 @@ private struct ProcessingFinalStageTab: View {
                 .disabled(disabled)
             DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
                 tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
-            Text("Final guardrail on the audio composite after the composite clipper and BS.412. Pilot and RDS subcarriers are injected after this stage at constant amplitude. Restart-required.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
       }
     }
@@ -7828,9 +7845,6 @@ private struct ProcessingMultibandLimiterTab: View {
                 tooltip: "Limiter release in ms. Short release = more density; long release = more transparent."
             )
             .disabled(!model.config.multibandLimiterEnabled)
-            Text("Per-band fast peak limiter operating after multiband compression. Controls instantaneous transient peaks independently from the compressor ratio.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7850,9 +7864,6 @@ private struct ProcessingExpanderTab: View {
                 tooltip: "Time to re-open the gate once program re-exceeds the threshold. Fast attack preserves initial transients.").disabled(disabled)
             DoubleSliderRow(title: "Release", value: model.configBinding(\.expanderReleaseMS, runtimeDisposition: .live), range: 10...2000, format: "%.0f ms",
                 tooltip: "Time to close the gate once program falls below the threshold. Longer release avoids chattering on sustained-but-quiet sources.").disabled(disabled)
-            Text("Per-band noise reduction within the multiband compressor. Reduces gain on quiet bands to prevent AGC from lifting the noise floor.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7870,9 +7881,23 @@ private struct ProcessingBassClipperTab: View {
                 tooltip: "Clipping threshold for the low band. Lower = more aggressive bass clipping, reducing bass-induced IMD in downstream stages.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.bassClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
                 tooltip: "Pre-clipping gain applied to the low band. Higher drive increases density but also clipping distortion.").disabled(disabled)
-            Text("Pre-clips bass peaks independently before the final limiter, dramatically reducing bass-induced intermodulation distortion.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct ProcessingHFClipperTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "HF Clipper") {
+            Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))
+            let disabled = !model.config.hfClipperEnabled
+            DoubleSliderRow(title: "Crossover", value: model.configBinding(\.hfClipperCrossoverHz, runtimeDisposition: .live), range: 3000...8000, format: "%.0f Hz",
+                tooltip: "LR4 crossover isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
+            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
+                tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
+            DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
+                tooltip: "Pre-clipping gain on the high band. Higher drive increases HF density but also clipping distortion.").disabled(disabled)
         }
     }
 }
@@ -7888,9 +7913,6 @@ private struct ProcessingDCClipperTab: View {
                 tooltip: "Clipping ceiling for the distortion-cancelled clipper. Lower ceiling = more audible density but more clipping artifacts.").disabled(disabled)
             DoubleSliderRow(title: "Cancel Freq", value: model.configBinding(\.dcClipperCancelFreqHz, runtimeDisposition: .live), range: 500...4000, format: "%.0f Hz",
                 tooltip: "Cutoff of the LF error-extraction filter. Clipping distortion below this frequency is subtracted; above, it is left for masking.").disabled(disabled)
-            Text("Audio clipper with low-frequency distortion cancellation (Orban principle). Clips signal, extracts LF error below cancel frequency, and subtracts it \u{2014} leaving only psychoacoustically masked HF distortion.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7906,9 +7928,6 @@ private struct ProcessingBS412Tab: View {
                 tooltip: "MPX average-power ceiling per ITU-R BS.412. Required for EU regulatory compliance (DE, AT, CH, SE, CZ, SI, etc).").disabled(disabled)
             DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 30...90, format: "%.0f s",
                 tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default; values outside ~30-90 s stop being BS.412 and become a generic AGC.").disabled(disabled)
-            Text("ITU-R BS.412 rolling average power limiter for European regulatory compliance (DE, AT, CH, SE, CZ, SI). Limits MPX power over a sliding time window.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -7930,7 +7949,7 @@ private struct ProcessingCompositeClipperTab: View {
                 tooltip: "Predictive peak shaving. 0.0 disables; 2.0 ms = recommended preset. Sliding-window-max detector + half-cosine attack + 200 Hz smoother bound overshoots tighter than the soft-clip alone, at the cost of N ms added chain latency. Hardcoded internals: 1.5 ms attack, 80 ms release, 200 Hz smoothing.").disabled(disabled)
             LabeledContent("Look-ahead GR") {
                 LiveTelemetryView(telemetry: model.telemetry) { t in
-                    Text(String(format: "%.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
+                    Text(String(format: "%5.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
@@ -8367,7 +8386,7 @@ private struct RDSCarrierTab: View {
                 title: "Injection Level",
                 value: model.rdsLevelPercentBinding(),
                 range: 0...10, format: "%.1f %%")
-            Text("Subcarrier physical-layer settings: injection level only. Carrier is fixed at 57 kHz, locked to 3x pilot per EN 50067 Sec 2.1.4. Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`. Restart required.")
+            Text("Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -8456,9 +8475,6 @@ private struct RDSAFTab: View {
                 )
                 .textFieldStyle(.roundedBorder)
             }
-            Text("Method A: up to 25 frequencies as a flat list. Method B: paired (tuned + alternative) — used for stations sharing AF lists across regions.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }

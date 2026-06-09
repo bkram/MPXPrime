@@ -752,6 +752,29 @@ struct Lagrange4Interp {
         return (h3 * l0) + (h2 * l1) + (h1 * l2) + (cur * l3)
     }
 
+    /// Basis weights for a fixed fractional position `t`. When a caller
+    /// oversamples by a fixed integer factor, every host sample evaluates
+    /// interpolation at the *same* set of `t` values (i/factor), so these
+    /// weights are constant and can be precomputed once instead of being
+    /// recomputed per host sample. Returns the four l-coefficients in the
+    /// exact (l0, l1, l2, l3) layout `interpolate(weights:cur:)` consumes.
+    @inline(__always)
+    static func basisWeights(t: Float) -> SIMD4<Float> {
+        let l0 = -((t + 1.0) * t * (t - 1.0)) / 6.0
+        let l1 = ((t + 2.0) * t * (t - 1.0)) * 0.5
+        let l2 = -((t + 2.0) * (t + 1.0) * (t - 1.0)) * 0.5
+        let l3 = ((t + 2.0) * (t + 1.0) * t) / 6.0
+        return SIMD4<Float>(l0, l1, l2, l3)
+    }
+
+    /// Bit-identical to `interpolate(t:cur:)` when `w == basisWeights(t:)` --
+    /// same operands, same accumulation order -- but skips the per-call
+    /// polynomial evaluation by using precomputed weights.
+    @inline(__always)
+    func interpolate(weights w: SIMD4<Float>, cur: Float) -> Float {
+        (h3 * w.x) + (h2 * w.y) + (h1 * w.z) + (cur * w.w)
+    }
+
     @inline(__always)
     mutating func advance(_ cur: Float) {
         h3 = h2; h2 = h1; h1 = cur
@@ -845,6 +868,111 @@ struct BassClipper {
         for i in 0..<f {
             outL = decimL.process(clipResultBatch[i] + highBatch[i])
             outR = decimR.process(clipResultBatch[i + f] + highBatch[i + f])
+        }
+        lagL.advance(left)
+        lagR.advance(right)
+        return (outL, outR)
+    }
+}
+
+// MARK: - HF Clipper (pre-emphasis-aware, L/R domain, oversampled)
+// Pre-emphasis-aware HF limiting. Clips only the HIGH band of the
+// (pre-emphasized) L/R signal so HF transients are tamed by a dedicated stage
+// instead of forcing the broadband pre-encode limiter to pull gain across the
+// whole signal (which dulls everything -- the classic FM-processing artifact).
+//
+// De-emphasis-correct by construction: it limits the *pre-emphasized* HF, so
+// the receiver's fixed 50/75 us de-emphasis still restores the intended curve
+// -- the trade is HF density, NOT the curve mismatch that relaxing pre-emphasis
+// (dynamic pre-emphasis) would cause. This is the Orban/Omnia/Stereotool
+// approach (see plan.md "HF limiter / clipper").
+//
+// Structurally a mirror of `BassClipper`: LR4 split at the crossover, oversample
+// + tanh soft-clip the band, decimate, recombine. BassClipper clips `.low`; this
+// clips `.high`. Oversampling (Lagrange4Interp up + BiquadCascade6 decimation)
+// keeps the clipping harmonics from aliasing. Default off -> passthrough
+// (bit-identical); ships opt-in, verifier-backed.
+struct HFClipper {
+    private var enabled = false
+    private var splitL = LinkwitzRiley4()
+    private var splitR = LinkwitzRiley4()
+    private var thresholdLin: Float = 0.9
+    private var drive: Float = 1.0
+    private var lagL = Lagrange4Interp()
+    private var lagR = Lagrange4Interp()
+    private var decimL = BiquadCascade6()
+    private var decimR = BiquadCascade6()
+    private static let factor: Int = 4
+    private var lowBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var highBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var clipDrivenBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var clipResultBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+
+    mutating func configure(enabled: Bool, sampleRate: Float, crossoverHz: Float,
+                            thresholdDB: Float, drive drv: Float) {
+        self.enabled = enabled
+        let osRate = sampleRate * Float(Self.factor)
+        splitL.configure(cutoffHz: crossoverHz, sampleRate: osRate)
+        splitR.configure(cutoffHz: crossoverHz, sampleRate: osRate)
+        thresholdLin = powf(10.0, min(0.0, thresholdDB) / 20.0)
+        drive = max(0.1, drv)
+        let cutoff = min(sampleRate * 0.45, (osRate * 0.5) - 1_000.0)
+        decimL.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
+        decimR.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
+    }
+
+    @inline(__always)
+    mutating func process(left: Float, right: Float) -> (Float, Float) {
+        guard enabled else { return (left, right) }
+        if !lagL.isPrimed { lagL.prime(left); lagR.prime(right) }
+        let f = Self.factor
+        let step = 1.0 / Float(f)
+
+        // Phase 1: per-OS-step interpolate + LR4 split (state advances here).
+        for i in 0..<f {
+            let t = step * Float(i + 1)
+            let upL = (i == f - 1) ? left : lagL.interpolate(t: t, cur: left)
+            let upR = (i == f - 1) ? right : lagR.interpolate(t: t, cur: right)
+            let sL = splitL.process(upL)
+            let sR = splitR.process(upR)
+            lowBatch[i] = sL.low
+            lowBatch[i + f] = sR.low
+            highBatch[i] = sL.high
+            highBatch[i + f] = sR.high
+        }
+
+        // Phase 2: batched tanh soft-clip of the HIGH band via vvtanhf.
+        let thr = thresholdLin
+        let drv = drive
+        let invDrv = 1.0 / drv
+        for i in 0..<(f * 2) {
+            clipDrivenBatch[i] = (highBatch[i] * drv) / thr
+        }
+        var n = Int32(f * 2)
+        clipDrivenBatch.withUnsafeMutableBufferPointer { dPtr in
+            clipTanhBatch.withUnsafeMutableBufferPointer { tPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
+                vvtanhf(tPtr.baseAddress!, dPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
+            }
+        }
+        for i in 0..<(f * 2) {
+            let driven = highBatch[i] * drv
+            if fabsf(driven) <= thr {
+                clipResultBatch[i] = highBatch[i]
+            } else {
+                clipResultBatch[i] = (thr * clipTanhBatch[i]) * invDrv
+            }
+        }
+
+        // Phase 3: recombine (low + clipped high) and decimate.
+        var outL: Float = 0
+        var outR: Float = 0
+        for i in 0..<f {
+            outL = decimL.process(lowBatch[i] + clipResultBatch[i])
+            outR = decimR.process(lowBatch[i + f] + clipResultBatch[i + f])
         }
         lagL.advance(left)
         lagR.advance(right)
@@ -1066,6 +1194,12 @@ struct CompositeClipper {
     private var clipBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
+    // Precomputed Lagrange basis weights per oversample phase. The
+    // interpolation fraction t = (i+1)/factor is fixed per phase, so these
+    // weights are constant; computing them once in configure() instead of
+    // re-evaluating the basis polynomials per host sample removes the
+    // clipper's largest scalar cost. Bit-identical to the inline path.
+    private var lagBasis: [SIMD4<Float>] = Array(repeating: .zero, count: defaultFactor)
 
     // === Look-ahead peak control (0.26) ===
     // Predictive sidechain that knows the future peak amplitude over the
@@ -1148,6 +1282,14 @@ struct CompositeClipper {
         if clipExcessBatch.count != validFactor { clipExcessBatch = [Float](repeating: 0.0, count: validFactor) }
         if clipTanhBatch.count != validFactor { clipTanhBatch = [Float](repeating: 0.0, count: validFactor) }
         if detOSBatch.count != validFactor { detOSBatch = [Float](repeating: 0.0, count: validFactor) }
+        // Precompute the per-phase Lagrange basis weights (t = (i+1)/factor),
+        // matching the hot-loop's `step * Float(i + 1)` exactly so the
+        // interpolation stays bit-identical.
+        if lagBasis.count != validFactor { lagBasis = [SIMD4<Float>](repeating: .zero, count: validFactor) }
+        let basisStep = 1.0 / Float(validFactor)
+        for i in 0..<validFactor {
+            lagBasis[i] = Lagrange4Interp.basisWeights(t: basisStep * Float(i + 1))
+        }
 
         thresholdLin = clampf(powf(10.0, min(0.0, thresholdDB) / 20.0), 0.1, 0.995)
         let cMin: Float = thresholdLin + 0.02
@@ -1180,14 +1322,22 @@ struct CompositeClipper {
         bypassWriteIdx = 0
 
         residualAudio15.configure(cutoffHz: 15_000.0, sampleRate: osRate)
-        residualStereo53.configure(cutoffHz: 53_000.0, sampleRate: osRate)
-        residualStereoHP.configure(cutoffHz: 22_000.0, sampleRate: osRate)
+        // Stereo guard (22-53 kHz) cancellation also runs at HOST rate on the
+        // decimated residual. 53 kHz is the FIR passband edge -- the riskiest
+        // band for decimate<->bandpass commuting -- so this move is gated by the
+        // receiver separation @ 10/14 kHz, which exercise the stereo subcarrier.
+        residualStereo53.configure(cutoffHz: 53_000.0, sampleRate: sampleRate)
+        residualStereoHP.configure(cutoffHz: 22_000.0, sampleRate: sampleRate)
         // Pilot guard: BPF centred at 19 kHz, Q=4 → ~4.75 kHz half-power
         // bandwidth (17–21 kHz). RDS guard: BPF centred at 57 kHz, Q=14
         // → ~4 kHz bandwidth (55–59 kHz). Q values keep the bandpasses
         // from bleeding into the adjacent audio (≤15 kHz) and stereo
         // (23–53 kHz) bands respectively.
-        residualPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: osRate, q: 4.0)
+        // Pilot guard cancellation runs at HOST rate on the decimated residual
+        // (see process()) -- 19 kHz sits deep inside the FIR's 53 kHz passband,
+        // so decimate and bandpass commute and the per-OS-step filter is
+        // redundant. Configured at the host sample rate accordingly.
+        residualPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: sampleRate, q: 4.0)
         residualRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
 
         self.cancelAudio = cancelAudio
@@ -1466,14 +1616,17 @@ struct CompositeClipper {
 
         if !lag.isPrimed { lag.prime(xPath) }
         let f = self.factor
-        let step = 1.0 / Float(f)
 
         // Phase 1: pre-compute all `f` oversampled inputs via Lagrange interp.
         // Lagrange state advances only at lag.advance(x) below, so this
         // is safe to do as a batch up front.
-        for i in 0..<f {
-            let t = step * Float(i + 1)
-            upBatch[i] = (i == f - 1) ? xPath : lag.interpolate(t: t, cur: xPath)
+        // Write through an unsafe buffer pointer so the per-element store
+        // doesn't trip a copy-on-write uniqueness check each iteration
+        // (these are private, never-aliased scratch buffers). Bit-identical.
+        upBatch.withUnsafeMutableBufferPointer { ub in
+            for i in 0..<f {
+                ub[i] = (i == f - 1) ? xPath : lag.interpolate(weights: lagBasis[i], cur: xPath)
+            }
         }
 
         // Phase 2: batched soft-clip via vvtanhf. Replaces `f` scalar tanhf
@@ -1485,8 +1638,10 @@ struct CompositeClipper {
         // smaller than the cost of a per-element branch on the SIMD path).
         let thr = thresholdLin
         let kn = knee
-        for i in 0..<f {
-            clipExcessBatch[i] = (fabsf(upBatch[i]) - thr) / kn
+        clipExcessBatch.withUnsafeMutableBufferPointer { eb in
+            for i in 0..<f {
+                eb[i] = (fabsf(upBatch[i]) - thr) / kn
+            }
         }
         var n = Int32(f)
         clipExcessBatch.withUnsafeMutableBufferPointer { excessPtr in
@@ -1498,15 +1653,17 @@ struct CompositeClipper {
             }
         }
         var sampleClipGain: Float = 1.0
-        for i in 0..<f {
-            let up = upBatch[i]
-            let ax = fabsf(up)
-            if ax <= thr {
-                clipBatch[i] = up
-            } else {
-                let clippedAbs = thr + kn * clipTanhBatch[i]
-                clipBatch[i] = copysignf(clippedAbs, up)
-                sampleClipGain = min(sampleClipGain, clippedAbs / max(1e-6, ax))
+        clipBatch.withUnsafeMutableBufferPointer { cb in
+            for i in 0..<f {
+                let up = upBatch[i]
+                let ax = fabsf(up)
+                if ax <= thr {
+                    cb[i] = up
+                } else {
+                    let clippedAbs = thr + kn * clipTanhBatch[i]
+                    cb[i] = copysignf(clippedAbs, up)
+                    sampleClipGain = min(sampleClipGain, clippedAbs / max(1e-6, ax))
+                }
             }
         }
 
@@ -1549,13 +1706,7 @@ struct CompositeClipper {
             if cancelAudio {
                 residual -= residualAudio15.process(r0).low
             }
-            if cancelPilot {
-                residual -= residualPilotBP.process(r0)
-            }
-            if cancelStereo {
-                let split = residualStereo53.process(r0)
-                residual -= residualStereoHP.process(split.low).high
-            }
+            // Pilot + stereo guards handled at host rate after decimation (below).
             if cancelRDS {
                 residual -= residualRDSBP.process(r0)
             }
@@ -1565,6 +1716,18 @@ struct CompositeClipper {
             // on the f-th push of each host sample, so the value read
             // after the loop is the freshly-decimated residual.
             residualDecimated = decimLP.push(residual)
+        }
+        // Pilot (19 kHz) guard cancellation at host rate: 19 kHz is deep within
+        // the FIR's 53 kHz passband, so cancelling on the decimated residual
+        // once per host sample is equivalent to the former per-OS-step path by
+        // LTI commuting -- but ~factor x cheaper. Stereo and RDS stay at OS rate
+        // (stereo rides the FIR passband edge; RDS at 57 kHz is outside it).
+        if cancelPilot {
+            residualDecimated -= residualPilotBP.process(residualDecimated)
+        }
+        if cancelStereo {
+            let split = residualStereo53.process(residualDecimated)
+            residualDecimated -= residualStereoHP.process(split.low).high
         }
         lag.advance(xPath)
 
@@ -2608,6 +2771,60 @@ struct EnvelopeFollower {
         }
         value = zapDenorm(value)
         return value
+    }
+}
+
+/// Dynamic pre-emphasis ("Smart HF") sidechain. A high-pass envelope follower
+/// detects HF transient energy; when it exceeds the threshold, `relaxAmount`
+/// returns a stereo-linked blend factor in [0, maxRelax] that the caller uses
+/// to fade the pre-emphasized signal back toward flat -- so the pre-encode
+/// limiter clamps less on HF transients and more average HF survives.
+///
+/// Trade-off (why it is opt-in, default off): the receiver de-emphasises with a
+/// fixed time constant, so relaxing pre-emphasis is a brief, bounded HF dip at
+/// the receiver on transients. This is the controlled Optimod-style trade, not
+/// a spec-transparent operation. `maxRelax = 0` (or disabled) is a hard no-op:
+/// `relaxAmount` returns 0 and the caller keeps full pre-emphasis (bit-identical
+/// to the static path). Stereo-linked (max of the two channels' HF) to preserve
+/// the stereo image, mirroring the pre-encode limiter's shared-gain design.
+struct DynamicPreemphasis {
+    private var enabled = false
+    private var hpL = Biquad()
+    private var hpR = Biquad()
+    private var env = EnvelopeFollower()
+    private var thresholdLin: Float = 1.0
+    private var maxRelax: Float = 0.0
+
+    mutating func configure(enabled: Bool, sampleRate: Float, hfCutoffHz: Float,
+                            thresholdDB: Float, maxRelax: Float,
+                            attackMS: Float, releaseMS: Float) {
+        self.enabled = enabled
+        self.maxRelax = max(0.0, min(1.0, maxRelax))
+        thresholdLin = powf(10.0, min(0.0, thresholdDB) / 20.0)
+        let sr = max(8_000.0 as Float, sampleRate)
+        let cutoff = max(1_000.0 as Float, min(hfCutoffHz, sr * 0.45))
+        hpL.configureHighpass(cutoffHz: cutoff, sampleRate: sr)
+        hpR.configureHighpass(cutoffHz: cutoff, sampleRate: sr)
+        env.configure(sampleRate: sr, attackMS: attackMS, releaseMS: releaseMS)
+    }
+
+    /// Stereo-linked relaxation amount in [0, maxRelax] for the current sample
+    /// (0 = full pre-emphasis). When enabled it advances the sidechain state, so
+    /// invoke it once per sample on the pre-emphasis INPUT (flat L/R). Ratio map:
+    /// `r = maxRelax * (1 - threshold/level)` -- 0 at threshold, asymptotic to
+    /// maxRelax as HF level rises.
+    mutating func relaxAmount(left: Float, right: Float) -> Float {
+        guard enabled, maxRelax > 0.0 else { return 0.0 }
+        let hf = max(fabsf(hpL.process(left)), fabsf(hpR.process(right)))
+        let level = env.processAbs(hf)
+        guard level > thresholdLin else { return 0.0 }
+        return maxRelax * (1.0 - thresholdLin / level)
+    }
+
+    mutating func reset() {
+        hpL.reset()
+        hpR.reset()
+        env.value = 0.0
     }
 }
 
@@ -5740,6 +5957,10 @@ final class MPXGenerator {
         let bassClipperCrossoverHz: Float
         let bassClipperThresholdDB: Float
         let bassClipperDrive: Float
+        let hfClipperEnabled: Bool
+        let hfClipperCrossoverHz: Float
+        let hfClipperThresholdDB: Float
+        let hfClipperDrive: Float
         let dcClipperEnabled: Bool
         let dcClipperCeilingDB: Float
         let dcClipperCancelFreqHz: Float
@@ -5857,6 +6078,10 @@ final class MPXGenerator {
             bassClipperCrossoverHz: Float(config.bassClipperCrossoverHz),
             bassClipperThresholdDB: Float(config.bassClipperThresholdDB),
             bassClipperDrive: Float(config.bassClipperDrive),
+            hfClipperEnabled: config.hfClipperEnabled,
+            hfClipperCrossoverHz: Float(config.hfClipperCrossoverHz),
+            hfClipperThresholdDB: Float(config.hfClipperThresholdDB),
+            hfClipperDrive: Float(config.hfClipperDrive),
             dcClipperEnabled: config.dcClipperEnabled,
             dcClipperCeilingDB: Float(config.dcClipperCeilingDB),
             dcClipperCancelFreqHz: Float(config.dcClipperCancelFreqHz),
@@ -6255,6 +6480,11 @@ final class MPXGenerator {
     private var bassClipperThresholdDB: Float
     private var bassClipperDrive: Float
     private var bassClipper = BassClipper()
+    private var hfClipperEnabled: Bool
+    private var hfClipperCrossoverHz: Float
+    private var hfClipperThresholdDB: Float
+    private var hfClipperDrive: Float
+    private var hfClipper = HFClipper()
 
     // Distortion-cancelled clipper: L/R domain with LF distortion cancellation
     private var dcClipperEnabled: Bool
@@ -6611,6 +6841,11 @@ final class MPXGenerator {
         self.bassClipperThresholdDB = clampf(Float(config.bassClipperThresholdDB), -12.0, 0.0)
         self.bassClipperDrive = clampf(Float(config.bassClipperDrive), 0.5, 3.0)
 
+        self.hfClipperEnabled = config.hfClipperEnabled
+        self.hfClipperCrossoverHz = clampf(Float(config.hfClipperCrossoverHz), 3_000.0, 8_000.0)
+        self.hfClipperThresholdDB = clampf(Float(config.hfClipperThresholdDB), -12.0, 0.0)
+        self.hfClipperDrive = clampf(Float(config.hfClipperDrive), 0.5, 3.0)
+
         self.dcClipperEnabled = config.dcClipperEnabled
         self.dcClipperCeilingDB = clampf(Float(config.dcClipperCeilingDB), -6.0, 0.0)
         self.dcClipperCancelFreqHz = clampf(Float(config.dcClipperCancelFreqHz), 500.0, 4000.0)
@@ -6695,6 +6930,13 @@ final class MPXGenerator {
             crossoverHz: bassClipperCrossoverHz,
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
+        )
+        hfClipper.configure(
+            enabled: hfClipperEnabled,
+            sampleRate: audioRate,
+            crossoverHz: hfClipperCrossoverHz,
+            thresholdDB: hfClipperThresholdDB,
+            drive: hfClipperDrive
         )
         configureDistortionCancelledClipper()
         configureProcessedAudioFinalClipper()
@@ -7094,6 +7336,13 @@ final class MPXGenerator {
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
         )
+        hfClipper.configure(
+            enabled: hfClipperEnabled,
+            sampleRate: audioRate,
+            crossoverHz: hfClipperCrossoverHz,
+            thresholdDB: hfClipperThresholdDB,
+            drive: hfClipperDrive
+        )
         configureDistortionCancelledClipper()
         configureProcessedAudioFinalClipper()
         lookaheadLimiter.configure(
@@ -7392,6 +7641,26 @@ final class MPXGenerator {
                 crossoverHz: bassClipperCrossoverHz,
                 thresholdDB: bassClipperThresholdDB,
                 drive: bassClipperDrive
+            )
+        }
+
+        // HF clipper (pre-emphasis-aware)
+        let hfClipChanged =
+            hfClipperEnabled != config.hfClipperEnabled
+            || fabsf(hfClipperCrossoverHz - config.hfClipperCrossoverHz) > 0.0001
+            || fabsf(hfClipperThresholdDB - config.hfClipperThresholdDB) > 0.0001
+            || fabsf(hfClipperDrive - config.hfClipperDrive) > 0.0001
+        hfClipperEnabled = config.hfClipperEnabled
+        hfClipperCrossoverHz = clampf(config.hfClipperCrossoverHz, 3_000.0, 8_000.0)
+        hfClipperThresholdDB = clampf(config.hfClipperThresholdDB, -12.0, 0.0)
+        hfClipperDrive = clampf(config.hfClipperDrive, 0.5, 3.0)
+        if hfClipChanged {
+            hfClipper.configure(
+                enabled: hfClipperEnabled,
+                sampleRate: sampleRate,
+                crossoverHz: hfClipperCrossoverHz,
+                thresholdDB: hfClipperThresholdDB,
+                drive: hfClipperDrive
             )
         }
 
@@ -8495,6 +8764,17 @@ final class MPXGenerator {
         // so the limiter peak-controls the HF-boosted signal. See `preL`/`preR`.
         stereo.left = preL.process(stereo.left)
         stereo.right = preR.process(stereo.right)
+
+        // Pre-emphasis-aware HF clipper: tame HF transients of the pre-emphasized
+        // signal with a dedicated stage so the broadband limiter below doesn't
+        // pull gain across the whole signal and dull it. De-emphasis-correct
+        // (acts on the pre-emphasized HF). Default off -> not invoked ->
+        // bit-identical to the prior chain.
+        if hfClipperEnabled && !processingBypass {
+            let hf = hfClipper.process(left: stereo.left, right: stereo.right)
+            stereo.left = hf.0
+            stereo.right = hf.1
+        }
 
         if preEncodeAudioLimiterEnabled && !processingBypass {
             let limited = preEncodeAudioLimiter.process(left: stereo.left, right: stereo.right)

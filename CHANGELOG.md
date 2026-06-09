@@ -9,6 +9,56 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.35 — 2026-06-09
+
+- **Pre-emphasis-aware HF clipper (new; opt-in, default off).** A dedicated clipper
+  on the high band of the *pre-emphasised* L/R signal, placed between pre-emphasis
+  and the pre-encode limiter, so HF transients are tamed by a focused stage instead
+  of forcing the broadband limiter to pull gain across the whole signal (the classic
+  FM "dulling"). De-emphasis-correct: it limits the pre-emphasised HF, so the
+  receiver's fixed de-emphasis restores the curve -- the trade is HF density, not
+  the curve mismatch that dynamic pre-emphasis would cause (the approach Orban /
+  Omnia / Stereotool take; web-researched, see plan.md). Anti-aliased oversampled
+  tanh soft-clip on an LR4-split high band (mirrors `BassClipper`). Config, all
+  live-apply: `hf_clipper_enabled` (false), `hf_clipper_crossover_hz` (5000),
+  `hf_clipper_threshold_db` (-3), `hf_clipper_drive` (1.2); dedicated HF Clipper
+  Processing tab. Validated on the receiver model -- pilot / RDS / sub-crossover
+  separation are bit-identical off->on. Ships off pending real-program listening.
+
+- **Composite-clipper acceleration (~56% off the heaviest stage).** The composite
+  clipper was the single heaviest stage (~9% of real-time / ~46% of the chain). A
+  `sample(1)` profile of a `--verify-long` render showed the cost was dominated by
+  `Biquad.process` (~32% of total CPU) -- the per-OS-step residual guard-band
+  cancellation running 16x per host sample -- with a secondary chunk in copy-on-
+  write checks. Three steps, each measured:
+  - Precompute the Lagrange interpolation basis weights (the interpolation
+    fraction is fixed per oversample phase) instead of re-evaluating the
+    polynomials per sample. Bit-identical.
+  - Hold `withUnsafeMutableBufferPointer` over the per-sample scratch-array
+    writes so each store doesn't trip a COW uniqueness check. Bit-identical.
+  - Move the pilot (19 kHz) and stereo (22-53 kHz) guard cancellation from the
+    16x oversampled rate to **host rate on the decimated residual**. Both bands
+    sit within the FIR's 53 kHz passband, so decimate and band-cancel commute;
+    running them once per host sample instead of 16x is the bulk of the win. RDS
+    (57 kHz, outside the FIR passband) and the audio guard stay at OS rate.
+  - Net: composite clipper **~9.05% -> ~3.95% of real-time** on M1 Pro. The first
+    two steps are bit-identical; the host-rate move is output-affecting but
+    bounded -- production stereo separation (1/10/14 kHz), pilot level/phase, and
+    RDS guard levels are unchanged on the receiver-model verifier; the only
+    composite-baseline drift is a +1.2% side/mid nudge on the single most extreme
+    (hard-panned HF) scenario. Verifier baseline recaptured accordingly.
+
+- **Steadier numeric readouts.** Live numeric fields (levels, gain reduction,
+  deviation, pilot / RDS %, etc.) are right-justified to constant character widths,
+  so a value moving between 1 / 2 / 3-digit magnitudes ("-6.2" -> "-12.4" ->
+  "-120.0") no longer shifts the surrounding layout on every refresh. The readout
+  fonts are monospaced, so fixed-width fields keep everything still.
+
+- **Tidier tab help.** Removed the in-card captions that duplicated the bottom help
+  box across the Processing / RDS / Test-Tone tabs (the same stage description was
+  shown twice); kept the in-card notes that give distinct actionable guidance. The
+  one-source-of-tab-help rule is now recorded in the agent instructions.
+
 ## 0.34 — 2026-06-09
 
 - **Lower cold-start input latency.** On a cold start the render path outputs

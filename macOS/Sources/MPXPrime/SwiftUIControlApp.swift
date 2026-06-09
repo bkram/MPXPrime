@@ -7922,9 +7922,6 @@ private struct ProcessingHFClipperTab: View {
                 tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
                 tooltip: "Pre-clipping gain on the high band. Higher drive increases HF density but also clipping distortion.").disabled(disabled)
-            Text("Pre-emphasis-aware HF clipper: tames high-frequency transients of the pre-emphasized signal with a dedicated stage, so the broadband pre-encode limiter doesn't pull gain across the whole signal and dull it. De-emphasis-correct (acts on the pre-emphasized HF; the receiver's fixed de-emphasis restores the curve). Default off; opt-in.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }

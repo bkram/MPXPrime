@@ -539,6 +539,35 @@ Exit status:
 - `1` means the configuration is close to the limit and should be reviewed
 - `2` means at least one verification warning was triggered
 
+### Reference-receiver validation (Profline SFP-X)
+
+The composite output has been validated on a Profline SFP-X measuring receiver
+against a 75 kHz total-deviation reference. The headline subcarrier levels read as
+expected and, importantly, read steady -- both subcarriers are injected after all
+peak-control stages at constant amplitude, so their deviation does not move with
+program audio.
+
+| Subcarrier | Setting | Measured (SFP-X) | % of 75 kHz |
+|------------|---------|------------------|-------------|
+| 19 kHz pilot | 10% | 7.3-7.4 kHz (steady, last-digit dither) | ~9.8% |
+| 57 kHz RDS | `rds_level` 2.4 kHz | 2.4 kHz (steady) | ~3.2% |
+
+Notes:
+
+- The 7.3/7.4 kHz pilot reading is the analyzer rounding a ~7.35 kHz value across
+  its display resolution, not the pilot modulating. A pilot that genuinely wandered
+  with program would indicate a fault -- by design the pilot here is constant
+  amplitude (post-clipper injection).
+- Pilot is at the top of the 8-10% legal window; RDS at 3.2% is comfortably inside
+  the EN 50067 / IEC 62106 range (2.0 kHz nominal, 1.0-7.5 kHz permitted) and a touch
+  above the 2.0 kHz default for more robust data decoding.
+- Subcarriers (~9.75 kHz combined) share the +/-75 kHz peak budget with the audio
+  composite; the audio path is clipped to leave room for them, which is why they can
+  be injected at fixed amplitude without pushing total deviation over target.
+- Confirm the analyzer's total-deviation reference is 75 kHz before reading the
+  percentages. On a 50 kHz reduced-deviation mandate the same kHz figures correspond
+  to different percentages (and the pilot/RDS levels should be scaled accordingly).
+
 ## Processing bypass
 
 The `Bypass` control does not create a true wire bypass. It disables the creative processing blocks while keeping essential FM encode stages active.

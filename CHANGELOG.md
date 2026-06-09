@@ -9,6 +9,74 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.34 — 2026-06-09
+
+- **Lower cold-start input latency.** On a cold start the render path outputs
+  silence until the input ring primes, but the input device free-runs and
+  overshoots the ring well past prime depth in the meantime, leaving ~100 ms of
+  standing latency that a warm (tone->input) restart didn't have. The ring now
+  snaps to prime depth the instant it primes (same RT-safe call the warm path
+  uses), so cold start settles at the same low latency as a warm restart
+  (measured ~300 ms -> ~200 ms at block 1024 / 192 kHz). Note: the input ring
+  target is floor-limited at 100 ms, so block sizes at or below ~512 give the
+  same ring depth -- 256 buys no latency over 512, only higher callback load.
+
+- **Long-run GUI stall — monitoring-overhead reduction (ARM and Intel).** The
+  GUI progressively bogged down (UI near-frozen) when a monitoring window was
+  left open for hours; the audio render, on its own real-time thread, was never
+  affected. A main-thread `sample` traced it to the per-tick AppKit/SwiftUI
+  layout pass driven by the 30 Hz metering refresh. Two changes cut that load:
+  - Meters now draw in a `Canvas` (vertical strips on the Levels window,
+    horizontal bars on the dashboard / status bar) instead of SwiftUI subviews
+    whose `.frame(width:/height:)` tracked the value — a value change is now a
+    repaint, not a layout invalidation.
+  - High-frequency telemetry (≈65 live values) moved off `MPXPrimeViewModel`
+    into a dedicated `LiveTelemetry` observable; only the live readouts (wrapped
+    in `LiveTelemetryView`) observe it, so a metering tick no longer fires the
+    view model's `objectWillChange` and re-evaluates the whole monitoring tree.
+    The view model keeps one-line forwarding properties, so the writer code in
+    the update methods is unchanged.
+
+  - Fixed-footprint meter readouts: the `MeterRow` value text is now a
+    fixed-width monospaced-digit frame, so a per-tick value change repaints in
+    place instead of resizing and re-solving the enclosing stack.
+  - The detached high-refresh windows (Levels, Scopes, MPX Spectrum, Audio
+    Spectrum) set `NSHostingController.sizingOptions = []`: the window drives
+    the size and the SwiftUI content fills it, so the hosting controller no
+    longer adds/recomputes min/intrinsic/max Auto Layout constraints on every
+    content update -- guarding against constraint accumulation in AppKit's
+    layout engine over a long-open window (a documented SwiftUI-on-macOS
+    long-running slowdown, closely related to the toolbar-recreation leak that
+    the telemetry split above also defuses).
+
+  Root cause was the documented SwiftUI-on-macOS defect where a high-frequency
+  state-change storm (the 30 Hz metering refresh firing the view model's
+  `objectWillChange`) recreates the window's `.toolbar` hierarchy every tick and
+  leaks the copies, so the main thread becomes progressively layout-bound until
+  the UI is near-frozen. Moving the telemetry off the view model severs that
+  driver: a tick no longer invalidates the `RootView` / toolbar scope. Confirmed
+  by a ~10-hour soak on a single instance with a monitoring window open the whole
+  time — resident memory trended *down* (156 MB -> 103 MB), the per-tick layout
+  pass stayed flat, and there was no visible lag, versus the old build's steady
+  climb to a near-freeze. A residual steady layout cost remains (the text/metric
+  panels re-solve their stacks on each update, inherent to that many live
+  readouts) but it is bounded and not the stall; a future pass may migrate the
+  monitoring state to the Observation framework (`@Observable`, macOS 15+) and
+  drive the Canvas meters from `TimelineView` as the idiomatic structure.
+
+- **Bass-desensitised wideband AGC** (opt-in, default off; `wideband_agc_bass_desensitize`,
+  AGC tab toggle). A kick / heavy bass line no longer pumps the whole chain: P4
+  (US 4,249,042) low-shelf-cuts the LF band out of the detector *sidechain* (audio
+  untouched) so bass can't drive the loudness reading; P5 (US 3,790,896) recovers
+  fast from brief reductions. Verifier-backed (`BassDesensitizedAGCTests`: bass no
+  longer drives the AGC; config round-trip).
+- **Now-playing scripts unified** into a single auto-detecting `nowplaying.sh` (VLC
+  then Cog) — shared title cleanup / output written once. Strips parenthetical
+  `(Radio Edit)` and bracketed `[Official Video]` title decorations (both default-on,
+  `STRIP_TITLE_PARENS` / `STRIP_TITLE_BRACKETS`) that overflow RT / PS.
+- **Platform support tiers** documented: Apple Silicon (arm64) Tier 1; Intel
+  (x86_64) Tier 2, best-effort.
+
 ## 0.33 — 2026-06-07
 
 ### Processed-audio output mode

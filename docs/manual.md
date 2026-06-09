@@ -269,20 +269,28 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 The RDS Radiotext section can poll an external script for now-playing metadata.
 
-Two ready-to-use example pollers ship with MPX Prime, both in the DMG's
+A ready-to-use example poller ships with MPX Prime, in the DMG's
 `Now Playing Scripts/` folder and inside the app at
 `MPX Prime.app/Contents/Resources/Scripts/`:
 
-- `vlc-nowplaying.sh` — reads the current item from VLC via AppleScript.
-- `cog-nowplaying.sh` — reads the current entry's artist / title from
-  [Cog](https://github.com/losnoco/cog) via its AppleScript dictionary
-  (`currentEntry`). Note: Cog exposes no play/pause state to scripts, so it
-  reports the loaded track even while paused (it clears the entry on Stop).
+- `nowplaying.sh` — auto-detects the running player and reads its metadata via
+  AppleScript: **VLC** (current item, only while playing) first, then
+  [**Cog**](https://github.com/losnoco/cog) (current entry via its `currentEntry`
+  dictionary). Note: Cog exposes no play/pause state, so it reports the loaded
+  track even while paused (it clears the entry on Stop). The shared title cleanup
+  and output formatting are written once; only the per-player fetch differs, so use
+  it as a template for another player by adding one fetch function.
 
-Copy one somewhere stable (for example your home folder) and point the
-Radiotext now-playing script setting at it, or use it as a template for
-another player. The first run prompts once for Automation permission to
-control the player.
+The script strips parenthetical `(Radio Edit)` / `(feat. X)` and bracketed
+`[Official Video]` / `[Remastered]` decorations from the title — they routinely
+push the RadioText / PS over length, e.g. `Song Title (Radio Edit) [Official Video]`
+becomes `Song Title`. Both are **on by default**; set `STRIP_TITLE_PARENS=0` and/or
+`STRIP_TITLE_BRACKETS=0` in the script's environment to keep them. If stripping
+would empty the title, the original is kept.
+
+Copy it somewhere stable (for example your home folder) and point the
+Radiotext now-playing script setting at it. The first run prompts once for
+Automation permission to control the player.
 
 Expected script behavior:
 

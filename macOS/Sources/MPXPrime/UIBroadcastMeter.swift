@@ -36,76 +36,17 @@ struct VerticalMeterStrip: View {
                 .textCase(.uppercase)
                 .lineLimit(1)
                 .fixedSize()
-            // Bar + scale-label column side by side. Bar stays 22pt
-            // wide; label column gets the rest of the strip width
-            // (~36pt) so dB / kHz labels render outside the bar
-            // alongside their tick marks.
-            HStack(alignment: .top, spacing: 4) {
-                GeometryReader { geo in
-                    ZStack {
-                        // Body + tinted fill.
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(BroadcastStyle.meterSurface)
-                        VStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(tint.opacity(0.80))
-                                .frame(height: geo.size.height * CGFloat(clamp(level)))
-                        }
-                        // Scale tick marks pinned to the bar's right edge.
-                        ForEach(scaleTicks) { tick in
-                            Rectangle()
-                                .fill(Color.primary.opacity(0.32))
-                                .frame(width: 6, height: 1)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                                .offset(
-                                    x: 0,
-                                    y: (0.5 - tick.position) * geo.size.height
-                                )
-                        }
-                        // Target line for modulation deviation.
-                        if let targetNorm {
-                            Rectangle()
-                                .fill(BroadcastStyle.accent.opacity(0.85))
-                                .frame(height: 1.5)
-                                .offset(x: 0, y: (0.5 - targetNorm) * geo.size.height)
-                        }
-                        // Peak-hold dot.
-                        if let peak = peakLevel {
-                            let y = (0.5 - clamp(peak)) * geo.size.height
-                            Rectangle()
-                                .fill(Color.primary.opacity(0.95))
-                                .frame(height: 2)
-                                .offset(x: 0, y: y)
-                        }
-                    }
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-                    )
-                }
-                .frame(width: 22)
-
-                // Scale labels rendered alongside their tick marks via
-                // y-offset positioning. Top-aligned with the bar so the
-                // tick → label vertical mapping is exact.
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        ForEach(scaleTicks) { tick in
-                            Text(tick.label)
-                                .font(BroadcastStyle.scaleLabel)
-                                .foregroundStyle(.secondary)
-                                .fixedSize()
-                                .offset(
-                                    x: 0,
-                                    y: ((1.0 - tick.position) * geo.size.height) - 6
-                                )
-                        }
-                    }
-                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                }
-                .frame(width: 22)
+            // Bar + ticks + scale labels + peak-hold, all drawn in a single
+            // Canvas. Critical for performance: the level / peak / target change
+            // every frame, and a SwiftUI subview whose `.frame(height:)` tracks the
+            // level would re-run Auto Layout on every update (a full window
+            // constraint re-solve at the refresh rate -- the cause of the
+            // "near-frozen after hours" stall when the Levels window stays open).
+            // A Canvas just repaints on a value change; it never invalidates layout.
+            Canvas { ctx, size in
+                drawMeter(into: ctx, size: size)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Text(valueText)
                 .font(BroadcastStyle.valueReadout)
                 .foregroundStyle(.primary)
@@ -121,6 +62,53 @@ struct VerticalMeterStrip: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(valueText)
+    }
+
+    // MARK: - Drawing
+
+    /// Paints the bar body, level fill, tick marks + scale labels, target line,
+    /// and peak-hold marker. Runs inside `Canvas`, so a per-frame value change is a
+    /// repaint, not an Auto Layout pass. y is top-down; normalized position 0 = bottom.
+    private func drawMeter(into ctx: GraphicsContext, size: CGSize) {
+        let barW: CGFloat = 22
+        let h = size.height
+        let radius: CGFloat = 3
+        let barRect = CGRect(x: 0, y: 0, width: barW, height: h)
+        let barPath = Path(roundedRect: barRect, cornerRadius: radius, style: .continuous)
+        ctx.fill(barPath, with: .color(BroadcastStyle.meterSurface))
+
+        let fillH = h * CGFloat(clamp(level))
+        if fillH > 0.5 {
+            let fillRect = CGRect(x: 0, y: h - fillH, width: barW, height: fillH)
+            ctx.fill(
+                Path(roundedRect: fillRect, cornerRadius: radius, style: .continuous),
+                with: .color(tint.opacity(0.80)))
+        }
+        ctx.stroke(barPath, with: .color(BroadcastStyle.panelBorder), lineWidth: 0.5)
+
+        for tick in scaleTicks {
+            let y = h * CGFloat(1.0 - tick.position)
+            ctx.fill(
+                Path(CGRect(x: barW - 6, y: y - 0.5, width: 6, height: 1)),
+                with: .color(Color.primary.opacity(0.32)))
+            ctx.draw(
+                Text(tick.label).font(BroadcastStyle.scaleLabel).foregroundColor(.secondary),
+                at: CGPoint(x: barW + 6, y: y), anchor: .leading)
+        }
+
+        if let targetNorm {
+            let y = h * CGFloat(1.0 - targetNorm)
+            ctx.fill(
+                Path(CGRect(x: 0, y: y - 0.75, width: barW, height: 1.5)),
+                with: .color(BroadcastStyle.accent.opacity(0.85)))
+        }
+
+        if let peak = peakLevel {
+            let y = h * CGFloat(1.0 - clamp(peak))
+            ctx.fill(
+                Path(CGRect(x: 0, y: y - 1, width: barW, height: 2)),
+                with: .color(Color.primary.opacity(0.95)))
+        }
     }
 
     // MARK: - Scale helpers

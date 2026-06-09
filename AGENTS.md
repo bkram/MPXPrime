@@ -8,6 +8,7 @@ Native macOS FM composite (MPX) generator — real-time broadcast-style stereo e
 
 - Primary entrypoint: `macOS/Package.swift`
 - Default user config: `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- **Platform tiers: Apple Silicon (arm64) is Tier 1** (primary, fully-supported, optimization target). **Intel (x86_64) is Tier 2, best-effort** — ships in the universal binary with an identical audio chain, but perf work targets arm64 first; give Intel lighter-weight fallbacks where cheap (e.g. the arch-tiered GUI refresh profile), don't block on Intel-only optimization.
 
 See also: `docs/manual.md` (user manual: usage / configuration / RDS / reference tables), `docs/ARCHITECTURE.md` (detailed DSP chain and stage descriptions), `docs/BUILDING.md` (build / run / test / package from source), `plan.md` (roadmap).
 
@@ -149,6 +150,9 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - Device UIDs are platform-specific — always enumerate, never hardcode.
 - New DSP stages ship **disabled by default** and must support live-apply via `RuntimeConfig` unless there is a specific reason not to.
 - Avoid reintroducing separate Stereo/RDS menus; use unified navigation.
+- **High-frequency monitoring UI must not invalidate the view model.** Meters, scopes, spectrum, and live numeric readouts update at the metering rate (up to 30 Hz). Two rules, both load-bearing (see CHANGELOG 0.34 — the multi-hour GUI freeze):
+  - **Draw moving graphics in `Canvas`, never as layout** — no SwiftUI subview whose `.frame(width:/height:)` or `.offset` tracks a live value. A value change must be a repaint, not an Auto Layout pass.
+  - **Read live values from the `LiveTelemetry` observable, not `@Published` on `MPXPrimeViewModel`.** Per-tick values live on `LiveTelemetry` (the view model keeps one-line forwarding properties so writer code is unchanged); wrap live readouts in `LiveTelemetryView` so a tick re-evaluates only those leaves. Putting per-tick state back on the view model recreates the window toolbar every tick (documented SwiftUI-on-macOS leak) and progressively freezes the GUI over hours. Detached high-refresh windows also set `NSHostingController.sizingOptions = []`. The 8 Hz "readout pulse" experiment was tried and reverted — don't reintroduce it.
 
 ## UI/UX (Apple HIG)
 
@@ -167,12 +171,14 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `swift build --package-path macOS -c release` is clean.
 - Manual smoke test with `--gui`: monitoring + processing tabs work.
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
-- Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.033`; 0.32 shipped 2026-06-07). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
+- Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.034`; 0.33 shipped 2026-06-07). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.
 
 ### Release validation checklist
 
 Run before tagging. None of these should be skipped on a release commit; partial coverage is how regressions ship.
+
+**Run the offline `--verify*` gates on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
 
 - [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS` — full default suite passes
 - [ ] `swift build --package-path macOS -c release` — release build clean

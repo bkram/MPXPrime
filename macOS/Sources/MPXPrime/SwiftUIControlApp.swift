@@ -1594,6 +1594,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let scopesView = ScopesOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: scopesView)
+        // Flexibly sized: the window drives the size and the SwiftUI content
+        // fills it, so suppress the hosting controller's auto-added min /
+        // intrinsic / max Auto Layout constraints. On a high-refresh window
+        // this avoids per-update constraint recomputation piling up in AppKit's
+        // layout engine -- a documented long-running SwiftUI-on-macOS slowdown.
+        hostingController.sizingOptions = []
         let w = NSWindow(contentViewController: hostingController)
         w.title = kScopesWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1628,6 +1634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let spectrumView = SpectrumOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: spectrumView)
+        hostingController.sizingOptions = []  // window drives size; avoid per-update constraint churn (see Scopes window)
         let w = NSWindow(contentViewController: hostingController)
         w.title = kMPXSpectrumWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1651,6 +1658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let spectrumView = PreMPXSpectrumOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: spectrumView)
+        hostingController.sizingOptions = []  // window drives size; avoid per-update constraint churn (see Scopes window)
         let w = NSWindow(contentViewController: hostingController)
         w.title = kAudioSpectrumWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1674,6 +1682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let vm = model else { return }
         let levelsView = LevelsOnlyView(model: vm)
         let hostingController = NSHostingController(rootView: levelsView)
+        hostingController.sizingOptions = []  // window drives size; avoid per-update constraint churn (see Scopes window)
         let w = NSWindow(contentViewController: hostingController)
         w.title = kLevelsWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -1932,95 +1941,99 @@ final class MPXPrimeViewModel: ObservableObject {
 
     @Published var isRunning: Bool = false
     @Published var isTransitioning: Bool = false
-    @Published var runtimeText: String = "Not running"
-    @Published var inputRingText: String = "Input ring: n/a"
-    @Published var inputBufferValue: Double = 0.0
-    @Published var inputBufferMax: Double = 1.0
-    @Published var inputBufferWarning: Double = 0.7
-    @Published var inputBufferCritical: Double = 0.9
+    var runtimeText: String { get { telemetry.runtimeText } set { telemetry.runtimeText = newValue } }
+    // Live monitoring telemetry lives on its own observable so a metering
+    // tick does not invalidate the whole view model. These forward to it;
+    // writer code in the update methods is unchanged. See LiveTelemetry.
+    let telemetry = LiveTelemetry()
+    var inputRingText: String { get { telemetry.inputRingText } set { telemetry.inputRingText = newValue } }
+    var inputBufferValue: Double { get { telemetry.inputBufferValue } set { telemetry.inputBufferValue = newValue } }
+    var inputBufferMax: Double { get { telemetry.inputBufferMax } set { telemetry.inputBufferMax = newValue } }
+    var inputBufferWarning: Double { get { telemetry.inputBufferWarning } set { telemetry.inputBufferWarning = newValue } }
+    var inputBufferCritical: Double { get { telemetry.inputBufferCritical } set { telemetry.inputBufferCritical = newValue } }
     /// Low-passed (~10 s time constant) version of `inputBufferValue /
     /// inputBufferMax`. Used by the Monitoring buffer-fill bar so the
     /// display shows trend rather than tick-by-tick wobble; raw
     /// `inputBufferValue` keeps its 30 Hz cadence for any logic that
     /// needs the instantaneous reading.
-    @Published var bufferFillSmoothed: Double = 0.0
-    @Published var streamHealth: MonitoringStreamHealth = .stopped
+    var bufferFillSmoothed: Double { get { telemetry.bufferFillSmoothed } set { telemetry.bufferFillSmoothed = newValue } }
+    var streamHealth: MonitoringStreamHealth { get { telemetry.streamHealth } set { telemetry.streamHealth = newValue } }
 
-    @Published var inputLLevel: Double = 0.0
-    @Published var inputRLevel: Double = 0.0
-    @Published var agcOutputLLevel: Double = 0.0
-    @Published var agcOutputRLevel: Double = 0.0
-    @Published var outputLevel: Double = 0.0
-    @Published var modulationLevel: Double = 0.0
-    @Published var inputLPeakHoldLevel: Double = 0.0
-    @Published var inputRPeakHoldLevel: Double = 0.0
-    @Published var agcOutputLPeakHoldLevel: Double = 0.0
-    @Published var agcOutputRPeakHoldLevel: Double = 0.0
-    @Published var outputPeakHoldLevel: Double = 0.0
-    @Published var modulationPeakHoldLevel: Double = 0.0
+    var inputLLevel: Double { get { telemetry.inputLLevel } set { telemetry.inputLLevel = newValue } }
+    var inputRLevel: Double { get { telemetry.inputRLevel } set { telemetry.inputRLevel = newValue } }
+    var agcOutputLLevel: Double { get { telemetry.agcOutputLLevel } set { telemetry.agcOutputLLevel = newValue } }
+    var agcOutputRLevel: Double { get { telemetry.agcOutputRLevel } set { telemetry.agcOutputRLevel = newValue } }
+    var outputLevel: Double { get { telemetry.outputLevel } set { telemetry.outputLevel = newValue } }
+    var modulationLevel: Double { get { telemetry.modulationLevel } set { telemetry.modulationLevel = newValue } }
+    var inputLPeakHoldLevel: Double { get { telemetry.inputLPeakHoldLevel } set { telemetry.inputLPeakHoldLevel = newValue } }
+    var inputRPeakHoldLevel: Double { get { telemetry.inputRPeakHoldLevel } set { telemetry.inputRPeakHoldLevel = newValue } }
+    var agcOutputLPeakHoldLevel: Double { get { telemetry.agcOutputLPeakHoldLevel } set { telemetry.agcOutputLPeakHoldLevel = newValue } }
+    var agcOutputRPeakHoldLevel: Double { get { telemetry.agcOutputRPeakHoldLevel } set { telemetry.agcOutputRPeakHoldLevel = newValue } }
+    var outputPeakHoldLevel: Double { get { telemetry.outputPeakHoldLevel } set { telemetry.outputPeakHoldLevel = newValue } }
+    var modulationPeakHoldLevel: Double { get { telemetry.modulationPeakHoldLevel } set { telemetry.modulationPeakHoldLevel = newValue } }
     @Published var stickyPeaksEnabled: Bool = true
     @Published var meterPeakHoldSeconds: Double = 1.5
     @Published var meterPeakFallDBPerSecond: Double = 18.0
 
-    @Published var inputLText: String = "-inf dBFS"
-    @Published var inputRText: String = "-inf dBFS"
-    @Published var agcOutputLText: String = "-inf dBFS"
-    @Published var agcOutputRText: String = "-inf dBFS"
-    @Published var outputText: String = "-inf dBFS"
-    @Published var modulationText: String = "0.0 kHz"
+    var inputLText: String { get { telemetry.inputLText } set { telemetry.inputLText = newValue } }
+    var inputRText: String { get { telemetry.inputRText } set { telemetry.inputRText = newValue } }
+    var agcOutputLText: String { get { telemetry.agcOutputLText } set { telemetry.agcOutputLText = newValue } }
+    var agcOutputRText: String { get { telemetry.agcOutputRText } set { telemetry.agcOutputRText = newValue } }
+    var outputText: String { get { telemetry.outputText } set { telemetry.outputText = newValue } }
+    var modulationText: String { get { telemetry.modulationText } set { telemetry.modulationText = newValue } }
 
-    @Published var limiterStateText: String = "Off"
-    @Published var limiterDetailText: String = "Drive 0.0 dB • GR 0.0 dB • Safe 0.0 dB • Peak -inf dBFS"
-    @Published var compositeBudgetStateText: String = "Off"
-    @Published var compositeCalibrationText: String = "Pilot 0.0% • RDS 0.0% • Audio -inf dBFS • Margin 0.0 dB"
-    @Published var estimatedDeviationPeakKHz: Float = 0.0
-    @Published var pilotInjectionPercentValue: Float = 0.0
-    @Published var rdsInjectionPercentValue: Float = 0.0
-    @Published var audioCompositePeakLinear: Float = 0.0
-    @Published var compositeBudgetMarginDBValue: Float = 0.0
+    var limiterStateText: String { get { telemetry.limiterStateText } set { telemetry.limiterStateText = newValue } }
+    var limiterDetailText: String { get { telemetry.limiterDetailText } set { telemetry.limiterDetailText = newValue } }
+    var compositeBudgetStateText: String { get { telemetry.compositeBudgetStateText } set { telemetry.compositeBudgetStateText = newValue } }
+    var compositeCalibrationText: String { get { telemetry.compositeCalibrationText } set { telemetry.compositeCalibrationText = newValue } }
+    var estimatedDeviationPeakKHz: Float { get { telemetry.estimatedDeviationPeakKHz } set { telemetry.estimatedDeviationPeakKHz = newValue } }
+    var pilotInjectionPercentValue: Float { get { telemetry.pilotInjectionPercentValue } set { telemetry.pilotInjectionPercentValue = newValue } }
+    var rdsInjectionPercentValue: Float { get { telemetry.rdsInjectionPercentValue } set { telemetry.rdsInjectionPercentValue = newValue } }
+    var audioCompositePeakLinear: Float { get { telemetry.audioCompositePeakLinear } set { telemetry.audioCompositePeakLinear = newValue } }
+    var compositeBudgetMarginDBValue: Float { get { telemetry.compositeBudgetMarginDBValue } set { telemetry.compositeBudgetMarginDBValue = newValue } }
     /// Post-injection overshoot envelope (from `CompositeCalibrationStatus`).
     /// Non-zero ⇒ pilot/RDS subcarriers are clipping at the final
     /// ±1.0 clamp because audio + subcarrier × outputGain exceeds
     /// budget. UI surfaces this as an over-budget warning so the
     /// operator can reduce outputGain / pilot / RDS levels.
-    @Published var postInjectionOvershootValue: Float = 0.0
+    var postInjectionOvershootValue: Float { get { telemetry.postInjectionOvershootValue } set { telemetry.postInjectionOvershootValue = newValue } }
     /// True when the composite budget governor has muted the audio
     /// path — outputGain × subcarrier reservation left no headroom.
-    @Published var compositeOverBudget: Bool = false
-    @Published var compositeClipperGainReductionDBValue: Float = 0.0
-    @Published var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
-    @Published var preEncodeLimiterGainReductionDBValue: Float = 0.0
-    @Published var safetyLimiterGainReductionDBValue: Float = 0.0
-    @Published var stereoImageText: String = "Corr +1.00 • Side 0.00x"
-    @Published var agcStateText: String = "Off"
-    @Published var agcDetailText: String = "Detector -inf dB • Gain 0.0 dB"
-    @Published var multibandStateText: String = "Off"
-    @Published var primeBassStateText: String = "Off"
-    @Published var widenerStateText: String = "Off"
+    var compositeOverBudget: Bool { get { telemetry.compositeOverBudget } set { telemetry.compositeOverBudget = newValue } }
+    var compositeClipperGainReductionDBValue: Float { get { telemetry.compositeClipperGainReductionDBValue } set { telemetry.compositeClipperGainReductionDBValue = newValue } }
+    var compositeClipperLookaheadGainReductionDBValue: Float { get { telemetry.compositeClipperLookaheadGainReductionDBValue } set { telemetry.compositeClipperLookaheadGainReductionDBValue = newValue } }
+    var preEncodeLimiterGainReductionDBValue: Float { get { telemetry.preEncodeLimiterGainReductionDBValue } set { telemetry.preEncodeLimiterGainReductionDBValue = newValue } }
+    var safetyLimiterGainReductionDBValue: Float { get { telemetry.safetyLimiterGainReductionDBValue } set { telemetry.safetyLimiterGainReductionDBValue = newValue } }
+    var stereoImageText: String { get { telemetry.stereoImageText } set { telemetry.stereoImageText = newValue } }
+    var agcStateText: String { get { telemetry.agcStateText } set { telemetry.agcStateText = newValue } }
+    var agcDetailText: String { get { telemetry.agcDetailText } set { telemetry.agcDetailText = newValue } }
+    var multibandStateText: String { get { telemetry.multibandStateText } set { telemetry.multibandStateText = newValue } }
+    var primeBassStateText: String { get { telemetry.primeBassStateText } set { telemetry.primeBassStateText = newValue } }
+    var widenerStateText: String { get { telemetry.widenerStateText } set { telemetry.widenerStateText = newValue } }
 
-    @Published var rdsPS: String = "-"
-    @Published var rdsPI: String = "-"
-    @Published var rdsPTY: String = "-"
-    @Published var rdsPTYN: String = "-"
-    @Published var rdsAID: String = "AID: OFF"
-    @Published var rdsLongPS: String = "-"
-    @Published var rdsRadiotext: String = "-"
-    @Published var rdsNowPlayingStatus: String = "Now Playing: off"
+    var rdsPS: String { get { telemetry.rdsPS } set { telemetry.rdsPS = newValue } }
+    var rdsPI: String { get { telemetry.rdsPI } set { telemetry.rdsPI = newValue } }
+    var rdsPTY: String { get { telemetry.rdsPTY } set { telemetry.rdsPTY = newValue } }
+    var rdsPTYN: String { get { telemetry.rdsPTYN } set { telemetry.rdsPTYN = newValue } }
+    var rdsAID: String { get { telemetry.rdsAID } set { telemetry.rdsAID = newValue } }
+    var rdsLongPS: String { get { telemetry.rdsLongPS } set { telemetry.rdsLongPS = newValue } }
+    var rdsRadiotext: String { get { telemetry.rdsRadiotext } set { telemetry.rdsRadiotext = newValue } }
+    var rdsNowPlayingStatus: String { get { telemetry.rdsNowPlayingStatus } set { telemetry.rdsNowPlayingStatus = newValue } }
 
-    @Published var inputScopeLeft: [Float] = Array(repeating: 0.0, count: 128)
-    @Published var inputScopeRight: [Float] = Array(repeating: 0.0, count: 128)
-    @Published var outputScope: [Float] = Array(repeating: 0.0, count: 128)
+    var inputScopeLeft: [Float] { get { telemetry.inputScopeLeft } set { telemetry.inputScopeLeft = newValue } }
+    var inputScopeRight: [Float] { get { telemetry.inputScopeRight } set { telemetry.inputScopeRight = newValue } }
+    var outputScope: [Float] { get { telemetry.outputScope } set { telemetry.outputScope = newValue } }
     @Published var scopeTimebaseMS: Double = 10.0
     @Published var scopeAutoGainEnabled: Bool = true
-    @Published var mpxSpectrumDB: [Float] = Array(repeating: -100.0, count: 512)
-    @Published var mpxSpectrumMaxHz: Double = 92_000.0
-    @Published var mpxSpectrumNyquistHz: Double = 0.0
+    var mpxSpectrumDB: [Float] { get { telemetry.mpxSpectrumDB } set { telemetry.mpxSpectrumDB = newValue } }
+    var mpxSpectrumMaxHz: Double { get { telemetry.mpxSpectrumMaxHz } set { telemetry.mpxSpectrumMaxHz = newValue } }
+    var mpxSpectrumNyquistHz: Double { get { telemetry.mpxSpectrumNyquistHz } set { telemetry.mpxSpectrumNyquistHz = newValue } }
     @Published var scopesWindowVisible: Bool = false
     @Published var spectrumWindowVisible: Bool = false
-    @Published var preMPXSpectrumLeftDB: [Float] = Array(repeating: -100.0, count: 128)
-    @Published var preMPXSpectrumRightDB: [Float] = Array(repeating: -100.0, count: 128)
-    @Published var preMPXSpectrumMaxHz: Double = 16_000.0
-    @Published var preMPXSpectrumNyquistHz: Double = 0.0
+    var preMPXSpectrumLeftDB: [Float] { get { telemetry.preMPXSpectrumLeftDB } set { telemetry.preMPXSpectrumLeftDB = newValue } }
+    var preMPXSpectrumRightDB: [Float] { get { telemetry.preMPXSpectrumRightDB } set { telemetry.preMPXSpectrumRightDB = newValue } }
+    var preMPXSpectrumMaxHz: Double { get { telemetry.preMPXSpectrumMaxHz } set { telemetry.preMPXSpectrumMaxHz = newValue } }
+    var preMPXSpectrumNyquistHz: Double { get { telemetry.preMPXSpectrumNyquistHz } set { telemetry.preMPXSpectrumNyquistHz = newValue } }
     @Published var preMPXSpectrumWindowVisible: Bool = false
     @Published var levelsWindowVisible: Bool = false
 
@@ -5784,18 +5797,20 @@ private struct MonitoringDashboardView: View {
         // audio-composite peak are all meaningless. Show the output level and the
         // (still-valid) stereo image instead.
         Card(title: model.processedAudioOutputActive ? "Output" : "MPX") {
-            if model.processedAudioOutputActive {
-                metricsGrid([
-                    ("OUTPUT", model.outputText.ifEmpty("—")),
-                    ("STEREO IMAGE", model.stereoImageText)
-                ])
-            } else {
-                metricsGrid([
-                    ("OUTPUT", model.outputText.ifEmpty("—")),
-                    ("AUDIO COMPOSITE", audioCompositeText),
-                    ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
-                    ("MODULATION", modulationText)
-                ])
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+                if model.processedAudioOutputActive {
+                    metricsGrid([
+                        ("OUTPUT", model.outputText.ifEmpty("—")),
+                        ("STEREO IMAGE", model.stereoImageText)
+                    ])
+                } else {
+                    metricsGrid([
+                        ("OUTPUT", model.outputText.ifEmpty("—")),
+                        ("AUDIO COMPOSITE", audioCompositeText),
+                        ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
+                        ("MODULATION", modulationText)
+                    ])
+                }
             }
         }
     }
@@ -5804,28 +5819,32 @@ private struct MonitoringDashboardView: View {
         // Composite clipper / safety limiter / BS.412 don't run in processed-audio
         // output — only the pre-encode limiter does.
         Card(title: "Headroom") {
-            if model.processedAudioOutputActive {
-                metricsGrid([
-                    ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
-                ])
-            } else {
-                metricsGrid([
-                    ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
-                    ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
-                    ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
-                    ("BS.412 BUDGET", budgetText)
-                ])
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+                if model.processedAudioOutputActive {
+                    metricsGrid([
+                        ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
+                    ])
+                } else {
+                    metricsGrid([
+                        ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
+                        ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
+                        ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
+                        ("BS.412 BUDGET", budgetText)
+                    ])
+                }
             }
         }
     }
 
     private var subcarriersPanel: some View {
         Card(title: "Subcarriers") {
-            metricsGrid([
-                ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
-                ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
-                ("STEREO IMAGE", model.stereoImageText)
-            ])
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+                metricsGrid([
+                    ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
+                    ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
+                    ("STEREO IMAGE", model.stereoImageText)
+                ])
+            }
         }
     }
 
@@ -5955,20 +5974,24 @@ private struct MonitoringDashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            MeterRow(
-                label: "L",
-                valueText: model.inputLText.meterCurrentOnly,
-                level: model.inputLLevel,
-                peakLevel: model.inputLPeakHoldLevel,
-                scaleStyle: .dbfs
-            )
-            MeterRow(
-                label: "R",
-                valueText: model.inputRText.meterCurrentOnly,
-                level: model.inputRLevel,
-                peakLevel: model.inputRPeakHoldLevel,
-                scaleStyle: .dbfs
-            )
+            LiveTelemetryView(telemetry: model.telemetry) { t in
+                VStack(alignment: .leading, spacing: 6) {
+                    MeterRow(
+                        label: "L",
+                        valueText: t.inputLText.meterCurrentOnly,
+                        level: t.inputLLevel,
+                        peakLevel: t.inputLPeakHoldLevel,
+                        scaleStyle: .dbfs
+                    )
+                    MeterRow(
+                        label: "R",
+                        valueText: t.inputRText.meterCurrentOnly,
+                        level: t.inputRLevel,
+                        peakLevel: t.inputRPeakHoldLevel,
+                        scaleStyle: .dbfs
+                    )
+                }
+            }
         }
         .padding(10)
         .background(BroadcastStyle.meterSurface.opacity(0.65))
@@ -5985,8 +6008,10 @@ private struct MonitoringDashboardView: View {
                 .font(BroadcastStyle.chipLabel)
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            Text(streamRateText)
-                .font(BroadcastStyle.valueReadout)
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+                Text(streamRateText)
+                    .font(BroadcastStyle.valueReadout)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -6006,14 +6031,18 @@ private struct MonitoringDashboardView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                 Spacer()
-                Text(delayText)
-                    .font(BroadcastStyle.valueReadout)
-                    .foregroundStyle(.secondary)
+                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                    Text(delayText)
+                        .font(BroadcastStyle.valueReadout)
+                        .foregroundStyle(.secondary)
+                }
             }
-            ProgressView(value: bufferFill)
-                .progressViewStyle(.linear)
-                .tint(bufferTint)
-                .frame(maxWidth: .infinity)
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+                ProgressView(value: bufferFill)
+                    .progressViewStyle(.linear)
+                    .tint(bufferTint)
+                    .frame(maxWidth: .infinity)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -6031,9 +6060,11 @@ private struct MonitoringDashboardView: View {
                 .font(BroadcastStyle.chipLabel)
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            HStack(spacing: 12) {
-                dropoutPill(label: "OVR", count: model.streamHealth.overflowsRecent)
-                dropoutPill(label: "UND", count: model.streamHealth.underflowsRecent)
+            LiveTelemetryView(telemetry: model.telemetry) { t in
+                HStack(spacing: 12) {
+                    dropoutPill(label: "OVR", count: t.streamHealth.overflowsRecent)
+                    dropoutPill(label: "UND", count: t.streamHealth.underflowsRecent)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -6073,11 +6104,13 @@ private struct MonitoringDashboardView: View {
     private var chainPanel: some View {
         Card(title: "Signal Chain") {
             VStack(alignment: .leading, spacing: 12) {
-                FlowStatusRow(items: [
-                    ("AGC", agcPillText, agcDotColor),
-                    ("Stereo", stereoPillText, .secondary.opacity(0.75)),
-                    ("Pre-Lim GR", preLimText, preLimDotColor)
-                ])
+                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                    FlowStatusRow(items: [
+                        ("AGC", agcPillText, agcDotColor),
+                        ("Stereo", stereoPillText, .secondary.opacity(0.75)),
+                        ("Pre-Lim GR", preLimText, preLimDotColor)
+                    ])
+                }
 
                 ProcessingOverviewGrid(model: model, embedded: true)
             }
@@ -6088,7 +6121,8 @@ private struct MonitoringDashboardView: View {
 
     private var rdsPanel: some View {
         Card(title: "RDS") {
-            VStack(alignment: .leading, spacing: 10) {
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+              VStack(alignment: .leading, spacing: 10) {
                 FlowStatusRow(items: [
                     ("PS", model.rdsPS.ifEmpty("—"), .secondary.opacity(0.75)),
                     ("PI", model.rdsPI.ifEmpty("—"), .secondary.opacity(0.75)),
@@ -6109,6 +6143,7 @@ private struct MonitoringDashboardView: View {
                         }
                     }
                 }
+              }
             }
         }
     }
@@ -6451,18 +6486,24 @@ private struct RuntimeCardView: View {
                 }
 
                 Divider()
-                Text(model.runtimeText)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                ProgressView(value: model.inputBufferValue, total: max(1.0, model.inputBufferMax))
-                    .tint(
-                        model.inputBufferValue >= model.inputBufferCritical
-                            ? .red
-                            : (model.inputBufferValue >= model.inputBufferWarning
-                                ? .yellow : .green))
-                Text(model.inputRingText)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                    Text(model.runtimeText)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                    ProgressView(value: model.inputBufferValue, total: max(1.0, model.inputBufferMax))
+                        .tint(
+                            model.inputBufferValue >= model.inputBufferCritical
+                                ? .red
+                                : (model.inputBufferValue >= model.inputBufferWarning
+                                    ? .yellow : .green))
+                }
+                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                    Text(model.inputRingText)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
             .controlSize(.regular)
         }
@@ -6508,7 +6549,8 @@ struct LevelsCardView: View {
 
     var body: some View {
         Card(title: "Levels", style: .meter) {
-            HStack(alignment: .center, spacing: 12) {
+            LiveTelemetryView(telemetry: model.telemetry) { _ in
+              HStack(alignment: .center, spacing: 12) {
                 VerticalMeterStrip(
                     label: "IN L",
                     valueText: model.inputLText.meterCurrentOnly,
@@ -6562,8 +6604,9 @@ struct LevelsCardView: View {
                 // and per-stage in the Signal Chain strip. The detached
                 // Levels window is now purely VU-style level metering.
                 Spacer(minLength: 0)
+              }
+              .frame(height: 340)
             }
-            .frame(height: 340)
         }
     }
 }
@@ -6605,6 +6648,11 @@ private struct MeterRow: View {
                 Text(valueText)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    // Fixed footprint so a per-tick value change (e.g.
+                    // "-6.2 dB" -> "-12.4 dB") repaints in place instead of
+                    // resizing and re-solving the enclosing stack layout.
+                    .frame(width: 68, alignment: .trailing)
             }
             MeterBar(level: level, peakLevel: peakLevel, scaleStyle: scaleStyle)
         }
@@ -6681,39 +6729,38 @@ private struct MeterBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            GeometryReader { geo in
-                let width = max(0.0, min(1.0, level)) * geo.size.width
-                let peakX = (peakLevel.map { max(0.0, min(1.0, $0)) } ?? 0.0) * geo.size.width
-                let targetX = (targetLevel.map { max(0.0, min(1.0, $0)) } ?? 0.0) * geo.size.width
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.secondary.opacity(0.18))
-                    ForEach(scaleTicks) { tick in
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.15))
-                            .frame(width: 1)
-                            .offset(x: (tick.position * geo.size.width) - 0.5)
-                    }
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(meterTint.opacity(0.75))
-                        .frame(width: max(0.0, width))
-                    if targetLevel != nil {
-                        Rectangle()
-                            .fill(Color.accentColor.opacity(0.95))
-                            .frame(width: 2, height: 14)
-                            .offset(
-                                x: min(
-                                    max(0.0, targetX - 1.0),
-                                    max(0.0, geo.size.width - 2.0)
-                                )
-                            )
-                    }
-                    if peakLevel != nil {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.98))
-                            .frame(width: 2, height: 14)
-                            .offset(x: min(max(0.0, peakX - 1.0), max(0.0, geo.size.width - 2.0)))
-                    }
+            // Drawn in a Canvas, not laid-out subviews: the fill width / peak / target
+            // change every frame, and a `.frame(width:)` tracking the level would
+            // re-run Auto Layout on every update at the refresh rate (the cause of the
+            // long-run GUI stall). A Canvas just repaints.
+            Canvas { ctx, size in
+                let w = size.width
+                let h = size.height
+                let radius: CGFloat = 3
+                let track = Path(roundedRect: CGRect(x: 0, y: 0, width: w, height: h),
+                                 cornerRadius: radius, style: .continuous)
+                ctx.fill(track, with: .color(Color.secondary.opacity(0.18)))
+                for tick in scaleTicks {
+                    let x = tick.position * w
+                    ctx.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: h)),
+                             with: .color(Color.primary.opacity(0.15)))
+                }
+                let fw = max(0.0, min(1.0, level)) * w
+                if fw > 0.5 {
+                    ctx.fill(
+                        Path(roundedRect: CGRect(x: 0, y: 0, width: fw, height: h),
+                             cornerRadius: radius, style: .continuous),
+                        with: .color(meterTint.opacity(0.75)))
+                }
+                if let target = targetLevel {
+                    let x = min(max(0.0, (max(0.0, min(1.0, target)) * w) - 1.0), max(0.0, w - 2.0))
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)),
+                             with: .color(Color.accentColor.opacity(0.95)))
+                }
+                if let peak = peakLevel {
+                    let x = min(max(0.0, (max(0.0, min(1.0, peak)) * w) - 1.0), max(0.0, w - 2.0))
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)),
+                             with: .color(Color.primary.opacity(0.98)))
                 }
             }
             .frame(height: 14)
@@ -7388,6 +7435,8 @@ private struct ProcessingAGCTab: View {
                 .help("BS.1770-flavoured pre-filter on the detector sidechain (HPF ~38 Hz + high-shelf +4 dB @ ~1.5 kHz). Tracks perceived loudness instead of flat RMS — bass rumble no longer pulls the AGC down unfairly; bright content reads hotter. Audio path is untouched. Default on.")
             Toggle("Program-Dependent Release", isOn: model.configBinding(\.widebandAGCReleaseProgramDependent, runtimeDisposition: .live))
                 .help("Slow release up to 3x on busy program (dense voice, music with many transients), speed back to the configured rate on flat program. Reduces pumping without forcing slow defaults. Default on.")
+            Toggle("Bass-Desensitised Sidechain", isOn: model.configBinding(\.widebandAGCBassDesensitizeEnabled, runtimeDisposition: .live))
+                .help("Low-shelf-cuts the LF band out of the detector sidechain so a kick / heavy bass line can't drive the loudness reading and pump the whole chain (US 4,249,042 + US 3,790,896: also recovers fast from brief reductions). Audio path is untouched. Trade-off: very bass-heavy program reads quieter, so the AGC adds more gain. Default off.")
             Text("Wideband AGC should establish a stable average level platform. It is not the final loudness stage.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -7880,9 +7929,11 @@ private struct ProcessingCompositeClipperTab: View {
             DoubleSliderRow(title: "Look-ahead", value: model.configBinding(\.compositeClipperLookaheadMS, runtimeDisposition: .live), range: 0...5, format: "%.1f ms",
                 tooltip: "Predictive peak shaving. 0.0 disables; 2.0 ms = recommended preset. Sliding-window-max detector + half-cosine attack + 200 Hz smoother bound overshoots tighter than the soft-clip alone, at the cost of N ms added chain latency. Hardcoded internals: 1.5 ms attack, 80 ms release, 200 Hz smoothing.").disabled(disabled)
             LabeledContent("Look-ahead GR") {
-                Text(String(format: "%.1f dB", Double(model.compositeClipperLookaheadGainReductionDBValue)))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                LiveTelemetryView(telemetry: model.telemetry) { t in
+                    Text(String(format: "%.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
             }
             Divider()
             Text("Subcarrier Protection")
@@ -8281,9 +8332,11 @@ private struct RDSRadiotextTab: View {
                 TextField("RT+ Format A", text: model.configBinding(\.rdsRTPlusFormatA, runtimeDisposition: .liveRDS))
                 TextField("RT+ Format B", text: model.configBinding(\.rdsRTPlusFormatB, runtimeDisposition: .liveRDS))
             }
-            Text(model.rdsNowPlayingStatus)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            LiveTelemetryView(telemetry: model.telemetry) { t in
+                Text(t.rdsNowPlayingStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -9047,11 +9100,15 @@ struct ScopesOnlyView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Stereo Input").font(.subheadline).foregroundStyle(.secondary)
-                    ScopeView(samples: model.inputScopeLeft, secondarySamples: model.inputScopeRight)
+                    LiveTelemetryView(telemetry: model.telemetry) { t in
+                        ScopeView(samples: t.inputScopeLeft, secondarySamples: t.inputScopeRight)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("MPX Output").font(.subheadline).foregroundStyle(.secondary)
-                    ScopeView(samples: model.outputScope)
+                    LiveTelemetryView(telemetry: model.telemetry) { t in
+                        ScopeView(samples: t.outputScope)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -9079,11 +9136,13 @@ struct SpectrumOnlyView: View {
             .padding(.horizontal)
 
             VStack(alignment: .leading, spacing: 6) {
-                MPXSpectrumView(
-                    dbBins: model.mpxSpectrumDB,
-                    maxHz: model.mpxSpectrumMaxHz,
-                    nyquistHz: model.mpxSpectrumNyquistHz
-                )
+                LiveTelemetryView(telemetry: model.telemetry) { t in
+                    MPXSpectrumView(
+                        dbBins: t.mpxSpectrumDB,
+                        maxHz: t.mpxSpectrumMaxHz,
+                        nyquistHz: t.mpxSpectrumNyquistHz
+                    )
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding()
@@ -9102,12 +9161,14 @@ struct PreMPXSpectrumOnlyView: View {
                 subtitle: "Raw stereo input spectrum before processing."
             )
 
-            StereoPreMPXSpectrumView(
-                leftBins: model.preMPXSpectrumLeftDB,
-                rightBins: model.preMPXSpectrumRightDB,
-                maxHz: model.preMPXSpectrumMaxHz,
-                nyquistHz: model.preMPXSpectrumNyquistHz
-            )
+            LiveTelemetryView(telemetry: model.telemetry) { t in
+                StereoPreMPXSpectrumView(
+                    leftBins: t.preMPXSpectrumLeftDB,
+                    rightBins: t.preMPXSpectrumRightDB,
+                    maxHz: t.preMPXSpectrumMaxHz,
+                    nyquistHz: t.preMPXSpectrumNyquistHz
+                )
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding()

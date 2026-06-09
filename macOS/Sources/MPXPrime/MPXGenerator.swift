@@ -1507,8 +1507,13 @@ struct CompositeClipper {
         // Phase 1: pre-compute all `f` oversampled inputs via Lagrange interp.
         // Lagrange state advances only at lag.advance(x) below, so this
         // is safe to do as a batch up front.
-        for i in 0..<f {
-            upBatch[i] = (i == f - 1) ? xPath : lag.interpolate(weights: lagBasis[i], cur: xPath)
+        // Write through an unsafe buffer pointer so the per-element store
+        // doesn't trip a copy-on-write uniqueness check each iteration
+        // (these are private, never-aliased scratch buffers). Bit-identical.
+        upBatch.withUnsafeMutableBufferPointer { ub in
+            for i in 0..<f {
+                ub[i] = (i == f - 1) ? xPath : lag.interpolate(weights: lagBasis[i], cur: xPath)
+            }
         }
 
         // Phase 2: batched soft-clip via vvtanhf. Replaces `f` scalar tanhf
@@ -1520,8 +1525,10 @@ struct CompositeClipper {
         // smaller than the cost of a per-element branch on the SIMD path).
         let thr = thresholdLin
         let kn = knee
-        for i in 0..<f {
-            clipExcessBatch[i] = (fabsf(upBatch[i]) - thr) / kn
+        clipExcessBatch.withUnsafeMutableBufferPointer { eb in
+            for i in 0..<f {
+                eb[i] = (fabsf(upBatch[i]) - thr) / kn
+            }
         }
         var n = Int32(f)
         clipExcessBatch.withUnsafeMutableBufferPointer { excessPtr in
@@ -1533,15 +1540,17 @@ struct CompositeClipper {
             }
         }
         var sampleClipGain: Float = 1.0
-        for i in 0..<f {
-            let up = upBatch[i]
-            let ax = fabsf(up)
-            if ax <= thr {
-                clipBatch[i] = up
-            } else {
-                let clippedAbs = thr + kn * clipTanhBatch[i]
-                clipBatch[i] = copysignf(clippedAbs, up)
-                sampleClipGain = min(sampleClipGain, clippedAbs / max(1e-6, ax))
+        clipBatch.withUnsafeMutableBufferPointer { cb in
+            for i in 0..<f {
+                let up = upBatch[i]
+                let ax = fabsf(up)
+                if ax <= thr {
+                    cb[i] = up
+                } else {
+                    let clippedAbs = thr + kn * clipTanhBatch[i]
+                    cb[i] = copysignf(clippedAbs, up)
+                    sampleClipGain = min(sampleClipGain, clippedAbs / max(1e-6, ax))
+                }
             }
         }
 

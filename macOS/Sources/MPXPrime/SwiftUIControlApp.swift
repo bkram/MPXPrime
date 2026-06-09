@@ -3721,7 +3721,7 @@ final class MPXPrimeViewModel: ObservableObject {
         agcOutputLText = Self.peakMeterString(currentPeak: currentAGCOutputLeftPeak, peakHoldDB: agcOutputLPeakHoldDB)
         agcOutputRText = Self.peakMeterString(currentPeak: currentAGCOutputRightPeak, peakHoldDB: agcOutputRPeakHoldDB)
         outputText = Self.peakMeterString(currentPeak: currentOutputPeak, peakHoldDB: outputPeakHoldDB)
-        modulationText = String(format: "%.1f kHz", deviationKHz)
+        modulationText = String(format: "%5.1f kHz", deviationKHz)
         estimatedDeviationPeakKHz = deviationKHz
         pilotInjectionPercentValue = pilotInjectionPercent
         rdsInjectionPercentValue = rdsInjectionPercent
@@ -4932,9 +4932,13 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private static func dbfsString(_ linear: Float) -> String {
-        guard linear > 1e-9 else { return "-inf dBFS" }
+        // Right-justified to a constant 6-char numeric field so the
+        // monospaced readout never changes width as the value moves between
+        // 1/2/3-digit magnitudes ("-6.2" vs "-12.4" vs "-120.0") -- avoids
+        // the layout jitter that variable-length numbers cause.
+        guard linear > 1e-9 else { return "  -inf dBFS" }
         let db = 20.0 * log10(Double(linear))
-        return String(format: "%.1f dBFS", db)
+        return String(format: "%6.1f dBFS", db)
     }
 
     private static func meterMetaString(rms: Float, peak: Float, peakHoldDB: Float? = nil) -> String {
@@ -4945,13 +4949,13 @@ final class MPXPrimeViewModel: ObservableObject {
         } else {
             displayPeakDB = peak > 1e-9 ? (20.0 * log10(Double(peak))) : -120.0
         }
-        return "\(rmsString)   \(String(format: "%.1f", displayPeakDB)) pk"
+        return "\(rmsString)   \(String(format: "%6.1f", displayPeakDB)) pk"
     }
 
     private static func peakMeterString(currentPeak: Float, peakHoldDB: Float? = nil) -> String {
         let currentString = dbfsString(currentPeak)
         guard let peakHoldDB else { return currentString }
-        return "\(currentString)   \(String(format: "%.1f", peakHoldDB)) pk"
+        return "\(currentString)   \(String(format: "%6.1f", peakHoldDB)) pk"
     }
 
     private static func lufsString(_ value: Float) -> String {
@@ -4972,6 +4976,11 @@ extension String {
     /// so duplicating it as text only adds clutter and overflows the
     /// 58 pt column.
     fileprivate var meterCurrentOnly: String {
+        // The current value ends at its unit suffix; split there so leading
+        // field-padding spaces in the value (now right-justified to a fixed
+        // width) aren't mistaken for the "   " peak separator.
+        if let r = range(of: " dBFS") { return String(self[..<r.upperBound]) }
+        if let r = range(of: " LUFS") { return String(self[..<r.upperBound]) }
         if let r = range(of: "   ") { return String(self[..<r.lowerBound]) }
         return self
     }
@@ -5828,7 +5837,7 @@ private struct MonitoringDashboardView: View {
                     metricsGrid([
                         ("OUTPUT", model.outputText.ifEmpty("—")),
                         ("AUDIO COMPOSITE", audioCompositeText),
-                        ("DEVIATION", String(format: "%.1f kHz", model.estimatedDeviationPeakKHz)),
+                        ("DEVIATION", String(format: "%5.1f kHz", model.estimatedDeviationPeakKHz)),
                         ("MODULATION", modulationText)
                     ])
                 }
@@ -5861,8 +5870,8 @@ private struct MonitoringDashboardView: View {
         Card(title: "Subcarriers") {
             LiveTelemetryView(telemetry: model.telemetry) { _ in
                 metricsGrid([
-                    ("PILOT", String(format: "%.1f%%", model.pilotInjectionPercentValue)),
-                    ("RDS", String(format: "%.1f%%", model.rdsInjectionPercentValue)),
+                    ("PILOT", String(format: "%5.1f%%", model.pilotInjectionPercentValue)),
+                    ("RDS", String(format: "%5.1f%%", model.rdsInjectionPercentValue)),
                     ("STEREO IMAGE", model.stereoImageText)
                 ])
             }
@@ -5895,7 +5904,7 @@ private struct MonitoringDashboardView: View {
     private var audioCompositeText: String {
         let v = Double(model.audioCompositePeakLinear)
         guard v > 1e-6 else { return "-120.0 dBFS" }
-        return String(format: "%.1f dBFS", 20.0 * log10(v))
+        return String(format: "%6.1f dBFS", 20.0 * log10(v))
     }
 
     /// Modulation percentage: peak deviation as a fraction of the
@@ -5905,7 +5914,7 @@ private struct MonitoringDashboardView: View {
     private var modulationText: String {
         let peak = Double(model.estimatedDeviationPeakKHz)
         let target = max(1.0, model.config.mpxDeviationKHz)
-        return String(format: "%.1f%%", (peak / target) * 100.0)
+        return String(format: "%6.1f%%", (peak / target) * 100.0)
     }
 
     /// Budget margin + state. ON shown in tail when BS.412 is engaged;
@@ -5914,13 +5923,15 @@ private struct MonitoringDashboardView: View {
     private var budgetText: String {
         let margin = Double(model.compositeBudgetMarginDBValue)
         let state = model.compositeBudgetStateText
-        let core = String(format: "%+.1f dB", margin)
+        let core = String(format: "%+5.1f dB", margin)
         return state.isEmpty || state == "Off" ? core : "\(core) · \(state)"
     }
 
     private func grText(_ valueDB: Float) -> String {
+        // 5-char numeric field (covers " 0.0".."16.0", and "-NN.N") so the GR
+        // readout stays a constant width as gain reduction varies.
         let db = Double(valueDB)
-        return db < 0.05 ? "0.0 dB" : String(format: "%.1f dB", db)
+        return String(format: "%5.1f dB", db < 0.05 ? 0.0 : db)
     }
 
     // MARK: - Panel A: Transport + Devices
@@ -6253,7 +6264,7 @@ private struct MonitoringDashboardView: View {
     }
 
     private var preLimText: String {
-        String(format: "%.1f dB", Double(model.preEncodeLimiterGainReductionDBValue))
+        String(format: "%5.1f dB", Double(model.preEncodeLimiterGainReductionDBValue))
     }
 
     private var preLimDotColor: Color {
@@ -7971,7 +7982,7 @@ private struct ProcessingCompositeClipperTab: View {
                 tooltip: "Predictive peak shaving. 0.0 disables; 2.0 ms = recommended preset. Sliding-window-max detector + half-cosine attack + 200 Hz smoother bound overshoots tighter than the soft-clip alone, at the cost of N ms added chain latency. Hardcoded internals: 1.5 ms attack, 80 ms release, 200 Hz smoothing.").disabled(disabled)
             LabeledContent("Look-ahead GR") {
                 LiveTelemetryView(telemetry: model.telemetry) { t in
-                    Text(String(format: "%.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
+                    Text(String(format: "%5.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }

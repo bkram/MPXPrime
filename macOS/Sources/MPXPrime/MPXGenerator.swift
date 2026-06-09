@@ -875,6 +875,111 @@ struct BassClipper {
     }
 }
 
+// MARK: - HF Clipper (pre-emphasis-aware, L/R domain, oversampled)
+// Pre-emphasis-aware HF limiting. Clips only the HIGH band of the
+// (pre-emphasized) L/R signal so HF transients are tamed by a dedicated stage
+// instead of forcing the broadband pre-encode limiter to pull gain across the
+// whole signal (which dulls everything -- the classic FM-processing artifact).
+//
+// De-emphasis-correct by construction: it limits the *pre-emphasized* HF, so
+// the receiver's fixed 50/75 us de-emphasis still restores the intended curve
+// -- the trade is HF density, NOT the curve mismatch that relaxing pre-emphasis
+// (dynamic pre-emphasis) would cause. This is the Orban/Omnia/Stereotool
+// approach (see plan.md "HF limiter / clipper").
+//
+// Structurally a mirror of `BassClipper`: LR4 split at the crossover, oversample
+// + tanh soft-clip the band, decimate, recombine. BassClipper clips `.low`; this
+// clips `.high`. Oversampling (Lagrange4Interp up + BiquadCascade6 decimation)
+// keeps the clipping harmonics from aliasing. Default off -> passthrough
+// (bit-identical); ships opt-in, verifier-backed.
+struct HFClipper {
+    private var enabled = false
+    private var splitL = LinkwitzRiley4()
+    private var splitR = LinkwitzRiley4()
+    private var thresholdLin: Float = 0.9
+    private var drive: Float = 1.0
+    private var lagL = Lagrange4Interp()
+    private var lagR = Lagrange4Interp()
+    private var decimL = BiquadCascade6()
+    private var decimR = BiquadCascade6()
+    private static let factor: Int = 4
+    private var lowBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var highBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var clipDrivenBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+    private var clipResultBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
+
+    mutating func configure(enabled: Bool, sampleRate: Float, crossoverHz: Float,
+                            thresholdDB: Float, drive drv: Float) {
+        self.enabled = enabled
+        let osRate = sampleRate * Float(Self.factor)
+        splitL.configure(cutoffHz: crossoverHz, sampleRate: osRate)
+        splitR.configure(cutoffHz: crossoverHz, sampleRate: osRate)
+        thresholdLin = powf(10.0, min(0.0, thresholdDB) / 20.0)
+        drive = max(0.1, drv)
+        let cutoff = min(sampleRate * 0.45, (osRate * 0.5) - 1_000.0)
+        decimL.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
+        decimR.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
+    }
+
+    @inline(__always)
+    mutating func process(left: Float, right: Float) -> (Float, Float) {
+        guard enabled else { return (left, right) }
+        if !lagL.isPrimed { lagL.prime(left); lagR.prime(right) }
+        let f = Self.factor
+        let step = 1.0 / Float(f)
+
+        // Phase 1: per-OS-step interpolate + LR4 split (state advances here).
+        for i in 0..<f {
+            let t = step * Float(i + 1)
+            let upL = (i == f - 1) ? left : lagL.interpolate(t: t, cur: left)
+            let upR = (i == f - 1) ? right : lagR.interpolate(t: t, cur: right)
+            let sL = splitL.process(upL)
+            let sR = splitR.process(upR)
+            lowBatch[i] = sL.low
+            lowBatch[i + f] = sR.low
+            highBatch[i] = sL.high
+            highBatch[i + f] = sR.high
+        }
+
+        // Phase 2: batched tanh soft-clip of the HIGH band via vvtanhf.
+        let thr = thresholdLin
+        let drv = drive
+        let invDrv = 1.0 / drv
+        for i in 0..<(f * 2) {
+            clipDrivenBatch[i] = (highBatch[i] * drv) / thr
+        }
+        var n = Int32(f * 2)
+        clipDrivenBatch.withUnsafeMutableBufferPointer { dPtr in
+            clipTanhBatch.withUnsafeMutableBufferPointer { tPtr in
+                // baseAddress is non-nil for non-empty pre-allocated arrays (vForce idiom).
+                // swiftlint:disable force_unwrapping
+                vvtanhf(tPtr.baseAddress!, dPtr.baseAddress!, &n)
+                // swiftlint:enable force_unwrapping
+            }
+        }
+        for i in 0..<(f * 2) {
+            let driven = highBatch[i] * drv
+            if fabsf(driven) <= thr {
+                clipResultBatch[i] = highBatch[i]
+            } else {
+                clipResultBatch[i] = (thr * clipTanhBatch[i]) * invDrv
+            }
+        }
+
+        // Phase 3: recombine (low + clipped high) and decimate.
+        var outL: Float = 0
+        var outR: Float = 0
+        for i in 0..<f {
+            outL = decimL.process(lowBatch[i] + clipResultBatch[i])
+            outR = decimR.process(lowBatch[i + f] + clipResultBatch[i + f])
+        }
+        lagL.advance(left)
+        lagR.advance(right)
+        return (outL, outR)
+    }
+}
+
 // MARK: - Distortion-Cancelled Clipper (L/R domain, 8x oversampled)
 struct DistortionCancelledClipper {
     private var ceiling: Float = 0.95

@@ -183,7 +183,7 @@ A standalone macOS companion app that consumes external MPX composite input (192
 
 Separate from the analyzer app: MPX Prime continues to support decoding its own generated composite back to L/R monitor audio through the shared `MPXDecoder`. The monitor output already represents what an FM stereo receiver would recover, not a shortcut downmix. The "External MPX monitoring" mode that earlier plan.md revisions described as a tab inside MPX Prime is superseded by `MPXPrimeMeter` — operators wanting to inspect external MPX use the companion app.
 
-7. **7.6 — Dynamic pre-emphasis ("Smart HF").** Lookahead-based HF envelope follower; dynamically relax the pre-emphasis curve during HF transients to reduce clipper workload. Significant algorithm effort. Pre-emphasis is now in L/R upstream of the pre-encode limiter, so dynamic relaxation can either modulate the existing `preL` / `preR` filters in place or build a dedicated sidechain detector — both paths are now compatible with the production chain. Lower priority for amateur-grade; this is a polish item.
+7. **7.6 — Dynamic pre-emphasis ("Smart HF") — superseded by the HF limiter (below).** The literal "relax the pre-emphasis curve on HF transients" approach reduces the transmitted HF boost, which the receiver's *fixed* 50/75 us de-emphasis then over-attenuates -> audible HF "dulling" / mismatch. This is the dbx/BTSC-style approach that FM broadcasting deliberately avoids. The de-emphasis-**correct** way to tame pre-emphasis-driven HF peaks is **pre-emphasis-aware HF limiting/clipping** (limit the *pre-emphasized* HF band; the receiver's fixed de-emphasis then restores the curve, trading HF density rather than a curve mismatch) -- see "HF limiter" under Broadcast-tier follow-ups, now the chosen path. An isolated `DynamicPreemphasis` sidechain core (approach A) was built + unit-tested (commit `d76eefb`) but is **parked unwired** -- keep only if an optional dbx-style "variable pre-emphasis" is ever wanted; otherwise removable.
 
 ## RDS roadmap toward enterprise tier
 
@@ -238,13 +238,15 @@ Both currently use `Lagrange4Interp` + `BiquadCascade6` (12th-order Butterworth 
 
 **Scope estimate**: 1–2 days per clipper for the OS bump + decimation-filter swap + benchmark + verifier baseline refresh. The chain currently has ~70% real-time headroom (per `DSPThroughputTests`) so absolute CPU cost is comfortably absorbed.
 
-### HF look-ahead clipper (mention)
+### HF limiter / clipper (pre-emphasis-aware) — ACTIVE (chosen over dynamic pre-emphasis)
 
-Omnia.9 / Stereotool ship a dedicated HF clipper stage with predictive sidechain — a separate clipper sitting on top of the multiband chain that look-aheads on the high band only, shaving HF transients before they hit the broadband composite clipper. MPX Prime currently relies on the broadband composite clipper's look-ahead (`mpx_clipper_lookahead_ms`, 0.26) and the per-band multiband expander/limiter; there is no dedicated HF clipper stage.
+Omnia.9 / Stereotool / Optimod ship a dedicated HF stage that tames the high band only, shaving HF transients before they force the *broadband* limiter/clipper to pull gain across the whole signal (which dulls everything). Web research (2026-06; FM pre/de-emphasis math + Orban 8600/8700i HF-limiting notes) confirmed this is the **de-emphasis-correct** answer: it limits the **pre-emphasized** HF, so the receiver's fixed 50/75 us de-emphasis restores the curve -- the trade is HF density, not the curve mismatch that dynamic pre-emphasis (7.6, approach A) suffers. Chosen over 7.6 for that reason.
 
-Audible mostly on dense EDM / contemporary pop where HF transients hit the composite clipper hard enough to cost loudness or cleanliness. Marginal on top-shelf program material. One of the two real audible gaps versus a $15k Optimod (the other is dynamic pre-emphasis, "Next up" #7).
+Math context: pre-emphasis is a single-zero shelf, `gain(f) = sqrt(1 + (2*pi*f*tau)^2)`, corner at `1/(2*pi*tau)` (75 us -> 2123 Hz, 50 us -> 3183 Hz), ~+13.6 dB (50) / ~+17 dB (75) at 15 kHz. That boost is what the broadband limiter fights; offloading the HF peaks to a dedicated band stage is the win.
 
-Implementation shape would be a new `HFClipper` stage between the multiband recombine and pre-emphasis, with its own oversampled tanh kernel + sliding-window-max detector (same primitive as the composite clipper's look-ahead). Significant algorithm + listening-validation effort; polish-tier, not next-up.
+**Design (placement = de-emphasis-correct):** a new `HFClipper` stage on the **pre-emphasized** L/R, between `preL`/`preR` and the pre-encode limiter (NOT before pre-emphasis -- it must act on the boosted HF so receiver de-emphasis restores it). Shape: linear/LR4 split at ~4-6 kHz -> oversampled soft-clip (tanh, anti-aliased -- reuse the `Lagrange4Interp` + decimator pattern from `BassClipper` / `DistortionCancelledClipper`; a base-rate clip would alias) on the high band, stereo-linked -> recombine with the (delay-matched) low band. Optional look-ahead later (same sliding-window-max primitive as the composite clipper). Default off, `RuntimeConfig` `.live`, verifier-backed: OFF == bit-identical (baseline-strict green); ON validated by before/after `--verify-receiver` (separation + pilot/RDS guards unchanged) and an HF-peak-reduction test. Reference: Orban 8600/8700i "pre-emphasis-aware HF limiting"; the broadband composite clipper already has look-ahead (`mpx_clipper_lookahead_ms`, 0.26) but pulls gain broadband.
+
+Audible mostly on dense EDM / contemporary pop. One of the two real audible gaps vs a $15k Optimod.
 
 ### Enterprise-parity status
 

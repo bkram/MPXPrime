@@ -175,7 +175,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case widener = "Widener"
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
-    case dcClipper = "DC Clipper"
+    case dcClipper = "Audio Clip"
     case hfClipper = "HF Clip"
     case limiter = "Audio Limiter"
     case compositeClipper = "Comp Clip"
@@ -281,7 +281,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .bassClipper:
             return "Reset Bass Clipper Tab"
         case .dcClipper:
-            return "Reset DC Clipper Tab"
+            return "Reset Audio Clipper Tab"
         case .hfClipper:
             return "Reset HF Clipper Tab"
         case .widener:
@@ -322,7 +322,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .bassClipper:
             return "Reset bass clipper tab to defaults"
         case .dcClipper:
-            return "Reset DC clipper tab to defaults"
+            return "Reset audio clipper tab to defaults"
         case .hfClipper:
             return "Reset HF clipper tab to defaults"
         case .widener:
@@ -496,7 +496,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingMBLimiter: return "MB Limiter"
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
-        case .processingDCClipper: return "DC Clipper"
+        case .processingDCClipper: return "Audio Clipper"
         case .processingHFClipper: return "HF Clipper"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
@@ -567,7 +567,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingMBLimiter: return "Per-band fast peak limiter"
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
-        case .processingDCClipper: return "Distortion-cancelled audio clipper"
+        case .processingDCClipper: return "Audio-band peak clipper"
         case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
@@ -579,7 +579,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsLongPS: return "32-character Long PS (15A)"
         case .rdsAF: return "Alternative frequencies (AF)"
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
-        case .rdsCarrier: return "Injection level, subcarrier frequency, Gaussian shaping"
+        case .rdsCarrier: return "Injection level, subcarrier frequency, pulse shaping"
         case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
         case .snapshots: return "Named save / recall slots for the full configuration"
         }
@@ -7684,7 +7684,7 @@ private struct ProcessingLimiterTab: View {
             ).disabled(disabled)
             DisclosureGroup("Advanced") {
                 Toggle(
-                    "Cleaner Limiter Ceiling",
+                    "Reduce Clipping Distortion",
                     isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
                 )
                 .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Experimental; off keeps the current behavior.")
@@ -7876,7 +7876,7 @@ private struct ProcessingBassClipperTab: View {
             Toggle("Enable Bass Clipper", isOn: model.configBinding(\.bassClipperEnabled, runtimeDisposition: .live))
             let disabled = !model.config.bassClipperEnabled
             DoubleSliderRow(title: "Crossover", value: model.configBinding(\.bassClipperCrossoverHz, runtimeDisposition: .live), range: 60...300, format: "%.0f Hz",
-                tooltip: "LR4 crossover frequency isolating the low band for clipping. Content below this is clipped independently; above passes unmodified.").disabled(disabled)
+                tooltip: "Crossover frequency isolating the low band for clipping. Content below this is clipped independently; above passes unmodified.").disabled(disabled)
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.bassClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Clipping threshold for the low band. Lower = more aggressive bass clipping, reducing bass-induced IMD in downstream stages.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.bassClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
@@ -7893,7 +7893,7 @@ private struct ProcessingHFClipperTab: View {
             Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))
             let disabled = !model.config.hfClipperEnabled
             DoubleSliderRow(title: "Crossover", value: model.configBinding(\.hfClipperCrossoverHz, runtimeDisposition: .live), range: 3000...8000, format: "%.0f Hz",
-                tooltip: "LR4 crossover isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
+                tooltip: "Crossover frequency isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
@@ -7906,8 +7906,8 @@ private struct ProcessingDCClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Distortion-Cancelled Clipper") {
-            Toggle("Enable DC Clipper", isOn: model.configBinding(\.dcClipperEnabled, runtimeDisposition: .live))
+        Card(title: "Audio Clipper") {
+            Toggle("Enable Audio Clipper", isOn: model.configBinding(\.dcClipperEnabled, runtimeDisposition: .live))
             let disabled = !model.config.dcClipperEnabled
             DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.dcClipperCeilingDB, runtimeDisposition: .live), range: -6...0, format: "%.1f dB",
                 tooltip: "Clipping ceiling for the distortion-cancelled clipper. Lower ceiling = more audible density but more clipping artifacts.").disabled(disabled)
@@ -8150,9 +8150,11 @@ private struct RDSProgramTab: View {
             LabeledContent("PI Code") {
                 HexCodeField(text: model.piBinding(), placeholder: "0000", width: 72)
             }
+            .help("Program Identification: the unique 16-bit hex station ID a receiver uses to recognize this station and follow it across alternative frequencies (AF). Assigned by your national broadcast authority; in RBDS it is derived from the call sign.")
             LabeledContent("ECC") {
                 HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
             }
+            .help("Extended Country Code: one hex byte that, combined with the PI country nibble, uniquely identifies the country. Lets receivers distinguish countries that share a PI prefix. Default E3 is the Netherlands; set the value for your country.")
             Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
                 Text("Europe (RDS)").tag(false)
                 Text("USA (RBDS)").tag(true)
@@ -8185,9 +8187,13 @@ private struct RDSProgramTab: View {
                 Toggle("TA", isOn: model.configBinding(\.rdsTA, runtimeDisposition: .liveRDS))
                 Toggle("MS", isOn: model.configBinding(\.rdsMS, runtimeDisposition: .liveRDS))
                 Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
+                    .help("Decoder Identification: tells receivers the broadcast is stereo (off = mono). Set this to match the actual program.")
                 Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
+                    .help("Decoder Identification: signals artificial-head (binaural) audio. Leave off for normal stereo program.")
                 Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
+                    .help("Decoder Identification: signals the audio is compressed/companded (an obsolete noise-reduction scheme). Leave off for normal program.")
                 Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
+                    .help("Decoder Identification: marks the Program Type as dynamically changing (varies through the broadcast) rather than fixed for the station.")
             }
             .toggleStyle(.switch)
             Text("Per-program flags. Applied live without restart.")
@@ -8386,7 +8392,7 @@ private struct RDSCarrierTab: View {
                 title: "Injection Level",
                 value: model.rdsLevelPercentBinding(),
                 range: 0...10, format: "%.1f %%")
-            Text("Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
+            Text("RDS subcarrier pulse shaping (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -8497,7 +8503,7 @@ private struct RDSStatusTab: View {
             Toggle(
                 "Enable RDS",
                 isOn: model.configBinding(\.enRDS, runtimeDisposition: .liveRDS))
-            Text("Master enable applies live. Subcarrier-physical-layer settings (injection level, frequency, Gaussian shaping) live on the Subcarrier tab and require a transport restart.")
+            Text("Master enable applies live. Subcarrier-physical-layer settings (injection level, frequency, pulse shaping) live on the Subcarrier tab and require a transport restart.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

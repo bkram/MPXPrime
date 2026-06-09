@@ -70,28 +70,28 @@ private struct CompositeClipperInspector: View {
                 .textCase(.uppercase)
 
             Toggle(
-                "Cancel audio band (0–15 kHz)",
+                "Protect Audio Highs",
                 isOn: model.configBinding(\.compositeClipperCancelAudio, runtimeDisposition: .live)
             )
-            .help("Subtract the clipper's audio-band IM via LR4 LP at 15 kHz. Costs loudness; off by default for full clipper drive. Inspired by Orban US 5,168,526.")
+            .help("Removes the clipper's distortion in the 0-15 kHz audio region. Costs loudness; off by default for full clipper drive. Inspired by Orban US 5,168,526.")
 
             Toggle(
-                "Cancel pilot guard (17–21 kHz)",
+                "Protect Stereo Pilot",
                 isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live)
             )
-            .help("Removes clipper IM under the cleanly-injected 19 kHz pilot. Required for reliable stereo decoding — leave on.")
+            .help("Removes clipper distortion under the cleanly-injected 19 kHz pilot (17-21 kHz). Required for reliable stereo decoding — leave on.")
 
             Toggle(
-                "Cancel stereo subcarrier (22–53 kHz)",
+                "Protect Stereo Subcarrier",
                 isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live)
             )
-            .help("Cancels M²·S cross-products that would otherwise demodulate as (L−R) breathing.")
+            .help("Keeps clipper distortion out of the 22-53 kHz stereo (L-R) subcarrier region that would otherwise cause stereo breathing.")
 
             Toggle(
-                "Cancel RDS guard (55–59 kHz)",
+                "Protect RDS",
                 isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live)
             )
-            .help("Removes clipper energy under the RDS subcarrier. Leave on or BCH error rate climbs as the clipper drives.")
+            .help("Removes clipper energy under the 57 kHz RDS subcarrier (55-59 kHz). Leave on or RDS reception degrades as the clipper drives.")
 
             Text("These flags subtract bandpass-isolated clipper residual back into the protected guard bands so the receiver doesn't see clipper noise vector-summed with the cleanly-injected pilot, stereo, and RDS subcarriers.")
                 .font(.caption)

@@ -5613,16 +5613,7 @@ private struct TestToneView: View {
         Card(title: "Test Tone Source") {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle(isOn: isEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Enable Test Tone").font(.body)
-                        Text(
-                            "Replaces the audio input. The rest of the chain "
-                            + "(AGC, multiband, clippers, BS.412, composite "
-                            + "clipper) processes the generated tone normally."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
+                    Text("Enable Test Tone").font(.body)
                 }
                 .toggleStyle(.switch)
             }
@@ -8395,7 +8386,7 @@ private struct RDSCarrierTab: View {
                 title: "Injection Level",
                 value: model.rdsLevelPercentBinding(),
                 range: 0...10, format: "%.1f %%")
-            Text("Subcarrier physical-layer settings: injection level only. Carrier is fixed at 57 kHz, locked to 3x pilot per EN 50067 Sec 2.1.4. Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`. Restart required.")
+            Text("Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -8484,9 +8475,6 @@ private struct RDSAFTab: View {
                 )
                 .textFieldStyle(.roundedBorder)
             }
-            Text("Method A: up to 25 frequencies as a flat list. Method B: paired (tuned + alternative) — used for stations sharing AF lists across regions.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }

@@ -281,6 +281,14 @@ struct AppConfig {
     var bassClipperCrossoverHz: Double = 150.0
     var bassClipperThresholdDB: Double = -3.0
     var bassClipperDrive: Double = 1.5
+    // Pre-emphasis-aware HF clipper (opt-in, default off). Clips the high band
+    // of the pre-emphasized L/R so HF transients are tamed by a dedicated stage
+    // instead of forcing the broadband pre-encode limiter to dull everything.
+    // De-emphasis-correct (limits pre-emphasized HF; receiver restores curve).
+    var hfClipperEnabled: Bool = false
+    var hfClipperCrossoverHz: Double = 5_000.0
+    var hfClipperThresholdDB: Double = -3.0
+    var hfClipperDrive: Double = 1.2
     var dcClipperEnabled: Bool = false
     var dcClipperCeilingDB: Double = -1.0
     var dcClipperCancelFreqHz: Double = 2000.0
@@ -666,6 +674,14 @@ struct AppConfig {
             "bass_clipper_threshold_db", defaultValue: cfg.bassClipperThresholdDB)
         cfg.bassClipperDrive = mpx.double(
             "bass_clipper_drive", defaultValue: cfg.bassClipperDrive)
+        cfg.hfClipperEnabled = mpx.bool(
+            "hf_clipper_enabled", defaultValue: cfg.hfClipperEnabled)
+        cfg.hfClipperCrossoverHz = mpx.double(
+            "hf_clipper_crossover_hz", defaultValue: cfg.hfClipperCrossoverHz)
+        cfg.hfClipperThresholdDB = mpx.double(
+            "hf_clipper_threshold_db", defaultValue: cfg.hfClipperThresholdDB)
+        cfg.hfClipperDrive = mpx.double(
+            "hf_clipper_drive", defaultValue: cfg.hfClipperDrive)
         cfg.dcClipperEnabled = mpx.bool(
             "dc_clipper_enabled", defaultValue: cfg.dcClipperEnabled)
         cfg.dcClipperCeilingDB = mpx.double(
@@ -926,6 +942,9 @@ struct AppConfig {
         bassClipperCrossoverHz = max(60.0, min(300.0, bassClipperCrossoverHz))
         bassClipperThresholdDB = max(-12.0, min(0.0, bassClipperThresholdDB))
         bassClipperDrive = max(0.5, min(3.0, bassClipperDrive))
+        hfClipperCrossoverHz = max(3_000.0, min(8_000.0, hfClipperCrossoverHz))
+        hfClipperThresholdDB = max(-12.0, min(0.0, hfClipperThresholdDB))
+        hfClipperDrive = max(0.5, min(3.0, hfClipperDrive))
 
         // Distortion-cancelled clipper
         dcClipperCeilingDB = max(-6.0, min(0.0, dcClipperCeilingDB))
@@ -1130,6 +1149,10 @@ struct AppConfig {
             "bass_clipper_crossover_hz = \(Self.formatFloat(bassClipperCrossoverHz))",
             "bass_clipper_threshold_db = \(Self.formatFloat(bassClipperThresholdDB))",
             "bass_clipper_drive = \(Self.formatFloat(bassClipperDrive))",
+            "hf_clipper_enabled = \(Self.boolString(hfClipperEnabled))",
+            "hf_clipper_crossover_hz = \(Self.formatFloat(hfClipperCrossoverHz))",
+            "hf_clipper_threshold_db = \(Self.formatFloat(hfClipperThresholdDB))",
+            "hf_clipper_drive = \(Self.formatFloat(hfClipperDrive))",
             "dc_clipper_enabled = \(Self.boolString(dcClipperEnabled))",
             "dc_clipper_ceiling_db = \(Self.formatFloat(dcClipperCeilingDB))",
             "dc_clipper_cancel_freq_hz = \(Self.formatFloat(dcClipperCancelFreqHz))",

@@ -5957,6 +5957,10 @@ final class MPXGenerator {
         let bassClipperCrossoverHz: Float
         let bassClipperThresholdDB: Float
         let bassClipperDrive: Float
+        let hfClipperEnabled: Bool
+        let hfClipperCrossoverHz: Float
+        let hfClipperThresholdDB: Float
+        let hfClipperDrive: Float
         let dcClipperEnabled: Bool
         let dcClipperCeilingDB: Float
         let dcClipperCancelFreqHz: Float
@@ -6074,6 +6078,10 @@ final class MPXGenerator {
             bassClipperCrossoverHz: Float(config.bassClipperCrossoverHz),
             bassClipperThresholdDB: Float(config.bassClipperThresholdDB),
             bassClipperDrive: Float(config.bassClipperDrive),
+            hfClipperEnabled: config.hfClipperEnabled,
+            hfClipperCrossoverHz: Float(config.hfClipperCrossoverHz),
+            hfClipperThresholdDB: Float(config.hfClipperThresholdDB),
+            hfClipperDrive: Float(config.hfClipperDrive),
             dcClipperEnabled: config.dcClipperEnabled,
             dcClipperCeilingDB: Float(config.dcClipperCeilingDB),
             dcClipperCancelFreqHz: Float(config.dcClipperCancelFreqHz),
@@ -6472,6 +6480,11 @@ final class MPXGenerator {
     private var bassClipperThresholdDB: Float
     private var bassClipperDrive: Float
     private var bassClipper = BassClipper()
+    private var hfClipperEnabled: Bool
+    private var hfClipperCrossoverHz: Float
+    private var hfClipperThresholdDB: Float
+    private var hfClipperDrive: Float
+    private var hfClipper = HFClipper()
 
     // Distortion-cancelled clipper: L/R domain with LF distortion cancellation
     private var dcClipperEnabled: Bool
@@ -6828,6 +6841,11 @@ final class MPXGenerator {
         self.bassClipperThresholdDB = clampf(Float(config.bassClipperThresholdDB), -12.0, 0.0)
         self.bassClipperDrive = clampf(Float(config.bassClipperDrive), 0.5, 3.0)
 
+        self.hfClipperEnabled = config.hfClipperEnabled
+        self.hfClipperCrossoverHz = clampf(Float(config.hfClipperCrossoverHz), 3_000.0, 8_000.0)
+        self.hfClipperThresholdDB = clampf(Float(config.hfClipperThresholdDB), -12.0, 0.0)
+        self.hfClipperDrive = clampf(Float(config.hfClipperDrive), 0.5, 3.0)
+
         self.dcClipperEnabled = config.dcClipperEnabled
         self.dcClipperCeilingDB = clampf(Float(config.dcClipperCeilingDB), -6.0, 0.0)
         self.dcClipperCancelFreqHz = clampf(Float(config.dcClipperCancelFreqHz), 500.0, 4000.0)
@@ -6912,6 +6930,13 @@ final class MPXGenerator {
             crossoverHz: bassClipperCrossoverHz,
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
+        )
+        hfClipper.configure(
+            enabled: hfClipperEnabled,
+            sampleRate: audioRate,
+            crossoverHz: hfClipperCrossoverHz,
+            thresholdDB: hfClipperThresholdDB,
+            drive: hfClipperDrive
         )
         configureDistortionCancelledClipper()
         configureProcessedAudioFinalClipper()
@@ -7311,6 +7336,13 @@ final class MPXGenerator {
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
         )
+        hfClipper.configure(
+            enabled: hfClipperEnabled,
+            sampleRate: audioRate,
+            crossoverHz: hfClipperCrossoverHz,
+            thresholdDB: hfClipperThresholdDB,
+            drive: hfClipperDrive
+        )
         configureDistortionCancelledClipper()
         configureProcessedAudioFinalClipper()
         lookaheadLimiter.configure(
@@ -7609,6 +7641,26 @@ final class MPXGenerator {
                 crossoverHz: bassClipperCrossoverHz,
                 thresholdDB: bassClipperThresholdDB,
                 drive: bassClipperDrive
+            )
+        }
+
+        // HF clipper (pre-emphasis-aware)
+        let hfClipChanged =
+            hfClipperEnabled != config.hfClipperEnabled
+            || fabsf(hfClipperCrossoverHz - config.hfClipperCrossoverHz) > 0.0001
+            || fabsf(hfClipperThresholdDB - config.hfClipperThresholdDB) > 0.0001
+            || fabsf(hfClipperDrive - config.hfClipperDrive) > 0.0001
+        hfClipperEnabled = config.hfClipperEnabled
+        hfClipperCrossoverHz = clampf(config.hfClipperCrossoverHz, 3_000.0, 8_000.0)
+        hfClipperThresholdDB = clampf(config.hfClipperThresholdDB, -12.0, 0.0)
+        hfClipperDrive = clampf(config.hfClipperDrive, 0.5, 3.0)
+        if hfClipChanged {
+            hfClipper.configure(
+                enabled: hfClipperEnabled,
+                sampleRate: sampleRate,
+                crossoverHz: hfClipperCrossoverHz,
+                thresholdDB: hfClipperThresholdDB,
+                drive: hfClipperDrive
             )
         }
 
@@ -8712,6 +8764,17 @@ final class MPXGenerator {
         // so the limiter peak-controls the HF-boosted signal. See `preL`/`preR`.
         stereo.left = preL.process(stereo.left)
         stereo.right = preR.process(stereo.right)
+
+        // Pre-emphasis-aware HF clipper: tame HF transients of the pre-emphasized
+        // signal with a dedicated stage so the broadband limiter below doesn't
+        // pull gain across the whole signal and dull it. De-emphasis-correct
+        // (acts on the pre-emphasized HF). Default off -> not invoked ->
+        // bit-identical to the prior chain.
+        if hfClipperEnabled && !processingBypass {
+            let hf = hfClipper.process(left: stereo.left, right: stereo.right)
+            stereo.left = hf.0
+            stereo.right = hf.1
+        }
 
         if preEncodeAudioLimiterEnabled && !processingBypass {
             let limited = preEncodeAudioLimiter.process(left: stereo.left, right: stereo.right)

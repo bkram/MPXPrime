@@ -7743,13 +7743,16 @@ private struct ProcessingFinalStageTab: View {
             Toggle("Enable Safety Limiter", isOn: model.configBinding(\.limitMPX))
                 .help("Look-ahead peak limiter on the final MPX (audio composite + safety net). Pilot and RDS bypass this stage to keep subcarriers at constant amplitude. Restart-required.")
             let disabled = !model.config.limitMPX
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.limitThreshold), range: 0.5...0.999, format: "%.3f",
-                tooltip: "Linear ceiling for the safety limiter (0.5..0.999). 0.98 = -0.18 dBFS. Below this the limiter doesn't engage; above it the look-ahead reduces gain to keep peaks under the ceiling.").disabled(disabled)
-            Toggle("Enable Look-Ahead", isOn: model.configBinding(\.limitLookaheadEnabled))
-                .help("Look-ahead delay so the limiter sees future peaks and applies gain reduction smoothly before the peak arrives. Off makes the limiter purely reactive (more overshoot).")
-                .disabled(disabled)
-            DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
-                tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
+            DisclosureGroup("Advanced") {
+                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.limitThreshold), range: 0.5...0.999, format: "%.3f",
+                    tooltip: "Linear ceiling for the safety limiter (0.5..0.999). 0.98 = -0.18 dBFS. Below this the limiter doesn't engage; above it the look-ahead reduces gain to keep peaks under the ceiling.").disabled(disabled)
+                Toggle("Enable Look-Ahead", isOn: model.configBinding(\.limitLookaheadEnabled))
+                    .help("Look-ahead delay so the limiter sees future peaks and applies gain reduction smoothly before the peak arrives. Off makes the limiter purely reactive (more overshoot).")
+                    .disabled(disabled)
+                DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
+                    tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
+            }
+            .disabled(disabled)
         }
       }
     }
@@ -7938,8 +7941,6 @@ private struct ProcessingCompositeClipperTab: View {
     var body: some View {
         Card(title: "Composite Clipper") {
             Toggle("Enable Composite Clipper", isOn: model.configBinding(\.compositeClipperEnabled, runtimeDisposition: .live))
-            Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
-                .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
             let disabled = !model.config.compositeClipperEnabled
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.compositeClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)
@@ -7973,6 +7974,10 @@ private struct ProcessingCompositeClipperTab: View {
             Text("Tip: leave the composite clipper off when loudness isn't critical -- it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Protect Audio Highs\" recovers HF detail at the cost of some loudness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            DisclosureGroup("Experimental") {
+                Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
+                    .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
+            }
         }
     }
 }
@@ -8140,35 +8145,39 @@ private struct RDSProgramTab: View {
             PSBankRow(letter: "B", model: model, path: \.rdsPSB)
             PSBankRow(letter: "C", model: model, path: \.rdsPSC)
             PSBankRow(letter: "D", model: model, path: \.rdsPSD)
-            Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered, runtimeDisposition: .liveRDS))
-            DoubleSliderRow(
-                title: "PS Frame",
-                value: model.configBinding(\.rdsPSFrameSeconds, runtimeDisposition: .liveRDS),
-                range: 0.5...10.0,
-                format: "%.1f s")
-            .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
-            LabeledContent("PI Code") {
-                HexCodeField(text: model.piBinding(), placeholder: "0000", width: 72)
-            }
-            .help("Program Identification: the unique 16-bit hex station ID a receiver uses to recognize this station and follow it across alternative frequencies (AF). Assigned by your national broadcast authority; in RBDS it is derived from the call sign.")
-            LabeledContent("ECC") {
-                HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
-            }
-            .help("Extended Country Code: one hex byte that, combined with the PI country nibble, uniquely identifies the country. Lets receivers distinguish countries that share a PI prefix. Default E3 is the Netherlands; set the value for your country.")
-            Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
-                Text("Europe (RDS)").tag(false)
-                Text("USA (RBDS)").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .help("Selects which genre table labels the PTY code below. The transmitted 5-bit PTY value is identical either way -- Europe (RDS, EN 50067) and North America (RBDS, NRSC-4) just name the same code differently, and receivers pick the table by region. Same number, different genre: e.g. 10 reads as Pop Music on RDS but Country on RBDS.")
             Picker("Program Type (PTY)", selection: model.ptyBinding()) {
                 ForEach(model.ptyChoices, id: \.0) { pty in
                     Text("\(pty.0) · \(pty.1)").tag(pty.0)
                 }
             }
-            Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN, runtimeDisposition: .liveRDS))
-            TextField("PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS))
-            Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
+            DisclosureGroup("PS Display") {
+                Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered, runtimeDisposition: .liveRDS))
+                DoubleSliderRow(
+                    title: "PS Frame",
+                    value: model.configBinding(\.rdsPSFrameSeconds, runtimeDisposition: .liveRDS),
+                    range: 0.5...10.0,
+                    format: "%.1f s")
+                .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
+                Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN, runtimeDisposition: .liveRDS))
+                TextField("PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS))
+                Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
+            }
+            DisclosureGroup("Station Identity") {
+                LabeledContent("PI Code") {
+                    HexCodeField(text: model.piBinding(), placeholder: "0000", width: 72)
+                }
+                .help("Program Identification: the unique 16-bit hex station ID a receiver uses to recognize this station and follow it across alternative frequencies (AF). Assigned by your national broadcast authority; in RBDS it is derived from the call sign.")
+                LabeledContent("ECC") {
+                    HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
+                }
+                .help("Extended Country Code: one hex byte that, combined with the PI country nibble, uniquely identifies the country. Lets receivers distinguish countries that share a PI prefix. Default E3 is the Netherlands; set the value for your country.")
+                Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
+                    Text("Europe (RDS)").tag(false)
+                    Text("USA (RBDS)").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .help("Selects which genre table labels the PTY code above. The transmitted 5-bit PTY value is identical either way -- Europe (RDS, EN 50067) and North America (RBDS, NRSC-4) just name the same code differently, and receivers pick the table by region. Same number, different genre: e.g. 10 reads as Pop Music on RDS but Country on RBDS.")
+            }
         }
 
         // Per-program operational flags. Live-applied; UECP MEC 0x0E
@@ -8184,18 +8193,26 @@ private struct RDSProgramTab: View {
                 GridItem(.flexible(minimum: 100))
             ], alignment: .leading, spacing: 8) {
                 Toggle("TP", isOn: model.configBinding(\.rdsTP, runtimeDisposition: .liveRDS))
+                    .help("Traffic Program: this station carries traffic announcements from time to time.")
                 Toggle("TA", isOn: model.configBinding(\.rdsTA, runtimeDisposition: .liveRDS))
+                    .help("Traffic Announcement: flip on for the duration of a traffic bulletin so TA-enabled receivers switch to it, then flip off.")
                 Toggle("MS", isOn: model.configBinding(\.rdsMS, runtimeDisposition: .liveRDS))
-                Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
-                    .help("Decoder Identification: tells receivers the broadcast is stereo (off = mono). Set this to match the actual program.")
-                Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
-                    .help("Decoder Identification: signals artificial-head (binaural) audio. Leave off for normal stereo program.")
-                Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
-                    .help("Decoder Identification: signals the audio is compressed/companded (an obsolete noise-reduction scheme). Leave off for normal program.")
-                Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
-                    .help("Decoder Identification: marks the Program Type as dynamically changing (varies through the broadcast) rather than fixed for the station.")
+                    .help("Music / Speech: tells receivers whether the current program is music (on) or speech (off).")
             }
             .toggleStyle(.switch)
+            DisclosureGroup("Decoder Info (DI)") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: tells receivers the broadcast is stereo (off = mono). Set this to match the actual program.")
+                    Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: signals artificial-head (binaural) audio. Leave off for normal stereo program.")
+                    Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: signals the audio is compressed/companded (an obsolete noise-reduction scheme). Leave off for normal program.")
+                    Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: marks the Program Type as dynamically changing (varies through the broadcast) rather than fixed for the station.")
+                }
+                .toggleStyle(.switch)
+            }
             Text("Per-program flags. Applied live without restart.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -9115,7 +9132,7 @@ struct ScopesOnlyView: View {
                         set: { model.scopeAutoGainEnabled = $0 }
                     )
                 )
-                .toggleStyle(.checkbox)
+                .toggleStyle(.switch)
             }
             .padding(.horizontal)
 

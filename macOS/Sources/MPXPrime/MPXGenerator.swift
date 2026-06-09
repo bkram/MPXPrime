@@ -752,6 +752,29 @@ struct Lagrange4Interp {
         return (h3 * l0) + (h2 * l1) + (h1 * l2) + (cur * l3)
     }
 
+    /// Basis weights for a fixed fractional position `t`. When a caller
+    /// oversamples by a fixed integer factor, every host sample evaluates
+    /// interpolation at the *same* set of `t` values (i/factor), so these
+    /// weights are constant and can be precomputed once instead of being
+    /// recomputed per host sample. Returns the four l-coefficients in the
+    /// exact (l0, l1, l2, l3) layout `interpolate(weights:cur:)` consumes.
+    @inline(__always)
+    static func basisWeights(t: Float) -> SIMD4<Float> {
+        let l0 = -((t + 1.0) * t * (t - 1.0)) / 6.0
+        let l1 = ((t + 2.0) * t * (t - 1.0)) * 0.5
+        let l2 = -((t + 2.0) * (t + 1.0) * (t - 1.0)) * 0.5
+        let l3 = ((t + 2.0) * (t + 1.0) * t) / 6.0
+        return SIMD4<Float>(l0, l1, l2, l3)
+    }
+
+    /// Bit-identical to `interpolate(t:cur:)` when `w == basisWeights(t:)` --
+    /// same operands, same accumulation order -- but skips the per-call
+    /// polynomial evaluation by using precomputed weights.
+    @inline(__always)
+    func interpolate(weights w: SIMD4<Float>, cur: Float) -> Float {
+        (h3 * w.x) + (h2 * w.y) + (h1 * w.z) + (cur * w.w)
+    }
+
     @inline(__always)
     mutating func advance(_ cur: Float) {
         h3 = h2; h2 = h1; h1 = cur
@@ -1066,6 +1089,12 @@ struct CompositeClipper {
     private var clipBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
+    // Precomputed Lagrange basis weights per oversample phase. The
+    // interpolation fraction t = (i+1)/factor is fixed per phase, so these
+    // weights are constant; computing them once in configure() instead of
+    // re-evaluating the basis polynomials per host sample removes the
+    // clipper's largest scalar cost. Bit-identical to the inline path.
+    private var lagBasis: [SIMD4<Float>] = Array(repeating: .zero, count: defaultFactor)
 
     // === Look-ahead peak control (0.26) ===
     // Predictive sidechain that knows the future peak amplitude over the
@@ -1148,6 +1177,14 @@ struct CompositeClipper {
         if clipExcessBatch.count != validFactor { clipExcessBatch = [Float](repeating: 0.0, count: validFactor) }
         if clipTanhBatch.count != validFactor { clipTanhBatch = [Float](repeating: 0.0, count: validFactor) }
         if detOSBatch.count != validFactor { detOSBatch = [Float](repeating: 0.0, count: validFactor) }
+        // Precompute the per-phase Lagrange basis weights (t = (i+1)/factor),
+        // matching the hot-loop's `step * Float(i + 1)` exactly so the
+        // interpolation stays bit-identical.
+        if lagBasis.count != validFactor { lagBasis = [SIMD4<Float>](repeating: .zero, count: validFactor) }
+        let basisStep = 1.0 / Float(validFactor)
+        for i in 0..<validFactor {
+            lagBasis[i] = Lagrange4Interp.basisWeights(t: basisStep * Float(i + 1))
+        }
 
         thresholdLin = clampf(powf(10.0, min(0.0, thresholdDB) / 20.0), 0.1, 0.995)
         let cMin: Float = thresholdLin + 0.02
@@ -1466,14 +1503,12 @@ struct CompositeClipper {
 
         if !lag.isPrimed { lag.prime(xPath) }
         let f = self.factor
-        let step = 1.0 / Float(f)
 
         // Phase 1: pre-compute all `f` oversampled inputs via Lagrange interp.
         // Lagrange state advances only at lag.advance(x) below, so this
         // is safe to do as a batch up front.
         for i in 0..<f {
-            let t = step * Float(i + 1)
-            upBatch[i] = (i == f - 1) ? xPath : lag.interpolate(t: t, cur: xPath)
+            upBatch[i] = (i == f - 1) ? xPath : lag.interpolate(weights: lagBasis[i], cur: xPath)
         }
 
         // Phase 2: batched soft-clip via vvtanhf. Replaces `f` scalar tanhf

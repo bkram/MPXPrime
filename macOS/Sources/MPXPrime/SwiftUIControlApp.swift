@@ -176,6 +176,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "DC Clipper"
+    case hfClipper = "HF Clip"
     case limiter = "Audio Limiter"
     case compositeClipper = "Comp Clip"
     case bs412 = "BS.412"
@@ -200,6 +201,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .primeBass: return .processingPrimeBass
         case .bassClipper: return .processingBassClipper
         case .dcClipper: return .processingDCClipper
+        case .hfClipper: return .processingHFClipper
         case .limiter: return .processingLimiter
         case .compositeClipper: return .processingCompositeClipper
         case .bs412: return .processingBS412
@@ -239,6 +241,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
         case .dcClipper:
             return "8x oversampled distortion-cancelled clipper on the audio band. Cleans up audio-band peaks before pre-emphasis adds HF boost."
+        case .hfClipper:
+            return "Pre-emphasis-aware HF clipper on the high band of the pre-emphasized signal. Tames HF transients with a dedicated stage so the broadband limiter doesn't pull gain across the whole signal and dull it. De-emphasis-correct; default off."
         case .limiter:
             return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
         case .bs412:
@@ -278,6 +282,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset Bass Clipper Tab"
         case .dcClipper:
             return "Reset DC Clipper Tab"
+        case .hfClipper:
+            return "Reset HF Clipper Tab"
         case .widener:
             return "Reset Widener Tab"
         case .limiter:
@@ -317,6 +323,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset bass clipper tab to defaults"
         case .dcClipper:
             return "Reset DC clipper tab to defaults"
+        case .hfClipper:
+            return "Reset HF clipper tab to defaults"
         case .widener:
             return "Reset Widener tab to defaults"
         case .limiter:
@@ -414,6 +422,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingPrimeBass
     case processingBassClipper
     case processingDCClipper
+    case processingHFClipper
     case processingLimiter
     case processingCompositeClipper
     case processingBS412
@@ -488,6 +497,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "DC Clipper"
+        case .processingHFClipper: return "HF Clipper"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
         case .processingCompositeClipper: return "Composite Clipper"
@@ -521,6 +531,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "arrow.up.right.and.arrow.down.left"
         case .processingBassClipper: return "speaker.wave.1"
         case .processingDCClipper: return "scissors"
+        case .processingHFClipper: return "speaker.wave.3"
         case .processingLimiter: return "rectangle.compress.vertical"
         case .processingBS412: return "doc.badge.gearshape"
         case .processingCompositeClipper: return "rectangle.stack"
@@ -557,6 +568,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
         case .processingDCClipper: return "Distortion-cancelled audio clipper"
+        case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingCompositeClipper: return "8x oversampled composite clipper"
@@ -607,6 +619,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return .expander
         case .processingBassClipper: return .bassClipper
         case .processingDCClipper: return .dcClipper
+        case .processingHFClipper: return .hfClipper
         case .processingLimiter: return .limiter
         case .processingBS412: return .bs412
         case .processingCompositeClipper: return .compositeClipper
@@ -1874,6 +1887,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
         case .processingDCClipper: return config.dcClipperEnabled
+        case .processingHFClipper: return config.hfClipperEnabled
         case .processingLimiter: return config.preEncodeAudioLimiterEnabled
         case .processingCompositeClipper: return config.compositeClipperEnabled
         case .processingBS412: return config.bs412Enabled
@@ -2938,6 +2952,11 @@ final class MPXPrimeViewModel: ObservableObject {
             config.dcClipperEnabled = defaults.dcClipperEnabled
             config.dcClipperCeilingDB = defaults.dcClipperCeilingDB
             config.dcClipperCancelFreqHz = defaults.dcClipperCancelFreqHz
+        case .hfClipper:
+            config.hfClipperEnabled = defaults.hfClipperEnabled
+            config.hfClipperCrossoverHz = defaults.hfClipperCrossoverHz
+            config.hfClipperThresholdDB = defaults.hfClipperThresholdDB
+            config.hfClipperDrive = defaults.hfClipperDrive
         case .bs412:
             config.bs412Enabled = defaults.bs412Enabled
             config.bs412ThresholdDB = defaults.bs412ThresholdDB
@@ -2957,7 +2976,7 @@ final class MPXPrimeViewModel: ObservableObject {
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .mbLimiter, .expander,
              .widener, .primeBass,
-             .bassClipper, .dcClipper, .limiter,
+             .bassClipper, .dcClipper, .hfClipper, .limiter,
              .compositeClipper, .bs412,
              .finalStage:
             runtimeDisposition = .live
@@ -5219,6 +5238,8 @@ private struct StageProcessingContent: View {
                         ProcessingBassClipperTab(model: model)
                     case .dcClipper:
                         ProcessingDCClipperTab(model: model)
+                    case .hfClipper:
+                        ProcessingHFClipperTab(model: model)
                     case .widener:
                         ProcessingWidenerTab(model: model)
                     case .limiter:
@@ -7871,6 +7892,26 @@ private struct ProcessingBassClipperTab: View {
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.bassClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
                 tooltip: "Pre-clipping gain applied to the low band. Higher drive increases density but also clipping distortion.").disabled(disabled)
             Text("Pre-clips bass peaks independently before the final limiter, dramatically reducing bass-induced intermodulation distortion.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct ProcessingHFClipperTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "HF Clipper") {
+            Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))
+            let disabled = !model.config.hfClipperEnabled
+            DoubleSliderRow(title: "Crossover", value: model.configBinding(\.hfClipperCrossoverHz, runtimeDisposition: .live), range: 3000...8000, format: "%.0f Hz",
+                tooltip: "LR4 crossover isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
+            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
+                tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
+            DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
+                tooltip: "Pre-clipping gain on the high band. Higher drive increases HF density but also clipping distortion.").disabled(disabled)
+            Text("Pre-emphasis-aware HF clipper: tames high-frequency transients of the pre-emphasized signal with a dedicated stage, so the broadband pre-encode limiter doesn't pull gain across the whole signal and dull it. De-emphasis-correct (acts on the pre-emphasized HF; the receiver's fixed de-emphasis restores the curve). Default off; opt-in.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

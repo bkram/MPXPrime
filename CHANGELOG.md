@@ -9,6 +9,38 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.36 — 2026-06-10
+
+- **RDS now bit-exactly locked to 3x pilot.** The 57 kHz RDS subcarrier is
+  derived from the pilot oscillator's recurrence via the triple-angle identity
+  (`sin 3t = 3s - 4s^3`) instead of a separate additive phase accumulator that
+  slowly drifted against it. Measured pilot-vs-RDS relative drift dropped from
+  ~9.08 deg / 5 s to ~0.11 deg / 5 s (EN 50067 Sec 2.1.4). Also slightly cheaper
+  than the old `fmodf` + `sinf`.
+- **Monitor decoder hardened against non-finite input.** `MPXDecoder` sanitises
+  NaN/Inf samples so a single bad sample can no longer permanently poison the
+  pilot-lock I/Q and envelope state (the smoothers never flushed NaN and the
+  stereo-collapse self-heal could not re-arm).
+- **Input ring buffer: torn-read telemetry.** Post-copy detection counts the rare
+  overflow-fault race (`tornReads`) rather than letting it pass silently; the
+  producer/consumer atomic protocol is now documented. No happy-path change.
+- **Numeric robustness.** BS.412 block-average denormal flush; downward-expander
+  gain floored at -60 dB to remove a subnormal-underflow gating discontinuity on
+  near-silent program.
+- **Verifier coverage.** Encoder-side sideband fingerprint baselined (asymmetry +
+  side/mono delta at 1/10/14 kHz; baseline schema 3). `--verify-receiver` now
+  reports composite-clipper guard-band cancellation depth (pilot ~11.8 dB / RDS
+  ~12.7 dB) and a pilot/RDS phase-lock drift gate. `--verify` adds a 4x-oversampled
+  true-peak (BS.1770-style) inter-sample-overshoot metric, baselined. Stage-isolation
+  sweep extended with bass / HF / DC clipper rows. New tests: RDS 3x-lock regression,
+  decoder NaN recovery, ring-buffer torn-read, BS.412 rolling-power ceiling, multiband
+  idle transparency.
+- **UI polish (HIG / accessibility).** Dropout indicator conveys state by shape +
+  colour (not colour alone, WCAG 2.1). Test-tone preset buttons highlight the active
+  frequency. Signal-flow strip dims bypassed stages with a tooltip + VoiceOver value.
+  Shared `BroadcastStyle` tokens centralise previously ad-hoc chip / connector / tick
+  fills (appearance unchanged).
+
 ## 0.35 — 2026-06-09
 
 - **Pre-emphasis-aware HF clipper (new; opt-in, default off).** A dedicated clipper

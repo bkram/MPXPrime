@@ -90,7 +90,7 @@ struct VerticalMeterStrip: View {
             let y = h * CGFloat(1.0 - tick.position)
             ctx.fill(
                 Path(CGRect(x: barW - 6, y: y - 0.5, width: 6, height: 1)),
-                with: .color(Color.primary.opacity(0.32)))
+                with: .color(BroadcastStyle.scaleTick))
             ctx.draw(
                 Text(tick.label).font(BroadcastStyle.scaleLabel).foregroundColor(.secondary),
                 at: CGPoint(x: barW + 6, y: y), anchor: .leading)

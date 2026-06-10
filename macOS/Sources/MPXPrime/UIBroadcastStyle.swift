@@ -73,6 +73,25 @@ enum BroadcastStyle {
         dark: NSColor(calibratedWhite: 0.35, alpha: 0.55)
     )
 
+    // MARK: - Component fills
+    // Centralised fills for the small chip / connector / tick surfaces that
+    // used to inline raw hierarchical styles. Stored as type-erased
+    // ShapeStyles so they reproduce the exact prior appearance (the
+    // hierarchical `.quaternary` / `.tertiary` materials adapt to
+    // appearance on their own) while giving a single source of truth.
+
+    /// Signal-flow strip inactive stage pill background.
+    static let stagePillFill = AnyShapeStyle(.quaternary.opacity(0.4))
+
+    /// Signal-flow strip terminal (IN / OUT / CODER) pill background.
+    static let terminalPillFill = AnyShapeStyle(.tertiary.opacity(0.18))
+
+    /// Signal-flow strip connector line between chips.
+    static let connectorFill = AnyShapeStyle(.tertiary.opacity(0.5))
+
+    /// Meter scale tick mark fill.
+    static let scaleTick = Color.primary.opacity(0.32)
+
     // MARK: - Readout foreground
 
     /// Hero monospaced readouts (Peak, Deviation, GR, Budget margin).

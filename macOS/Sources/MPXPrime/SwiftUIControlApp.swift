@@ -5668,10 +5668,14 @@ private struct TestToneView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(Self.frequencyPresets, id: \.self) { freq in
+                        let isActive = abs(freqBinding.wrappedValue - freq) < 0.5
                         Button(presetLabel(for: freq)) {
                             freqBinding.wrappedValue = freq
                         }
                         .buttonStyle(.bordered)
+                        // Tint the preset matching the current frequency so the
+                        // active selection is visible at a glance.
+                        .tint(isActive ? BroadcastStyle.accent : nil)
                     }
                 }
             }
@@ -6102,12 +6106,19 @@ private struct MonitoringDashboardView: View {
     }
 
     private func dropoutPill(label: String, count: Int) -> some View {
-        let tint: Color = count == 0 ? .green : (count < 3 ? .orange : .red)
+        let tint: Color = count == 0
+            ? BroadcastStyle.safeGreen
+            : (count < 3 ? BroadcastStyle.tightAmber : BroadcastStyle.overRed)
+        // Distinct symbol per state so the cue is shape + colour, not colour
+        // alone (WCAG 2.1 / Differentiate-Without-Color).
+        let symbol = count == 0
+            ? "checkmark.circle.fill"
+            : (count < 3 ? "exclamationmark.circle.fill" : "exclamationmark.triangle.fill")
         let state = count == 0 ? "ok" : (count < 3 ? "warning" : "error")
         return HStack(spacing: 4) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
+            Image(systemName: symbol)
+                .font(.caption2)
+                .foregroundStyle(tint)
                 .accessibilityHidden(true)
             Text(label)
                 .font(BroadcastStyle.scaleLabel)
@@ -6115,8 +6126,8 @@ private struct MonitoringDashboardView: View {
             Text("\(count)")
                 .font(BroadcastStyle.valueReadout)
         }
-        // The dot's red/orange/green is the only visual state cue; carry that
-        // state as words for VoiceOver and Differentiate-Without-Color users.
+        // Symbol + colour carry the state visually; mirror it in words for
+        // VoiceOver.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue("\(count), \(state)")

@@ -83,6 +83,8 @@ struct BroadcastStatusBar: View {
                 tint: .orange
             )
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("RDS warning: output sample rate is below 192 kHz; the RDS subcarrier aliases and will not decode")
         .help("RDS subcarrier at 57 kHz cannot be represented below 192 kHz output sample rate — the upper sideband at ~59 kHz aliases back into the audio band and no receiver will decode RDS. Either raise the output sample rate to 192 kHz (Audio MIDI Setup + the engine's `sample_rate`) or disable RDS for this output configuration.")
     }
 
@@ -103,6 +105,8 @@ struct BroadcastStatusBar: View {
                 tint: .yellow
             )
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Restart pending: one or more changed settings need an engine restart to take effect")
         .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, pilot/sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
     }
 
@@ -114,6 +118,9 @@ struct BroadcastStatusBar: View {
                 for: model.isRunning ? BroadcastStyle.safeGreen : Color.secondary,
                 active: model.isRunning
             )
+            // Decorative — the adjacent value text ("RUNNING"/"STOPPED")
+            // already carries transport state to VoiceOver.
+            .accessibilityHidden(true)
             chipLabelledValue(
                 label: "TRANSPORT",
                 value: model.isRunning ? "RUNNING" : "STOPPED",

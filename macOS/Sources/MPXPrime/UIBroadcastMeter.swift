@@ -59,9 +59,25 @@ struct VerticalMeterStrip: View {
         // The bar/peak-hold/ticks are decorative to VoiceOver; collapse the
         // strip into one element that announces its name and current reading
         // (e.g. "IN L, -6.2 dB") instead of two disconnected text fragments.
+        // The scale range + colour meaning go in the hint so the primary
+        // announcement stays crisp.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(valueText)
+        .accessibilityHint(accessibilityHint)
+    }
+
+    /// Supplementary VoiceOver context: what the meter measures, its scale,
+    /// and what the colour bands mean (so colour isn't the only state cue).
+    private var accessibilityHint: String {
+        switch scale {
+        case .dbfs:
+            return "Level meter, scale -36 to 0 dBFS. Green safe, amber near limit, red over."
+        case .modulationKHz:
+            return "Modulation meter, scale 0 to 100 kHz. Amber near the deviation limit, red over."
+        case .gainReductionDB:
+            return "Gain-reduction meter, scale 0 to 16 dB of attenuation."
+        }
     }
 
     // MARK: - Drawing

@@ -182,11 +182,11 @@ which to use at `start()` from config and routes the render callback accordingly
 
 ## Major Components
 
-- `main.swift`: CLI entry point, config loading, audio engine lifecycle. Verifier modes: `--verify`, `--verify-presets`, `--verify-long`, `--verify-receiver` (0.27), `--verify-composite-multiband` and `--verify-multiband-coupling` (0.28).
+- `main.swift`: CLI entry point, config loading, audio engine lifecycle. Verifier modes: `--verify`, `--verify-presets`, `--verify-long`, `--verify-receiver` (0.27), `--verify-composite-multiband` and `--verify-multiband-coupling` (0.28). 0.36 extended `--verify-receiver` with composite-clipper guard-band cancellation depth (pilot 17-21 kHz / RDS 55-59 kHz) and a pilot/RDS phase-lock drift gate, added a 4x-oversampled true-peak (BS.1770-style) inter-sample-overshoot metric to `--verify`, and bumped the `--baseline-strict` baseline to schema 3 (adds the true-peak field plus a global encoder-side sideband fingerprint — asymmetry + side/mono delta at 1/10/14 kHz).
 - `AudioOutputEngine.swift`: AVAudioEngine output setup, render callback, transport orchestration. Delegates input capture to `InputAUHAL`.
 - `InputAUHAL.swift`: Direct AUHAL (`kAudioUnitSubType_HALOutput`) input-capture wrapper. Replaces a second `AVAudioEngine` instance the engine used to spin up for input — AVAudioEngine's first `start()` with a non-default input device intermittently failed to deliver tap callbacks. The two-AUHAL pattern (separate input AU + output AVAudioEngine + `StereoInputRingBuffer` as the only bridge) is what TN2091 / CAPlayThrough / Stereotool / AudioKit's non-default-device path use on macOS.
 - `MPXGenerator.swift`: Real-time MPX/DSP generation, RDS encoding.
-- `MPXDecoder.swift` (0.27, PLL refactor in 0.28): Reusable FM-stereo demodulator. Used both by the audio render callback for monitor output (with the internally generated, delay-aligned 38 kHz reference) and by the offline verifier (with a pilot-PLL recovered reference). 0.28 replaced the bandpass + phase-discriminator PLL with an I/Q coherent lockin demodulator — slow IIR-smoothed estimates of `mpx · sin(ω_p · t)` and `mpx · cos(ω_p · t)` at the local oscillator, then the doubled-phase subcarrier is recovered via trig identities. Effect: external-style PLL decode now matches synthetic-reference coherent decode within 0.1 dB at every test tone. Includes a smoothed noise gate and a stereo-collapse cooldown that re-initialises the PLL if it ever drifts off-lock.
+- `MPXDecoder.swift` (0.27, PLL refactor in 0.28): Reusable FM-stereo demodulator. Used both by the audio render callback for monitor output (with the internally generated, delay-aligned 38 kHz reference) and by the offline verifier (with a pilot-PLL recovered reference). 0.28 replaced the bandpass + phase-discriminator PLL with an I/Q coherent lockin demodulator — slow IIR-smoothed estimates of `mpx · sin(ω_p · t)` and `mpx · cos(ω_p · t)` at the local oscillator, then the doubled-phase subcarrier is recovered via trig identities. Effect: external-style PLL decode now matches synthetic-reference coherent decode within 0.1 dB at every test tone. Includes a smoothed noise gate and a stereo-collapse cooldown that re-initialises the PLL if it ever drifts off-lock. Lives in the `MPXPrimeCore` SPM target (shared by the transmit app and the verifier; the hot `process()` is `@inlinable` so it still inlines across the module boundary). 0.36 added non-finite-input sanitization at the top of `process()` — a single NaN/Inf sample used to permanently poison the pilot-lock I/Q and envelope state (the exponential smoothers never flush NaN and the self-heal could not re-arm).
 - `BandLimitedStep.swift` (0.27): Allocation-free BLEP/BLAMP correction helper for the US 6,937,912 anti-aliased clipping work. Detects fractional threshold crossings and schedules normalized finite correction windows in impulse / step / ramp shapes.
 - `AcceleratedBandlimitedResidualClipper.swift` (0.27): vDSP-accelerated patent-style residual-bandlimiting candidate clipper (hard-clip → bandlimit the residual → reconstruct as delayed-clean + filtered-residual). Wired as the inner kernel of `OversampledPeakLimiter` / `StereoLinkedOversampledPeakLimiter` behind the off-by-default `pre_encode_bandlimited_residual_enabled` opt-in.
 - `AppConfig.swift`: Configuration model, INI parsing/serialization.
@@ -369,8 +369,13 @@ Not currently implemented: 14A/14B (EON), 8A (TMC), 9A (EWS), 6A (IH),
   Gaussian shaping FIR (configurable BW + taps).
 - CRC polynomial 0x5B9; offset words A=0x0FC, B=0x198, C=0x168,
   Cp=0x1E0, D=0x1B4 per IEC 62106-2 Table 2.
-- 57 kHz subcarrier locked to 19 kHz pilot at 3:1 phase ratio
-  (`nextSampleWithPilotLock`).
+- 57 kHz subcarrier locked to 19 kHz pilot at 3:1 (`nextSampleWithPilotLock`):
+  the carrier is `sin(3*theta)` recovered from the pilot oscillator's
+  instantaneous `sin(theta)` (`pilotOsc.s`, supplied per sample via
+  `updateRDSPilotSin`) through the triple-angle identity `3s - 4s^3`. 0.36
+  replaced the prior separate additive phase accumulator, which drifted
+  ~9 deg / 5 s against the emitted pilot; the `--verify-receiver` pilot/RDS
+  phase-lock drift check guards against regressing it.
 - AF Method A and Method B encoding both supported; Method B repeats
   the tuned frequency per pair so receivers can group AF lists across
   regional variants (EN 50067 §3.2.1.6.4 / IEC 62106-2 §7.5.3).

@@ -148,6 +148,7 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 ## Conventions
 
 - **ASCII only** in source and docs. No non-ASCII punctuation / symbols.
+- **Keep `docs/ARCHITECTURE.md` and `docs/manual.md` up to date — always.** They are part of "done", like tests. When a change alters the DSP chain / signal flow / stage behavior / output modes / RDS / verifier surface, update `docs/ARCHITECTURE.md` in the same change. When a change alters user-facing behavior, UI labels or controls, config keys, presets, or operator workflow, update `docs/manual.md` (e.g. the 0.35 outcome-language relabel renamed the composite-clipper guards `Cancel ...` -> `Protect ...` — both UI and manual must use the shipped label). Do not let the docs drift behind the code.
 - Keep `MPXGenerator.swift` and `SwiftUIControlApp.swift` splittable-in-principle (both >6k lines); prefer new helpers over growing them further, but **do not** opportunistically refactor the final MPX chain — even behavior-preserving edits can measurably move composite output. Structural cleanup there is done in small, verifier-backed steps.
 - Device UIDs are platform-specific — always enumerate, never hardcode.
 - New DSP stages ship **disabled by default** and must support live-apply via `RuntimeConfig` unless there is a specific reason not to.

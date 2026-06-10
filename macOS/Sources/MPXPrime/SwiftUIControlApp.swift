@@ -37,6 +37,7 @@ private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
 // returned by URL(string:) is guaranteed non-nil.
 private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
 private let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual.md")!
+private let kLicenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 private let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
 
@@ -8954,8 +8955,10 @@ Now: {now_playing}
 /// a confident one-line description, version, then a compact highlight of
 /// what the processor actually does — it ships a patent-grade chain, full
 /// RDS, and a verification harness, so the About should say so rather than
-/// undersell it. The legal text (not-certified / liability / GPL) is kept
-/// honest but tucked into a disclosure so it doesn't dominate the panel.
+/// undersell it. The full disclaimer is NOT restated here: README.md
+/// (intended-use / not-certified) and LICENSE (GPL-3.0, no warranty) are
+/// the single source of truth; the panel shows README's canonical key
+/// phrase plus links to both.
 private struct AboutSectionView: View {
     private var appIcon: NSImage? {
         if let icon = NSApp?.applicationIconImage, icon.size.width > 0 {
@@ -9034,27 +9037,24 @@ private struct AboutSectionView: View {
                 HStack(spacing: 18) {
                     Link("View on GitHub", destination: kProjectURL)
                     Link("User Manual", destination: kManualURL)
+                    Link("License", destination: kLicenseURL)
                 }
                 .font(.callout)
 
-                DisclosureGroup("License & disclaimer") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Experimental amateur-grade FM composite (MPX) generator targeting core behavior from EN 50067 / IEC 62106 and common FM stereo practice. Not certified; no compliance warranty is implied.")
-
-                        Text("Suitable for LPFM, community radio, prosumer broadcast-style encoding, and study of FM signal processing — not for certified production broadcast. The author assumes no liability for regulatory violations, equipment damage, interference, or any direct or indirect consequences arising from its use. Use at your own risk.")
-                    }
-                    .font(.footnote)
+                // Single source of truth for the full disclaimer is README.md
+                // (intended-use / not-certified) + LICENSE (GPL-3.0, no
+                // warranty). The About only carries README's canonical key
+                // phrase plus pointers — do not restate the full text here.
+                Text("Experimental and not certified — no conformity or compliance is promised. See the README for intended use and the GPL-3.0 license for terms (provided without warranty).")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
-                }
-                .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
 
                 Text("Copyright © 2026 Bkram Developments")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .padding(.top, 2)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 22)

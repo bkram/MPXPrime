@@ -4,9 +4,11 @@ Active work list + anti-rework guardrails. **Not** a readme: positioning, archit
 
 ## Status
 
-Released **0.35** (2026-06-09). Integration branch: **develop/v.036**.
+Released **0.35** (2026-06-09). **0.36 staged on `develop/v.036`** (version-bumped + CHANGELOG written, awaiting the maintainer's hardware/RDS/VoiceOver smoke + `v0.36` tag — see CLAUDE.md "release prep vs tagging"). **Active branch: `develop/v.037`.**
 
-Uncommitted on the branch (v.036 DSP audit): RDS pilot-lock fix (`3s−4s³`), MPXDecoder NaN guard, ring-buffer torn-read telemetry, BS.412/expander denormal cleanups, plus verifier coverage (encoder-sideband baseline, guard-band depth + pilot/RDS phase-lock gate in `--verify-receiver`, 4x true-peak metric, BS.412 + multiband-idle tests).
+0.36 content (on develop/v.036): RDS pilot-lock fix (`3s−4s³`), MPXDecoder NaN guard, ring-buffer torn-read telemetry, BS.412/expander denormal cleanups, verifier coverage (encoder-sideband baseline, guard-band depth + pilot/RDS phase-lock gate in `--verify-receiver`, 4x true-peak metric, BS.412 + multiband-idle tests), and GUI HIG batch 1 (`BroadcastStyle` tokens, dropout WCAG fix, test-tone preset highlight, signal-flow bypass dimming).
+
+Landed since on `develop/v.037` (future 0.37): rest of the GUI HIG/professional/usability pass — per-control restart badges + clickable pending-restart chip, RDS character counters, overview-grid live status + per-card status dots, status-bar + meter VoiceOver (incl. the Levels group summary), reworked About panel — and the MPXDecoder HF stereo-separation fix (Next-up #6, below).
 
 ---
 
@@ -18,8 +20,8 @@ Uncommitted on the branch (v.036 DSP audit): RDS pilot-lock fix (`3s−4s³`), M
 2. **Tune/validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped; dense real-program A/B at 0.5 / 1 / 2 ms, verify pilot/RDS guard cleanliness, decide loud-preset default. Capture via `MPXPRIME_AUDIT_CAPTURE=1` → `macOS/.audit-out/lookahead/`.
 3. **Smoke-test pass.** Live-apply vs restart-required on difficult real material; catch transients/clicks/dropouts on toggle. New RDS live-apply paths (PI/PTY/flags/AF/scheduler) need real-receiver checks beyond the bit-stream tests.
 4. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema, different scenario sets.
-5. **Receiver-model verifier hardening.** Promote unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets; add stored receiver-side baselines (separation @ 1/10/14 kHz, pilot error, RDS-band RMS, correlation, mono/no-pilot, sideband balance).
-6. **HF stereo separation — `MPXDecoder` audit.** Production monitor decode runs ~38–93 dB below the ideal-coherent ceiling at 10/14 kHz (seen in `--verify-receiver`). Audit deemphasis / pilot notch / 15.5 kHz LP contribution. Monitoring-path quality, not transmitted MPX. The one open thread with real quality headroom.
+5. **Receiver-model verifier hardening.** v.036 added the pilot/RDS phase-lock gate + guard-band-depth measurement to `--verify-receiver` and the encoder-sideband baseline. Remaining: promote unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets; add stored receiver-side baselines (separation @ 1/10/14 kHz — now ~98/86/97 dB, pilot error, RDS-band RMS, correlation, mono/no-pilot, sideband balance) so the decoder gains are pinned against regression.
+6. **HF stereo separation — `MPXDecoder` audit. DONE (develop/v.037).** Root cause was the pre-demod pilot/RDS notches clipping the S-channel sidebands; removed them — separation 65/51.6/44.2 → 98.3/86.1/97.2 dB at 1/10/14 kHz, composite untouched. See "Settled findings".
 
 ## Opt-in advanced stages — validate + decide default
 
@@ -77,10 +79,12 @@ Highest-leverage audible-gap closer vs the enterprise tier: these stages are imp
 
 ## UX / accessibility polish
 
-1. **Quiet visible help prose.** `TabHelpBox` + per-card `Text` blocks are verbose; move longer explanations to `.help()` / README / an Advanced inspector, keep only safety-critical one-liners inline.
-2. **Stronger sidebar enabled-state affordance.** `StageSidebarRow`'s 6 pt accent dot is subtle — consider a native status badge / secondary label; verify contrast in light/dark/increased-contrast/grayscale.
-3. **Meter accessibility audit.** `UIBroadcastMeter` / `UIBroadcastStatusBar` have no accessibility annotations — add semantic group summaries; mark high-frequency decorative updates `accessibilityHidden`.
-4. **Per-tab control-density review.** Continue the DisclosureGroup pattern (started 0.35) for advanced/experimental controls on the densest tabs.
+The GUI HIG/professional/usability/accessibility pass landed on develop/v.037 (state feedback: restart badges + clickable pending chip + RDS counters; overview live status; About rework; dropout WCAG fix; flow-strip bypass; `BroadcastStyle` tokens; status-bar + meter VoiceOver incl. the Levels group summary). Meter accessibility (the old item 3) and dense-tab DisclosureGroups (old item 4, started 0.35) are done. Remaining, lower-priority:
+
+1. **Format-profile drift indicator.** When the config drifts from the selected Format Profile, show the picker as "edited". Real feature but needs `applyFormatProfile` refactored into a pure function + a decision on which fields count as drift; the model author deferred it ("no dirty indicator in v1"). A half-correct version gives false "edited" flags, so do it properly or not at all.
+2. **Prose-to-tooltip sweep.** Mostly already appropriate — the house rule keeps *distinct actionable guidance* inline; little remains safe to move. Low value.
+3. **Dynamic Type pass.** Manual: launch with large system text, verify no clipping/overlap across tabs (fonts are already semantic, so likely nothing to fix). Eyes-on, not a code task.
+4. **Sidebar-row enabled affordance.** Overview cards now carry status dots; the `StageSidebarRow` 6 pt dot is unchanged — optional native status badge / contrast check.
 
 ## RDS enterprise tier (stretch — only if direction shifts to multi-station)
 
@@ -155,6 +159,8 @@ P4 (US 4,249,042) + P5 (US 3,790,896) landed in 0.34 as the bass-desensitised wi
 ## Settled findings
 
 **Pre-emphasis placement.** Ships in L/R immediately upstream of the pre-encode limiter (`preL`/`preR` in `processSampleDetailed`; canonical Optimod/Stereotool). The b806053 cost regression that reverted this in 0.10 is no longer reproducible post-0.24 (vvtanhf / vDSP_dotpr / FIR multiband / differential clipper cut chain cost ~95% → ~28% RT, absorbing the ~7% relative increase). Do not relocate to M/S.
+
+**MPXDecoder has no pre-demod pilot/RDS notch (do not re-add).** The decoder used to notch the 19 kHz pilot and 57 kHz RDS on the common signal before the M/S split; the notch skirts asymmetrically attenuated the S-channel DSB-SC sidebands (38 +/- f), the dominant HF stereo-separation limiter (14 kHz capped ~44 dB). Removed on develop/v.037 → 97 dB at 14 kHz. Pilot/RDS are handled by the 15.5 kHz M-path lowpass + S-path `diffLP` + the post-recombination `pilotNotchL/R`. The decoder only sees the app's own clean composite (monitor path + `--verify-receiver`), so there is no off-air noise the notches protected against. If `MPXPrimeMeter` later decodes noisy off-air composite, add input conditioning *there*, not back in the shared decoder.
 
 **Composite-clipper guard cancellation depth (measured, not a defect).** v.036 measured the clipper's guard cancellation in isolation (upstream nonlinearities off, clipper driven hard): pilot guard ~11.8 dB, RDS guard ~12.7 dB, residual IM ~−50 dBFS in both — clean in absolute terms. Aligning the decimator group delay to an exact integer host-sample count (removing the ~2 OS-sample bypass/residual offset) was implemented and measured: **no change** to depth or residual, at ~10% more clipper taps → reverted. The misalignment noted in `LinearPhaseFIRDecimator.groupDelayHostSamples` is confirmed negligible. If depth ever needs to go deeper, the binding constraint is the guard bandpass Q / delta-substitution match, not decimator alignment.
 

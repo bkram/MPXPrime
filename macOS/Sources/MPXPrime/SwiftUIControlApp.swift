@@ -36,6 +36,7 @@ private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
 // Compile-time constant URL; literal is well-formed so the optional
 // returned by URL(string:) is guaranteed non-nil.
 private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
+private let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual.md")!
 private let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
 
@@ -1467,7 +1468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let w = NSWindow(contentViewController: hostingController)
         w.title = "About MPX Prime"
         w.styleMask = [.titled, .closable]
-        w.setContentSize(NSSize(width: 360, height: 460))
+        w.setContentSize(NSSize(width: 400, height: 560))
         w.isReleasedWhenClosed = false
         w.delegate = self
         restoreFrame(for: w, autosaveName: kAboutWindowAutosaveName)
@@ -8949,10 +8950,12 @@ Now: {now_playing}
     }
 }
 
-/// macOS-style About panel: app icon + name + version + copyright,
-/// stacked centered, with a brief description and disclaimer in plain
-/// prose. Matches the Apple HIG About-window pattern (cf. Music.app,
-/// Mail.app) rather than a settings-style framed card.
+/// macOS-style About panel (cf. Music.app / Final Cut): app icon, name,
+/// a confident one-line description, version, then a compact highlight of
+/// what the processor actually does — it ships a patent-grade chain, full
+/// RDS, and a verification harness, so the About should say so rather than
+/// undersell it. The legal text (not-certified / liability / GPL) is kept
+/// honest but tucked into a disclosure so it doesn't dominate the panel.
 private struct AboutSectionView: View {
     private var appIcon: NSImage? {
         if let icon = NSApp?.applicationIconImage, icon.size.width > 0 {
@@ -8961,49 +8964,102 @@ private struct AboutSectionView: View {
         return NSImage(named: NSImage.applicationIconName)
     }
 
+    private struct Capability: Identifiable {
+        let symbol: String
+        let text: String
+        var id: String { symbol }
+    }
+
+    private let capabilities: [Capability] = [
+        Capability(
+            symbol: "dot.radiowaves.right",
+            text: "True FM stereo encoding — constant-amplitude pilot with post-clipper subcarrier injection"),
+        Capability(
+            symbol: "slider.horizontal.3",
+            text: "Linear-phase multiband, look-ahead limiting, PrimeBass enhancement, pre-emphasis-aware HF clipping"),
+        Capability(
+            symbol: "waveform",
+            text: "Differential composite clipper with cross-domain IM cancellation and BS.412 MPX-power control"),
+        Capability(
+            symbol: "antenna.radiowaves.left.and.right",
+            text: "Full RDS encoder — PS, RadioText, RT+, AF, CT, PTY and Long PS, all live-apply"),
+        Capability(
+            symbol: "chart.bar.xaxis",
+            text: "Real-time meters, scope and spectrum, plus offline receiver-model verification")
+    ]
+
     var body: some View {
-        VStack(alignment: .center, spacing: 10) {
-            if let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 96, height: 96)
-                    .accessibilityHidden(true)
-            }
+        ScrollView {
+            VStack(alignment: .center, spacing: 12) {
+                if let icon = appIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 96, height: 96)
+                        .accessibilityHidden(true)
+                }
 
-            Text("MPX Prime")
-                .font(.title2.weight(.semibold))
+                VStack(spacing: 4) {
+                    Text("MPX Prime")
+                        .font(.title.weight(.semibold))
+                    Text("Professional FM stereo processing and RDS encoding — free and open source")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            Text("Version \(AppConfig.appVersion)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-
-            Text("Copyright © 2026 Bkram Developments")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Link("github.com/bkram/MPXPrime", destination: kProjectURL)
-                .font(.caption)
-
-            Divider()
-                .padding(.vertical, 4)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Experimental amateur-grade FM composite (MPX) generator with stereo encoding and optional RDS. Targets core behavior from EN 50067 / IEC 62106 and common FM stereo practice, but is not certified and no compliance warranty is implied.")
-
-                Text("Suitable for LPFM, community radio, prosumer broadcast-style encoding, and study of FM signal processing — not for certified production broadcast. The author assumes no liability for regulatory violations, equipment damage, interference, or any direct or indirect consequences arising from its use. Use at your own risk.")
-
-                Text("Released under GPL-3.0.")
+                Text("Version \(AppConfig.appVersion) · GPL-3.0")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(capabilities) { cap in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: cap.symbol)
+                                .font(.callout)
+                                .foregroundStyle(.tint)
+                                .frame(width: 20, alignment: .center)
+                                .accessibilityHidden(true)
+                            Text(cap.text)
+                                .font(.footnote)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
+
+                HStack(spacing: 18) {
+                    Link("View on GitHub", destination: kProjectURL)
+                    Link("User Manual", destination: kManualURL)
+                }
+                .font(.callout)
+
+                DisclosureGroup("License & disclaimer") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Experimental amateur-grade FM composite (MPX) generator targeting core behavior from EN 50067 / IEC 62106 and common FM stereo practice. Not certified; no compliance warranty is implied.")
+
+                        Text("Suitable for LPFM, community radio, prosumer broadcast-style encoding, and study of FM signal processing — not for certified production broadcast. The author assumes no liability for regulatory violations, equipment damage, interference, or any direct or indirect consequences arising from its use. Use at your own risk.")
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
+                }
+                .font(.callout)
+
+                Text("Copyright © 2026 Bkram Developments")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
             }
-            .font(.footnote)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 

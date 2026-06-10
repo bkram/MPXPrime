@@ -8172,7 +8172,7 @@ private struct RDSProgramTab: View {
                     format: "%.1f s")
                 .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
                 Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN, runtimeDisposition: .liveRDS))
-                TextField("PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS))
+                RDSCountedField(placeholder: "PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS), maxChars: 8)
                 Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
             }
             DisclosureGroup("Station Identity") {
@@ -8257,9 +8257,31 @@ private struct PSBankRow: View {
                 .font(.callout.monospaced())
                 .foregroundStyle(isActive ? Color.primary : Color.secondary)
 
-            TextField("", text: model.configBinding(path, runtimeDisposition: .liveRDS))
+            RDSCountedField(placeholder: "", text: model.configBinding(path, runtimeDisposition: .liveRDS), maxChars: 8)
+        }
+    }
+}
+
+/// RDS text entry with a live character counter. RDS fields have hard
+/// length limits (PS 8, PTYN 8, Long PS 32, RadioText 64); past the limit
+/// the encoder silently truncates. The trailing `n/max` counter turns amber
+/// once the field reaches the limit so the operator sees it before air.
+private struct RDSCountedField: View {
+    let placeholder: String
+    let text: Binding<String>
+    let maxChars: Int
+
+    var body: some View {
+        let count = text.wrappedValue.count
+        let atLimit = count >= maxChars
+        HStack(spacing: 8) {
+            TextField(placeholder, text: text)
                 .textFieldStyle(.roundedBorder)
-                .disabled(false)
+            Text("\(count)/\(maxChars)")
+                .font(BroadcastStyle.scaleLabel)
+                .monospacedDigit()
+                .foregroundStyle(atLimit ? BroadcastStyle.tightAmber : .secondary)
+                .accessibilityLabel("\(count) of \(maxChars) characters")
         }
     }
 }
@@ -8292,7 +8314,7 @@ private struct RDSRadiotextTab: View {
 
     var body: some View {
         Card(title: "Radiotext & RT+") {
-            TextField("Single Radiotext", text: model.configBinding(\.rdsRTText, runtimeDisposition: .liveRDS))
+            RDSCountedField(placeholder: "Single Radiotext", text: model.configBinding(\.rdsRTText, runtimeDisposition: .liveRDS), maxChars: 64)
             Text("Used when no RT buffer entries are checked.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -8402,7 +8424,7 @@ private struct RDSLongPSTab: View {
     var body: some View {
         Card(title: "Long PS") {
             Toggle("Enable Long PS (15A)", isOn: model.configBinding(\.rdsEnableLPS, runtimeDisposition: .liveRDS))
-            TextField("Long PS Text", text: model.configBinding(\.rdsLongPS32, runtimeDisposition: .liveRDS))
+            RDSCountedField(placeholder: "Long PS Text", text: model.configBinding(\.rdsLongPS32, runtimeDisposition: .liveRDS), maxChars: 32)
             Toggle("Center Long PS", isOn: model.configBinding(\.rdsLPSCentered, runtimeDisposition: .liveRDS))
             Toggle("Append CR", isOn: model.configBinding(\.rdsLPSCR, runtimeDisposition: .liveRDS))
         }

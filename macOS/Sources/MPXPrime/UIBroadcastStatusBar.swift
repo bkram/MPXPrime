@@ -95,18 +95,27 @@ struct BroadcastStatusBar: View {
     /// badges, but more discoverable than the existing status-text
     /// approach that operators were missing in dense tabs.
     private var restartPendingChip: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.yellow)
-                .accessibilityHidden(true)
-            chipLabelledValue(
-                label: "PENDING",
-                value: "RESTART REQ.",
-                tint: .yellow
-            )
+        // Actionable: clicking the always-visible chip stops and restarts the
+        // engine to apply the pending restart-required changes — same as the
+        // Control > Apply Restart menu item (Shift-Cmd-A), but reachable
+        // without leaving a dense tab.
+        Button {
+            model.applyPendingRuntimeChanges()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.yellow)
+                    .accessibilityHidden(true)
+                chipLabelledValue(
+                    label: "PENDING",
+                    value: "RESTART REQ.",
+                    tint: .yellow
+                )
+            }
         }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Restart pending: one or more changed settings need an engine restart to take effect")
+        .accessibilityLabel("Restart pending: one or more changed settings need an engine restart to take effect. Activate to apply now.")
         .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, pilot/sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
     }
 

@@ -573,7 +573,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
-        case .processingCompositeClipper: return "8x oversampled composite clipper"
+        case .processingCompositeClipper: return "16x oversampled composite clipper"
         case .processingFinalStage: return "Final drive, MPX safety, budget, deviation"
         case .rdsControl: return "Master enable + live snapshot of what's on air"
         case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks, runtime flags"

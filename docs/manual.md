@@ -123,6 +123,7 @@ Recommended **off** by default (enable only when needed):
 - **Stereo Widener** — leave off unless the source program needs subtle width enhancement; aggressive widening risks mono-compatibility on FM (see "Stereo image control" below)
 - **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
 - **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
+- **HF Clipper** — pre-emphasis-aware HF clipper (`Processing` -> `HF Clipper`; `hf_clipper_*`). Off by default. Clips only the *pre-emphasised* high band (crossover default 5 kHz, threshold -3 dB, drive 1.2) so HF transients are tamed by a dedicated stage instead of forcing the broadband limiter to pull gain across the whole signal and dull it — de-emphasis-correct, since the receiver's fixed de-emphasis restores the curve. Worth trying on dense EDM / contemporary pop where HF transients dominate; leave off for talk / classical. Controls live-apply.
 - **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
 
 This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
@@ -145,7 +146,7 @@ The level adjustment lives upstream of MPX Prime — in your studio mixer, DAW, 
 
 **2. Let AGC do the level-evening.** Open `Processing` → `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
 
-- `Platform Target` — the level the AGC drives the program *toward*. **Default −16 dBFS** (Balanced Music preset) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
+- `Platform Target` — the level the AGC drives the program *toward*. **Default −14 dBFS** (`wideband_agc_target_db`) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
 - `Enable Wideband AGC` — leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program.
 
 Watch the `AGC GR` field in `DSP Overview` (or the AGC card itself). Healthy operation:
@@ -381,7 +382,7 @@ Visit us\: https\://example.com/10s:Alt text
 Important defaults:
 
 - Input HPF default: `30 Hz`
-- Program lowpass default: `16.4 kHz`
+- Program lowpass default: `16.0 kHz` (`program_lowpass_hz`)
 - Scope auto gain default: enabled
 
 ## Processed-audio output mode

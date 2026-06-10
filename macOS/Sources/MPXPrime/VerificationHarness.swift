@@ -29,6 +29,9 @@ private struct VerificationMetrics {
     var maxSafetyGRDB: Float = 0.0
     var maxAudioCompositePeak: Float = 0.0
     var maxPostInjectionOvershoot: Float = 0.0
+    /// 4x-oversampled true-peak of the composite (ITU-R BS.1770-style
+    /// inter-sample peak). Computed offline on the captured MPX samples.
+    var truePeakAbs: Float = 0.0
     var overBudget: Bool = false
     var minBudgetMarginDB: Float = .greatestFiniteMagnitude
     var pilotPercent: Float = 0.0
@@ -629,6 +632,7 @@ private func verifyScenario(
         )
     }
     metrics.bandwidth = computeMPXBandwidthMetrics(samples: mpxSamples, sampleRate: sampleRate)
+    metrics.truePeakAbs = truePeak4x(mpxSamples).truePeak
 
     return metrics
 }
@@ -636,6 +640,60 @@ private func verifyScenario(
 private func dbfsString(_ linear: Float) -> String {
     guard linear > 1e-9 else { return "-inf" }
     return String(format: "%.2f", 20.0 * log10(Double(linear)))
+}
+
+/// 4x-oversampled true-peak of a composite sample array (offline,
+/// ITU-R BS.1770-style inter-sample peak detection). The composite is
+/// band-limited to ~60 kHz, well below the 96 kHz Nyquist at 192 kHz, so
+/// a windowed-sinc fractional-delay interpolator reconstructs inter-sample
+/// peaks faithfully. Returns both the true-peak and the plain sample-peak
+/// so callers can report the overshoot (true minus sample).
+private func truePeak4x(_ samples: [Float]) -> (truePeak: Float, samplePeak: Float) {
+    let n = samples.count
+    guard n > 0 else { return (0.0, 0.0) }
+
+    let oversample = 4
+    let halfTaps = 16
+    let taps = 2 * halfTaps
+    // Precompute the 3 non-integer polyphase fractional-delay kernels
+    // (phase 0 is the identity — the original sample — so skip it).
+    var kernels = [[Float]](repeating: [Float](repeating: 0.0, count: taps), count: oversample)
+    for p in 1..<oversample {
+        let frac = Float(p) / Float(oversample)
+        var sum: Float = 0.0
+        for j in 0..<taps {
+            let k = Float(j - halfTaps + 1)
+            let x = k - frac
+            let sinc: Float = abs(x) < 1e-6 ? 1.0 : sinf(.pi * x) / (.pi * x)
+            let wn = Float(j) / Float(taps - 1)
+            let w = 0.42 - 0.5 * cosf(2.0 * .pi * wn) + 0.08 * cosf(4.0 * .pi * wn)
+            let tap = sinc * w
+            kernels[p][j] = tap
+            sum += tap
+        }
+        if sum > 1e-9 {
+            for j in 0..<taps { kernels[p][j] /= sum }
+        }
+    }
+
+    var samplePeak: Float = 0.0
+    for v in samples { samplePeak = max(samplePeak, abs(v)) }
+
+    var truePeak = samplePeak
+    for i in 0..<n {
+        for p in 1..<oversample {
+            var acc: Float = 0.0
+            let kp = kernels[p]
+            for j in 0..<taps {
+                let idx = i + j - halfTaps + 1
+                if idx >= 0 && idx < n {
+                    acc += samples[idx] * kp[j]
+                }
+            }
+            truePeak = max(truePeak, abs(acc))
+        }
+    }
+    return (truePeak, samplePeak)
 }
 
 private func dbfs(_ linear: Double) -> Float {
@@ -715,7 +773,44 @@ private func buildBaselineRecord(
         rmsDeltaDB: metrics.rmsDeltaDB,
         occupied999Hz: metrics.bandwidth.occupied999Hz,
         above60kRatioDB: metrics.bandwidth.above60kRatioDB,
-        above67kRatioDB: metrics.bandwidth.above67kRatioDB
+        above67kRatioDB: metrics.bandwidth.above67kRatioDB,
+        truePeakOvershootDB: truePeakOvershootDB(metrics: metrics)
+    )
+}
+
+/// True-peak minus sample-peak, in dB (>= 0). The inter-sample overshoot.
+private func truePeakOvershootDB(metrics: VerificationMetrics) -> Float {
+    guard metrics.truePeakAbs > 1e-9, metrics.peakAbs > 1e-9 else { return 0.0 }
+    return max(0.0, Float(20.0 * log10(Double(metrics.truePeakAbs) / Double(metrics.peakAbs))))
+}
+
+/// Captures the encoder-side sideband fingerprint (L-only tone drive at
+/// 1 / 10 / 14 kHz) for the baseline. Reuses the same per-tone
+/// `encoderSidebandMetrics` measurement the receiver model prints, so a
+/// `--baseline-strict` run gates the exact numbers a human reads in
+/// `--verify-receiver`.
+private func buildEncoderSidebandBaseline(
+    config: AppConfig,
+    durationSeconds: Double
+) -> EncoderSidebandBaselineRecord {
+    func measure(_ toneHz: Double) -> EncoderSidebandMetrics {
+        encoderSidebandMetrics(
+            config: config,
+            toneHz: toneHz,
+            drivenChannel: "L",
+            durationSeconds: durationSeconds
+        )
+    }
+    let m1 = measure(1_000.0)
+    let m10 = measure(10_000.0)
+    let m14 = measure(14_000.0)
+    return EncoderSidebandBaselineRecord(
+        asymmetryDB1k: m1.asymmetryDB,
+        sideMonoDeltaDB1k: m1.sideMonoDeltaDB,
+        asymmetryDB10k: m10.asymmetryDB,
+        sideMonoDeltaDB10k: m10.sideMonoDeltaDB,
+        asymmetryDB14k: m14.asymmetryDB,
+        sideMonoDeltaDB14k: m14.sideMonoDeltaDB
     )
 }
 
@@ -1219,6 +1314,9 @@ private func runEncoderStageIsolationSweep(
 
     var rows: [StageIsolationRow] = []
     rows.append(measure(label: "baseline (full chain)") { _ in })
+    rows.append(measure(label: "bass clipper OFF") { $0.bassClipperEnabled = false })
+    rows.append(measure(label: "HF clipper OFF") { $0.hfClipperEnabled = false })
+    rows.append(measure(label: "distortion-cancel clip OFF") { $0.dcClipperEnabled = false })
     rows.append(measure(label: "composite clipper OFF") { $0.compositeClipperEnabled = false })
     rows.append(measure(label: "audio composite softclip OFF") { $0.audioCompositeSoftClipEnabled = false })
     rows.append(measure(label: "audio composite smoother OFF") { $0.audioCompositeSmootherEnabled = false })
@@ -1231,6 +1329,207 @@ private func runEncoderStageIsolationSweep(
     // pre-emphasis is on, so the joint toggle is the right unit.
     rows.append(measure(label: "pre-emphasis + pilot notch OFF") { $0.preemphasisUS = 0 })
     return rows
+}
+
+/// Pilot/RDS phase-lock stability. The RDS 57 kHz subcarrier must stay
+/// locked to 3x the 19 kHz pilot (EN 50067 Sec 2.1.4). If the encoder
+/// derives the two from different phase representations they slowly slip;
+/// this measures that slip by comparing the pilot-vs-RDS phase
+/// relationship in an early window against a late window of one long
+/// render. A locked encoder holds the relationship flat (~0 deg drift);
+/// a slipping one accumulates degrees over the render.
+private struct PilotRDSLockMetrics {
+    let earlyPilotPhaseDeg: Float
+    let latePilotPhaseDeg: Float
+    let earlyRDSPhaseDeg: Float
+    let lateRDSPhaseDeg: Float
+    /// Change in (RDS carrier phase - 3x pilot phase) from early to late
+    /// window, wrapped to +/-90 deg (squaring recovery is mod 180).
+    let lockDriftDeg: Float
+    let renderSeconds: Double
+}
+
+/// Squaring carrier-phase recovery for the BPSK RDS subcarrier. A 57 kHz
+/// bandpass isolates the RDS band; complex demod against an absolute-
+/// sample-index 57 kHz reference brings it to baseband; squaring strips
+/// the +/-1 biphase modulation. Returns 0.5*arg of the coherent sum --
+/// the RDS carrier phase relative to the ideal 57 kHz reference, in
+/// radians, ambiguous mod pi.
+private func rdsCarrierResidualPhase(
+    samples: [Float],
+    sampleRate: Double,
+    start: Int,
+    count: Int
+) -> Double {
+    guard count > 0, start >= 0, start + count <= samples.count else { return 0.0 }
+    var bp = Biquad()
+    bp.configureBandpass(freqHz: 57_000.0, sampleRate: Float(sampleRate), q: 14.0)
+    // Prime the filter on a short run-up so its state is settled at the
+    // window start.
+    let primeStart = max(0, start - 2048)
+    for i in primeStart..<start {
+        _ = bp.process(samples[i])
+    }
+    let omega = 2.0 * Double.pi * 57_000.0 / sampleRate
+    var reAcc = 0.0
+    var imAcc = 0.0
+    for i in 0..<count {
+        let n = Double(start + i)
+        let s = Double(bp.process(samples[start + i]))
+        let zr = s * cos(omega * n)
+        let zi = -s * sin(omega * n)
+        reAcc += (zr * zr) - (zi * zi)
+        imAcc += 2.0 * zr * zi
+    }
+    return 0.5 * atan2(imAcc, reAcc)
+}
+
+private func pilotRDSLockMetrics(
+    baseConfig: AppConfig,
+    durationSeconds: Double
+) -> PilotRDSLockMetrics {
+    var cfg = baseConfig
+    cfg.monoMode = false
+    cfg.enRDS = true
+    // Stereo content so the pilot reads cleanly; modest level so nothing
+    // saturates and shifts phase.
+    let amplitude = 0.30
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let t = Double(frame) / sampleRate
+        let l = Float(amplitude * sin(2.0 * Double.pi * 1_000.0 * t))
+        let r = Float(amplitude * sin(2.0 * Double.pi * 1_000.0 * t + 0.6))
+        return (l, r)
+    }
+    let sr = cfg.sampleRate
+    let n = samples.count
+    // Early / late analysis windows, each ~0.2 s, taken near the ends.
+    let win = max(4096, min(n / 4, Int((0.2 * sr).rounded())))
+    let earlyStart = min(max(0, n / 8), max(0, n - win))
+    let lateStart = max(earlyStart + win, n - win)
+
+    func pilotPhase(_ start: Int) -> Double {
+        estimatePilotPhase(samples: samples, sampleRate: sr, start: start, count: win).phase
+    }
+    let earlyPilot = pilotPhase(earlyStart)
+    let latePilot = pilotPhase(lateStart)
+    let earlyRDS = rdsCarrierResidualPhase(samples: samples, sampleRate: sr, start: earlyStart, count: win)
+    let lateRDS = rdsCarrierResidualPhase(samples: samples, sampleRate: sr, start: lateStart, count: win)
+
+    // Lock error = RDS phase - 3*pilot phase. Compare early vs late; the
+    // absolute value is meaningless (mod-pi ambiguity from squaring),
+    // only the drift between windows matters. Wrap to +/- pi/2.
+    func wrapHalfPi(_ x: Double) -> Double {
+        var v = x
+        let pi = Double.pi
+        while v > pi / 2 { v -= pi }
+        while v < -pi / 2 { v += pi }
+        return v
+    }
+    let earlyErr = earlyRDS - 3.0 * earlyPilot
+    let lateErr = lateRDS - 3.0 * latePilot
+    let drift = wrapHalfPi(lateErr - earlyErr)
+    let toDeg = 180.0 / Double.pi
+    return PilotRDSLockMetrics(
+        earlyPilotPhaseDeg: Float(earlyPilot * toDeg),
+        latePilotPhaseDeg: Float(latePilot * toDeg),
+        earlyRDSPhaseDeg: Float(earlyRDS * toDeg),
+        lateRDSPhaseDeg: Float(lateRDS * toDeg),
+        lockDriftDeg: Float(drift * toDeg),
+        renderSeconds: Double(n) / sr
+    )
+}
+
+/// Guard-band cancellation depth for the composite clipper. The clipper
+/// removes its own intermod from the pilot guard (17-21 kHz) and RDS
+/// guard (55-59 kHz) bands before the constant-amplitude subcarriers are
+/// injected. This measures how deep that removal actually is.
+///
+/// Methodology: drive the clipper hard with a dense stereo program but
+/// suppress the cleanly-injected subcarriers that would otherwise mask
+/// the residual — pilot level forced to 0 (the 17-21 kHz band then holds
+/// only clipper IM) and RDS off (the 55-59 kHz band holds only clipper
+/// IM). The 38 kHz stereo DSB-SC stays on so the clipper sees a full
+/// 0-53 kHz composite and generates realistic out-of-band IM. Render
+/// once with the guard's cancellation flag on, once off; depth is the
+/// band-energy delta. Larger = the guard is doing more work.
+private struct GuardBandCancellationMetrics {
+    let pilotGuardResidualOnDBFS: Float
+    let pilotGuardResidualOffDBFS: Float
+    let pilotGuardDepthDB: Float
+    let rdsGuardResidualOnDBFS: Float
+    let rdsGuardResidualOffDBFS: Float
+    let rdsGuardDepthDB: Float
+}
+
+private func guardBandCancellationMetrics(
+    baseConfig: AppConfig,
+    durationSeconds: Double
+) -> GuardBandCancellationMetrics {
+    func render(cancelPilot: Bool, cancelRDS: Bool) -> [Float] {
+        var cfg = baseConfig
+        cfg.monoMode = false
+        cfg.enRDS = false
+        cfg.pilotLevel = 0.0
+        cfg.compositeClipperEnabled = true
+        cfg.compositeClipperCancelPilot = cancelPilot
+        cfg.compositeClipperCancelRDS = cancelRDS
+        // Isolate the composite clipper: disable every other nonlinearity
+        // so the only source of guard-band IM is the composite clipper
+        // itself. Otherwise upstream clipper/limiter IM dominates the
+        // guard bands and masks the cancellation depth we want to gate.
+        cfg.bassClipperEnabled = false
+        cfg.hfClipperEnabled = false
+        cfg.dcClipperEnabled = false
+        cfg.audioCompositeSoftClipEnabled = false
+        cfg.finalMPXSoftClipEnabled = false
+        cfg.preEncodeAudioLimiterEnabled = false
+        // Push the clipper hard so the guard bands carry measurable IM.
+        cfg.finalDriveDB = min(20.0, baseConfig.finalDriveDB + 8.0)
+        return renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+            let t = Double(frame) / sampleRate
+            // Dense, hard-panned multitone with HF energy so clipping
+            // throws IM up into the stereo / RDS region.
+            let env = 0.85 + (0.10 * sin(2.0 * Double.pi * 0.5 * t))
+            let a = sin(2.0 * Double.pi * 440.0 * t)
+            let b = sin(2.0 * Double.pi * 3100.0 * t)
+            let c = sin(2.0 * Double.pi * 7700.0 * t)
+            let d = sin(2.0 * Double.pi * 13_500.0 * t)
+            let left = Float(env) * Float((0.30 * a) + (0.26 * b) + (0.24 * c) + (0.20 * d))
+            let right = Float(env) * Float((0.28 * a) - (0.24 * b) + (0.22 * c) - (0.20 * d))
+            return (left, right)
+        }
+    }
+
+    func bandEnergy(_ samples: [Float], lowerHz: Double, upperHz: Double) -> Float {
+        let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: baseConfig.sampleRate)
+        return toneBandEnergyDBFS(
+            samples: samples,
+            sampleRate: baseConfig.sampleRate,
+            lowerHz: lowerHz,
+            upperHz: upperHz,
+            start: window.start,
+            count: window.count,
+            stepHz: 250.0
+        )
+    }
+
+    let bothOn = render(cancelPilot: true, cancelRDS: true)
+    let pilotOff = render(cancelPilot: false, cancelRDS: true)
+    let rdsOff = render(cancelPilot: true, cancelRDS: false)
+
+    let pilotOnDB = bandEnergy(bothOn, lowerHz: 17_000.0, upperHz: 21_000.0)
+    let pilotOffDB = bandEnergy(pilotOff, lowerHz: 17_000.0, upperHz: 21_000.0)
+    let rdsOnDB = bandEnergy(bothOn, lowerHz: 55_000.0, upperHz: 59_000.0)
+    let rdsOffDB = bandEnergy(rdsOff, lowerHz: 55_000.0, upperHz: 59_000.0)
+
+    return GuardBandCancellationMetrics(
+        pilotGuardResidualOnDBFS: pilotOnDB,
+        pilotGuardResidualOffDBFS: pilotOffDB,
+        pilotGuardDepthDB: pilotOffDB - pilotOnDB,
+        rdsGuardResidualOnDBFS: rdsOnDB,
+        rdsGuardResidualOffDBFS: rdsOffDB,
+        rdsGuardDepthDB: rdsOffDB - rdsOnDB
+    )
 }
 
 private func receiverPLLRoundTripMetrics(
@@ -2444,6 +2743,13 @@ private func runReceiverModelVerification(
     let mono = receiverMonoMetrics(config: baseConfig, durationSeconds: duration)
     let noPilot = receiverNoPilotMetrics(config: baseConfig, durationSeconds: duration)
     let subcarriers = receiverSubcarrierMetrics(config: baseConfig, durationSeconds: duration)
+    let guardBands = guardBandCancellationMetrics(
+        baseConfig: baseConfig,
+        durationSeconds: pllDuration
+    )
+    let pilotRDSLock = baseConfig.enRDS
+        ? pilotRDSLockMetrics(baseConfig: baseConfig, durationSeconds: max(5.0, durationSeconds))
+        : nil
 
     print("Receiver Model")
     print("Scope: coherent stereo decode, PLL external-style decode, mono/no-pilot behavior, pilot/RDS spectral checks")
@@ -2647,6 +2953,60 @@ private func runReceiverModelVerification(
     )
 
     print("")
+    print("Guard-Band Cancellation (clipper driven hard, subcarriers suppressed)")
+    print("Depth = residual with guard OFF minus guard ON. Larger = guard removes more clipper IM.")
+    print("Guard        Band        Resid ON   Resid OFF  Depth")
+    print("-----------  ----------  ---------  ---------  -----")
+    print(
+        "pilot 17-21  17-21 kHz "
+            + "  \(leftPadded(String(format: "%.1f", guardBands.pilotGuardResidualOnDBFS), width: 9))"
+            + "  \(leftPadded(String(format: "%.1f", guardBands.pilotGuardResidualOffDBFS), width: 9))"
+            + "  \(String(format: "%5.1f", guardBands.pilotGuardDepthDB))"
+    )
+    print(
+        "rds 55-59    55-59 kHz "
+            + "  \(leftPadded(String(format: "%.1f", guardBands.rdsGuardResidualOnDBFS), width: 9))"
+            + "  \(leftPadded(String(format: "%.1f", guardBands.rdsGuardResidualOffDBFS), width: 9))"
+            + "  \(String(format: "%5.1f", guardBands.rdsGuardDepthDB))"
+    )
+    // Soft floor: an enabled guard that removes essentially nothing is a
+    // regression (cancellation FIR misconfigured / mis-aligned). The
+    // threshold is deliberately low so this gates true breakage, not the
+    // exact depth (the exact number is the human-read / baseline metric).
+    if baseConfig.compositeClipperEnabled && baseConfig.compositeClipperCancelPilot
+        && guardBands.pilotGuardDepthDB < 3.0 {
+        warnings.append(
+            "pilot guard cancellation depth \(String(format: "%.1f", guardBands.pilotGuardDepthDB)) dB < 3.0 dB (guard enabled but not removing IM)"
+        )
+    }
+    if baseConfig.compositeClipperEnabled && baseConfig.compositeClipperCancelRDS
+        && guardBands.rdsGuardDepthDB < 3.0 {
+        warnings.append(
+            "RDS guard cancellation depth \(String(format: "%.1f", guardBands.rdsGuardDepthDB)) dB < 3.0 dB (guard enabled but not removing IM)"
+        )
+    }
+
+    if let lock = pilotRDSLock {
+        print("")
+        print("Pilot/RDS Phase Lock (RDS 57 kHz must track 3x pilot; drift over the render)")
+        print("Render \(String(format: "%.1f", lock.renderSeconds)) s   Pilot early/late deg   RDS early/late deg   Lock drift")
+        print(
+            "             "
+                + "  \(String(format: "%+7.1f", lock.earlyPilotPhaseDeg)) / \(String(format: "%+7.1f", lock.latePilotPhaseDeg))"
+                + "   \(String(format: "%+7.1f", lock.earlyRDSPhaseDeg)) / \(String(format: "%+7.1f", lock.lateRDSPhaseDeg))"
+                + "   \(String(format: "%+6.2f", lock.lockDriftDeg)) deg"
+        )
+        // A locked encoder holds RDS at exactly 3x pilot, so the relative
+        // phase is flat over the render. Visible drift means the two
+        // subcarriers are derived from diverging phase representations.
+        if abs(lock.lockDriftDeg) > 3.0 {
+            warnings.append(
+                "pilot/RDS lock drift \(String(format: "%.2f", lock.lockDriftDeg)) deg over \(String(format: "%.1f", lock.renderSeconds)) s exceeds 3.0 deg (RDS not strictly locked to 3x pilot)"
+            )
+        }
+    }
+
+    print("")
     print("Assessment")
     if !notes.isEmpty {
         print("Receiver notes:")
@@ -2771,6 +3131,7 @@ func runVerificationHarness(
     var worstSafety: Float = 0.0
     var worstMargin: Float = .greatestFiniteMagnitude
     var worstPostInjectionOvershoot: Float = 0.0
+    var worstTruePeakOvershootDB: Float = 0.0
     var anyOverBudget = false
     var scenarioMetrics: [(VerificationScenario, VerificationMetrics)] = []
     var qualityWarnings: [String] = []
@@ -2788,6 +3149,7 @@ func runVerificationHarness(
         worstSafety = max(worstSafety, metrics.maxSafetyGRDB)
         worstMargin = min(worstMargin, metrics.minBudgetMarginDB)
         worstPostInjectionOvershoot = max(worstPostInjectionOvershoot, metrics.maxPostInjectionOvershoot)
+        worstTruePeakOvershootDB = max(worstTruePeakOvershootDB, truePeakOvershootDB(metrics: metrics))
         anyOverBudget = anyOverBudget || metrics.overBudget
         qualityWarnings.append(
             contentsOf: qualityFindings(scenario: scenario, metrics: metrics).map { "\(scenario.name): \($0)" }
@@ -2868,6 +3230,15 @@ func runVerificationHarness(
                 ))
             }
         )
+        // Encoder-side sideband fingerprint: computed only when capturing
+        // or when there is a stored fingerprint to compare against, so a
+        // plain `--verify` with no baseline doesn't pay the extra renders.
+        let needSidebands = captureBaseline || (loadedBaseline?.encoderSidebands != nil)
+        let sidebandDuration = max(0.75, min(durationSeconds, 1.0))
+        let measuredSidebands: EncoderSidebandBaselineRecord? = needSidebands
+            ? buildEncoderSidebandBaseline(config: config, durationSeconds: sidebandDuration)
+            : nil
+
         if captureBaseline {
             let file = VerifierBaselineFile(
                 schemaVersion: VerifierBaselineFile.currentSchemaVersion,
@@ -2876,19 +3247,30 @@ func runVerificationHarness(
                 renderSampleRateHz: Int(config.sampleRate),
                 blockSize: config.blockSize,
                 durationSeconds: durationSeconds,
-                scenarios: measured
+                scenarios: measured,
+                encoderSidebands: measuredSidebands
             )
             do {
                 try saveVerifierBaseline(file, to: baselineURL)
                 print("")
                 print("Baseline captured: \(baselineURL.path)")
                 print("  \(measured.count) scenarios written.")
+                if measuredSidebands != nil {
+                    print("  encoder sideband fingerprint written (1/10/14 kHz).")
+                }
             } catch {
                 print("")
                 print("Baseline capture FAILED: \(error)")
             }
         } else if let baseline = loadedBaseline {
             baselineDrift = compareBaseline(measured: measured, baseline: baseline)
+            if let storedSidebands = baseline.encoderSidebands,
+                let measuredSidebands = measuredSidebands {
+                baselineDrift.append(contentsOf: compareEncoderSidebands(
+                    measured: measuredSidebands,
+                    baseline: storedSidebands
+                ))
+            }
         }
     }
 
@@ -2898,6 +3280,7 @@ func runVerificationHarness(
     print("Worst safety limiter GR: \(String(format: "%.1f", nonNegative(worstSafety))) dB")
     print("Worst composite margin: \(String(format: "%.1f", worstMargin)) dB")
     print("Worst post-injection overshoot: \(String(format: "%.6f", worstPostInjectionOvershoot))")
+    print("Worst inter-sample (4x true-peak) overshoot: \(String(format: "%.2f", worstTruePeakOvershootDB)) dB")
     print("Composite budget exceeded: \(anyOverBudget ? "yes" : "no")")
 
     if longRun {

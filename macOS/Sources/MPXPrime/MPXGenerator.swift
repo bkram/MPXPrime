@@ -1811,7 +1811,10 @@ struct BS412PowerLimiter {
 
         decimationCounter += 1
         if decimationCounter >= decimationFactor {
-            let avgPower = decimationAccumulator / Float(decimationFactor)
+            // Flush a denormal block average to zero so subnormal arithmetic
+            // can't seep into the rolling power ring / Double accumulator on
+            // near-silent program.
+            let avgPower = zapDenorm(decimationAccumulator / Float(decimationFactor))
             // Update ring buffer
             if ringFull {
                 powerAccumulator -= Double(ringBuffer[ringIndex])
@@ -1874,10 +1877,13 @@ struct DownwardExpander {
         let coeff = peak > env ? attackCoeff : releaseCoeff
         env = (coeff * env) + ((1.0 - coeff) * peak)
         if env < thresholdLin && env > 1e-10 {
-            // Below threshold: reduce gain by expansion ratio
+            // Below threshold: reduce gain by expansion ratio. Floor the
+            // result at -60 dB so very quiet signals don't underflow to a
+            // subnormal gain (which produced a hard silent-vs-expanding
+            // discontinuity / tremolo just above the 1e-10 detector floor).
             let belowDB = 20.0 * log10f(env / thresholdLin)
             let expandedDB = belowDB * ratio
-            return powf(10.0, expandedDB / 20.0)
+            return max(1e-3, powf(10.0, expandedDB / 20.0))
         }
         return 1.0
     }
@@ -2185,6 +2191,7 @@ struct LinearPhaseFIRDecimator {
         stopBandDB: Float = 90.0,
         transitionHz: Float = 60_000.0
     ) {
+        let factor = max(1, decimateFactor)
         coeffs = kaiserSincLowpassCoefficients(
             cutoffHz: cutoffHz,
             sampleRate: sampleRateOS,
@@ -2195,7 +2202,7 @@ struct LinearPhaseFIRDecimator {
         halfLength = (lengthTaps - 1) / 2
         delay = [Float](repeating: 0.0, count: lengthTaps * 2)
         writeIdx = 0
-        self.decimateFactor = max(1, decimateFactor)
+        self.decimateFactor = factor
         pushSinceLastEmit = 0
         lastOutput = 0.0
     }
@@ -3438,8 +3445,12 @@ final class BasicRDSCoder {
     private var sampleRate: Float
     private var carrierPhase: Float = 0.0
     private var carrierStep: Float = 0.0
-    private var pilotPhaseForRDS: Float = 0.0
-    private var pilotStepForRDS: Float = 0.0
+    /// Instantaneous pilot recurrence value sin(theta) supplied by the
+    /// generator's pilot oscillator. The 57 kHz RDS carrier is derived
+    /// from this via the triple-angle identity so it stays bit-exactly
+    /// locked to 3x the emitted pilot (EN 50067 Sec 2.1.4) instead of
+    /// drifting off a separate phase accumulator.
+    private var pilotSinForRDS: Float = 0.0
     private var bitPhase: Float = 0.0
     private var differentialBit: Int = 0
     /// Pre-allocated 104-byte buffer (4 RDS blocks × 26 bits) reused
@@ -3931,9 +3942,16 @@ final class BasicRDSCoder {
     func nextSampleWithPilotLock() -> Float {
         guard enabled else { return 0.0 }
 
-        // Phase is now set externally via updateRDSPilotPhase()
-        // RDS subcarrier is 3x pilot frequency (57kHz = 3 * 19kHz)
-        let rdsPhase = fmodf(3.0 * pilotPhaseForRDS, twoPi)
+        // RDS subcarrier is 57 kHz = 3x the 19 kHz pilot. The pilot's
+        // instantaneous sin(theta) is supplied externally via
+        // updateRDSPilotSin() from the same recurrence oscillator that
+        // emits the broadcast pilot; the carrier sin(3*theta) is recovered
+        // with the triple-angle identity sin(3t) = 3*sin t - 4*sin^3 t.
+        // This keeps RDS exactly locked to the emitted pilot rather than
+        // tracking a separate additive phase accumulator that slowly
+        // drifts against the recurrence (~9 deg / 5 s pre-fix).
+        let s = pilotSinForRDS
+        let carrier = (3.0 - (4.0 * s * s)) * s
 
         let previousPhase = bitPhase
         var impulse: Float = 0.0
@@ -3950,7 +3968,6 @@ final class BasicRDSCoder {
 
         let shaped = nextShapingSample(impulse: impulse)
 
-        let carrier = sinf(rdsPhase)
         let normalized = shaped / max(1e-6, shapingPeak)
         return normalized * carrier * levelScale
     }
@@ -3958,14 +3975,16 @@ final class BasicRDSCoder {
     private func updateDerivedRates() {
         // EN 50067 Sec 2.1.4: RDS subcarrier is 57 kHz, locked to 3x pilot.
         // The production render path uses `nextSampleWithPilotLock()` which
-        // derives the carrier from the pilot phase directly; this constant
-        // exists only for the free-running `nextSample()` path used by tests.
+        // derives the carrier from the pilot recurrence directly; this
+        // constant exists only for the free-running `nextSample()` path
+        // used by tests.
         carrierStep = twoPi * 57_000.0 / sampleRate
-        pilotStepForRDS = twoPi * 19_000.0 / sampleRate
     }
 
-    func updateRDSPilotPhase(_ phase: Float) {
-        pilotPhaseForRDS = phase
+    /// Supply the pilot oscillator's instantaneous sin(theta). The RDS
+    /// carrier sin(3*theta) is derived from it in nextSampleWithPilotLock().
+    func updateRDSPilotSin(_ pilotSin: Float) {
+        pilotSinForRDS = pilotSin
     }
 
     private func updateShapingFilters() {
@@ -6642,7 +6661,6 @@ final class MPXGenerator {
     /// across runs).
     private var toneNoiseRNG: UInt64 = 0xCAFE_BABE_DEAD_BEEF
     private var pilotOsc = SineCosOsc()
-    private var pilotPhaseForRDS: Float = 0.0
     private var subPhase: Float = 0.0
 
     private var pilotSupported: Bool = false
@@ -9027,14 +9045,16 @@ final class MPXGenerator {
         // phase advance for all three tone paths.)
 
         pilotOsc.step()
-        pilotPhaseForRDS = pilotOsc.phase
         let stereoServicesEnabled = !monoMode
         let pilot = (stereoServicesEnabled && pilotSupported) ? (pilotOsc.s * pilotLevel) : 0.0
         let sub = (stereoServicesEnabled && stereoSubcarrierSupported) ? pilotOsc.sin2x() : 0.0
         lastSubcarrierSample = sub
 
         if stereoServicesEnabled {
-            rdsCoder?.updateRDSPilotPhase(pilotPhaseForRDS)
+            // Lock RDS to the emitted pilot: hand the coder the pilot
+            // oscillator's instantaneous sin(theta); it derives the 57 kHz
+            // carrier as sin(3*theta) from the same recurrence value.
+            rdsCoder?.updateRDSPilotSin(pilotOsc.s)
         }
         let rds =
             (stereoServicesEnabled && rdsSupported) ? (rdsCoder?.nextSampleWithPilotLock() ?? 0.0)

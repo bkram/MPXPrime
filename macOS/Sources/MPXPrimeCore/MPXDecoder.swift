@@ -117,12 +117,22 @@ public struct MPXDecoder {
     @inlinable
     @inline(__always)
     public mutating func process(
-        _ mpx: Float,
+        _ mpxIn: Float,
         referenceSubcarrier: Float? = nil,
-        programActivity: Float,
-        expectedSide: Float
+        programActivity programActivityIn: Float,
+        expectedSide expectedSideIn: Float
     ) -> (Float, Float) {
-        let subcarrier = referenceSubcarrier ?? pilotLockedSubcarrier(from: mpx)
+        // Sanitize all float inputs up front. A single non-finite sample
+        // would otherwise poison the persistent pilot-lock I/Q, envelope,
+        // and noise-floor state permanently: NaN flows through the
+        // exponential smoothers (which never flush it) and every recovery
+        // comparison against NaN is false, so the stereo-collapse self-heal
+        // can never re-arm. Substituting 0 keeps the decoder recoverable.
+        let mpx = mpxIn.isFinite ? mpxIn : 0.0
+        let programActivity = programActivityIn.isFinite ? programActivityIn : 0.0
+        let expectedSide = expectedSideIn.isFinite ? expectedSideIn : 0.0
+        let refSubcarrier: Float? = referenceSubcarrier.flatMap { $0.isFinite ? $0 : 0.0 }
+        let subcarrier = refSubcarrier ?? pilotLockedSubcarrier(from: mpx)
 
         var monSrc = rfNotchPilot.process(mpx)
         monSrc = rfNotchRDS.process(monSrc)

@@ -130,6 +130,35 @@ struct StereoInputRingBufferTests {
         #expect(ring.stats().overflows == 8)
     }
 
+    @Test func overflowSequenceDoesNotReportTornReads() {
+        // Single-producer/consumer overflow handled by the normal atomic
+        // protocol must never tear a read: the consumer brackets each copy
+        // with `consumerReadInProgress`, so the producer trims new input
+        // rather than lapping the span being read. A true torn read needs
+        // concurrent interleaving (covered by the detection helper +
+        // telemetry); here we assert the happy path stays clean and the
+        // tornReads telemetry is wired and reads 0.
+        let ring = StereoInputRingBuffer(capacityFrames: 512)
+        // Interleave heavy overflowing writes with reads several times.
+        let block: [Float] = Array(0..<700).map(Float.init)
+        var outLeft = [Float](repeating: 0, count: 256)
+        var outRight = [Float](repeating: 0, count: 256)
+        for _ in 0..<8 {
+            block.withUnsafeBufferPointer { buf in
+                ring.write(left: buf.baseAddress!, right: buf.baseAddress!, frameCount: block.count)
+            }
+            _ = outLeft.withUnsafeMutableBufferPointer { lBuf in
+                outRight.withUnsafeMutableBufferPointer { rBuf in
+                    ring.read(intoLeft: lBuf.baseAddress!, outRight: rBuf.baseAddress!, frameCount: 256)
+                }
+            }
+        }
+
+        #expect(ring.stats().overflows > 0, "expected overflow to occur in this stress pattern")
+        let snapshot = ring.transportSnapshot()
+        #expect(snapshot.tornReads == 0, "normal protocol must not report torn reads, got \(snapshot.tornReads)")
+    }
+
     @Test func underflowCountsAndZeroFills() {
         let ring = StereoInputRingBuffer(capacityFrames: 8)
         let left: [Float] = [1, 2]

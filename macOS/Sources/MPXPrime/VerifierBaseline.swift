@@ -37,6 +37,28 @@ struct VerifierBaselineRecord: Codable, Equatable {
     var occupied999Hz: Float
     var above60kRatioDB: Float
     var above67kRatioDB: Float
+    /// 4x-oversampled true-peak minus sample-peak, in dB. The inter-sample
+    /// overshoot the sample-domain peak meter misses. Baselining the delta
+    /// (not the absolute true-peak, which tracks peakDBFS) catches a
+    /// regression that lets inter-sample peaks grow past the 75 kHz
+    /// deviation ceiling without moving the sample peak.
+    var truePeakOvershootDB: Float
+}
+
+/// Encoder-side DSB-SC sideband metrics, captured once from an L-only
+/// tone drive at 1 / 10 / 14 kHz (independent of the program scenarios).
+/// These gate the composite clipper's guard-band cancellation and
+/// DSB-SC balance: a drift in clipper / FIR group-delay alignment moves
+/// `asymmetryDB` (lower-vs-upper sideband imbalance) or `sideMonoDeltaDB`
+/// (side-vs-mono level), neither of which the program-scenario records
+/// surface. Source is `EncoderSidebandMetrics` in the harness.
+struct EncoderSidebandBaselineRecord: Codable, Equatable {
+    var asymmetryDB1k: Float
+    var sideMonoDeltaDB1k: Float
+    var asymmetryDB10k: Float
+    var sideMonoDeltaDB10k: Float
+    var asymmetryDB14k: Float
+    var sideMonoDeltaDB14k: Float
 }
 
 struct VerifierBaselineFile: Codable, Equatable {
@@ -48,8 +70,12 @@ struct VerifierBaselineFile: Codable, Equatable {
     var durationSeconds: Double
     /// Dictionary keyed by scenario name → baseline record.
     var scenarios: [String: VerifierBaselineRecord]
+    /// Encoder-side sideband fingerprint (L-only tone drive at 1/10/14
+    /// kHz). Optional so schema-2 files decode, but always written by
+    /// schema-3 captures.
+    var encoderSidebands: EncoderSidebandBaselineRecord?
 
-    static let currentSchemaVersion: Int = 2
+    static let currentSchemaVersion: Int = 3
 }
 
 // MARK: - Tolerances
@@ -77,8 +103,20 @@ struct MetricTolerances {
     var occupied999Hz: Float = 150.0
     var above60kRatioDB: Float = 1.0
     var above67kRatioDB: Float = 1.0
+    var truePeakOvershootDB: Float = 0.20
 
     static let `default` = MetricTolerances()
+}
+
+/// Per-metric tolerance for the encoder-side sideband fingerprint. These
+/// are tighter than the program-scenario tolerances because the drive is
+/// a clean single tone, so the only motion should be genuine encoder /
+/// clipper drift, not program-dependent jitter.
+struct EncoderSidebandTolerances {
+    var asymmetryDB: Float = 0.5
+    var sideMonoDeltaDB: Float = 0.5
+
+    static let `default` = EncoderSidebandTolerances()
 }
 
 // MARK: - Comparison
@@ -143,7 +181,8 @@ func compareBaseline(
         Probe(name: "rmsDeltaDB", unit: "dB", tolerance: tolerances.rmsDeltaDB, get: { $0.rmsDeltaDB }),
         Probe(name: "occupied999Hz", unit: "Hz", tolerance: tolerances.occupied999Hz, get: { $0.occupied999Hz }),
         Probe(name: "above60kRatioDB", unit: "dB", tolerance: tolerances.above60kRatioDB, get: { $0.above60kRatioDB }),
-        Probe(name: "above67kRatioDB", unit: "dB", tolerance: tolerances.above67kRatioDB, get: { $0.above67kRatioDB })
+        Probe(name: "above67kRatioDB", unit: "dB", tolerance: tolerances.above67kRatioDB, get: { $0.above67kRatioDB }),
+        Probe(name: "truePeakOvershootDB", unit: "dB", tolerance: tolerances.truePeakOvershootDB, get: { $0.truePeakOvershootDB })
     ]
 
     // Report missing scenarios (new in measured, or dropped from baseline).
@@ -197,6 +236,48 @@ func compareBaseline(
         }
     }
 
+    return findings
+}
+
+/// Compare measured encoder-side sideband metrics against the stored
+/// baseline. Returns one drift finding per (tone, metric) that moved
+/// beyond tolerance. The synthetic scenario name "encoder_sidebands"
+/// keeps these findings visually distinct from per-scenario drift.
+func compareEncoderSidebands(
+    measured: EncoderSidebandBaselineRecord,
+    baseline: EncoderSidebandBaselineRecord,
+    tolerances: EncoderSidebandTolerances = .default
+) -> [BaselineDriftFinding] {
+    var findings: [BaselineDriftFinding] = []
+
+    struct Probe {
+        let name: String
+        let tolerance: Float
+        let get: (EncoderSidebandBaselineRecord) -> Float
+    }
+    let probes: [Probe] = [
+        Probe(name: "asymmetryDB@1k", tolerance: tolerances.asymmetryDB, get: { $0.asymmetryDB1k }),
+        Probe(name: "sideMonoDeltaDB@1k", tolerance: tolerances.sideMonoDeltaDB, get: { $0.sideMonoDeltaDB1k }),
+        Probe(name: "asymmetryDB@10k", tolerance: tolerances.asymmetryDB, get: { $0.asymmetryDB10k }),
+        Probe(name: "sideMonoDeltaDB@10k", tolerance: tolerances.sideMonoDeltaDB, get: { $0.sideMonoDeltaDB10k }),
+        Probe(name: "asymmetryDB@14k", tolerance: tolerances.asymmetryDB, get: { $0.asymmetryDB14k }),
+        Probe(name: "sideMonoDeltaDB@14k", tolerance: tolerances.sideMonoDeltaDB, get: { $0.sideMonoDeltaDB14k })
+    ]
+
+    for probe in probes {
+        let mv = probe.get(measured)
+        let bv = probe.get(baseline)
+        if abs(mv - bv) > probe.tolerance {
+            findings.append(BaselineDriftFinding(
+                scenarioName: "encoder_sidebands",
+                metricName: probe.name,
+                measured: mv,
+                baseline: bv,
+                tolerance: probe.tolerance,
+                unit: "dB"
+            ))
+        }
+    }
     return findings
 }
 

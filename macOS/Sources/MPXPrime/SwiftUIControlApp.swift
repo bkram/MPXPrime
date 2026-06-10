@@ -6642,6 +6642,15 @@ struct LevelsCardView: View {
                 Spacer(minLength: 0)
               }
               .frame(height: 340)
+              // Group the strips under one named VoiceOver container so the
+              // cluster is announced as a unit ("Level meters, …") and the
+              // user can navigate into the individual strips for readings,
+              // instead of landing on disconnected strips with no context.
+              .accessibilityElement(children: .contain)
+              .accessibilityLabel(
+                model.processedAudioOutputActive
+                    ? "Level meters: input L and R, AGC output L and R, output"
+                    : "Level meters: input L and R, AGC output L and R, MPX output, modulation")
             }
         }
     }

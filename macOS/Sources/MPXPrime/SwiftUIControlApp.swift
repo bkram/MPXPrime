@@ -7693,7 +7693,8 @@ private struct ProcessingLimiterTab: View {
                 value: model.configBinding(\.preEncodeLookaheadMS, runtimeDisposition: .restart),
                 range: 0...5,
                 format: "%.2f ms",
-                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
+                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required.",
+                restartRequired: true
             ).disabled(disabled)
             DisclosureGroup("Advanced") {
                 Toggle(
@@ -7702,10 +7703,12 @@ private struct ProcessingLimiterTab: View {
                 )
                 .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Experimental; off keeps the current behavior.")
                 .disabled(disabled)
-                Toggle(
-                    "High-Frequency Transient Look-ahead",
-                    isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)
-                )
+                Toggle(isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)) {
+                    HStack(spacing: 6) {
+                        Text("High-Frequency Transient Look-ahead")
+                        RestartBadge()
+                    }
+                }
                 .help("Engages look-ahead only on high-frequency transients (where pre-emphasis concentrates peaks), leaving low-frequency punch untouched. Requires Look-ahead above 0. Restart-required.")
                 .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
                 DoubleSliderRow(
@@ -7713,7 +7716,8 @@ private struct ProcessingLimiterTab: View {
                     value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
                     range: 1_000...12_000,
                     format: "%.0f Hz",
-                    tooltip: "High-pass cutoff for the HF transient look-ahead detector. 4 kHz default; lower (2-3 kHz) catches more vocal sibilance, higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required."
+                    tooltip: "High-pass cutoff for the HF transient look-ahead detector. 4 kHz default; lower (2-3 kHz) catches more vocal sibilance, higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required.",
+                    restartRequired: true
                 ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
             }
             .disabled(disabled)
@@ -8050,7 +8054,8 @@ private struct SystemSettingsSectionContent: View {
             if !model.processedAudioOutputActive {
                 DoubleSliderRow(
                     title: "Pilot Level", value: model.pilotLevelPercentBinding(),
-                    range: 0...12, format: "%.1f %%")
+                    range: 0...12, format: "%.1f %%",
+                    restartRequired: true)
                 .disabled(model.config.monoMode)
             }
 
@@ -8443,7 +8448,8 @@ private struct RDSCarrierTab: View {
             DoubleSliderRow(
                 title: "Injection Level",
                 value: model.rdsLevelPercentBinding(),
-                range: 0...10, format: "%.1f %%")
+                range: 0...10, format: "%.1f %%",
+                restartRequired: true)
             Text("RDS subcarrier pulse shaping (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -8575,11 +8581,15 @@ private struct OutputModeSettingsSectionContent: View {
 
     var body: some View {
         Picker(
-            "Output",
             selection: model.configBinding(\.processedAudioOutput, runtimeDisposition: .restart)
         ) {
             Text("MPX Composite").tag(false)
             Text("Processed Audio").tag(true)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Output")
+                RestartBadge()
+            }
         }
         .pickerStyle(.segmented)
         .help("MPX Composite: the FM multiplex (pilot + stereo + RDS) for a transmitter / exciter that accepts composite. Processed Audio: processed stereo L/R for an external stereo coder + RDS encoder. Restart required.")
@@ -9124,6 +9134,20 @@ private struct TooltipIfPresent: ViewModifier {
     }
 }
 
+/// Compact "restart-required" affordance. Sits next to a control whose
+/// change does not apply live (the engine must stop/restart). Matches the
+/// pending-restart status chip's icon so the two read as the same concept.
+/// Module-visible so the stage inspector can reuse it.
+struct RestartBadge: View {
+    var body: some View {
+        Image(systemName: "arrow.triangle.2.circlepath")
+            .font(.caption2)
+            .foregroundStyle(BroadcastStyle.tightAmber)
+            .help("Restart-required: this setting takes effect only after the engine restarts (use Apply Restart). Changing it while running marks a pending restart in the header.")
+            .accessibilityLabel("Restart required")
+    }
+}
+
 private struct DoubleSliderRow: View {
     let title: String
     @Binding var value: Double
@@ -9131,9 +9155,10 @@ private struct DoubleSliderRow: View {
     let format: String
     var accessibilityLabel: String?
     var tooltip: String?
+    var restartRequired: Bool = false
 
     var body: some View {
-        LabeledContent(title) {
+        LabeledContent {
             HStack(spacing: 12) {
                 Slider(value: $value, in: range)
                     .controlSize(.small)
@@ -9151,6 +9176,11 @@ private struct DoubleSliderRow: View {
             // not always forward `.help()` to its content on macOS 15).
             .contentShape(Rectangle())
             .modifier(TooltipIfPresent(text: tooltip))
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                if restartRequired { RestartBadge() }
+            }
         }
         .contentShape(Rectangle())
         .modifier(TooltipIfPresent(text: tooltip))

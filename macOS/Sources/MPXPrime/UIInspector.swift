@@ -100,10 +100,13 @@ private struct CompositeClipperInspector: View {
 
             Divider()
 
-            Text("Oversampling factor")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+            HStack(spacing: 6) {
+                Text("Oversampling factor")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                RestartBadge()
+            }
 
             Picker(
                 "",

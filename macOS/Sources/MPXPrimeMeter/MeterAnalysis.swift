@@ -47,11 +47,13 @@ final class MeterAnalysis {
 
     // 57 kHz bandpass to isolate the RDS subcarrier for deviation measurement.
     private var rdsBandpass = Biquad()
-    // Peak-holds with ~2 s exponential decay so MAX DEV / RDS track recent
-    // peaks rather than the instantaneous value.
+    // Composite peak-hold (~2 s exponential decay) -> MAX DEV.
     private var peakHoldComposite: Float = 0.0
-    private var peakHoldRDS: Float = 0.0
     private var peakDecay: Float = 0.999986
+    // RDS subcarrier RMS, smoothed (~0.5 s). RMS-referenced to the pilot
+    // matches how measuring receivers report RDS injection -- a peak-hold of
+    // the DSB-SC biphase envelope over-reads (~1.7x) on data overshoot.
+    private var rdsRMS: Float = 0.0
 
     // Windowed BER: diff the stream decoder's cumulative block counters per
     // process() call and smooth (~1 s) so the readout tracks current quality.
@@ -85,6 +87,7 @@ final class MeterAnalysis {
 
         var peak: Float = 0.0
         var sumSq: Float = 0.0
+        var rdsSumSq: Float = 0.0
         var pilotMagMax: Float = 0.0
         var lSq: Float = 0.0
         var rSq: Float = 0.0
@@ -96,12 +99,12 @@ final class MeterAnalysis {
             if a > peak { peak = a }
             sumSq += s * s
 
-            // Peak-holds (decay then capture) for deviation readouts.
+            // Composite peak-hold (decay then capture) for MAX DEV.
             peakHoldComposite *= peakDecay
             if a > peakHoldComposite { peakHoldComposite = a }
-            let rdsBand = fabsf(rdsBandpass.process(s))
-            peakHoldRDS *= peakDecay
-            if rdsBand > peakHoldRDS { peakHoldRDS = rdsBand }
+            // RDS subcarrier power for an RMS-based deviation estimate.
+            let rdsBand = rdsBandpass.process(s)
+            rdsSumSq += rdsBand * rdsBand
 
             let p = pilot.process(s)
             if p.mag2 > pilotMagMax { pilotMagMax = p.mag2 }
@@ -126,6 +129,9 @@ final class MeterAnalysis {
         let rms = sqrtf(sumSq / n)
         // PilotPLL lock-in I/Q each converge to (A/2)*{cos,sin}(phi); |I,Q| = A/2.
         let pilotAmp = 2.0 * sqrtf(pilotMagMax)
+        // Smooth the RDS subcarrier RMS (~0.5 s) across blocks.
+        let blockRDSRMS = sqrtf(rdsSumSq / n)
+        rdsRMS = (0.95 * rdsRMS) + (0.05 * blockRDSRMS)
         let corr: Float = (lSq > 1e-12 && rSq > 1e-12) ? (lr / sqrtf(lSq * rSq)) : 0.0
 
         snap.hasSignal = peak > 1e-4
@@ -138,9 +144,10 @@ final class MeterAnalysis {
         if pilotAmp > 1e-5 {
             let scale = pilotRefKHz / pilotAmp
             snap.pilotDevKHz = pilotRefKHz
-            // The 57 kHz bandpass is a unit-gain-at-center resonator; the
-            // peak of the DSB-SC envelope is the subcarrier amplitude.
-            snap.rdsDevKHz = peakHoldRDS * scale
+            // RDS RMS referenced to the pilot RMS (pilotAmp/sqrt2), expressed as
+            // the equivalent sine-peak deviation -- the basis measuring
+            // receivers use, so it matches an SFP-style RDS readout.
+            snap.rdsDevKHz = (rdsRMS * 1.41421356 / pilotAmp) * pilotRefKHz
             snap.maxDevKHz = peakHoldComposite * scale
         } else {
             snap.pilotDevKHz = 0.0

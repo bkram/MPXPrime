@@ -54,6 +54,8 @@ private func printUsage() {
                          (default: 6.75 = 9% of 75 kHz). Set it to your
                          modulator's known pilot injection; MAX DEV and RDS are
                          then measured relative to it.
+      --wav <path>       Record the decoded stereo audio to a 24-bit WAV at the
+                         input sample rate (high quality). Stops on Ctrl-C/exit.
       --seconds N        Run for N seconds then exit (default: until Ctrl-C;
                          --selftest defaults to 2 s).
       --selftest         No hardware: synthesize a pilot + mono-audio composite
@@ -222,6 +224,7 @@ private func runLive(
     monitorDeviceSpec: String?,
     monitorGainDB: Float,
     pilotRefKHz: Float,
+    wavPath: String?,
     seconds: Double?
 ) -> Int32 {
     guard let deviceID = resolveDevice(deviceSpec) else {
@@ -239,14 +242,17 @@ private func runLive(
 
     let monitorDeviceID = resolveOutputDevice(monitorDeviceSpec)
     let gainLinear = powf(10.0, monitorGainDB / 20.0)
+    let wavURL = wavPath.map { URL(fileURLWithPath: $0) }
     let engine = MeterAudioEngine(
         sampleRate: Float(rate), channel: channel,
-        monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz)
+        monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
+        wavURL: wavURL)
     do {
         let fmt = try engine.start(deviceID: deviceID, monitorDeviceID: monitorDeviceID)
         let mon = monitor ? "monitor ON" : "monitor off"
-        print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. pilot ref %.2f kHz. Ctrl-C to stop.",
-                     fmt.sampleRate, fmt.channels, channel.rawValue, mon, pilotRefKHz))
+        let rec = wavPath.map { " recording -> \($0)." } ?? ""
+        print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. pilot ref %.2f kHz.%@ Ctrl-C to stop.",
+                     fmt.sampleRate, fmt.channels, channel.rawValue, mon, pilotRefKHz, rec))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
         return 1
@@ -344,6 +350,7 @@ if args.contains("--help") || args.contains("-h") {
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
+        wavPath: parseValue(args, "--wav"),
         seconds: parseSeconds(args))
 }
 exit(exitCode)

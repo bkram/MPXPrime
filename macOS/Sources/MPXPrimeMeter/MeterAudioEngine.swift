@@ -38,6 +38,10 @@ final class MeterAudioEngine: @unchecked Sendable {
     private let monitorRing: StereoInputRingBuffer
     private var monitor: MeterMonitor?
 
+    // Optional WAV capture of the decoded audio.
+    private let wavURL: URL?
+    private var recorder: MeterRecorder?
+
     private var consumer: Thread?
     private var running = false
     private let lock = NSLock()
@@ -49,6 +53,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         monitorEnabled: Bool = false,
         monitorGain: Float = 1.0,
         pilotRefKHz: Float = 6.75,
+        wavURL: URL? = nil,
         input: MPXInputSource = AUHALInputSource()
     ) {
         self.input = input
@@ -63,6 +68,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         self.monitorEnabled = monitorEnabled
         self.monitorGain = monitorGain
         self.monitorRing = StereoInputRingBuffer(capacityFrames: 1 << 15)
+        self.wavURL = wavURL
     }
 
     deinit {
@@ -96,6 +102,10 @@ final class MeterAudioEngine: @unchecked Sendable {
             monitor = mon
         }
 
+        if let wavURL {
+            recorder = try MeterRecorder(url: wavURL, sampleRate: Double(sampleRate))
+        }
+
         running = true
         let t = Thread { [weak self] in self?.consumeLoop() }
         t.name = "com.mpxprime.meter.analysis"
@@ -113,6 +123,8 @@ final class MeterAudioEngine: @unchecked Sendable {
         consumer = nil
         monitor?.stop()
         monitor = nil
+        // Release the recorder so AVAudioFile finalizes the WAV header.
+        recorder = nil
     }
 
     func snapshot() -> MeterSnapshot {
@@ -138,8 +150,8 @@ final class MeterAudioEngine: @unchecked Sendable {
                 left.withUnsafeBufferPointer { lp in
                     analysis.process(UnsafeBufferPointer(start: lp.baseAddress, count: got))
                 }
+                let count = analysis.lastBlockCount
                 if monitorEnabled {
-                    let count = analysis.lastBlockCount
                     analysis.decodedL.withUnsafeBufferPointer { lp in
                         analysis.decodedR.withUnsafeBufferPointer { rp in
                             if let lb = lp.baseAddress, let rb = rp.baseAddress {
@@ -148,6 +160,7 @@ final class MeterAudioEngine: @unchecked Sendable {
                         }
                     }
                 }
+                recorder?.write(left: analysis.decodedL, right: analysis.decodedR, count: count)
                 let s = analysis.snapshot()
                 lock.lock()
                 published = s

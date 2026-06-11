@@ -74,7 +74,10 @@ let package = Package(
         // input capture, decode, and analysis code as the transmit app.
         .executableTarget(
             name: "MPXPrimeMeter",
-            dependencies: ["MPXPrimeCore"],
+            dependencies: [
+                "MPXPrimeCore",
+                .product(name: "Atomics", package: "swift-atomics")
+            ],
             path: "Sources/MPXPrimeMeter"
         ),
         .testTarget(

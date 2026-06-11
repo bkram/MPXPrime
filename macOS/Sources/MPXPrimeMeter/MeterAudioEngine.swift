@@ -1,3 +1,4 @@
+import Atomics
 import CoreAudio
 import Darwin
 import Foundation
@@ -43,7 +44,8 @@ final class MeterAudioEngine: @unchecked Sendable {
     private var recorder: MeterRecorder?
 
     private var consumer: Thread?
-    private var running = false
+    private let runningFlag = ManagedAtomic<Bool>(false)
+    private let consumerDone = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private var published = MeterSnapshot()
 
@@ -108,7 +110,7 @@ final class MeterAudioEngine: @unchecked Sendable {
             recorder = try MeterRecorder(url: wavURL, sampleRate: Double(sampleRate))
         }
 
-        running = true
+        runningFlag.store(true, ordering: .relaxed)
         let t = Thread { [weak self] in self?.consumeLoop() }
         t.name = "com.mpxprime.meter.analysis"
         t.qualityOfService = .userInitiated
@@ -118,10 +120,12 @@ final class MeterAudioEngine: @unchecked Sendable {
     }
 
     func stop() {
-        running = false
+        runningFlag.store(false, ordering: .relaxed)
         input.stop()
-        // Give the consumer a beat to observe `running == false` and exit.
-        usleep(50_000)
+        // Wait for the consumer thread to actually exit before tearing down
+        // the monitor/recorder it touches -- a bare sleep races (TSan-flagged);
+        // the semaphore is a real happens-before handshake.
+        _ = consumerDone.wait(timeout: .now() + 1.0)
         consumer = nil
         monitor?.stop()
         monitor = nil
@@ -136,9 +140,10 @@ final class MeterAudioEngine: @unchecked Sendable {
     }
 
     private func consumeLoop() {
+        defer { consumerDone.signal() }
         var left = [Float](repeating: 0.0, count: blockFrames)
         var right = [Float](repeating: 0.0, count: blockFrames)
-        while running {
+        while runningFlag.load(ordering: .relaxed) {
             let missing = left.withUnsafeMutableBufferPointer { lp -> Int in
                 right.withUnsafeMutableBufferPointer { rp -> Int in
                     guard let lb = lp.baseAddress, let rb = rp.baseAddress else {
@@ -163,7 +168,9 @@ final class MeterAudioEngine: @unchecked Sendable {
                     }
                 }
                 recorder?.write(left: analysis.decodedL, right: analysis.decodedR, count: count)
-                let s = analysis.snapshot()
+                // Isolated copy: the snapshot crosses to the display thread,
+                // and the decoder keeps mutating its CoW buffers each block.
+                let s = analysis.isolatedSnapshot()
                 lock.lock()
                 published = s
                 lock.unlock()

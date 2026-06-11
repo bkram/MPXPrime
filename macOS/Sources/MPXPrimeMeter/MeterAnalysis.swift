@@ -187,7 +187,29 @@ final class MeterAnalysis {
         snap.recentBlockErrorRate = berEMA
     }
 
+    /// Same-thread snapshot (no cross-thread handoff).
     func snapshot() -> MeterSnapshot { snap }
+
+    /// A snapshot whose heap-backed members (RDS arrays + strings) are copied
+    /// into independent storage, safe to hand to another thread. The live RDS
+    /// decoder keeps mutating its own copy-on-write buffers every block, and
+    /// `snap.rds` shares those buffers; reading them on the display thread
+    /// while the analysis thread mutates them is undefined behavior (heap
+    /// corruption / "pointer being freed was not allocated"). Build the
+    /// isolated copy here, on the analysis thread, before publishing.
+    func isolatedSnapshot() -> MeterSnapshot {
+        var c = snap
+        c.rds.groupCounts = snap.rds.groupCounts.map { $0 }
+        c.rds.alternativeFrequenciesMHz = snap.rds.alternativeFrequenciesMHz.map { $0 }
+        c.rds.rtPlusTags = snap.rds.rtPlusTags.map {
+            RDSRTPlusTag(contentType: $0.contentType, text: String(Array($0.text)))
+        }
+        c.rds.programService = String(Array(snap.rds.programService))
+        c.rds.radioText = String(Array(snap.rds.radioText))
+        c.rds.programTypeName = String(Array(snap.rds.programTypeName))
+        c.rds.longPS = String(Array(snap.rds.longPS))
+        return c
+    }
 
     private static func dbfs(_ x: Float) -> Float { 20.0 * log10f(max(1e-6, x)) }
 }

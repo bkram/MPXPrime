@@ -1,3 +1,4 @@
+import Atomics
 import AudioToolbox
 import CoreAudio
 import Darwin
@@ -56,21 +57,24 @@ final class StdinInputSource: MPXInputSource {
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
 
-    private var running = false
+    // Cross-thread flags (read on the CLI/main thread, written on the reader
+    // thread): atomic to avoid a data race on the shared Bool.
+    private let runningFlag = ManagedAtomic<Bool>(false)
+    private let finishedFlag = ManagedAtomic<Bool>(false)
     private var thread: Thread?
-    /// Set when the source reaches EOF (writer closed) -- the CLI loop exits.
-    private(set) var finished = false
+    /// True once the source reaches EOF (writer closed) -- the CLI loop exits.
+    var finished: Bool { finishedFlag.load(ordering: .relaxed) }
 
     init(fileDescriptor: Int32 = 0, sampleRate: Double) {
         self.fd = fileDescriptor
         self.assumedRate = sampleRate
     }
 
-    var isRunning: Bool { running }
+    var isRunning: Bool { runningFlag.load(ordering: .relaxed) }
 
     @discardableResult
     func start() throws -> (sampleRate: Double, channels: Int) {
-        running = true
+        runningFlag.store(true, ordering: .relaxed)
         let t = Thread { [weak self] in self?.readLoop() }
         t.name = "com.mpxprime.meter.stdin"
         t.qualityOfService = .userInitiated
@@ -79,7 +83,7 @@ final class StdinInputSource: MPXInputSource {
         return (assumedRate, 1)
     }
 
-    func stop() { running = false }
+    func stop() { runningFlag.store(false, ordering: .relaxed) }
 
     private func readLoop() {
         let readChunk = 16384
@@ -91,11 +95,11 @@ final class StdinInputSource: MPXInputSource {
         var headerScan = [UInt8]()
         var floatScratch = [Float](repeating: 0.0, count: readChunk / 2 + 2)
 
-        while running {
+        while runningFlag.load(ordering: .relaxed) {
             let got = raw.withUnsafeMutableBytes { read(fd, $0.baseAddress, readChunk) }
             if got <= 0 {
-                finished = true
-                running = false
+                finishedFlag.store(true, ordering: .relaxed)
+                runningFlag.store(false, ordering: .relaxed)
                 break
             }
             var sampleBytesStart = 0

@@ -64,10 +64,10 @@ Highest-leverage audible-gap closer vs the enterprise tier: these stages are imp
 ## Code-quality priorities
 
 **P0 — confidence/safety**
-1. Deterministic tests: AGC envelope, filter primitives (Preemphasis/Deemphasis/Biquad/BiquadCascade6), M/S round-trip, bypass-null.
-2. Fix verifier bandwidth metric so RDS doesn't trigger misleading occupied-width failures (`bright_dense` occ999 warning vanishes when `en_rds = False`).
-3. Render-path scratch growth: convert the `ensureMonitorScratchCapacity` / `ensureAnalysisScratchCapacity` runtime allocation fallback to a debug assertion / pre-start failure; track max frame count off the render path.
-4. Stored receiver baseline file + hard-fail on `postInjectionOvershoot > 0` for normal presets.
+1. Deterministic primitive tests: Biquad/BiquadCascade6/LR4/Lagrange/FIR decimator (`FilterPrimitiveTests`), AGC envelope (`AGCDetectorTests`), and Preemphasis/Deemphasis (`PreemphasisFilterTests`, added v.037) are all covered. Remaining low-value gaps only: an isolated M/S encode round-trip (algebra is trivial; chain separation tests already exercise it) and a focused bypass-null contract (the `DeepDSPTests` "Silence" input already covers it at chain level). Effectively done.
+2. Fix verifier bandwidth metric so RDS doesn't skew occupied-width (`bright_dense` occ999 reads differently with `en_rds` on/off). NOTE: this is a metric *redefinition* (exclude the 57 kHz RDS band from the occupied-width / above-60k/67k power sums), not an active bug — the threshold + baseline already account for RDS. Cascades into 3 baselined bandwidth fields → recapture. Decide the metric's intended meaning (audio-only width vs total composite) before doing it.
+3. **DONE.** Render-path scratch growth already guarded: `ensureMonitorScratchCapacity`/`ensureAnalysisScratchCapacity` carry an `assertionFailure` debug trap + release-only graceful grow, `recordObservedRenderFrames`/`maxObservedRenderFrameCount` track the max off the render path, and `preAllocateBuffers` sizes to ~100 ms (>> any CoreAudio block).
+4. **DONE (v.037 + already).** Stored receiver baseline landed (`receiver.json`, `--verify-receiver --baseline-strict`). `postInjectionOvershoot > 0` is already a hard fail (`naturalResult = 2`) on the composite path.
 
 **P1 — modularization** (MPXPrimeCore is the forcing function; companion-app needs the same boundaries)
 - `MPXPrimeCore` target landed: `MPXDecoder` + DSP primitives (Biquad/BiquadCascade6/DeemphasisFilter) + symmetric `RDSStreamDecoder`. Hot `process()` is `@inlinable` so it still inlines across the module boundary.

@@ -38,6 +38,10 @@ let package = Package(
         // cross-module-inlining rationale.
         .target(
             name: "MPXPrimeCore",
+            dependencies: [
+                .product(name: "Atomics", package: "swift-atomics"),
+                "MPXPrimeNative"
+            ],
             path: "Sources/MPXPrimeCore"
         ),
         .executableTarget(

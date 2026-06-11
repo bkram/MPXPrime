@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import MPXPrimeCore
 @testable import MPXPrime
 
 @Suite("StereoInputRingBuffer")

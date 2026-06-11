@@ -22,15 +22,29 @@ import Foundation
 // dropping input — `overflowCount` is climbing and audio is already
 // compromised), so we detect and count it (`tornReadCount`) for telemetry
 // rather than pay for a lock on the real-time path.
-final class StereoInputRingBuffer {
-    struct TransportSnapshot {
-        let overflows: UInt64
-        let underflows: UInt64
-        let tornReads: UInt64
-        let bufferedFrames: Int
-        let resampleMode: String
-        let ratioTrim: Double
-        let sampleStep: Double
+public final class StereoInputRingBuffer {
+    public struct TransportSnapshot {
+        public let overflows: UInt64
+        public let underflows: UInt64
+        public let tornReads: UInt64
+        public let bufferedFrames: Int
+        public let resampleMode: String
+        public let ratioTrim: Double
+        public let sampleStep: Double
+
+        public init(
+            overflows: UInt64, underflows: UInt64, tornReads: UInt64,
+            bufferedFrames: Int, resampleMode: String, ratioTrim: Double,
+            sampleStep: Double
+        ) {
+            self.overflows = overflows
+            self.underflows = underflows
+            self.tornReads = tornReads
+            self.bufferedFrames = bufferedFrames
+            self.resampleMode = resampleMode
+            self.ratioTrim = ratioTrim
+            self.sampleStep = sampleStep
+        }
     }
 
     private let capacity: Int
@@ -51,7 +65,7 @@ final class StereoInputRingBuffer {
     private let transportRatioTrimMicrounits = ManagedAtomic<Int>(0)
     private let transportSampleStepMicrounits = ManagedAtomic<Int>(1_000_000)
 
-    init(capacityFrames: Int) {
+    public init(capacityFrames: Int) {
         let requested = max(512, capacityFrames)
         let roundedCapacity = Self.nextPowerOfTwo(requested)
         self.capacity = roundedCapacity
@@ -60,7 +74,7 @@ final class StereoInputRingBuffer {
         self.right = Array(repeating: 0.0, count: roundedCapacity)
     }
 
-    func write(
+    public func write(
         left inLeft: UnsafePointer<Float>, right inRight: UnsafePointer<Float>, frameCount: Int
     ) {
         guard frameCount > 0 else { return }
@@ -78,7 +92,7 @@ final class StereoInputRingBuffer {
         )
     }
 
-    func writeMono(mono inMono: UnsafePointer<Float>, frameCount: Int) {
+    public func writeMono(mono inMono: UnsafePointer<Float>, frameCount: Int) {
         guard frameCount > 0 else { return }
         let plan = planWrite(frameCount: frameCount)
         guard plan.framesToWrite > 0 else { return }
@@ -93,7 +107,7 @@ final class StereoInputRingBuffer {
         )
     }
 
-    func read(
+    public func read(
         intoLeft outLeft: UnsafeMutablePointer<Float>,
         outRight: UnsafeMutablePointer<Float>,
         frameCount: Int
@@ -140,7 +154,7 @@ final class StereoInputRingBuffer {
         return missing
     }
 
-    func readAdaptive(
+    public func readAdaptive(
         intoLeft outLeft: UnsafeMutablePointer<Float>,
         outRight: UnsafeMutablePointer<Float>,
         frameCount: Int,
@@ -282,7 +296,7 @@ final class StereoInputRingBuffer {
         return missing
     }
 
-    func bufferedFrames() -> Int {
+    public func bufferedFrames() -> Int {
         let read = readCursor.load(ordering: .acquiring)
         let write = writeCursor.load(ordering: .acquiring)
         return min(capacity, max(0, Int(write &- read)))
@@ -296,7 +310,7 @@ final class StereoInputRingBuffer {
     /// state) the moment the input render path starts pulling. After
     /// the drain the ring is at its prime depth and reads continue
     /// normally.
-    func dropToTargetBufferedFrames(_ targetFrames: Int) {
+    public func dropToTargetBufferedFrames(_ targetFrames: Int) {
         let target = max(0, targetFrames)
         let read = readCursor.load(ordering: .acquiring)
         let write = writeCursor.load(ordering: .acquiring)
@@ -306,14 +320,14 @@ final class StereoInputRingBuffer {
         readCursor.store(read &+ toAdvance, ordering: .releasing)
     }
 
-    func stats() -> (overflows: UInt64, underflows: UInt64, bufferedFrames: Int) {
+    public func stats() -> (overflows: UInt64, underflows: UInt64, bufferedFrames: Int) {
         let over = overflowCount.load(ordering: .relaxed)
         let under = underflowCount.load(ordering: .relaxed)
         let buffered = bufferedFrames()
         return (over, under, buffered)
     }
 
-    func transportSnapshot() -> TransportSnapshot {
+    public func transportSnapshot() -> TransportSnapshot {
         TransportSnapshot(
             overflows: overflowCount.load(ordering: .relaxed),
             underflows: underflowCount.load(ordering: .relaxed),

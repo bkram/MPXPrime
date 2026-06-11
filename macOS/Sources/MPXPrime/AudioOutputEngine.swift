@@ -3,6 +3,7 @@ import AudioToolbox
 import Foundation
 import Accelerate
 import Atomics
+import MPXPrimeCore
 import MPXPrimeNative
 import os
 

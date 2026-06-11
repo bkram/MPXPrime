@@ -49,6 +49,11 @@ private func printUsage() {
                          Output device for the monitor (index|uid|name);
                          default: system default output.
       --monitor-gain <dB>  Monitor gain in dB (default: 0).
+      --pilot-ref-khz <kHz>
+                         Pilot deviation used to calibrate the kHz readouts
+                         (default: 6.75 = 9% of 75 kHz). Set it to your
+                         modulator's known pilot injection; MAX DEV and RDS are
+                         then measured relative to it.
       --seconds N        Run for N seconds then exit (default: until Ctrl-C;
                          --selftest defaults to 2 s).
       --selftest         No hardware: synthesize a pilot + mono-audio composite
@@ -72,25 +77,88 @@ private func boolField(_ value: Bool?) -> String {
     return value ? "1" : "0"
 }
 
-private func statusLine(_ s: MeterSnapshot) -> String {
-    let pilot = s.pilotPresent
-        ? String(format: "lock %.1f%%", s.pilotPercent)
-        : "--"
+// EU RDS programme types (EN 50067 Annex). RBDS (North America) differs.
+private let ptyNamesEU = [
+    "None", "News", "Current Affairs", "Info", "Sport", "Education", "Drama",
+    "Culture", "Science", "Varied", "Pop M", "Rock M", "Easy Listening",
+    "Light Classical", "Serious Classical", "Other Music", "Weather", "Finance",
+    "Children", "Social Affairs", "Religion", "Phone In", "Travel", "Leisure",
+    "Jazz", "Country", "National M", "Oldies M", "Folk M", "Documentary",
+    "Alarm Test", "Alarm"
+]
+
+private func ptyName(_ pty: Int?) -> String {
+    guard let pty, pty >= 0, pty < ptyNamesEU.count else { return "--" }
+    return ptyNamesEU[pty]
+}
+
+private func clockString(_ ct: RDSClockTime) -> String {
+    let offHours = Double(ct.offsetHalfHours) * 0.5
+    return String(format: "%04d-%02d-%02d %02d:%02dZ %+.1fh",
+                  ct.year, ct.month, ct.day, ct.hour, ct.minute, offHours)
+}
+
+private func groupSummary(_ counts: [Int]) -> String {
+    var parts: [String] = []
+    for type in 0..<16 {
+        let a = counts[type * 2]
+        let b = counts[type * 2 + 1]
+        if a > 0 { parts.append("\(type)A:\(a)") }
+        if b > 0 { parts.append("\(type)B:\(b)") }
+    }
+    return parts.isEmpty ? "--" : parts.joined(separator: " ")
+}
+
+/// Fixed 9-line SFP-style panel. Always the same line count so the live TTY
+/// refresh can move the cursor up a constant amount.
+private func dashboard(_ s: MeterSnapshot, sampleRate: Double, channel: String) -> [String] {
     let pi = s.rds.pi.map { String(format: "%04X", $0) } ?? "----"
-    let ps = "\"\(s.rds.programService)\""
-    let ber = String(format: "%.1f%%", s.recentBlockErrorRate * 100.0)
-    // "sync" only on real block synchronization. The front-end's bit-phase
-    // lock fires on any present pilot (even with no RDS), so it would
-    // overclaim here -- a high BER alongside "----" is the no-RDS signature.
-    let rdsSync = s.rds.synced ? "sync" : "----"
-    return String(
-        format:
-            "in %6.1f dBFS | pilot %@ | L %6.1f R %6.1f corr %+.2f | "
-            + "RDS %@ PI=%@ PS=%@ PTY=%@ TP=%@ TA=%@ MS=%@ BER=%@",
-        s.inputPeakDBFS, pilot,
-        s.leftRMSDBFS, s.rightRMSDBFS, s.stereoCorrelation,
-        rdsSync, pi, ps, ptyLabel(s.rds.pty),
-        boolField(s.rds.tp), boolField(s.rds.ta), boolField(s.rds.ms), ber)
+    let sync = s.rds.synced ? "sync" : "----"
+    let psLine = "\"\(s.rds.programService)\""
+    let ptyn = s.rds.programTypeName.trimmingCharacters(in: .whitespaces)
+    let eccStr = s.rds.ecc.map { String(format: "%02X", $0) } ?? "--"
+    let rt = s.rds.radioText.isEmpty ? "--" : "\"\(s.rds.radioText)\""
+    let ct = s.rds.clockTime.map(clockString) ?? "--"
+    let af = s.rds.alternativeFrequenciesMHz.isEmpty
+        ? "--"
+        : s.rds.alternativeFrequenciesMHz.prefix(12).map { String(format: "%.1f", $0) }
+            .joined(separator: " ") + " MHz"
+
+    return [
+        String(format: "INPUT  %6.1f dBFS   %.0f kHz   ch:%@",
+               s.inputPeakDBFS, sampleRate / 1000.0, channel),
+        String(format: "DEV    PILOT %.2f   RDS %.2f   MAX %5.1f kHz   (pilot=ref)",
+               s.pilotDevKHz, s.rdsDevKHz, s.maxDevKHz),
+        String(format: "STEREO L %6.1f  R %6.1f dBFS   corr %+.2f",
+               s.leftRMSDBFS, s.rightRMSDBFS, s.stereoCorrelation),
+        String(format: "RDS    %@  PI %@  PTY %@ (%@)  TP%@ TA%@ MS%@  BER %.1f%%",
+               sync, pi, ptyLabel(s.rds.pty), ptyName(s.rds.pty),
+               boolField(s.rds.tp), boolField(s.rds.ta), boolField(s.rds.ms),
+               s.recentBlockErrorRate * 100.0),
+        "PS     \(psLine)   PTYN \"\(ptyn)\"   ECC \(eccStr)",
+        "RT     \(rt)",
+        "CT     \(ct)",
+        "AF     \(af)",
+        "GRP    \(groupSummary(s.rds.groupCounts))"
+    ]
+}
+
+private let stdoutIsTTY = isatty(fileno(stdout)) != 0
+
+/// Render the panel: in-place ANSI refresh on a TTY, plain block otherwise.
+private func renderPanel(_ lines: [String], firstRender: inout Bool) {
+    if stdoutIsTTY {
+        if !firstRender {
+            print("\u{1b}[\(lines.count)A", terminator: "")  // cursor up N lines
+        }
+        for line in lines {
+            print("\u{1b}[2K\(line)")  // clear line, print, newline
+        }
+    } else {
+        for line in lines { print(line) }
+        print("")
+    }
+    firstRender = false
 }
 
 // MARK: - Commands
@@ -153,6 +221,7 @@ private func runLive(
     monitor: Bool,
     monitorDeviceSpec: String?,
     monitorGainDB: Float,
+    pilotRefKHz: Float,
     seconds: Double?
 ) -> Int32 {
     guard let deviceID = resolveDevice(deviceSpec) else {
@@ -172,26 +241,27 @@ private func runLive(
     let gainLinear = powf(10.0, monitorGainDB / 20.0)
     let engine = MeterAudioEngine(
         sampleRate: Float(rate), channel: channel,
-        monitorEnabled: monitor, monitorGain: gainLinear)
+        monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz)
     do {
         let fmt = try engine.start(deviceID: deviceID, monitorDeviceID: monitorDeviceID)
         let mon = monitor ? "monitor ON" : "monitor off"
-        print(String(format: "Capturing at %.0f Hz, %d ch, composite on %@ channel. %@. Ctrl-C to stop.\n",
-                     fmt.sampleRate, fmt.channels, channel.rawValue, mon))
+        print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. pilot ref %.2f kHz. Ctrl-C to stop.",
+                     fmt.sampleRate, fmt.channels, channel.rawValue, mon, pilotRefKHz))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
         return 1
     }
 
     signal(SIGINT, handleSigint)
+    var firstRender = true
     let deadline = seconds.map { Date().addingTimeInterval($0) }
     while gStop == 0 {
         if let deadline, Date() >= deadline { break }
-        print("\r" + statusLine(engine.snapshot()), terminator: "")
+        renderPanel(dashboard(engine.snapshot(), sampleRate: rate, channel: channel.rawValue),
+                    firstRender: &firstRender)
         fflush(stdout)
         usleep(500_000)
     }
-    print("")
     engine.stop()
     return 0
 }
@@ -210,6 +280,7 @@ private func runSelftest(seconds: Double) -> Int32 {
     let block = 8192
     var buf = [Float](repeating: 0.0, count: block)
     let totalBlocks = max(1, Int((Double(sampleRate) * seconds) / Double(block)))
+    var firstRender = true
     for b in 0..<totalBlocks {
         for i in 0..<block {
             let pilot: Float = 0.09 * sinf(pilotPhase)
@@ -222,12 +293,14 @@ private func runSelftest(seconds: Double) -> Int32 {
         }
         buf.withUnsafeBufferPointer { analysis.process($0) }
         if b % 2 == 0 {
-            print("\r" + statusLine(analysis.snapshot()), terminator: "")
+            renderPanel(dashboard(analysis.snapshot(), sampleRate: Double(sampleRate), channel: "self"),
+                        firstRender: &firstRender)
             fflush(stdout)
         }
     }
-    print("\n" + statusLine(analysis.snapshot()))
-    print("Self-test done (pilot should read present; RDS stays '----').")
+    renderPanel(dashboard(analysis.snapshot(), sampleRate: Double(sampleRate), channel: "self"),
+                firstRender: &firstRender)
+    print("Self-test done (pilot present; RDS stays '----').")
     return 0
 }
 
@@ -270,6 +343,7 @@ if args.contains("--help") || args.contains("-h") {
         monitor: !args.contains("--no-monitor"),
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
+        pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
         seconds: parseSeconds(args))
 }
 exit(exitCode)

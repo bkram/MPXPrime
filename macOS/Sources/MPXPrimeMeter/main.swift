@@ -43,6 +43,12 @@ private func printUsage() {
                          the name, or "default" (default: system default input).
       --channel <ch>     Which channel carries the composite: left | right |
                          mix (default: left). Many USB DACs feed it on right.
+      --no-monitor       Do not play the decoded audio (monitor is ON by
+                         default in live mode -- you hear what a receiver hears).
+      --monitor-device <spec>
+                         Output device for the monitor (index|uid|name);
+                         default: system default output.
+      --monitor-gain <dB>  Monitor gain in dB (default: 0).
       --seconds N        Run for N seconds then exit (default: until Ctrl-C;
                          --selftest defaults to 2 s).
       --selftest         No hardware: synthesize a pilot + mono-audio composite
@@ -124,10 +130,31 @@ private func resolveDevice(_ spec: String?) -> AudioDeviceID? {
     if let byName = devices.first(where: { $0.name.localizedCaseInsensitiveContains(spec) }) {
         return byName.id
     }
+    if let byUIDContains = devices.first(where: { $0.uid.localizedCaseInsensitiveContains(spec) }) {
+        return byUIDContains.id
+    }
     return nil
 }
 
-private func runLive(deviceSpec: String?, channel: MeterChannel, seconds: Double?) -> Int32 {
+private func resolveOutputDevice(_ spec: String?) -> AudioDeviceID? {
+    guard let spec, spec != "default" else { return nil }
+    let devices = (try? AudioDevices.outputDevices()) ?? []
+    if let idx = Int(spec), idx >= 0, idx < devices.count { return devices[idx].id }
+    if let byUID = devices.first(where: { $0.uid == spec }) { return byUID.id }
+    if let byName = devices.first(where: { $0.name.localizedCaseInsensitiveContains(spec) }) {
+        return byName.id
+    }
+    return nil
+}
+
+private func runLive(
+    deviceSpec: String?,
+    channel: MeterChannel,
+    monitor: Bool,
+    monitorDeviceSpec: String?,
+    monitorGainDB: Float,
+    seconds: Double?
+) -> Int32 {
     guard let deviceID = resolveDevice(deviceSpec) else {
         FileHandle.standardError.write(Data("No matching input device (try --list-devices).\n".utf8))
         return 1
@@ -141,11 +168,16 @@ private func runLive(deviceSpec: String?, channel: MeterChannel, seconds: Double
             + "above Nyquist and will not decode. Set 192 kHz in Audio MIDI Setup.")
     }
 
-    let engine = MeterAudioEngine(sampleRate: Float(rate), channel: channel)
+    let monitorDeviceID = resolveOutputDevice(monitorDeviceSpec)
+    let gainLinear = powf(10.0, monitorGainDB / 20.0)
+    let engine = MeterAudioEngine(
+        sampleRate: Float(rate), channel: channel,
+        monitorEnabled: monitor, monitorGain: gainLinear)
     do {
-        let fmt = try engine.start(deviceID: deviceID)
-        print(String(format: "Capturing at %.0f Hz, %d ch, composite on %@ channel. Ctrl-C to stop.\n",
-                     fmt.sampleRate, fmt.channels, channel.rawValue))
+        let fmt = try engine.start(deviceID: deviceID, monitorDeviceID: monitorDeviceID)
+        let mon = monitor ? "monitor ON" : "monitor off"
+        print(String(format: "Capturing at %.0f Hz, %d ch, composite on %@ channel. %@. Ctrl-C to stop.\n",
+                     fmt.sampleRate, fmt.channels, channel.rawValue, mon))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
         return 1
@@ -217,6 +249,11 @@ private func parseChannel(_ args: [String]) -> MeterChannel {
     return ch
 }
 
+private func parseValue(_ args: [String], _ flag: String) -> String? {
+    guard let idx = args.firstIndex(of: flag), idx + 1 < args.count else { return nil }
+    return args[idx + 1]
+}
+
 let args = CommandLine.arguments
 let exitCode: Int32
 if args.contains("--help") || args.contains("-h") {
@@ -230,6 +267,9 @@ if args.contains("--help") || args.contains("-h") {
     exitCode = runLive(
         deviceSpec: parseDevice(args),
         channel: parseChannel(args),
+        monitor: !args.contains("--no-monitor"),
+        monitorDeviceSpec: parseValue(args, "--monitor-device"),
+        monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         seconds: parseSeconds(args))
 }
 exit(exitCode)

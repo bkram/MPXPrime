@@ -26,25 +26,42 @@ final class MeterAudioEngine: @unchecked Sendable {
     private let analysis: MeterAnalysis
     private let blockFrames: Int
     private let channel: MeterChannel
+    private let sampleRate: Float
     // Pre-allocated scratch for the .mix sum so the capture-thread sink never
     // allocates.
     private let mixScratch: UnsafeMutablePointer<Float>
     private let mixScratchCap: Int
+
+    // Monitor (decoded-audio playback). nil when monitoring is disabled.
+    private let monitorEnabled: Bool
+    private let monitorGain: Float
+    private let monitorRing: StereoInputRingBuffer
+    private var monitor: MeterMonitor?
 
     private var consumer: Thread?
     private var running = false
     private let lock = NSLock()
     private var published = MeterSnapshot()
 
-    init(sampleRate: Float, channel: MeterChannel = .left, input: MPXInputSource = AUHALInputSource()) {
+    init(
+        sampleRate: Float,
+        channel: MeterChannel = .left,
+        monitorEnabled: Bool = false,
+        monitorGain: Float = 1.0,
+        input: MPXInputSource = AUHALInputSource()
+    ) {
         self.input = input
         self.ring = StereoInputRingBuffer(capacityFrames: 1 << 16)
         self.analysis = MeterAnalysis(sampleRate: sampleRate)
         self.blockFrames = 8192
         self.channel = channel
+        self.sampleRate = sampleRate
         self.mixScratchCap = Self.maxSliceFrames
         self.mixScratch = UnsafeMutablePointer<Float>.allocate(capacity: Self.maxSliceFrames)
         self.mixScratch.initialize(repeating: 0.0, count: Self.maxSliceFrames)
+        self.monitorEnabled = monitorEnabled
+        self.monitorGain = monitorGain
+        self.monitorRing = StereoInputRingBuffer(capacityFrames: 1 << 15)
     }
 
     deinit {
@@ -53,7 +70,7 @@ final class MeterAudioEngine: @unchecked Sendable {
     }
 
     @discardableResult
-    func start(deviceID: AudioDeviceID) throws -> (sampleRate: Double, channels: Int) {
+    func start(deviceID: AudioDeviceID, monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring
         let channel = self.channel
         let scratch = self.mixScratch
@@ -72,6 +89,12 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
         let fmt = try input.start(deviceID: deviceID, maxFramesPerSlice: Self.maxSliceFrames)
 
+        if monitorEnabled {
+            let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
+            try mon.start(outputDeviceID: monitorDeviceID)
+            monitor = mon
+        }
+
         running = true
         let t = Thread { [weak self] in self?.consumeLoop() }
         t.name = "com.mpxprime.meter.analysis"
@@ -87,6 +110,8 @@ final class MeterAudioEngine: @unchecked Sendable {
         // Give the consumer a beat to observe `running == false` and exit.
         usleep(50_000)
         consumer = nil
+        monitor?.stop()
+        monitor = nil
     }
 
     func snapshot() -> MeterSnapshot {
@@ -111,6 +136,16 @@ final class MeterAudioEngine: @unchecked Sendable {
             if got > 0 {
                 left.withUnsafeBufferPointer { lp in
                     analysis.process(UnsafeBufferPointer(start: lp.baseAddress, count: got))
+                }
+                if monitorEnabled {
+                    let count = analysis.lastBlockCount
+                    analysis.decodedL.withUnsafeBufferPointer { lp in
+                        analysis.decodedR.withUnsafeBufferPointer { rp in
+                            if let lb = lp.baseAddress, let rb = rp.baseAddress {
+                                monitorRing.write(left: lb, right: rb, frameCount: count)
+                            }
+                        }
+                    }
                 }
                 let s = analysis.snapshot()
                 lock.lock()

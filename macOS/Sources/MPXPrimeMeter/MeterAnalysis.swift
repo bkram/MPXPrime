@@ -32,16 +32,25 @@ final class MeterAnalysis {
     private let rds: RDSSubcarrierDecoder
     private var snap = MeterSnapshot()
 
-    init(sampleRate: Float, preemphasisUS: Int = 50) {
+    // Decoded L/R audio for the current block, for the monitor path. Filled by
+    // `process`; valid for `[0..<lastBlockCount]`.
+    private(set) var decodedL: [Float]
+    private(set) var decodedR: [Float]
+    private(set) var lastBlockCount = 0
+
+    init(sampleRate: Float, preemphasisUS: Int = 50, maxBlock: Int = 16384) {
         self.sampleRate = sampleRate
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
+        decodedL = [Float](repeating: 0.0, count: maxBlock)
+        decodedR = [Float](repeating: 0.0, count: maxBlock)
     }
 
     func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
         let n = Float(samples.count)
+        let cap = decodedL.count
 
         var peak: Float = 0.0
         var sumSq: Float = 0.0
@@ -50,6 +59,7 @@ final class MeterAnalysis {
         var rSq: Float = 0.0
         var lr: Float = 0.0
 
+        var i = 0
         for s in samples {
             let a = fabsf(s)
             if a > peak { peak = a }
@@ -65,9 +75,15 @@ final class MeterAnalysis {
             lSq += l * l
             rSq += r * r
             lr += l * r
+            if i < cap {
+                decodedL[i] = l
+                decodedR[i] = r
+            }
 
             rds.process(s)
+            i += 1
         }
+        lastBlockCount = min(samples.count, cap)
 
         let rms = sqrtf(sumSq / n)
         // PilotPLL lock-in I/Q each converge to (A/2)*{cos,sin}(phi); |I,Q| = A/2.

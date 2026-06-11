@@ -21,6 +21,10 @@ struct MeterSnapshot {
 
     var rdsLocked = false
     var rds = RDSReceiverState()
+    /// Windowed block-error rate (~1 s smoothing). `rds.blockErrorRate` is
+    /// cumulative since start and never recovers after a retune; this one
+    /// reflects current link quality.
+    var recentBlockErrorRate: Float = 0.0
 }
 
 /// Drives the receive chain over blocks of composite samples and accumulates a
@@ -31,6 +35,12 @@ final class MeterAnalysis {
     private var decoder = MPXDecoder()
     private let rds: RDSSubcarrierDecoder
     private var snap = MeterSnapshot()
+
+    // Windowed BER: diff the stream decoder's cumulative block counters per
+    // process() call and smooth (~1 s) so the readout tracks current quality.
+    private var prevBlocksReceived = 0
+    private var prevBlocksValid = 0
+    private var berEMA: Float = 0.0
 
     // Decoded L/R audio for the current block, for the monitor path. Filled by
     // `process`; valid for `[0..<lastBlockCount]`.
@@ -100,6 +110,16 @@ final class MeterAnalysis {
         snap.stereoCorrelation = corr
         snap.rdsLocked = rds.locked
         snap.rds = rds.state
+
+        let deltaReceived = snap.rds.blocksReceived - prevBlocksReceived
+        let deltaValid = snap.rds.blocksValid - prevBlocksValid
+        if deltaReceived > 0 {
+            let instant = Float(deltaReceived - deltaValid) / Float(deltaReceived)
+            berEMA = (0.95 * berEMA) + (0.05 * instant)
+            prevBlocksReceived = snap.rds.blocksReceived
+            prevBlocksValid = snap.rds.blocksValid
+        }
+        snap.recentBlockErrorRate = berEMA
     }
 
     func snapshot() -> MeterSnapshot { snap }

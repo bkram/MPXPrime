@@ -78,7 +78,7 @@ private func statusLine(_ s: MeterSnapshot) -> String {
         : "--"
     let pi = s.rds.pi.map { String(format: "%04X", $0) } ?? "----"
     let ps = "\"\(s.rds.programService)\""
-    let ber = String(format: "%.1f%%", s.rds.blockErrorRate * 100.0)
+    let ber = String(format: "%.1f%%", s.recentBlockErrorRate * 100.0)
     // "sync" only on real block synchronization. The front-end's bit-phase
     // lock fires on any present pilot (even with no RDS), so it would
     // overclaim here -- a high BER alongside "----" is the no-RDS signature.

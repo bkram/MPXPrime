@@ -8,68 +8,114 @@ import Foundation
 ///
 /// Pipeline (one pass, streaming):
 ///  1. Pilot lock (`PilotPLL`) recovers the 19 kHz pilot phase `p`.
-///  2. Coherent 57 kHz demod: the carrier is `sin(3p)` via the triple-angle
-///     identity `3*sin(p) - 4*sin^3(p)` (exactly mirroring the encoder, which
-///     locks RDS to 3x the emitted pilot). Multiply the composite by it and
-///     lowpass to ~3 kHz -> baseband biphase signal.
-///  3. Biphase matched filter: a running Manchester correlation (recent
-///     half-bit minus previous half-bit) over one bit period. Its output
-///     peaks, with sign, at each symbol center.
-///  4. Symbol timing: the bit RATE is pilot-locked and known exactly
-///     (19000/16 = 1187.5 bps, i.e. sampleRate/1187.5 samples/bit). The bit
-///     PHASE is acquired once by scanning sub-bit offsets for the alignment
-///     that maximizes summed |matched-filter| over an acquisition window
-///     (clean-signal acquisition; a tracking loop is the deferred robustness
-///     upgrade for weak off-air pilots). Thereafter a fixed-rate clock samples
-///     the matched-filter output at each symbol center.
-///  5. Biphase -> level bit (sign of the sample) -> differential decode
-///     (`d_k = e_k XOR e_{k-1}`, the inverse of the encoder's
+///  2. Coherent dual-axis 57 kHz demod: the composite is mixed with BOTH
+///     `sin(3p)` and `cos(3p)` (triple-angle identities, mirroring the
+///     encoder's pilot-locked carrier) and each product is lowpassed to
+///     ~3 kHz. Two axes are required for real signals: EN 50067 Sec 2.1.4
+///     allows the RDS subcarrier to be locked either in phase OR in
+///     quadrature to the third pilot harmonic, and a tuner's MPX output
+///     filtering adds its own arbitrary 57 kHz-vs-19 kHz phase rotation.
+///     Demodulating one fixed axis costs cos(phi) of the amplitude --
+///     decodable on a strong signal but with badly degraded BER.
+///  3. Biphase matched filter per axis: a running Manchester correlation
+///     (recent half-bit minus previous half-bit) over one bit period. Its
+///     output peaks, with sign, at each symbol center.
+///  4. Carrier-axis recovery: at each symbol strobe the (I, Q) matched-filter
+///     pair is folded into slow second-moment accumulators; the dominant
+///     signal axis is `0.5 * atan2(2*cIQ, cII - cQQ)` and the symbol value is
+///     the projection onto it. The 180-degree axis ambiguity inverts every
+///     level bit, which the differential decode cancels.
+///  5. Symbol timing: the bit RATE is pilot-locked (19000/16 = 1187.5 bps)
+///     but the receiver's sample clock (DAC/SDR) and the broadcast clock are
+///     independent oscillators, so the strobe is steered by a Gardner
+///     timing-error detector + PI loop (clamped to +/-1000 ppm) instead of a
+///     fixed-rate clock. Initial bit phase comes from a one-shot acquisition
+///     scan that maximizes matched-filter energy over a 300 ms window.
+///  6. Biphase -> level bit (sign of the projected sample) -> differential
+///     decode (`d_k = e_k XOR e_{k-1}`, the inverse of the encoder's
 ///     `differentialBit ^= dataBit`) -> `RDSStreamDecoder.feed(bit:)`.
+///  7. Re-acquire watchdog: once per second in track, if almost every block
+///     is failing its checkword (retune, signal loss) the front-end drops
+///     back to acquisition instead of free-running on a stale bit phase.
 ///
-/// A global carrier-phase inversion or a half-bit timing flip both invert
-/// every recovered level bit, which differential decoding cancels -- so only
-/// the demod AXIS (not its sign) and the symbol CENTER (not which of the two
-/// half-bit slots) must be right, both of which the steps above guarantee.
-///
-/// `configure()` allocates the acquisition buffer; call it off the real-time
-/// audio thread. `process(_:)` is allocation-free. Not thread-safe.
+/// `configure()` allocates buffers; call it off the real-time audio thread.
+/// `process(_:)` is allocation-free. Not thread-safe.
 public final class RDSSubcarrierDecoder {
 
     private enum Phase {
         case warmup    // let the pilot lock-in settle
         case acquire   // buffer matched-filter output, estimate bit phase
-        case track     // fixed-rate symbol sampling
+        case track     // Gardner-steered symbol strobing
     }
 
     public let stream = RDSStreamDecoder()
 
     private var sampleRate: Float = 192_000.0
     private var pilot = PilotPLL()
-    private var basebandLP = BiquadCascade6()
+    private var basebandLPI = BiquadCascade6()
+    private var basebandLPQ = BiquadCascade6()
 
     // Bit timing.
     private var samplesPerBit: Float = 161.68
     private var bitLen: Int = 162      // L: matched-filter window in samples
     private var halfLen: Int = 81      // H: recent-half length
 
-    // Running Manchester correlation over the last `bitLen` baseband samples:
-    //   y = sum(newest H) - sum(previous L-H).
-    private var ring: [Float] = []
+    // Running Manchester correlation per axis over the last `bitLen` baseband
+    // samples: y = sum(newest H) - sum(previous L-H).
+    private var ringI: [Float] = []
+    private var ringQ: [Float] = []
     private var ringPos: Int = 0
-    private var recentSum: Float = 0.0
-    private var oldSum: Float = 0.0
+    private var recentSumI: Float = 0.0
+    private var oldSumI: Float = 0.0
+    private var recentSumQ: Float = 0.0
+    private var oldSumQ: Float = 0.0
+
+    // Matched-filter history so the strobe can be evaluated at fractional
+    // sample positions (linear interpolation).
+    private var yHistI: [Float] = []
+    private var yHistQ: [Float] = []
+    private var histLen: Int = 0
 
     // Acquisition.
     private var phase: Phase = .warmup
     private var globalN: Int = 0
     private var warmupSamples: Int = 0
     private var acquireSamples: Int = 0
-    private var acqY: [Float] = []
+    private var acqYI: [Float] = []
+    private var acqYQ: [Float] = []
     private var acqCount: Int = 0
     private var acqStartN: Int = 0
 
-    // Tracking + differential decode.
-    private var nextCenter: Float = 0.0   // global sample index of the next symbol center
+    // Carrier-axis recovery: exponentially-forgotten second moments of the
+    // per-symbol (I, Q) matched-filter pair. ~200-symbol (~170 ms) memory.
+    private var cII: Float = 0.0
+    private var cQQ: Float = 0.0
+    private var cIQ: Float = 0.0
+    private var axisCos: Float = 1.0
+    private var axisSin: Float = 0.0
+    private let axisForget: Float = 0.995
+
+    // Symbol-timing recovery (Gardner TED + PI loop). Gains sized for the
+    // heavily-oversampled (~162 samples/bit) MF output; TED sign set
+    // empirically against the clock-offset round-trip test. +/-1000 ppm
+    // covers any real DAC/SDR clock offset.
+    private var strobePos: Float = 0.0    // global sample index of the next symbol center
+    private var periodEst: Float = 0.0    // tracked samples/bit
+    private var prevCenterY: Float = 0.0  // projected y at the previous symbol center
+    private var haveTimingHistory = false
+    private let timingKp: Float = 0.10
+    private let timingKi: Float = 0.004
+    private let timingSign: Float = -1.0
+    private let maxPeriodFraction: Float = 0.001
+
+    // Re-acquire watchdog (track phase, once per second): if nearly all
+    // recent blocks fail their checkword, the bit phase is stale -- re-acquire.
+    private var watchdogInterval: Int = 0
+    private var nextWatchdogN: Int = 0
+    private var prevBlocksReceived: Int = 0
+    private var prevBlocksValid: Int = 0
+
+    // Differential decode.
     private var lastLevel: Int = 0
     private var haveLast: Bool = false
 
@@ -85,37 +131,61 @@ public final class RDSSubcarrierDecoder {
         pilot.configure(sampleRate: sr)
         // ~3 kHz lowpass isolates the +/-2.4 kHz RDS baseband after demod; the
         // nearest demod image (pilot -> 38 kHz) is far above it.
-        basebandLP.configureLowpass(cutoffHz: 3_000.0, sampleRate: sr)
+        basebandLPI.configureLowpass(cutoffHz: 3_000.0, sampleRate: sr)
+        basebandLPQ.configureLowpass(cutoffHz: 3_000.0, sampleRate: sr)
 
         samplesPerBit = sr / 1187.5
         bitLen = max(4, Int(samplesPerBit.rounded()))
         halfLen = bitLen / 2
 
-        ring = Array(repeating: 0.0, count: bitLen)
+        ringI = Array(repeating: 0.0, count: bitLen)
+        ringQ = Array(repeating: 0.0, count: bitLen)
+        histLen = 2 * bitLen + 16
+        yHistI = Array(repeating: 0.0, count: histLen)
+        yHistQ = Array(repeating: 0.0, count: histLen)
         warmupSamples = Int((0.060 * sr).rounded())
         acquireSamples = Int((0.300 * sr).rounded())
-        acqY = Array(repeating: 0.0, count: acquireSamples)
+        acqYI = Array(repeating: 0.0, count: acquireSamples)
+        acqYQ = Array(repeating: 0.0, count: acquireSamples)
+        watchdogInterval = Int(sr.rounded())
 
         resetState()
     }
 
     public func reset() {
         pilot.configure(sampleRate: sampleRate)
-        basebandLP.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
+        basebandLPI.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
+        basebandLPQ.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
         stream.reset()
         resetState()
     }
 
     private func resetState() {
-        for i in ring.indices { ring[i] = 0.0 }
+        for i in ringI.indices { ringI[i] = 0.0 }
+        for i in ringQ.indices { ringQ[i] = 0.0 }
+        for i in yHistI.indices { yHistI[i] = 0.0 }
+        for i in yHistQ.indices { yHistQ[i] = 0.0 }
         ringPos = 0
-        recentSum = 0.0
-        oldSum = 0.0
+        recentSumI = 0.0
+        oldSumI = 0.0
+        recentSumQ = 0.0
+        oldSumQ = 0.0
         phase = .warmup
         globalN = 0
         acqCount = 0
         acqStartN = 0
-        nextCenter = 0.0
+        cII = 0.0
+        cQQ = 0.0
+        cIQ = 0.0
+        axisCos = 1.0
+        axisSin = 0.0
+        strobePos = 0.0
+        periodEst = samplesPerBit
+        prevCenterY = 0.0
+        haveTimingHistory = false
+        nextWatchdogN = 0
+        prevBlocksReceived = 0
+        prevBlocksValid = 0
         lastLevel = 0
         haveLast = false
         lastMag2 = 0.0
@@ -136,24 +206,39 @@ public final class RDSSubcarrierDecoder {
         let recovered = pilot.process(sample)
         lastMag2 = recovered.mag2
 
-        // 57 kHz carrier = sin(3p) via triple-angle identity.
+        // Dual-axis 57 kHz carrier from the recovered pilot phase:
+        //   sin(3p) = sin(p) * (3 - 4 sin^2(p))
+        //   cos(3p) = cos(p) * (1 - 4 sin^2(p))
         let sinP = recovered.sinP
-        let carrier57 = (3.0 - (4.0 * sinP * sinP)) * sinP
-        let demod = 2.0 * sample * carrier57
-        let baseband = basebandLP.process(demod)
+        let cosP = recovered.cosP
+        let sin2 = sinP * sinP
+        let carrierI = (3.0 - (4.0 * sin2)) * sinP
+        let carrierQ = (1.0 - (4.0 * sin2)) * cosP
+        let basebandI = basebandLPI.process(2.0 * sample * carrierI)
+        let basebandQ = basebandLPQ.process(2.0 * sample * carrierQ)
 
-        // Update the running Manchester correlation.
-        let drop = ring[ringPos]                              // x[n-L]
-        let crossing = ring[(ringPos - halfLen + bitLen) % bitLen]  // x[n-H]
-        recentSum += baseband - crossing
-        oldSum += crossing - drop
-        ring[ringPos] = baseband
+        // Update the running Manchester correlations (shared indices).
+        let crossingIdx = (ringPos - halfLen + bitLen) % bitLen
+        let dropI = ringI[ringPos]
+        let crossingI = ringI[crossingIdx]
+        recentSumI += basebandI - crossingI
+        oldSumI += crossingI - dropI
+        ringI[ringPos] = basebandI
+        let dropQ = ringQ[ringPos]
+        let crossingQ = ringQ[crossingIdx]
+        recentSumQ += basebandQ - crossingQ
+        oldSumQ += crossingQ - dropQ
+        ringQ[ringPos] = basebandQ
         ringPos += 1
         if ringPos >= bitLen { ringPos = 0 }
-        let y = recentSum - oldSum
+        let yI = recentSumI - oldSumI
+        let yQ = recentSumQ - oldSumQ
 
         let n = globalN
         globalN += 1
+        let histIdx = n % histLen
+        yHistI[histIdx] = yI
+        yHistQ[histIdx] = yQ
 
         switch phase {
         case .warmup:
@@ -164,23 +249,103 @@ public final class RDSSubcarrierDecoder {
             }
         case .acquire:
             if acqCount < acquireSamples {
-                acqY[acqCount] = y
+                acqYI[acqCount] = yI
+                acqYQ[acqCount] = yQ
                 acqCount += 1
             }
             if acqCount >= acquireSamples {
                 finishAcquisition()
             }
         case .track:
-            if Float(n) >= nextCenter {
-                decideSymbol(y)
-                nextCenter += samplesPerBit
+            // Evaluate each symbol center once it (and its interpolation
+            // neighbor) is safely in the past.
+            while Float(n) >= strobePos + 1.0 {
+                let yIk = interp(yHistI, strobePos)
+                let yQk = interp(yHistQ, strobePos)
+                updateAxis(yI: yIk, yQ: yQk)
+                let yk = (yIk * axisCos) + (yQk * axisSin)
+                decideSymbol(yk)
+                if haveTimingHistory {
+                    // Gardner TED on the projected matched-filter output: the
+                    // midpoint sample sits at the inter-symbol boundary
+                    // (y ~ 0 when timing is correct).
+                    let mid = strobePos - (periodEst * 0.5)
+                    let ymid = (interp(yHistI, mid) * axisCos) + (interp(yHistQ, mid) * axisSin)
+                    let raw = ymid * (yk - prevCenterY)
+                    let denom = (yk * yk) + (prevCenterY * prevCenterY) + 1e-6
+                    var e = timingSign * (raw / denom)
+                    if e > 0.5 { e = 0.5 } else if e < -0.5 { e = -0.5 }
+                    periodEst += timingKi * e
+                    let lo = samplesPerBit * (1.0 - maxPeriodFraction)
+                    let hi = samplesPerBit * (1.0 + maxPeriodFraction)
+                    if periodEst < lo { periodEst = lo } else if periodEst > hi { periodEst = hi }
+                    strobePos += periodEst + (timingKp * e)
+                } else {
+                    strobePos += periodEst
+                    haveTimingHistory = true
+                }
+                prevCenterY = yk
+            }
+            if n >= nextWatchdogN {
+                runWatchdog(at: n)
             }
         }
     }
 
+    /// Fold one symbol's (I, Q) pair into the axis estimate and refresh the
+    /// projection vector. The axis is the dominant eigenvector of the (I, Q)
+    /// second-moment matrix; `0.5 * atan2` collapses the 180-degree ambiguity
+    /// (harmless -- differential decode cancels a global inversion).
+    private func updateAxis(yI: Float, yQ: Float) {
+        cII = (axisForget * cII) + (yI * yI)
+        cQQ = (axisForget * cQQ) + (yQ * yQ)
+        cIQ = (axisForget * cIQ) + (yI * yQ)
+        let energy = cII + cQQ
+        guard energy > 1e-9 else { return }
+        let angle = 0.5 * atan2f(2.0 * cIQ, cII - cQQ)
+        axisCos = cosf(angle)
+        axisSin = sinf(angle)
+    }
+
+    /// Once per second in track: if nearly every recent block failed its
+    /// checkword while bits kept flowing, the bit phase / axis is stale
+    /// (retune, signal swap) -- drop back to acquisition. The stream decoder's
+    /// own state is left alone; it resynchronizes itself on the fresh bits.
+    private func runWatchdog(at n: Int) {
+        nextWatchdogN = n + watchdogInterval
+        let received = stream.state.blocksReceived
+        let valid = stream.state.blocksValid
+        let deltaReceived = received - prevBlocksReceived
+        let deltaValid = valid - prevBlocksValid
+        prevBlocksReceived = received
+        prevBlocksValid = valid
+        guard deltaReceived >= 32 else { return }
+        let ratio = Float(deltaValid) / Float(deltaReceived)
+        if ratio < 0.20 {
+            phase = .acquire
+            acqStartN = n
+            acqCount = 0
+            cII = 0.0
+            cQQ = 0.0
+            cIQ = 0.0
+        }
+    }
+
+    /// Linear interpolation of a matched-filter history at a fractional global
+    /// sample index. Caller must ensure `pos` and `pos+1` are within the most
+    /// recent `histLen` samples.
+    private func interp(_ hist: [Float], _ pos: Float) -> Float {
+        let g0 = Int(floorf(pos))
+        let frac = pos - Float(g0)
+        let i0 = ((g0 % histLen) + histLen) % histLen
+        let i1 = (((g0 + 1) % histLen) + histLen) % histLen
+        return (hist[i0] * (1.0 - frac)) + (hist[i1] * frac)
+    }
+
     /// Scan sub-bit offsets for the alignment that maximizes summed
-    /// |matched-filter| at predicted symbol centers, then decode every buffered
-    /// symbol and hand off to the fixed-rate tracker.
+    /// matched-filter energy (I^2 + Q^2, axis-independent) at predicted symbol
+    /// centers, estimate the carrier axis at that alignment, then decode every
+    /// buffered symbol and hand off to the timing loop.
     private func finishAcquisition() {
         let t = samplesPerBit
         let maxOffset = bitLen
@@ -193,7 +358,7 @@ public final class RDSSubcarrierDecoder {
             while true {
                 let idx = Int((Float(off) + Float(k) * t).rounded())
                 if idx >= acqCount { break }
-                score += fabsf(acqY[idx])
+                score += (acqYI[idx] * acqYI[idx]) + (acqYQ[idx] * acqYQ[idx])
                 k += 1
             }
             if score > bestScore {
@@ -203,18 +368,44 @@ public final class RDSSubcarrierDecoder {
             off += 1
         }
 
-        // Decode every symbol center that falls inside the acquisition buffer,
-        // in order, so no bits are lost during acquisition.
+        // Seed the carrier axis from the buffered strobes at the chosen
+        // alignment, then decode every buffered symbol with the projection so
+        // no bits are lost during acquisition.
+        cII = 0.0
+        cQQ = 0.0
+        cIQ = 0.0
         var center = Float(bestOffset)
         while true {
             let idx = Int(center.rounded())
             if idx >= acqCount { break }
-            decideSymbol(acqY[idx])
+            cII += acqYI[idx] * acqYI[idx]
+            cQQ += acqYQ[idx] * acqYQ[idx]
+            cIQ += acqYI[idx] * acqYQ[idx]
             center += t
         }
+        if (cII + cQQ) > 1e-9 {
+            let angle = 0.5 * atan2f(2.0 * cIQ, cII - cQQ)
+            axisCos = cosf(angle)
+            axisSin = sinf(angle)
+        }
+
+        center = Float(bestOffset)
+        while true {
+            let idx = Int(center.rounded())
+            if idx >= acqCount { break }
+            decideSymbol((acqYI[idx] * axisCos) + (acqYQ[idx] * axisSin))
+            center += t
+        }
+
         // `center` is now the first center beyond the buffer, in acquisition-
-        // relative samples; convert to a global index for the tracker.
-        nextCenter = Float(acqStartN) + center
+        // relative samples; convert to a global index and seed the timing loop.
+        strobePos = Float(acqStartN) + center
+        periodEst = samplesPerBit
+        prevCenterY = 0.0
+        haveTimingHistory = false
+        nextWatchdogN = globalN + watchdogInterval
+        prevBlocksReceived = stream.state.blocksReceived
+        prevBlocksValid = stream.state.blocksValid
         phase = .track
     }
 

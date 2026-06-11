@@ -379,3 +379,152 @@ func verifierBaselineTimestampNow() -> String {
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.string(from: Date())
 }
+
+// MARK: - Receiver-side baseline
+//
+// Kept in a SEPARATE file (`receiver.json`) from the composite baseline
+// (`default.json`): the receiver-model metrics are captured by the
+// `--verify-receiver` path, the composite scenario metrics by the `--verify`
+// sweep. Independent files mean neither capture clobbers the other and the
+// composite schema needs no migration.
+
+/// Stored receiver-decode metrics. Pins the decoder/encoder stereo
+/// separation and subcarrier health so a regression — e.g. reintroducing a
+/// decoder pilot/RDS notch (see plan.md "MPXDecoder has no pre-demod
+/// notch"), or an encoder change that quietly costs separation — is caught
+/// by `--verify-receiver --baseline-strict` instead of sailing past the
+/// loose inline >=16-18 dB thresholds. Pilot/RDS phase-lock drift already
+/// has its own hard gate, so it is intentionally not duplicated here.
+struct ReceiverBaselineRecord: Codable, Equatable {
+    var coherentSep1k: Float
+    var coherentSep10k: Float
+    var coherentSep14k: Float
+    var pllSep1k: Float
+    var pllSep10k: Float
+    var pllSep14k: Float
+    var monoSideRejectionDB: Float
+    var noPilotSideRejectionDB: Float
+    var noPilotPilotPercent: Float
+    var subcarrierPilotPercent: Float
+    var pilotGuardDepthDB: Float
+    var rdsGuardDepthDB: Float
+}
+
+struct ReceiverBaselineFile: Codable, Equatable {
+    var schemaVersion: Int
+    var capturedAt: String
+    var configPath: String
+    var renderSampleRateHz: Int
+    var metrics: ReceiverBaselineRecord
+
+    static let currentSchemaVersion: Int = 1
+}
+
+/// Per-metric tolerance for the receiver baseline. Conservative defaults —
+/// separations and rejections can jitter a little with FFT windowing, so
+/// widen (never tighten below the observed run-to-run spread) if a clean
+/// recapture+strict cycle reports drift.
+struct ReceiverMetricTolerances {
+    var separationDB: Float = 2.0
+    var rejectionDB: Float = 3.0
+    var pilotPercent: Float = 0.10
+    var guardDepthDB: Float = 1.5
+
+    static let `default` = ReceiverMetricTolerances()
+}
+
+/// Compare measured receiver metrics against the stored baseline. One drift
+/// finding per metric beyond tolerance; the synthetic scenario name
+/// "receiver" keeps these visually distinct from per-scenario composite drift.
+func compareReceiverMetrics(
+    measured: ReceiverBaselineRecord,
+    baseline: ReceiverBaselineRecord,
+    tolerances: ReceiverMetricTolerances = .default
+) -> [BaselineDriftFinding] {
+    var findings: [BaselineDriftFinding] = []
+    struct Probe {
+        let name: String
+        let unit: String
+        let tolerance: Float
+        let get: (ReceiverBaselineRecord) -> Float
+    }
+    let probes: [Probe] = [
+        Probe(name: "coherentSep@1k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.coherentSep1k }),
+        Probe(name: "coherentSep@10k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.coherentSep10k }),
+        Probe(name: "coherentSep@14k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.coherentSep14k }),
+        Probe(name: "pllSep@1k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep1k }),
+        Probe(name: "pllSep@10k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep10k }),
+        Probe(name: "pllSep@14k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep14k }),
+        Probe(name: "monoSideRejection", unit: "dB", tolerance: tolerances.rejectionDB, get: { $0.monoSideRejectionDB }),
+        Probe(name: "noPilotSideRejection", unit: "dB", tolerance: tolerances.rejectionDB, get: { $0.noPilotSideRejectionDB }),
+        Probe(name: "noPilotPilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.noPilotPilotPercent }),
+        Probe(name: "subcarrierPilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.subcarrierPilotPercent }),
+        Probe(name: "pilotGuardDepth", unit: "dB", tolerance: tolerances.guardDepthDB, get: { $0.pilotGuardDepthDB }),
+        Probe(name: "rdsGuardDepth", unit: "dB", tolerance: tolerances.guardDepthDB, get: { $0.rdsGuardDepthDB })
+    ]
+    for probe in probes {
+        let mv = probe.get(measured)
+        let bv = probe.get(baseline)
+        if abs(mv - bv) > probe.tolerance {
+            findings.append(BaselineDriftFinding(
+                scenarioName: "receiver",
+                metricName: probe.name,
+                measured: mv,
+                baseline: bv,
+                tolerance: probe.tolerance,
+                unit: probe.unit
+            ))
+        }
+    }
+    return findings
+}
+
+func loadReceiverBaseline(from url: URL) throws -> ReceiverBaselineFile {
+    guard FileManager.default.fileExists(atPath: url.path) else {
+        throw VerifierBaselineError.fileMissing(url)
+    }
+    let data: Data
+    do {
+        data = try Data(contentsOf: url)
+    } catch {
+        throw VerifierBaselineError.readFailed(url, error)
+    }
+    let decoded: ReceiverBaselineFile
+    do {
+        decoded = try JSONDecoder().decode(ReceiverBaselineFile.self, from: data)
+    } catch {
+        throw VerifierBaselineError.decodeFailed(url, error)
+    }
+    guard decoded.schemaVersion == ReceiverBaselineFile.currentSchemaVersion else {
+        throw VerifierBaselineError.schemaMismatch(
+            expected: ReceiverBaselineFile.currentSchemaVersion,
+            found: decoded.schemaVersion
+        )
+    }
+    return decoded
+}
+
+func saveReceiverBaseline(_ baseline: ReceiverBaselineFile, to url: URL) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data: Data
+    do {
+        data = try encoder.encode(baseline)
+    } catch {
+        throw VerifierBaselineError.writeFailed(url, error)
+    }
+    let dir = url.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    do {
+        try data.write(to: url, options: .atomic)
+    } catch {
+        throw VerifierBaselineError.writeFailed(url, error)
+    }
+}
+
+/// Receiver baseline lives next to the composite baseline, named `receiver.json`.
+func defaultReceiverBaselinePath() -> URL {
+    defaultVerifierBaselinePath()
+        .deletingLastPathComponent()
+        .appendingPathComponent("receiver.json")
+}

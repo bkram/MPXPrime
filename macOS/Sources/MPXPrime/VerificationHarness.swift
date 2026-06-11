@@ -2712,7 +2712,10 @@ private func runMultibandCouplingComparison(
 
 private func runReceiverModelVerification(
     baseConfig: AppConfig,
-    durationSeconds: Double
+    configPath: String,
+    durationSeconds: Double,
+    captureBaseline: Bool = false,
+    strictBaseline: Bool = false
 ) -> Int32 {
     let duration = max(1.0, durationSeconds)
     let pllDuration = max(3.0, durationSeconds)
@@ -3006,20 +3009,83 @@ private func runReceiverModelVerification(
         }
     }
 
+    // Stored receiver baseline (separate receiver.json): pin the decode
+    // separation + subcarrier health so regressions are caught instead of
+    // sailing past the loose inline thresholds. tone/pll metrics are indexed
+    // by toneFrequencies [1k, 10k, 14k].
+    let receiverRecord = ReceiverBaselineRecord(
+        coherentSep1k: toneMetrics[0].separationDB,
+        coherentSep10k: toneMetrics[1].separationDB,
+        coherentSep14k: toneMetrics[2].separationDB,
+        pllSep1k: pllRoundTripMetrics[0].separationDB,
+        pllSep10k: pllRoundTripMetrics[1].separationDB,
+        pllSep14k: pllRoundTripMetrics[2].separationDB,
+        monoSideRejectionDB: mono.sideRejectionDB,
+        noPilotSideRejectionDB: noPilot.sideRejectionDB,
+        noPilotPilotPercent: noPilot.pilotPercent,
+        subcarrierPilotPercent: subcarriers.pilotPercent,
+        pilotGuardDepthDB: guardBands.pilotGuardDepthDB,
+        rdsGuardDepthDB: guardBands.rdsGuardDepthDB
+    )
+    let receiverBaselineURL = defaultReceiverBaselinePath()
+    var receiverDrift: [BaselineDriftFinding] = []
+    var captureNote: String?
+    if captureBaseline {
+        let file = ReceiverBaselineFile(
+            schemaVersion: ReceiverBaselineFile.currentSchemaVersion,
+            capturedAt: verifierBaselineTimestampNow(),
+            configPath: configPath,
+            renderSampleRateHz: Int(baseConfig.sampleRate),
+            metrics: receiverRecord
+        )
+        do {
+            try saveReceiverBaseline(file, to: receiverBaselineURL)
+            captureNote = "Receiver baseline captured: \(receiverBaselineURL.path)"
+        } catch {
+            captureNote = "Receiver baseline capture FAILED: \(error)"
+        }
+    } else if FileManager.default.fileExists(atPath: receiverBaselineURL.path) {
+        do {
+            let stored = try loadReceiverBaseline(from: receiverBaselineURL)
+            receiverDrift = compareReceiverMetrics(measured: receiverRecord, baseline: stored.metrics)
+        } catch {
+            print("Receiver baseline: failed to load (\(error))")
+        }
+    }
+
     print("")
     print("Assessment")
     if !notes.isEmpty {
         print("Receiver notes:")
         for note in notes { print("- \(note)") }
     }
-    if warnings.isEmpty {
-        print("Result: OK - receiver-model decode checks passed.")
-        return 0
+    if let captureNote { print(captureNote) }
+    if !receiverDrift.isEmpty {
+        print("Receiver baseline drift (\(receiverDrift.count) finding\(receiverDrift.count == 1 ? "" : "s")):")
+        for finding in receiverDrift { print("- \(finding.formattedLine)") }
     }
-    print("Receiver warnings:")
-    for warning in warnings { print("- \(warning)") }
-    print("Result: TIGHT - receiver-model checks need review.")
-    return 1
+    if !warnings.isEmpty {
+        print("Receiver warnings:")
+        for warning in warnings { print("- \(warning)") }
+    }
+
+    // Exit code, mirroring the composite path: stored-baseline drift is a hard
+    // WARN (2) under --baseline-strict, else TIGHT (1); inline warnings are
+    // TIGHT (1); otherwise PASS (0).
+    if !receiverDrift.isEmpty {
+        if strictBaseline {
+            print("Result: WARN - stored receiver-baseline drift in --baseline-strict mode.")
+            return 2
+        }
+        print("Result: TIGHT - receiver-baseline drift detected (use --baseline-strict to fail the run).")
+        return 1
+    }
+    if !warnings.isEmpty {
+        print("Result: TIGHT - receiver-model checks need review.")
+        return 1
+    }
+    print("Result: OK - receiver-model decode checks passed.")
+    return 0
 }
 
 func runVerificationHarness(
@@ -3067,7 +3133,10 @@ func runVerificationHarness(
         print("")
         return runReceiverModelVerification(
             baseConfig: config,
-            durationSeconds: durationSeconds
+            configPath: configPath,
+            durationSeconds: durationSeconds,
+            captureBaseline: captureBaseline,
+            strictBaseline: strictBaseline
         )
     }
     if presetSweep {

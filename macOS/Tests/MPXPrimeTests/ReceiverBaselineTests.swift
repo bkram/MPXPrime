@@ -15,8 +15,6 @@ struct ReceiverBaselineTests {
         ReceiverBaselineRecord(
             coherentSep1k: 98.3, coherentSep10k: 86.1, coherentSep14k: 97.2,
             pllSep1k: 68.0, pllSep10k: 51.8, pllSep14k: 44.2,
-            monoSideRejectionDB: 175.5,
-            noPilotSideRejectionDB: 230.8,
             noPilotPilotPercent: 0.0,
             subcarrierPilotPercent: 8.0,
             pilotGuardDepthDB: 11.8,
@@ -48,14 +46,13 @@ struct ReceiverBaselineTests {
         #expect(compareReceiverMetrics(measured: measured, baseline: base).isEmpty)
     }
 
-    @Test func rejectionUsesLooserToleranceThanSeparation() {
+    @Test func guardDepthUsesItsOwnTolerance() {
         let base = sampleRecord()
         var measured = base
-        // 2.5 dB on a rejection field: inside its 3.0 dB tolerance (would
-        // exceed the 2.0 dB separation tolerance — confirms per-metric tol).
-        measured.monoSideRejectionDB = base.monoSideRejectionDB - 2.5
+        // Guard-depth tolerance is 1.5 dB: 1.0 dB is clean, 2.0 dB flags.
+        measured.pilotGuardDepthDB = base.pilotGuardDepthDB - 1.0
         #expect(compareReceiverMetrics(measured: measured, baseline: base).isEmpty)
-        measured.monoSideRejectionDB = base.monoSideRejectionDB - 4.0
+        measured.pilotGuardDepthDB = base.pilotGuardDepthDB - 2.0
         #expect(compareReceiverMetrics(measured: measured, baseline: base).count == 1)
     }
 

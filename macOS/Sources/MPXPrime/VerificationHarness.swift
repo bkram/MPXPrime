@@ -3020,8 +3020,6 @@ private func runReceiverModelVerification(
         pllSep1k: pllRoundTripMetrics[0].separationDB,
         pllSep10k: pllRoundTripMetrics[1].separationDB,
         pllSep14k: pllRoundTripMetrics[2].separationDB,
-        monoSideRejectionDB: mono.sideRejectionDB,
-        noPilotSideRejectionDB: noPilot.sideRejectionDB,
         noPilotPilotPercent: noPilot.pilotPercent,
         subcarrierPilotPercent: subcarriers.pilotPercent,
         pilotGuardDepthDB: guardBands.pilotGuardDepthDB,

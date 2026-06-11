@@ -402,12 +402,16 @@ struct ReceiverBaselineRecord: Codable, Equatable {
     var pllSep1k: Float
     var pllSep10k: Float
     var pllSep14k: Float
-    var monoSideRejectionDB: Float
-    var noPilotSideRejectionDB: Float
     var noPilotPilotPercent: Float
     var subcarrierPilotPercent: Float
     var pilotGuardDepthDB: Float
     var rdsGuardDepthDB: Float
+    // Deliberately NOT pinned: mono / no-pilot side rejection. Those are
+    // ~175-230 dB ratios — i.e. the side channel sits at the numerical floor
+    // (~-180 dBFS) for a mono input, so the exact dB is meaningless jitter
+    // that drifts with render duration (settling), not a regression signal.
+    // A genuine rejection failure is still caught by the inline >=26 dB
+    // thresholds in runReceiverModelVerification.
 }
 
 struct ReceiverBaselineFile: Codable, Equatable {
@@ -426,7 +430,6 @@ struct ReceiverBaselineFile: Codable, Equatable {
 /// recapture+strict cycle reports drift.
 struct ReceiverMetricTolerances {
     var separationDB: Float = 2.0
-    var rejectionDB: Float = 3.0
     var pilotPercent: Float = 0.10
     var guardDepthDB: Float = 1.5
 
@@ -455,8 +458,6 @@ func compareReceiverMetrics(
         Probe(name: "pllSep@1k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep1k }),
         Probe(name: "pllSep@10k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep10k }),
         Probe(name: "pllSep@14k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep14k }),
-        Probe(name: "monoSideRejection", unit: "dB", tolerance: tolerances.rejectionDB, get: { $0.monoSideRejectionDB }),
-        Probe(name: "noPilotSideRejection", unit: "dB", tolerance: tolerances.rejectionDB, get: { $0.noPilotSideRejectionDB }),
         Probe(name: "noPilotPilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.noPilotPilotPercent }),
         Probe(name: "subcarrierPilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.subcarrierPilotPercent }),
         Probe(name: "pilotGuardDepth", unit: "dB", tolerance: tolerances.guardDepthDB, get: { $0.pilotGuardDepthDB }),

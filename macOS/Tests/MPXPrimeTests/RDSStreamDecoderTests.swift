@@ -123,5 +123,47 @@ struct RDSStreamDecoderTests {
         #expect(fresh.pi == nil)
         #expect(fresh.programService == "        ")
         #expect(fresh.groupsDecoded == 0)
+        #expect(fresh.radioText == "")
+        #expect(fresh.clockTime == nil)
+    }
+
+    @Test func recoversRadioTextFromGroup2A() {
+        var cfg = makeConfig()
+        // RT comes from the manual buffers; enable only A so a single message
+        // transmits without buffer-switch resets.
+        cfg.rdsRTA = "NOW PLAYING TEST"
+        cfg.rdsRTBufferAEnabled = true
+        cfg.rdsRTBufferBEnabled = false
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+        var bits: [UInt8] = []
+        // 16 segments cover the full 64-char RadioText; emit a couple cycles.
+        for _ in 0..<24 { bits.append(contentsOf: coder.buildGroup2(versionB: false)) }
+
+        let decoder = RDSStreamDecoder()
+        for bit in bits { decoder.feed(bit: bit) }
+        #expect(decoder.state.radioText.contains("NOW PLAYING TEST"),
+                "RadioText was '\(decoder.state.radioText)'")
+    }
+
+    @Test func recoversProgramTypeNameFromGroup10A() {
+        var cfg = makeConfig()
+        cfg.rdsEnablePTYN = true
+        cfg.rdsPTYN = "ROCK"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+        var bits: [UInt8] = []
+        for _ in 0..<8 { bits.append(contentsOf: coder.buildGroup10A()) }
+
+        let decoder = RDSStreamDecoder()
+        for bit in bits { decoder.feed(bit: bit) }
+        #expect(decoder.state.programTypeName.contains("ROCK"),
+                "PTYN was '\(decoder.state.programTypeName)'")
+    }
+
+    @Test func gregorianFromMJDMatchesKnownDates() {
+        // MJD 58849 = 2020-01-01, 59945 = 2023-01-01 (MJD = JD - 2400000.5).
+        let a = RDSStreamDecoder.gregorian(fromMJD: 58849)
+        #expect(a == (2020, 1, 1), "got \(a)")
+        let b = RDSStreamDecoder.gregorian(fromMJD: 59945)
+        #expect(b == (2023, 1, 1), "got \(b)")
     }
 }

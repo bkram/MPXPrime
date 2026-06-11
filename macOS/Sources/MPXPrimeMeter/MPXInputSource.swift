@@ -51,7 +51,11 @@ final class AUHALInputSource: MPXInputSource {
 /// Reads a mono MPX composite from a file descriptor (default stdin / a FIFO).
 /// Accepts a canonical WAV stream (skips the header) or raw little-endian
 /// int16 PCM. Used to pipe an external tuner's MPX output into the meter.
-final class StdinInputSource: MPXInputSource {
+///
+/// `@unchecked Sendable`: the cross-thread state is the two atomic flags
+/// (`runningFlag` / `finishedFlag`); `frameSink` and `thread` are set on the
+/// main thread before the reader thread starts and not mutated afterwards.
+final class StdinInputSource: MPXInputSource, @unchecked Sendable {
     private let fd: Int32
     private let assumedRate: Double
 

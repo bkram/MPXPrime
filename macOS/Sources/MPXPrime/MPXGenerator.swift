@@ -4362,7 +4362,7 @@ final class BasicRDSCoder {
         )
     }
 
-    private func buildGroup11A() -> [UInt8] {
+    func buildGroup11A() -> [UInt8] {
         var t1Type = 0
         var t1Start = 0
         var t1Length = 0

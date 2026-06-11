@@ -120,7 +120,28 @@ private func groupSummary(_ counts: [Int]) -> String {
     return parts.isEmpty ? "--" : parts.joined(separator: " ")
 }
 
-/// Fixed 9-line SFP-style panel. Always the same line count so the live TTY
+// RT+ content-type class names (ETSI TS 101 499 / IEC 62106-2). Index = code.
+private let rtPlusClassNames = [
+    "DUMMY", "TITLE", "ALBUM", "TRACK", "ARTIST", "COMPOSITION", "MOVEMENT",
+    "CONDUCTOR", "COMPOSER", "BAND", "COMMENT", "GENRE", "NEWS", "NEWS.LOCAL",
+    "STOCK", "SPORT", "LOTTERY", "HOROSCOPE", "DIVERSION", "HEALTH", "EVENT",
+    "SCENE", "CINEMA", "TV", "DATETIME", "WEATHER", "TRAFFIC", "ALARM", "AD",
+    "URL", "OTHER", "STATION.SHORT", "STATION.LONG", "NOW", "NEXT", "PART",
+    "HOST", "EDITORIAL", "FREQUENCY", "HOMEPAGE", "SUBCHANNEL"
+]
+
+private func rtPlusClassName(_ t: Int) -> String {
+    (t >= 0 && t < rtPlusClassNames.count) ? rtPlusClassNames[t] : "T\(t)"
+}
+
+/// RT+ tags as `CLASS="text"` pairs (e.g. `ARTIST="..." TITLE="..."`), or "--".
+private func rtPlusSummary(_ tags: [RDSRTPlusTag]) -> String {
+    if tags.isEmpty { return "--" }
+    return tags.map { "\(rtPlusClassName($0.contentType))=\"\($0.text)\"" }
+        .joined(separator: "  ")
+}
+
+/// Fixed 11-line SFP-style panel. Always the same line count so the live TTY
 /// refresh can move the cursor up a constant amount.
 private func dashboard(
     _ s: MeterSnapshot, sampleRate: Double, channel: String, calLabel: String = "pilot=ref"
@@ -131,6 +152,7 @@ private func dashboard(
     let ptyn = s.rds.programTypeName.trimmingCharacters(in: .whitespaces)
     let eccStr = s.rds.ecc.map { String(format: "%02X", $0) } ?? "--"
     let rt = s.rds.radioText.isEmpty ? "--" : "\"\(s.rds.radioText)\""
+    let lps = s.rds.longPS.isEmpty ? "--" : "\"\(s.rds.longPS)\""
     let ct = s.rds.clockTime.map(clockString) ?? "--"
     let af = s.rds.alternativeFrequenciesMHz.isEmpty
         ? "--"
@@ -149,7 +171,9 @@ private func dashboard(
                boolField(s.rds.tp), boolField(s.rds.ta), boolField(s.rds.ms),
                s.recentBlockErrorRate * 100.0),
         "PS     \(psLine)   PTYN \"\(ptyn)\"   ECC \(eccStr)",
+        "LPS    \(lps)",
         "RT     \(rt)",
+        "RT+    \(rtPlusSummary(s.rds.rtPlusTags))",
         "CT     \(ct)",
         "AF     \(af)",
         "GRP    \(groupSummary(s.rds.groupCounts))"

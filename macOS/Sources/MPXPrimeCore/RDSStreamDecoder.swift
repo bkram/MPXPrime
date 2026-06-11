@@ -55,6 +55,19 @@ public struct RDSClockTime: Equatable {
     }
 }
 
+/// One RadioText+ (RT+) tag: a content type (EN 50067 / IEC 62106 RT+ class
+/// code, e.g. 1 = ITEM.TITLE, 4 = ITEM.ARTIST) and the substring of the
+/// current RadioText it points at.
+public struct RDSRTPlusTag: Equatable {
+    public let contentType: Int
+    public let text: String
+
+    public init(contentType: Int, text: String) {
+        self.contentType = contentType
+        self.text = text
+    }
+}
+
 /// Accumulated receiver state for the meter's RDS readout. Fields are optional
 /// or empty until first observed so the UI can show "--" before lock.
 public struct RDSReceiverState: Equatable {
@@ -79,6 +92,11 @@ public struct RDSReceiverState: Equatable {
     public var clockTime: RDSClockTime?
     /// Alternative Frequencies (group 0A), MHz, sorted ascending.
     public var alternativeFrequenciesMHz: [Double] = []
+    /// Long PS (group 15A), assembled 32-char station name; empty until seen.
+    public var longPS: String = ""
+    /// RadioText+ tags (group 11A, ODA AID 0x4BD7) resolved against the
+    /// current RadioText. Empty until a tagged item is decoded.
+    public var rtPlusTags: [RDSRTPlusTag] = []
     /// Count of decoded groups by type, indexed `groupType * 2 + (versionB ? 1 : 0)`.
     public var groupCounts: [Int] = Array(repeating: 0, count: 32)
 
@@ -136,7 +154,12 @@ public final class RDSStreamDecoder {
     private var rtChars = [UInt8](repeating: 0x20, count: 64)
     private var rtABFlag = -1
     private var ptynChars = [UInt8](repeating: 0x20, count: 8)
+    private var lpsChars = [UInt8](repeating: 0x20, count: 32)
     private var afCodes = Set<Int>()
+    // RT+ ODA: the group type carrying AID 0x4BD7, learned from a 3A
+    // announcement. nil -> assume 11A (the near-universal RT+ assignment).
+    private static let rtPlusAID = 0x4BD7
+    private var rtPlusGroupType: Int?
 
     public init() {}
 
@@ -153,7 +176,9 @@ public final class RDSStreamDecoder {
         rtChars = [UInt8](repeating: 0x20, count: 64)
         rtABFlag = -1
         ptynChars = [UInt8](repeating: 0x20, count: 8)
+        lpsChars = [UInt8](repeating: 0x20, count: 32)
         afCodes = []
+        rtPlusGroupType = nil
     }
 
     /// Feed one recovered data bit (0/1). Returns a fully-assembled group when
@@ -250,9 +275,18 @@ public final class RDSStreamDecoder {
         case 0:  accumulateGroup0(group)
         case 1:  accumulateGroup1(group)
         case 2:  accumulateRadioText(group)
+        case 3:  accumulateODA(group)
         case 4:  accumulateClockTime(group)
         case 10: accumulatePTYN(group)
+        case 15: accumulateLongPS(group)
         default: break
+        }
+
+        // RT+ is an ODA: it rides whichever group 3A assigned to AID 0x4BD7
+        // (commonly 11A, but 12A and others occur -- e.g. SunriseFM uses 12A).
+        // Route by the learned group, defaulting to 11A before any 3A is seen.
+        if !group.versionB, group.groupType == (rtPlusGroupType ?? 11) {
+            accumulateRTPlus(group)
         }
     }
 
@@ -345,6 +379,77 @@ public final class RDSStreamDecoder {
             ptynChars[seg * 4 + 3] = UInt8(group.block4 & 0xFF)
         }
         receiver.programTypeName = String(ptynChars.map { Self.char($0) })
+    }
+
+    /// Group 3A: ODA application identification. Block D is the 16-bit AID;
+    /// block B bits 4-0 are the application group code (group<<1 | version).
+    /// Learn which group carries RT+ (AID 0x4BD7).
+    private func accumulateODA(_ group: RDSGroup) {
+        guard !group.versionB, blocksOK[1], blocksOK[3] else { return }
+        if group.block4 == Self.rtPlusAID {
+            rtPlusGroupType = (group.b2Tail & 0x1F) >> 1
+        }
+    }
+
+    /// RadioText+ (ODA AID 0x4BD7): two tags, each a content type + start +
+    /// length into the current RT. The caller has already confirmed this group
+    /// is the RT+ carrier.
+    private func accumulateRTPlus(_ group: RDSGroup) {
+        guard blocksOK[1] else { return }
+
+        var tags: [RDSRTPlusTag] = []
+        if blocksOK[2] {
+            let t1Type = ((group.b2Tail & 0x07) << 3) | ((group.block3 >> 13) & 0x07)
+            let t1Start = (group.block3 >> 7) & 0x3F
+            let t1Len = (group.block3 >> 1) & 0x3F
+            if t1Type != 0 {
+                let text = rtPlusSubstring(start: t1Start, length: t1Len + 1)
+                if !text.isEmpty { tags.append(RDSRTPlusTag(contentType: t1Type, text: text)) }
+            }
+        }
+        if blocksOK[2], blocksOK[3] {
+            let t2Type = ((group.block3 & 0x01) << 5) | ((group.block4 >> 11) & 0x1F)
+            let t2Start = (group.block4 >> 5) & 0x3F
+            let t2Len = group.block4 & 0x1F
+            if t2Type != 0 {
+                let text = rtPlusSubstring(start: t2Start, length: t2Len + 1)
+                if !text.isEmpty { tags.append(RDSRTPlusTag(contentType: t2Type, text: text)) }
+            }
+        }
+        // Only replace when this group produced resolvable tags, so a tag
+        // whose RT segments have not arrived yet doesn't clear a good reading.
+        if !tags.isEmpty { receiver.rtPlusTags = tags }
+    }
+
+    /// Group 15A: Long PS, 32 chars over 8 segments (4 chars each, blocks C+D).
+    private func accumulateLongPS(_ group: RDSGroup) {
+        guard !group.versionB, blocksOK[1] else { return }
+        let seg = group.b2Tail & 0x07
+        if blocksOK[2] {
+            lpsChars[seg * 4] = UInt8((group.block3 >> 8) & 0xFF)
+            lpsChars[seg * 4 + 1] = UInt8(group.block3 & 0xFF)
+        }
+        if blocksOK[3] {
+            lpsChars[seg * 4 + 2] = UInt8((group.block4 >> 8) & 0xFF)
+            lpsChars[seg * 4 + 3] = UInt8(group.block4 & 0xFF)
+        }
+        var out = ""
+        for byte in lpsChars {
+            if byte == 0x0D { break }
+            out.append(Self.char(byte))
+        }
+        while out.hasSuffix(" ") { out.removeLast() }
+        receiver.longPS = out
+    }
+
+    /// Extract an RT+ tag's substring from the RAW (untrimmed) RadioText
+    /// buffer, since RT+ start/length index into the full transmitted text.
+    private func rtPlusSubstring(start: Int, length: Int) -> String {
+        guard length > 0, start >= 0, start < rtChars.count else { return "" }
+        let end = min(rtChars.count, start + length)
+        var out = ""
+        for i in start..<end { out.append(Self.char(rtChars[i])) }
+        return out.trimmingCharacters(in: .whitespaces)
     }
 
     private func setRTChar(_ index: Int, _ byte: UInt8) {

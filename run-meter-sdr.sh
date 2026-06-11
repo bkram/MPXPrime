@@ -13,13 +13,24 @@
 # A FIFO carries the 16-bit/192 kHz mono MPX; the tuner's stdout logs go to a
 # logfile so they don't corrupt the stream. Monitor (decoded audio) is on by
 # default -- you hear the station. Requires an RTL-SDR connected and the
-# FM-SDR-Tuner binary built at ~/Projects/git/FM-SDR-Tuner/build/fm-sdr-tuner.
+# FM-SDR-Tuner binary (place it in bin/ -- see bin/README.md for where to get
+# it -- or set FM_SDR_TUNER).
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-TUNER="${FM_SDR_TUNER:-$HOME/Projects/git/FM-SDR-Tuner/build/fm-sdr-tuner}"
 RATE=192000
+
+# Locate the FM-SDR-Tuner binary: env override, then a local bin/ copy (see
+# bin/README.md), then a sibling source checkout's build dir.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${FM_SDR_TUNER:-}" ]; then
+  TUNER="$FM_SDR_TUNER"
+elif [ -x "$SCRIPT_DIR/bin/fm-sdr-tuner" ]; then
+  TUNER="$SCRIPT_DIR/bin/fm-sdr-tuner"
+else
+  TUNER="$HOME/Projects/git/FM-SDR-Tuner/build/fm-sdr-tuner"
+fi
 
 # Parse --freq (MHz); forward the rest to the meter.
 FREQ_MHZ=""
@@ -38,7 +49,7 @@ if [ -z "$FREQ_MHZ" ]; then
 fi
 if [ ! -x "$TUNER" ]; then
   echo "FM-SDR-Tuner binary not found/executable: $TUNER" >&2
-  echo "Build it in ~/Projects/git/FM-SDR-Tuner, or set FM_SDR_TUNER=<path>." >&2
+  echo "Place it in bin/ (see bin/README.md) or set FM_SDR_TUNER=<path>." >&2
   exit 1
 fi
 

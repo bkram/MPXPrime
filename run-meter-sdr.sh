@@ -66,4 +66,7 @@ echo "Tuning ${FREQ_MHZ} MHz (${KHZ} kHz). Tuner log: $LOG"
 TUNER_PID=$!
 
 # Meter reads the MPX from the FIFO via stdin. Monitor is on by default.
-"$METER" --stdin --sample-rate "$RATE" "${METER_ARGS[@]}" < "$FIFO"
+# --full-scale-khz 150 matches the tuner's default -6 dB MPX gain (demod is
+# 1.0 = 75 kHz, so full scale = 150 kHz): all deviation readouts -- including
+# PILOT -- are then absolute measurements, no pilot-injection assumption.
+"$METER" --stdin --sample-rate "$RATE" --full-scale-khz 150 "${METER_ARGS[@]}" < "$FIFO"

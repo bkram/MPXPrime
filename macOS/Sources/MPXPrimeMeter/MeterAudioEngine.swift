@@ -53,12 +53,14 @@ final class MeterAudioEngine: @unchecked Sendable {
         monitorEnabled: Bool = false,
         monitorGain: Float = 1.0,
         pilotRefKHz: Float = 6.75,
+        fullScaleKHz: Float? = nil,
         wavURL: URL? = nil,
         input: MPXInputSource
     ) {
         self.input = input
         self.ring = StereoInputRingBuffer(capacityFrames: 1 << 16)
-        self.analysis = MeterAnalysis(sampleRate: sampleRate, pilotRefKHz: pilotRefKHz)
+        self.analysis = MeterAnalysis(
+            sampleRate: sampleRate, pilotRefKHz: pilotRefKHz, fullScaleKHz: fullScaleKHz)
         self.blockFrames = 8192
         self.channel = channel
         self.sampleRate = sampleRate

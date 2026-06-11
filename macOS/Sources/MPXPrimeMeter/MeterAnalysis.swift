@@ -40,6 +40,11 @@ struct MeterSnapshot {
 final class MeterAnalysis {
     private let sampleRate: Float
     private let pilotRefKHz: Float
+    // When non-nil, the source is absolutely calibrated: amplitude 1.0 == this
+    // many kHz of FM deviation (e.g. FM-SDR-Tuner demod, 1.0 = 75 kHz). All
+    // deviations are then measured directly and PILOT is a real reading. When
+    // nil, fall back to pilot-referenced calibration (uncalibrated audio in).
+    private let fullScaleKHz: Float?
     private var pilot = PilotPLL()
     private var decoder = MPXDecoder()
     private let rds: RDSSubcarrierDecoder
@@ -67,9 +72,13 @@ final class MeterAnalysis {
     private(set) var decodedR: [Float]
     private(set) var lastBlockCount = 0
 
-    init(sampleRate: Float, preemphasisUS: Int = 50, pilotRefKHz: Float = 6.75, maxBlock: Int = 16384) {
+    init(
+        sampleRate: Float, preemphasisUS: Int = 50, pilotRefKHz: Float = 6.75,
+        fullScaleKHz: Float? = nil, maxBlock: Int = 16384
+    ) {
         self.sampleRate = sampleRate
         self.pilotRefKHz = pilotRefKHz
+        self.fullScaleKHz = fullScaleKHz
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
@@ -141,7 +150,14 @@ final class MeterAnalysis {
         snap.pilotPercent = peak > 1e-6 ? (pilotAmp / peak * 100.0) : 0.0
 
         // Pilot-referenced deviation: scale = pilotRef / pilotAmp.
-        if pilotAmp > 1e-5 {
+        if let fullScale = fullScaleKHz {
+            // Absolutely calibrated source (e.g. FM-SDR-Tuner: 1.0 = 150 kHz
+            // at its default -6 dB MPX gain). Everything is a direct
+            // measurement -- including the pilot.
+            snap.pilotDevKHz = pilotAmp * fullScale
+            snap.rdsDevKHz = rdsRMS * 1.41421356 * fullScale
+            snap.maxDevKHz = peakHoldComposite * fullScale
+        } else if pilotAmp > 1e-5 {
             let scale = pilotRefKHz / pilotAmp
             snap.pilotDevKHz = pilotRefKHz
             // RDS RMS referenced to the pilot RMS (pilotAmp/sqrt2), expressed as

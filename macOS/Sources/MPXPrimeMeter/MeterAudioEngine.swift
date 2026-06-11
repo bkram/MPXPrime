@@ -3,39 +3,74 @@ import Darwin
 import Foundation
 import MPXPrimeCore
 
+/// Which input channel carries the composite. A composite is a single real
+/// signal patched to one channel of the interface (varies by hardware -- e.g.
+/// some USB DACs expose it on the right channel).
+enum MeterChannel: String {
+    case left, right, mix
+}
+
 /// Live capture wiring: `MPXInputSource` (AUHAL @ device rate) -> lock-free
 /// `StereoInputRingBuffer` -> a background analysis thread that drains the ring
 /// and runs `MeterAnalysis`. The latest snapshot is published under a lock for
 /// the (CLI main-thread) display loop.
 ///
-/// The composite is mono; the input's left channel is captured. The decoders
-/// assume the configured `sampleRate` matches the device format (192 kHz for a
-/// real composite — RDS at 57 kHz needs Nyquist > 57 kHz, so >= 128 kHz).
+/// The composite is mono on the selected `channel`. The decoders assume the
+/// configured `sampleRate` matches the device format (192 kHz for a real
+/// composite — RDS at 57 kHz needs Nyquist > 57 kHz, so >= 128 kHz).
 final class MeterAudioEngine: @unchecked Sendable {
+    private static let maxSliceFrames = 4096
+
     private let input: MPXInputSource
     private let ring: StereoInputRingBuffer
     private let analysis: MeterAnalysis
     private let blockFrames: Int
+    private let channel: MeterChannel
+    // Pre-allocated scratch for the .mix sum so the capture-thread sink never
+    // allocates.
+    private let mixScratch: UnsafeMutablePointer<Float>
+    private let mixScratchCap: Int
 
     private var consumer: Thread?
     private var running = false
     private let lock = NSLock()
     private var published = MeterSnapshot()
 
-    init(sampleRate: Float, input: MPXInputSource = AUHALInputSource()) {
+    init(sampleRate: Float, channel: MeterChannel = .left, input: MPXInputSource = AUHALInputSource()) {
         self.input = input
         self.ring = StereoInputRingBuffer(capacityFrames: 1 << 16)
         self.analysis = MeterAnalysis(sampleRate: sampleRate)
         self.blockFrames = 8192
+        self.channel = channel
+        self.mixScratchCap = Self.maxSliceFrames
+        self.mixScratch = UnsafeMutablePointer<Float>.allocate(capacity: Self.maxSliceFrames)
+        self.mixScratch.initialize(repeating: 0.0, count: Self.maxSliceFrames)
+    }
+
+    deinit {
+        mixScratch.deinitialize(count: mixScratchCap)
+        mixScratch.deallocate()
     }
 
     @discardableResult
     func start(deviceID: AudioDeviceID) throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring
-        input.frameSink = { left, _, frames in
-            ring.writeMono(mono: left, frameCount: frames)
+        let channel = self.channel
+        let scratch = self.mixScratch
+        let scratchCap = self.mixScratchCap
+        input.frameSink = { left, right, frames in
+            switch channel {
+            case .left:
+                ring.writeMono(mono: left, frameCount: frames)
+            case .right:
+                ring.writeMono(mono: right, frameCount: frames)
+            case .mix:
+                let n = min(frames, scratchCap)
+                for i in 0..<n { scratch[i] = 0.5 * (left[i] + right[i]) }
+                ring.writeMono(mono: scratch, frameCount: n)
+            }
         }
-        let fmt = try input.start(deviceID: deviceID, maxFramesPerSlice: 4096)
+        let fmt = try input.start(deviceID: deviceID, maxFramesPerSlice: Self.maxSliceFrames)
 
         running = true
         let t = Thread { [weak self] in self?.consumeLoop() }

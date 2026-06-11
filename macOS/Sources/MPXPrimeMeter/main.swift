@@ -41,6 +41,8 @@ private func printUsage() {
       --list-devices     List audio input devices and exit.
       --device <spec>    Input device: list index, device UID, a substring of
                          the name, or "default" (default: system default input).
+      --channel <ch>     Which channel carries the composite: left | right |
+                         mix (default: left). Many USB DACs feed it on right.
       --seconds N        Run for N seconds then exit (default: until Ctrl-C;
                          --selftest defaults to 2 s).
       --selftest         No hardware: synthesize a pilot + mono-audio composite
@@ -48,9 +50,9 @@ private func printUsage() {
                          covered by the unit tests; this is a pipeline smoke.)
       --help             Show this help.
 
-    Feed the station composite (tuner MPX out / SDR demod / loopback) to the
-    input's LEFT channel. RDS needs the device running at >= 128 kHz (57 kHz
-    subcarrier); 192 kHz is recommended.
+    Feed the station composite (tuner MPX out / SDR demod / loopback) to one
+    input channel and select it with --channel. RDS needs the device running
+    at >= 128 kHz (57 kHz subcarrier); 192 kHz is recommended.
     """)
 }
 
@@ -125,7 +127,7 @@ private func resolveDevice(_ spec: String?) -> AudioDeviceID? {
     return nil
 }
 
-private func runLive(deviceSpec: String?, seconds: Double?) -> Int32 {
+private func runLive(deviceSpec: String?, channel: MeterChannel, seconds: Double?) -> Int32 {
     guard let deviceID = resolveDevice(deviceSpec) else {
         FileHandle.standardError.write(Data("No matching input device (try --list-devices).\n".utf8))
         return 1
@@ -139,11 +141,11 @@ private func runLive(deviceSpec: String?, seconds: Double?) -> Int32 {
             + "above Nyquist and will not decode. Set 192 kHz in Audio MIDI Setup.")
     }
 
-    let engine = MeterAudioEngine(sampleRate: Float(rate))
+    let engine = MeterAudioEngine(sampleRate: Float(rate), channel: channel)
     do {
         let fmt = try engine.start(deviceID: deviceID)
-        print(String(format: "Capturing at %.0f Hz, %d ch. Ctrl-C to stop.\n",
-                     fmt.sampleRate, fmt.channels))
+        print(String(format: "Capturing at %.0f Hz, %d ch, composite on %@ channel. Ctrl-C to stop.\n",
+                     fmt.sampleRate, fmt.channels, channel.rawValue))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
         return 1
@@ -209,6 +211,12 @@ private func parseDevice(_ args: [String]) -> String? {
     return args[idx + 1]
 }
 
+private func parseChannel(_ args: [String]) -> MeterChannel {
+    guard let idx = args.firstIndex(of: "--channel"), idx + 1 < args.count,
+          let ch = MeterChannel(rawValue: args[idx + 1].lowercased()) else { return .left }
+    return ch
+}
+
 let args = CommandLine.arguments
 let exitCode: Int32
 if args.contains("--help") || args.contains("-h") {
@@ -219,6 +227,9 @@ if args.contains("--help") || args.contains("-h") {
 } else if args.contains("--selftest") {
     exitCode = runSelftest(seconds: parseSeconds(args) ?? 2.0)
 } else {
-    exitCode = runLive(deviceSpec: parseDevice(args), seconds: parseSeconds(args))
+    exitCode = runLive(
+        deviceSpec: parseDevice(args),
+        channel: parseChannel(args),
+        seconds: parseSeconds(args))
 }
 exit(exitCode)

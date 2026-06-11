@@ -61,6 +61,10 @@ private func printUsage() {
       --selftest         No hardware: synthesize a pilot + mono-audio composite
                          and run the analysis path. (RDS/stereo decode is
                          covered by the unit tests; this is a pipeline smoke.)
+      --stdin            Read the MPX composite from stdin (a WAV stream or raw
+                         little-endian int16 mono) instead of an audio device.
+                         For piping an external tuner -- see run-meter-sdr.sh.
+      --sample-rate <Hz> Sample rate for --stdin raw/WAV input (default 192000).
       --help             Show this help.
 
     Feed the station composite (tuner MPX out / SDR demod / loopback) to one
@@ -246,9 +250,9 @@ private func runLive(
     let engine = MeterAudioEngine(
         sampleRate: Float(rate), channel: channel,
         monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
-        wavURL: wavURL)
+        wavURL: wavURL, input: AUHALInputSource(deviceID: deviceID))
     do {
-        let fmt = try engine.start(deviceID: deviceID, monitorDeviceID: monitorDeviceID)
+        let fmt = try engine.start(monitorDeviceID: monitorDeviceID)
         let mon = monitor ? "monitor ON" : "monitor off"
         let rec = wavPath.map { " recording -> \($0)." } ?? ""
         print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. pilot ref %.2f kHz.%@ Ctrl-C to stop.",
@@ -268,6 +272,53 @@ private func runLive(
         fflush(stdout)
         usleep(500_000)
     }
+    engine.stop()
+    return 0
+}
+
+private func runPipe(
+    channel: MeterChannel,
+    monitor: Bool,
+    monitorDeviceSpec: String?,
+    monitorGainDB: Float,
+    pilotRefKHz: Float,
+    wavPath: String?,
+    sampleRate: Double,
+    seconds: Double?
+) -> Int32 {
+    let monitorDeviceID = resolveOutputDevice(monitorDeviceSpec)
+    let gainLinear = powf(10.0, monitorGainDB / 20.0)
+    let wavURL = wavPath.map { URL(fileURLWithPath: $0) }
+    let source = StdinInputSource(sampleRate: sampleRate)
+    let engine = MeterAudioEngine(
+        sampleRate: Float(sampleRate), channel: channel,
+        monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
+        wavURL: wavURL, input: source)
+    do {
+        try engine.start(monitorDeviceID: monitorDeviceID)
+        let mon = monitor ? "monitor ON" : "monitor off"
+        let rec = wavPath.map { " recording -> \($0)." } ?? ""
+        print(String(format: "Reading MPX from stdin @ %.0f Hz. %@. pilot ref %.2f kHz.%@ Ctrl-C to stop.",
+                     sampleRate, mon, pilotRefKHz, rec))
+    } catch {
+        FileHandle.standardError.write(Data("Failed to start pipe input: \(error)\n".utf8))
+        return 1
+    }
+
+    signal(SIGINT, handleSigint)
+    var firstRender = true
+    let deadline = seconds.map { Date().addingTimeInterval($0) }
+    while gStop == 0 {
+        usleep(500_000)  // let the analysis thread accumulate before rendering
+        renderPanel(dashboard(engine.snapshot(), sampleRate: sampleRate, channel: "pipe"),
+                    firstRender: &firstRender)
+        fflush(stdout)
+        if source.finished { break }       // writer closed the pipe
+        if let deadline, Date() >= deadline { break }
+    }
+    usleep(200_000)  // drain
+    renderPanel(dashboard(engine.snapshot(), sampleRate: sampleRate, channel: "pipe"),
+                firstRender: &firstRender)
     engine.stop()
     return 0
 }
@@ -342,6 +393,16 @@ if args.contains("--help") || args.contains("-h") {
     exitCode = listDevices()
 } else if args.contains("--selftest") {
     exitCode = runSelftest(seconds: parseSeconds(args) ?? 2.0)
+} else if args.contains("--stdin") {
+    exitCode = runPipe(
+        channel: parseChannel(args),
+        monitor: !args.contains("--no-monitor"),
+        monitorDeviceSpec: parseValue(args, "--monitor-device"),
+        monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
+        pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
+        wavPath: parseValue(args, "--wav"),
+        sampleRate: parseValue(args, "--sample-rate").flatMap { Double($0) } ?? 192_000.0,
+        seconds: parseSeconds(args))
 } else {
     exitCode = runLive(
         deviceSpec: parseDevice(args),

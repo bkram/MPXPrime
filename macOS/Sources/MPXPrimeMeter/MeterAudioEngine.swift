@@ -54,7 +54,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         monitorGain: Float = 1.0,
         pilotRefKHz: Float = 6.75,
         wavURL: URL? = nil,
-        input: MPXInputSource = AUHALInputSource()
+        input: MPXInputSource
     ) {
         self.input = input
         self.ring = StereoInputRingBuffer(capacityFrames: 1 << 16)
@@ -77,7 +77,7 @@ final class MeterAudioEngine: @unchecked Sendable {
     }
 
     @discardableResult
-    func start(deviceID: AudioDeviceID, monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
+    func start(monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring
         let channel = self.channel
         let scratch = self.mixScratch
@@ -94,7 +94,7 @@ final class MeterAudioEngine: @unchecked Sendable {
                 ring.writeMono(mono: scratch, frameCount: n)
             }
         }
-        let fmt = try input.start(deviceID: deviceID, maxFramesPerSlice: Self.maxSliceFrames)
+        let fmt = try input.start()
 
         if monitorEnabled {
             let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)

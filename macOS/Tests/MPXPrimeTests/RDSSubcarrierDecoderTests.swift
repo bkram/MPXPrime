@@ -1,7 +1,7 @@
 import Testing
 import Foundation
 @testable import MPXPrime
-import MPXPrimeCore
+@testable import MPXPrimeCore
 
 // Full RDS receive-chain round-trip: render a composite with a known RDS
 // payload using the transmit-side BasicRDSCoder subcarrier generator (pilot +
@@ -179,6 +179,27 @@ struct RDSSubcarrierDecoderTests {
                 "PS '\(state.programService)' at carrier phase \(phaseDeg) deg")
         #expect(state.blockErrorRate < 0.10,
                 "BER \(state.blockErrorRate) at carrier phase \(phaseDeg) deg")
+    }
+
+    @Test func staysCleanAtLargeSampleIndex() {
+        // Regression: the symbol strobe is an absolute sample index and was
+        // tracked in Float32, whose integer precision ends at 2^24 (~87 s at
+        // 192 kHz) -- past that the strobe quantized (4-sample steps at 2^25)
+        // and BER climbed with time-on-air. Pre-advance the counter to 2^25
+        // and verify the decode is as clean as a fresh start.
+        let coder = BasicRDSCoder(config: makeConfig(), sampleRate: sampleRate)
+        let composite = renderComposite(coder, seconds: 3.0)
+
+        let decoder = RDSSubcarrierDecoder(sampleRate: sampleRate)
+        decoder._testAdvanceSampleIndex(to: 1 << 25)
+        decoder.process(composite)
+
+        let state = decoder.state
+        #expect(state.synced, "no block sync at large sample index")
+        #expect(state.pi == 0x1234)
+        #expect(state.programService == " HELLO  ", "PS was '\(state.programService)'")
+        #expect(state.blockErrorRate < 0.05,
+                "BER \(state.blockErrorRate) at large sample index (strobe precision)")
     }
 
     @Test func reportsNoLockOnSilence() {

@@ -99,21 +99,31 @@ public final class RDSSubcarrierDecoder {
     // heavily-oversampled (~162 samples/bit) MF output; TED sign set
     // empirically against the clock-offset round-trip test. +/-1000 ppm
     // covers any real DAC/SDR clock offset.
-    private var strobePos: Float = 0.0    // global sample index of the next symbol center
-    private var periodEst: Float = 0.0    // tracked samples/bit
+    //
+    // strobePos holds an ABSOLUTE sample index and must be Double: Float32's
+    // 24-bit mantissa stops representing consecutive integers past ~16.7M
+    // samples (~87 s at 192 kHz), after which `strobePos += periodEst`
+    // quantizes and the symbol strobe develops runtime-growing jitter --
+    // observed live as block-error rate climbing with time-on-air.
+    private var strobePos: Double = 0.0   // global sample index of the next symbol center
+    private var periodEst: Double = 0.0   // tracked samples/bit
     private var prevCenterY: Float = 0.0  // projected y at the previous symbol center
     private var haveTimingHistory = false
-    private let timingKp: Float = 0.10
-    private let timingKi: Float = 0.004
-    private let timingSign: Float = -1.0
-    private let maxPeriodFraction: Float = 0.001
+    private let timingKp: Double = 0.10
+    private let timingKi: Double = 0.004
+    private let timingSign: Double = -1.0
+    private let maxPeriodFraction: Double = 0.001
 
     // Re-acquire watchdog (track phase, once per second): if nearly all
-    // recent blocks fail their checkword, the bit phase is stale -- re-acquire.
+    // recent blocks fail their checkword, the bit phase is stale -- re-acquire
+    // immediately. A decode stuck at a mediocre error rate (timing/axis crept
+    // off but not catastrophically) re-acquires after several consecutive bad
+    // seconds instead of persisting degraded forever.
     private var watchdogInterval: Int = 0
     private var nextWatchdogN: Int = 0
     private var prevBlocksReceived: Int = 0
     private var prevBlocksValid: Int = 0
+    private var mediocreSeconds: Int = 0
 
     // Differential decode.
     private var lastLevel: Int = 0
@@ -180,18 +190,29 @@ public final class RDSSubcarrierDecoder {
         axisCos = 1.0
         axisSin = 0.0
         strobePos = 0.0
-        periodEst = samplesPerBit
+        periodEst = Double(samplesPerBit)
         prevCenterY = 0.0
         haveTimingHistory = false
         nextWatchdogN = 0
         prevBlocksReceived = 0
         prevBlocksValid = 0
+        mediocreSeconds = 0
         lastLevel = 0
         haveLast = false
         lastMag2 = 0.0
     }
 
     public var state: RDSReceiverState { stream.state }
+
+    /// Test seam (@testable): pre-advance the absolute sample counter as if
+    /// the decoder had already been running for `n` samples. Regression
+    /// coverage for strobe precision at large sample indices -- a Float32
+    /// strobe position quantizes past ~16.7M samples (~87 s at 192 kHz) and
+    /// the symbol clock develops runtime-growing jitter.
+    func _testAdvanceSampleIndex(to n: Int) {
+        globalN = n
+        nextWatchdogN = n + watchdogInterval
+    }
 
     /// True once the pilot lock-in has meaningful energy and the front-end has
     /// finished bit-phase acquisition.
@@ -259,7 +280,7 @@ public final class RDSSubcarrierDecoder {
         case .track:
             // Evaluate each symbol center once it (and its interpolation
             // neighbor) is safely in the past.
-            while Float(n) >= strobePos + 1.0 {
+            while Double(n) >= strobePos + 1.0 {
                 let yIk = interp(yHistI, strobePos)
                 let yQk = interp(yHistQ, strobePos)
                 updateAxis(yI: yIk, yQ: yQk)
@@ -273,11 +294,11 @@ public final class RDSSubcarrierDecoder {
                     let ymid = (interp(yHistI, mid) * axisCos) + (interp(yHistQ, mid) * axisSin)
                     let raw = ymid * (yk - prevCenterY)
                     let denom = (yk * yk) + (prevCenterY * prevCenterY) + 1e-6
-                    var e = timingSign * (raw / denom)
+                    var e = timingSign * Double(raw / denom)
                     if e > 0.5 { e = 0.5 } else if e < -0.5 { e = -0.5 }
                     periodEst += timingKi * e
-                    let lo = samplesPerBit * (1.0 - maxPeriodFraction)
-                    let hi = samplesPerBit * (1.0 + maxPeriodFraction)
+                    let lo = Double(samplesPerBit) * (1.0 - maxPeriodFraction)
+                    let hi = Double(samplesPerBit) * (1.0 + maxPeriodFraction)
                     if periodEst < lo { periodEst = lo } else if periodEst > hi { periodEst = hi }
                     strobePos += periodEst + (timingKp * e)
                 } else {
@@ -322,21 +343,39 @@ public final class RDSSubcarrierDecoder {
         guard deltaReceived >= 32 else { return }
         let ratio = Float(deltaValid) / Float(deltaReceived)
         if ratio < 0.20 {
-            phase = .acquire
-            acqStartN = n
-            acqCount = 0
-            cII = 0.0
-            cQQ = 0.0
-            cIQ = 0.0
+            reacquire(at: n)
+            return
         }
+        // Persistent mediocre decode (> ~35% block errors for 5 s straight):
+        // a fresh acquisition is cheap (~0.36 s of bits) compared to staying
+        // degraded indefinitely.
+        if ratio < 0.65 {
+            mediocreSeconds += 1
+            if mediocreSeconds >= 5 {
+                reacquire(at: n)
+            }
+        } else {
+            mediocreSeconds = 0
+        }
+    }
+
+    private func reacquire(at n: Int) {
+        phase = .acquire
+        acqStartN = n
+        acqCount = 0
+        cII = 0.0
+        cQQ = 0.0
+        cIQ = 0.0
+        mediocreSeconds = 0
     }
 
     /// Linear interpolation of a matched-filter history at a fractional global
     /// sample index. Caller must ensure `pos` and `pos+1` are within the most
-    /// recent `histLen` samples.
-    private func interp(_ hist: [Float], _ pos: Float) -> Float {
-        let g0 = Int(floorf(pos))
-        let frac = pos - Float(g0)
+    /// recent `histLen` samples. `pos` is Double: the fractional part stays
+    /// exact at arbitrarily large absolute sample indices.
+    private func interp(_ hist: [Float], _ pos: Double) -> Float {
+        let g0 = Int(pos.rounded(.down))
+        let frac = Float(pos - Double(g0))
         let i0 = ((g0 % histLen) + histLen) % histLen
         let i1 = (((g0 + 1) % histLen) + histLen) % histLen
         return (hist[i0] * (1.0 - frac)) + (hist[i1] * frac)
@@ -399,8 +438,10 @@ public final class RDSSubcarrierDecoder {
 
         // `center` is now the first center beyond the buffer, in acquisition-
         // relative samples; convert to a global index and seed the timing loop.
-        strobePos = Float(acqStartN) + center
-        periodEst = samplesPerBit
+        // Double throughout: Float(acqStartN) rounds once the run is past
+        // ~16.7M samples, which would mis-seed the strobe on a late re-acquire.
+        strobePos = Double(acqStartN) + Double(center)
+        periodEst = Double(samplesPerBit)
         prevCenterY = 0.0
         haveTimingHistory = false
         nextWatchdogN = globalN + watchdogInterval

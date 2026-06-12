@@ -218,4 +218,70 @@ public enum AudioDevices {
         }
         return currentBufferFrameSize(deviceID: deviceID) ?? clamped
     }
+
+    /// The device's supported nominal sample rates (Hz). A range with
+    /// min == max is a discrete rate; ranges (rare on real hardware) are
+    /// reported by their max. Empty on error.
+    public static func availableNominalSampleRates(deviceID: AudioDeviceID) -> [Double] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else { return [] }
+        let count = Int(dataSize) / MemoryLayout<AudioValueRange>.size
+        var ranges = Array(repeating: AudioValueRange(), count: count)
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &dataSize, &ranges) == noErr
+        else { return [] }
+        return ranges.map { $0.mMaximum }
+    }
+
+    /// Reads the device's current nominal sample rate (Hz), or nil on error.
+    public static func currentNominalSampleRate(deviceID: AudioDeviceID) -> Double? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &rate) == noErr,
+              rate > 0 else { return nil }
+        return rate
+    }
+
+    /// Set the device's nominal sample rate (Hz). The HAL applies the change
+    /// asynchronously, so this polls the current rate until it matches (within
+    /// 1 Hz) or `timeout` elapses. Returns the rate the device ended up at, or
+    /// nil if the set call itself failed.
+    @discardableResult
+    public static func setNominalSampleRate(
+        deviceID: AudioDeviceID, _ rate: Double, timeout: TimeInterval = 1.5
+    ) -> Double? {
+        if let current = currentNominalSampleRate(deviceID: deviceID),
+           abs(current - rate) < 1.0 {
+            return current
+        }
+        var value = Float64(rate)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, &value) == noErr
+        else { return nil }
+        // Poll until the asynchronous switch lands.
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let current = currentNominalSampleRate(deviceID: deviceID),
+               abs(current - rate) < 1.0 {
+                return current
+            }
+            usleep(20_000)
+        }
+        return currentNominalSampleRate(deviceID: deviceID)
+    }
 }

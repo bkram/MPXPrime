@@ -139,6 +139,41 @@ final class MeterAudioEngine: @unchecked Sendable {
         return published
     }
 
+    /// Raise an input device to the best capture rate before opening it: 192 kHz
+    /// if supported, else the highest supported rate >= 128 kHz (RDS at 57 kHz
+    /// needs Nyquist > 57 kHz). The AUHAL cannot sample-rate-convert, so it
+    /// captures at whatever rate the device is currently set to -- we must set
+    /// the device's nominal rate ourselves. Returns the rate the device ended
+    /// up at, the prior rate (pass to `restoreInputRate` on stop), and an
+    /// optional warning when nothing >= 128 kHz is available.
+    static func prepareInputRate(
+        deviceID: AudioDeviceID, preferred: Double = 192_000
+    ) -> (rate: Double, prior: Double?, warning: String?) {
+        let available = AudioDevices.availableNominalSampleRates(deviceID: deviceID)
+        let prior = AudioDevices.currentNominalSampleRate(deviceID: deviceID)
+        var target = preferred
+        var warning: String?
+        if available.contains(where: { abs($0 - preferred) < 1.0 }) {
+            target = preferred
+        } else if let best = available.filter({ $0 >= 128_000 }).max() {
+            target = best
+        } else if let highest = available.max() {
+            target = highest
+            warning = "device max \(Int(highest)) Hz < 128 kHz -- RDS (57 kHz) cannot decode"
+        } else {
+            target = prior ?? preferred  // couldn't enumerate; keep current
+        }
+        let actual = AudioDevices.setNominalSampleRate(deviceID: deviceID, target)
+            ?? prior ?? target
+        return (actual, prior, warning)
+    }
+
+    /// Restore a device's nominal rate (best-effort) saved by `prepareInputRate`.
+    static func restoreInputRate(deviceID: AudioDeviceID, to prior: Double?) {
+        guard let prior else { return }
+        _ = AudioDevices.setNominalSampleRate(deviceID: deviceID, prior)
+    }
+
     private func consumeLoop() {
         defer { consumerDone.signal() }
         var left = [Float](repeating: 0.0, count: blockFrames)

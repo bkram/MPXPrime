@@ -266,14 +266,11 @@ private func runLive(
         FileHandle.standardError.write(Data("No matching input device (try --list-devices).\n".utf8))
         return 1
     }
-    guard let rate = nominalSampleRate(deviceID: deviceID) else {
-        FileHandle.standardError.write(Data("Could not read device sample rate.\n".utf8))
-        return 1
-    }
-    if rate < 128_000 {
-        print("WARNING: device rate \(Int(rate)) Hz < 128 kHz -- RDS (57 kHz) is "
-            + "above Nyquist and will not decode. Set 192 kHz in Audio MIDI Setup.")
-    }
+    // Raise the device to 192 kHz (or its best rate) before opening; the AUHAL
+    // captures at whatever the device is currently set to.
+    let prep = MeterAudioEngine.prepareInputRate(deviceID: deviceID)
+    if let warning = prep.warning { print("WARNING: \(warning).") }
+    let rate = prep.rate
 
     let monitorDeviceID = resolveOutputDevice(monitorDeviceSpec)
     let gainLinear = powf(10.0, monitorGainDB / 20.0)
@@ -282,14 +279,21 @@ private func runLive(
         sampleRate: Float(rate), channel: channel,
         monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
         wavURL: wavURL, input: AUHALInputSource(deviceID: deviceID))
+    var captureRate = rate
     do {
         let fmt = try engine.start(monitorDeviceID: monitorDeviceID)
+        captureRate = fmt.sampleRate
+        if abs(fmt.sampleRate - rate) > 1.0 {
+            print(String(format: "WARNING: device opened at %.0f Hz, not the requested %.0f Hz.",
+                         fmt.sampleRate, rate))
+        }
         let mon = monitor ? "monitor ON" : "monitor off"
         let rec = wavPath.map { " recording -> \($0)." } ?? ""
         print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. pilot ref %.2f kHz.%@ Ctrl-C to stop.",
                      fmt.sampleRate, fmt.channels, channel.rawValue, mon, pilotRefKHz, rec))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
+        MeterAudioEngine.restoreInputRate(deviceID: deviceID, to: prep.prior)
         return 1
     }
 
@@ -298,12 +302,13 @@ private func runLive(
     let deadline = seconds.map { Date().addingTimeInterval($0) }
     while gStop == 0 {
         if let deadline, Date() >= deadline { break }
-        renderPanel(dashboard(engine.snapshot(), sampleRate: rate, channel: channel.rawValue),
+        renderPanel(dashboard(engine.snapshot(), sampleRate: captureRate, channel: channel.rawValue),
                     firstRender: &firstRender)
         fflush(stdout)
         usleep(500_000)
     }
     engine.stop()
+    MeterAudioEngine.restoreInputRate(deviceID: deviceID, to: prep.prior)
     return 0
 }
 

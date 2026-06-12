@@ -89,7 +89,17 @@ let package = Package(
                 "MPXPrimeUI",
                 .product(name: "Atomics", package: "swift-atomics")
             ],
-            path: "Sources/MPXPrimeMeter"
+            path: "Sources/MPXPrimeMeter",
+            linkerSettings: [
+                // Embed an Info.plist so the unbundled binary shows
+                // "MPX Prime Meter" in the menu/Dock (see MPXPrime above).
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "\(packageDir)/Resources/MPXPrimeMeter-Info.plist",
+                ])
+            ]
         ),
         .testTarget(
             name: "MPXPrimeTests",

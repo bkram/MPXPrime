@@ -138,10 +138,12 @@ struct RootMeterView: View {
                         ScopeView(samples: t.compositeScope, accessibilityName: "Composite waveform scope")
                     }
                     .frame(maxWidth: .infinity)
-                    labeled("Decoded L / R") {
-                        ScopeView(
-                            samples: t.decodedLScope, secondarySamples: t.decodedRScope,
-                            accessibilityName: "Decoded left and right waveform scope")
+                    labeled("Decoded L") {
+                        ScopeView(samples: t.decodedLScope, accessibilityName: "Decoded left waveform scope")
+                    }
+                    .frame(maxWidth: .infinity)
+                    labeled("Decoded R") {
+                        ScopeView(samples: t.decodedRScope, accessibilityName: "Decoded right waveform scope")
                     }
                     .frame(maxWidth: .infinity)
                 }

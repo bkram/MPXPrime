@@ -45,12 +45,22 @@ let package = Package(
             ],
             path: "Sources/MPXPrimeCore"
         ),
+        // Shared SwiftUI: Canvas-based, signal-agnostic UI components
+        // (scope, spectrum, vertical meter, style tokens, the LiveTelemetry
+        // isolation wrapper) used by both the transmit GUI (MPXPrime) and the
+        // MPX Prime Meter window. Depends only on MPXPrimeCore.
+        .target(
+            name: "MPXPrimeUI",
+            dependencies: ["MPXPrimeCore"],
+            path: "Sources/MPXPrimeUI"
+        ),
         .executableTarget(
             name: "MPXPrime",
             dependencies: [
                 .product(name: "Atomics", package: "swift-atomics"),
                 "MPXPrimeNative",
-                "MPXPrimeCore"
+                "MPXPrimeCore",
+                "MPXPrimeUI"
             ],
             path: "Sources/MPXPrime",
             linkerSettings: [
@@ -76,13 +86,14 @@ let package = Package(
             name: "MPXPrimeMeter",
             dependencies: [
                 "MPXPrimeCore",
+                "MPXPrimeUI",
                 .product(name: "Atomics", package: "swift-atomics")
             ],
             path: "Sources/MPXPrimeMeter"
         ),
         .testTarget(
             name: "MPXPrimeTests",
-            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore"],
+            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore", "MPXPrimeUI"],
             path: "Tests/MPXPrimeTests"
         )
     ]

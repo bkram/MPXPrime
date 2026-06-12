@@ -6,9 +6,13 @@
 #   ./run-meter-sdr.sh --freq 88.6
 #   ./run-meter-sdr.sh --freq 101.1 --no-monitor --wav ~/cap.wav
 #   ./run-meter-sdr.sh --freq 88.6 --pilot-ref-khz 6.8
+#   ./run-meter-sdr.sh --freq 88.6 --gui      # open the dashboard window instead
 #
-# --freq <MHz> is required. Every other argument is forwarded verbatim to
-# MPXPrimeMeter (--channel is irrelevant here; the piped MPX is mono).
+# --freq <MHz> is required. With --gui this opens the MPX Prime Meter window
+# pre-tuned to that frequency (the GUI spawns its own tuner -- no FIFO). Without
+# --gui it pipes the MPX into the headless terminal meter over a FIFO; every
+# other argument is forwarded verbatim to MPXPrimeMeter (--channel is
+# irrelevant there; the piped MPX is mono).
 #
 # A FIFO carries the 16-bit/192 kHz mono MPX; the tuner's stdout logs go to a
 # logfile so they don't corrupt the stream. Monitor (decoded audio) is on by
@@ -32,20 +36,31 @@ else
   TUNER="$HOME/Projects/git/FM-SDR-Tuner/build/fm-sdr-tuner"
 fi
 
-# Parse --freq (MHz); forward the rest to the meter.
+# Parse --freq (MHz) and --gui; forward the rest to the meter.
 FREQ_MHZ=""
+GUI=0
 METER_ARGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --freq) FREQ_MHZ="$2"; shift 2 ;;
     --freq=*) FREQ_MHZ="${1#*=}"; shift ;;
+    --gui) GUI=1; shift ;;
     *) METER_ARGS+=("$1"); shift ;;
   esac
 done
 
 if [ -z "$FREQ_MHZ" ]; then
-  echo "usage: ./run-meter-sdr.sh --freq <MHz> [meter args...]" >&2
+  echo "usage: ./run-meter-sdr.sh --freq <MHz> [--gui] [meter args...]" >&2
   exit 2
+fi
+
+# GUI mode: the window spawns its own tuner via its native SDR source, so we
+# just build and launch it pre-tuned -- no FIFO / external tuner plumbing here.
+if [ "$GUI" -eq 1 ]; then
+  echo "Building MPXPrimeMeter (release)..."
+  swift build --package-path macOS -c release --product MPXPrimeMeter
+  echo "Opening MPX Prime Meter, tuned to ${FREQ_MHZ} MHz (SDR)..."
+  exec "macOS/.build/release/MPXPrimeMeter" --gui --sdr-freq "$FREQ_MHZ"
 fi
 if [ ! -x "$TUNER" ]; then
   echo "FM-SDR-Tuner binary not found/executable: $TUNER" >&2

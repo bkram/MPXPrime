@@ -64,6 +64,8 @@ private func printUsage() {
                          covered by the unit tests; this is a pipeline smoke.)
       --gui              Open the graphical dashboard window (also the default
                          when launched with no arguments, e.g. the .app bundle).
+      --sdr-freq <MHz>   Open the GUI pre-tuned to this RTL-SDR frequency and
+                         start capturing (used by run-meter-sdr.sh --gui).
       --stdin            Read the MPX composite from stdin (a WAV stream or raw
                          little-endian int16 mono) instead of an audio device.
                          For piping an external tuner -- see run-meter-sdr.sh.
@@ -427,11 +429,13 @@ private func parseValue(_ args: [String], _ flag: String) -> String? {
     return args[idx + 1]
 }
 
-/// Launch the SwiftUI dashboard window (blocks until the app quits).
+/// Launch the SwiftUI dashboard window (blocks until the app quits). When
+/// `sdrFreqMHz` is set, the window opens pre-tuned to that SDR frequency and
+/// starts capturing immediately (used by run-meter-sdr.sh --gui).
 @MainActor
-private func runGUI() -> Int32 {
+private func runGUI(sdrFreqMHz: Double?) -> Int32 {
     let app = NSApplication.shared
-    let delegate = MeterAppDelegate()
+    let delegate = MeterAppDelegate(autoStartSDRFreqMHz: sdrFreqMHz)
     app.delegate = delegate
     app.setActivationPolicy(.regular)
     app.run()
@@ -466,10 +470,12 @@ if args.contains("--help") || args.contains("-h") {
         wavPath: parseValue(args, "--wav"),
         sampleRate: parseValue(args, "--sample-rate").flatMap { Double($0) } ?? 192_000.0,
         seconds: parseSeconds(args))
-} else if args.contains("--gui") || userArgs.isEmpty || !liveFlags.contains(where: args.contains) {
+} else if args.contains("--gui") || args.contains("--sdr-freq")
+            || userArgs.isEmpty || !liveFlags.contains(where: args.contains) {
     // Explicit --gui, no arguments at all (double-clicked .app), or no
-    // headless capture flag present -> open the dashboard window.
-    exitCode = runGUI()
+    // headless capture flag present -> open the dashboard window. --sdr-freq
+    // additionally pre-tunes the SDR and auto-starts.
+    exitCode = runGUI(sdrFreqMHz: parseValue(args, "--sdr-freq").flatMap { Double($0) })
 } else {
     exitCode = runLive(
         deviceSpec: parseDevice(args),

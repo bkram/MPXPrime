@@ -9,6 +9,12 @@ import SwiftUI
 final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private let vm = MeterViewModel()
+    private let autoStartSDRFreqMHz: Double?
+
+    init(autoStartSDRFreqMHz: Double? = nil) {
+        self.autoStartSDRFreqMHz = autoStartSDRFreqMHz
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let hosting = NSHostingController(rootView: RootMeterView(vm: vm))
@@ -27,6 +33,13 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Launched via run-meter-sdr.sh --gui: pre-tune the SDR and start.
+        if let freq = autoStartSDRFreqMHz, vm.sdrAvailable {
+            vm.inputKind = .sdr
+            vm.frequencyMHz = freq
+            vm.start()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

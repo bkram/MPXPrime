@@ -33,6 +33,17 @@ struct MeterSnapshot {
     /// cumulative since start and never recovers after a retune; this one
     /// reflects current link quality.
     var recentBlockErrorRate: Float = 0.0
+
+    // Display waveforms / spectrum for the GUI (empty for the headless CLI).
+    // Downsampled to a fixed point count; cross-thread-copied in
+    // `isolatedSnapshot()`.
+    var compositeScope: [Float] = []
+    var decodedLScope: [Float] = []
+    var decodedRScope: [Float] = []
+    /// Composite spectrum (dB bins), 0..spectrumMaxHz.
+    var spectrumDB: [Float] = []
+    var spectrumMaxHz: Double = 100_000
+    var spectrumNyquistHz: Double = 0
 }
 
 /// Drives the receive chain over blocks of composite samples and accumulates a
@@ -71,6 +82,16 @@ final class MeterAnalysis {
     private(set) var decodedL: [Float]
     private(set) var decodedR: [Float]
     private(set) var lastBlockCount = 0
+
+    // GUI display buffers (reused; copied into the snapshot each block).
+    private static let scopePoints = 512
+    private static let spectrumBins = 512
+    private var scopeComposite = [Float](repeating: 0.0, count: scopePoints)
+    private var scopeL = [Float](repeating: 0.0, count: scopePoints)
+    private var scopeR = [Float](repeating: 0.0, count: scopePoints)
+    private var spectrum = MPXSpectrumAnalyzer()
+    private var spectrumInput: [Float] = []
+    private var spectrumTick = 0
 
     init(
         sampleRate: Float, preemphasisUS: Int = 50, pilotRefKHz: Float = 6.75,
@@ -185,6 +206,51 @@ final class MeterAnalysis {
             prevBlocksValid = snap.rds.blocksValid
         }
         snap.recentBlockErrorRate = berEMA
+
+        // GUI display buffers. Decimate this block to a fixed point count for
+        // the scopes; recompute the composite spectrum every 4th block (~6/s at
+        // 8192-frame blocks @ 192 kHz -- ample for a display, cheap on CPU).
+        Self.decimate(into: &scopeComposite, from: samples, count: samples.count)
+        decodedL.withUnsafeBufferPointer {
+            Self.decimate(into: &scopeL, from: $0, count: lastBlockCount)
+        }
+        decodedR.withUnsafeBufferPointer {
+            Self.decimate(into: &scopeR, from: $0, count: lastBlockCount)
+        }
+        snap.compositeScope = scopeComposite
+        snap.decodedLScope = scopeL
+        snap.decodedRScope = scopeR
+
+        spectrumTick += 1
+        if spectrumTick >= 4 {
+            spectrumTick = 0
+            if spectrumInput.count != samples.count {
+                spectrumInput = [Float](repeating: 0.0, count: samples.count)
+            }
+            for j in 0..<samples.count { spectrumInput[j] = samples[j] }
+            let result = spectrum.compute(
+                samples: spectrumInput, validCount: samples.count,
+                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+                maxDisplayHz: 100_000)
+            snap.spectrumDB = result.dbBins
+            snap.spectrumMaxHz = result.maxHz
+            snap.spectrumNyquistHz = result.nyquistHz
+        }
+    }
+
+    /// Point-decimate a source buffer into a fixed-size destination (stride
+    /// pick, point-to-point to match ScopeView's line render).
+    private static func decimate(
+        into dst: inout [Float], from src: UnsafeBufferPointer<Float>, count: Int
+    ) {
+        let n = dst.count
+        guard count > 0 else {
+            for i in 0..<n { dst[i] = 0.0 }
+            return
+        }
+        for i in 0..<n {
+            dst[i] = src[min(count - 1, (i * count) / n)]
+        }
     }
 
     /// Same-thread snapshot (no cross-thread handoff).
@@ -208,6 +274,13 @@ final class MeterAnalysis {
         c.rds.radioText = String(Array(snap.rds.radioText))
         c.rds.programTypeName = String(Array(snap.rds.programTypeName))
         c.rds.longPS = String(Array(snap.rds.longPS))
+        // Scope/spectrum buffers share the reused analysis-thread storage --
+        // force independent copies for the display thread (same cross-thread
+        // CoW hazard as the RDS arrays above).
+        c.compositeScope = snap.compositeScope.map { $0 }
+        c.decodedLScope = snap.decodedLScope.map { $0 }
+        c.decodedRScope = snap.decodedRScope.map { $0 }
+        c.spectrumDB = snap.spectrumDB.map { $0 }
         return c
     }
 

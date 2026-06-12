@@ -128,11 +128,17 @@ struct RootMeterView: View {
     private var scopesSection: some View {
         GroupBox("Scopes") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
-                VStack(spacing: 10) {
-                    labeled("Composite") { ScopeView(samples: t.compositeScope) }
-                    labeled("Decoded L / R") {
-                        ScopeView(samples: t.decodedLScope, secondarySamples: t.decodedRScope)
+                HStack(alignment: .top, spacing: 12) {
+                    labeled("Composite") {
+                        ScopeView(samples: t.compositeScope, accessibilityName: "Composite waveform scope")
                     }
+                    .frame(maxWidth: .infinity)
+                    labeled("Decoded L / R") {
+                        ScopeView(
+                            samples: t.decodedLScope, secondarySamples: t.decodedRScope,
+                            accessibilityName: "Decoded left and right waveform scope")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 .padding(6)
             }

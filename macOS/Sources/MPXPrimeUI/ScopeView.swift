@@ -7,10 +7,16 @@ import SwiftUI
 public struct ScopeView: View {
     let samples: [Float]
     var secondarySamples: [Float]?
+    var accessibilityName: String
 
-    public init(samples: [Float], secondarySamples: [Float]? = nil) {
+    public init(
+        samples: [Float],
+        secondarySamples: [Float]? = nil,
+        accessibilityName: String = "Waveform scope"
+    ) {
         self.samples = samples
         self.secondarySamples = secondarySamples
+        self.accessibilityName = accessibilityName
     }
 
     public var body: some View {
@@ -67,7 +73,7 @@ public struct ScopeView: View {
         // A Canvas exposes no children; without this it is silent noise to
         // VoiceOver. Give the region a name + image role.
         .accessibilityElement()
-        .accessibilityLabel("Waveform scope")
+        .accessibilityLabel(accessibilityName)
         .accessibilityAddTraits(.isImage)
     }
 }

@@ -50,6 +50,10 @@ final class SDRTunerProcess {
         self.logPath = (tmp as NSString).appendingPathComponent("fm-sdr-tuner-\(token).log")
     }
 
+    /// False once the tuner subprocess has exited (e.g. no RTL-SDR found, or it
+    /// lost the device). The GUI polls this to surface an early exit.
+    var isRunning: Bool { process.isRunning }
+
     /// Whether a tuner binary is resolvable -- lets the UI enable/disable SDR.
     static func isAvailable() -> Bool {
         candidatePaths().contains { FileManager.default.isExecutableFile(atPath: $0) }

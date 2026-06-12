@@ -18,7 +18,7 @@ final class MeterViewModel: ObservableObject {
 
     // Structural / control state (low frequency).
     @Published var inputKind: InputKind = .audioDevice
-    @Published var frequencyMHz: Double = 88.0
+    @Published var frequencyMHz: Double = 88.6
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputID: AudioDeviceID?
@@ -167,6 +167,13 @@ final class MeterViewModel: ObservableObject {
     }
 
     private func tick() {
+        // Surface an early tuner exit (no RTL-SDR found / device lost) rather
+        // than silently showing -120 dBFS as if "Tuned".
+        if inputKind == .sdr, let t = sdrTuner, !t.isRunning {
+            stop()
+            statusText = "SDR stopped: tuner exited (no RTL-SDR found or device lost)"
+            return
+        }
         guard let s = engine?.snapshot() else { return }
         pushTelemetry(s)
         pushRDSIfChanged(s)

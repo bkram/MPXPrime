@@ -6,6 +6,7 @@ import CoreAudio
 import Darwin
 import Foundation
 import MPXPrimeCore
+import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 

@@ -1,15 +1,12 @@
 import SwiftUI
 
-// Vertical meter-strip component used on the dedicated Levels window.
-// Orban Optimod-style: narrow column per signal, scale ticks on the
-// right edge, peak-hold dot, colour-graded fill via BroadcastStyle.
-//
-// Horizontal MeterBar continues to be used on the Monitoring dashboard
-// and the header status bar — vertical strips are specifically for the
-// Levels window where they make sense at full window height.
+// Vertical meter-strip component (shared). Orban Optimod-style: narrow column
+// per signal, scale ticks on the right edge, peak-hold dot, colour-graded fill
+// via BroadcastStyle. Takes plain scalars + a pre-formatted value string, so
+// any app can feed it (the transmit Levels window and the Meter window both do).
 
-struct VerticalMeterStrip: View {
-    enum Scale: Equatable {
+public struct VerticalMeterStrip: View {
+    public enum Scale: Equatable {
         case dbfs                           // -36..0 dBFS, 6 breakpoints
         case modulationKHz(limit: Double)   // 0..100 kHz, limit highlighted
         case gainReductionDB                // 0..16 dB attenuation, inverted
@@ -22,13 +19,21 @@ struct VerticalMeterStrip: View {
     let peakLevel: Double?
     let scale: Scale
 
+    public init(label: String, valueText: String, level: Double, peakLevel: Double?, scale: Scale) {
+        self.label = label
+        self.valueText = valueText
+        self.level = level
+        self.peakLevel = peakLevel
+        self.scale = scale
+    }
+
     private struct Tick: Identifiable {
         let position: Double
         let label: String
         var id: String { "\(label)-\(position)" }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 6) {
             Text(label)
                 .font(BroadcastStyle.chipLabel)

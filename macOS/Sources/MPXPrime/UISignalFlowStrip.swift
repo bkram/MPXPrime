@@ -1,3 +1,4 @@
+import MPXPrimeUI
 import SwiftUI
 
 /// Compact "block-diagram chip strip" header for the Processing section.

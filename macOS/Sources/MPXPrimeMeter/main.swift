@@ -1,3 +1,4 @@
+import AppKit
 import CoreAudio
 import Darwin
 import Foundation
@@ -61,6 +62,8 @@ private func printUsage() {
       --selftest         No hardware: synthesize a pilot + mono-audio composite
                          and run the analysis path. (RDS/stereo decode is
                          covered by the unit tests; this is a pipeline smoke.)
+      --gui              Open the graphical dashboard window (also the default
+                         when launched with no arguments, e.g. the .app bundle).
       --stdin            Read the MPX composite from stdin (a WAV stream or raw
                          little-endian int16 mono) instead of an audio device.
                          For piping an external tuner -- see run-meter-sdr.sh.
@@ -424,7 +427,26 @@ private func parseValue(_ args: [String], _ flag: String) -> String? {
     return args[idx + 1]
 }
 
+/// Launch the SwiftUI dashboard window (blocks until the app quits).
+@MainActor
+private func runGUI() -> Int32 {
+    let app = NSApplication.shared
+    let delegate = MeterAppDelegate()
+    app.delegate = delegate
+    app.setActivationPolicy(.regular)
+    app.run()
+    return 0
+}
+
+// Headless capture/control flags. Their presence selects a CLI mode; their
+// absence (or an explicit --gui) opens the window.
+private let liveFlags = [
+    "--device", "--channel", "--seconds", "--no-monitor",
+    "--monitor-device", "--monitor-gain", "--wav", "--pilot-ref-khz", "--full-scale-khz"
+]
+
 let args = CommandLine.arguments
+let userArgs = Array(args.dropFirst())
 let exitCode: Int32
 if args.contains("--help") || args.contains("-h") {
     printUsage()
@@ -444,6 +466,10 @@ if args.contains("--help") || args.contains("-h") {
         wavPath: parseValue(args, "--wav"),
         sampleRate: parseValue(args, "--sample-rate").flatMap { Double($0) } ?? 192_000.0,
         seconds: parseSeconds(args))
+} else if args.contains("--gui") || userArgs.isEmpty || !liveFlags.contains(where: args.contains) {
+    // Explicit --gui, no arguments at all (double-clicked .app), or no
+    // headless capture flag present -> open the dashboard window.
+    exitCode = runGUI()
 } else {
     exitCode = runLive(
         deviceSpec: parseDevice(args),

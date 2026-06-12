@@ -24,6 +24,8 @@ struct MeterSnapshot {
 
     var leftRMSDBFS: Float = -120.0
     var rightRMSDBFS: Float = -120.0
+    var midRMSDBFS: Float = -120.0
+    var sideRMSDBFS: Float = -120.0
     /// Decoded L/R correlation: ~+1 mono, lower for wide stereo.
     var stereoCorrelation: Float = 0.0
 
@@ -122,6 +124,8 @@ final class MeterAnalysis {
         var lSq: Float = 0.0
         var rSq: Float = 0.0
         var lr: Float = 0.0
+        var mSq: Float = 0.0
+        var sSq: Float = 0.0
 
         var i = 0
         for s in samples {
@@ -146,6 +150,10 @@ final class MeterAnalysis {
             lSq += l * l
             rSq += r * r
             lr += l * r
+            let mid = (l + r) * 0.5
+            let side = (l - r) * 0.5
+            mSq += mid * mid
+            sSq += side * side
             if i < cap {
                 decodedL[i] = l
                 decodedR[i] = r
@@ -193,6 +201,8 @@ final class MeterAnalysis {
         }
         snap.leftRMSDBFS = Self.dbfs(sqrtf(lSq / n))
         snap.rightRMSDBFS = Self.dbfs(sqrtf(rSq / n))
+        snap.midRMSDBFS = Self.dbfs(sqrtf(mSq / n))
+        snap.sideRMSDBFS = Self.dbfs(sqrtf(sSq / n))
         snap.stereoCorrelation = corr
         snap.rdsLocked = rds.locked
         snap.rds = rds.state

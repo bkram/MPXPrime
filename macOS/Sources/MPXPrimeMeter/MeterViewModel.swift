@@ -70,8 +70,24 @@ final class MeterViewModel: ObservableObject {
         inputDevices = (try? AudioDevices.inputDevices()) ?? []
         outputDevices = (try? AudioDevices.outputDevices()) ?? []
         if selectedInputID == nil {
-            selectedInputID = AudioDevices.defaultInputDeviceID() ?? inputDevices.first?.id
+            selectedInputID = Self.preferredDefaultInput(inputDevices)
+                ?? AudioDevices.defaultInputDeviceID()
+                ?? inputDevices.first?.id
         }
+    }
+
+    /// Default to a device that can actually carry an MPX composite. The
+    /// system default input is usually the built-in microphone (96 kHz max),
+    /// which can never decode RDS at 57 kHz -- prefer the first 192 kHz-capable
+    /// device, then anything >= 128 kHz, then fall back to the system default.
+    private static func preferredDefaultInput(_ devices: [AudioDevice]) -> AudioDeviceID? {
+        var fallback: AudioDeviceID?
+        for dev in devices {
+            let rates = AudioDevices.availableNominalSampleRates(deviceID: dev.id)
+            if rates.contains(where: { abs($0 - 192_000) < 1.0 }) { return dev.id }
+            if fallback == nil, rates.contains(where: { $0 >= 128_000 }) { fallback = dev.id }
+        }
+        return fallback
     }
 
     // MARK: - Capture lifecycle

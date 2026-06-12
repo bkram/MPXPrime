@@ -28,22 +28,49 @@ struct RootMeterView: View {
     private var inputBar: some View {
         GroupBox {
             HStack(spacing: 12) {
-                Picker("Input", selection: $vm.selectedInputID) {
-                    ForEach(vm.inputDevices) { dev in
-                        Text(dev.name).tag(Optional(dev.id))
+                if vm.sdrAvailable {
+                    Picker("Source", selection: $vm.inputKind) {
+                        Text("Audio").tag(MeterViewModel.InputKind.audioDevice)
+                        Text("SDR").tag(MeterViewModel.InputKind.sdr)
                     }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .help("Audio: a Core Audio input device. SDR: a live RTL-SDR "
+                        + "station via FM-SDR-Tuner (mono MPX, absolute calibration).")
+                    .onChange(of: vm.inputKind) { _, _ in vm.restartIfRunning() }
                 }
-                .frame(maxWidth: 240)
-                .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
 
-                Picker("Ch", selection: $vm.channel) {
-                    Text("L").tag(MeterChannel.left)
-                    Text("R").tag(MeterChannel.right)
-                    Text("Mix").tag(MeterChannel.mix)
+                if vm.inputKind == .audioDevice {
+                    Picker("Input", selection: $vm.selectedInputID) {
+                        ForEach(vm.inputDevices) { dev in
+                            Text(dev.name).tag(Optional(dev.id))
+                        }
+                    }
+                    .frame(maxWidth: 220)
+                    .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
+
+                    Picker("Ch", selection: $vm.channel) {
+                        Text("L").tag(MeterChannel.left)
+                        Text("R").tag(MeterChannel.right)
+                        Text("Mix").tag(MeterChannel.mix)
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
+                } else {
+                    HStack(spacing: 4) {
+                        Text("Freq")
+                        TextField("MHz", value: $vm.frequencyMHz, format: .number.precision(.fractionLength(1)))
+                            .frame(width: 64)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit { vm.restartIfRunning() }
+                        Text("MHz")
+                        Stepper("", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
+                            .labelsHidden()
+                            .onChange(of: vm.frequencyMHz) { _, _ in vm.restartIfRunning() }
+                    }
+                    .help("FM broadcast frequency to tune (RTL-SDR).")
                 }
-                .pickerStyle(.segmented)
-                .fixedSize()
-                .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
 
                 Toggle("Monitor", isOn: $vm.monitorEnabled)
                     .onChange(of: vm.monitorEnabled) { _, _ in vm.restartIfRunning() }

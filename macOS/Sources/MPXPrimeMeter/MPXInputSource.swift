@@ -58,6 +58,12 @@ final class AUHALInputSource: MPXInputSource {
 final class StdinInputSource: MPXInputSource, @unchecked Sendable {
     private let fd: Int32
     private let assumedRate: Double
+    /// When set, the reader thread opens this FIFO itself (non-blocking) instead
+    /// of reading `fd`. Used by the GUI's SDR path: the tuner subprocess is the
+    /// writer and may not have opened its end yet when the meter starts, so we
+    /// poll until samples appear rather than blocking the open. nil = read `fd`
+    /// (the `--stdin` CLI path, fd 0).
+    private let fifoPath: String?
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
 
@@ -72,6 +78,14 @@ final class StdinInputSource: MPXInputSource, @unchecked Sendable {
     init(fileDescriptor: Int32 = 0, sampleRate: Double) {
         self.fd = fileDescriptor
         self.assumedRate = sampleRate
+        self.fifoPath = nil
+    }
+
+    /// Read the MPX stream from a named FIFO the reader thread opens itself.
+    init(fifoPath: String, sampleRate: Double) {
+        self.fd = -1
+        self.assumedRate = sampleRate
+        self.fifoPath = fifoPath
     }
 
     var isRunning: Bool { runningFlag.load(ordering: .relaxed) }
@@ -99,12 +113,52 @@ final class StdinInputSource: MPXInputSource, @unchecked Sendable {
         var headerScan = [UInt8]()
         var floatScratch = [Float](repeating: 0.0, count: readChunk / 2 + 2)
 
-        while runningFlag.load(ordering: .relaxed) {
-            let got = raw.withUnsafeMutableBytes { read(fd, $0.baseAddress, readChunk) }
-            if got <= 0 {
+        // FIFO path: open our own non-blocking read end so the open never
+        // stalls the thread before the tuner (the writer) appears.
+        var readFD = fd
+        let ownsFD: Bool
+        if let path = fifoPath {
+            readFD = open(path, O_RDONLY | O_NONBLOCK)
+            if readFD < 0 {
                 finishedFlag.store(true, ordering: .relaxed)
                 runningFlag.store(false, ordering: .relaxed)
-                break
+                return
+            }
+            ownsFD = true
+        } else {
+            ownsFD = false
+        }
+        defer { if ownsFD { close(readFD) } }
+        // Only treat a 0-byte read / hangup as EOF once the writer has actually
+        // delivered samples; before that it just means "tuner not up yet".
+        var sawData = false
+
+        while runningFlag.load(ordering: .relaxed) {
+            let got: Int
+            if ownsFD {
+                var pfd = pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)
+                let pr = poll(&pfd, 1, 200)  // 200 ms: lets stop() be observed
+                if pr <= 0 { continue }      // timeout / EINTR -> recheck running
+                if (Int32(pfd.revents) & POLLIN) == 0 {
+                    // Hangup with no data: real EOF only after we've seen samples.
+                    if sawData { break }
+                    usleep(100_000)
+                    continue
+                }
+                got = raw.withUnsafeMutableBytes { read(readFD, $0.baseAddress, readChunk) }
+                if got < 0 {
+                    if errno == EAGAIN || errno == EINTR { continue }
+                    break
+                }
+                if got == 0 {
+                    if sawData { break }
+                    usleep(100_000)
+                    continue
+                }
+                sawData = true
+            } else {
+                got = raw.withUnsafeMutableBytes { read(readFD, $0.baseAddress, readChunk) }
+                if got <= 0 { break }
             }
             var sampleBytesStart = 0
             var bytes = Array(raw[0..<got])
@@ -161,6 +215,11 @@ final class StdinInputSource: MPXInputSource, @unchecked Sendable {
                 }
             }
         }
+        // The loop exits either on stop() (runningFlag cleared by another thread
+        // -- not EOF) or on a read EOF / FIFO hangup (break). Mark finished so
+        // the CLI loop / GUI can observe the stream ended, and clear running.
+        finishedFlag.store(true, ordering: .relaxed)
+        runningFlag.store(false, ordering: .relaxed)
     }
 
     /// Locate the "data" chunk tag in an accumulated WAV header. Returns its

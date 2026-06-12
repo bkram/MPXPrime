@@ -12,12 +12,20 @@ import MPXPrimeCore
 final class MeterViewModel: ObservableObject {
     let telemetry = MeterTelemetry()
 
+    /// Where the composite comes from: a Core Audio input device, or a live
+    /// RTL-SDR via the FM-SDR-Tuner subprocess (mono MPX over a FIFO).
+    enum InputKind: Hashable { case audioDevice, sdr }
+
     // Structural / control state (low frequency).
+    @Published var inputKind: InputKind = .audioDevice
+    @Published var frequencyMHz: Double = 88.0
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputID: AudioDeviceID?
     @Published var selectedOutputID: AudioDeviceID?   // nil = system default
     @Published var channel: MeterChannel = .right
+    /// True when a tuner binary is resolvable -- gates the SDR input option.
+    let sdrAvailable = SDRTunerProcess.isAvailable()
     @Published var monitorEnabled = false
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
@@ -38,6 +46,7 @@ final class MeterViewModel: ObservableObject {
     private var deviceID: AudioDeviceID?
     private var priorDeviceRate: Double?
     private var captureRate: Double = 192_000
+    private var sdrTuner: SDRTunerProcess?
     private var timer: Timer?
     private var lastRDSSignature = ""
 
@@ -56,7 +65,15 @@ final class MeterViewModel: ObservableObject {
     // MARK: - Capture lifecycle
 
     func start() {
-        guard !running, let id = selectedInputID else { return }
+        guard !running else { return }
+        switch inputKind {
+        case .audioDevice: startAudioDevice()
+        case .sdr: startSDR()
+        }
+    }
+
+    private func startAudioDevice() {
+        guard let id = selectedInputID else { return }
         let prep = MeterAudioEngine.prepareInputRate(deviceID: id)
         deviceID = id
         priorDeviceRate = prep.prior
@@ -82,12 +99,51 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
+    // Live RTL-SDR via FM-SDR-Tuner: spawn the tuner, read its mono MPX over a
+    // FIFO at 192 kHz. Absolute calibration (full scale = 150 kHz) -- the
+    // tuner's default -6 dB MPX gain -- so PILOT/RDS/MAX are real measurements,
+    // not pilot-referenced. No device rate to restore.
+    private func startSDR() {
+        let khz = Int((frequencyMHz * 1000).rounded())
+        let tuner: SDRTunerProcess
+        do {
+            tuner = try SDRTunerProcess(frequencyKHz: khz)
+            try tuner.start()
+        } catch {
+            statusText = "SDR start failed: \(error.localizedDescription)"
+            return
+        }
+        deviceID = nil
+        priorDeviceRate = nil
+        captureRate = 192_000
+        let gainLinear = Float(pow(10.0, monitorGainDB / 20.0))
+        let eng = MeterAudioEngine(
+            sampleRate: 192_000, channel: channel,
+            monitorEnabled: monitorEnabled, monitorGain: gainLinear,
+            pilotRefKHz: Float(pilotRefKHz), fullScaleKHz: 150,
+            input: StdinInputSource(fifoPath: tuner.fifoPath, sampleRate: 192_000))
+        do {
+            _ = try eng.start(monitorDeviceID: selectedOutputID)
+            engine = eng
+            sdrTuner = tuner
+            running = true
+            statusText = String(format: "Tuned %.2f MHz (SDR, 192 kHz, abs cal)", frequencyMHz)
+            startTimer()
+        } catch {
+            statusText = "SDR start failed: \(error)"
+            tuner.stop()
+            engine = nil
+        }
+    }
+
     func stop() {
         guard running else { return }
         timer?.invalidate()
         timer = nil
         engine?.stop()
         engine = nil
+        sdrTuner?.stop()
+        sdrTuner = nil
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"

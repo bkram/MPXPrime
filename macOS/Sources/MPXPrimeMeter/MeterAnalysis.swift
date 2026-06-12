@@ -91,6 +91,19 @@ final class MeterAnalysis {
 
     // 57 kHz bandpass to isolate the RDS subcarrier for deviation measurement.
     private var rdsBandpass = Biquad()
+    // Measurement low-pass (60 kHz Butterworth, 6th order) applied to the
+    // deviation/MPX-power path only. An FM demod's noise density rises with
+    // f^2 (the noise triangle), so on a weak station the 60..96 kHz band is
+    // pure demod noise that vector-sums into the raw composite peaks and
+    // inflates MAX/peak/power readings far above the true deviation.
+    // Bandlimiting to 60 kHz keeps everything that is really modulated
+    // (mono, pilot, stereo, RDS) -- matching how modulation monitors measure.
+    // Scopes, spectrum, and the IN level stay raw so the noise stays visible.
+    private var measurementLP = BiquadCascade6()
+    // Warm-up gate: skip the held-peak / power / separation accumulators for
+    // the first second after start so a tuner's pre-lock transient does not
+    // poison hold-until-reset values (PEAK +/- read ~full scale forever).
+    private var warmupRemaining: Int
     // Composite peak-hold (~2 s exponential decay) -> MAX DEV.
     private var peakHoldComposite: Float = 0.0
     private var peakDecay: Float = 0.999986
@@ -150,6 +163,10 @@ final class MeterAnalysis {
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
         rdsBandpass.configureBandpass(freqHz: 57_000.0, sampleRate: sampleRate, q: 10.0)
+        // Clamp below Nyquist for low-rate captures (no RDS there anyway).
+        measurementLP.configureLowpass(
+            cutoffHz: min(60_000.0, 0.45 * sampleRate), sampleRate: sampleRate)
+        warmupRemaining = Int(sampleRate)  // ~1 s
         // ~2 s hold: decay^(2*sr) ~ 1/e.
         peakDecay = expf(-1.0 / (2.0 * sampleRate))
         decodedL = [Float](repeating: 0.0, count: maxBlock)
@@ -174,7 +191,9 @@ final class MeterAnalysis {
 
         var peak: Float = 0.0
         var sumSq: Float = 0.0
+        var measSumSq: Float = 0.0
         var rdsSumSq: Float = 0.0
+        let inWarmup = warmupRemaining > 0
         var pilotMagMax: Float = 0.0
         var lSq: Float = 0.0
         var rSq: Float = 0.0
@@ -188,12 +207,19 @@ final class MeterAnalysis {
             if a > peak { peak = a }
             sumSq += s * s
 
+            // Deviation/power measurement path: 60 kHz bandlimited composite
+            // (rejects the demod noise triangle above the modulated bands).
+            let m = measurementLP.process(s)
+            measSumSq += m * m
+            let ma = fabsf(m)
             // Composite peak-hold (decay then capture) for MAX DEV.
             peakHoldComposite *= peakDecay
-            if a > peakHoldComposite { peakHoldComposite = a }
-            // Signed peak-hold (hold until reset) for +/- deviation asymmetry.
-            if s > posPeakRaw { posPeakRaw = s }
-            if s < negPeakRaw { negPeakRaw = s }
+            if !inWarmup {
+                if ma > peakHoldComposite { peakHoldComposite = ma }
+                // Signed peak-hold (until reset) for +/- deviation asymmetry.
+                if m > posPeakRaw { posPeakRaw = m }
+                if m < negPeakRaw { negPeakRaw = m }
+            }
             // RDS subcarrier power for an RMS-based deviation estimate.
             let rdsBand = rdsBandpass.process(s)
             rdsSumSq += rdsBand * rdsBand
@@ -271,18 +297,20 @@ final class MeterAnalysis {
             snap.negPeakDevKHz = negPeakRaw * devScaleKHz
         }
 
-        // MPX power (ITU-R BS.412): EMA the composite mean-square (~60 s), then
-        // express in dBr vs the power of a +/-19 kHz sine (mean-square 19^2/2 in
-        // the kHz domain). beta is the per-block 60 s decay.
-        let blockMeanSq = sumSq / n
+        // MPX power (ITU-R BS.412): EMA the bandlimited composite mean-square
+        // (~60 s), then express in dBr vs the power of a +/-19 kHz sine
+        // (mean-square 19^2/2 in the kHz domain). beta is the per-block decay.
+        let blockMeanSq = measSumSq / n
         let beta = expf(-(n / sampleRate) / 60.0)
-        if mpxPowerPrimed {
+        if inWarmup {
+            // Don't seed the 60 s integrator from pre-lock transients.
+        } else if mpxPowerPrimed {
             mpxPowerMS = mpxPowerMS * beta + blockMeanSq * (1.0 - beta)
         } else {
             mpxPowerMS = blockMeanSq
             mpxPowerPrimed = true
         }
-        if let devScaleKHz {
+        if let devScaleKHz, mpxPowerPrimed {
             let mpxMSkHz2 = mpxPowerMS * devScaleKHz * devScaleKHz
             let refMSkHz2: Float = 19.0 * 19.0 / 2.0
             snap.mpxPowerDBr = 10.0 * log10f(max(1e-9, mpxMSkHz2 / refMSkHz2))
@@ -298,12 +326,13 @@ final class MeterAnalysis {
         let rRMS = sqrtf(rSq / n)
         let hi = max(lRMS, rRMS)
         let lo = min(lRMS, rRMS)
-        if hi > 0.05, lo > 1e-4 {
+        if !inWarmup, hi > 0.05, lo > 1e-4 {
             let sep = min(60.0, 20.0 * log10f(hi / lo))
             if sep > bestSepDB { bestSepDB = sep; sepValid = true }
         }
         snap.bestSeparationDB = bestSepDB
         snap.separationValid = sepValid
+        warmupRemaining = max(0, warmupRemaining - samples.count)
 
         // Trend history (~2/s): push current peak deviation + MPX power.
         trendCounter += 1

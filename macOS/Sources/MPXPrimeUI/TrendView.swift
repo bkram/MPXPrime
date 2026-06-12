@@ -65,7 +65,7 @@ public struct TrendView: View {
             }
             ctx.stroke(wave, with: .color(.green.opacity(0.90)), lineWidth: 1.3)
         }
-        .frame(maxWidth: .infinity, minHeight: 84, idealHeight: 96)
+        .frame(maxWidth: .infinity, minHeight: 56, idealHeight: 96)
         .clipShape(RoundedRectangle(
             cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
         .accessibilityElement()

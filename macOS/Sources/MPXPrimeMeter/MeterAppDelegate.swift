@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // Hosts the single Meter window. Built programmatically (no nib): NSWindow +
@@ -10,6 +11,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private let vm = MeterViewModel()
     private let autoStartSDRFreqMHz: Double?
+    private var subtitleCancellable: AnyCancellable?
 
     init(autoStartSDRFreqMHz: Double? = nil) {
         self.autoStartSDRFreqMHz = autoStartSDRFreqMHz
@@ -24,9 +26,23 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         w.title = "MPX Prime Meter"
         w.toolbarStyle = .unified
-        w.setContentSize(NSSize(width: 1040, height: 820))
+        // Use the operator's screen well: default to most of the visible frame
+        // (the spectrum row absorbs the extra height), bounded so it stays sane
+        // on very large displays. The autosaved frame (below) wins on relaunch.
+        let visible = NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 900)
+        w.setContentSize(NSSize(
+            width: min(1480, visible.width - 80),
+            height: min(1100, visible.height - 60)))
+        w.contentMinSize = NSSize(width: 1020, height: 700)
         w.setFrameAutosaveName("MeterMainWindow")
         if w.frame.origin == .zero { w.center() }
+        // Status line lives in the native window subtitle (HIG) rather than a
+        // content-area status bar; statusText changes only on start/stop/error.
+        w.subtitle = vm.statusText
+        subtitleCancellable = vm.$statusText.sink { [weak w] text in
+            w?.subtitle = text
+        }
         window = w
 
         setupMainMenu()

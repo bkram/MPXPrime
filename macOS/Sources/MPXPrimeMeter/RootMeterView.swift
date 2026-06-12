@@ -10,88 +10,105 @@ struct RootMeterView: View {
     @ObservedObject var vm: MeterViewModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                inputBar
-                HStack(alignment: .top, spacing: 14) {
-                    audioSection
-                    vectorscopeSection
-                    rdsSection
-                        .frame(minWidth: 260, maxWidth: .infinity)
+        // Fluid, non-scrolling dashboard: fixed-height analysis rows on top,
+        // the MPX spectrum (the centerpiece) takes ALL remaining height. The
+        // ScrollView only engages as a fallback when the window is squeezed
+        // below the content minimum -- on a normal screen nothing scrolls.
+        GeometryReader { geo in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 12) {
+                        audioSection
+                        vectorscopeSection
+                        rdsSection
+                            .frame(minWidth: 280, maxWidth: .infinity)
+                    }
+                    .frame(height: 246)
+                    modulationSection
+                        .frame(height: 246)
+                    scopesSection
+                    spectrumSection
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .layoutPriority(1)
                 }
-                modulationSection
-                scopesSection
-                spectrumSection
+                .padding(12)
+                .frame(minWidth: 1020, minHeight: max(820, geo.size.height))
             }
-            .padding(16)
         }
-        .frame(minWidth: 900, minHeight: 680)
+        .toolbar { toolbarContent }
     }
 
-    // MARK: - Input bar
+    // MARK: - Toolbar (HIG: frequent commands live in the unified title bar)
 
-    private var inputBar: some View {
-        GroupBox {
-            HStack(spacing: 12) {
-                if vm.sdrAvailable {
-                    Picker("Source", selection: $vm.inputKind) {
-                        Text("Audio").tag(MeterViewModel.InputKind.audioDevice)
-                        Text("SDR").tag(MeterViewModel.InputKind.sdr)
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    .help("Audio: a Core Audio input device. SDR: a live RTL-SDR "
-                        + "station via FM-SDR-Tuner (mono MPX, absolute calibration).")
-                    .onChange(of: vm.inputKind) { _, _ in vm.restartIfRunning() }
-                }
-
-                if vm.inputKind == .audioDevice {
-                    Picker("Input", selection: $vm.selectedInputID) {
-                        ForEach(vm.inputDevices) { dev in
-                            Text(dev.name).tag(Optional(dev.id))
-                        }
-                    }
-                    .frame(maxWidth: 220)
-                    .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
-
-                    Picker("Ch", selection: $vm.channel) {
-                        Text("L").tag(MeterChannel.left)
-                        Text("R").tag(MeterChannel.right)
-                        Text("Mix").tag(MeterChannel.mix)
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
-                } else {
-                    HStack(spacing: 4) {
-                        Text("Freq")
-                        TextField("MHz", value: $vm.frequencyMHz, format: .number.precision(.fractionLength(1)))
-                            .frame(width: 64)
-                            .multilineTextAlignment(.trailing)
-                            .onSubmit { vm.restartIfRunning() }
-                        Text("MHz")
-                        Stepper("", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
-                            .labelsHidden()
-                            .onChange(of: vm.frequencyMHz) { _, _ in vm.restartIfRunning() }
-                    }
-                    .help("FM broadcast frequency to tune (RTL-SDR).")
-                }
-
-                Toggle("Monitor", isOn: $vm.monitorEnabled)
-                    .onChange(of: vm.monitorEnabled) { _, _ in vm.restartIfRunning() }
-
-                Button(vm.running ? "Stop" : "Start") {
-                    vm.running ? vm.stop() : vm.start()
-                }
-                .buttonStyle(.borderedProminent)
-
-                Spacer()
-                Text(vm.statusText)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button {
+                vm.running ? vm.stop() : vm.start()
+            } label: {
+                Label(vm.running ? "Stop" : "Start",
+                      systemImage: vm.running ? "stop.fill" : "play.fill")
             }
-            .padding(6)
+            .help(vm.running ? "Stop capturing (Command-Return)"
+                             : "Start capturing (Command-Return)")
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+        ToolbarItemGroup(placement: .principal) {
+            if vm.sdrAvailable {
+                Picker("Source", selection: $vm.inputKind) {
+                    Text("Audio").tag(MeterViewModel.InputKind.audioDevice)
+                    Text("SDR").tag(MeterViewModel.InputKind.sdr)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Audio: a Core Audio input device. SDR: a live RTL-SDR "
+                    + "station via FM-SDR-Tuner (mono MPX, absolute calibration).")
+                .onChange(of: vm.inputKind) { _, _ in vm.restartIfRunning() }
+            }
+
+            if vm.inputKind == .audioDevice {
+                Picker("Input", selection: $vm.selectedInputID) {
+                    ForEach(vm.inputDevices) { dev in
+                        Text(dev.name).tag(Optional(dev.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 200)
+                .help("Audio input device carrying the MPX composite.")
+                .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
+
+                Picker("Channel", selection: $vm.channel) {
+                    Text("L").tag(MeterChannel.left)
+                    Text("R").tag(MeterChannel.right)
+                    Text("Mix").tag(MeterChannel.mix)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Which input channel carries the composite (Mix averages both).")
+                .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
+            } else {
+                HStack(spacing: 4) {
+                    TextField("MHz", value: $vm.frequencyMHz,
+                              format: .number.precision(.fractionLength(1)))
+                        .frame(width: 60)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { vm.restartIfRunning() }
+                    Text("MHz").foregroundStyle(.secondary)
+                    Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
+                        .labelsHidden()
+                        .onChange(of: vm.frequencyMHz) { _, _ in vm.restartIfRunning() }
+                }
+                .help("FM broadcast frequency to tune (RTL-SDR).")
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Toggle(isOn: $vm.monitorEnabled) {
+                Label("Monitor", systemImage: vm.monitorEnabled
+                    ? "speaker.wave.2.fill" : "speaker.slash")
+            }
+            .toggleStyle(.button)
+            .help("Play the decoded audio so you hear what a receiver hears.")
+            .onChange(of: vm.monitorEnabled) { _, _ in vm.restartIfRunning() }
         }
     }
 
@@ -113,7 +130,7 @@ struct RootMeterView: View {
                     strip("S", t.sideText, t.sideNorm, .dbfs,
                           "Side / difference (L-R) level. Well below Mid = mostly mono; "
                             + "approaching Mid = very wide stereo.")
-                    Divider().frame(height: 170)
+                    Divider()
                     VStack(spacing: 6) {
                         Text("CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
                         Text(t.correlationText).font(BroadcastStyle.heroReadout)
@@ -123,7 +140,7 @@ struct RootMeterView: View {
                     .help("L/R correlation: +1 = mono, ~0 = wide stereo. Negative means L and R "
                         + "are out of phase -- a mono-compatibility risk; keep it positive.")
                 }
-                .frame(height: 210)
+                .frame(maxHeight: .infinity)
                 .padding(6)
             }
         }
@@ -135,7 +152,8 @@ struct RootMeterView: View {
         GroupBox("Vectorscope") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 VectorscopeView(left: t.decodedLScope, right: t.decodedRScope)
-                    .frame(width: 196, height: 196)
+                    .frame(width: 190)
+                    .frame(maxHeight: .infinity)
                     .padding(6)
                     .help("Stereo goniometer of decoded L/R. Vertical line = mono, a tilted "
                         + "line = single channel, a filled field = wide stereo. A horizontal "
@@ -173,9 +191,9 @@ struct RootMeterView: View {
                               "Peak total deviation (2 s hold). Must stay at or below 75 kHz; "
                                 + "sustained excursions above are over-modulation.")
                     }
-                    .frame(height: 210)
+                    .frame(maxHeight: .infinity)
 
-                    Divider().frame(height: 190)
+                    Divider()
 
                     // Numeric readouts + reset.
                     VStack(alignment: .leading, spacing: 10) {
@@ -196,9 +214,10 @@ struct RootMeterView: View {
                             .buttonStyle(.bordered)
                             .disabled(!vm.running)
                     }
-                    .frame(width: 168, height: 210, alignment: .topLeading)
+                    .frame(width: 168, alignment: .topLeading)
+                    .frame(maxHeight: .infinity)
 
-                    Divider().frame(height: 190)
+                    Divider()
 
                     // Trends.
                     VStack(spacing: 10) {
@@ -233,15 +252,21 @@ struct RootMeterView: View {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 HStack(alignment: .top, spacing: 12) {
                     labeled("Composite") {
-                        ScopeView(samples: t.compositeScope, accessibilityName: "Composite waveform scope")
+                        ScopeView(samples: t.compositeScope,
+                                  accessibilityName: "Composite waveform scope",
+                                  minHeight: 84, idealHeight: 100)
                     }
                     .frame(maxWidth: .infinity)
                     labeled("Decoded L") {
-                        ScopeView(samples: t.decodedLScope, accessibilityName: "Decoded left waveform scope")
+                        ScopeView(samples: t.decodedLScope,
+                                  accessibilityName: "Decoded left waveform scope",
+                                  minHeight: 84, idealHeight: 100)
                     }
                     .frame(maxWidth: .infinity)
                     labeled("Decoded R") {
-                        ScopeView(samples: t.decodedRScope, accessibilityName: "Decoded right waveform scope")
+                        ScopeView(samples: t.decodedRScope,
+                                  accessibilityName: "Decoded right waveform scope",
+                                  minHeight: 84, idealHeight: 100)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -281,7 +306,7 @@ struct RootMeterView: View {
                 rdsRow("Groups", vm.groupText,
                        "RDS group types received and their counts (0A = PS/AF, 2A = RadioText, 4A = CT...).")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(6)
         }
     }

@@ -8,15 +8,21 @@ public struct ScopeView: View {
     let samples: [Float]
     var secondarySamples: [Float]?
     var accessibilityName: String
+    var minHeight: CGFloat
+    var idealHeight: CGFloat
 
     public init(
         samples: [Float],
         secondarySamples: [Float]? = nil,
-        accessibilityName: String = "Waveform scope"
+        accessibilityName: String = "Waveform scope",
+        minHeight: CGFloat = 130,
+        idealHeight: CGFloat = 150
     ) {
         self.samples = samples
         self.secondarySamples = secondarySamples
         self.accessibilityName = accessibilityName
+        self.minHeight = minHeight
+        self.idealHeight = idealHeight
     }
 
     public var body: some View {
@@ -68,7 +74,7 @@ public struct ScopeView: View {
                 lineWidth: 1.2
             )
         }
-        .frame(maxWidth: .infinity, minHeight: 130, idealHeight: 150)
+        .frame(maxWidth: .infinity, minHeight: minHeight, idealHeight: idealHeight)
         .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
         // A Canvas exposes no children; without this it is silent noise to
         // VoiceOver. Give the region a name + image role.

@@ -21,13 +21,19 @@ public struct VerticalMeterStrip: View {
     let level: Double
     let peakLevel: Double?
     let scale: Scale
+    /// Hover tooltip: what the meter shows and its safe range. Empty = none.
+    let help: String
 
-    public init(label: String, valueText: String, level: Double, peakLevel: Double?, scale: Scale) {
+    public init(
+        label: String, valueText: String, level: Double, peakLevel: Double?,
+        scale: Scale, help: String = ""
+    ) {
         self.label = label
         self.valueText = valueText
         self.level = level
         self.peakLevel = peakLevel
         self.scale = scale
+        self.help = help
     }
 
     private struct Tick: Identifiable {
@@ -72,7 +78,8 @@ public struct VerticalMeterStrip: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(valueText)
-        .accessibilityHint(accessibilityHint)
+        .accessibilityHint(help.isEmpty ? accessibilityHint : help)
+        .help(help)
     }
 
     /// Supplementary VoiceOver context: what the meter measures, its scale,

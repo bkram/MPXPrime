@@ -139,6 +139,9 @@ final class MeterAudioEngine: @unchecked Sendable {
         return published
     }
 
+    /// Reset the deviation peak-hold + best-separation accumulators.
+    func resetPeaks() { analysis.requestPeakReset() }
+
     /// Raise an input device to the best capture rate before opening it: 192 kHz
     /// if supported, else the highest supported rate >= 128 kHz (RDS at 57 kHz
     /// needs Nyquist > 57 kHz). The AUHAL cannot sample-rate-convert, so it

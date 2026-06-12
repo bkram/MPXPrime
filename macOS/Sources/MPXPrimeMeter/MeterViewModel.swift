@@ -212,6 +212,22 @@ final class MeterViewModel: ObservableObject {
         telemetry.maxDevNorm = Double(s.maxDevKHz) / MeterScale.maxFullKHz
         telemetry.maxDevText = String(format: "%.1f kHz", s.maxDevKHz)
 
+        if s.mpxPowerValid {
+            telemetry.mpxPowerText = String(format: "%+.1f dBr", s.mpxPowerDBr)
+            // Display range -12..+3 dBr (0 dBr = BS.412 limit).
+            telemetry.mpxPowerNorm = Double(max(0, min(1, (s.mpxPowerDBr + 12.0) / 15.0)))
+        } else {
+            telemetry.mpxPowerText = "--"
+            telemetry.mpxPowerNorm = 0
+        }
+        telemetry.posPeakText = String(format: "%+.1f", s.posPeakDevKHz)
+        telemetry.negPeakText = String(format: "%+.1f", s.negPeakDevKHz)
+        telemetry.separationText = s.separationValid
+            ? String(format: "%.0f dB", s.bestSeparationDB) : "--"
+
+        telemetry.devHistoryKHz = s.devHistoryKHz
+        telemetry.mpxPowerHistoryDBr = s.mpxPowerHistoryDBr
+
         telemetry.compositeScope = s.compositeScope
         telemetry.decodedLScope = s.decodedLScope
         telemetry.decodedRScope = s.decodedRScope
@@ -219,6 +235,9 @@ final class MeterViewModel: ObservableObject {
         telemetry.spectrumMaxHz = s.spectrumMaxHz
         telemetry.spectrumNyquistHz = s.spectrumNyquistHz
     }
+
+    /// Reset the deviation peak-hold + best-separation readouts.
+    func resetPeaks() { engine?.resetPeaks() }
 
     private func pushRDSIfChanged(_ s: MeterSnapshot) {
         let r = s.rds

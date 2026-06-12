@@ -29,6 +29,18 @@ final class MeterTelemetry: ObservableObject {
     @Published var maxDevNorm: Double = 0
     @Published var maxDevText = "0.0 kHz"
 
+    // Modulation analysis: MPX power (BS.412), +/- peak-hold deviation, best
+    // stereo separation. Text "--" when not yet valid.
+    @Published var mpxPowerText = "--"
+    @Published var mpxPowerNorm: Double = 0      // 0..1 over a -12..+3 dBr display range
+    @Published var posPeakText = "0.0"
+    @Published var negPeakText = "0.0"
+    @Published var separationText = "--"
+
+    // Scrolling trend history (oldest -> newest).
+    @Published var devHistoryKHz: [Float] = []
+    @Published var mpxPowerHistoryDBr: [Float] = []
+
     // Waveforms / spectrum.
     @Published var compositeScope: [Float] = []
     @Published var decodedLScope: [Float] = []

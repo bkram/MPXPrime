@@ -1,3 +1,4 @@
+import Atomics
 import Darwin
 import Foundation
 import MPXPrimeCore
@@ -21,6 +22,26 @@ struct MeterSnapshot {
     var pilotDevKHz: Float = 0.0
     var rdsDevKHz: Float = 0.0
     var maxDevKHz: Float = 0.0
+
+    // Total deviation peak-hold since the last reset (composite amplitude
+    // scaled to kHz). Positive and negative excursions tracked separately so
+    // asymmetry is visible. negPeakDevKHz is signed (<= 0).
+    var posPeakDevKHz: Float = 0.0
+    var negPeakDevKHz: Float = 0.0
+
+    // MPX power per ITU-R BS.412: multiplex power integrated over ~60 s,
+    // expressed in dBr where 0 dBr is the power of a sine at +/-19 kHz
+    // deviation. Only meaningful with a known kHz scale (abs cal, or pilot
+    // lock for pilot-ref); `mpxPowerValid` is false otherwise.
+    var mpxPowerDBr: Float = -30.0
+    var mpxPowerValid = false
+
+    // Best stereo separation (dB) observed since reset: 20*log10(stronger /
+    // weaker decoded channel) sampled during strongly lateralized content
+    // (a single-channel / test tone gives the truest reading). Peak-held
+    // because panned program reads pessimistically low.
+    var bestSeparationDB: Float = 0.0
+    var separationValid = false
 
     var leftRMSDBFS: Float = -120.0
     var rightRMSDBFS: Float = -120.0
@@ -46,6 +67,11 @@ struct MeterSnapshot {
     var spectrumDB: [Float] = []
     var spectrumMaxHz: Double = 100_000
     var spectrumNyquistHz: Double = 0
+
+    // Scrolling trend history (oldest -> newest), ~2 points/s. Deviation in kHz
+    // and MPX power in dBr. Cross-thread-copied in `isolatedSnapshot()`.
+    var devHistoryKHz: [Float] = []
+    var mpxPowerHistoryDBr: [Float] = []
 }
 
 /// Drives the receive chain over blocks of composite samples and accumulates a
@@ -72,6 +98,24 @@ final class MeterAnalysis {
     // matches how measuring receivers report RDS injection -- a peak-hold of
     // the DSB-SC biphase envelope over-reads (~1.7x) on data overshoot.
     private var rdsRMS: Float = 0.0
+
+    // Total-deviation peak-hold (hold until reset): raw +/- composite extremes.
+    private var posPeakRaw: Float = 0.0
+    private var negPeakRaw: Float = 0.0
+    // MPX power (BS.412): ~60 s EMA of the composite mean-square.
+    private var mpxPowerMS: Float = 0.0
+    private var mpxPowerPrimed = false
+    // Best observed stereo separation (dB) since reset.
+    private var bestSepDB: Float = 0.0
+    private var sepValid = false
+    // Trend ring (oldest -> newest), pushed ~2/s (every `trendStride` blocks).
+    private static let trendPoints = 120
+    private var devHistory = [Float](repeating: 0.0, count: trendPoints)
+    private var powerHistory = [Float](repeating: -30.0, count: trendPoints)
+    private var trendCounter = 0
+    private let trendStride = 12
+    // Peak/separation reset requested from the UI thread, applied on this thread.
+    private let resetRequested = ManagedAtomic<Bool>(false)
 
     // Windowed BER: diff the stream decoder's cumulative block counters per
     // process() call and smooth (~1 s) so the readout tracks current quality.
@@ -112,8 +156,19 @@ final class MeterAnalysis {
         decodedR = [Float](repeating: 0.0, count: maxBlock)
     }
 
+    /// Clear the peak-hold and best-separation accumulators (UI "Reset"). Safe
+    /// to call from any thread; applied at the top of the next `process`.
+    func requestPeakReset() { resetRequested.store(true, ordering: .relaxed) }
+
     func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
+        if resetRequested.exchange(false, ordering: .relaxed) {
+            peakHoldComposite = 0.0
+            posPeakRaw = 0.0
+            negPeakRaw = 0.0
+            bestSepDB = 0.0
+            sepValid = false
+        }
         let n = Float(samples.count)
         let cap = decodedL.count
 
@@ -136,6 +191,9 @@ final class MeterAnalysis {
             // Composite peak-hold (decay then capture) for MAX DEV.
             peakHoldComposite *= peakDecay
             if a > peakHoldComposite { peakHoldComposite = a }
+            // Signed peak-hold (hold until reset) for +/- deviation asymmetry.
+            if s > posPeakRaw { posPeakRaw = s }
+            if s < negPeakRaw { negPeakRaw = s }
             // RDS subcarrier power for an RMS-based deviation estimate.
             let rdsBand = rdsBandpass.process(s)
             rdsSumSq += rdsBand * rdsBand
@@ -178,7 +236,11 @@ final class MeterAnalysis {
         snap.pilotPresent = pilotMagMax > 1e-6
         snap.pilotPercent = peak > 1e-6 ? (pilotAmp / peak * 100.0) : 0.0
 
-        // Pilot-referenced deviation: scale = pilotRef / pilotAmp.
+        // Pilot-referenced deviation: scale = pilotRef / pilotAmp. devScaleKHz
+        // is the unified "kHz per unit composite amplitude" used by the
+        // deviation, peak-hold and MPX-power metrics below; nil when no scale
+        // is established (uncalibrated input with no pilot lock).
+        let devScaleKHz: Float?
         if let fullScale = fullScaleKHz {
             // Absolutely calibrated source (e.g. FM-SDR-Tuner: 1.0 = 150 kHz
             // at its default -6 dB MPX gain). Everything is a direct
@@ -186,6 +248,7 @@ final class MeterAnalysis {
             snap.pilotDevKHz = pilotAmp * fullScale
             snap.rdsDevKHz = rdsRMS * 1.41421356 * fullScale
             snap.maxDevKHz = peakHoldComposite * fullScale
+            devScaleKHz = fullScale
         } else if pilotAmp > 1e-5 {
             let scale = pilotRefKHz / pilotAmp
             snap.pilotDevKHz = pilotRefKHz
@@ -194,11 +257,65 @@ final class MeterAnalysis {
             // receivers use, so it matches an SFP-style RDS readout.
             snap.rdsDevKHz = (rdsRMS * 1.41421356 / pilotAmp) * pilotRefKHz
             snap.maxDevKHz = peakHoldComposite * scale
+            devScaleKHz = scale
         } else {
             snap.pilotDevKHz = 0.0
             snap.rdsDevKHz = 0.0
             snap.maxDevKHz = 0.0
+            devScaleKHz = nil
         }
+
+        // Total-deviation +/- peak-hold (kHz).
+        if let devScaleKHz {
+            snap.posPeakDevKHz = posPeakRaw * devScaleKHz
+            snap.negPeakDevKHz = negPeakRaw * devScaleKHz
+        }
+
+        // MPX power (ITU-R BS.412): EMA the composite mean-square (~60 s), then
+        // express in dBr vs the power of a +/-19 kHz sine (mean-square 19^2/2 in
+        // the kHz domain). beta is the per-block 60 s decay.
+        let blockMeanSq = sumSq / n
+        let beta = expf(-(n / sampleRate) / 60.0)
+        if mpxPowerPrimed {
+            mpxPowerMS = mpxPowerMS * beta + blockMeanSq * (1.0 - beta)
+        } else {
+            mpxPowerMS = blockMeanSq
+            mpxPowerPrimed = true
+        }
+        if let devScaleKHz {
+            let mpxMSkHz2 = mpxPowerMS * devScaleKHz * devScaleKHz
+            let refMSkHz2: Float = 19.0 * 19.0 / 2.0
+            snap.mpxPowerDBr = 10.0 * log10f(max(1e-9, mpxMSkHz2 / refMSkHz2))
+            snap.mpxPowerValid = true
+        } else {
+            snap.mpxPowerValid = false
+        }
+
+        // Best stereo separation (dB): sample 20*log10(stronger/weaker) only on
+        // real, lateralized content (a single-channel / test tone is truest),
+        // and peak-hold it -- panned program reads pessimistically low.
+        let lRMS = sqrtf(lSq / n)
+        let rRMS = sqrtf(rSq / n)
+        let hi = max(lRMS, rRMS)
+        let lo = min(lRMS, rRMS)
+        if hi > 0.05, lo > 1e-4 {
+            let sep = min(60.0, 20.0 * log10f(hi / lo))
+            if sep > bestSepDB { bestSepDB = sep; sepValid = true }
+        }
+        snap.bestSeparationDB = bestSepDB
+        snap.separationValid = sepValid
+
+        // Trend history (~2/s): push current peak deviation + MPX power.
+        trendCounter += 1
+        if trendCounter >= trendStride {
+            trendCounter = 0
+            devHistory.removeFirst()
+            devHistory.append(snap.maxDevKHz)
+            powerHistory.removeFirst()
+            powerHistory.append(snap.mpxPowerValid ? snap.mpxPowerDBr : -30.0)
+        }
+        snap.devHistoryKHz = devHistory
+        snap.mpxPowerHistoryDBr = powerHistory
         snap.leftRMSDBFS = Self.dbfs(sqrtf(lSq / n))
         snap.rightRMSDBFS = Self.dbfs(sqrtf(rSq / n))
         snap.midRMSDBFS = Self.dbfs(sqrtf(mSq / n))
@@ -291,6 +408,8 @@ final class MeterAnalysis {
         c.decodedLScope = snap.decodedLScope.map { $0 }
         c.decodedRScope = snap.decodedRScope.map { $0 }
         c.spectrumDB = snap.spectrumDB.map { $0 }
+        c.devHistoryKHz = snap.devHistoryKHz.map { $0 }
+        c.mpxPowerHistoryDBr = snap.mpxPowerHistoryDBr.map { $0 }
         return c
     }
 

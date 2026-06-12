@@ -11,15 +11,34 @@ public struct MPXSpectrumView: View {
     /// Optional vertical reference markers in Hz (e.g. 19k/38k/57k). Default
     /// nil keeps existing transmit call sites unchanged.
     var markersHz: [Double]?
+    /// When true, draw the FM composite band regions (Mono L+R, 19 kHz Pilot,
+    /// Stereo L-R, 57 kHz RDS, SCA) as trapezoid outlines + captions along the
+    /// bottom, MpxTool-style. Default false leaves transmit call sites unchanged.
+    var showBandLabels: Bool
 
     private let dbMin: Float = -100.0
     private let dbMax: Float = 0.0
 
-    public init(dbBins: [Float], maxHz: Double, nyquistHz: Double, markersHz: [Double]? = nil) {
+    // Standard FM composite band regions (lo, hi in Hz; two-line caption).
+    private static let compositeBands: [(lo: Double, hi: Double, top: String, bottom: String)] = [
+        (500, 15_000, "Mono", "L+R"),
+        (18_000, 20_000, "19 kHz", "Pilot"),
+        (23_000, 37_000, "Stereo", "L-R"),
+        (39_000, 53_000, "Stereo", "L-R"),
+        (55_000, 59_000, "57 kHz", "RDS"),
+        (64_000, 71_000, "67.65 kHz", "Direct Band"),
+        (88_000, 96_000, "92 kHz", "SCA")
+    ]
+
+    public init(
+        dbBins: [Float], maxHz: Double, nyquistHz: Double,
+        markersHz: [Double]? = nil, showBandLabels: Bool = false
+    ) {
         self.dbBins = dbBins
         self.maxHz = maxHz
         self.nyquistHz = nyquistHz
         self.markersHz = markersHz
+        self.showBandLabels = showBandLabels
     }
 
     public var body: some View {
@@ -142,6 +161,34 @@ public struct MPXSpectrumView: View {
                             Text("\(kHz)k").font(.system(.caption2, design: .monospaced))
                                 .foregroundColor(.orange.opacity(0.95)),
                             at: CGPoint(x: x, y: plotRect.minY + 7))
+                    }
+                }
+
+                // FM composite band regions: trapezoid outline + two-line caption
+                // along the bottom (MpxTool-style reference labels).
+                if showBandLabels {
+                    let bandColor = Color(.sRGB, red: 0.80, green: 0.74, blue: 0.46, opacity: 1.0)
+                    let baseY = plotRect.maxY
+                    let trapTop = plotRect.maxY - plotRect.height * 0.30
+                    for band in Self.compositeBands where band.lo < maxDisplayHz {
+                        let xLo = xPosition(forHz: band.lo, in: plotRect, maxHz: maxDisplayHz)
+                        let xHi = xPosition(forHz: min(band.hi, maxDisplayHz), in: plotRect, maxHz: maxDisplayHz)
+                        let slope = min(10.0, (xHi - xLo) * 0.28)
+                        var trap = Path()
+                        trap.move(to: CGPoint(x: xLo, y: baseY))
+                        trap.addLine(to: CGPoint(x: xLo + slope, y: trapTop))
+                        trap.addLine(to: CGPoint(x: xHi - slope, y: trapTop))
+                        trap.addLine(to: CGPoint(x: xHi, y: baseY))
+                        context.stroke(trap, with: .color(bandColor.opacity(0.35)), lineWidth: 1.0)
+                        let cx = (xLo + xHi) * 0.5
+                        context.draw(
+                            Text(band.top).font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(bandColor.opacity(0.95)),
+                            at: CGPoint(x: cx, y: trapTop + 15))
+                        context.draw(
+                            Text(band.bottom).font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(bandColor.opacity(0.95)),
+                            at: CGPoint(x: cx, y: trapTop + 29))
                     }
                 }
             }

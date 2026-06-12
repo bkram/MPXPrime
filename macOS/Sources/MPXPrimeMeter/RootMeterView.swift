@@ -257,7 +257,7 @@ struct RootMeterView: View {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 MPXSpectrumView(
                     dbBins: t.spectrumDB, maxHz: t.spectrumMaxHz,
-                    nyquistHz: t.spectrumNyquistHz, markersHz: [19_000, 38_000, 57_000]
+                    nyquistHz: t.spectrumNyquistHz, showBandLabels: true
                 )
                 .padding(6)
             }

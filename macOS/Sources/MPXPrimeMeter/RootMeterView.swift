@@ -13,14 +13,17 @@ struct RootMeterView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 inputBar
-                levelsSection
+                HStack(alignment: .top, spacing: 14) {
+                    levelsSection
+                    rdsSection
+                        .frame(minWidth: 240, maxWidth: 360)
+                }
                 scopesSection
                 spectrumSection
-                rdsSection
             }
             .padding(16)
         }
-        .frame(minWidth: 760, minHeight: 680)
+        .frame(minWidth: 900, minHeight: 680)
     }
 
     // MARK: - Input bar
@@ -101,17 +104,19 @@ struct RootMeterView: View {
                     strip("R", t.rightText, t.rightNorm, .dbfs)
                     strip("M", t.midText, t.midNorm, .dbfs)
                     strip("S", t.sideText, t.sideNorm, .dbfs)
-                    Divider().frame(height: 150)
+                    Divider().frame(height: 170)
                     strip("PILOT", t.pilotText, t.pilotNorm, .modulationKHz(limit: 75))
                     strip("RDS", t.rdsText, t.rdsNorm, .modulationKHz(limit: 75))
                     strip("MAX", t.maxDevText, t.maxDevNorm, .modulationKHz(limit: 75))
-                    Spacer()
-                    VStack {
+                    Divider().frame(height: 170)
+                    VStack(spacing: 6) {
                         Text("CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
                         Text(t.correlationText).font(BroadcastStyle.heroReadout)
+                        Spacer(minLength: 0)
                     }
+                    .frame(width: 64)
                 }
-                .frame(height: 180)
+                .frame(height: 210)
                 .padding(6)
             }
         }

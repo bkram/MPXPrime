@@ -94,13 +94,22 @@ public struct VerticalMeterStrip: View {
         let barW: CGFloat = 22
         let h = size.height
         let radius: CGFloat = 3
-        let barRect = CGRect(x: 0, y: 0, width: barW, height: h)
+        // Inset the whole scale vertically so the extreme tick labels (top "0",
+        // bottom "-36"/"100") render fully instead of being clipped at the
+        // Canvas edge -- they are centred on their y, so half would sit off-view
+        // at y=0 / y=h. Everything (bar, fill, ticks, target, peak) maps through
+        // the same inset range so labels stay aligned with their ticks.
+        let vpad: CGFloat = 8
+        let usable = max(1.0, h - 2 * vpad)
+        func yFor(_ position: Double) -> CGFloat { vpad + usable * CGFloat(1.0 - clamp(position)) }
+
+        let barRect = CGRect(x: 0, y: vpad, width: barW, height: usable)
         let barPath = Path(roundedRect: barRect, cornerRadius: radius, style: .continuous)
         ctx.fill(barPath, with: .color(BroadcastStyle.meterSurface))
 
-        let fillH = h * CGFloat(clamp(level))
+        let fillH = usable * CGFloat(clamp(level))
         if fillH > 0.5 {
-            let fillRect = CGRect(x: 0, y: h - fillH, width: barW, height: fillH)
+            let fillRect = CGRect(x: 0, y: vpad + usable - fillH, width: barW, height: fillH)
             ctx.fill(
                 Path(roundedRect: fillRect, cornerRadius: radius, style: .continuous),
                 with: .color(tint.opacity(0.80)))
@@ -108,7 +117,7 @@ public struct VerticalMeterStrip: View {
         ctx.stroke(barPath, with: .color(BroadcastStyle.panelBorder), lineWidth: 0.5)
 
         for tick in scaleTicks {
-            let y = h * CGFloat(1.0 - tick.position)
+            let y = yFor(tick.position)
             ctx.fill(
                 Path(CGRect(x: barW - 6, y: y - 0.5, width: 6, height: 1)),
                 with: .color(BroadcastStyle.scaleTick))
@@ -118,14 +127,14 @@ public struct VerticalMeterStrip: View {
         }
 
         if let targetNorm {
-            let y = h * CGFloat(1.0 - targetNorm)
+            let y = yFor(targetNorm)
             ctx.fill(
                 Path(CGRect(x: 0, y: y - 0.75, width: barW, height: 1.5)),
                 with: .color(BroadcastStyle.accent.opacity(0.85)))
         }
 
         if let peak = peakLevel {
-            let y = h * CGFloat(1.0 - clamp(peak))
+            let y = yFor(peak)
             ctx.fill(
                 Path(CGRect(x: 0, y: y - 1, width: barW, height: 2)),
                 with: .color(Color.primary.opacity(0.95)))

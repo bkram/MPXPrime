@@ -18,7 +18,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         w.title = "MPX Prime Meter"
         w.toolbarStyle = .unified
-        w.setContentSize(NSSize(width: 920, height: 780))
+        w.setContentSize(NSSize(width: 1040, height: 820))
         w.setFrameAutosaveName("MeterMainWindow")
         if w.frame.origin == .zero { w.center() }
         window = w

@@ -6479,7 +6479,7 @@ struct LevelsCardView: View {
                         valueText: model.modulationText,
                         level: model.modulationLevel,
                         peakLevel: model.modulationPeakHoldLevel,
-                        scale: .modulationKHz(limit: model.config.mpxDeviationKHz)
+                        scale: .modulationKHz(fullScale: 100, limit: model.config.mpxDeviationKHz)
                     )
                 }
                 // GR + SAFE removed in 0.30 — peak-control gain-reduction

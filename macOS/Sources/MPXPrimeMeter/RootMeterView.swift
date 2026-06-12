@@ -105,9 +105,12 @@ struct RootMeterView: View {
                     strip("M", t.midText, t.midNorm, .dbfs)
                     strip("S", t.sideText, t.sideNorm, .dbfs)
                     Divider().frame(height: 170)
-                    strip("PILOT", t.pilotText, t.pilotNorm, .modulationKHz(limit: 75))
-                    strip("RDS", t.rdsText, t.rdsNorm, .modulationKHz(limit: 75))
-                    strip("MAX", t.maxDevText, t.maxDevNorm, .modulationKHz(limit: 75))
+                    strip("PILOT", t.pilotText, t.pilotNorm,
+                          .modulationKHz(fullScale: MeterScale.pilotFullKHz, limit: MeterScale.pilotLimitKHz))
+                    strip("RDS", t.rdsText, t.rdsNorm,
+                          .modulationKHz(fullScale: MeterScale.rdsFullKHz, limit: nil))
+                    strip("MAX", t.maxDevText, t.maxDevNorm,
+                          .modulationKHz(fullScale: MeterScale.maxFullKHz, limit: MeterScale.maxLimitKHz))
                     Divider().frame(height: 170)
                     VStack(spacing: 6) {
                         Text("CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)

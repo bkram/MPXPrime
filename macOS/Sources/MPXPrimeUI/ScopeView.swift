@@ -68,7 +68,7 @@ public struct ScopeView: View {
                 lineWidth: 1.2
             )
         }
-        .frame(minHeight: 130, idealHeight: 150)
+        .frame(maxWidth: .infinity, minHeight: 130, idealHeight: 150)
         .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
         // A Canvas exposes no children; without this it is silent noise to
         // VoiceOver. Give the region a name + image role.

@@ -8,6 +8,18 @@ import MPXPrimeCore
 //   - per-tick levels/scopes/spectrum -> `telemetry` (isolated; never the VM)
 //   - slow, structural state (devices, running, RDS text) -> @Published here,
 //     written only on change so a tick does not invalidate the window.
+/// Per-meter full-scale ranges (kHz) for the deviation strips. Shared by the
+/// view model (to normalize the reading) and RootMeterView (to label the
+/// strip), so the divisor and the scale always match. Pilot/RDS use small
+/// ranges so they read mid-scale instead of as a stub on a 0..100 scale.
+enum MeterScale {
+    static let pilotFullKHz = 12.0
+    static let pilotLimitKHz = 7.5    // ~10% pilot injection ceiling
+    static let rdsFullKHz = 8.0
+    static let maxFullKHz = 100.0
+    static let maxLimitKHz = 75.0     // total FM deviation limit
+}
+
 @MainActor
 final class MeterViewModel: ObservableObject {
     let telemetry = MeterTelemetry()
@@ -193,11 +205,11 @@ final class MeterViewModel: ObservableObject {
         telemetry.correlation = Double(s.stereoCorrelation)
         telemetry.correlationText = String(format: "%+.2f", s.stereoCorrelation)
 
-        telemetry.pilotNorm = Double(s.pilotDevKHz) / 100.0
+        telemetry.pilotNorm = Double(s.pilotDevKHz) / MeterScale.pilotFullKHz
         telemetry.pilotText = String(format: "%.2f kHz", s.pilotDevKHz)
-        telemetry.rdsNorm = Double(s.rdsDevKHz) / 100.0
+        telemetry.rdsNorm = Double(s.rdsDevKHz) / MeterScale.rdsFullKHz
         telemetry.rdsText = String(format: "%.2f kHz", s.rdsDevKHz)
-        telemetry.maxDevNorm = Double(s.maxDevKHz) / 100.0
+        telemetry.maxDevNorm = Double(s.maxDevKHz) / MeterScale.maxFullKHz
         telemetry.maxDevText = String(format: "%.1f kHz", s.maxDevKHz)
 
         telemetry.compositeScope = s.compositeScope

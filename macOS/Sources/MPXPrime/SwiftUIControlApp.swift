@@ -5292,6 +5292,7 @@ private struct SnapshotSlotRow: View {
     let slot: Int
     @State private var draftName: String = ""
     @State private var confirmingClear = false
+    @FocusState private var nameFieldFocused: Bool
 
     private var snapshot: ConfigSnapshot? { model.snapshots[slot] }
 
@@ -5303,17 +5304,18 @@ private struct SnapshotSlotRow: View {
                 .frame(width: 22, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 2) {
-                TextField(snapshot?.name ?? "Snapshot \(slot + 1)", text: $draftName, onCommit: {
-                    if snapshot != nil {
-                        model.renameSnapshot(slot: slot, name: draftName)
-                    } else {
-                        model.saveSnapshot(slot: slot, name: draftName)
-                        draftName = ""
+                TextField("Snapshot \(slot + 1)", text: $draftName)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .frame(maxWidth: 260)
+                    .focused($nameFieldFocused)
+                    // Enter commits (creates an empty slot or renames a saved
+                    // one); losing focus commits a rename so a typed name is
+                    // never silently lost.
+                    .onSubmit { commitName(allowCreate: true) }
+                    .onChange(of: nameFieldFocused) { _, focused in
+                        if !focused { commitName(allowCreate: false) }
                     }
-                })
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(maxWidth: 260)
 
                 if let snap = snapshot {
                     Text("saved \(Self.relativeDateString(snap.savedAt))")
@@ -5330,9 +5332,11 @@ private struct SnapshotSlotRow: View {
 
             HStack(spacing: 8) {
                 Button("Save") {
-                    let nameToUse = !draftName.isEmpty ? draftName : (snapshot?.name ?? "")
-                    model.saveSnapshot(slot: slot, name: nameToUse)
-                    draftName = ""
+                    // Capture the current full config into this slot under the
+                    // field's name (saveSnapshot trims + defaults when empty).
+                    // Do NOT clear draftName -- the name stays visible, and the
+                    // onChange(of: snapshot?.name) sync keeps the field correct.
+                    model.saveSnapshot(slot: slot, name: draftName)
                 }
                 .help("Capture the current full configuration into this slot. Overwrites any existing snapshot here.")
 
@@ -5353,6 +5357,12 @@ private struct SnapshotSlotRow: View {
         .onAppear {
             draftName = snapshot?.name ?? ""
         }
+        // Keep the field in sync when the slot's stored name changes underneath
+        // (loaded from disk, renamed, saved, cleared) -- but never clobber the
+        // user's in-progress typing.
+        .onChange(of: snapshot?.name) { _, newName in
+            if !nameFieldFocused { draftName = newName ?? "" }
+        }
         // Deleting a saved slot is irreversible -- confirm first (HIG: confirm
         // destructive actions that can't be undone).
         .confirmationDialog(
@@ -5367,6 +5377,21 @@ private struct SnapshotSlotRow: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("\"\(snapshot?.name ?? "Snapshot \(slot + 1)")\" will be deleted. This cannot be undone.")
+        }
+    }
+
+    /// Persist the edited name. For a saved slot, rename it (on Enter or focus
+    /// loss) when the text actually changed. For an empty slot, only Enter
+    /// (`allowCreate`) creates the snapshot -- clicking away must not silently
+    /// save a slot the user never asked for.
+    private func commitName(allowCreate: Bool) {
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = snapshot {
+            if !trimmed.isEmpty, trimmed != existing.name {
+                model.renameSnapshot(slot: slot, name: trimmed)
+            }
+        } else if allowCreate, !trimmed.isEmpty {
+            model.saveSnapshot(slot: slot, name: trimmed)
         }
     }
 

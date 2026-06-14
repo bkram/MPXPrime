@@ -690,6 +690,10 @@ struct ConfigSnapshot: Identifiable, Codable {
 /// save, etc.) can be added without breaking old files.
 struct SnapshotFile: Codable {
     var slots: [ConfigSnapshot?]
+    /// The preset whose config is currently live (persisted so the "Loaded"
+    /// marker survives relaunch). Optional with defaults so older files decode.
+    var activeID: UUID?
+    var activeModified: Bool?
 }
 
 struct MonitoringStreamHealth {
@@ -2448,6 +2452,15 @@ final class MPXPrimeViewModel: ObservableObject {
             let count = min(file.slots.count, slots.count)
             for i in 0..<count { slots[i] = file.slots[i] }
             self.snapshots = slots
+            // Restore which preset is active so the "Loaded" marker survives
+            // relaunch. Drop it if the slot it pointed at is gone.
+            if let id = file.activeID, slots.contains(where: { $0?.id == id }) {
+                self.activeSnapshotID = id
+                self.activeSnapshotModified = file.activeModified ?? false
+            } else {
+                self.activeSnapshotID = nil
+                self.activeSnapshotModified = false
+            }
         } catch {
             statusText = "Failed to load presets: \(error.localizedDescription)"
         }
@@ -2458,7 +2471,8 @@ final class MPXPrimeViewModel: ObservableObject {
     /// schema migrations stay handled by the existing INI parser's
     /// defaults).
     func writeSnapshotsToDisk() {
-        let file = SnapshotFile(slots: snapshots)
+        let file = SnapshotFile(
+            slots: snapshots, activeID: activeSnapshotID, activeModified: activeSnapshotModified)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -2508,6 +2522,10 @@ final class MPXPrimeViewModel: ObservableObject {
             applyLoadedConfig(loaded, origin: .manual)
             activeSnapshotID = snapshot.id
             activeSnapshotModified = false
+            // Persist the loaded config to the main INI so disk == live, and
+            // record the active preset so the "Loaded" marker survives relaunch.
+            enqueueConfigSave(snapshot: config)
+            writeSnapshotsToDisk()
             statusText = "Loaded preset \"\(snapshot.name)\"."
         } catch {
             statusText = "Failed to load preset: \(error.localizedDescription)"
@@ -4533,8 +4551,12 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private func saveConfig(restartRequired: Bool) {
-        // Any user edit diverges the live config from the loaded snapshot.
-        if activeSnapshotID != nil { activeSnapshotModified = true }
+        // Any user edit diverges the live config from the loaded preset. Persist
+        // the flip once (not per keystroke) so "Loaded - edited" survives relaunch.
+        if activeSnapshotID != nil, !activeSnapshotModified {
+            activeSnapshotModified = true
+            writeSnapshotsToDisk()
+        }
         enqueueConfigSave(snapshot: config)
         if restartRequired && isRunning {
             if !pendingRuntimeApply {
@@ -5317,11 +5339,48 @@ private struct Card<Content: View>: View {
 private struct SnapshotsView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
+    private var activePresetName: String? {
+        guard let id = model.activeSnapshotID else { return nil }
+        return model.snapshots.compactMap { $0 }.first { $0.id == id }?.name
+    }
+
+    /// Unmissable summary of which preset is live (or that the config is custom).
+    @ViewBuilder private var activePresetBanner: some View {
+        let modified = model.activeSnapshotModified
+        HStack(spacing: 8) {
+            if let name = activePresetName {
+                Image(systemName: modified ? "pencil.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(modified ? Color.orange : Color.accentColor)
+                    .accessibilityHidden(true)
+                Text(modified ? "Active preset: \(name)  (edited since loaded)"
+                              : "Active preset: \(name)")
+                    .fontWeight(.semibold)
+            } else {
+                Image(systemName: "circle.dashed")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text("No preset loaded - the live configuration isn't tied to a saved preset.")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(activePresetName == nil
+                      ? Color.secondary.opacity(0.08)
+                      : (modified ? Color.orange : Color.accentColor).opacity(0.12))
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Card(title: "Presets") {
                     VStack(alignment: .leading, spacing: 10) {
+                        activePresetBanner
                         ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
                             SnapshotSlotRow(model: model, slot: slot)
                             if slot < MPXPrimeViewModel.snapshotSlotCount - 1 {

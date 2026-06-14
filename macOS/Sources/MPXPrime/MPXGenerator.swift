@@ -3632,7 +3632,7 @@ final class BasicRDSCoder {
         self.schedulerStandardLPS = config.rdsSchedulerStandardLPS
         let initialPSText = psBanks[psActiveBankIndex]
         self.psFrames = Self.parseTimedFrames(
-            initialPSText, width: 8, uppercase: true, center: psCentered,
+            initialPSText, width: 8, uppercase: false, center: psCentered,
             allowScroll: true, defaultDuration: self.psFrameSeconds)
         self.psFrameBytes = psFrames.map(Self.rdsBytes)
         self.rtFrames = Self.parseTimedFrames(
@@ -3642,7 +3642,7 @@ final class BasicRDSCoder {
             center: rtCentered
         )
         self.psSequence = Self.parseTimedSequence(
-            initialPSText, width: 8, uppercase: true, center: psCentered,
+            initialPSText, width: 8, uppercase: false, center: psCentered,
             allowScroll: true, defaultDuration: self.psFrameSeconds)
         self.rtSequence = Self.parseTimedSequence(
             config.rdsRTText,
@@ -3714,11 +3714,11 @@ final class BasicRDSCoder {
     private func rebuildPSSequence() {
         let text = psBanks[psActiveBankIndex]
         psFrames = Self.parseTimedFrames(
-            text, width: 8, uppercase: true, center: psCentered,
+            text, width: 8, uppercase: false, center: psCentered,
             allowScroll: true, defaultDuration: psFrameSeconds)
         psFrameBytes = psFrames.map(Self.rdsBytes)
         psSequence = Self.parseTimedSequence(
-            text, width: 8, uppercase: true, center: psCentered,
+            text, width: 8, uppercase: false, center: psCentered,
             allowScroll: true, defaultDuration: psFrameSeconds)
         psSeqIndex = 0
         psSeqStart = Self.monotonicSeconds()

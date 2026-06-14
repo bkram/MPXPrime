@@ -11,6 +11,12 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **PS no longer force-uppercased.** The 8-character Program Service now
+  transmits in the case you type it (e.g. "Veronica"), matching RadioText and
+  Long PS. Previously PS was always upper-cased for older-receiver
+  compatibility. PTYN is still upper-cased.
+- **"Snapshots" renamed to "Presets"** in the UI (full-config save slots).
+  The on-disk file, types, and methods are unchanged — no migration.
 - **Renamed to "MPX Prime Studio".** The encoder app is now "MPX Prime Studio"
   (paired with the "MPX Prime Meter" analyzer); all window titles, menus, the
   About panel, the `.app` bundle, and the default RDS text reflect the new name.

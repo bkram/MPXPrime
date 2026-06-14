@@ -1813,6 +1813,13 @@ final class MPXPrimeViewModel: ObservableObject {
     // ("Morning Show", "Saturday Night", "Live Sports").
     @Published var snapshots: [ConfigSnapshot?] = Array(repeating: nil, count: MPXPrimeViewModel.snapshotSlotCount)
 
+    // Which snapshot's config is currently live (set on load + save), so the UI
+    // can show which slot is active. nil = the live config came from the main
+    // INI, not a snapshot. `activeSnapshotModified` flips true once any config
+    // edit diverges from that snapshot.
+    @Published var activeSnapshotID: UUID?
+    @Published var activeSnapshotModified = false
+
     static let snapshotSlotCount: Int = 8
 
     /// Snapshot file path derived from the config file path. Sibling
@@ -2473,12 +2480,16 @@ final class MPXPrimeViewModel: ObservableObject {
         do {
             let ini = try config.captureAsINIString()
             let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            snapshots[slot] = ConfigSnapshot(
+            let saved = ConfigSnapshot(
                 id: UUID(),
                 name: resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName,
                 savedAt: Date(),
                 configINIText: ini
             )
+            snapshots[slot] = saved
+            // The just-saved slot now mirrors the live config exactly.
+            activeSnapshotID = saved.id
+            activeSnapshotModified = false
             writeSnapshotsToDisk()
             statusText = "Saved snapshot to slot \(slot + 1)."
         } catch {
@@ -2495,6 +2506,8 @@ final class MPXPrimeViewModel: ObservableObject {
         do {
             let loaded = try AppConfig.loadFromINIString(snapshot.configINIText)
             applyLoadedConfig(loaded, origin: .manual)
+            activeSnapshotID = snapshot.id
+            activeSnapshotModified = false
             statusText = "Loaded snapshot \"\(snapshot.name)\"."
         } catch {
             statusText = "Failed to load snapshot: \(error.localizedDescription)"
@@ -2504,6 +2517,10 @@ final class MPXPrimeViewModel: ObservableObject {
     /// Drop the snapshot in `slot` and persist the empty state.
     func clearSnapshot(slot: Int) {
         guard (0..<snapshots.count).contains(slot) else { return }
+        if snapshots[slot]?.id == activeSnapshotID {
+            activeSnapshotID = nil
+            activeSnapshotModified = false
+        }
         snapshots[slot] = nil
         writeSnapshotsToDisk()
         statusText = "Cleared snapshot slot \(slot + 1)."
@@ -4516,6 +4533,8 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private func saveConfig(restartRequired: Bool) {
+        // Any user edit diverges the live config from the loaded snapshot.
+        if activeSnapshotID != nil { activeSnapshotModified = true }
         enqueueConfigSave(snapshot: config)
         if restartRequired && isRunning {
             if !pendingRuntimeApply {
@@ -5329,11 +5348,15 @@ private struct SnapshotSlotRow: View {
 
     private var snapshot: ConfigSnapshot? { model.snapshots[slot] }
 
+    /// This slot holds the snapshot whose config is currently live.
+    private var isActive: Bool { snapshot != nil && snapshot?.id == model.activeSnapshotID }
+
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Text("\(slot + 1).")
                 .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .fontWeight(isActive ? .bold : .regular)
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 .frame(width: 22, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -5350,14 +5373,25 @@ private struct SnapshotSlotRow: View {
                         if !focused { commitName(allowCreate: false) }
                     }
 
-                if let snap = snapshot {
-                    Text("saved \(Self.relativeDateString(snap.savedAt))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("empty")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    if isActive {
+                        Label(
+                            model.activeSnapshotModified ? "Loaded - edited" : "Loaded",
+                            systemImage: model.activeSnapshotModified
+                                ? "pencil.circle.fill" : "checkmark.circle.fill"
+                        )
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(model.activeSnapshotModified ? Color.orange : Color.accentColor)
+                    }
+                    if let snap = snapshot {
+                        Text("saved \(Self.relativeDateString(snap.savedAt))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("empty")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
 
@@ -5387,6 +5421,12 @@ private struct SnapshotSlotRow: View {
             }
             .controlSize(.small)
         }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isActive ? Color.accentColor.opacity(0.10) : Color.clear)
+        )
         .onAppear {
             draftName = snapshot?.name ?? ""
         }

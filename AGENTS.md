@@ -7,7 +7,7 @@ This file is the single source of truth for AI coding agents (Claude Code, Codex
 Native macOS FM composite (MPX) generator — real-time broadcast-style stereo encoder with RDS. Swift 6 / SwiftUI / AVAudioEngine, SPM package rooted at `macOS/`. Targets macOS 15+. Single executable target `MPXPrime`; sole external dep is `swift-atomics`.
 
 - Primary entrypoint: `macOS/Package.swift`
-- Default user config: `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- Default user config: `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 - **Platform tiers: Apple Silicon (arm64) is Tier 1** (primary, fully-supported, optimization target). **Intel (x86_64) is Tier 2, best-effort** — ships in the universal binary with an identical audio chain, but perf work targets arm64 first; give Intel lighter-weight fallbacks where cheap (e.g. the arch-tiered GUI refresh profile), don't block on Intel-only optimization.
 
 See also: `docs/manual.md` (user manual: usage / configuration / RDS / reference tables), `docs/ARCHITECTURE.md` (detailed DSP chain and stage descriptions), `docs/BUILDING.md` (build / run / test / package from source), `plan.md` (roadmap).
@@ -22,7 +22,7 @@ swift build --package-path macOS -c release
 # Run
 swift run --package-path macOS MPXPrime              # GUI
 swift run --package-path macOS MPXPrime --nogui      # headless
-swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime.ini"
+swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime Studio.ini"
 
 # Offline verification (no audio devices touched)
 swift run --package-path macOS MPXPrime --verify --seconds 5
@@ -84,7 +84,7 @@ For DSP differences, prefer measurement-first validation wherever technically po
   - `NowPlayingSupport.swift` — external script polling for RDS RT metadata
 - `macOS/Tests/MPXPrimeTests/` — Swift Testing suite (DSP primitives, ring buffer, analysis helpers, RDS bitstream + live-apply)
 - `macOS/verifier_baselines/` — JSON baselines for `--verify --baseline-strict`
-- `macOS/{MPXPrime.ini,Verification.ini}` — sample configs; user config lives at `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- `macOS/{MPXPrime.ini,Verification.ini}` — sample configs; user config lives at `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 - `documents/` — standards PDFs (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
 - `.vscode/settings.json` — sets `swift.searchSubfoldersForPackages: true` so sourcekit-lsp discovers `macOS/Package.swift` (workspace root is the repo root, package lives one level down)
 
@@ -185,7 +185,7 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 
 Run before tagging. None of these should be skipped on a release commit; partial coverage is how regressions ship.
 
-**Run the offline `--verify*` gates on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
+**Run the offline `--verify*` gates on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime Studio GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
 
 - [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS` — full default suite passes
 - [ ] `swift build --package-path macOS -c release` — release build clean

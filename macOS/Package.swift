@@ -65,7 +65,7 @@ let package = Package(
             path: "Sources/MPXPrime",
             linkerSettings: [
                 // Embed an Info.plist into the Mach-O so LaunchServices shows
-                // "MPX Prime" (CFBundleName) in the Apple menu / Dock even for
+                // "MPX Prime Studio" (CFBundleName) in the Apple menu / Dock even for
                 // the unbundled binary (swift run / .build/release/MPXPrime).
                 // The shipped .app bundle's own Info.plist takes precedence
                 // when bundled.

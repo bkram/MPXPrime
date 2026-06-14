@@ -27,14 +27,28 @@ private let kScopesWindowTitle = "Scopes"
 private let kMPXSpectrumWindowTitle = "MPX Spectrum"
 private let kAudioSpectrumWindowTitle = "Audio Spectrum"
 private let kLevelsWindowTitle = "Levels"
-private let kMainWindowAutosaveName = "MPXPrime.MainWindow"
-private let kScopesWindowAutosaveName = "MPXPrime.ScopesWindow"
-private let kSpectrumWindowAutosaveName = "MPXPrime.SpectrumWindow"
-private let kPreMPXSpectrumWindowAutosaveName = "MPXPrime.PreMPXSpectrumWindow"
-private let kLevelsWindowAutosaveName = "MPXPrime.LevelsWindow"
-private let kAboutWindowAutosaveName = "MPXPrime.AboutWindow"
-private let kHelpWindowAutosaveName = "MPXPrime.HelpWindow"
-private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
+// Window-frame autosave keys. Renamed MPXPrime.* -> MPXPrimeStudio.* with the
+// "MPX Prime Studio" rebrand; `migrateLegacyWindowFrames()` copies any saved
+// geometry forward on first launch (same UserDefaults domain -- bundle id is
+// unchanged). The (legacy, new) pairs below feed that migration.
+private let kWindowAutosaveLegacyToNew: [(String, String)] = [
+    ("MPXPrime.MainWindow", "MPXPrimeStudio.MainWindow"),
+    ("MPXPrime.ScopesWindow", "MPXPrimeStudio.ScopesWindow"),
+    ("MPXPrime.SpectrumWindow", "MPXPrimeStudio.SpectrumWindow"),
+    ("MPXPrime.PreMPXSpectrumWindow", "MPXPrimeStudio.PreMPXSpectrumWindow"),
+    ("MPXPrime.LevelsWindow", "MPXPrimeStudio.LevelsWindow"),
+    ("MPXPrime.AboutWindow", "MPXPrimeStudio.AboutWindow"),
+    ("MPXPrime.HelpWindow", "MPXPrimeStudio.HelpWindow"),
+    ("MPXPrime.SettingsWindow", "MPXPrimeStudio.SettingsWindow")
+]
+private let kMainWindowAutosaveName = "MPXPrimeStudio.MainWindow"
+private let kScopesWindowAutosaveName = "MPXPrimeStudio.ScopesWindow"
+private let kSpectrumWindowAutosaveName = "MPXPrimeStudio.SpectrumWindow"
+private let kPreMPXSpectrumWindowAutosaveName = "MPXPrimeStudio.PreMPXSpectrumWindow"
+private let kLevelsWindowAutosaveName = "MPXPrimeStudio.LevelsWindow"
+private let kAboutWindowAutosaveName = "MPXPrimeStudio.AboutWindow"
+private let kHelpWindowAutosaveName = "MPXPrimeStudio.HelpWindow"
+private let kSettingsWindowAutosaveName = "MPXPrimeStudio.SettingsWindow"
 // Compile-time constant URL; literal is well-formed so the optional
 // returned by URL(string:) is guaranteed non-nil.
 private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
@@ -898,6 +912,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    /// One-time copy of saved window geometry from the legacy "MPXPrime.*"
+    /// autosave keys to the renamed "MPXPrimeStudio.*" keys (the "MPX Prime
+    /// Studio" rebrand). NSWindow stores frames under "NSWindow Frame <name>"
+    /// in the app's UserDefaults (domain unchanged -- bundle id is the same), so
+    /// this is a pure key copy; no-op once the new key exists. Run before any
+    /// `restoreFrame`.
+    private func migrateLegacyWindowFrames() {
+        let defaults = UserDefaults.standard
+        for (legacy, new) in kWindowAutosaveLegacyToNew {
+            let newKey = "NSWindow Frame \(new)"
+            let legacyKey = "NSWindow Frame \(legacy)"
+            if defaults.object(forKey: newKey) == nil,
+               let value = defaults.object(forKey: legacyKey) {
+                defaults.set(value, forKey: newKey)
+            }
+        }
+    }
+
     private func revealWindow(_ window: NSWindow) {
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -971,6 +1003,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = makeMPXPrimeAppIcon()
         NSApp.activate(ignoringOtherApps: true)
+        migrateLegacyWindowFrames()
 
         let vm = MPXPrimeViewModel(configPath: configPath)
         model = vm
@@ -985,7 +1018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             defer: false
         )
         w.center()
-        w.title = "MPX Prime"
+        w.title = "MPX Prime Studio"
         w.titleVisibility = .visible
         w.minSize = NSSize(width: 900, height: 620)
         w.delegate = self
@@ -1087,7 +1120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     private func setupMainMenu() {
-        let appName = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "MPX Prime"
+        let appName = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "MPX Prime Studio"
         let mainMenu = NSMenu()
 
         // App Menu (unchanged)
@@ -1287,7 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
         let helpMenu = NSMenu(title: "Help")
 
-        let openHelp = NSMenuItem(title: "MPX Prime Help", action: #selector(showHelp), keyEquivalent: "/")
+        let openHelp = NSMenuItem(title: "MPX Prime Studio Help", action: #selector(showHelp), keyEquivalent: "/")
         openHelp.target = self
         openHelp.keyEquivalentModifierMask = [.command, .shift]
         helpMenu.addItem(openHelp)
@@ -1315,7 +1348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let aboutView = AboutSectionView()
         let hostingController = NSHostingController(rootView: aboutView)
         let w = NSWindow(contentViewController: hostingController)
-        w.title = "About MPX Prime"
+        w.title = "About MPX Prime Studio"
         w.styleMask = [.titled, .closable]
         w.setContentSize(NSSize(width: 400, height: 560))
         w.isReleasedWhenClosed = false
@@ -1334,7 +1367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let helpView = HelpWindowView()
         let hostingController = NSHostingController(rootView: helpView)
         let w = NSWindow(contentViewController: hostingController)
-        w.title = "MPX Prime Help"
+        w.title = "MPX Prime Studio Help"
         // Utility/documentation windows should not minimize (macOS HIG —
         // matches About / Settings styleMasks). Resizable so long help
         // text remains usable on smaller displays.
@@ -1430,7 +1463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             defer: false
         )
         w.center()
-        w.title = "MPX Prime"
+        w.title = "MPX Prime Studio"
         w.titleVisibility = .visible
         w.minSize = NSSize(width: 900, height: 620)
         w.delegate = self
@@ -8677,7 +8710,7 @@ private struct AboutSectionView: View {
                 }
 
                 VStack(spacing: 4) {
-                    Text("MPX Prime")
+                    Text("MPX Prime Studio")
                         .font(.title.weight(.semibold))
                     Text("Professional FM stereo processing and RDS encoding — free and open source")
                         .font(.callout)

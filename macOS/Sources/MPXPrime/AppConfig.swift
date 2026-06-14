@@ -3,21 +3,59 @@ import Foundation
 struct AppConfig {
     static let appVersion: String = "0.36"
 
-    static var defaultINIPath: String {
+    // App-support folder / config filename. Renamed "MPX Prime" -> "MPX Prime
+    // Studio" (the encoder, paired with "MPX Prime Meter"). The legacy names are
+    // kept so `migrateLegacyConfigIfNeeded()` can carry an existing user's
+    // config + snapshots forward on first launch.
+    static let appSupportDirName = "MPX Prime Studio"
+    static let configFileName = "MPX Prime Studio.ini"
+    static let legacyAppSupportDirName = "MPX Prime"
+    static let legacyConfigFileName = "MPX Prime.ini"
+
+    static var defaultINIPath: String { iniPath(dir: appSupportDirName, file: configFileName) }
+    static var legacyINIPath: String { iniPath(dir: legacyAppSupportDirName, file: legacyConfigFileName) }
+
+    private static func iniPath(dir: String, file: String) -> String {
         let fileManager = FileManager.default
         if let appSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first {
             return appSupport
-                .appendingPathComponent("MPX Prime", isDirectory: true)
-                .appendingPathComponent("MPX Prime.ini", isDirectory: false)
+                .appendingPathComponent(dir, isDirectory: true)
+                .appendingPathComponent(file, isDirectory: false)
                 .path
         }
         return ((NSHomeDirectory() as NSString)
-            .appendingPathComponent("Library/Application Support/MPX Prime/MPX Prime.ini")
+            .appendingPathComponent("Library/Application Support/\(dir)/\(file)")
             as NSString)
             .standardizingPath
+    }
+
+    /// One-time migration for the "MPX Prime" -> "MPX Prime Studio" rename:
+    /// if the new default config does not exist yet but a legacy one does, copy
+    /// the config AND its `.snapshots.json` sidecar into the new location so the
+    /// rename loses no user data. No-op once the new config exists. Call once at
+    /// startup, before loading the config, and only for the default path.
+    static func migrateLegacyConfigIfNeeded() {
+        let fm = FileManager.default
+        let newPath = defaultINIPath
+        let oldPath = legacyINIPath
+        guard !fm.fileExists(atPath: newPath), fm.fileExists(atPath: oldPath) else { return }
+        do {
+            let newDir = (newPath as NSString).deletingLastPathComponent
+            try fm.createDirectory(atPath: newDir, withIntermediateDirectories: true)
+            try fm.copyItem(atPath: oldPath, toPath: newPath)
+            // Snapshots sidecar: "<config>.snapshots.json" (see snapshotsFilePath).
+            let oldSnaps = oldPath + ".snapshots.json"
+            let newSnaps = newPath + ".snapshots.json"
+            if fm.fileExists(atPath: oldSnaps), !fm.fileExists(atPath: newSnaps) {
+                try fm.copyItem(atPath: oldSnaps, toPath: newSnaps)
+            }
+        } catch {
+            FileHandle.standardError.write(
+                Data("MPX Prime Studio: legacy config migration failed: \(error)\n".utf8))
+        }
     }
 
     // Parameter apply behaviour:
@@ -383,11 +421,11 @@ struct AppConfig {
         }
     }
     var rdsRTText: String =
-        "10s:MPX Prime FM MPX Generator/10s:Native macOS Swift App"
+        "10s:MPX Prime Studio FM MPX Generator/10s:Native macOS Swift App"
     var rdsRTManualBuffers: Bool = false
     var rdsRTCycleAB: Bool = false
-    var rdsRTA: String = "MPX Prime: FM MPX + RDS Audio Processor"
-    var rdsRTB: String = "MPX Prime: FM MPX Generator"
+    var rdsRTA: String = "MPX Prime Studio: FM MPX + RDS Audio Processor"
+    var rdsRTB: String = "MPX Prime Studio: FM MPX Generator"
     var rdsRTC: String = ""
     var rdsRTD: String = ""
     var rdsRTBufferAEnabled: Bool = true
@@ -404,7 +442,7 @@ struct AppConfig {
     var rdsPTYN: String = "-STEREO-"
     var rdsEnablePTYN: Bool = true
     var rdsPTYNCentered: Bool = false
-    var rdsLongPS32: String = "MPX Prime Stereo and RDS Coder"
+    var rdsLongPS32: String = "MPX Prime Studio Stereo+RDS"
     var rdsEnableLPS: Bool = true
     var rdsLPSCentered: Bool = false
     var rdsLPSCR: Bool = true

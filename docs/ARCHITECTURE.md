@@ -2,7 +2,7 @@
 
 ## Overview
 
-MPX Prime is a native macOS audio application built with Swift and SwiftUI. It provides real-time FM stereo MPX generation with RDS support using AVAudioEngine.
+MPX Prime Studio is a native macOS audio application built with Swift and SwiftUI. It provides real-time FM stereo MPX generation with RDS support using AVAudioEngine.
 
 ```
 SwiftUI UI  <->  App State (ObservableObject)
@@ -214,7 +214,7 @@ The SPM package (`macOS/Package.swift`) has three targets: **`MPXPrime`** (the e
 
 ## Current processing order
 
-Within the main audio path, MPX Prime runs:
+Within the main audio path, MPX Prime Studio runs:
 
 1. Input gain and mono fold
 2. **Phase rotation** (4-pole allpass, optional)
@@ -249,7 +249,7 @@ Within the main audio path, MPX Prime runs:
 
 Most optional stages are disabled by default and can be enabled via config/UI. The default processing chain intentionally ships with multiband, bass clipper, composite clipper, pre-encode limiter, final MPX safety, encoder FIR, and multiband FIR enabled per `AppConfig`.
 
-When `Mono Mode` is enabled, MPX Prime suppresses the pilot, stereo subcarrier, and RDS injection so the transmitted composite is true mono.
+When `Mono Mode` is enabled, MPX Prime Studio suppresses the pilot, stereo subcarrier, and RDS injection so the transmitted composite is true mono.
 
 ## External Dependencies
 
@@ -357,7 +357,7 @@ The choice is resolved once per engine start by `AudioOutputEngine.start()` via 
 
 The block-level bit encoder — `crc` / `withCheckword` / `buildGroupBits` and the B1/B2/B3/B4 layout — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). The CRC polynomial (`0x5B9`), offset words A/B/C/D, the `(groupType << 12) | (versionB << 11) | (tp << 10) | (pty << 5) | b2Tail` B2 composition, and the segment-counter patterns in Group 0 (mod 4, DI bit) and Group 2 (mod 16, A/B flag) all follow the Python implementation's structure. The Cp offset value diverged during the port (Python uses `0x350`, this implementation uses `0x1E0`).
 
-Everything else in this section — the 1187.5 bit/s biphase impulse + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation (`nextSampleWithPilotLock`), the real-time audio-thread safety work (pre-allocated `bitBuffer`, atomic CT cache, `monotonicSeconds()` timing), the `RDSRuntimeConfig` live-apply pipeline, AF Method B encoding, RT+ ODA registration (AID `0x4BD7`, group 3A/11A), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, and Group 1A ECC/LIC variants — is MPX Prime's own work and has no counterpart in the source Python project.
+Everything else in this section — the 1187.5 bit/s biphase impulse + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation (`nextSampleWithPilotLock`), the real-time audio-thread safety work (pre-allocated `bitBuffer`, atomic CT cache, `monotonicSeconds()` timing), the `RDSRuntimeConfig` live-apply pipeline, AF Method B encoding, RT+ ODA registration (AID `0x4BD7`, group 3A/11A), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, and Group 1A ECC/LIC variants — is MPX Prime Studio's own work and has no counterpart in the source Python project.
 
 ### Group repertoire
 

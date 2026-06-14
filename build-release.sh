@@ -7,9 +7,9 @@ cd "$(dirname "$0")"
 
 VERSION=${1:-0.36}
 OUTPUT_DIR="macOS/dist"
-APP_NAME="MPX Prime"
+APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"
-CONFIG_NAME="MPX Prime.ini"
+CONFIG_NAME="MPX Prime Studio.ini"
 ICON_FILE="macOS/Resources/MPXPrime.icns"
 ENTITLEMENTS="macOS/MPXPrime.entitlements"
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}

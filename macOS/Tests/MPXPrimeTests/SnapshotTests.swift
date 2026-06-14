@@ -76,10 +76,10 @@ struct SnapshotTests {
     @Test func emptyNameFallsBackToSlotLabel() {
         let model = makeViewModel()
         model.saveSnapshot(slot: 2, name: "")
-        #expect(model.snapshots[2]?.name == "Snapshot 3")
+        #expect(model.snapshots[2]?.name == "Preset 3")
 
         model.saveSnapshot(slot: 5, name: "   \n\t  ")
-        #expect(model.snapshots[5]?.name == "Snapshot 6",
+        #expect(model.snapshots[5]?.name == "Preset 6",
             "whitespace-only names should also fall back")
     }
 

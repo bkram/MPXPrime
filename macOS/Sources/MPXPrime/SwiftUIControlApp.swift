@@ -528,7 +528,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Schedule"
         case .rdsCarrier: return "Subcarrier"
         case .testTone: return "Test Tone"
-        case .snapshots: return "Snapshots"
+        case .snapshots: return "Presets"
         }
     }
 
@@ -599,7 +599,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
         case .rdsCarrier: return "Injection level, subcarrier frequency, pulse shaping"
         case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
-        case .snapshots: return "Named save / recall slots for the full configuration"
+        case .snapshots: return "Named presets — save / recall the full configuration"
         }
     }
 
@@ -2449,7 +2449,7 @@ final class MPXPrimeViewModel: ObservableObject {
             for i in 0..<count { slots[i] = file.slots[i] }
             self.snapshots = slots
         } catch {
-            statusText = "Failed to load snapshots: \(error.localizedDescription)"
+            statusText = "Failed to load presets: \(error.localizedDescription)"
         }
     }
 
@@ -2467,12 +2467,12 @@ final class MPXPrimeViewModel: ObservableObject {
             try data.write(
                 to: URL(fileURLWithPath: snapshotsFilePath), options: [.atomic])
         } catch {
-            statusText = "Failed to write snapshots: \(error.localizedDescription)"
+            statusText = "Failed to write presets: \(error.localizedDescription)"
         }
     }
 
     /// Capture the current config into slot `slot` with the given name
-    /// (empty → "Snapshot N"). Writes the file immediately so a crash
+    /// (empty → "Preset N"). Writes the file immediately so a crash
     /// doesn't lose the operator's save.
     func saveSnapshot(slot: Int, name: String) {
         guard (0..<snapshots.count).contains(slot) else { return }
@@ -2482,7 +2482,7 @@ final class MPXPrimeViewModel: ObservableObject {
             let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let saved = ConfigSnapshot(
                 id: UUID(),
-                name: resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName,
+                name: resolvedName.isEmpty ? "Preset \(slot + 1)" : resolvedName,
                 savedAt: Date(),
                 configINIText: ini
             )
@@ -2491,9 +2491,9 @@ final class MPXPrimeViewModel: ObservableObject {
             activeSnapshotID = saved.id
             activeSnapshotModified = false
             writeSnapshotsToDisk()
-            statusText = "Saved snapshot to slot \(slot + 1)."
+            statusText = "Saved preset to slot \(slot + 1)."
         } catch {
-            statusText = "Failed to save snapshot: \(error.localizedDescription)"
+            statusText = "Failed to save preset: \(error.localizedDescription)"
         }
     }
 
@@ -2508,9 +2508,9 @@ final class MPXPrimeViewModel: ObservableObject {
             applyLoadedConfig(loaded, origin: .manual)
             activeSnapshotID = snapshot.id
             activeSnapshotModified = false
-            statusText = "Loaded snapshot \"\(snapshot.name)\"."
+            statusText = "Loaded preset \"\(snapshot.name)\"."
         } catch {
-            statusText = "Failed to load snapshot: \(error.localizedDescription)"
+            statusText = "Failed to load preset: \(error.localizedDescription)"
         }
     }
 
@@ -2523,7 +2523,7 @@ final class MPXPrimeViewModel: ObservableObject {
         }
         snapshots[slot] = nil
         writeSnapshotsToDisk()
-        statusText = "Cleared snapshot slot \(slot + 1)."
+        statusText = "Cleared preset slot \(slot + 1)."
     }
 
     /// Rename an existing snapshot in place (doesn't touch the stored
@@ -2534,7 +2534,7 @@ final class MPXPrimeViewModel: ObservableObject {
         guard (0..<snapshots.count).contains(slot),
               var snapshot = snapshots[slot] else { return }
         let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        snapshot.name = resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName
+        snapshot.name = resolvedName.isEmpty ? "Preset \(slot + 1)" : resolvedName
         snapshots[slot] = snapshot
         writeSnapshotsToDisk()
     }
@@ -5320,7 +5320,7 @@ private struct SnapshotsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Card(title: "Snapshots") {
+                Card(title: "Presets") {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
                             SnapshotSlotRow(model: model, slot: slot)
@@ -5331,7 +5331,7 @@ private struct SnapshotsView: View {
                     }
                 }
 
-                TabHelpBox(text: "Eight named snapshot slots for the full configuration. Save the current setup into a slot, load it back later — survives app restart (stored as `<configPath>.snapshots.json`). Heavier than Format Profiles: snapshots capture every per-stage setting and RDS field, not just the DSP bundle.")
+                TabHelpBox(text: "Eight named presets capturing the full configuration. Save the current setup into a slot, load it back later — survives app restart. Heavier than Format Profiles: a preset captures every per-stage setting and RDS field, not just the DSP bundle.")
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)
@@ -5360,7 +5360,7 @@ private struct SnapshotSlotRow: View {
                 .frame(width: 22, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 2) {
-                TextField("Snapshot \(slot + 1)", text: $draftName)
+                TextField("Preset \(slot + 1)", text: $draftName)
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
                     .frame(maxWidth: 260)
@@ -5405,7 +5405,7 @@ private struct SnapshotSlotRow: View {
                     // onChange(of: snapshot?.name) sync keeps the field correct.
                     model.saveSnapshot(slot: slot, name: draftName)
                 }
-                .help("Capture the current full configuration into this slot. Overwrites any existing snapshot here.")
+                .help("Capture the current full configuration into this slot. Overwrites any existing preset here.")
 
                 Button("Load") {
                     model.loadSnapshot(slot: slot)
@@ -5439,17 +5439,17 @@ private struct SnapshotSlotRow: View {
         // Deleting a saved slot is irreversible -- confirm first (HIG: confirm
         // destructive actions that can't be undone).
         .confirmationDialog(
-            "Clear snapshot \(slot + 1)?",
+            "Clear preset \(slot + 1)?",
             isPresented: $confirmingClear,
             titleVisibility: .visible
         ) {
-            Button("Clear Snapshot", role: .destructive) {
+            Button("Clear Preset", role: .destructive) {
                 model.clearSnapshot(slot: slot)
                 draftName = ""
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\"\(snapshot?.name ?? "Snapshot \(slot + 1)")\" will be deleted. This cannot be undone.")
+            Text("\"\(snapshot?.name ?? "Preset \(slot + 1)")\" will be deleted. This cannot be undone.")
         }
     }
 

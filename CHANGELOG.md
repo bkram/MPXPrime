@@ -20,11 +20,11 @@ combination test suite. Newest first.
 - **Renamed to "MPX Prime Studio".** The encoder app is now "MPX Prime Studio"
   (paired with the "MPX Prime Meter" analyzer); all window titles, menus, the
   About panel, the `.app` bundle, and the default RDS text reflect the new name.
-  The default config moves to
-  `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`; on first
-  launch an existing `MPX Prime/MPX Prime.ini` (and its snapshots sidecar) is
-  copied forward, and saved window positions migrate too — nothing is lost. The
-  bundle identifier (`com.mpxprime.app`) is unchanged, so the granted microphone
+  The default config lives at
+  `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`. This is
+  a clean break — an old `MPX Prime/MPX Prime.ini` is **not** migrated; point
+  the app at it with `--config`, or re-save your setup as a preset. The bundle
+  identifier (`com.mpxprime.app`) is unchanged, so the granted microphone
   permission carries over. The DMG filename stays `MPX_Prime-<version>.dmg` and
   the internal executable stays `MPXPrime`.
 - **Fixed snapshot names not saving/loading.** Typing a name then clicking Save

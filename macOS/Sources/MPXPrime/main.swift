@@ -180,12 +180,6 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
     printUsage()
     exit(0)
 }
-// Carry an existing "MPX Prime" config + snapshots forward to the new
-// "MPX Prime Studio" location before resolving the default path. Skipped when
-// the user passed an explicit --config or is running a verify scenario.
-if !options.configPathExplicit, !options.verify {
-    AppConfig.migrateLegacyConfigIfNeeded()
-}
 let configPath = options.configPathExplicit
     ? options.configPath
     : (options.verify ? defaultVerificationConfigPath() : AppConfig.defaultINIPath)

@@ -3,59 +3,26 @@ import Foundation
 struct AppConfig {
     static let appVersion: String = "0.36"
 
-    // App-support folder / config filename. Renamed "MPX Prime" -> "MPX Prime
-    // Studio" (the encoder, paired with "MPX Prime Meter"). The legacy names are
-    // kept so `migrateLegacyConfigIfNeeded()` can carry an existing user's
-    // config + snapshots forward on first launch.
+    // App-support folder / config filename for MPX Prime Studio (the encoder,
+    // paired with "MPX Prime Meter").
     static let appSupportDirName = "MPX Prime Studio"
     static let configFileName = "MPX Prime Studio.ini"
-    static let legacyAppSupportDirName = "MPX Prime"
-    static let legacyConfigFileName = "MPX Prime.ini"
 
-    static var defaultINIPath: String { iniPath(dir: appSupportDirName, file: configFileName) }
-    static var legacyINIPath: String { iniPath(dir: legacyAppSupportDirName, file: legacyConfigFileName) }
-
-    private static func iniPath(dir: String, file: String) -> String {
+    static var defaultINIPath: String {
         let fileManager = FileManager.default
         if let appSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first {
             return appSupport
-                .appendingPathComponent(dir, isDirectory: true)
-                .appendingPathComponent(file, isDirectory: false)
+                .appendingPathComponent(appSupportDirName, isDirectory: true)
+                .appendingPathComponent(configFileName, isDirectory: false)
                 .path
         }
         return ((NSHomeDirectory() as NSString)
-            .appendingPathComponent("Library/Application Support/\(dir)/\(file)")
+            .appendingPathComponent("Library/Application Support/\(appSupportDirName)/\(configFileName)")
             as NSString)
             .standardizingPath
-    }
-
-    /// One-time migration for the "MPX Prime" -> "MPX Prime Studio" rename:
-    /// if the new default config does not exist yet but a legacy one does, copy
-    /// the config AND its `.snapshots.json` sidecar into the new location so the
-    /// rename loses no user data. No-op once the new config exists. Call once at
-    /// startup, before loading the config, and only for the default path.
-    static func migrateLegacyConfigIfNeeded() {
-        let fm = FileManager.default
-        let newPath = defaultINIPath
-        let oldPath = legacyINIPath
-        guard !fm.fileExists(atPath: newPath), fm.fileExists(atPath: oldPath) else { return }
-        do {
-            let newDir = (newPath as NSString).deletingLastPathComponent
-            try fm.createDirectory(atPath: newDir, withIntermediateDirectories: true)
-            try fm.copyItem(atPath: oldPath, toPath: newPath)
-            // Snapshots sidecar: "<config>.snapshots.json" (see snapshotsFilePath).
-            let oldSnaps = oldPath + ".snapshots.json"
-            let newSnaps = newPath + ".snapshots.json"
-            if fm.fileExists(atPath: oldSnaps), !fm.fileExists(atPath: newSnaps) {
-                try fm.copyItem(atPath: oldSnaps, toPath: newSnaps)
-            }
-        } catch {
-            FileHandle.standardError.write(
-                Data("MPX Prime Studio: legacy config migration failed: \(error)\n".utf8))
-        }
     }
 
     // Parameter apply behaviour:

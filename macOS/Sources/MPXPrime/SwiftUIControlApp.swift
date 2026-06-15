@@ -27,20 +27,7 @@ private let kScopesWindowTitle = "Scopes"
 private let kMPXSpectrumWindowTitle = "MPX Spectrum"
 private let kAudioSpectrumWindowTitle = "Audio Spectrum"
 private let kLevelsWindowTitle = "Levels"
-// Window-frame autosave keys. Renamed MPXPrime.* -> MPXPrimeStudio.* with the
-// "MPX Prime Studio" rebrand; `migrateLegacyWindowFrames()` copies any saved
-// geometry forward on first launch (same UserDefaults domain -- bundle id is
-// unchanged). The (legacy, new) pairs below feed that migration.
-private let kWindowAutosaveLegacyToNew: [(String, String)] = [
-    ("MPXPrime.MainWindow", "MPXPrimeStudio.MainWindow"),
-    ("MPXPrime.ScopesWindow", "MPXPrimeStudio.ScopesWindow"),
-    ("MPXPrime.SpectrumWindow", "MPXPrimeStudio.SpectrumWindow"),
-    ("MPXPrime.PreMPXSpectrumWindow", "MPXPrimeStudio.PreMPXSpectrumWindow"),
-    ("MPXPrime.LevelsWindow", "MPXPrimeStudio.LevelsWindow"),
-    ("MPXPrime.AboutWindow", "MPXPrimeStudio.AboutWindow"),
-    ("MPXPrime.HelpWindow", "MPXPrimeStudio.HelpWindow"),
-    ("MPXPrime.SettingsWindow", "MPXPrimeStudio.SettingsWindow")
-]
+// Window-frame autosave keys (UserDefaults).
 private let kMainWindowAutosaveName = "MPXPrimeStudio.MainWindow"
 private let kScopesWindowAutosaveName = "MPXPrimeStudio.ScopesWindow"
 private let kSpectrumWindowAutosaveName = "MPXPrimeStudio.SpectrumWindow"
@@ -916,24 +903,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// One-time copy of saved window geometry from the legacy "MPXPrime.*"
-    /// autosave keys to the renamed "MPXPrimeStudio.*" keys (the "MPX Prime
-    /// Studio" rebrand). NSWindow stores frames under "NSWindow Frame <name>"
-    /// in the app's UserDefaults (domain unchanged -- bundle id is the same), so
-    /// this is a pure key copy; no-op once the new key exists. Run before any
-    /// `restoreFrame`.
-    private func migrateLegacyWindowFrames() {
-        let defaults = UserDefaults.standard
-        for (legacy, new) in kWindowAutosaveLegacyToNew {
-            let newKey = "NSWindow Frame \(new)"
-            let legacyKey = "NSWindow Frame \(legacy)"
-            if defaults.object(forKey: newKey) == nil,
-               let value = defaults.object(forKey: legacyKey) {
-                defaults.set(value, forKey: newKey)
-            }
-        }
-    }
-
     private func revealWindow(_ window: NSWindow) {
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -1007,7 +976,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = makeMPXPrimeAppIcon()
         NSApp.activate(ignoringOtherApps: true)
-        migrateLegacyWindowFrames()
 
         let vm = MPXPrimeViewModel(configPath: configPath)
         model = vm

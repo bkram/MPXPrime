@@ -9,8 +9,14 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased
+## 0.37 — 2026-06-15
 
+- **MPX Prime Meter GUI.** The companion analyzer ships a full SwiftUI
+  dashboard window (scopes, MPX spectrum with band captions, levels +
+  deviation meters, stereo vectorscope, RDS panel) plus MPX power (BS.412),
+  peak-hold deviation, best stereo separation, and deviation/power trend
+  graphs. Native RTL-SDR input via FM-SDR-Tuner (`run-meter-sdr.sh --gui` or
+  Source -> SDR), and a packaged double-clickable `MPX Prime Meter.app`.
 - **RDS PIN (Programme Item Number).** Group 1A block 4 can now carry a PIN —
   the scheduled day / hour / minute of the current programme item — instead of
   always sending 0. Off by default; enable it under RDS → Program → Station

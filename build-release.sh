@@ -166,6 +166,58 @@ cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
 </dict>
 </plist>
 EOF
+
+# --- Bundle the mpx-tuner RTL-SDR helper + its dylibs into the Meter app ---
+# Self-contained SDR: no user-placed fm-sdr-tuner, no Homebrew at runtime.
+# arm64-only (the deps are arm64-only Homebrew dylibs; Intel SDR is not
+# supported -- Tier 2). Conditional: if cmake or the deps are missing, skip and
+# the Meter falls back to resolving fm-sdr-tuner from bin/ or $FM_SDR_TUNER.
+TUNER_RTLSDR_DYLIB="/opt/homebrew/opt/librtlsdr/lib/librtlsdr.0.dylib"
+TUNER_LIQUID_DYLIB="/opt/homebrew/opt/liquid-dsp/lib/libliquid.dylib"
+TUNER_USB_DYLIB="/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib"
+TUNER_FFTW_DYLIB="/opt/homebrew/opt/fftw/lib/libfftw3f.3.dylib"
+if command -v cmake >/dev/null 2>&1 \
+    && [ -f "$TUNER_RTLSDR_DYLIB" ] && [ -f "$TUNER_LIQUID_DYLIB" ] \
+    && [ -f "$TUNER_USB_DYLIB" ] && [ -f "$TUNER_FFTW_DYLIB" ]; then
+    echo "Building + bundling mpx-tuner (RTL-SDR helper, arm64)..."
+    cmake -S tuner -B tuner/build-release -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 >/dev/null
+    cmake --build tuner/build-release -j "$BUILD_JOBS" >/dev/null
+    HELPERS_DIR="$METER_APP_DIR/Contents/Helpers"
+    FRAMEWORKS_DIR="$METER_APP_DIR/Contents/Frameworks"
+    mkdir -p "$HELPERS_DIR" "$FRAMEWORKS_DIR"
+    cp tuner/build-release/mpx-tuner "$HELPERS_DIR/"
+    chmod u+w "$HELPERS_DIR/mpx-tuner"
+    for d in "$TUNER_RTLSDR_DYLIB" "$TUNER_LIQUID_DYLIB" "$TUNER_USB_DYLIB" "$TUNER_FFTW_DYLIB"; do
+        cp "$d" "$FRAMEWORKS_DIR/"; chmod u+w "$FRAMEWORKS_DIR/$(basename "$d")"
+    done
+    # Rewrite any Homebrew load command pointing at one of our 4 dylibs to @rpath.
+    relocate_macho() {
+        local f="$1"
+        otool -L "$f" | awk 'NR>1 {print $1}' | grep -E '^/(opt/homebrew|usr/local)/' | while read -r dep; do
+            case "$(basename "$dep")" in
+                librtlsdr.0.dylib|libliquid.dylib|libusb-1.0.0.dylib|libfftw3f.3.dylib)
+                    install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$f" ;;
+            esac
+        done
+    }
+    for b in librtlsdr.0.dylib libliquid.dylib libusb-1.0.0.dylib libfftw3f.3.dylib; do
+        install_name_tool -id "@rpath/$b" "$FRAMEWORKS_DIR/$b"
+        relocate_macho "$FRAMEWORKS_DIR/$b"
+    done
+    relocate_macho "$HELPERS_DIR/mpx-tuner"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$HELPERS_DIR/mpx-tuner"
+    # Sign the bundled dylibs + helper (the --deep below also covers them, but
+    # sign explicitly so the rewritten load commands have valid signatures).
+    for b in librtlsdr.0.dylib libliquid.dylib libusb-1.0.0.dylib libfftw3f.3.dylib; do
+        codesign --force --sign - "$FRAMEWORKS_DIR/$b"
+    done
+    codesign --force --sign - "$HELPERS_DIR/mpx-tuner"
+else
+    echo "Skipping mpx-tuner bundle (cmake or librtlsdr/liquid-dsp/libusb/fftw not found);"
+    echo "  the Meter will resolve fm-sdr-tuner from bin/ or \$FM_SDR_TUNER at runtime."
+fi
+
 echo "Ad-hoc signing $METER_APP_NAME.app..."
 codesign --force --deep --sign - "$METER_APP_DIR"
 

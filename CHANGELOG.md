@@ -9,6 +9,20 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## Unreleased
+
+- **Built-in RTL-SDR (no external binary).** MPX Prime Meter now bundles its
+  own stripped SDR helper, `mpx-tuner` (a minimal RTL-SDR -> FM-demod -> MPX
+  subset of FM-SDR-Tuner, vendored under `tuner/`, GPL-3.0), with its dylibs
+  (librtlsdr / liquid-dsp / libusb / fftw) inside `MPX Prime Meter.app`. The
+  GUI's `Source -> SDR` now works out of the box on Apple Silicon with just a
+  connected dongle -- no Homebrew, no separately-placed `fm-sdr-tuner`. The
+  Meter prefers the bundled helper, falling back to `FM_SDR_TUNER` / `bin/` for
+  development. SDR is Apple-Silicon-only (the deps are arm64-only). The headless
+  `run-meter-sdr.sh` script still uses an external `fm-sdr-tuner`.
+- Docs: documented MPX Prime Meter across README / manual / ARCHITECTURE /
+  AGENTS (it shipped in 0.37 but wasn't mentioned).
+
 ## 0.37 — 2026-06-15
 
 - **MPX Prime Meter GUI.** The companion analyzer ships a full SwiftUI

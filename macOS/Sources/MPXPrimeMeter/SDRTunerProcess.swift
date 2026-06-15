@@ -61,11 +61,18 @@ final class SDRTunerProcess {
 
     private static func candidatePaths() -> [String] {
         var paths: [String] = []
+        // Explicit dev override always wins.
         if let env = ProcessInfo.processInfo.environment["FM_SDR_TUNER"], !env.isEmpty {
             paths.append(env)
         }
+        // The bundled, self-contained helper inside the shipped .app
+        // (Contents/Helpers/mpx-tuner) -- absent for an unbundled `swift run`.
+        paths.append((Bundle.main.bundlePath as NSString)
+            .appendingPathComponent("Contents/Helpers/mpx-tuner"))
+        // Dev fallbacks: a local bin/ copy, then a sibling FM-SDR-Tuner build.
         let cwd = FileManager.default.currentDirectoryPath
         paths.append((cwd as NSString).appendingPathComponent("bin/fm-sdr-tuner"))
+        paths.append((cwd as NSString).appendingPathComponent("tuner/build/mpx-tuner"))
         let home = NSHomeDirectory()
         paths.append((home as NSString)
             .appendingPathComponent("Projects/git/FM-SDR-Tuner/build/fm-sdr-tuner"))
@@ -83,13 +90,23 @@ final class SDRTunerProcess {
         let log = FileHandle.forWritingToFile(path: logPath)
 
         process.executableURL = URL(fileURLWithPath: binaryPath)
-        process.arguments = [
-            "-f", "\(frequencyKHz)",
-            "--auto-start",
-            "--no-audio",
-            "--mpx-wav", fifoPath,
-            "--mpx-rate", "\(mpxRate)"
-        ]
+        // The bundled `mpx-tuner` and the full `fm-sdr-tuner` take different
+        // flags for "write MPX to this FIFO at this rate".
+        if (binaryPath as NSString).lastPathComponent == "mpx-tuner" {
+            process.arguments = [
+                "-f", "\(frequencyKHz)",
+                "-o", fifoPath,
+                "--mpx-rate", "\(mpxRate)"
+            ]
+        } else {
+            process.arguments = [
+                "-f", "\(frequencyKHz)",
+                "--auto-start",
+                "--no-audio",
+                "--mpx-wav", fifoPath,
+                "--mpx-rate", "\(mpxRate)"
+            ]
+        }
         if let log {
             process.standardOutput = log
             process.standardError = log

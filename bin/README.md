@@ -1,8 +1,13 @@
 # bin/
 
-External helper binaries used by the MPX Prime helper scripts. These are
-**not part of MPX Prime** and are **not committed** (see `.gitignore`) — place
-the binary here yourself.
+External helper binaries used by the MPX Prime **helper scripts** (the headless
+`run-meter-sdr.sh`). These are **not committed** (see `.gitignore`) — place the
+binary here yourself.
+
+> **You only need this for the headless `run-meter-sdr.sh` script.** The
+> packaged **MPX Prime Meter.app** ships its own stripped, self-contained SDR
+> helper (`mpx-tuner`, built from `tuner/` and bundled with its dylibs), so the
+> GUI needs neither this binary nor Homebrew. See `tuner/README.md`.
 
 ## `fm-sdr-tuner`
 

@@ -41,9 +41,11 @@ and it decodes stereo + full RDS and shows it on a single dashboard window.
   best stereo separation, and deviation / MPX-power trend graphs
 - Full RDS decode: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group
   histogram + live BER
-- Input: an audio device, or **native RTL-SDR** tuning (`Source -> SDR`, or
-  `./run-meter-sdr.sh --gui --freq <MHz>`); a headless terminal mode also
-  exists (`./run-meter.sh`, `./run-meter-sdr.sh`)
+- Input: an audio device, or **native RTL-SDR** tuning (`Source -> SDR`) -- the
+  app bundles its own stripped SDR helper (`mpx-tuner`, from `tuner/`), so it
+  needs no separate binary or Homebrew, just a connected RTL-SDR dongle
+  (Apple Silicon). Headless terminal modes also exist (`./run-meter.sh`,
+  `./run-meter-sdr.sh`)
 
 See the [user manual](docs/manual.md) for details.
 

@@ -255,4 +255,4 @@ captures/**
 bin/fm-sdr-tuner
 
 # mpx-tuner CMake build dir
-tuner/build/
+tuner/build*/

@@ -612,10 +612,13 @@ check your own air signal, compare against other stations, or validate a chain.
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
   >= 128 kHz, so the default input prefers a 192 kHz-capable device.
 - **RTL-SDR** (`Source -> SDR`): set the frequency and Start; the Meter spawns
-  the bundled FM-SDR-Tuner, reads its mono MPX over a FIFO at 192 kHz, and
-  measures with absolute calibration (full scale = 150 kHz). `./run-meter-sdr.sh
-  --gui --freq <MHz>` opens the window pre-tuned. Place the `fm-sdr-tuner`
-  binary in `bin/` (see `bin/README.md`) or set `FM_SDR_TUNER`.
+  its bundled `mpx-tuner` helper, reads its mono MPX over a FIFO at 192 kHz, and
+  measures with absolute calibration (full scale = 150 kHz). The packaged app
+  ships this helper (a stripped subset of FM-SDR-Tuner, from `tuner/`) with its
+  dylibs, so you need only a connected RTL-SDR dongle -- no Homebrew, no
+  separately-placed binary. SDR is Apple Silicon only. `./run-meter-sdr.sh
+  --gui --freq <MHz>` opens the window pre-tuned. (The headless
+  `run-meter-sdr.sh` script still uses a `bin/fm-sdr-tuner` or `FM_SDR_TUNER`.)
 
 ### What it shows
 

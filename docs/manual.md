@@ -592,6 +592,50 @@ Disabled by bypass:
 - Stereo widener
 
 
+## MPX Prime Meter (companion analyzer)
+
+MPX Prime Meter is the receive/analyze counterpart to the encoder, shipped as
+`MPX Prime Meter.app` in the same DMG. It takes an FM MPX composite, decodes
+stereo + full RDS, and shows everything on one dashboard window. Use it to
+check your own air signal, compare against other stations, or validate a chain.
+
+### Launching
+
+- Double-click `MPX Prime Meter.app`, or run `macOS/.build/release/MPXPrimeMeter --gui`.
+- Headless terminal dashboards also exist: `./run-meter.sh` (audio-device input)
+  and `./run-meter-sdr.sh --freq <MHz>` (RTL-SDR input).
+
+### Input
+
+- **Audio device** (`Source -> Audio`): pick the input carrying the composite
+  and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
+  start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
+  >= 128 kHz, so the default input prefers a 192 kHz-capable device.
+- **RTL-SDR** (`Source -> SDR`): set the frequency and Start; the Meter spawns
+  the bundled FM-SDR-Tuner, reads its mono MPX over a FIFO at 192 kHz, and
+  measures with absolute calibration (full scale = 150 kHz). `./run-meter-sdr.sh
+  --gui --freq <MHz>` opens the window pre-tuned. Place the `fm-sdr-tuner`
+  binary in `bin/` (see `bin/README.md`) or set `FM_SDR_TUNER`.
+
+### What it shows
+
+- **Audio**: IN / L / R / M / S levels and L/R correlation.
+- **Modulation**: pilot / RDS / total deviation meters; MPX power (ITU-R
+  BS.412, ~60 s integrated, in dBr vs a +/-19 kHz sine); peak-hold +/-
+  deviation (with Reset); best stereo separation; deviation + MPX-power trends.
+- **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
+  horizontal spread = out-of-phase / mono-incompatible).
+- **Scopes**: composite, decoded L, decoded R.
+- **Spectrum** (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot, Stereo
+  L-R, 57 kHz RDS, 67.65 kHz, 92 kHz SCA).
+- **RDS**: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group histogram and
+  live block-error rate (BER under ~5% is a clean link).
+
+Deviation is referenced to a 75 kHz total; on a weak/noisy signal the
+deviation/MPX-power path is band-limited to 60 kHz so the FM demod noise
+triangle above the modulated bands doesn't inflate the readings.
+
+
 ## Appendix: RDS PI and ECC Country Table
 
 RDS country identity is derived from:

@@ -4,7 +4,7 @@ This file is the single source of truth for AI coding agents (Claude Code, Codex
 
 ## Project
 
-Native macOS FM composite (MPX) generator — real-time broadcast-style stereo encoder with RDS. Swift 6 / SwiftUI / AVAudioEngine, SPM package rooted at `macOS/`. Targets macOS 15+. Single executable target `MPXPrime`; sole external dep is `swift-atomics`.
+Native macOS FM composite (MPX) generator — real-time broadcast-style stereo encoder with RDS, "MPX Prime Studio". Swift 6 / SwiftUI / AVAudioEngine, SPM package rooted at `macOS/`. Targets macOS 15+. Two executable targets: `MPXPrime` (the encoder, ships as "MPX Prime Studio.app") and `MPXPrimeMeter` (the companion receive/analyze app "MPX Prime Meter.app" — captures an MPX composite from an audio device or RTL-SDR and decodes stereo + RDS in a SwiftUI dashboard); they share `MPXPrimeCore` (DSP) and `MPXPrimeUI` (Canvas SwiftUI components), and both ship in the same DMG. Sole external dep is `swift-atomics`.
 
 - Primary entrypoint: `macOS/Package.swift`
 - Default user config: `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`

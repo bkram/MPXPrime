@@ -2532,6 +2532,30 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// Export the preset in `slot` to a file. The stored config IS a complete
+    /// MPX Prime Studio INI, so the exported file doubles as a shareable config
+    /// (loadable via --config or Import). Returns true on success.
+    @discardableResult
+    func exportSnapshot(slot: Int, to url: URL) -> Bool {
+        guard (0..<snapshots.count).contains(slot), let snap = snapshots[slot] else { return false }
+        do {
+            try snap.configINIText.write(to: url, atomically: true, encoding: .utf8)
+            statusText = "Exported preset \"\(snap.name)\" to \(url.lastPathComponent)."
+            return true
+        } catch {
+            statusText = "Failed to export preset: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// A filesystem-safe default filename for exporting the preset in `slot`.
+    func exportFilename(slot: Int) -> String {
+        let base = snapshots[slot]?.name ?? "Preset \(slot + 1)"
+        let safe = base.map { "/\\:?%*|\"<>".contains($0) ? "-" : $0 }
+        let trimmed = String(safe).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed.isEmpty ? "Preset \(slot + 1)" : trimmed) + ".ini"
+    }
+
     /// Drop the snapshot in `slot` and persist the empty state.
     func clearSnapshot(slot: Int) {
         guard (0..<snapshots.count).contains(slot) else { return }
@@ -5472,6 +5496,12 @@ private struct SnapshotSlotRow: View {
                 .disabled(snapshot == nil)
                 .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
 
+                Button("Export...") {
+                    exportPreset()
+                }
+                .disabled(snapshot == nil)
+                .help("Save this preset to a file (a standard MPX Prime Studio .ini you can share or load with --config).")
+
                 Button("Clear", role: .destructive) {
                     confirmingClear = true
                 }
@@ -5516,6 +5546,20 @@ private struct SnapshotSlotRow: View {
     /// loss) when the text actually changed. For an empty slot, only Enter
     /// (`allowCreate`) creates the snapshot -- clicking away must not silently
     /// save a slot the user never asked for.
+    /// Prompt for a destination and write the preset's config there.
+    private func exportPreset() {
+        guard snapshot != nil else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = model.exportFilename(slot: slot)
+        panel.allowedContentTypes = [UTType(filenameExtension: "ini") ?? .data]
+        panel.canCreateDirectories = true
+        panel.title = "Export Preset"
+        panel.prompt = "Export"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.exportSnapshot(slot: slot, to: url)
+        }
+    }
+
     private func commitName(allowCreate: Bool) {
         let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         if let existing = snapshot {

@@ -1,14 +1,50 @@
 import Atomics
 import Foundation
 
-final class StereoInputRingBuffer {
-    struct TransportSnapshot {
-        let overflows: UInt64
-        let underflows: UInt64
-        let bufferedFrames: Int
-        let resampleMode: String
-        let ratioTrim: Double
-        let sampleStep: Double
+// Lock-free single-producer / single-consumer stereo ring.
+//
+// Atomic protocol:
+//   * `writeCursor` and `readCursor` are monotonic UInt64 frame counts;
+//     physical slots are `cursor & mask`. The producer only advances
+//     `writeCursor`; the consumer only advances `readCursor`. Each store
+//     uses `.releasing`, each cross-thread load `.acquiring`, so a reader
+//     that observes a new `writeCursor` also observes the frames written
+//     before it.
+//   * `consumerReadInProgress` is a hint, not a lock: the consumer raises
+//     it around its copy so the producer prefers trimming new input over
+//     advancing `readCursor` (overwriting unread frames) on overflow.
+//
+// Accepted race: the producer's `consumerReadInProgress` load can be stale
+// relative to the consumer's store (they are separate atomics with no
+// combined ordering point). In that narrow window the producer may lap the
+// span the consumer is mid-copy, tearing a few frames. This is only
+// reachable in the overflow fault state (the ring is already full and
+// dropping input — `overflowCount` is climbing and audio is already
+// compromised), so we detect and count it (`tornReadCount`) for telemetry
+// rather than pay for a lock on the real-time path.
+public final class StereoInputRingBuffer {
+    public struct TransportSnapshot {
+        public let overflows: UInt64
+        public let underflows: UInt64
+        public let tornReads: UInt64
+        public let bufferedFrames: Int
+        public let resampleMode: String
+        public let ratioTrim: Double
+        public let sampleStep: Double
+
+        public init(
+            overflows: UInt64, underflows: UInt64, tornReads: UInt64,
+            bufferedFrames: Int, resampleMode: String, ratioTrim: Double,
+            sampleStep: Double
+        ) {
+            self.overflows = overflows
+            self.underflows = underflows
+            self.tornReads = tornReads
+            self.bufferedFrames = bufferedFrames
+            self.resampleMode = resampleMode
+            self.ratioTrim = ratioTrim
+            self.sampleStep = sampleStep
+        }
     }
 
     private let capacity: Int
@@ -23,12 +59,13 @@ final class StereoInputRingBuffer {
     private let writeCursor = ManagedAtomic<UInt64>(0)
     private let overflowCount = ManagedAtomic<UInt64>(0)
     private let underflowCount = ManagedAtomic<UInt64>(0)
+    private let tornReadCount = ManagedAtomic<UInt64>(0)
     private let consumerReadInProgress = ManagedAtomic<Bool>(false)
     private let transportMode = ManagedAtomic<Int>(0)
     private let transportRatioTrimMicrounits = ManagedAtomic<Int>(0)
     private let transportSampleStepMicrounits = ManagedAtomic<Int>(1_000_000)
 
-    init(capacityFrames: Int) {
+    public init(capacityFrames: Int) {
         let requested = max(512, capacityFrames)
         let roundedCapacity = Self.nextPowerOfTwo(requested)
         self.capacity = roundedCapacity
@@ -37,7 +74,7 @@ final class StereoInputRingBuffer {
         self.right = Array(repeating: 0.0, count: roundedCapacity)
     }
 
-    func write(
+    public func write(
         left inLeft: UnsafePointer<Float>, right inRight: UnsafePointer<Float>, frameCount: Int
     ) {
         guard frameCount > 0 else { return }
@@ -55,7 +92,7 @@ final class StereoInputRingBuffer {
         )
     }
 
-    func writeMono(mono inMono: UnsafePointer<Float>, frameCount: Int) {
+    public func writeMono(mono inMono: UnsafePointer<Float>, frameCount: Int) {
         guard frameCount > 0 else { return }
         let plan = planWrite(frameCount: frameCount)
         guard plan.framesToWrite > 0 else { return }
@@ -70,7 +107,7 @@ final class StereoInputRingBuffer {
         )
     }
 
-    func read(
+    public func read(
         intoLeft outLeft: UnsafeMutablePointer<Float>,
         outRight: UnsafeMutablePointer<Float>,
         frameCount: Int
@@ -107,6 +144,9 @@ final class StereoInputRingBuffer {
             underflowCount.wrappingIncrement(by: UInt64(missing), ordering: .relaxed)
         }
 
+        if snapshot.available > 0 {
+            noteTornReadIfLapped(startCursor: snapshot.startCursor)
+        }
         readCursor.store(
             snapshot.startCursor &+ UInt64(snapshot.available),
             ordering: .releasing
@@ -114,7 +154,7 @@ final class StereoInputRingBuffer {
         return missing
     }
 
-    func readAdaptive(
+    public func readAdaptive(
         intoLeft outLeft: UnsafeMutablePointer<Float>,
         outRight: UnsafeMutablePointer<Float>,
         frameCount: Int,
@@ -194,6 +234,9 @@ final class StereoInputRingBuffer {
 
             resamplePhase = 0.0
             updateTransportState(mode: 1, ratioTrim: resampleRatioTrim, sampleStep: 1.0)
+            if availableFrames > 0 {
+                noteTornReadIfLapped(startCursor: startCursor)
+            }
             readCursor.store(
                 startCursor &+ UInt64(availableFrames),
                 ordering: .releasing
@@ -243,6 +286,9 @@ final class StereoInputRingBuffer {
             underflowCount.wrappingIncrement(by: UInt64(missing), ordering: .relaxed)
         }
 
+        if consumed > 0 {
+            noteTornReadIfLapped(startCursor: startCursor)
+        }
         readCursor.store(
             startCursor &+ UInt64(consumed),
             ordering: .releasing
@@ -250,7 +296,7 @@ final class StereoInputRingBuffer {
         return missing
     }
 
-    func bufferedFrames() -> Int {
+    public func bufferedFrames() -> Int {
         let read = readCursor.load(ordering: .acquiring)
         let write = writeCursor.load(ordering: .acquiring)
         return min(capacity, max(0, Int(write &- read)))
@@ -264,7 +310,7 @@ final class StereoInputRingBuffer {
     /// state) the moment the input render path starts pulling. After
     /// the drain the ring is at its prime depth and reads continue
     /// normally.
-    func dropToTargetBufferedFrames(_ targetFrames: Int) {
+    public func dropToTargetBufferedFrames(_ targetFrames: Int) {
         let target = max(0, targetFrames)
         let read = readCursor.load(ordering: .acquiring)
         let write = writeCursor.load(ordering: .acquiring)
@@ -274,17 +320,18 @@ final class StereoInputRingBuffer {
         readCursor.store(read &+ toAdvance, ordering: .releasing)
     }
 
-    func stats() -> (overflows: UInt64, underflows: UInt64, bufferedFrames: Int) {
+    public func stats() -> (overflows: UInt64, underflows: UInt64, bufferedFrames: Int) {
         let over = overflowCount.load(ordering: .relaxed)
         let under = underflowCount.load(ordering: .relaxed)
         let buffered = bufferedFrames()
         return (over, under, buffered)
     }
 
-    func transportSnapshot() -> TransportSnapshot {
+    public func transportSnapshot() -> TransportSnapshot {
         TransportSnapshot(
             overflows: overflowCount.load(ordering: .relaxed),
             underflows: underflowCount.load(ordering: .relaxed),
+            tornReads: tornReadCount.load(ordering: .relaxed),
             bufferedFrames: bufferedFrames(),
             resampleMode: transportModeName(raw: transportMode.load(ordering: .relaxed)),
             ratioTrim: Double(transportRatioTrimMicrounits.load(ordering: .relaxed)) / 1_000_000.0,
@@ -552,6 +599,20 @@ final class StereoInputRingBuffer {
             return write &- UInt64(capacity)
         }
         return read
+    }
+
+    /// After a copy, check whether the producer lapped the copied span.
+    /// `startCursor` is where the consumer began copying; if the producer
+    /// has since written more than `capacity` frames past it, the oldest
+    /// copied frames were overwritten mid-read (torn). We can't prevent
+    /// this without a lock, so we count it — it only happens deep in the
+    /// overflow fault state and makes the fault visible in telemetry.
+    @inline(__always)
+    private func noteTornReadIfLapped(startCursor: UInt64) {
+        let writeNow = writeCursor.load(ordering: .acquiring)
+        if (writeNow &- startCursor) > UInt64(capacity) {
+            tornReadCount.wrappingIncrement(by: 1, ordering: .relaxed)
+        }
     }
 
     private func updateTransportState(mode: Int, ratioTrim: Double, sampleStep: Double) {

@@ -2,6 +2,7 @@ import AppKit
 import CoreAudio
 import Darwin
 import Foundation
+import MPXPrimeCore
 
 @discardableResult
 func applyRealtimePriorityHints() -> Bool {

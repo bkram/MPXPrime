@@ -123,5 +123,94 @@ struct RDSStreamDecoderTests {
         #expect(fresh.pi == nil)
         #expect(fresh.programService == "        ")
         #expect(fresh.groupsDecoded == 0)
+        #expect(fresh.radioText == "")
+        #expect(fresh.clockTime == nil)
+    }
+
+    @Test func recoversRadioTextFromGroup2A() {
+        var cfg = makeConfig()
+        // RT comes from the manual buffers; enable only A so a single message
+        // transmits without buffer-switch resets.
+        cfg.rdsRTA = "NOW PLAYING TEST"
+        cfg.rdsRTBufferAEnabled = true
+        cfg.rdsRTBufferBEnabled = false
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+        var bits: [UInt8] = []
+        // 16 segments cover the full 64-char RadioText; emit a couple cycles.
+        for _ in 0..<24 { bits.append(contentsOf: coder.buildGroup2(versionB: false)) }
+
+        let decoder = RDSStreamDecoder()
+        for bit in bits { decoder.feed(bit: bit) }
+        #expect(decoder.state.radioText.contains("NOW PLAYING TEST"),
+                "RadioText was '\(decoder.state.radioText)'")
+    }
+
+    @Test func recoversProgramTypeNameFromGroup10A() {
+        var cfg = makeConfig()
+        cfg.rdsEnablePTYN = true
+        cfg.rdsPTYN = "ROCK"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+        var bits: [UInt8] = []
+        for _ in 0..<8 { bits.append(contentsOf: coder.buildGroup10A()) }
+
+        let decoder = RDSStreamDecoder()
+        for bit in bits { decoder.feed(bit: bit) }
+        #expect(decoder.state.programTypeName.contains("ROCK"),
+                "PTYN was '\(decoder.state.programTypeName)'")
+    }
+
+    @Test func recoversLongPSFromGroup15A() {
+        var cfg = makeConfig()
+        cfg.rdsEnableLPS = true
+        cfg.rdsLongPS32 = "LONG STATION NAME"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+        var bits: [UInt8] = []
+        // 8 segments cover the 32-char Long PS; emit a couple cycles.
+        for _ in 0..<16 { bits.append(contentsOf: coder.buildGroup15A()) }
+
+        let decoder = RDSStreamDecoder()
+        for bit in bits { decoder.feed(bit: bit) }
+        #expect(decoder.state.longPS.contains("LONG STATION NAME"),
+                "Long PS was '\(decoder.state.longPS)'")
+    }
+
+    @Test func recoversRTPlusTagsFromGroup11A() {
+        var cfg = makeConfig()
+        // RT carries the item; RT+ format marks artist/title positions in it.
+        // Trailing "!" bounds the {title} capture (the encoder's generic RT+
+        // matcher is non-greedy, so an unbounded trailing {title} would clip
+        // to one char -- that is a transmit-side regex quirk, not a decode
+        // issue; here we test a clean, fully-bounded tagging).
+        cfg.rdsRTA = "Now: Chris Rea - Josephine!"
+        cfg.rdsRTBufferAEnabled = true
+        cfg.rdsRTBufferBEnabled = false
+        cfg.rdsEnableRTPlus = true
+        cfg.rdsRTPlusFormatA = "Now: {artist} - {title}!"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+
+        // Interleave 2A (fills RT + computes RT+ tags) and 11A (emits tags).
+        var bits: [UInt8] = []
+        for _ in 0..<40 {
+            bits.append(contentsOf: coder.buildGroup2(versionB: false))
+            bits.append(contentsOf: coder.buildGroup11A())
+        }
+
+        let decoder = RDSStreamDecoder()
+        for bit in bits { decoder.feed(bit: bit) }
+        let tags = decoder.state.rtPlusTags
+        #expect(!tags.isEmpty, "no RT+ tags decoded")
+        // Content type 1 = ITEM.TITLE, 4 = ITEM.ARTIST.
+        let title = tags.first { $0.contentType == 1 }?.text
+        let artist = tags.first { $0.contentType == 4 }?.text
+        #expect(title == "Josephine", "RT+ title was '\(title ?? "nil")'")
+        #expect(artist == "Chris Rea", "RT+ artist was '\(artist ?? "nil")'")
+    }
+
+    @Test func gregorianFromMJDMatchesKnownDates() {
+        // MJD 58849 = 2020-01-01, 59945 = 2023-01-01 (MJD = JD - 2400000.5).
+        let a = RDSStreamDecoder.gregorian(fromMJD: 58849)
+        #expect(a == (2020, 1, 1), "got \(a)")
+        let b = RDSStreamDecoder.gregorian(fromMJD: 59945)
+        #expect(b == (2023, 1, 1), "got \(b)")
     }
 }

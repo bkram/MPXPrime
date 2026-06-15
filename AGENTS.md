@@ -7,7 +7,7 @@ This file is the single source of truth for AI coding agents (Claude Code, Codex
 Native macOS FM composite (MPX) generator — real-time broadcast-style stereo encoder with RDS. Swift 6 / SwiftUI / AVAudioEngine, SPM package rooted at `macOS/`. Targets macOS 15+. Single executable target `MPXPrime`; sole external dep is `swift-atomics`.
 
 - Primary entrypoint: `macOS/Package.swift`
-- Default user config: `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- Default user config: `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 - **Platform tiers: Apple Silicon (arm64) is Tier 1** (primary, fully-supported, optimization target). **Intel (x86_64) is Tier 2, best-effort** — ships in the universal binary with an identical audio chain, but perf work targets arm64 first; give Intel lighter-weight fallbacks where cheap (e.g. the arch-tiered GUI refresh profile), don't block on Intel-only optimization.
 
 See also: `docs/manual.md` (user manual: usage / configuration / RDS / reference tables), `docs/ARCHITECTURE.md` (detailed DSP chain and stage descriptions), `docs/BUILDING.md` (build / run / test / package from source), `plan.md` (roadmap).
@@ -22,13 +22,13 @@ swift build --package-path macOS -c release
 # Run
 swift run --package-path macOS MPXPrime              # GUI
 swift run --package-path macOS MPXPrime --nogui      # headless
-swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime.ini"
+swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime Studio.ini"
 
 # Offline verification (no audio devices touched)
 swift run --package-path macOS MPXPrime --verify --seconds 5
 swift run --package-path macOS MPXPrime --verify-presets --seconds 5
 swift run --package-path macOS MPXPrime --verify-long --seconds 30
-swift run --package-path macOS MPXPrime --verify-receiver --seconds 5  # 0.27: coherent receiver-side decode (separation @ 1/10/14 kHz, pilot, RDS)
+swift run --package-path macOS MPXPrime --verify-receiver --seconds 5  # coherent receiver-side decode (separation @ 1/10/14 kHz, pilot, RDS); 0.36 adds guard-band cancellation depth + pilot/RDS phase-lock drift gate
 swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2  # A/B experimental composite multiband clipper toggle
 swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2  # A/B experimental multiband inter-band coupling toggle
 
@@ -54,9 +54,11 @@ MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 Verifier exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN.
 
+The `--verify --baseline-strict` baseline is schema 3 (`VerifierBaseline.swift`): besides the per-scenario composite metrics it pins a 4x-oversampled true-peak inter-sample-overshoot field and a global encoder-side sideband fingerprint (asymmetry + side/mono delta at 1/10/14 kHz). A DSP change that moves composite output requires recapturing via `--capture-baseline`.
+
 Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not XCTest. Do not add XCTest-based tests.
 
-The default `swift test` is fast (~10 s; latest observed suite is 322 tests / 45 suites) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
+The default `swift test` is fast (~18 s; latest observed suite is 426 tests / 64 suites) and runs on every change. The optional deep suite (`DeepDSPTests.swift`, gated by `MPXPRIME_DEEP=1`) covers stage-interaction bugs: per-stage isolation, 50 random configs × 4 adversarial programs, pairwise enable/disable matrix, counteract pair detection, per-preset safety. Run on demand before a release or when touching multiple stages.
 
 For DSP differences, prefer measurement-first validation wherever technically possible before asking the operator to listen. If a behavior can be characterized with deterministic signals, FFT/band-energy analysis, receiver decode metrics, alias/IM checks, peak/ceiling checks, stereo-link checks, CPU budget tests, or verifier/baseline comparisons, add or run those tests first. Listening tests are still useful for final subjective confirmation, but they should not be the primary regression detector for measurable DSP behavior.
 
@@ -68,12 +70,12 @@ For DSP differences, prefer measurement-first validation wherever technically po
   - `AppConfig.swift` — INI-backed config model + live-apply routing (`RuntimeConfig`, `RDSRuntimeConfig`)
   - `INIParser.swift`, `AudioDevices.swift` — file and CoreAudio plumbing
   - `AudioOutputEngine.swift` — AVAudioEngine lifecycle, input tap, render callback
-  - `MPXGenerator.swift` (~8500 lines) — DSP core + `BasicRDSCoder`. All stages of the chain live here
-  - `MPXDecoder.swift` (0.27) — reusable FM stereo demod (pilot PLL, deemphasis, noise gate, stereo-collapse cooldown). Used by the monitor path with the delay-aligned reference and by `--verify-receiver` with a PLL-recovered reference
+  - `MPXGenerator.swift` (~9900 lines) — DSP core + `BasicRDSCoder`. All stages of the chain live here
+  - `MPXDecoder.swift` (0.27) — reusable FM stereo demod (pilot PLL, deemphasis, noise gate, stereo-collapse cooldown). Lives in the `MPXPrimeCore` SPM target (not `MPXPrime`); hot `process()` is `@inlinable`. Used by the monitor path with the delay-aligned reference and by `--verify-receiver` with a PLL-recovered reference. Sanitizes non-finite inputs (0.36) — one NaN/Inf sample used to permanently poison the pilot-lock I/Q + envelope state (smoothers never flush NaN, self-heal can't re-arm); keep the `isFinite` guard at the top of `process()`.
   - `BandLimitedStep.swift` (0.27) — BLEP/BLAMP correction primitive for the US 6,937,912 anti-aliased clipping work
   - `AcceleratedBandlimitedResidualClipper.swift` (0.27) — vDSP-accelerated patent-style residual-bandlimiting clipper, opt-in via `pre_encode_bandlimited_residual_enabled`
   - `StereoInputRingBuffer.swift` — lock-free input → render bridge
-  - `SwiftUIControlApp.swift` (~7600 lines) — SwiftUI views + view-model state
+  - `SwiftUIControlApp.swift` (~9250 lines) — SwiftUI views + view-model state
   - `UIBroadcastStatusBar.swift` / `UIBroadcastMeter.swift` / `UIBroadcastStyle.swift` — pinned-top status header, vertical meter strips, shared style tokens
   - `UISignalFlowStrip.swift` — read-only DSP-chain pill strip
   - `UIInspector.swift` — stage-aware right-pane inspector
@@ -82,7 +84,7 @@ For DSP differences, prefer measurement-first validation wherever technically po
   - `NowPlayingSupport.swift` — external script polling for RDS RT metadata
 - `macOS/Tests/MPXPrimeTests/` — Swift Testing suite (DSP primitives, ring buffer, analysis helpers, RDS bitstream + live-apply)
 - `macOS/verifier_baselines/` — JSON baselines for `--verify --baseline-strict`
-- `macOS/{MPXPrime.ini,Verification.ini}` — sample configs; user config lives at `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- `macOS/{MPXPrime.ini,Verification.ini}` — sample configs; user config lives at `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 - `documents/` — standards PDFs (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
 - `.vscode/settings.json` — sets `swift.searchSubfoldersForPackages: true` so sourcekit-lsp discovers `macOS/Package.swift` (workspace root is the repo root, package lives one level down)
 
@@ -110,7 +112,7 @@ Multiband Phase 2 is implemented but opt-in: `multiband_transient_aware_attack_e
 
 Multiband inter-band coupling is implemented but opt-in: `multiband_inter_band_coupling_enabled = false` by default. When enabled, low-band gain reduction is smoothed (20 ms attack / 300 ms release) and gently biases upper-band thresholds lower so bass-heavy passages keep tonal glue without wideband pumping. Keep it preset-gated until program-material A/B confirms the balance.
 
-RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. RDS carrier frequency is config-only; the UI exposes carrier level and program data.
+RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. The 57 kHz carrier is derived from the pilot oscillator's recurrence (`pilotOsc.s`) via the triple-angle identity (`3s - 4s^3`), passed into `BasicRDSCoder.updateRDSPilotSin` per sample — NOT a separate additive phase accumulator. The old accumulator path drifted ~9 deg / 5 s against the emitted pilot (it added `Float(w)` while the broadcast pilot / 38 kHz subcarrier ride the s/c recurrence); fixed 0.36, gated by the pilot/RDS phase-lock drift check in `--verify-receiver`. Do not regress the production path to a free-running 57 kHz oscillator. RDS carrier frequency is config-only; the UI exposes carrier level and program data.
 
 ### Configuration + live-apply
 
@@ -146,6 +148,7 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 ## Conventions
 
 - **ASCII only** in source and docs. No non-ASCII punctuation / symbols.
+- **Keep `docs/ARCHITECTURE.md` and `docs/manual.md` up to date — always.** They are part of "done", like tests. When a change alters the DSP chain / signal flow / stage behavior / output modes / RDS / verifier surface, update `docs/ARCHITECTURE.md` in the same change. When a change alters user-facing behavior, UI labels or controls, config keys, presets, or operator workflow, update `docs/manual.md` (e.g. the 0.35 outcome-language relabel renamed the composite-clipper guards `Cancel ...` -> `Protect ...` — both UI and manual must use the shipped label). Do not let the docs drift behind the code.
 - Keep `MPXGenerator.swift` and `SwiftUIControlApp.swift` splittable-in-principle (both >6k lines); prefer new helpers over growing them further, but **do not** opportunistically refactor the final MPX chain — even behavior-preserving edits can measurably move composite output. Structural cleanup there is done in small, verifier-backed steps.
 - Device UIDs are platform-specific — always enumerate, never hardcode.
 - New DSP stages ship **disabled by default** and must support live-apply via `RuntimeConfig` unless there is a specific reason not to.
@@ -164,6 +167,8 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `.pickerStyle(.segmented)` for small mutually-exclusive option sets / view switchers; `.pickerStyle(.menu)` for dropdowns (pop-up buttons).
 - Project visual convention (house style, NOT a HIG rule): content "cards" use `LabeledContent` with 10pt corner radius and 16pt spacing. `LabeledContent` is the native control; the radius/spacing are ours. macOS-native grouping (`GroupBox`, `Form` sections) is equally acceptable and is what the HIG actually prescribes.
 - **One source of tab help — no duplicated prose.** Each Processing / RDS tab already shows its description in the shared bottom `TabHelpBox` (fed by the tab enum's `helpText`, e.g. `ProcessingTab.helpText` / `RDSTab.helpText`). Do NOT add an in-card `Text` that restates the stage description — it shows the same information twice. In-card captions are only for **distinct actionable guidance the box doesn't cover** (a usage tip, a "start with X" recommendation, a control-interaction note) or a safety-critical one-liner. When adding a tab, put the description in `helpText`, not in the card.
+- **Disclaimer / license: one source of truth.** The full intended-use / not-certified disclaimer lives only in `README.md` (line ~9); GPL-3.0 / no-warranty terms live only in `LICENSE`. The About panel (`AboutSectionView` in `SwiftUIControlApp.swift`) must NOT restate the full disclaimer — it quotes README's canonical key phrase ("experimental and not certified — no conformity or compliance is promised") plus links to GitHub / User Manual / License. If the disclaimer wording changes, edit README (and the About's one-liner only if that key phrase changes); never grow a second copy.
+- **Control labels use outcome language; jargon lives in tooltips.** The target operator is broadcast/RF-literate but not a DSP engineer. KEEP established broadcast terms on labels (pre-emphasis, pilot, RDS, PTY/PI/ECC, deviation, composite clipper, BS.412, phase rotator, AGC, multiband). Do NOT put patent/topology/DSP-implementation phrasing on a label — say what the control does for the signal ("Protect Stereo Pilot", "Reduce Clipping Distortion", "Audio Clipper"), and push the mechanism (distortion-cancellation topology, LR4/Gaussian/FIR internals, Orban/US-patent references) into the `.help()` tooltip or the bottom help box. When two views control the same thing, use one vocabulary across both (the inspector matches the main tab). Collapse expert / set-once / experimental controls into a `DisclosureGroup` (reuse the Audio Limiter "Advanced" pattern) so common controls stay prominent.
 - **Accessibility lint** — the project ships a `.swiftlint.yml` that runs only `accessibility_label_for_image` and `accessibility_trait_for_button` (no broader style enforcement; DSP code uses many intentional patterns that fight the default SwiftLint rule pack). Run with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint` from the project root before committing UI changes. Decorative SF Symbols (icons next to descriptive text, info-circle in help boxes) should use `.accessibilityHidden(true)`; icon-only buttons need `.accessibilityLabel(...)`.
 
 ## Release prep
@@ -172,14 +177,15 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 - `swift build --package-path macOS -c release` is clean.
 - Manual smoke test with `--gui`: monitoring + processing tabs work.
 - `./build-release.sh <version>` produces the universal binary + DMG under `macOS/dist/`.
-- Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.034`; 0.33 shipped 2026-06-07). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by merging the integration branch into `main`, tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
+- Branch model: `main` is the default branch and tracks released versions. The integration branch is always named **`develop/v.NNN`** — three digits, leading zero — after the next target version (currently `develop/v.037`; 0.35 shipped 2026-06-09, and 0.36 is staged on `develop/v.036` awaiting the maintainer's tag). Unreleased work accumulates there; feature work either commits directly on the integration branch or on short-lived branches off it. Releases ship by **squash-merging** the integration branch into `main` (one commit per shipped version, NOT `--ff-only`), tagging `v<version>` from `main`, and pushing the tag — which triggers `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and publishes the resulting DMG as a GitHub Release. After a release ships, cut a new `develop/v.NNN` branch off `main` for the next target version. Tags themselves use `v<version>` without zero-padding (e.g., `v0.21`, `v0.28`); only branch names use the `v.NNN` form.
+- **Release prep vs. tagging is split.** An agent prepares a release — version bump in the four files, CHANGELOG entry, commit + push to the integration branch — but does NOT merge to `main` or push the tag. The maintainer runs the hardware-dependent checklist items (live 192 kHz device smoke, RDS receiver smoke, VoiceOver pass) and pushes the `v<version>` tag, since those cannot be done from a headless agent and the tag push publishes a public DMG.
 - Optionally run the deep DSP combination suite (`MPXPRIME_DEEP=1 swift test --filter Deep`, ~3 min) before tagging — catches stage-interaction regressions the default suite misses.
 
 ### Release validation checklist
 
 Run before tagging. None of these should be skipped on a release commit; partial coverage is how regressions ship.
 
-**Run the offline `--verify*` gates on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
+**Run the offline `--verify*` gates on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime Studio GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
 
 - [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS` — full default suite passes
 - [ ] `swift build --package-path macOS -c release` — release build clean

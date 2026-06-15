@@ -5,6 +5,8 @@ import Combine
 import CoreAudio
 import Darwin
 import Foundation
+import MPXPrimeCore
+import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -25,17 +27,20 @@ private let kScopesWindowTitle = "Scopes"
 private let kMPXSpectrumWindowTitle = "MPX Spectrum"
 private let kAudioSpectrumWindowTitle = "Audio Spectrum"
 private let kLevelsWindowTitle = "Levels"
-private let kMainWindowAutosaveName = "MPXPrime.MainWindow"
-private let kScopesWindowAutosaveName = "MPXPrime.ScopesWindow"
-private let kSpectrumWindowAutosaveName = "MPXPrime.SpectrumWindow"
-private let kPreMPXSpectrumWindowAutosaveName = "MPXPrime.PreMPXSpectrumWindow"
-private let kLevelsWindowAutosaveName = "MPXPrime.LevelsWindow"
-private let kAboutWindowAutosaveName = "MPXPrime.AboutWindow"
-private let kHelpWindowAutosaveName = "MPXPrime.HelpWindow"
-private let kSettingsWindowAutosaveName = "MPXPrime.SettingsWindow"
+// Window-frame autosave keys (UserDefaults).
+private let kMainWindowAutosaveName = "MPXPrimeStudio.MainWindow"
+private let kScopesWindowAutosaveName = "MPXPrimeStudio.ScopesWindow"
+private let kSpectrumWindowAutosaveName = "MPXPrimeStudio.SpectrumWindow"
+private let kPreMPXSpectrumWindowAutosaveName = "MPXPrimeStudio.PreMPXSpectrumWindow"
+private let kLevelsWindowAutosaveName = "MPXPrimeStudio.LevelsWindow"
+private let kAboutWindowAutosaveName = "MPXPrimeStudio.AboutWindow"
+private let kHelpWindowAutosaveName = "MPXPrimeStudio.HelpWindow"
+private let kSettingsWindowAutosaveName = "MPXPrimeStudio.SettingsWindow"
 // Compile-time constant URL; literal is well-formed so the optional
 // returned by URL(string:) is guaranteed non-nil.
 private let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
+private let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual.md")!
+private let kLicenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 private let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
 
@@ -175,7 +180,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case widener = "Widener"
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
-    case dcClipper = "DC Clipper"
+    case dcClipper = "Audio Clip"
     case hfClipper = "HF Clip"
     case limiter = "Audio Limiter"
     case compositeClipper = "Comp Clip"
@@ -281,7 +286,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .bassClipper:
             return "Reset Bass Clipper Tab"
         case .dcClipper:
-            return "Reset DC Clipper Tab"
+            return "Reset Audio Clipper Tab"
         case .hfClipper:
             return "Reset HF Clipper Tab"
         case .widener:
@@ -322,7 +327,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .bassClipper:
             return "Reset bass clipper tab to defaults"
         case .dcClipper:
-            return "Reset DC clipper tab to defaults"
+            return "Reset audio clipper tab to defaults"
         case .hfClipper:
             return "Reset HF clipper tab to defaults"
         case .widener:
@@ -496,7 +501,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingMBLimiter: return "MB Limiter"
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
-        case .processingDCClipper: return "DC Clipper"
+        case .processingDCClipper: return "Audio Clipper"
         case .processingHFClipper: return "HF Clipper"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
@@ -510,7 +515,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsSchedule: return "Schedule"
         case .rdsCarrier: return "Subcarrier"
         case .testTone: return "Test Tone"
-        case .snapshots: return "Snapshots"
+        case .snapshots: return "Presets"
         }
     }
 
@@ -567,11 +572,11 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingMBLimiter: return "Per-band fast peak limiter"
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
-        case .processingDCClipper: return "Distortion-cancelled audio clipper"
+        case .processingDCClipper: return "Audio-band peak clipper"
         case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
-        case .processingCompositeClipper: return "8x oversampled composite clipper"
+        case .processingCompositeClipper: return "16x oversampled composite clipper"
         case .processingFinalStage: return "Final drive, MPX safety, budget, deviation"
         case .rdsControl: return "Master enable + live snapshot of what's on air"
         case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks, runtime flags"
@@ -579,9 +584,9 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsLongPS: return "32-character Long PS (15A)"
         case .rdsAF: return "Alternative frequencies (AF)"
         case .rdsSchedule: return "Group sequence, scheduler policy, clock"
-        case .rdsCarrier: return "Injection level, subcarrier frequency, Gaussian shaping"
+        case .rdsCarrier: return "Injection level, subcarrier frequency, pulse shaping"
         case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
-        case .snapshots: return "Named save / recall slots for the full configuration"
+        case .snapshots: return "Named presets — save / recall the full configuration"
         }
     }
 
@@ -672,6 +677,10 @@ struct ConfigSnapshot: Identifiable, Codable {
 /// save, etc.) can be added without breaking old files.
 struct SnapshotFile: Codable {
     var slots: [ConfigSnapshot?]
+    /// The preset whose config is currently live (persisted so the "Loaded"
+    /// marker survives relaunch). Optional with defaults so older files decode.
+    var activeID: UUID?
+    var activeModified: Bool?
 }
 
 struct MonitoringStreamHealth {
@@ -754,160 +763,6 @@ private struct PeakHoldState {
 private struct AudioPeakHoldState {
     var db: Float = -120.0
     var holdRemaining: Double = 0.0
-}
-
-private final class MPXSpectrumAnalyzer: @unchecked Sendable {
-    private var fftSetup: FFTSetup?
-    private var fftLog2: vDSP_Length = 0
-    private var window: [Float] = []
-    private var signal: [Float] = []
-    private var windowed: [Float] = []
-    private var real: [Float] = []
-    private var imag: [Float] = []
-    private var magnitudesSq: [Float] = []
-    private var spectrumDB: [Float] = []
-    private var mapped: [Float] = []
-
-    deinit {
-        if let fftSetup {
-            vDSP_destroy_fftsetup(fftSetup)
-        }
-    }
-
-    func compute(
-        samples: [Float],
-        validCount: Int,
-        sampleRate: Double,
-        displayBins: Int,
-        maxDisplayHz: Double
-    ) -> (dbBins: [Float], maxHz: Double, nyquistHz: Double) {
-        let safeBins = max(64, displayBins)
-        let nyquist = max(1_000.0, sampleRate * 0.5)
-        let maxHz = max(1_000.0, maxDisplayHz)
-        let sampleCount = min(samples.count, max(0, validCount))
-        guard sampleCount >= 256 else {
-            return (Array(repeating: -100.0, count: safeBins), maxHz, nyquist)
-        }
-
-        let maxFFTSize = min(sampleCount, 8192)
-        let log2n = Int(floor(log2(Double(maxFFTSize))))
-        let n = max(256, 1 << log2n)
-        prepareBuffers(fftSize: n, displayBins: safeBins)
-
-        signal.withUnsafeMutableBufferPointer { buffer in
-            samples.withUnsafeBufferPointer { source in
-                guard let sourceBase = source.baseAddress, let destinationBase = buffer.baseAddress else { return }
-                let start = sampleCount - n
-                destinationBase.update(from: sourceBase.advanced(by: start), count: n)
-            }
-        }
-
-        var mean: Float = 0.0
-        vDSP_meanv(signal, 1, &mean, vDSP_Length(n))
-        var negMean = -mean
-        vDSP_vsadd(signal, 1, &negMean, &signal, 1, vDSP_Length(n))
-        vDSP_vmul(signal, 1, window, 1, &windowed, 1, vDSP_Length(n))
-
-        guard let fftSetup else {
-            return (Array(repeating: -100.0, count: safeBins), maxHz, nyquist)
-        }
-
-        real.withUnsafeMutableBufferPointer { realBP in
-            imag.withUnsafeMutableBufferPointer { imagBP in
-                // baseAddress is non-nil for non-empty pre-allocated arrays.
-                // swiftlint:disable force_unwrapping
-                var split = DSPSplitComplex(realp: realBP.baseAddress!, imagp: imagBP.baseAddress!)
-                windowed.withUnsafeBufferPointer { src in
-                    src.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: n / 2) { complexSrc in
-                        vDSP_ctoz(complexSrc, 2, &split, 1, vDSP_Length(n / 2))
-                    }
-                }
-                // swiftlint:enable force_unwrapping
-                vDSP_fft_zrip(fftSetup, &split, 1, fftLog2, FFTDirection(FFT_FORWARD))
-                // Apple's real-input FFT packs DC into split.realp[0]
-                // and Nyquist into split.imagp[0] to save one slot.
-                // Without untangling them, vDSP_zvmags would compute
-                // magnitudesSq[0] = DC² + Nyquist² and the leftmost
-                // display bin would render Nyquist energy (because we
-                // already remove DC pre-FFT via vDSP_meanv + vDSP_vsadd).
-                // Zero the Nyquist slot before the magnitude pass so
-                // bin 0 holds clean DC². Nyquist is ignored for display
-                // — the highest visible bin is at index n/2-1, just
-                // below Nyquist.
-                imagBP[0] = 0
-                vDSP_zvmags(&split, 1, &magnitudesSq, 1, vDSP_Length(n / 2))
-            }
-        }
-
-        // Calibrated amplitude: divide by N (FFT length) to undo the
-        // un-normalised forward transform, then divide by the window's
-        // coherent gain so a 0 dBFS sine through a Hann window reads as
-        // 0 dB on the display. vDSP_HANN_NORM produces a normalised
-        // Hann window with sum = N/2, i.e. coherent gain = 0.5. The
-        // factor of 2 on non-DC bins accounts for the one-sided
-        // spectrum (energy from the conjugate bin).
-        let invN = 1.0 / Float(n)
-        let hannCG: Float = 0.5
-        let cgScale = invN / hannCG
-        if !magnitudesSq.isEmpty {
-            let dcAmp = sqrtf(max(0.0, magnitudesSq[0])) * cgScale
-            spectrumDB[0] = max(-100.0, min(0.0, 20.0 * log10f(max(1e-9, dcAmp))))
-        }
-        if magnitudesSq.count > 1 {
-            for k in 1..<magnitudesSq.count {
-                let amp = (2.0 * sqrtf(max(0.0, magnitudesSq[k]))) * cgScale
-                spectrumDB[k] = max(-100.0, min(0.0, 20.0 * log10f(max(1e-9, amp))))
-            }
-        }
-
-        let sourceCount = max(1, spectrumDB.count)
-        for i in 0..<safeBins {
-            let ratio = safeBins > 1 ? (Double(i) / Double(safeBins - 1)) : 0.0
-            let freq = ratio * maxHz
-            if freq > nyquist {
-                mapped[i] = -100.0
-                continue
-            }
-            let srcPos = (freq / nyquist) * Double(sourceCount - 1)
-            let i0 = max(0, min(sourceCount - 1, Int(srcPos.rounded(.down))))
-            let i1 = max(0, min(sourceCount - 1, i0 + 1))
-            let frac = Float(srcPos - Double(i0))
-            let a = spectrumDB[i0]
-            let b = spectrumDB[i1]
-            mapped[i] = a + ((b - a) * frac)
-        }
-        return (mapped, maxHz, nyquist)
-    }
-
-    private func prepareBuffers(fftSize: Int, displayBins: Int) {
-        let requiredLog2 = vDSP_Length(log2(Double(fftSize)))
-        if fftLog2 != requiredLog2 || fftSetup == nil {
-            if let fftSetup {
-                vDSP_destroy_fftsetup(fftSetup)
-            }
-            fftSetup = vDSP_create_fftsetup(requiredLog2, FFTRadix(kFFTRadix2))
-            fftLog2 = requiredLog2
-        }
-
-        if window.count != fftSize {
-            window = Array(repeating: 0.0, count: fftSize)
-            signal = Array(repeating: 0.0, count: fftSize)
-            windowed = Array(repeating: 0.0, count: fftSize)
-            vDSP_hann_window(&window, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
-        }
-
-        let halfSize = fftSize / 2
-        if real.count != halfSize {
-            real = Array(repeating: 0.0, count: halfSize)
-            imag = Array(repeating: 0.0, count: halfSize)
-            magnitudesSq = Array(repeating: 0.0, count: halfSize)
-            spectrumDB = Array(repeating: -100.0, count: halfSize)
-        }
-
-        if mapped.count != displayBins {
-            mapped = Array(repeating: -100.0, count: displayBins)
-        }
-    }
 }
 
 private struct PrimeBassPreset {
@@ -1135,7 +990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             defer: false
         )
         w.center()
-        w.title = "MPX Prime"
+        w.title = "MPX Prime Studio"
         w.titleVisibility = .visible
         w.minSize = NSSize(width: 900, height: 620)
         w.delegate = self
@@ -1237,7 +1092,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     private func setupMainMenu() {
-        let appName = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "MPX Prime"
+        let appName = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "MPX Prime Studio"
         let mainMenu = NSMenu()
 
         // App Menu (unchanged)
@@ -1437,7 +1292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
         let helpMenu = NSMenu(title: "Help")
 
-        let openHelp = NSMenuItem(title: "MPX Prime Help", action: #selector(showHelp), keyEquivalent: "/")
+        let openHelp = NSMenuItem(title: "MPX Prime Studio Help", action: #selector(showHelp), keyEquivalent: "/")
         openHelp.target = self
         openHelp.keyEquivalentModifierMask = [.command, .shift]
         helpMenu.addItem(openHelp)
@@ -1465,9 +1320,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let aboutView = AboutSectionView()
         let hostingController = NSHostingController(rootView: aboutView)
         let w = NSWindow(contentViewController: hostingController)
-        w.title = "About MPX Prime"
+        w.title = "About MPX Prime Studio"
         w.styleMask = [.titled, .closable]
-        w.setContentSize(NSSize(width: 360, height: 460))
+        w.setContentSize(NSSize(width: 400, height: 560))
         w.isReleasedWhenClosed = false
         w.delegate = self
         restoreFrame(for: w, autosaveName: kAboutWindowAutosaveName)
@@ -1484,7 +1339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let helpView = HelpWindowView()
         let hostingController = NSHostingController(rootView: helpView)
         let w = NSWindow(contentViewController: hostingController)
-        w.title = "MPX Prime Help"
+        w.title = "MPX Prime Studio Help"
         // Utility/documentation windows should not minimize (macOS HIG —
         // matches About / Settings styleMasks). Resizable so long help
         // text remains usable on smaller displays.
@@ -1580,7 +1435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             defer: false
         )
         w.center()
-        w.title = "MPX Prime"
+        w.title = "MPX Prime Studio"
         w.titleVisibility = .visible
         w.minSize = NSSize(width: 900, height: 620)
         w.delegate = self
@@ -1929,6 +1784,13 @@ final class MPXPrimeViewModel: ObservableObject {
     // app upgrades. 8 fixed slots; nil = empty. Operator names each save
     // ("Morning Show", "Saturday Night", "Live Sports").
     @Published var snapshots: [ConfigSnapshot?] = Array(repeating: nil, count: MPXPrimeViewModel.snapshotSlotCount)
+
+    // Which snapshot's config is currently live (set on load + save), so the UI
+    // can show which slot is active. nil = the live config came from the main
+    // INI, not a snapshot. `activeSnapshotModified` flips true once any config
+    // edit diverges from that snapshot.
+    @Published var activeSnapshotID: UUID?
+    @Published var activeSnapshotModified = false
 
     static let snapshotSlotCount: Int = 8
 
@@ -2558,8 +2420,17 @@ final class MPXPrimeViewModel: ObservableObject {
             let count = min(file.slots.count, slots.count)
             for i in 0..<count { slots[i] = file.slots[i] }
             self.snapshots = slots
+            // Restore which preset is active so the "Loaded" marker survives
+            // relaunch. Drop it if the slot it pointed at is gone.
+            if let id = file.activeID, slots.contains(where: { $0?.id == id }) {
+                self.activeSnapshotID = id
+                self.activeSnapshotModified = file.activeModified ?? false
+            } else {
+                self.activeSnapshotID = nil
+                self.activeSnapshotModified = false
+            }
         } catch {
-            statusText = "Failed to load snapshots: \(error.localizedDescription)"
+            statusText = "Failed to load presets: \(error.localizedDescription)"
         }
     }
 
@@ -2568,7 +2439,8 @@ final class MPXPrimeViewModel: ObservableObject {
     /// schema migrations stay handled by the existing INI parser's
     /// defaults).
     func writeSnapshotsToDisk() {
-        let file = SnapshotFile(slots: snapshots)
+        let file = SnapshotFile(
+            slots: snapshots, activeID: activeSnapshotID, activeModified: activeSnapshotModified)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -2577,12 +2449,12 @@ final class MPXPrimeViewModel: ObservableObject {
             try data.write(
                 to: URL(fileURLWithPath: snapshotsFilePath), options: [.atomic])
         } catch {
-            statusText = "Failed to write snapshots: \(error.localizedDescription)"
+            statusText = "Failed to write presets: \(error.localizedDescription)"
         }
     }
 
     /// Capture the current config into slot `slot` with the given name
-    /// (empty → "Snapshot N"). Writes the file immediately so a crash
+    /// (empty → "Preset N"). Writes the file immediately so a crash
     /// doesn't lose the operator's save.
     func saveSnapshot(slot: Int, name: String) {
         guard (0..<snapshots.count).contains(slot) else { return }
@@ -2590,16 +2462,20 @@ final class MPXPrimeViewModel: ObservableObject {
         do {
             let ini = try config.captureAsINIString()
             let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            snapshots[slot] = ConfigSnapshot(
+            let saved = ConfigSnapshot(
                 id: UUID(),
-                name: resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName,
+                name: resolvedName.isEmpty ? "Preset \(slot + 1)" : resolvedName,
                 savedAt: Date(),
                 configINIText: ini
             )
+            snapshots[slot] = saved
+            // The just-saved slot now mirrors the live config exactly.
+            activeSnapshotID = saved.id
+            activeSnapshotModified = false
             writeSnapshotsToDisk()
-            statusText = "Saved snapshot to slot \(slot + 1)."
+            statusText = "Saved preset to slot \(slot + 1)."
         } catch {
-            statusText = "Failed to save snapshot: \(error.localizedDescription)"
+            statusText = "Failed to save preset: \(error.localizedDescription)"
         }
     }
 
@@ -2612,18 +2488,85 @@ final class MPXPrimeViewModel: ObservableObject {
         do {
             let loaded = try AppConfig.loadFromINIString(snapshot.configINIText)
             applyLoadedConfig(loaded, origin: .manual)
-            statusText = "Loaded snapshot \"\(snapshot.name)\"."
+            activeSnapshotID = snapshot.id
+            activeSnapshotModified = false
+            // Persist the loaded config to the main INI so disk == live, and
+            // record the active preset so the "Loaded" marker survives relaunch.
+            enqueueConfigSave(snapshot: config)
+            writeSnapshotsToDisk()
+            statusText = "Loaded preset \"\(snapshot.name)\"."
         } catch {
-            statusText = "Failed to load snapshot: \(error.localizedDescription)"
+            statusText = "Failed to load preset: \(error.localizedDescription)"
         }
+    }
+
+    /// Export the preset in `slot` to a file. The stored config IS a complete
+    /// MPX Prime Studio INI, so the exported file doubles as a shareable config
+    /// (loadable via --config or Import). Returns true on success.
+    @discardableResult
+    func exportSnapshot(slot: Int, to url: URL) -> Bool {
+        guard (0..<snapshots.count).contains(slot), let snap = snapshots[slot] else { return false }
+        do {
+            try snap.configINIText.write(to: url, atomically: true, encoding: .utf8)
+            statusText = "Exported preset \"\(snap.name)\" to \(url.lastPathComponent)."
+            return true
+        } catch {
+            statusText = "Failed to export preset: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Import an INI file into preset `slot`. Validates it parses, normalises it
+    /// through the canonical writer, and names the preset from the filename.
+    /// Populates the slot only (does not load it into the engine). Returns true
+    /// on success.
+    @discardableResult
+    func importSnapshot(slot: Int, from url: URL) -> Bool {
+        guard (0..<snapshots.count).contains(slot) else { return false }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let parsed = try AppConfig.loadFromINIString(text)  // validate
+            let canonical = try parsed.captureAsINIString()     // normalise
+            let rawName = url.deletingPathExtension().lastPathComponent
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let imported = ConfigSnapshot(
+                id: UUID(),
+                name: name.isEmpty ? "Preset \(slot + 1)" : name,
+                savedAt: Date(),
+                configINIText: canonical)
+            // Overwriting the active slot's content untethers the live config.
+            if snapshots[slot]?.id == activeSnapshotID {
+                activeSnapshotID = nil
+                activeSnapshotModified = false
+            }
+            snapshots[slot] = imported
+            writeSnapshotsToDisk()
+            statusText = "Imported preset \"\(imported.name)\" into slot \(slot + 1)."
+            return true
+        } catch {
+            statusText = "Failed to import preset: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// A filesystem-safe default filename for exporting the preset in `slot`.
+    func exportFilename(slot: Int) -> String {
+        let base = snapshots[slot]?.name ?? "Preset \(slot + 1)"
+        let safe = base.map { "/\\:?%*|\"<>".contains($0) ? "-" : $0 }
+        let trimmed = String(safe).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed.isEmpty ? "Preset \(slot + 1)" : trimmed) + ".ini"
     }
 
     /// Drop the snapshot in `slot` and persist the empty state.
     func clearSnapshot(slot: Int) {
         guard (0..<snapshots.count).contains(slot) else { return }
+        if snapshots[slot]?.id == activeSnapshotID {
+            activeSnapshotID = nil
+            activeSnapshotModified = false
+        }
         snapshots[slot] = nil
         writeSnapshotsToDisk()
-        statusText = "Cleared snapshot slot \(slot + 1)."
+        statusText = "Cleared preset slot \(slot + 1)."
     }
 
     /// Rename an existing snapshot in place (doesn't touch the stored
@@ -2634,7 +2577,7 @@ final class MPXPrimeViewModel: ObservableObject {
         guard (0..<snapshots.count).contains(slot),
               var snapshot = snapshots[slot] else { return }
         let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        snapshot.name = resolvedName.isEmpty ? "Snapshot \(slot + 1)" : resolvedName
+        snapshot.name = resolvedName.isEmpty ? "Preset \(slot + 1)" : resolvedName
         snapshots[slot] = snapshot
         writeSnapshotsToDisk()
     }
@@ -4633,6 +4576,12 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private func saveConfig(restartRequired: Bool) {
+        // Any user edit diverges the live config from the loaded preset. Persist
+        // the flip once (not per keystroke) so "Loaded - edited" survives relaunch.
+        if activeSnapshotID != nil, !activeSnapshotModified {
+            activeSnapshotModified = true
+            writeSnapshotsToDisk()
+        }
         enqueueConfigSave(snapshot: config)
         if restartRequired && isRunning {
             if !pendingRuntimeApply {
@@ -5415,11 +5364,48 @@ private struct Card<Content: View>: View {
 private struct SnapshotsView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
+    private var activePresetName: String? {
+        guard let id = model.activeSnapshotID else { return nil }
+        return model.snapshots.compactMap { $0 }.first { $0.id == id }?.name
+    }
+
+    /// Unmissable summary of which preset is live (or that the config is custom).
+    @ViewBuilder private var activePresetBanner: some View {
+        let modified = model.activeSnapshotModified
+        HStack(spacing: 8) {
+            if let name = activePresetName {
+                Image(systemName: modified ? "pencil.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(modified ? Color.orange : Color.accentColor)
+                    .accessibilityHidden(true)
+                Text(modified ? "Active preset: \(name)  (edited since loaded)"
+                              : "Active preset: \(name)")
+                    .fontWeight(.semibold)
+            } else {
+                Image(systemName: "circle.dashed")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text("No preset loaded - the live configuration isn't tied to a saved preset.")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(activePresetName == nil
+                      ? Color.secondary.opacity(0.08)
+                      : (modified ? Color.orange : Color.accentColor).opacity(0.12))
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Card(title: "Snapshots") {
+                Card(title: "Presets") {
                     VStack(alignment: .leading, spacing: 10) {
+                        activePresetBanner
                         ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
                             SnapshotSlotRow(model: model, slot: slot)
                             if slot < MPXPrimeViewModel.snapshotSlotCount - 1 {
@@ -5429,7 +5415,7 @@ private struct SnapshotsView: View {
                     }
                 }
 
-                TabHelpBox(text: "Eight named snapshot slots for the full configuration. Save the current setup into a slot, load it back later — survives app restart (stored as `<configPath>.snapshots.json`). Heavier than Format Profiles: snapshots capture every per-stage setting and RDS field, not just the DSP bundle.")
+                TabHelpBox(text: "Eight named presets capturing the full configuration. Save the current setup into a slot, load it back later — survives app restart. Heavier than Format Profiles: a preset captures every per-stage setting and RDS field, not just the DSP bundle.")
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)
@@ -5442,37 +5428,54 @@ private struct SnapshotSlotRow: View {
     let slot: Int
     @State private var draftName: String = ""
     @State private var confirmingClear = false
+    @FocusState private var nameFieldFocused: Bool
 
     private var snapshot: ConfigSnapshot? { model.snapshots[slot] }
+
+    /// This slot holds the snapshot whose config is currently live.
+    private var isActive: Bool { snapshot != nil && snapshot?.id == model.activeSnapshotID }
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Text("\(slot + 1).")
                 .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .fontWeight(isActive ? .bold : .regular)
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 .frame(width: 22, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 2) {
-                TextField(snapshot?.name ?? "Snapshot \(slot + 1)", text: $draftName, onCommit: {
-                    if snapshot != nil {
-                        model.renameSnapshot(slot: slot, name: draftName)
-                    } else {
-                        model.saveSnapshot(slot: slot, name: draftName)
-                        draftName = ""
+                TextField("Preset \(slot + 1)", text: $draftName)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .frame(maxWidth: 260)
+                    .focused($nameFieldFocused)
+                    // Enter commits (creates an empty slot or renames a saved
+                    // one); losing focus commits a rename so a typed name is
+                    // never silently lost.
+                    .onSubmit { commitName(allowCreate: true) }
+                    .onChange(of: nameFieldFocused) { _, focused in
+                        if !focused { commitName(allowCreate: false) }
                     }
-                })
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(maxWidth: 260)
 
-                if let snap = snapshot {
-                    Text("saved \(Self.relativeDateString(snap.savedAt))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("empty")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    if isActive {
+                        Label(
+                            model.activeSnapshotModified ? "Loaded - edited" : "Loaded",
+                            systemImage: model.activeSnapshotModified
+                                ? "pencil.circle.fill" : "checkmark.circle.fill"
+                        )
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(model.activeSnapshotModified ? Color.orange : Color.accentColor)
+                    }
+                    if let snap = snapshot {
+                        Text("saved \(Self.relativeDateString(snap.savedAt))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("empty")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
 
@@ -5480,17 +5483,30 @@ private struct SnapshotSlotRow: View {
 
             HStack(spacing: 8) {
                 Button("Save") {
-                    let nameToUse = !draftName.isEmpty ? draftName : (snapshot?.name ?? "")
-                    model.saveSnapshot(slot: slot, name: nameToUse)
-                    draftName = ""
+                    // Capture the current full config into this slot under the
+                    // field's name (saveSnapshot trims + defaults when empty).
+                    // Do NOT clear draftName -- the name stays visible, and the
+                    // onChange(of: snapshot?.name) sync keeps the field correct.
+                    model.saveSnapshot(slot: slot, name: draftName)
                 }
-                .help("Capture the current full configuration into this slot. Overwrites any existing snapshot here.")
+                .help("Capture the current full configuration into this slot. Overwrites any existing preset here.")
+
+                Button("Import...") {
+                    importPreset()
+                }
+                .help("Load a preset from an MPX Prime Studio .ini file into this slot (overwrites). Does not apply it -- use Load for that.")
 
                 Button("Load") {
                     model.loadSnapshot(slot: slot)
                 }
                 .disabled(snapshot == nil)
                 .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
+
+                Button("Export...") {
+                    exportPreset()
+                }
+                .disabled(snapshot == nil)
+                .help("Save this preset to a file (a standard MPX Prime Studio .ini you can share or load with --config).")
 
                 Button("Clear", role: .destructive) {
                     confirmingClear = true
@@ -5500,23 +5516,77 @@ private struct SnapshotSlotRow: View {
             }
             .controlSize(.small)
         }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isActive ? Color.accentColor.opacity(0.10) : Color.clear)
+        )
         .onAppear {
             draftName = snapshot?.name ?? ""
+        }
+        // Keep the field in sync when the slot's stored name changes underneath
+        // (loaded from disk, renamed, saved, cleared) -- but never clobber the
+        // user's in-progress typing.
+        .onChange(of: snapshot?.name) { _, newName in
+            if !nameFieldFocused { draftName = newName ?? "" }
         }
         // Deleting a saved slot is irreversible -- confirm first (HIG: confirm
         // destructive actions that can't be undone).
         .confirmationDialog(
-            "Clear snapshot \(slot + 1)?",
+            "Clear preset \(slot + 1)?",
             isPresented: $confirmingClear,
             titleVisibility: .visible
         ) {
-            Button("Clear Snapshot", role: .destructive) {
+            Button("Clear Preset", role: .destructive) {
                 model.clearSnapshot(slot: slot)
                 draftName = ""
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\"\(snapshot?.name ?? "Snapshot \(slot + 1)")\" will be deleted. This cannot be undone.")
+            Text("\"\(snapshot?.name ?? "Preset \(slot + 1)")\" will be deleted. This cannot be undone.")
+        }
+    }
+
+    /// Persist the edited name. For a saved slot, rename it (on Enter or focus
+    /// loss) when the text actually changed. For an empty slot, only Enter
+    /// (`allowCreate`) creates the snapshot -- clicking away must not silently
+    /// save a slot the user never asked for.
+    /// Prompt for an INI file and import it into this slot.
+    private func importPreset() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "ini") ?? .data, .plainText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "Import Preset"
+        panel.prompt = "Import"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.importSnapshot(slot: slot, from: url)
+        }
+    }
+
+    /// Prompt for a destination and write the preset's config there.
+    private func exportPreset() {
+        guard snapshot != nil else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = model.exportFilename(slot: slot)
+        panel.allowedContentTypes = [UTType(filenameExtension: "ini") ?? .data]
+        panel.canCreateDirectories = true
+        panel.title = "Export Preset"
+        panel.prompt = "Export"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.exportSnapshot(slot: slot, to: url)
+        }
+    }
+
+    private func commitName(allowCreate: Bool) {
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = snapshot {
+            if !trimmed.isEmpty, trimmed != existing.name {
+                model.renameSnapshot(slot: slot, name: trimmed)
+            }
+        } else if allowCreate, !trimmed.isEmpty {
+            model.saveSnapshot(slot: slot, name: trimmed)
         }
     }
 
@@ -5668,10 +5738,14 @@ private struct TestToneView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(Self.frequencyPresets, id: \.self) { freq in
+                        let isActive = abs(freqBinding.wrappedValue - freq) < 0.5
                         Button(presetLabel(for: freq)) {
                             freqBinding.wrappedValue = freq
                         }
                         .buttonStyle(.bordered)
+                        // Tint the preset matching the current frequency so the
+                        // active selection is visible at a glance.
+                        .tint(isActive ? BroadcastStyle.accent : nil)
                     }
                 }
             }
@@ -6102,12 +6176,19 @@ private struct MonitoringDashboardView: View {
     }
 
     private func dropoutPill(label: String, count: Int) -> some View {
-        let tint: Color = count == 0 ? .green : (count < 3 ? .orange : .red)
+        let tint: Color = count == 0
+            ? BroadcastStyle.safeGreen
+            : (count < 3 ? BroadcastStyle.tightAmber : BroadcastStyle.overRed)
+        // Distinct symbol per state so the cue is shape + colour, not colour
+        // alone (WCAG 2.1 / Differentiate-Without-Color).
+        let symbol = count == 0
+            ? "checkmark.circle.fill"
+            : (count < 3 ? "exclamationmark.circle.fill" : "exclamationmark.triangle.fill")
         let state = count == 0 ? "ok" : (count < 3 ? "warning" : "error")
         return HStack(spacing: 4) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
+            Image(systemName: symbol)
+                .font(.caption2)
+                .foregroundStyle(tint)
                 .accessibilityHidden(true)
             Text(label)
                 .font(BroadcastStyle.scaleLabel)
@@ -6115,8 +6196,8 @@ private struct MonitoringDashboardView: View {
             Text("\(count)")
                 .font(BroadcastStyle.valueReadout)
         }
-        // The dot's red/orange/green is the only visual state cue; carry that
-        // state as words for VoiceOver and Differentiate-Without-Color users.
+        // Symbol + colour carry the state visually; mirror it in words for
+        // VoiceOver.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue("\(count), \(state)")
@@ -6618,7 +6699,7 @@ struct LevelsCardView: View {
                         valueText: model.modulationText,
                         level: model.modulationLevel,
                         peakLevel: model.modulationPeakHoldLevel,
-                        scale: .modulationKHz(limit: model.config.mpxDeviationKHz)
+                        scale: .modulationKHz(fullScale: 100, limit: model.config.mpxDeviationKHz)
                     )
                 }
                 // GR + SAFE removed in 0.30 — peak-control gain-reduction
@@ -6629,6 +6710,15 @@ struct LevelsCardView: View {
                 Spacer(minLength: 0)
               }
               .frame(height: 340)
+              // Group the strips under one named VoiceOver container so the
+              // cluster is announced as a unit ("Level meters, …") and the
+              // user can navigate into the individual strips for readings,
+              // instead of landing on disconnected strips with no context.
+              .accessibilityElement(children: .contain)
+              .accessibilityLabel(
+                model.processedAudioOutputActive
+                    ? "Level meters: input L and R, AGC output L and R, output"
+                    : "Level meters: input L and R, AGC output L and R, MPX output, modulation")
             }
         }
     }
@@ -6814,69 +6904,6 @@ private struct MeterBar: View {
     }
 }
 
-struct ScopeView: View {
-    let samples: [Float]
-    var secondarySamples: [Float]?
-
-    var body: some View {
-        Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-            context.fill(
-                Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius), with: .color(.black.opacity(0.22)))
-
-            var grid = Path()
-            let midY = size.height * 0.5
-            grid.move(to: CGPoint(x: 0, y: midY))
-            grid.addLine(to: CGPoint(x: size.width, y: midY))
-            for i in 1..<4 {
-                let x = size.width * (CGFloat(i) / 4.0)
-                grid.move(to: CGPoint(x: x, y: 0))
-                grid.addLine(to: CGPoint(x: x, y: size.height))
-            }
-            context.stroke(grid, with: .color(.white.opacity(0.12)), lineWidth: 1)
-
-            func makeWavePath(samples: [Float]) -> Path {
-                guard samples.count > 1 else { return Path() }
-                let stepX = size.width / CGFloat(samples.count - 1)
-                var wave = Path()
-                for (idx, sample) in samples.enumerated() {
-                    let clamped = max(-1.0, min(1.0, sample))
-                    let x = CGFloat(idx) * stepX
-                    let y = midY - (CGFloat(clamped) * amplitude)
-                    if idx == 0 {
-                        wave.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        wave.addLine(to: CGPoint(x: x, y: y))
-                    }
-                }
-                return wave
-            }
-
-            guard samples.count > 1 else { return }
-            let amplitude = max(10.0, size.height * 0.46)
-            if let secondarySamples {
-                context.stroke(
-                    makeWavePath(samples: secondarySamples),
-                    with: .color(.cyan.opacity(0.85)),
-                    lineWidth: 1.1
-                )
-            }
-            context.stroke(
-                makeWavePath(samples: samples),
-                with: .color(.green.opacity(0.90)),
-                lineWidth: 1.2
-            )
-        }
-        .frame(minHeight: 130, idealHeight: 150)
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
-        // A Canvas exposes no children; without this it is silent noise to
-        // VoiceOver. Give the region a name + image role.
-        .accessibilityElement()
-        .accessibilityLabel("Waveform scope")
-        .accessibilityAddTraits(.isImage)
-    }
-}
-
 private struct MonitoringWindowHeader: View {
     let title: String
     let subtitle: String
@@ -6890,183 +6917,6 @@ private struct MonitoringWindowHeader: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct MPXSpectrumView: View {
-    let dbBins: [Float]
-    let maxHz: Double
-    let nyquistHz: Double
-
-    private let dbMin: Float = -100.0
-    private let dbMax: Float = 0.0
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Canvas { context, size in
-                let rect = CGRect(origin: .zero, size: size)
-                context.fill(
-                    Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius), with: .color(.black.opacity(0.30)))
-                let maxDisplayHz = max(1_000.0, maxHz)
-                let nyquist = max(0.0, min(maxDisplayHz, nyquistHz))
-                let leftAxisWidth: CGFloat = 42
-                let rightAxisWidth: CGFloat = 42
-                let topInset: CGFloat = 8
-                let bottomInset: CGFloat = 20
-                let plotRect = CGRect(
-                    x: leftAxisWidth,
-                    y: topInset,
-                    width: max(10, size.width - leftAxisWidth - rightAxisWidth),
-                    height: max(10, size.height - topInset - bottomInset)
-                )
-
-                // Grid and border inside the plot region.
-                var grid = Path()
-                for db in stride(from: -100, through: 0, by: 10) {
-                    let y = yPosition(forDB: Float(db), in: plotRect)
-                    grid.move(to: CGPoint(x: plotRect.minX, y: y))
-                    grid.addLine(to: CGPoint(x: plotRect.maxX, y: y))
-                }
-                for tick in xTicks(maxHz: maxDisplayHz, dense: true) {
-                    let x = xPosition(forHz: tick, in: plotRect, maxHz: maxDisplayHz)
-                    grid.move(to: CGPoint(x: x, y: plotRect.minY))
-                    grid.addLine(to: CGPoint(x: x, y: plotRect.maxY))
-                }
-                context.stroke(grid, with: .color(.white.opacity(0.18)), lineWidth: 0.9)
-                context.stroke(
-                    Path(plotRect),
-                    with: .color(.white.opacity(0.40)),
-                    lineWidth: 1.0
-                )
-
-                // Left and right Y-axis labels.
-                for db in stride(from: -100, through: 0, by: 10) {
-                    let y = yPosition(forDB: Float(db), in: plotRect)
-                    let label = db == 0 ? "0 dB" : "\(db) dB"
-                    let text = Text(label)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    context.draw(text, at: CGPoint(x: 18, y: y))
-                    context.draw(text, at: CGPoint(x: size.width - 18, y: y))
-                }
-
-                // Bottom X-axis labels.
-                for tick in xTicks(maxHz: maxDisplayHz, dense: false) {
-                    let x = xPosition(forHz: tick, in: plotRect, maxHz: maxDisplayHz)
-                    let kHz = Int((tick / 1000.0).rounded())
-                    let label = Text("\(kHz) kHz")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    context.draw(label, at: CGPoint(x: x, y: plotRect.maxY + 12))
-                }
-
-                guard dbBins.count > 1 else { return }
-
-                let stepX = plotRect.width / CGFloat(dbBins.count - 1)
-                var line = Path()
-                for (idx, value) in dbBins.enumerated() {
-                    let x = plotRect.minX + (CGFloat(idx) * stepX)
-                    let y = yPosition(forDB: max(dbMin, min(dbMax, value)), in: plotRect)
-                    if idx == 0 {
-                        line.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        line.addLine(to: CGPoint(x: x, y: y))
-                    }
-                }
-
-                var fill = line
-                fill.addLine(to: CGPoint(x: plotRect.maxX, y: plotRect.maxY))
-                fill.addLine(to: CGPoint(x: plotRect.minX, y: plotRect.maxY))
-                fill.closeSubpath()
-                let gradient = Gradient(colors: [
-                    Color.red.opacity(0.65),
-                    Color.yellow.opacity(0.60),
-                    Color.green.opacity(0.55),
-                    Color.cyan.opacity(0.50),
-                    Color.blue.opacity(0.45)
-                ])
-                context.fill(
-                    fill,
-                    with: .linearGradient(
-                        gradient, startPoint: CGPoint(x: 0, y: 0),
-                        endPoint: CGPoint(x: 0, y: size.height)))
-                context.stroke(line, with: .color(.white.opacity(0.7)), lineWidth: 1.0)
-
-                if nyquist > 0.0, nyquist < maxDisplayHz {
-                    let xNyquist = xPosition(forHz: nyquist, in: plotRect, maxHz: maxDisplayHz)
-                    let unsupportedRect = CGRect(
-                        x: xNyquist,
-                        y: plotRect.minY,
-                        width: max(0, plotRect.maxX - xNyquist),
-                        height: plotRect.height
-                    )
-                    context.fill(
-                        Path(unsupportedRect),
-                        with: .color(.black.opacity(0.38))
-                    )
-                }
-            }
-            .frame(minHeight: 190, idealHeight: 220)
-            .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
-
-            HStack(spacing: 14) {
-                let maxDisplayHz = max(1_000.0, maxHz)
-                if nyquistHz > 0.0, nyquistHz < maxDisplayHz {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.orange.opacity(0.9))
-                            .frame(width: 6, height: 6)
-                        Text("Nyquist \(Int((nyquistHz / 1000.0).rounded())) kHz")
-                    }
-                }
-                Spacer()
-            }
-            .font(.system(.caption, design: .monospaced).weight(.medium))
-            .foregroundStyle(.secondary)
-        }
-        // Disable SwiftUI implicit animations on @Published dbBins updates.
-        // Without this, frame-to-frame interpolation queues accumulated
-        // when 30 Hz spectrum updates were interrupted mid-interpolation —
-        // visible as growing lag in the Audio Spectrum / MPX Spectrum
-        // windows after several minutes. Matches the inline spectrum view
-        // which already has this transaction modifier.
-        .transaction { txn in
-            txn.animation = nil
-        }
-        // Canvas content is invisible to VoiceOver; name the region.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("MPX spectrum, 0 to \(Int((maxHz / 1000.0).rounded())) kHz")
-        .accessibilityAddTraits(.isImage)
-    }
-
-    private func yPosition(forDB db: Float, height: CGFloat) -> CGFloat {
-        let clamped = max(dbMin, min(dbMax, db))
-        let norm = (clamped - dbMin) / (dbMax - dbMin)
-        return (1.0 - CGFloat(norm)) * height
-    }
-
-    private func yPosition(forDB db: Float, in rect: CGRect) -> CGFloat {
-        rect.minY + yPosition(forDB: db, height: rect.height)
-    }
-
-    private func xPosition(forHz hz: Double, in rect: CGRect, maxHz: Double) -> CGFloat {
-        let ratio = CGFloat(max(0.0, min(1.0, hz / max(1_000.0, maxHz))))
-        return rect.minX + (ratio * rect.width)
-    }
-
-    private func xTicks(maxHz: Double, dense: Bool) -> [Double] {
-        let maxDisplayHz = max(1_000.0, maxHz)
-        let step = dense ? 5_000.0 : 10_000.0
-        var ticks: [Double] = [0.0]
-        var value = step
-        while value < maxDisplayHz {
-            ticks.append(value)
-            value += step
-        }
-        if ticks.last != maxDisplayHz {
-            ticks.append(maxDisplayHz)
-        }
-        return ticks
     }
 }
 
@@ -7680,19 +7530,22 @@ private struct ProcessingLimiterTab: View {
                 value: model.configBinding(\.preEncodeLookaheadMS, runtimeDisposition: .restart),
                 range: 0...5,
                 format: "%.2f ms",
-                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required."
+                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required.",
+                restartRequired: true
             ).disabled(disabled)
             DisclosureGroup("Advanced") {
                 Toggle(
-                    "Cleaner Limiter Ceiling",
+                    "Reduce Clipping Distortion",
                     isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
                 )
                 .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Experimental; off keeps the current behavior.")
                 .disabled(disabled)
-                Toggle(
-                    "High-Frequency Transient Look-ahead",
-                    isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)
-                )
+                Toggle(isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)) {
+                    HStack(spacing: 6) {
+                        Text("High-Frequency Transient Look-ahead")
+                        RestartBadge()
+                    }
+                }
                 .help("Engages look-ahead only on high-frequency transients (where pre-emphasis concentrates peaks), leaving low-frequency punch untouched. Requires Look-ahead above 0. Restart-required.")
                 .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
                 DoubleSliderRow(
@@ -7700,7 +7553,8 @@ private struct ProcessingLimiterTab: View {
                     value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
                     range: 1_000...12_000,
                     format: "%.0f Hz",
-                    tooltip: "High-pass cutoff for the HF transient look-ahead detector. 4 kHz default; lower (2-3 kHz) catches more vocal sibilance, higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required."
+                    tooltip: "High-pass cutoff for the HF transient look-ahead detector. 4 kHz default; lower (2-3 kHz) catches more vocal sibilance, higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required.",
+                    restartRequired: true
                 ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
             }
             .disabled(disabled)
@@ -7743,13 +7597,16 @@ private struct ProcessingFinalStageTab: View {
             Toggle("Enable Safety Limiter", isOn: model.configBinding(\.limitMPX))
                 .help("Look-ahead peak limiter on the final MPX (audio composite + safety net). Pilot and RDS bypass this stage to keep subcarriers at constant amplitude. Restart-required.")
             let disabled = !model.config.limitMPX
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.limitThreshold), range: 0.5...0.999, format: "%.3f",
-                tooltip: "Linear ceiling for the safety limiter (0.5..0.999). 0.98 = -0.18 dBFS. Below this the limiter doesn't engage; above it the look-ahead reduces gain to keep peaks under the ceiling.").disabled(disabled)
-            Toggle("Enable Look-Ahead", isOn: model.configBinding(\.limitLookaheadEnabled))
-                .help("Look-ahead delay so the limiter sees future peaks and applies gain reduction smoothly before the peak arrives. Off makes the limiter purely reactive (more overshoot).")
-                .disabled(disabled)
-            DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
-                tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
+            DisclosureGroup("Advanced") {
+                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.limitThreshold), range: 0.5...0.999, format: "%.3f",
+                    tooltip: "Linear ceiling for the safety limiter (0.5..0.999). 0.98 = -0.18 dBFS. Below this the limiter doesn't engage; above it the look-ahead reduces gain to keep peaks under the ceiling.").disabled(disabled)
+                Toggle("Enable Look-Ahead", isOn: model.configBinding(\.limitLookaheadEnabled))
+                    .help("Look-ahead delay so the limiter sees future peaks and applies gain reduction smoothly before the peak arrives. Off makes the limiter purely reactive (more overshoot).")
+                    .disabled(disabled)
+                DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
+                    tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
+            }
+            .disabled(disabled)
         }
       }
     }
@@ -7876,7 +7733,7 @@ private struct ProcessingBassClipperTab: View {
             Toggle("Enable Bass Clipper", isOn: model.configBinding(\.bassClipperEnabled, runtimeDisposition: .live))
             let disabled = !model.config.bassClipperEnabled
             DoubleSliderRow(title: "Crossover", value: model.configBinding(\.bassClipperCrossoverHz, runtimeDisposition: .live), range: 60...300, format: "%.0f Hz",
-                tooltip: "LR4 crossover frequency isolating the low band for clipping. Content below this is clipped independently; above passes unmodified.").disabled(disabled)
+                tooltip: "Crossover frequency isolating the low band for clipping. Content below this is clipped independently; above passes unmodified.").disabled(disabled)
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.bassClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Clipping threshold for the low band. Lower = more aggressive bass clipping, reducing bass-induced IMD in downstream stages.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.bassClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
@@ -7893,7 +7750,7 @@ private struct ProcessingHFClipperTab: View {
             Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))
             let disabled = !model.config.hfClipperEnabled
             DoubleSliderRow(title: "Crossover", value: model.configBinding(\.hfClipperCrossoverHz, runtimeDisposition: .live), range: 3000...8000, format: "%.0f Hz",
-                tooltip: "LR4 crossover isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
+                tooltip: "Crossover frequency isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
@@ -7906,8 +7763,8 @@ private struct ProcessingDCClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Distortion-Cancelled Clipper") {
-            Toggle("Enable DC Clipper", isOn: model.configBinding(\.dcClipperEnabled, runtimeDisposition: .live))
+        Card(title: "Audio Clipper") {
+            Toggle("Enable Audio Clipper", isOn: model.configBinding(\.dcClipperEnabled, runtimeDisposition: .live))
             let disabled = !model.config.dcClipperEnabled
             DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.dcClipperCeilingDB, runtimeDisposition: .live), range: -6...0, format: "%.1f dB",
                 tooltip: "Clipping ceiling for the distortion-cancelled clipper. Lower ceiling = more audible density but more clipping artifacts.").disabled(disabled)
@@ -7938,8 +7795,6 @@ private struct ProcessingCompositeClipperTab: View {
     var body: some View {
         Card(title: "Composite Clipper") {
             Toggle("Enable Composite Clipper", isOn: model.configBinding(\.compositeClipperEnabled, runtimeDisposition: .live))
-            Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
-                .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
             let disabled = !model.config.compositeClipperEnabled
             DoubleSliderRow(title: "Threshold", value: model.configBinding(\.compositeClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
                 tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)
@@ -7973,6 +7828,10 @@ private struct ProcessingCompositeClipperTab: View {
             Text("Tip: leave the composite clipper off when loudness isn't critical -- it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Protect Audio Highs\" recovers HF detail at the cost of some loudness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            DisclosureGroup("Experimental") {
+                Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
+                    .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
+            }
         }
     }
 }
@@ -8032,7 +7891,8 @@ private struct SystemSettingsSectionContent: View {
             if !model.processedAudioOutputActive {
                 DoubleSliderRow(
                     title: "Pilot Level", value: model.pilotLevelPercentBinding(),
-                    range: 0...12, format: "%.1f %%")
+                    range: 0...12, format: "%.1f %%",
+                    restartRequired: true)
                 .disabled(model.config.monoMode)
             }
 
@@ -8140,33 +8000,56 @@ private struct RDSProgramTab: View {
             PSBankRow(letter: "B", model: model, path: \.rdsPSB)
             PSBankRow(letter: "C", model: model, path: \.rdsPSC)
             PSBankRow(letter: "D", model: model, path: \.rdsPSD)
-            Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered, runtimeDisposition: .liveRDS))
-            DoubleSliderRow(
-                title: "PS Frame",
-                value: model.configBinding(\.rdsPSFrameSeconds, runtimeDisposition: .liveRDS),
-                range: 0.5...10.0,
-                format: "%.1f s")
-            .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
-            LabeledContent("PI Code") {
-                HexCodeField(text: model.piBinding(), placeholder: "0000", width: 72)
-            }
-            LabeledContent("ECC") {
-                HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
-            }
-            Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
-                Text("Europe (RDS)").tag(false)
-                Text("USA (RBDS)").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .help("Selects which genre table labels the PTY code below. The transmitted 5-bit PTY value is identical either way -- Europe (RDS, EN 50067) and North America (RBDS, NRSC-4) just name the same code differently, and receivers pick the table by region. Same number, different genre: e.g. 10 reads as Pop Music on RDS but Country on RBDS.")
             Picker("Program Type (PTY)", selection: model.ptyBinding()) {
                 ForEach(model.ptyChoices, id: \.0) { pty in
                     Text("\(pty.0) · \(pty.1)").tag(pty.0)
                 }
             }
-            Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN, runtimeDisposition: .liveRDS))
-            TextField("PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS))
-            Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
+            DisclosureGroup("PS Display") {
+                Toggle("Center PS", isOn: model.configBinding(\.rdsPSCentered, runtimeDisposition: .liveRDS))
+                DoubleSliderRow(
+                    title: "PS Frame",
+                    value: model.configBinding(\.rdsPSFrameSeconds, runtimeDisposition: .liveRDS),
+                    range: 0.5...10.0,
+                    format: "%.1f s")
+                .help("Default seconds each PS chunk is shown when the source has no explicit Ns: timing marker. Typical broadcast cadence is 3 s. Per-segment markers like 4s:NEWS still override this.")
+                Toggle("Enable PTYN", isOn: model.configBinding(\.rdsEnablePTYN, runtimeDisposition: .liveRDS))
+                RDSCountedField(placeholder: "PTYN", text: model.configBinding(\.rdsPTYN, runtimeDisposition: .liveRDS), maxChars: 8)
+                Toggle("Center PTYN", isOn: model.configBinding(\.rdsPTYNCentered, runtimeDisposition: .liveRDS))
+            }
+            DisclosureGroup("Station Identity") {
+                LabeledContent("PI Code") {
+                    HexCodeField(text: model.piBinding(), placeholder: "0000", width: 72)
+                }
+                .help("Program Identification: the unique 16-bit hex station ID a receiver uses to recognize this station and follow it across alternative frequencies (AF). Assigned by your national broadcast authority; in RBDS it is derived from the call sign.")
+                LabeledContent("ECC") {
+                    HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
+                }
+                .help("Extended Country Code: one hex byte that, combined with the PI country nibble, uniquely identifies the country. Lets receivers distinguish countries that share a PI prefix. Default E3 is the Netherlands; set the value for your country (e.g. E0 Italy, E1 UK/France, E2 Spain).")
+                LabeledContent("LIC") {
+                    HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
+                }
+                .help("Language Identification Code: one hex byte naming the programme language, sent in Group 1A alongside the ECC. Independent of country. Default 1D is Dutch; e.g. 15 Italian, 09 English, 0F French, 08 German, 0A Spanish.")
+                Toggle("Enable PIN (1A)", isOn: model.configBinding(\.rdsEnablePIN, runtimeDisposition: .liveRDS))
+                    .help("Programme Item Number, Group 1A block 4: the scheduled start (day-of-month / hour / minute) of the current programme item. Legacy -- rarely decoded by modern receivers; off transmits 0.")
+                if model.config.rdsEnablePIN {
+                    HStack(spacing: 14) {
+                        Stepper("Day \(model.config.rdsPINDay)",
+                                value: model.configBinding(\.rdsPINDay, runtimeDisposition: .liveRDS), in: 1...31)
+                        Stepper("Hour \(model.config.rdsPINHour)",
+                                value: model.configBinding(\.rdsPINHour, runtimeDisposition: .liveRDS), in: 0...23)
+                        Stepper("Min \(model.config.rdsPINMinute)",
+                                value: model.configBinding(\.rdsPINMinute, runtimeDisposition: .liveRDS), in: 0...59)
+                    }
+                    .font(.callout)
+                }
+                Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
+                    Text("Europe (RDS)").tag(false)
+                    Text("USA (RBDS)").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .help("Selects which genre table labels the PTY code above. The transmitted 5-bit PTY value is identical either way -- Europe (RDS, EN 50067) and North America (RBDS, NRSC-4) just name the same code differently, and receivers pick the table by region. Same number, different genre: e.g. 10 reads as Pop Music on RDS but Country on RBDS.")
+            }
         }
 
         // Per-program operational flags. Live-applied; UECP MEC 0x0E
@@ -8182,14 +8065,26 @@ private struct RDSProgramTab: View {
                 GridItem(.flexible(minimum: 100))
             ], alignment: .leading, spacing: 8) {
                 Toggle("TP", isOn: model.configBinding(\.rdsTP, runtimeDisposition: .liveRDS))
+                    .help("Traffic Program: this station carries traffic announcements from time to time.")
                 Toggle("TA", isOn: model.configBinding(\.rdsTA, runtimeDisposition: .liveRDS))
+                    .help("Traffic Announcement: flip on for the duration of a traffic bulletin so TA-enabled receivers switch to it, then flip off.")
                 Toggle("MS", isOn: model.configBinding(\.rdsMS, runtimeDisposition: .liveRDS))
-                Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
-                Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
-                Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
-                Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
+                    .help("Music / Speech: tells receivers whether the current program is music (on) or speech (off).")
             }
             .toggleStyle(.switch)
+            DisclosureGroup("Decoder Info (DI)") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("DI Stereo", isOn: model.configBinding(\.rdsDI_STEREO, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: tells receivers the broadcast is stereo (off = mono). Set this to match the actual program.")
+                    Toggle("DI Head", isOn: model.configBinding(\.rdsDI_HEAD, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: signals artificial-head (binaural) audio. Leave off for normal stereo program.")
+                    Toggle("DI Comp", isOn: model.configBinding(\.rdsDI_COMP, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: signals the audio is compressed/companded (an obsolete noise-reduction scheme). Leave off for normal program.")
+                    Toggle("DI Dyn PTY", isOn: model.configBinding(\.rdsDI_DYN, runtimeDisposition: .liveRDS))
+                        .help("Decoder Identification: marks the Program Type as dynamically changing (varies through the broadcast) rather than fixed for the station.")
+                }
+                .toggleStyle(.switch)
+            }
             Text("Per-program flags. Applied live without restart.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -8221,9 +8116,31 @@ private struct PSBankRow: View {
                 .font(.callout.monospaced())
                 .foregroundStyle(isActive ? Color.primary : Color.secondary)
 
-            TextField("", text: model.configBinding(path, runtimeDisposition: .liveRDS))
+            RDSCountedField(placeholder: "", text: model.configBinding(path, runtimeDisposition: .liveRDS), maxChars: 8)
+        }
+    }
+}
+
+/// RDS text entry with a live character counter. RDS fields have hard
+/// length limits (PS 8, PTYN 8, Long PS 32, RadioText 64); past the limit
+/// the encoder silently truncates. The trailing `n/max` counter turns amber
+/// once the field reaches the limit so the operator sees it before air.
+private struct RDSCountedField: View {
+    let placeholder: String
+    let text: Binding<String>
+    let maxChars: Int
+
+    var body: some View {
+        let count = text.wrappedValue.count
+        let atLimit = count >= maxChars
+        HStack(spacing: 8) {
+            TextField(placeholder, text: text)
                 .textFieldStyle(.roundedBorder)
-                .disabled(false)
+            Text("\(count)/\(maxChars)")
+                .font(BroadcastStyle.scaleLabel)
+                .monospacedDigit()
+                .foregroundStyle(atLimit ? BroadcastStyle.tightAmber : .secondary)
+                .accessibilityLabel("\(count) of \(maxChars) characters")
         }
     }
 }
@@ -8256,7 +8173,7 @@ private struct RDSRadiotextTab: View {
 
     var body: some View {
         Card(title: "Radiotext & RT+") {
-            TextField("Single Radiotext", text: model.configBinding(\.rdsRTText, runtimeDisposition: .liveRDS))
+            RDSCountedField(placeholder: "Single Radiotext", text: model.configBinding(\.rdsRTText, runtimeDisposition: .liveRDS), maxChars: 64)
             Text("Used when no RT buffer entries are checked.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -8366,7 +8283,7 @@ private struct RDSLongPSTab: View {
     var body: some View {
         Card(title: "Long PS") {
             Toggle("Enable Long PS (15A)", isOn: model.configBinding(\.rdsEnableLPS, runtimeDisposition: .liveRDS))
-            TextField("Long PS Text", text: model.configBinding(\.rdsLongPS32, runtimeDisposition: .liveRDS))
+            RDSCountedField(placeholder: "Long PS Text", text: model.configBinding(\.rdsLongPS32, runtimeDisposition: .liveRDS), maxChars: 32)
             Toggle("Center Long PS", isOn: model.configBinding(\.rdsLPSCentered, runtimeDisposition: .liveRDS))
             Toggle("Append CR", isOn: model.configBinding(\.rdsLPSCR, runtimeDisposition: .liveRDS))
         }
@@ -8385,8 +8302,9 @@ private struct RDSCarrierTab: View {
             DoubleSliderRow(
                 title: "Injection Level",
                 value: model.rdsLevelPercentBinding(),
-                range: 0...10, format: "%.1f %%")
-            Text("Gaussian-shaping FIR (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
+                range: 0...10, format: "%.1f %%",
+                restartRequired: true)
+            Text("RDS subcarrier pulse shaping (enable / bandwidth / taps) is tuned at the defaults (on, 2400 Hz, 81 taps) and not exposed in the GUI — power users can adjust via INI keys `rds_gaussian_enabled` / `rds_gaussian_bw_hz` / `rds_gaussian_taps`.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -8441,9 +8359,6 @@ private struct RDSScheduleTab: View {
                 title: "Clock Offset",
                 value: model.configBinding(\.rdsTZOffset, runtimeDisposition: .liveRDS),
                 range: -12...14, format: "%.1f h")
-            LabeledContent("LIC") {
-                HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
-            }
         }
     }
 }
@@ -8497,7 +8412,7 @@ private struct RDSStatusTab: View {
             Toggle(
                 "Enable RDS",
                 isOn: model.configBinding(\.enRDS, runtimeDisposition: .liveRDS))
-            Text("Master enable applies live. Subcarrier-physical-layer settings (injection level, frequency, Gaussian shaping) live on the Subcarrier tab and require a transport restart.")
+            Text("Master enable applies live. Subcarrier-physical-layer settings (injection level, frequency, pulse shaping) live on the Subcarrier tab and require a transport restart.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -8517,11 +8432,15 @@ private struct OutputModeSettingsSectionContent: View {
 
     var body: some View {
         Picker(
-            "Output",
             selection: model.configBinding(\.processedAudioOutput, runtimeDisposition: .restart)
         ) {
             Text("MPX Composite").tag(false)
             Text("Processed Audio").tag(true)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Output")
+                RestartBadge()
+            }
         }
         .pickerStyle(.segmented)
         .help("MPX Composite: the FM multiplex (pilot + stereo + RDS) for a transmitter / exciter that accepts composite. Processed Audio: processed stereo L/R for an external stereo coder + RDS encoder. Restart required.")
@@ -8915,10 +8834,14 @@ Now: {now_playing}
     }
 }
 
-/// macOS-style About panel: app icon + name + version + copyright,
-/// stacked centered, with a brief description and disclaimer in plain
-/// prose. Matches the Apple HIG About-window pattern (cf. Music.app,
-/// Mail.app) rather than a settings-style framed card.
+/// macOS-style About panel (cf. Music.app / Final Cut): app icon, name,
+/// a confident one-line description, version, then a compact highlight of
+/// what the processor actually does — it ships a patent-grade chain, full
+/// RDS, and a verification harness, so the About should say so rather than
+/// undersell it. The full disclaimer is NOT restated here: README.md
+/// (intended-use / not-certified) and LICENSE (GPL-3.0, no warranty) are
+/// the single source of truth; the panel shows README's canonical key
+/// phrase plus links to both.
 private struct AboutSectionView: View {
     private var appIcon: NSImage? {
         if let icon = NSApp?.applicationIconImage, icon.size.width > 0 {
@@ -8927,49 +8850,99 @@ private struct AboutSectionView: View {
         return NSImage(named: NSImage.applicationIconName)
     }
 
+    private struct Capability: Identifiable {
+        let symbol: String
+        let text: String
+        var id: String { symbol }
+    }
+
+    private let capabilities: [Capability] = [
+        Capability(
+            symbol: "dot.radiowaves.right",
+            text: "True FM stereo encoding — constant-amplitude pilot with post-clipper subcarrier injection"),
+        Capability(
+            symbol: "slider.horizontal.3",
+            text: "Linear-phase multiband, look-ahead limiting, PrimeBass enhancement, pre-emphasis-aware HF clipping"),
+        Capability(
+            symbol: "waveform",
+            text: "Differential composite clipper with cross-domain IM cancellation and BS.412 MPX-power control"),
+        Capability(
+            symbol: "antenna.radiowaves.left.and.right",
+            text: "Full RDS encoder — PS, RadioText, RT+, AF, CT, PTY and Long PS, all live-apply"),
+        Capability(
+            symbol: "chart.bar.xaxis",
+            text: "Real-time meters, scope and spectrum, plus offline receiver-model verification")
+    ]
+
     var body: some View {
-        VStack(alignment: .center, spacing: 10) {
-            if let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 96, height: 96)
-                    .accessibilityHidden(true)
-            }
+        ScrollView {
+            VStack(alignment: .center, spacing: 12) {
+                if let icon = appIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 96, height: 96)
+                        .accessibilityHidden(true)
+                }
 
-            Text("MPX Prime")
-                .font(.title2.weight(.semibold))
+                VStack(spacing: 4) {
+                    Text("MPX Prime Studio")
+                        .font(.title.weight(.semibold))
+                    Text("Professional FM stereo processing and RDS encoding — free and open source")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            Text("Version \(AppConfig.appVersion)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-
-            Text("Copyright © 2026 Bkram Developments")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Link("github.com/bkram/MPXPrime", destination: kProjectURL)
-                .font(.caption)
-
-            Divider()
-                .padding(.vertical, 4)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Experimental amateur-grade FM composite (MPX) generator with stereo encoding and optional RDS. Targets core behavior from EN 50067 / IEC 62106 and common FM stereo practice, but is not certified and no compliance warranty is implied.")
-
-                Text("Suitable for LPFM, community radio, prosumer broadcast-style encoding, and study of FM signal processing — not for certified production broadcast. The author assumes no liability for regulatory violations, equipment damage, interference, or any direct or indirect consequences arising from its use. Use at your own risk.")
-
-                Text("Released under GPL-3.0.")
+                Text("Version \(AppConfig.appVersion) · GPL-3.0")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(capabilities) { cap in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: cap.symbol)
+                                .font(.callout)
+                                .foregroundStyle(.tint)
+                                .frame(width: 20, alignment: .center)
+                                .accessibilityHidden(true)
+                            Text(cap.text)
+                                .font(.footnote)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
+
+                HStack(spacing: 18) {
+                    Link("View on GitHub", destination: kProjectURL)
+                    Link("User Manual", destination: kManualURL)
+                    Link("License", destination: kLicenseURL)
+                }
+                .font(.callout)
+
+                // Single source of truth for the full disclaimer is README.md
+                // (intended-use / not-certified) + LICENSE (GPL-3.0, no
+                // warranty). The About only carries README's canonical key
+                // phrase plus pointers — do not restate the full text here.
+                Text("Experimental and not certified — no conformity or compliance is promised. See the README for intended use and the GPL-3.0 license for terms (provided without warranty).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
+
+                Text("Copyright © 2026 Bkram Developments")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            .font(.footnote)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -9012,6 +8985,20 @@ private struct TooltipIfPresent: ViewModifier {
     }
 }
 
+/// Compact "restart-required" affordance. Sits next to a control whose
+/// change does not apply live (the engine must stop/restart). Matches the
+/// pending-restart status chip's icon so the two read as the same concept.
+/// Module-visible so the stage inspector can reuse it.
+struct RestartBadge: View {
+    var body: some View {
+        Image(systemName: "arrow.triangle.2.circlepath")
+            .font(.caption2)
+            .foregroundStyle(BroadcastStyle.tightAmber)
+            .help("Restart-required: this setting takes effect only after the engine restarts (use Apply Restart). Changing it while running marks a pending restart in the header.")
+            .accessibilityLabel("Restart required")
+    }
+}
+
 private struct DoubleSliderRow: View {
     let title: String
     @Binding var value: Double
@@ -9019,9 +9006,10 @@ private struct DoubleSliderRow: View {
     let format: String
     var accessibilityLabel: String?
     var tooltip: String?
+    var restartRequired: Bool = false
 
     var body: some View {
-        LabeledContent(title) {
+        LabeledContent {
             HStack(spacing: 12) {
                 Slider(value: $value, in: range)
                     .controlSize(.small)
@@ -9039,6 +9027,11 @@ private struct DoubleSliderRow: View {
             // not always forward `.help()` to its content on macOS 15).
             .contentShape(Rectangle())
             .modifier(TooltipIfPresent(text: tooltip))
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                if restartRequired { RestartBadge() }
+            }
         }
         .contentShape(Rectangle())
         .modifier(TooltipIfPresent(text: tooltip))
@@ -9109,7 +9102,7 @@ struct ScopesOnlyView: View {
                         set: { model.scopeAutoGainEnabled = $0 }
                     )
                 )
-                .toggleStyle(.checkbox)
+                .toggleStyle(.switch)
             }
             .padding(.horizontal)
 

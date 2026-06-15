@@ -3,6 +3,7 @@ import AudioToolbox
 import Foundation
 import Accelerate
 import Atomics
+import MPXPrimeCore
 import MPXPrimeNative
 import os
 
@@ -34,6 +35,7 @@ final class AudioOutputEngine {
     struct InputTransportSnapshot {
         let overflows: UInt64
         let underflows: UInt64
+        let tornReads: UInt64
         let bufferedFrames: Int
         let resampleMode: String
         let ratioTrim: Double
@@ -1314,6 +1316,7 @@ final class AudioOutputEngine {
         return InputTransportSnapshot(
             overflows: snapshot.overflows,
             underflows: snapshot.underflows,
+            tornReads: snapshot.tornReads,
             bufferedFrames: snapshot.bufferedFrames,
             resampleMode: snapshot.resampleMode,
             ratioTrim: snapshot.ratioTrim,

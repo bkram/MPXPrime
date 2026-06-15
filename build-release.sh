@@ -5,11 +5,11 @@ set -e
 
 cd "$(dirname "$0")"
 
-VERSION=${1:-0.35}
+VERSION=${1:-0.37}
 OUTPUT_DIR="macOS/dist"
-APP_NAME="MPX Prime"
+APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"
-CONFIG_NAME="MPX Prime.ini"
+CONFIG_NAME="MPX Prime Studio.ini"
 ICON_FILE="macOS/Resources/MPXPrime.icns"
 ENTITLEMENTS="macOS/MPXPrime.entitlements"
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
@@ -117,6 +117,58 @@ else
     echo "Note: App uses ad-hoc signature. Run: xattr -cr '$APP_DIR' if needed."
 fi
 
+# --- MPX Prime Meter companion app (same universal release build) ---
+METER_APP_NAME="MPX Prime Meter"
+METER_EXECUTABLE_NAME="MPXPrimeMeter"
+METER_APP_DIR="$OUTPUT_DIR/$METER_APP_NAME.app"
+echo "Creating $METER_APP_NAME.app..."
+rm -rf "$METER_APP_DIR"
+mkdir -p "$METER_APP_DIR/Contents/MacOS"
+mkdir -p "$METER_APP_DIR/Contents/Resources"
+lipo -create \
+    "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
+    "macOS/.build/x86_64-apple-macosx/release/MPXPrimeMeter" \
+    -output "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+if [ -f "$ICON_FILE" ]; then
+    cp "$ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
+fi
+cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>${METER_EXECUTABLE_NAME}</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.mpxprime.meter</string>
+    <key>CFBundleName</key>
+    <string>${METER_APP_NAME}</string>
+    <key>CFBundleDisplayName</key>
+    <string>${METER_APP_NAME}</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>MPXPrime.icns</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>15.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MPX Prime Meter needs microphone/input access to capture the MPX composite for analysis.</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2024. All rights reserved.</string>
+</dict>
+</plist>
+EOF
+echo "Ad-hoc signing $METER_APP_NAME.app..."
+codesign --force --deep --sign - "$METER_APP_DIR"
+
 # Create DMG with Applications symlink for drag-to-install
 echo "Creating DMG..."
 DMG_PATH="$OUTPUT_DIR/MPX_Prime-$VERSION.dmg"
@@ -124,6 +176,7 @@ DMG_STAGING="$OUTPUT_DIR/dmg_staging"
 rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_DIR" "$DMG_STAGING/"
+cp -R "$METER_APP_DIR" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
 mkdir -p "$DMG_STAGING/Now Playing Scripts"
 cp scripts/nowplaying.sh "$DMG_STAGING/Now Playing Scripts/"

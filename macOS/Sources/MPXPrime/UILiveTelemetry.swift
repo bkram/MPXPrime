@@ -92,19 +92,5 @@ final class LiveTelemetry: ObservableObject {
     @Published var preMPXSpectrumNyquistHz: Double = 0.0
 }
 
-// Observes ONLY the LiveTelemetry object, so wrapping a live widget in this
-// view confines a metering tick's re-evaluation + layout to the wrapped
-// subtree. The enclosing card / Form holds `model` (the view model) and
-// passes `model.telemetry` in WITHOUT observing it -- handing an object to a
-// child initializer does not subscribe the parent -- so the card body does
-// not re-evaluate on a tick. Keep the wrapped content a fixed-size Canvas
-// leaf (meter / scope / spectrum) or a fixed-width readout so the repaint
-// never propagates a layout change back out to the card.
-struct LiveTelemetryView<Content: View>: View {
-    @ObservedObject var telemetry: LiveTelemetry
-    @ViewBuilder let content: (LiveTelemetry) -> Content
-
-    var body: some View {
-        content(telemetry)
-    }
-}
+// `LiveTelemetryView` (the generic isolation wrapper) now lives in the shared
+// MPXPrimeUI target so both the transmit GUI and the Meter window reuse it.

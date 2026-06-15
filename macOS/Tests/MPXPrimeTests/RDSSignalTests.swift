@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import MPXPrime
+import MPXPrimeCore
 
 // Spectral tests on the MPX composite output with RDS configured.
 //
@@ -172,5 +173,83 @@ struct RDSSignalTests {
         let delta = highDB - lowDB
         #expect(delta > 4.0 && delta < 8.0,
                 "pilot level doubling gave \(delta) dB step, expected ~6 dB")
+    }
+
+    // MARK: - Pilot/RDS phase lock (B1 regression)
+
+    /// The RDS 57 kHz carrier must stay exactly locked to 3x the emitted
+    /// 19 kHz pilot (EN 50067 Sec 2.1.4). Before the fix the carrier was
+    /// driven by a separate additive phase accumulator that drifted off
+    /// the pilot's recurrence oscillator (~9 deg / 5 s). Now the carrier
+    /// is sin(3*theta) derived from the pilot recurrence, so the relative
+    /// phase is flat over an arbitrarily long render. This renders ~2 s,
+    /// recovers the pilot phase (Goertzel) and the BPSK RDS carrier phase
+    /// (57 kHz bandpass + complex demod + squaring to strip the +/-1
+    /// modulation) in an early and a late window, and asserts the
+    /// pilot-vs-RDS relationship barely moves.
+    @Test func rdsCarrierStaysPhaseLockedToTriplePilot() {
+        var config = AppConfig()
+        config.processingBypass = true  // pilot + RDS only, no audio DSP
+        let sr = Double(sampleRate)
+        let totalFrames = warmupFrames + Int(2.0 * sr)
+        let gen = MPXGenerator(config: config, sampleRate: sr)
+        var left = [Float](repeating: 0.0, count: totalFrames)
+        var right = [Float](repeating: 0.0, count: totalFrames)
+        left.withUnsafeMutableBufferPointer { lBuf in
+            right.withUnsafeMutableBufferPointer { rBuf in
+                gen.renderFromInputInPlace(
+                    frameCount: totalFrames,
+                    left: lBuf.baseAddress!,
+                    right: rBuf.baseAddress!
+                )
+            }
+        }
+        let samples = Array(left[warmupFrames..<totalFrames])
+
+        let win = Int(0.2 * sr)
+        let earlyStart = 0
+        let lateStart = samples.count - win
+
+        func pilotPhase(_ start: Int) -> Double {
+            let omega = 2.0 * Double.pi * 19_000.0 / sr
+            var sinSum = 0.0
+            var cosSum = 0.0
+            for i in 0..<win {
+                let phase = omega * Double(start + i)
+                let s = Double(samples[start + i])
+                sinSum += s * sin(phase)
+                cosSum += s * cos(phase)
+            }
+            return atan2(cosSum, sinSum)
+        }
+
+        func rdsCarrierPhase(_ start: Int) -> Double {
+            var bp = Biquad()
+            bp.configureBandpass(freqHz: 57_000.0, sampleRate: sampleRate, q: 14.0)
+            let prime = max(0, start - 2048)
+            for i in prime..<start { _ = bp.process(samples[i]) }
+            let omega = 2.0 * Double.pi * 57_000.0 / sr
+            var re = 0.0
+            var im = 0.0
+            for i in 0..<win {
+                let n = Double(start + i)
+                let s = Double(bp.process(samples[start + i]))
+                let zr = s * cos(omega * n)
+                let zi = -s * sin(omega * n)
+                re += (zr * zr) - (zi * zi)
+                im += 2.0 * zr * zi
+            }
+            return 0.5 * atan2(im, re)
+        }
+
+        let earlyErr = rdsCarrierPhase(earlyStart) - 3.0 * pilotPhase(earlyStart)
+        let lateErr = rdsCarrierPhase(lateStart) - 3.0 * pilotPhase(lateStart)
+        var drift = lateErr - earlyErr
+        let pi = Double.pi
+        while drift > pi / 2 { drift -= pi }
+        while drift < -pi / 2 { drift += pi }
+        let driftDeg = abs(drift) * 180.0 / pi
+        #expect(driftDeg < 1.0,
+                "RDS carrier drifted \(driftDeg) deg vs 3x pilot over ~2 s — not locked to pilot recurrence")
     }
 }

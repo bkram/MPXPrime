@@ -1,18 +1,18 @@
 import SwiftUI
 
-// Vertical meter-strip component used on the dedicated Levels window.
-// Orban Optimod-style: narrow column per signal, scale ticks on the
-// right edge, peak-hold dot, colour-graded fill via BroadcastStyle.
-//
-// Horizontal MeterBar continues to be used on the Monitoring dashboard
-// and the header status bar — vertical strips are specifically for the
-// Levels window where they make sense at full window height.
+// Vertical meter-strip component (shared). Orban Optimod-style: narrow column
+// per signal, scale ticks on the right edge, peak-hold dot, colour-graded fill
+// via BroadcastStyle. Takes plain scalars + a pre-formatted value string, so
+// any app can feed it (the transmit Levels window and the Meter window both do).
 
-struct VerticalMeterStrip: View {
-    enum Scale: Equatable {
-        case dbfs                           // -36..0 dBFS, 6 breakpoints
-        case modulationKHz(limit: Double)   // 0..100 kHz, limit highlighted
-        case gainReductionDB                // 0..16 dB attenuation, inverted
+public struct VerticalMeterStrip: View {
+    public enum Scale: Equatable {
+        case dbfs                                        // -36..0 dBFS, 6 breakpoints
+        /// 0..fullScale kHz with an optional highlighted limit line. fullScale
+        /// is per-meter so low-deviation subcarriers (pilot ~7.5, RDS ~2-4 kHz)
+        /// get a readable range instead of a stub on a 0..100 scale.
+        case modulationKHz(fullScale: Double, limit: Double?)
+        case gainReductionDB                             // 0..16 dB attenuation, inverted
     }
 
     let label: String
@@ -21,6 +21,20 @@ struct VerticalMeterStrip: View {
     let level: Double
     let peakLevel: Double?
     let scale: Scale
+    /// Hover tooltip: what the meter shows and its safe range. Empty = none.
+    let help: String
+
+    public init(
+        label: String, valueText: String, level: Double, peakLevel: Double?,
+        scale: Scale, help: String = ""
+    ) {
+        self.label = label
+        self.valueText = valueText
+        self.level = level
+        self.peakLevel = peakLevel
+        self.scale = scale
+        self.help = help
+    }
 
     private struct Tick: Identifiable {
         let position: Double
@@ -28,7 +42,7 @@ struct VerticalMeterStrip: View {
         var id: String { "\(label)-\(position)" }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 6) {
             Text(label)
                 .font(BroadcastStyle.chipLabel)
@@ -59,9 +73,27 @@ struct VerticalMeterStrip: View {
         // The bar/peak-hold/ticks are decorative to VoiceOver; collapse the
         // strip into one element that announces its name and current reading
         // (e.g. "IN L, -6.2 dB") instead of two disconnected text fragments.
+        // The scale range + colour meaning go in the hint so the primary
+        // announcement stays crisp.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(valueText)
+        .accessibilityHint(help.isEmpty ? accessibilityHint : help)
+        .help(help)
+    }
+
+    /// Supplementary VoiceOver context: what the meter measures, its scale,
+    /// and what the colour bands mean (so colour isn't the only state cue).
+    private var accessibilityHint: String {
+        switch scale {
+        case .dbfs:
+            return "Level meter, scale -36 to 0 dBFS. Green safe, amber near limit, red over."
+        case .modulationKHz(let fullScale, _):
+            return "Modulation meter, scale 0 to \(Int(fullScale)) kHz. "
+                + "Amber near the deviation limit, red over."
+        case .gainReductionDB:
+            return "Gain-reduction meter, scale 0 to 16 dB of attenuation."
+        }
     }
 
     // MARK: - Drawing
@@ -73,13 +105,22 @@ struct VerticalMeterStrip: View {
         let barW: CGFloat = 22
         let h = size.height
         let radius: CGFloat = 3
-        let barRect = CGRect(x: 0, y: 0, width: barW, height: h)
+        // Inset the whole scale vertically so the extreme tick labels (top "0",
+        // bottom "-36"/"100") render fully instead of being clipped at the
+        // Canvas edge -- they are centred on their y, so half would sit off-view
+        // at y=0 / y=h. Everything (bar, fill, ticks, target, peak) maps through
+        // the same inset range so labels stay aligned with their ticks.
+        let vpad: CGFloat = 8
+        let usable = max(1.0, h - 2 * vpad)
+        func yFor(_ position: Double) -> CGFloat { vpad + usable * CGFloat(1.0 - clamp(position)) }
+
+        let barRect = CGRect(x: 0, y: vpad, width: barW, height: usable)
         let barPath = Path(roundedRect: barRect, cornerRadius: radius, style: .continuous)
         ctx.fill(barPath, with: .color(BroadcastStyle.meterSurface))
 
-        let fillH = h * CGFloat(clamp(level))
+        let fillH = usable * CGFloat(clamp(level))
         if fillH > 0.5 {
-            let fillRect = CGRect(x: 0, y: h - fillH, width: barW, height: fillH)
+            let fillRect = CGRect(x: 0, y: vpad + usable - fillH, width: barW, height: fillH)
             ctx.fill(
                 Path(roundedRect: fillRect, cornerRadius: radius, style: .continuous),
                 with: .color(tint.opacity(0.80)))
@@ -87,24 +128,24 @@ struct VerticalMeterStrip: View {
         ctx.stroke(barPath, with: .color(BroadcastStyle.panelBorder), lineWidth: 0.5)
 
         for tick in scaleTicks {
-            let y = h * CGFloat(1.0 - tick.position)
+            let y = yFor(tick.position)
             ctx.fill(
                 Path(CGRect(x: barW - 6, y: y - 0.5, width: 6, height: 1)),
-                with: .color(Color.primary.opacity(0.32)))
+                with: .color(BroadcastStyle.scaleTick))
             ctx.draw(
                 Text(tick.label).font(BroadcastStyle.scaleLabel).foregroundColor(.secondary),
                 at: CGPoint(x: barW + 6, y: y), anchor: .leading)
         }
 
         if let targetNorm {
-            let y = h * CGFloat(1.0 - targetNorm)
+            let y = yFor(targetNorm)
             ctx.fill(
                 Path(CGRect(x: 0, y: y - 0.75, width: barW, height: 1.5)),
                 with: .color(BroadcastStyle.accent.opacity(0.85)))
         }
 
         if let peak = peakLevel {
-            let y = h * CGFloat(1.0 - clamp(peak))
+            let y = yFor(peak)
             ctx.fill(
                 Path(CGRect(x: 0, y: y - 1, width: barW, height: 2)),
                 with: .color(Color.primary.opacity(0.95)))
@@ -121,8 +162,11 @@ struct VerticalMeterStrip: View {
         switch scale {
         case .dbfs:
             return BroadcastStyle.tint(forLevel: level)
-        case .modulationKHz(let limit):
-            return BroadcastStyle.tint(forLevel: level, limitNorm: limit / 100.0)
+        case .modulationKHz(let fullScale, let limit):
+            if let limit {
+                return BroadcastStyle.tint(forLevel: level, limitNorm: limit / fullScale)
+            }
+            return BroadcastStyle.tint(forLevel: level)
         case .gainReductionDB:
             // More GR = redder (signal is being fought harder).
             return BroadcastStyle.tint(forLevel: level)
@@ -131,7 +175,8 @@ struct VerticalMeterStrip: View {
 
     private var targetNorm: Double? {
         switch scale {
-        case .modulationKHz(let limit): return max(0.0, min(1.0, limit / 100.0))
+        case .modulationKHz(let fullScale, let limit):
+            return limit.map { max(0.0, min(1.0, $0 / fullScale)) }
         default: return nil
         }
     }
@@ -143,10 +188,23 @@ struct VerticalMeterStrip: View {
             return points.map {
                 Tick(position: (($0 - -36) / 36), label: "\(Int($0))")
             }
-        case .modulationKHz:
-            return [0, 25, 50, 75, 100].map {
-                Tick(position: $0 / 100, label: "\(Int($0))")
+        case .modulationKHz(let fullScale, _):
+            // Pick a tick step that yields ~4-6 labels for the given range.
+            let step: Double
+            switch fullScale {
+            case ...10: step = 2
+            case ...16: step = 3
+            case ...30: step = 5
+            case ...60: step = 10
+            default: step = 25
             }
+            var ticks: [Tick] = []
+            var v = 0.0
+            while v <= fullScale + 0.001 {
+                ticks.append(Tick(position: v / fullScale, label: "\(Int(v.rounded()))"))
+                v += step
+            }
+            return ticks
         case .gainReductionDB:
             return [0, 3, 6, 9, 12, 16].map {
                 Tick(position: $0 / 16.0, label: "\(Int($0))")

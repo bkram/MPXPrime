@@ -1,19 +1,19 @@
-# MPX Prime — User Manual
+# MPX Prime Studio — User Manual
 
-Operation, configuration, and reference for running MPX Prime. For a project overview see the [README](../README.md); to build from source see [BUILDING.md](BUILDING.md); for the DSP chain internals see [ARCHITECTURE.md](ARCHITECTURE.md).
+Operation, configuration, and reference for running MPX Prime Studio. For a project overview see the [README](../README.md); to build from source see [BUILDING.md](BUILDING.md); for the DSP chain internals see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Usage
 
-Launch MPX Prime from `/Applications` (or wherever you copied it). On first run,
+Launch MPX Prime Studio from `/Applications` (or wherever you copied it). On first run,
 grant input access when macOS prompts — this is required to capture audio. Then
 pick your input and MPX output devices in the app and start the engine.
 
 Command-line flags (run the binary inside the app bundle):
 
 ```bash
-"/Applications/MPX Prime.app/Contents/MacOS/MPXPrime" --nogui       # headless, no UI
-"/Applications/MPX Prime.app/Contents/MacOS/MPXPrime" --seconds 10  # run for a fixed time then exit
-"/Applications/MPX Prime.app/Contents/MacOS/MPXPrime" --config "/path/to/MPX Prime.ini"
+"/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --nogui       # headless, no UI
+"/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --seconds 10  # run for a fixed time then exit
+"/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --config "/path/to/MPX Prime Studio.ini"
 ```
 
 To build, run, verify, test, or package from source, see
@@ -21,9 +21,9 @@ To build, run, verify, test, or package from source, see
 
 ## Quick start (first-time use)
 
-This is the minimum to hear MPX Prime processing your audio and feeding a transmitter / SDR / loopback. Defaults are tuned to sound good out of the box — the chain ships processing-on with AGC, multiband, bass clipping, and the composite clipper engaged.
+This is the minimum to hear MPX Prime Studio processing your audio and feeding a transmitter / SDR / loopback. Defaults are tuned to sound good out of the box — the chain ships processing-on with AGC, multiband, bass clipping, and the composite clipper engaged.
 
-**1. Plug audio in and out.** MPX Prime reads from a Core Audio input device and writes the composite (MPX) signal to a Core Audio output device. Typical setups:
+**1. Plug audio in and out.** MPX Prime Studio reads from a Core Audio input device and writes the composite (MPX) signal to a Core Audio output device. Typical setups:
 
 - Soundcard input from your studio mixer / streaming source → soundcard output into an FM exciter that accepts MPX baseband.
 - BlackHole 2ch (virtual loopback) input from a music player or DAW → soundcard output into an SDR transmitter or RF generator.
@@ -31,11 +31,11 @@ This is the minimum to hear MPX Prime processing your audio and feeding a transm
 
 192 kHz output is **required for the full composite with RDS.** RDS sits at 57 kHz, which exceeds the 48 kHz Nyquist of 96 kHz sample rates — the RDS subcarrier cannot be represented at 96 kHz or below. 96 kHz is just enough to carry the FM stereo composite alone (M + 19 kHz pilot + 38 kHz DSB-SC stereo subcarrier) provided the audio bandwidth is limited so the upper L−R sideband doesn't push past 48 kHz; pilot-locked stereo decoding works, but disable RDS at this rate. Below 96 kHz the stereo subcarrier itself doesn't fit. 192 kHz is the recommended rate for everything because it gives Nyquist headroom for the post-clipper pilot/RDS injection plus the oversampled peak-control stages the chain runs above the host rate.
 
-> **External sound card required for RDS.** Apple's built-in audio output on Mac laptops and most desktops tops out at **96 kHz**, which cannot carry RDS — the 57 kHz subcarrier exceeds 48 kHz Nyquist. For any FM-with-RDS chain you need a USB / Thunderbolt audio interface that natively runs at **192 kHz**. Most pro and prosumer interfaces (RME, MOTU, Focusrite Scarlett 3rd-gen+, Apogee, etc.) support 192 kHz on at least the analog or AES outputs — check the spec sheet before ordering. The internal Mac speakers / headphone jack are fine for *listening to a test tone* through MPX Prime, but they cannot be the production output if RDS is in play.
+> **External sound card required for RDS.** Apple's built-in audio output on Mac laptops and most desktops tops out at **96 kHz**, which cannot carry RDS — the 57 kHz subcarrier exceeds 48 kHz Nyquist. For any FM-with-RDS chain you need a USB / Thunderbolt audio interface that natively runs at **192 kHz**. Most pro and prosumer interfaces (RME, MOTU, Focusrite Scarlett 3rd-gen+, Apogee, etc.) support 192 kHz on at least the analog or AES outputs — check the spec sheet before ordering. The internal Mac speakers / headphone jack are fine for *listening to a test tone* through MPX Prime Studio, but they cannot be the production output if RDS is in play.
 
 ### Audio MIDI Setup — required device configuration
 
-macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime tells the engine what rate it wants, but the device-side format and volume are owned by the OS — wrong values there silently corrupt the composite before it leaves the Mac.
+macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime Studio tells the engine what rate it wants, but the device-side format and volume are owned by the OS — wrong values there silently corrupt the composite before it leaves the Mac.
 
 **Output device** (feeding your exciter / SDR / RF generator):
 
@@ -58,7 +58,7 @@ If your output device is BlackHole or a virtual loopback, the same rules apply �
 
 Open `Processing` → `Core` and change `Pre-emphasis (μs)` to `75` if you are in a 75 µs region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). EU operators required to comply with ITU-R BS.412 should also enable `Processing` → `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
 
-**3. Launch and Start.** Open MPX Prime, pick your input and output devices in `Settings`, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
+**3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in `Settings`, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
 
 **4. Calibrate composite output level.** On `Monitoring`, watch the `Composite Budget` chip:
 
@@ -77,7 +77,7 @@ If you cannot hear anything, check `Settings` → output device routing, that th
 Default config location:
 
 ```text
-~/Library/Application Support/MPX Prime/MPX Prime.ini
+~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini
 ```
 
 Relevant config sections:
@@ -88,7 +88,7 @@ Relevant config sections:
 
 ### Format Profiles (Station Format selector)
 
-For one-click "make this sound right for my format", MPX Prime ships with eight atomic Format Profiles plus a `Custom` sentinel, accessible from the dedicated **Processing → Format Profile** tab. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate. Pick `Custom` to flag "my settings are bespoke — don't overwrite them" so re-visiting the picker won't reset your manual tuning.
+For one-click "make this sound right for my format", MPX Prime Studio ships with eight atomic Format Profiles plus a `Custom` sentinel, accessible from the dedicated **Processing → Format Profile** tab. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate. Pick `Custom` to flag "my settings are bespoke — don't overwrite them" so re-visiting the picker won't reset your manual tuning.
 
 | Profile | Multiband | Intensity | Final Stage | PrimeBass | Widener | Clipper drive | Use case |
 |---|---|---|---|---|---|---|---|
@@ -123,6 +123,7 @@ Recommended **off** by default (enable only when needed):
 - **Stereo Widener** — leave off unless the source program needs subtle width enhancement; aggressive widening risks mono-compatibility on FM (see "Stereo image control" below)
 - **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
 - **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
+- **HF Clipper** — pre-emphasis-aware HF clipper (`Processing` -> `HF Clipper`; `hf_clipper_*`). Off by default. Clips only the *pre-emphasised* high band (crossover default 5 kHz, threshold -3 dB, drive 1.2) so HF transients are tamed by a dedicated stage instead of forcing the broadband limiter to pull gain across the whole signal and dull it — de-emphasis-correct, since the receiver's fixed de-emphasis restores the curve. Worth trying on dense EDM / contemporary pop where HF transients dominate; leave off for talk / classical. Controls live-apply.
 - **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
 
 This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
@@ -139,13 +140,13 @@ source → IN meter → AGC → [DSP] → Final Drive → composite clipper → 
                   level control    loudness lever                   hardware calibration
 ```
 
-**1. Get your input into the AGC's working range.** Open `Monitoring`. The `IN` meter shows the level coming into MPX Prime from your source (before any processing). Aim for input peaks landing roughly in the **−12 to −6 dBFS** range on busy program — bright but not pinned. If the source is consistently below −18 dBFS the AGC has to push hard to reach its target; if it's above −3 dBFS it's eating its own headroom before the chain even sees it.
+**1. Get your input into the AGC's working range.** Open `Monitoring`. The `IN` meter shows the level coming into MPX Prime Studio from your source (before any processing). Aim for input peaks landing roughly in the **−12 to −6 dBFS** range on busy program — bright but not pinned. If the source is consistently below −18 dBFS the AGC has to push hard to reach its target; if it's above −3 dBFS it's eating its own headroom before the chain even sees it.
 
-The level adjustment lives upstream of MPX Prime — in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Processing` → `Core` → `Input Gain` (±24 dB) inside MPX Prime, but use that only to trim — the further upstream you fix the level, the less you stack noise floors.
+The level adjustment lives upstream of MPX Prime Studio — in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Processing` → `Core` → `Input Gain` (±24 dB) inside MPX Prime Studio, but use that only to trim — the further upstream you fix the level, the less you stack noise floors.
 
 **2. Let AGC do the level-evening.** Open `Processing` → `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
 
-- `Platform Target` — the level the AGC drives the program *toward*. **Default −16 dBFS** (Balanced Music preset) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
+- `Platform Target` — the level the AGC drives the program *toward*. **Default −14 dBFS** (`wideband_agc_target_db`) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
 - `Enable Wideband AGC` — leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program.
 
 Watch the `AGC GR` field in `DSP Overview` (or the AGC card itself). Healthy operation:
@@ -167,7 +168,7 @@ Don't use AGC `Platform Target` as a loudness knob. It tunes the chain's working
 
 Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudness *inside* the chain; MPX Output Level adjusts the *voltage* leaving the Mac.
 
-**4. Set MPX Output Level to match the exciter's input.** `Processing` → `Core` → `MPX Output Level` (±18 dB) is the final calibration knob — it scales the composite signal between MPX Prime and the exciter. The right value depends on your exciter / SDR / RF generator's input sensitivity.
+**4. Set MPX Output Level to match the exciter's input.** `Processing` → `Core` → `MPX Output Level` (±18 dB) is the final calibration knob — it scales the composite signal between MPX Prime Studio and the exciter. The right value depends on your exciter / SDR / RF generator's input sensitivity.
 
 - Watch the `Composite Budget` chip on `Monitoring`:
   - **Safe** — nominal modulation, headroom available
@@ -227,10 +228,10 @@ Monitoring also shows composite calibration status:
 Both stages are loudness / regulatory tools and both visibly cost stereo image and high-frequency detail when engaged. If you do not need them, leave them off — the chain still produces a fully compliant FM composite.
 
 - `BS.412` (`Processing` -> `BS.412`): only required if you operate under EU power-limiting rules (rolling 60-second MPX power cap). Outside that regulatory context, leave `Enable BS.412` off — it actively pulls level back over long windows and dulls dynamics.
-- `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band cancellation toggles let you choose what to protect:
-  - `Cancel pilot guard`, `Cancel stereo subcarrier`, `Cancel RDS guard` — leave on (defaults). These keep the 19 kHz pilot, 38 kHz L-R subcarrier, and 57 kHz RDS regions clean of clip IM.
-  - `Cancel audio band` — off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
-  - `Experimental Multiband Composite Clipping` — off by default. It is an A/B loudness experiment for HF-heavy program material; current verifier numbers show useful peak/audio reduction, but it should stay out of presets until dense-program listening confirms the trade.
+- `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band protection toggles let you choose what to keep clean:
+  - `Protect Stereo Pilot`, `Protect Stereo Subcarrier`, `Protect RDS` — leave on (defaults). These keep the 19 kHz pilot, 38 kHz L-R subcarrier, and 57 kHz RDS regions clean of clip IM.
+  - `Protect Audio Highs` — off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
+  - `Multiband Composite Clipping` — off by default. It is an A/B loudness experiment for HF-heavy program material; current verifier numbers show useful peak/audio reduction, but it should stay out of presets until dense-program listening confirms the trade.
 
 All of these are exposed in the GUI; no INI editing is required.
 
@@ -269,9 +270,9 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 The RDS Radiotext section can poll an external script for now-playing metadata.
 
-A ready-to-use example poller ships with MPX Prime, in the DMG's
+A ready-to-use example poller ships with MPX Prime Studio, in the DMG's
 `Now Playing Scripts/` folder and inside the app at
-`MPX Prime.app/Contents/Resources/Scripts/`:
+`MPX Prime Studio.app/Contents/Resources/Scripts/`:
 
 - `nowplaying.sh` — auto-detects the running player and reads its metadata via
   AppleScript: **VLC** (current item, only while playing) first, then
@@ -302,7 +303,7 @@ Expected script behavior:
 No-data behavior:
 
 - Exit with status `1` when no song is currently playing or no usable metadata is available
-- MPX Prime treats `exit 1` and empty output as `No Song Data`
+- MPX Prime Studio treats `exit 1` and empty output as `No Song Data`
 - Any RT segment containing `{now_playing}`, `{display}`, `{artist}`, or `{title}` is discarded entirely when no song data is available
 - This works for both slash-separated timed RT and consecutive timed markers
 
@@ -346,7 +347,7 @@ Available Radiotext macros:
 
 ### RDS text syntax
 
-MPX Prime accepts the same RDS text grammar as Stereotool for PS, PTYN, Long PS, and Radiotext fields. Unsupported markers are accepted silently where practical so existing Stereotool presets load without modification.
+MPX Prime Studio accepts the same RDS text grammar as Stereotool for PS, PTYN, Long PS, and Radiotext fields. Unsupported markers are accepted silently where practical so existing Stereotool presets load without modification.
 
 | Marker | Meaning |
 | --- | --- |
@@ -358,12 +359,12 @@ MPX Prime accepts the same RDS text grammar as Stereotool for PS, PTYN, Long PS,
 | `\\<`  `\\>`  `\\\|`  `\\:`  `\\/`  `\\\\` | Escape the special character so it transmits literally. |
 | `\R"path"` / `\r"path"` | Load file contents (uppercase / as-is). |
 | `\F"path"` / `\f"path"` | Aliases for `\R` / `\r`. |
-| `\w"url"` | Fetch text from a URL. MPX Prime extension, not in Stereotool. |
+| `\w"url"` | Fetch text from a URL. MPX Prime Studio extension, not in Stereotool. |
 
 Example mixing timing modes and separators:
 
 ```text
-1.5s:MPX Prime/3t:In STEREO on RDS/10s:Now: {artist} - {title}
+1.5s:MPX Prime Studio/3t:In STEREO on RDS/10s:Now: {artist} - {title}
 ```
 
 Scrolling PS marquee (PS is 8 characters wide):
@@ -381,17 +382,17 @@ Visit us\: https\://example.com/10s:Alt text
 Important defaults:
 
 - Input HPF default: `30 Hz`
-- Program lowpass default: `16.4 kHz`
+- Program lowpass default: `16.0 kHz` (`program_lowpass_hz`)
 - Scope auto gain default: enabled
 
 ## Processed-audio output mode
 
-By default MPX Prime emits the finished FM composite (pilot + stereo subcarrier +
+By default MPX Prime Studio emits the finished FM composite (pilot + stereo subcarrier +
 optional RDS) for a transmitter / exciter that accepts a composite/MPX baseband
 input. **Processed-audio output mode** instead emits the processed stereo **L/R
 audio** — for transmitters that only accept L/R analog or AES3 audio and have
 their own built-in stereo coder + RDS encoder (the classic separate-processor
-topology). You keep MPX Prime's full audio chain (AGC, EQ, multiband, stereo,
+topology). You keep MPX Prime Studio's full audio chain (AGC, EQ, multiband, stereo,
 bass, clippers, pre-emphasis, pre-encode limiter); you give up the composite-only
 stages (composite clipper, BS.412, pilot-locked RDS), which the external box now
 provides.
@@ -416,9 +417,9 @@ Exactly one device in the chain may apply pre-emphasis (50 us EU / 75 us US).
 Pick in Settings -> Output Mode -> **Pre-emphasis**:
 
 - **Coder has NO pre-emphasis (or it is switched off):** select `50`/`75 us` so
-  MPX Prime applies it. Its pre-emphasis-aware limiter then controls the
+  MPX Prime Studio applies it. Its pre-emphasis-aware limiter then controls the
   HF peaks. (Common for cheap exciters.)
-- **Coder applies pre-emphasis:** select `Off` so MPX Prime stays flat.
+- **Coder applies pre-emphasis:** select `Off` so MPX Prime Studio stays flat.
 - **Never both** — two pre-emphasis stages in series over-deviate.
 
 ### Optional final loudness clipper
@@ -426,9 +427,9 @@ Pick in Settings -> Output Mode -> **Pre-emphasis**:
 To narrow the loudness gap when the external coder has no clipper of its own,
 Settings -> Output Mode -> **External coder has its own clipper**:
 
-- Leave **ON** (default) if your coder clips/limits its input — MPX Prime stays
+- Leave **ON** (default) if your coder clips/limits its input — MPX Prime Studio stays
   clean to avoid double-clipping.
-- Turn **OFF** if it does not — MPX Prime then applies an oversampled
+- Turn **OFF** if it does not — MPX Prime Studio then applies an oversampled
   distortion-cancelled final clipper, with a **Final Clipper Drive** slider
   (0-12 dB) to set density. Two clippers in series sound harsh, so only enable
   this when the coder genuinely does not clip.
@@ -454,12 +455,12 @@ INI keys: `processed_audio_output`, `preemphasis_us`,
 
 - `MPX Output Device` is the composite/baseband output device
 - `Monitor Output Device (Decoded MPX Simulation)` is used when monitor output is enabled
-- The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime is actively using audio input
+- The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input
 - `Mono Mode` now transmits true mono composite and suppresses pilot, stereo subcarrier, and RDS while enabled
 
 ## Offline verification
 
-MPX Prime includes an offline MPX verification mode that renders deterministic test scenarios without opening audio devices.
+MPX Prime Studio includes an offline MPX verification mode that renders deterministic test scenarios without opening audio devices.
 
 Example:
 
@@ -539,6 +540,35 @@ Exit status:
 - `1` means the configuration is close to the limit and should be reviewed
 - `2` means at least one verification warning was triggered
 
+### Reference-receiver validation (Profline SFP-X)
+
+The composite output has been validated on a Profline SFP-X measuring receiver
+against a 75 kHz total-deviation reference. The headline subcarrier levels read as
+expected and, importantly, read steady -- both subcarriers are injected after all
+peak-control stages at constant amplitude, so their deviation does not move with
+program audio.
+
+| Subcarrier | Setting | Measured (SFP-X) | % of 75 kHz |
+|------------|---------|------------------|-------------|
+| 19 kHz pilot | 10% | 7.3-7.4 kHz (steady, last-digit dither) | ~9.8% |
+| 57 kHz RDS | `rds_level` 2.4 kHz | 2.4 kHz (steady) | ~3.2% |
+
+Notes:
+
+- The 7.3/7.4 kHz pilot reading is the analyzer rounding a ~7.35 kHz value across
+  its display resolution, not the pilot modulating. A pilot that genuinely wandered
+  with program would indicate a fault -- by design the pilot here is constant
+  amplitude (post-clipper injection).
+- Pilot is at the top of the 8-10% legal window; RDS at 3.2% is comfortably inside
+  the EN 50067 / IEC 62106 range (2.0 kHz nominal, 1.0-7.5 kHz permitted) and a touch
+  above the 2.0 kHz default for more robust data decoding.
+- Subcarriers (~9.75 kHz combined) share the +/-75 kHz peak budget with the audio
+  composite; the audio path is clipped to leave room for them, which is why they can
+  be injected at fixed amplitude without pushing total deviation over target.
+- Confirm the analyzer's total-deviation reference is 75 kHz before reading the
+  percentages. On a 50 kHz reduced-deviation mandate the same kHz figures correspond
+  to different percentages (and the pilot/RDS levels should be scaled accordingly).
+
 ## Processing bypass
 
 The `Bypass` control does not create a true wire bypass. It disables the creative processing blocks while keeping essential FM encode stages active.
@@ -570,6 +600,8 @@ RDS country identity is derived from:
 - the `ECC` value transmitted in group `1A`
 
 Together they identify a country or area. There is no special "pirate" country code.
+
+Group `1A` also carries the `LIC` language code (e.g. `15` Italian, `09` English, `0F` French, `08` German, `0A` Spanish, `1D` Dutch) and an optional Programme Item Number (PIN). PIN is off by default (transmits 0); enable it in **RDS → Program → Station Identity** to send the current programme item's scheduled day / hour / minute (config keys `pin_enabled`, `pin_day`, `pin_hour`, `pin_minute`). PIN is a legacy field that few modern receivers decode.
 
 This appendix is a practical reference table for the published RDS country and area allocations. It is grouped the same way the published tables are grouped, so some countries and areas appear in more than one regional list.
 

@@ -24,29 +24,34 @@ import os
 /// allocation-free and lock-free. Refcon uses `passUnretained`; the
 /// lifetime invariant is that `stop()` always runs before `deinit`,
 /// so `self` stays alive while the unit is initialized.
-final class InputAUHAL {
+public final class InputAUHAL {
     /// Frame sink invoked from the AUHAL render thread after each
     /// successful `AudioUnitRender`. Pointers point into the
     /// pre-allocated buffer list and are valid only for the duration
     /// of the call — sinks must copy or push to a ring before
     /// returning.
-    typealias FrameSink = (
+    public typealias FrameSink = (
         _ left: UnsafePointer<Float>,
         _ right: UnsafePointer<Float>,
         _ frameCount: Int
     ) -> Void
 
-    struct Format {
-        let deviceSampleRate: Double
-        let deviceChannelCount: Int
+    public struct Format {
+        public let deviceSampleRate: Double
+        public let deviceChannelCount: Int
+
+        public init(deviceSampleRate: Double, deviceChannelCount: Int) {
+            self.deviceSampleRate = deviceSampleRate
+            self.deviceChannelCount = deviceChannelCount
+        }
     }
 
-    enum InputAUHALError: Error, CustomStringConvertible {
+    public enum InputAUHALError: Error, CustomStringConvertible {
         case componentNotFound
         case osStatus(name: String, status: OSStatus)
         case invalidChannelCount(Int)
 
-        var description: String {
+        public var description: String {
             switch self {
             case .componentNotFound:
                 return "AUHAL component not found"
@@ -68,15 +73,17 @@ final class InputAUHAL {
     /// Set this before calling `start()`. Once start succeeds the AU
     /// can fire callbacks at any time, so changing the sink afterward
     /// is racy — replace by stop+restart instead.
-    var frameSink: FrameSink?
+    public var frameSink: FrameSink?
 
-    var isRunning: Bool { running }
+    public var isRunning: Bool { running }
+
+    public init() {}
 
     /// Open and start an AUHAL pinned to `deviceID`. Returns the
     /// device's native format (sample rate + channel count) so the
     /// caller can wire up rate-conversion machinery.
     @discardableResult
-    func start(deviceID: AudioDeviceID, maxFramesPerSlice: Int = 4096) throws -> Format {
+    public func start(deviceID: AudioDeviceID, maxFramesPerSlice: Int = 4096) throws -> Format {
         precondition(unit == nil, "InputAUHAL.start called twice without stop()")
         self.maxFramesPerSlice = max(1024, maxFramesPerSlice)
 
@@ -298,7 +305,7 @@ final class InputAUHAL {
         )
     }
 
-    func stop() {
+    public func stop() {
         guard let unit else { return }
         if running {
             AudioOutputUnitStop(unit)

@@ -1,7 +1,12 @@
 import Foundation
 
 struct AppConfig {
-    static let appVersion: String = "0.35"
+    static let appVersion: String = "0.37"
+
+    // App-support folder / config filename for MPX Prime Studio (the encoder,
+    // paired with "MPX Prime Meter").
+    static let appSupportDirName = "MPX Prime Studio"
+    static let configFileName = "MPX Prime Studio.ini"
 
     static var defaultINIPath: String {
         let fileManager = FileManager.default
@@ -10,12 +15,12 @@ struct AppConfig {
             in: .userDomainMask
         ).first {
             return appSupport
-                .appendingPathComponent("MPX Prime", isDirectory: true)
-                .appendingPathComponent("MPX Prime.ini", isDirectory: false)
+                .appendingPathComponent(appSupportDirName, isDirectory: true)
+                .appendingPathComponent(configFileName, isDirectory: false)
                 .path
         }
         return ((NSHomeDirectory() as NSString)
-            .appendingPathComponent("Library/Application Support/MPX Prime/MPX Prime.ini")
+            .appendingPathComponent("Library/Application Support/\(appSupportDirName)/\(configFileName)")
             as NSString)
             .standardizingPath
     }
@@ -382,12 +387,22 @@ struct AppConfig {
         default:  return rdsPSA
         }
     }
+    /// Programme Item Number packed for Group 1A block 4: 5 bits day (1-31),
+    /// 5 bits hour (0-23), 6 bits minute (0-59). 0 when disabled (no PIN).
+    var rdsPINValue: Int {
+        guard rdsEnablePIN else { return 0 }
+        let day = min(31, max(1, rdsPINDay))
+        let hour = min(23, max(0, rdsPINHour))
+        let minute = min(59, max(0, rdsPINMinute))
+        return (day << 11) | (hour << 6) | minute
+    }
+
     var rdsRTText: String =
-        "10s:MPX Prime FM MPX Generator/10s:Native macOS Swift App"
+        "10s:MPX Prime Studio FM MPX Generator/10s:Native macOS Swift App"
     var rdsRTManualBuffers: Bool = false
     var rdsRTCycleAB: Bool = false
-    var rdsRTA: String = "MPX Prime: FM MPX + RDS Audio Processor"
-    var rdsRTB: String = "MPX Prime: FM MPX Generator"
+    var rdsRTA: String = "MPX Prime Studio: FM MPX + RDS Audio Processor"
+    var rdsRTB: String = "MPX Prime Studio: FM MPX Generator"
     var rdsRTC: String = ""
     var rdsRTD: String = ""
     var rdsRTBufferAEnabled: Bool = true
@@ -404,7 +419,7 @@ struct AppConfig {
     var rdsPTYN: String = "-STEREO-"
     var rdsEnablePTYN: Bool = true
     var rdsPTYNCentered: Bool = false
-    var rdsLongPS32: String = "MPX Prime Stereo and RDS Coder"
+    var rdsLongPS32: String = "MPX Prime Studio Stereo+RDS"
     var rdsEnableLPS: Bool = true
     var rdsLPSCentered: Bool = false
     var rdsLPSCR: Bool = true
@@ -417,6 +432,13 @@ struct AppConfig {
     var rdsNowPlayingTimeoutSeconds: Double = 1.0
     var rdsECC: String = "E3"
     var rdsLIC: String = "1D"
+    // Programme Item Number (Group 1A, block 4): the scheduled start of the
+    // current programme item. Off by default (transmits 0). Day 1-31, hour
+    // 0-23, minute 0-59 -- a static value the operator sets, per spec intent.
+    var rdsEnablePIN: Bool = false
+    var rdsPINDay: Int = 1
+    var rdsPINHour: Int = 0
+    var rdsPINMinute: Int = 0
     var rdsTZOffset: Double = 1.0
     var rdsEnableCT: Bool = true
     var rdsEnableID: Bool = true
@@ -781,6 +803,10 @@ struct AppConfig {
             "now_playing_timeout_seconds", defaultValue: cfg.rdsNowPlayingTimeoutSeconds)
         cfg.rdsECC = rds.string("ecc", defaultValue: cfg.rdsECC)
         cfg.rdsLIC = rds.string("lic", defaultValue: cfg.rdsLIC)
+        cfg.rdsEnablePIN = rds.bool("pin_enabled", defaultValue: cfg.rdsEnablePIN)
+        cfg.rdsPINDay = rds.int("pin_day", defaultValue: cfg.rdsPINDay)
+        cfg.rdsPINHour = rds.int("pin_hour", defaultValue: cfg.rdsPINHour)
+        cfg.rdsPINMinute = rds.int("pin_minute", defaultValue: cfg.rdsPINMinute)
         cfg.rdsTZOffset = rds.double("tz_offset", defaultValue: cfg.rdsTZOffset)
         cfg.rdsEnableCT = rds.bool("en_ct", defaultValue: cfg.rdsEnableCT)
         cfg.rdsEnableID = rds.bool("en_id", defaultValue: cfg.rdsEnableID)
@@ -995,6 +1021,9 @@ struct AppConfig {
         rdsRTABCycleCount = max(1, min(99, rdsRTABCycleCount))
         rdsECC = Self.sanitizedHexByte(rdsECC)
         rdsLIC = Self.sanitizedHexByte(rdsLIC)
+        rdsPINDay = min(31, max(1, rdsPINDay))
+        rdsPINHour = min(23, max(0, rdsPINHour))
+        rdsPINMinute = min(59, max(0, rdsPINMinute))
         rdsTZOffset = max(-12.0, min(14.0, rdsTZOffset))
         rdsLevel = max(0.0, min(7.5, rdsLevel))
         rdsGaussianBWHZ = max(600.0, min(6_000.0, rdsGaussianBWHZ))
@@ -1235,6 +1264,10 @@ struct AppConfig {
             "now_playing_timeout_seconds = \(Self.formatFloat(max(0.2, min(30.0, rdsNowPlayingTimeoutSeconds))))",
             "ecc = \(Self.sanitizedHexByte(rdsECC))",
             "lic = \(Self.sanitizedHexByte(rdsLIC))",
+            "pin_enabled = \(Self.boolString(rdsEnablePIN))",
+            "pin_day = \(rdsPINDay)",
+            "pin_hour = \(rdsPINHour)",
+            "pin_minute = \(rdsPINMinute)",
             "tz_offset = \(Self.formatFloat(max(-12.0, min(14.0, rdsTZOffset))))",
             "en_ct = \(Self.boolString(rdsEnableCT))",
             "en_id = \(Self.boolString(rdsEnableID))",

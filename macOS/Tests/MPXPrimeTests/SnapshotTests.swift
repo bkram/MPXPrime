@@ -73,13 +73,67 @@ struct SnapshotTests {
         #expect(model.snapshots[1] == nil, "slot 1 must be empty")
     }
 
+    @Test func exportWritesConfigINIToFile() throws {
+        let model = makeViewModel()
+        model.config.pilotLevel = 0.087
+        model.saveSnapshot(slot: 3, name: "Export me")
+
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("MPXPrime-export-\(UUID().uuidString).ini")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(model.exportSnapshot(slot: 3, to: url))
+        let written = try String(contentsOf: url, encoding: .utf8)
+        #expect(written == model.snapshots[3]?.configINIText,
+            "exported file must equal the stored preset config")
+        // The export is a loadable config.
+        let reloaded = try AppConfig.loadFromINIString(written)
+        #expect(abs(reloaded.pilotLevel - 0.087) < 1e-6)
+
+        // Empty slot exports nothing.
+        #expect(!model.exportSnapshot(slot: 4, to: url))
+    }
+
+    @Test func importLoadsConfigFromFileIntoSlot() throws {
+        let exporter = makeViewModel()
+        exporter.config.pilotLevel = 0.091
+        exporter.saveSnapshot(slot: 0, name: "Shared")
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("Shared Setup.ini")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(exporter.exportSnapshot(slot: 0, to: url))
+
+        // A fresh model imports the exported file into a slot.
+        let importer = makeViewModel()
+        #expect(importer.importSnapshot(slot: 4, from: url))
+        #expect(importer.snapshots[4] != nil)
+        #expect(importer.snapshots[4]?.name == "Shared Setup", "name comes from the filename")
+
+        // Loading the imported slot reproduces the original config.
+        importer.loadSnapshot(slot: 4)
+        #expect(abs(importer.config.pilotLevel - 0.091) < 1e-6)
+
+        // A missing file fails cleanly (returns false, slot untouched).
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("does-not-exist-\(UUID().uuidString).ini")
+        #expect(!importer.importSnapshot(slot: 5, from: missing))
+        #expect(importer.snapshots[5] == nil)
+    }
+
+    @Test func exportFilenameSanitizesName() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Rock / Pop: A?")
+        #expect(model.exportFilename(slot: 0) == "Rock - Pop- A-.ini")
+        #expect(model.exportFilename(slot: 1) == "Preset 2.ini", "empty slot uses the label")
+    }
+
     @Test func emptyNameFallsBackToSlotLabel() {
         let model = makeViewModel()
         model.saveSnapshot(slot: 2, name: "")
-        #expect(model.snapshots[2]?.name == "Snapshot 3")
+        #expect(model.snapshots[2]?.name == "Preset 3")
 
         model.saveSnapshot(slot: 5, name: "   \n\t  ")
-        #expect(model.snapshots[5]?.name == "Snapshot 6",
+        #expect(model.snapshots[5]?.name == "Preset 6",
             "whitespace-only names should also fall back")
     }
 

@@ -1,23 +1,34 @@
 import CoreAudio
 import Foundation
 
-struct AudioDevice: Identifiable {
-    let id: AudioDeviceID
-    let uid: String
-    let name: String
-    let inputChannels: Int
-    let outputChannels: Int
+public struct AudioDevice: Identifiable {
+    public let id: AudioDeviceID
+    public let uid: String
+    public let name: String
+    public let inputChannels: Int
+    public let outputChannels: Int
 
-    var hasInput: Bool { inputChannels > 0 }
-    var hasOutput: Bool { outputChannels > 0 }
+    public var hasInput: Bool { inputChannels > 0 }
+    public var hasOutput: Bool { outputChannels > 0 }
+
+    public init(
+        id: AudioDeviceID, uid: String, name: String,
+        inputChannels: Int, outputChannels: Int
+    ) {
+        self.id = id
+        self.uid = uid
+        self.name = name
+        self.inputChannels = inputChannels
+        self.outputChannels = outputChannels
+    }
 }
 
-enum AudioDeviceError: Error {
+public enum AudioDeviceError: Error {
     case propertyQueryFailed(OSStatus)
 }
 
-enum AudioDevices {
-    static func list() throws -> [AudioDevice] {
+public enum AudioDevices {
+    public static func list() throws -> [AudioDevice] {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -65,11 +76,11 @@ enum AudioDevices {
         }
     }
 
-    static func inputDevices() throws -> [AudioDevice] {
+    public static func inputDevices() throws -> [AudioDevice] {
         try list().filter { $0.hasInput }
     }
 
-    static func outputDevices() throws -> [AudioDevice] {
+    public static func outputDevices() throws -> [AudioDevice] {
         try list().filter { $0.hasOutput }
     }
 
@@ -77,7 +88,7 @@ enum AudioDevices {
     /// the operator has not selected an explicit input — AUHAL needs
     /// an explicit `AudioDeviceID`, unlike AVAudioEngine which infers
     /// "default" implicitly.
-    static func defaultInputDeviceID() -> AudioDeviceID? {
+    public static func defaultInputDeviceID() -> AudioDeviceID? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -153,7 +164,7 @@ enum AudioDevices {
     /// Reads the device's allowed `kAudioDevicePropertyBufferFrameSize`
     /// range. Returns `nil` if the property isn't available (some virtual
     /// devices). Used to clamp our requested HAL buffer size before setting.
-    static func bufferFrameSizeRange(deviceID: AudioDeviceID) -> (min: UInt32, max: UInt32)? {
+    public static func bufferFrameSizeRange(deviceID: AudioDeviceID) -> (min: UInt32, max: UInt32)? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyBufferFrameSizeRange,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -168,7 +179,7 @@ enum AudioDevices {
 
     /// Reads the current `kAudioDevicePropertyBufferFrameSize`. Returns
     /// `nil` on error.
-    static func currentBufferFrameSize(deviceID: AudioDeviceID) -> UInt32? {
+    public static func currentBufferFrameSize(deviceID: AudioDeviceID) -> UInt32? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyBufferFrameSize,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -187,7 +198,7 @@ enum AudioDevices {
     /// rejected). Returns `nil` if neither the range query nor the set
     /// succeeded — caller should treat that as "device kept its default".
     @discardableResult
-    static func setBufferFrameSize(deviceID: AudioDeviceID, requested: UInt32) -> UInt32? {
+    public static func setBufferFrameSize(deviceID: AudioDeviceID, requested: UInt32) -> UInt32? {
         let clamped: UInt32
         if let range = bufferFrameSizeRange(deviceID: deviceID) {
             clamped = max(range.min, min(range.max, requested))
@@ -206,5 +217,71 @@ enum AudioDevices {
             return currentBufferFrameSize(deviceID: deviceID)
         }
         return currentBufferFrameSize(deviceID: deviceID) ?? clamped
+    }
+
+    /// The device's supported nominal sample rates (Hz). A range with
+    /// min == max is a discrete rate; ranges (rare on real hardware) are
+    /// reported by their max. Empty on error.
+    public static func availableNominalSampleRates(deviceID: AudioDeviceID) -> [Double] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else { return [] }
+        let count = Int(dataSize) / MemoryLayout<AudioValueRange>.size
+        var ranges = Array(repeating: AudioValueRange(), count: count)
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &dataSize, &ranges) == noErr
+        else { return [] }
+        return ranges.map { $0.mMaximum }
+    }
+
+    /// Reads the device's current nominal sample rate (Hz), or nil on error.
+    public static func currentNominalSampleRate(deviceID: AudioDeviceID) -> Double? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &rate) == noErr,
+              rate > 0 else { return nil }
+        return rate
+    }
+
+    /// Set the device's nominal sample rate (Hz). The HAL applies the change
+    /// asynchronously, so this polls the current rate until it matches (within
+    /// 1 Hz) or `timeout` elapses. Returns the rate the device ended up at, or
+    /// nil if the set call itself failed.
+    @discardableResult
+    public static func setNominalSampleRate(
+        deviceID: AudioDeviceID, _ rate: Double, timeout: TimeInterval = 1.5
+    ) -> Double? {
+        if let current = currentNominalSampleRate(deviceID: deviceID),
+           abs(current - rate) < 1.0 {
+            return current
+        }
+        var value = Float64(rate)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, &value) == noErr
+        else { return nil }
+        // Poll until the asynchronous switch lands.
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let current = currentNominalSampleRate(deviceID: deviceID),
+               abs(current - rate) < 1.0 {
+                return current
+            }
+            usleep(20_000)
+        }
+        return currentNominalSampleRate(deviceID: deviceID)
     }
 }

@@ -30,8 +30,6 @@ public struct MPXDecoder {
     @usableFromInline var diffBandHP = BiquadCascade6()
     @usableFromInline var diffBandLP = BiquadCascade6()
     @usableFromInline var diffLP = BiquadCascade6()
-    @usableFromInline var rfNotchPilot = Biquad()
-    @usableFromInline var rfNotchRDS = Biquad()
     @usableFromInline var pilotNotchL = Biquad()
     @usableFromInline var pilotNotchR = Biquad()
     @usableFromInline var deemphasisL = DeemphasisFilter()
@@ -72,20 +70,16 @@ public struct MPXDecoder {
         diffBandLP.configureIdentity()
         diffLP.configureLowpass(cutoffHz: 15_500.0, sampleRate: sr)
 
+        // No pre-demod RF notch (see process()): pilot/RDS are handled by the
+        // audio-band lowpasses + the post-recombination pilot notch. The
+        // pilot notch on the decoded L/R removes residual 19 kHz that the
+        // M-path 15.5 kHz lowpass leaves behind.
         if nyquist > (Self.pilotHz + 100.0) {
-            rfNotchPilot.configureNotch(freqHz: Self.pilotHz, sampleRate: sr, q: 18.0)
             pilotNotchL.configureNotch(freqHz: Self.pilotHz, sampleRate: sr, q: 24.0)
             pilotNotchR.configureNotch(freqHz: Self.pilotHz, sampleRate: sr, q: 24.0)
         } else {
-            rfNotchPilot.configureIdentity()
             pilotNotchL.configureIdentity()
             pilotNotchR.configureIdentity()
-        }
-
-        if nyquist > 57_100.0 {
-            rfNotchRDS.configureNotch(freqHz: Self.rdsHz, sampleRate: sr, q: 22.0)
-        } else {
-            rfNotchRDS.configureIdentity()
         }
 
         deemphasisL.configure(tauUS: preemphasisUS, sampleRate: sr)
@@ -117,15 +111,32 @@ public struct MPXDecoder {
     @inlinable
     @inline(__always)
     public mutating func process(
-        _ mpx: Float,
+        _ mpxIn: Float,
         referenceSubcarrier: Float? = nil,
-        programActivity: Float,
-        expectedSide: Float
+        programActivity programActivityIn: Float,
+        expectedSide expectedSideIn: Float
     ) -> (Float, Float) {
-        let subcarrier = referenceSubcarrier ?? pilotLockedSubcarrier(from: mpx)
+        // Sanitize all float inputs up front. A single non-finite sample
+        // would otherwise poison the persistent pilot-lock I/Q, envelope,
+        // and noise-floor state permanently: NaN flows through the
+        // exponential smoothers (which never flush it) and every recovery
+        // comparison against NaN is false, so the stereo-collapse self-heal
+        // can never re-arm. Substituting 0 keeps the decoder recoverable.
+        let mpx = mpxIn.isFinite ? mpxIn : 0.0
+        let programActivity = programActivityIn.isFinite ? programActivityIn : 0.0
+        let expectedSide = expectedSideIn.isFinite ? expectedSideIn : 0.0
+        let refSubcarrier: Float? = referenceSubcarrier.flatMap { $0.isFinite ? $0 : 0.0 }
+        let subcarrier = refSubcarrier ?? pilotLockedSubcarrier(from: mpx)
 
-        var monSrc = rfNotchPilot.process(mpx)
-        monSrc = rfNotchRDS.process(monSrc)
+        // No pre-demod pilot/RDS notch: it used to attenuate the 19 kHz pilot
+        // and 57 kHz RDS before the M/S split, but its skirts clipped the
+        // S-channel DSB-SC sidebands (38 +/- f) asymmetrically — worse as f
+        // rose toward the notches — which was the dominant HF stereo-
+        // separation limiter (14 kHz ~44 dB -> ~97 dB once removed). The
+        // pilot/RDS are already handled downstream: the 15.5 kHz M-path
+        // lowpass + S-path `diffLP` reject everything above the audio band,
+        // and `pilotNotchL/R` cleans residual 19 kHz from the decoded L/R.
+        let monSrc = mpx
 
         let lpr = lprLP.process(monSrc)
         var diff = 2.0 * monSrc * subcarrier

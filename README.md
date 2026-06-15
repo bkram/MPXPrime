@@ -1,12 +1,12 @@
-# MPX Prime
+# MPX Prime Studio
 
-Version: 0.35
+Version: 0.37
 
-MPX Prime is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
+MPX Prime Studio is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
 It runs a full broadcast-style processing chain — phase rotator, wideband AGC, 4-band parametric EQ, 3-/5-band multiband compressor, stereo widener, PrimeBass, bass and audio-band clippers, L/R pre-emphasis, pre-encode true-peak limiter, BS.412 power limiting, and an oversampled composite clipper — ahead of a pilot-locked stereo encoder, and keeps the pilot and RDS subcarriers out of all peak control (post-clipper injection).
 
-> **Intended use and status.** MPX Prime is for **experimental, hobby, and small-budget broadcast** — community / LPFM stations, pirate and SDR-fed exciters, prosumer encoding, and study of FM signal processing. It implements core behavior from EN 50067 / IEC 62106 and common FM-stereo practice, but it is **experimental and not certified — no conformity or compliance is promised.** Do not rely on it for regulated production broadcast.
+> **Intended use and status.** MPX Prime Studio is for **experimental, hobby, and small-budget broadcast** — community / LPFM stations, pirate and SDR-fed exciters, prosumer encoding, and study of FM signal processing. It implements core behavior from EN 50067 / IEC 62106 and common FM-stereo practice, but it is **experimental and not certified — no conformity or compliance is promised.** Do not rely on it for regulated production broadcast.
 
 ## App structure
 
@@ -41,11 +41,11 @@ transport restart since they reconfigure the modulator.
 - Decoded MPX monitor output on a selectable monitor device
 - **Processed-audio output mode** (Settings - Output Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
 - Scopes, spectrum, levels, sticky peaks, and live monitoring views
-- Config persisted to `~/Library/Application Support/MPX Prime/MPX Prime.ini`
+- Config persisted to `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 
 ## Output modes
 
-MPX Prime drives its main output device in one of two modes, chosen in
+MPX Prime Studio drives its main output device in one of two modes, chosen in
 **Settings → Output Mode** (restart-required). What you need from your hardware
 depends on which you use:
 
@@ -87,22 +87,22 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 
 **[github.com/bkram/MPXPrime/releases](https://github.com/bkram/MPXPrime/releases)**
 
-Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, drag `MPX Prime.app` into `/Applications` (or any folder you prefer), and launch.
+Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, drag `MPX Prime Studio.app` into `/Applications` (or any folder you prefer), and launch.
 
 ### First-launch security note
 
-MPX Prime is **ad-hoc signed**, not Apple-notarized. The DMG is built and signed by an automated GitHub Actions workflow with a self-managed signing identity — it is *not* enrolled in the Apple Developer Notary Service. As a result, macOS Gatekeeper will refuse to open the app on first launch with a message similar to:
+MPX Prime Studio is **ad-hoc signed**, not Apple-notarized. The DMG is built and signed by an automated GitHub Actions workflow with a self-managed signing identity — it is *not* enrolled in the Apple Developer Notary Service. As a result, macOS Gatekeeper will refuse to open the app on first launch with a message similar to:
 
-> *"MPX Prime" cannot be opened because Apple cannot check it for malicious software.*
+> *"MPX Prime Studio" cannot be opened because Apple cannot check it for malicious software.*
 
 This is the standard macOS warning for any app distributed outside the Mac App Store / Apple Notarization. To approve the app once:
 
 1. Open **System Settings → Privacy & Security**.
-2. Scroll to the **Security** section near the bottom. You will see a message like *"MPX Prime was blocked from use because it is not from an identified developer"*.
+2. Scroll to the **Security** section near the bottom. You will see a message like *"MPX Prime Studio was blocked from use because it is not from an identified developer"*.
 3. Click **Open Anyway** next to that message.
-4. The next time you launch MPX Prime, macOS will prompt one more time — click **Open**.
+4. The next time you launch MPX Prime Studio, macOS will prompt one more time — click **Open**.
 
-After the first approval, MPX Prime launches normally on subsequent runs. This is a one-time per-version operation; updating to a new release will trigger the prompt again on first launch.
+After the first approval, MPX Prime Studio launches normally on subsequent runs. This is a one-time per-version operation; updating to a new release will trigger the prompt again on first launch.
 
 If you would rather skip the Gatekeeper dialog entirely, build from source (see [docs/BUILDING.md](docs/BUILDING.md)) — locally built binaries are not subject to the same check.
 
@@ -123,11 +123,11 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 
 ## Acknowledgements
 
-The block-level RDS bit encoder in `BasicRDSCoder` — CRC (`0x5B9`), offset words, and the four-block group assembly shared by groups 0/2/3A/4A/10A/11A/15A — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). Everything around it is MPX Prime's own work: the 1187.5 bit/s biphase + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation, the audio-thread real-time pipeline (pre-allocated bit buffer, atomic CT cache, monotonic-clock timing), the `RDSRuntimeConfig` live-apply path, AF Method B, RT+ ODA (AID 0x4BD7), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, Group 1A ECC/LIC, the Stereotool-compatible text grammar, and the full FM composite chain that the encoder feeds into.
+The block-level RDS bit encoder in `BasicRDSCoder` — CRC (`0x5B9`), offset words, and the four-block group assembly shared by groups 0/2/3A/4A/10A/11A/15A — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). Everything around it is MPX Prime Studio's own work: the 1187.5 bit/s biphase + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation, the audio-thread real-time pipeline (pre-allocated bit buffer, atomic CT cache, monotonic-clock timing), the `RDSRuntimeConfig` live-apply path, AF Method B, RT+ ODA (AID 0x4BD7), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, Group 1A ECC/LIC, the Stereotool-compatible text grammar, and the full FM composite chain that the encoder feeds into.
 
 ## Trademarks
 
-MPX Prime is an independent open-source project and is not affiliated with,
+MPX Prime Studio is an independent open-source project and is not affiliated with,
 endorsed by, or sponsored by any of the companies named in this documentation.
 Product and company names — including Orban, Optimod, Omnia, Stereo Tool /
 Stereotool, Aphex, Waves, and others — are trademarks of their respective owners

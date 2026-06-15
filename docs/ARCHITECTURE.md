@@ -2,7 +2,7 @@
 
 ## Overview
 
-MPX Prime is a native macOS audio application built with Swift and SwiftUI. It provides real-time FM stereo MPX generation with RDS support using AVAudioEngine.
+MPX Prime Studio is a native macOS audio application built with Swift and SwiftUI. It provides real-time FM stereo MPX generation with RDS support using AVAudioEngine.
 
 ```
 SwiftUI UI  <->  App State (ObservableObject)
@@ -76,6 +76,15 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │    └── Applied L/R immediately upstream of the pre-encode limiter
 │        so the limiter peak-controls the +10..12 dB HF-boosted signal
 │        (canonical Optimod / Stereotool placement)
+│
+├──► Pre-emphasis-aware HF clipper (L/R domain, oversampled, optional, default-off)
+│    └── Dedicated HF peak control on the *pre-emphasised* high band,
+│        between pre-emphasis and the pre-encode limiter, so the broadband
+│        limiter doesn't pull gain across the whole signal and dull it
+│        (de-emphasis-correct — the receiver's fixed de-emphasis restores
+│        the curve). Configurable crossover (3-8 kHz, default 5 kHz),
+│        threshold (-12..0 dB, default -3), drive (0.5-3.0, default 1.2);
+│        live-apply. `hf_clipper_*`. Added 0.35.
 │
 ├──► Pre-encode audio limiter (L/R domain, stereo-linked oversampled, look-ahead)
 │    └── True-peak limiter on L/R before stereo encoding —
@@ -182,11 +191,14 @@ which to use at `start()` from config and routes the render callback accordingly
 
 ## Major Components
 
-- `main.swift`: CLI entry point, config loading, audio engine lifecycle. Verifier modes: `--verify`, `--verify-presets`, `--verify-long`, `--verify-receiver` (0.27), `--verify-composite-multiband` and `--verify-multiband-coupling` (0.28).
+The SPM package (`macOS/Package.swift`) has three targets: **`MPXPrime`** (the executable — UI, engine, generator, config), **`MPXPrimeCore`** (a shared DSP library: `MPXDecoder`, `RDSStreamDecoder`, `DSPPrimitives` — depended on by the app and reused by the planned `MPXPrimeMeter` analyzer; hot per-sample `process()` methods are `@inlinable` so they inline across the module boundary), and **`MPXPrimeNative`** (a tiny C target, `MPXPrimeNative.c`, that sets the FTZ/DAZ denormal-handling CPU flags on the audio thread). The file list below notes each file's target.
+
+- `main.swift`: CLI entry point, config loading, audio engine lifecycle. Verifier modes: `--verify`, `--verify-presets`, `--verify-long`, `--verify-receiver` (0.27), `--verify-composite-multiband` and `--verify-multiband-coupling` (0.28). 0.36 extended `--verify-receiver` with composite-clipper guard-band cancellation depth (pilot 17-21 kHz / RDS 55-59 kHz) and a pilot/RDS phase-lock drift gate, added a 4x-oversampled true-peak (BS.1770-style) inter-sample-overshoot metric to `--verify`, and bumped the `--baseline-strict` baseline to schema 3 (adds the true-peak field plus a global encoder-side sideband fingerprint — asymmetry + side/mono delta at 1/10/14 kHz).
 - `AudioOutputEngine.swift`: AVAudioEngine output setup, render callback, transport orchestration. Delegates input capture to `InputAUHAL`.
 - `InputAUHAL.swift`: Direct AUHAL (`kAudioUnitSubType_HALOutput`) input-capture wrapper. Replaces a second `AVAudioEngine` instance the engine used to spin up for input — AVAudioEngine's first `start()` with a non-default input device intermittently failed to deliver tap callbacks. The two-AUHAL pattern (separate input AU + output AVAudioEngine + `StereoInputRingBuffer` as the only bridge) is what TN2091 / CAPlayThrough / Stereotool / AudioKit's non-default-device path use on macOS.
 - `MPXGenerator.swift`: Real-time MPX/DSP generation, RDS encoding.
-- `MPXDecoder.swift` (0.27, PLL refactor in 0.28): Reusable FM-stereo demodulator. Used both by the audio render callback for monitor output (with the internally generated, delay-aligned 38 kHz reference) and by the offline verifier (with a pilot-PLL recovered reference). 0.28 replaced the bandpass + phase-discriminator PLL with an I/Q coherent lockin demodulator — slow IIR-smoothed estimates of `mpx · sin(ω_p · t)` and `mpx · cos(ω_p · t)` at the local oscillator, then the doubled-phase subcarrier is recovered via trig identities. Effect: external-style PLL decode now matches synthetic-reference coherent decode within 0.1 dB at every test tone. Includes a smoothed noise gate and a stereo-collapse cooldown that re-initialises the PLL if it ever drifts off-lock.
+- `MPXDecoder.swift` (0.27, PLL refactor in 0.28): Reusable FM-stereo demodulator. Used both by the audio render callback for monitor output (with the internally generated, delay-aligned 38 kHz reference) and by the offline verifier (with a pilot-PLL recovered reference). 0.28 replaced the bandpass + phase-discriminator PLL with an I/Q coherent lockin demodulator — slow IIR-smoothed estimates of `mpx · sin(ω_p · t)` and `mpx · cos(ω_p · t)` at the local oscillator, then the doubled-phase subcarrier is recovered via trig identities. Effect: external-style PLL decode now matches synthetic-reference coherent decode within 0.1 dB at every test tone. Includes a smoothed noise gate and a stereo-collapse cooldown that re-initialises the PLL if it ever drifts off-lock. Lives in the `MPXPrimeCore` SPM target (shared by the transmit app and the verifier; the hot `process()` is `@inlinable` so it still inlines across the module boundary). 0.36 added non-finite-input sanitization at the top of `process()` — a single NaN/Inf sample used to permanently poison the pilot-lock I/Q and envelope state (the exponential smoothers never flush NaN and the self-heal could not re-arm).
+- `RDSStreamDecoder.swift` (MPXPrimeCore, 0.31): Symmetric receive-side RDS decoder — the counterpart to `BasicRDSCoder`. Operates on recovered RDS data bits (differentially-decoded 1187.5 bps stream): BCH offset-word block synchronization, CRC-checked group assembly, and PI/PTY/TP/TA/MS/DI/PS field accumulation. Exports public `RDSGroup` / `RDSReceiverState`. Used by the offline verifier and the planned `MPXPrimeMeter` analyzer app; round-trip tested against `BasicRDSCoder`.
 - `BandLimitedStep.swift` (0.27): Allocation-free BLEP/BLAMP correction helper for the US 6,937,912 anti-aliased clipping work. Detects fractional threshold crossings and schedules normalized finite correction windows in impulse / step / ramp shapes.
 - `AcceleratedBandlimitedResidualClipper.swift` (0.27): vDSP-accelerated patent-style residual-bandlimiting candidate clipper (hard-clip → bandlimit the residual → reconstruct as delayed-clean + filtered-residual). Wired as the inner kernel of `OversampledPeakLimiter` / `StereoLinkedOversampledPeakLimiter` behind the off-by-default `pre_encode_bandlimited_residual_enabled` opt-in.
 - `AppConfig.swift`: Configuration model, INI parsing/serialization.
@@ -202,7 +214,7 @@ which to use at `start()` from config and routes the render callback accordingly
 
 ## Current processing order
 
-Within the main audio path, MPX Prime runs:
+Within the main audio path, MPX Prime Studio runs:
 
 1. Input gain and mono fold
 2. **Phase rotation** (4-pole allpass, optional)
@@ -225,18 +237,19 @@ Within the main audio path, MPX Prime runs:
 15. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor
 16. Stereo-image protection
 17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal)
-18. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`)
-19. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
-20. Composite clipper (16× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead)
-21. Audio composite bandwidth FIR (linear-phase HF cleanup before pilot/RDS injection)
-22. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
-23. Final-MPX safety limiter (audio composite only)
-24. Composite budget governor (smoothed gain ride on audio path so post-injection clamp is unreachable for sane configs)
-25. Pilot and RDS injection (post-clipper, constant amplitude, delay-aligned via `subcarrierDelayLine`)
+18. Pre-emphasis-aware HF clipper (L/R domain, oversampled, optional, default-off; clips only the pre-emphasised high band so the broadband limiter doesn't dull the whole signal; configurable crossover ~5 kHz / threshold / drive; live-apply; added 0.35)
+19. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`)
+20. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
+21. Composite clipper (16× oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead)
+22. Audio composite bandwidth FIR (linear-phase HF cleanup before pilot/RDS injection)
+23. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
+24. Final-MPX safety limiter (audio composite only)
+25. Composite budget governor (smoothed gain ride on audio path so post-injection clamp is unreachable for sane configs)
+26. Pilot and RDS injection (post-clipper, constant amplitude, delay-aligned via `subcarrierDelayLine`)
 
 Most optional stages are disabled by default and can be enabled via config/UI. The default processing chain intentionally ships with multiband, bass clipper, composite clipper, pre-encode limiter, final MPX safety, encoder FIR, and multiband FIR enabled per `AppConfig`.
 
-When `Mono Mode` is enabled, MPX Prime suppresses the pilot, stereo subcarrier, and RDS injection so the transmitted composite is true mono.
+When `Mono Mode` is enabled, MPX Prime Studio suppresses the pilot, stereo subcarrier, and RDS injection so the transmitted composite is true mono.
 
 ## External Dependencies
 
@@ -344,7 +357,7 @@ The choice is resolved once per engine start by `AudioOutputEngine.start()` via 
 
 The block-level bit encoder — `crc` / `withCheckword` / `buildGroupBits` and the B1/B2/B3/B4 layout — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). The CRC polynomial (`0x5B9`), offset words A/B/C/D, the `(groupType << 12) | (versionB << 11) | (tp << 10) | (pty << 5) | b2Tail` B2 composition, and the segment-counter patterns in Group 0 (mod 4, DI bit) and Group 2 (mod 16, A/B flag) all follow the Python implementation's structure. The Cp offset value diverged during the port (Python uses `0x350`, this implementation uses `0x1E0`).
 
-Everything else in this section — the 1187.5 bit/s biphase impulse + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation (`nextSampleWithPilotLock`), the real-time audio-thread safety work (pre-allocated `bitBuffer`, atomic CT cache, `monotonicSeconds()` timing), the `RDSRuntimeConfig` live-apply pipeline, AF Method B encoding, RT+ ODA registration (AID `0x4BD7`, group 3A/11A), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, and Group 1A ECC/LIC variants — is MPX Prime's own work and has no counterpart in the source Python project.
+Everything else in this section — the 1187.5 bit/s biphase impulse + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation (`nextSampleWithPilotLock`), the real-time audio-thread safety work (pre-allocated `bitBuffer`, atomic CT cache, `monotonicSeconds()` timing), the `RDSRuntimeConfig` live-apply pipeline, AF Method B encoding, RT+ ODA registration (AID `0x4BD7`, group 3A/11A), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, and Group 1A ECC/LIC variants — is MPX Prime Studio's own work and has no counterpart in the source Python project.
 
 ### Group repertoire
 
@@ -369,8 +382,13 @@ Not currently implemented: 14A/14B (EON), 8A (TMC), 9A (EWS), 6A (IH),
   Gaussian shaping FIR (configurable BW + taps).
 - CRC polynomial 0x5B9; offset words A=0x0FC, B=0x198, C=0x168,
   Cp=0x1E0, D=0x1B4 per IEC 62106-2 Table 2.
-- 57 kHz subcarrier locked to 19 kHz pilot at 3:1 phase ratio
-  (`nextSampleWithPilotLock`).
+- 57 kHz subcarrier locked to 19 kHz pilot at 3:1 (`nextSampleWithPilotLock`):
+  the carrier is `sin(3*theta)` recovered from the pilot oscillator's
+  instantaneous `sin(theta)` (`pilotOsc.s`, supplied per sample via
+  `updateRDSPilotSin`) through the triple-angle identity `3s - 4s^3`. 0.36
+  replaced the prior separate additive phase accumulator, which drifted
+  ~9 deg / 5 s against the emitted pilot; the `--verify-receiver` pilot/RDS
+  phase-lock drift check guards against regressing it.
 - AF Method A and Method B encoding both supported; Method B repeats
   the tuned frequency per pair so receivers can group AF lists across
   regional variants (EN 50067 §3.2.1.6.4 / IEC 62106-2 §7.5.3).

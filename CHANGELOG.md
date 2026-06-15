@@ -9,6 +9,74 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## 0.37 — 2026-06-15
+
+- **MPX Prime Meter GUI.** The companion analyzer ships a full SwiftUI
+  dashboard window (scopes, MPX spectrum with band captions, levels +
+  deviation meters, stereo vectorscope, RDS panel) plus MPX power (BS.412),
+  peak-hold deviation, best stereo separation, and deviation/power trend
+  graphs. Native RTL-SDR input via FM-SDR-Tuner (`run-meter-sdr.sh --gui` or
+  Source -> SDR), and a packaged double-clickable `MPX Prime Meter.app`.
+- **RDS PIN (Programme Item Number).** Group 1A block 4 can now carry a PIN —
+  the scheduled day / hour / minute of the current programme item — instead of
+  always sending 0. Off by default; enable it under RDS → Program → Station
+  Identity (config keys `pin_enabled`, `pin_day`, `pin_hour`, `pin_minute`),
+  live-apply. Legacy field, rarely decoded, added for spec completeness.
+- **RDS LIC moved next to PI/ECC** in the Station Identity group (was orphaned
+  in the Schedule tab's Clock Time card).
+- **PS no longer force-uppercased.** The 8-character Program Service now
+  transmits in the case you type it (e.g. "Veronica"), matching RadioText and
+  Long PS. Previously PS was always upper-cased for older-receiver
+  compatibility. PTYN is still upper-cased.
+- **"Snapshots" renamed to "Presets"** in the UI (full-config save slots).
+  The on-disk file, types, and methods are unchanged — no migration.
+- **Renamed to "MPX Prime Studio".** The encoder app is now "MPX Prime Studio"
+  (paired with the "MPX Prime Meter" analyzer); all window titles, menus, the
+  About panel, the `.app` bundle, and the default RDS text reflect the new name.
+  The default config lives at
+  `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`. This is
+  a clean break — an old `MPX Prime/MPX Prime.ini` is **not** migrated; point
+  the app at it with `--config`, or re-save your setup as a preset. The bundle
+  identifier (`com.mpxprime.app`) is unchanged, so the granted microphone
+  permission carries over. The DMG filename stays `MPX_Prime-<version>.dmg` and
+  the internal executable stays `MPXPrime`.
+- **Fixed snapshot names not saving/loading.** Typing a name then clicking Save
+  (or saving first then renaming) now persists the name reliably — committed on
+  Enter and on focus loss, kept visible after Save, and re-synced when a slot is
+  loaded or renamed.
+
+## 0.36 — 2026-06-10
+
+- **RDS now bit-exactly locked to 3x pilot.** The 57 kHz RDS subcarrier is
+  derived from the pilot oscillator's recurrence via the triple-angle identity
+  (`sin 3t = 3s - 4s^3`) instead of a separate additive phase accumulator that
+  slowly drifted against it. Measured pilot-vs-RDS relative drift dropped from
+  ~9.08 deg / 5 s to ~0.11 deg / 5 s (EN 50067 Sec 2.1.4). Also slightly cheaper
+  than the old `fmodf` + `sinf`.
+- **Monitor decoder hardened against non-finite input.** `MPXDecoder` sanitises
+  NaN/Inf samples so a single bad sample can no longer permanently poison the
+  pilot-lock I/Q and envelope state (the smoothers never flushed NaN and the
+  stereo-collapse self-heal could not re-arm).
+- **Input ring buffer: torn-read telemetry.** Post-copy detection counts the rare
+  overflow-fault race (`tornReads`) rather than letting it pass silently; the
+  producer/consumer atomic protocol is now documented. No happy-path change.
+- **Numeric robustness.** BS.412 block-average denormal flush; downward-expander
+  gain floored at -60 dB to remove a subnormal-underflow gating discontinuity on
+  near-silent program.
+- **Verifier coverage.** Encoder-side sideband fingerprint baselined (asymmetry +
+  side/mono delta at 1/10/14 kHz; baseline schema 3). `--verify-receiver` now
+  reports composite-clipper guard-band cancellation depth (pilot ~11.8 dB / RDS
+  ~12.7 dB) and a pilot/RDS phase-lock drift gate. `--verify` adds a 4x-oversampled
+  true-peak (BS.1770-style) inter-sample-overshoot metric, baselined. Stage-isolation
+  sweep extended with bass / HF / DC clipper rows. New tests: RDS 3x-lock regression,
+  decoder NaN recovery, ring-buffer torn-read, BS.412 rolling-power ceiling, multiband
+  idle transparency.
+- **UI polish (HIG / accessibility).** Dropout indicator conveys state by shape +
+  colour (not colour alone, WCAG 2.1). Test-tone preset buttons highlight the active
+  frequency. Signal-flow strip dims bypassed stages with a tooltip + VoiceOver value.
+  Shared `BroadcastStyle` tokens centralise previously ad-hoc chip / connector / tick
+  fills (appearance unchanged).
+
 ## 0.35 — 2026-06-09
 
 - **Pre-emphasis-aware HF clipper (new; opt-in, default off).** A dedicated clipper

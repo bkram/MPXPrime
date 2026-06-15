@@ -14,7 +14,8 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "MPXPrime", targets: ["MPXPrime"])
+        .executable(name: "MPXPrime", targets: ["MPXPrime"]),
+        .executable(name: "MPXPrimeMeter", targets: ["MPXPrimeMeter"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0")
@@ -38,19 +39,33 @@ let package = Package(
         // cross-module-inlining rationale.
         .target(
             name: "MPXPrimeCore",
+            dependencies: [
+                .product(name: "Atomics", package: "swift-atomics"),
+                "MPXPrimeNative"
+            ],
             path: "Sources/MPXPrimeCore"
+        ),
+        // Shared SwiftUI: Canvas-based, signal-agnostic UI components
+        // (scope, spectrum, vertical meter, style tokens, the LiveTelemetry
+        // isolation wrapper) used by both the transmit GUI (MPXPrime) and the
+        // MPX Prime Meter window. Depends only on MPXPrimeCore.
+        .target(
+            name: "MPXPrimeUI",
+            dependencies: ["MPXPrimeCore"],
+            path: "Sources/MPXPrimeUI"
         ),
         .executableTarget(
             name: "MPXPrime",
             dependencies: [
                 .product(name: "Atomics", package: "swift-atomics"),
                 "MPXPrimeNative",
-                "MPXPrimeCore"
+                "MPXPrimeCore",
+                "MPXPrimeUI"
             ],
             path: "Sources/MPXPrime",
             linkerSettings: [
                 // Embed an Info.plist into the Mach-O so LaunchServices shows
-                // "MPX Prime" (CFBundleName) in the Apple menu / Dock even for
+                // "MPX Prime Studio" (CFBundleName) in the Apple menu / Dock even for
                 // the unbundled binary (swift run / .build/release/MPXPrime).
                 // The shipped .app bundle's own Info.plist takes precedence
                 // when bundled.
@@ -62,9 +77,33 @@ let package = Package(
                 ])
             ]
         ),
+        // MPX Prime Meter: companion MPX composite analyzer. Headless CLI for
+        // now (live capture + offline self-test); the SwiftUI window is a later
+        // increment. Depends only on the shared MPXPrimeCore library (which
+        // transitively pulls in Atomics + MPXPrimeNative), reusing the same
+        // input capture, decode, and analysis code as the transmit app.
+        .executableTarget(
+            name: "MPXPrimeMeter",
+            dependencies: [
+                "MPXPrimeCore",
+                "MPXPrimeUI",
+                .product(name: "Atomics", package: "swift-atomics")
+            ],
+            path: "Sources/MPXPrimeMeter",
+            linkerSettings: [
+                // Embed an Info.plist so the unbundled binary shows
+                // "MPX Prime Meter" in the menu/Dock (see MPXPrime above).
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "\(packageDir)/Resources/MPXPrimeMeter-Info.plist",
+                ])
+            ]
+        ),
         .testTarget(
             name: "MPXPrimeTests",
-            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore"],
+            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore", "MPXPrimeUI"],
             path: "Tests/MPXPrimeTests"
         )
     ]

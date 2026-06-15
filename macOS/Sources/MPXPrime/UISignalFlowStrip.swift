@@ -1,3 +1,4 @@
+import MPXPrimeUI
 import SwiftUI
 
 /// Compact "block-diagram chip strip" header for the Processing section.
@@ -88,6 +89,12 @@ struct SignalFlowStrip: View {
 
     @ViewBuilder
     private func chip(text: String, kind: ChipKind, stage: Stage? = nil) -> some View {
+        // A stage with an enable toggle that is currently off renders dimmed
+        // so the strip shows what's actually in the signal path. Stages with
+        // no toggle (Core, Final) report nil and stay full-strength.
+        let bypassed = stage.map { model.isStageEnabled($0) == false } ?? false
+        let help = (stage?.label ?? "") + " — \(stage?.detailSubtitle ?? "")"
+            + (bypassed ? " (bypassed)" : "")
         let label = Text(text)
             .font(.caption.monospaced().weight(kind == .active ? .semibold : .regular))
             .lineLimit(1)
@@ -104,7 +111,7 @@ struct SignalFlowStrip: View {
                     .foregroundStyle(.secondary)
                     .background(
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(.quaternary.opacity(0.4))
+                            .fill(BroadcastStyle.stagePillFill)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -112,7 +119,9 @@ struct SignalFlowStrip: View {
                     )
             }
             .buttonStyle(.plain)
-            .help((stage?.label ?? "") + " — \(stage?.detailSubtitle ?? "")")
+            .opacity(bypassed ? 0.4 : 1.0)
+            .help(help)
+            .accessibilityValue(bypassed ? "bypassed" : "active")
 
         case .active:
             Button {
@@ -130,14 +139,16 @@ struct SignalFlowStrip: View {
                     )
             }
             .buttonStyle(.plain)
-            .help((stage?.label ?? "") + " — \(stage?.detailSubtitle ?? "")")
+            .opacity(bypassed ? 0.5 : 1.0)
+            .help(help)
+            .accessibilityValue(bypassed ? "bypassed, selected" : "selected")
 
         case .terminal:
             label
                 .foregroundStyle(.secondary)
                 .background(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(.tertiary.opacity(0.18))
+                        .fill(BroadcastStyle.terminalPillFill)
                 )
         }
     }
@@ -147,7 +158,7 @@ struct SignalFlowStrip: View {
         // strip reads as "AGC, Multiband, Bass Clipper, …" instead
         // of intermixed connector / chip / connector / chip noise.
         Rectangle()
-            .fill(.tertiary.opacity(0.5))
+            .fill(BroadcastStyle.connectorFill)
             .frame(width: 6, height: 1)
             .accessibilityHidden(true)
     }

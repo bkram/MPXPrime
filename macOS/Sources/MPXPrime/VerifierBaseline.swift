@@ -37,6 +37,28 @@ struct VerifierBaselineRecord: Codable, Equatable {
     var occupied999Hz: Float
     var above60kRatioDB: Float
     var above67kRatioDB: Float
+    /// 4x-oversampled true-peak minus sample-peak, in dB. The inter-sample
+    /// overshoot the sample-domain peak meter misses. Baselining the delta
+    /// (not the absolute true-peak, which tracks peakDBFS) catches a
+    /// regression that lets inter-sample peaks grow past the 75 kHz
+    /// deviation ceiling without moving the sample peak.
+    var truePeakOvershootDB: Float
+}
+
+/// Encoder-side DSB-SC sideband metrics, captured once from an L-only
+/// tone drive at 1 / 10 / 14 kHz (independent of the program scenarios).
+/// These gate the composite clipper's guard-band cancellation and
+/// DSB-SC balance: a drift in clipper / FIR group-delay alignment moves
+/// `asymmetryDB` (lower-vs-upper sideband imbalance) or `sideMonoDeltaDB`
+/// (side-vs-mono level), neither of which the program-scenario records
+/// surface. Source is `EncoderSidebandMetrics` in the harness.
+struct EncoderSidebandBaselineRecord: Codable, Equatable {
+    var asymmetryDB1k: Float
+    var sideMonoDeltaDB1k: Float
+    var asymmetryDB10k: Float
+    var sideMonoDeltaDB10k: Float
+    var asymmetryDB14k: Float
+    var sideMonoDeltaDB14k: Float
 }
 
 struct VerifierBaselineFile: Codable, Equatable {
@@ -48,8 +70,12 @@ struct VerifierBaselineFile: Codable, Equatable {
     var durationSeconds: Double
     /// Dictionary keyed by scenario name → baseline record.
     var scenarios: [String: VerifierBaselineRecord]
+    /// Encoder-side sideband fingerprint (L-only tone drive at 1/10/14
+    /// kHz). Optional so schema-2 files decode, but always written by
+    /// schema-3 captures.
+    var encoderSidebands: EncoderSidebandBaselineRecord?
 
-    static let currentSchemaVersion: Int = 2
+    static let currentSchemaVersion: Int = 3
 }
 
 // MARK: - Tolerances
@@ -77,8 +103,20 @@ struct MetricTolerances {
     var occupied999Hz: Float = 150.0
     var above60kRatioDB: Float = 1.0
     var above67kRatioDB: Float = 1.0
+    var truePeakOvershootDB: Float = 0.20
 
     static let `default` = MetricTolerances()
+}
+
+/// Per-metric tolerance for the encoder-side sideband fingerprint. These
+/// are tighter than the program-scenario tolerances because the drive is
+/// a clean single tone, so the only motion should be genuine encoder /
+/// clipper drift, not program-dependent jitter.
+struct EncoderSidebandTolerances {
+    var asymmetryDB: Float = 0.5
+    var sideMonoDeltaDB: Float = 0.5
+
+    static let `default` = EncoderSidebandTolerances()
 }
 
 // MARK: - Comparison
@@ -143,7 +181,8 @@ func compareBaseline(
         Probe(name: "rmsDeltaDB", unit: "dB", tolerance: tolerances.rmsDeltaDB, get: { $0.rmsDeltaDB }),
         Probe(name: "occupied999Hz", unit: "Hz", tolerance: tolerances.occupied999Hz, get: { $0.occupied999Hz }),
         Probe(name: "above60kRatioDB", unit: "dB", tolerance: tolerances.above60kRatioDB, get: { $0.above60kRatioDB }),
-        Probe(name: "above67kRatioDB", unit: "dB", tolerance: tolerances.above67kRatioDB, get: { $0.above67kRatioDB })
+        Probe(name: "above67kRatioDB", unit: "dB", tolerance: tolerances.above67kRatioDB, get: { $0.above67kRatioDB }),
+        Probe(name: "truePeakOvershootDB", unit: "dB", tolerance: tolerances.truePeakOvershootDB, get: { $0.truePeakOvershootDB })
     ]
 
     // Report missing scenarios (new in measured, or dropped from baseline).
@@ -197,6 +236,48 @@ func compareBaseline(
         }
     }
 
+    return findings
+}
+
+/// Compare measured encoder-side sideband metrics against the stored
+/// baseline. Returns one drift finding per (tone, metric) that moved
+/// beyond tolerance. The synthetic scenario name "encoder_sidebands"
+/// keeps these findings visually distinct from per-scenario drift.
+func compareEncoderSidebands(
+    measured: EncoderSidebandBaselineRecord,
+    baseline: EncoderSidebandBaselineRecord,
+    tolerances: EncoderSidebandTolerances = .default
+) -> [BaselineDriftFinding] {
+    var findings: [BaselineDriftFinding] = []
+
+    struct Probe {
+        let name: String
+        let tolerance: Float
+        let get: (EncoderSidebandBaselineRecord) -> Float
+    }
+    let probes: [Probe] = [
+        Probe(name: "asymmetryDB@1k", tolerance: tolerances.asymmetryDB, get: { $0.asymmetryDB1k }),
+        Probe(name: "sideMonoDeltaDB@1k", tolerance: tolerances.sideMonoDeltaDB, get: { $0.sideMonoDeltaDB1k }),
+        Probe(name: "asymmetryDB@10k", tolerance: tolerances.asymmetryDB, get: { $0.asymmetryDB10k }),
+        Probe(name: "sideMonoDeltaDB@10k", tolerance: tolerances.sideMonoDeltaDB, get: { $0.sideMonoDeltaDB10k }),
+        Probe(name: "asymmetryDB@14k", tolerance: tolerances.asymmetryDB, get: { $0.asymmetryDB14k }),
+        Probe(name: "sideMonoDeltaDB@14k", tolerance: tolerances.sideMonoDeltaDB, get: { $0.sideMonoDeltaDB14k })
+    ]
+
+    for probe in probes {
+        let mv = probe.get(measured)
+        let bv = probe.get(baseline)
+        if abs(mv - bv) > probe.tolerance {
+            findings.append(BaselineDriftFinding(
+                scenarioName: "encoder_sidebands",
+                metricName: probe.name,
+                measured: mv,
+                baseline: bv,
+                tolerance: probe.tolerance,
+                unit: "dB"
+            ))
+        }
+    }
     return findings
 }
 
@@ -297,4 +378,154 @@ func verifierBaselineTimestampNow() -> String {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.string(from: Date())
+}
+
+// MARK: - Receiver-side baseline
+//
+// Kept in a SEPARATE file (`receiver.json`) from the composite baseline
+// (`default.json`): the receiver-model metrics are captured by the
+// `--verify-receiver` path, the composite scenario metrics by the `--verify`
+// sweep. Independent files mean neither capture clobbers the other and the
+// composite schema needs no migration.
+
+/// Stored receiver-decode metrics. Pins the decoder/encoder stereo
+/// separation and subcarrier health so a regression — e.g. reintroducing a
+/// decoder pilot/RDS notch (see plan.md "MPXDecoder has no pre-demod
+/// notch"), or an encoder change that quietly costs separation — is caught
+/// by `--verify-receiver --baseline-strict` instead of sailing past the
+/// loose inline >=16-18 dB thresholds. Pilot/RDS phase-lock drift already
+/// has its own hard gate, so it is intentionally not duplicated here.
+struct ReceiverBaselineRecord: Codable, Equatable {
+    var coherentSep1k: Float
+    var coherentSep10k: Float
+    var coherentSep14k: Float
+    var pllSep1k: Float
+    var pllSep10k: Float
+    var pllSep14k: Float
+    var noPilotPilotPercent: Float
+    var subcarrierPilotPercent: Float
+    var pilotGuardDepthDB: Float
+    var rdsGuardDepthDB: Float
+    // Deliberately NOT pinned: mono / no-pilot side rejection. Those are
+    // ~175-230 dB ratios — i.e. the side channel sits at the numerical floor
+    // (~-180 dBFS) for a mono input, so the exact dB is meaningless jitter
+    // that drifts with render duration (settling), not a regression signal.
+    // A genuine rejection failure is still caught by the inline >=26 dB
+    // thresholds in runReceiverModelVerification.
+}
+
+struct ReceiverBaselineFile: Codable, Equatable {
+    var schemaVersion: Int
+    var capturedAt: String
+    var configPath: String
+    var renderSampleRateHz: Int
+    var metrics: ReceiverBaselineRecord
+
+    static let currentSchemaVersion: Int = 1
+}
+
+/// Per-metric tolerance for the receiver baseline. Conservative defaults —
+/// separations and rejections can jitter a little with FFT windowing, so
+/// widen (never tighten below the observed run-to-run spread) if a clean
+/// recapture+strict cycle reports drift.
+struct ReceiverMetricTolerances {
+    var separationDB: Float = 2.0
+    var pilotPercent: Float = 0.10
+    var guardDepthDB: Float = 1.5
+
+    static let `default` = ReceiverMetricTolerances()
+}
+
+/// Compare measured receiver metrics against the stored baseline. One drift
+/// finding per metric beyond tolerance; the synthetic scenario name
+/// "receiver" keeps these visually distinct from per-scenario composite drift.
+func compareReceiverMetrics(
+    measured: ReceiverBaselineRecord,
+    baseline: ReceiverBaselineRecord,
+    tolerances: ReceiverMetricTolerances = .default
+) -> [BaselineDriftFinding] {
+    var findings: [BaselineDriftFinding] = []
+    struct Probe {
+        let name: String
+        let unit: String
+        let tolerance: Float
+        let get: (ReceiverBaselineRecord) -> Float
+    }
+    let probes: [Probe] = [
+        Probe(name: "coherentSep@1k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.coherentSep1k }),
+        Probe(name: "coherentSep@10k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.coherentSep10k }),
+        Probe(name: "coherentSep@14k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.coherentSep14k }),
+        Probe(name: "pllSep@1k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep1k }),
+        Probe(name: "pllSep@10k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep10k }),
+        Probe(name: "pllSep@14k", unit: "dB", tolerance: tolerances.separationDB, get: { $0.pllSep14k }),
+        Probe(name: "noPilotPilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.noPilotPilotPercent }),
+        Probe(name: "subcarrierPilotPercent", unit: "%", tolerance: tolerances.pilotPercent, get: { $0.subcarrierPilotPercent }),
+        Probe(name: "pilotGuardDepth", unit: "dB", tolerance: tolerances.guardDepthDB, get: { $0.pilotGuardDepthDB }),
+        Probe(name: "rdsGuardDepth", unit: "dB", tolerance: tolerances.guardDepthDB, get: { $0.rdsGuardDepthDB })
+    ]
+    for probe in probes {
+        let mv = probe.get(measured)
+        let bv = probe.get(baseline)
+        if abs(mv - bv) > probe.tolerance {
+            findings.append(BaselineDriftFinding(
+                scenarioName: "receiver",
+                metricName: probe.name,
+                measured: mv,
+                baseline: bv,
+                tolerance: probe.tolerance,
+                unit: probe.unit
+            ))
+        }
+    }
+    return findings
+}
+
+func loadReceiverBaseline(from url: URL) throws -> ReceiverBaselineFile {
+    guard FileManager.default.fileExists(atPath: url.path) else {
+        throw VerifierBaselineError.fileMissing(url)
+    }
+    let data: Data
+    do {
+        data = try Data(contentsOf: url)
+    } catch {
+        throw VerifierBaselineError.readFailed(url, error)
+    }
+    let decoded: ReceiverBaselineFile
+    do {
+        decoded = try JSONDecoder().decode(ReceiverBaselineFile.self, from: data)
+    } catch {
+        throw VerifierBaselineError.decodeFailed(url, error)
+    }
+    guard decoded.schemaVersion == ReceiverBaselineFile.currentSchemaVersion else {
+        throw VerifierBaselineError.schemaMismatch(
+            expected: ReceiverBaselineFile.currentSchemaVersion,
+            found: decoded.schemaVersion
+        )
+    }
+    return decoded
+}
+
+func saveReceiverBaseline(_ baseline: ReceiverBaselineFile, to url: URL) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data: Data
+    do {
+        data = try encoder.encode(baseline)
+    } catch {
+        throw VerifierBaselineError.writeFailed(url, error)
+    }
+    let dir = url.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    do {
+        try data.write(to: url, options: .atomic)
+    } catch {
+        throw VerifierBaselineError.writeFailed(url, error)
+    }
+}
+
+/// Receiver baseline lives next to the composite baseline, named `receiver.json`.
+func defaultReceiverBaselinePath() -> URL {
+    defaultVerifierBaselinePath()
+        .deletingLastPathComponent()
+        .appendingPathComponent("receiver.json")
 }

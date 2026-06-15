@@ -1,3 +1,4 @@
+import MPXPrimeUI
 import SwiftUI
 
 // Always-visible header. Sits immediately under the window chrome and
@@ -83,6 +84,8 @@ struct BroadcastStatusBar: View {
                 tint: .orange
             )
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("RDS warning: output sample rate is below 192 kHz; the RDS subcarrier aliases and will not decode")
         .help("RDS subcarrier at 57 kHz cannot be represented below 192 kHz output sample rate — the upper sideband at ~59 kHz aliases back into the audio band and no receiver will decode RDS. Either raise the output sample rate to 192 kHz (Audio MIDI Setup + the engine's `sample_rate`) or disable RDS for this output configuration.")
     }
 
@@ -93,16 +96,27 @@ struct BroadcastStatusBar: View {
     /// badges, but more discoverable than the existing status-text
     /// approach that operators were missing in dense tabs.
     private var restartPendingChip: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.yellow)
-                .accessibilityHidden(true)
-            chipLabelledValue(
-                label: "PENDING",
-                value: "RESTART REQ.",
-                tint: .yellow
-            )
+        // Actionable: clicking the always-visible chip stops and restarts the
+        // engine to apply the pending restart-required changes — same as the
+        // Control > Apply Restart menu item (Shift-Cmd-A), but reachable
+        // without leaving a dense tab.
+        Button {
+            model.applyPendingRuntimeChanges()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.yellow)
+                    .accessibilityHidden(true)
+                chipLabelledValue(
+                    label: "PENDING",
+                    value: "RESTART REQ.",
+                    tint: .yellow
+                )
+            }
         }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Restart pending: one or more changed settings need an engine restart to take effect. Activate to apply now.")
         .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, pilot/sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
     }
 
@@ -114,6 +128,9 @@ struct BroadcastStatusBar: View {
                 for: model.isRunning ? BroadcastStyle.safeGreen : Color.secondary,
                 active: model.isRunning
             )
+            // Decorative — the adjacent value text ("RUNNING"/"STOPPED")
+            // already carries transport state to VoiceOver.
+            .accessibilityHidden(true)
             chipLabelledValue(
                 label: "TRANSPORT",
                 value: model.isRunning ? "RUNNING" : "STOPPED",

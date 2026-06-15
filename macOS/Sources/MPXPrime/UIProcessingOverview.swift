@@ -1,3 +1,4 @@
+import MPXPrimeUI
 import SwiftUI
 
 // Broadcast-console "everything at once" view for the Processing section.
@@ -52,7 +53,8 @@ struct ProcessingOverviewGrid: View {
                     .agc,
                     title: "Wideband AGC",
                     subtitle: agcSubtitle,
-                    enabledPath: \.widebandAGCEnabled
+                    enabledPath: \.widebandAGCEnabled,
+                    liveReadout: { $0.agcStateText }
                 )
                 stageCard(
                     .parametricEQ,
@@ -64,7 +66,8 @@ struct ProcessingOverviewGrid: View {
                     .multiband,
                     title: "Multiband",
                     subtitle: multibandSubtitle,
-                    enabledPath: \.multibandEnabled
+                    enabledPath: \.multibandEnabled,
+                    liveReadout: { $0.multibandStateText }
                 )
                 stageCard(
                     .expander,
@@ -82,13 +85,15 @@ struct ProcessingOverviewGrid: View {
                     .widener,
                     title: "Stereo Widener",
                     subtitle: widenerSubtitle,
-                    enabledPath: \.stereoWidenEnabled
+                    enabledPath: \.stereoWidenEnabled,
+                    liveReadout: { $0.widenerStateText }
                 )
                 stageCard(
                     .primeBass,
                     title: "PrimeBass",
                     subtitle: primeBassSubtitle,
-                    enabledPath: \.primeBassEnabled
+                    enabledPath: \.primeBassEnabled,
+                    liveReadout: { $0.primeBassStateText }
                 )
                 stageCard(
                     .bassClipper,
@@ -106,7 +111,8 @@ struct ProcessingOverviewGrid: View {
                     .limiter,
                     title: "Audio Limiter",
                     subtitle: limiterSubtitle,
-                    enabledPath: \.preEncodeAudioLimiterEnabled
+                    enabledPath: \.preEncodeAudioLimiterEnabled,
+                    liveReadout: { String(format: "GR %.1f dB", $0.preEncodeLimiterGainReductionDBValue) }
                 )
                 // Composite-domain stages are absent in processed-audio output.
                 if !model.processedAudioOutputActive {
@@ -114,7 +120,8 @@ struct ProcessingOverviewGrid: View {
                         .compositeClipper,
                         title: "Composite Clipper",
                         subtitle: compositeClipperSubtitle,
-                        enabledPath: \.compositeClipperEnabled
+                        enabledPath: \.compositeClipperEnabled,
+                        liveReadout: { String(format: "GR %.1f dB", $0.compositeClipperGainReductionDBValue) }
                     )
                     stageCard(
                         .bs412,
@@ -136,7 +143,8 @@ struct ProcessingOverviewGrid: View {
         title: String,
         subtitle: String,
         enabledPath: WritableKeyPath<AppConfig, Bool>,
-        heroValue: String? = nil
+        heroValue: String? = nil,
+        liveReadout: ((LiveTelemetry) -> String)? = nil
     ) -> some View {
         // Use configBinding so the toggle follows the same runtime-apply /
         // live-apply semantics as the detail tabs — no ad-hoc mutation.
@@ -153,7 +161,14 @@ struct ProcessingOverviewGrid: View {
                 model.selectedStage = tab.stage
             } label: {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline) {
+                    HStack(spacing: 6) {
+                        // Leading enabled-state dot (accent on, hairline off)
+                        // matching the sidebar row vocabulary. Reflects the
+                        // config flag (static), not telemetry.
+                        Circle()
+                            .fill(enabled ? BroadcastStyle.accent : BroadcastStyle.panelBorder)
+                            .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
                         Text(title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(enabled ? Color.primary : Color.secondary)
@@ -168,6 +183,21 @@ struct ProcessingOverviewGrid: View {
                             .font(BroadcastStyle.heroReadout)
                             .foregroundStyle(enabled ? Color.primary : Color.secondary)
                             .lineLimit(1)
+                    }
+                    // Live per-stage readout (GR / state). Isolated in a
+                    // LiveTelemetryView leaf with a fixed frame + lineLimit(1)
+                    // so a metering tick repaints only this text and never
+                    // propagates a layout pass out to the card (the
+                    // load-bearing Canvas/LiveTelemetry rule).
+                    if let liveReadout {
+                        LiveTelemetryView(telemetry: model.telemetry) { t in
+                            Text(liveReadout(t))
+                                .font(BroadcastStyle.valueReadout)
+                                .monospacedDigit()
+                                .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                     Text(subtitle)
                         .font(BroadcastStyle.valueReadout)

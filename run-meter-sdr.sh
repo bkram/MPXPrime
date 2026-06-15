@@ -25,11 +25,14 @@ cd "$(dirname "$0")"
 
 RATE=192000
 
-# Locate the FM-SDR-Tuner binary: env override, then a local bin/ copy (see
-# bin/README.md), then a sibling source checkout's build dir.
+# Locate a tuner binary. Order: FM_SDR_TUNER override, the vendored mpx-tuner
+# (tuner/build/mpx-tuner -- built on demand below), a local bin/fm-sdr-tuner,
+# then a sibling source checkout. The launch flags differ per binary (see below).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -n "${FM_SDR_TUNER:-}" ]; then
   TUNER="$FM_SDR_TUNER"
+elif [ -x "$SCRIPT_DIR/tuner/build/mpx-tuner" ]; then
+  TUNER="$SCRIPT_DIR/tuner/build/mpx-tuner"
 elif [ -x "$SCRIPT_DIR/bin/fm-sdr-tuner" ]; then
   TUNER="$SCRIPT_DIR/bin/fm-sdr-tuner"
 else
@@ -62,9 +65,19 @@ if [ "$GUI" -eq 1 ]; then
   echo "Opening MPX Prime Meter, tuned to ${FREQ_MHZ} MHz (SDR)..."
   exec "macOS/.build/release/MPXPrimeMeter" --gui --sdr-freq "$FREQ_MHZ"
 fi
+# Nothing resolved yet -> build the vendored mpx-tuner on demand (needs cmake +
+# librtlsdr + liquid-dsp).
+if [ ! -x "$TUNER" ] && command -v cmake >/dev/null 2>&1; then
+  echo "Building vendored mpx-tuner..."
+  if cmake -S "$SCRIPT_DIR/tuner" -B "$SCRIPT_DIR/tuner/build" -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 \
+     && cmake --build "$SCRIPT_DIR/tuner/build" -j >/dev/null 2>&1; then
+    TUNER="$SCRIPT_DIR/tuner/build/mpx-tuner"
+  fi
+fi
 if [ ! -x "$TUNER" ]; then
-  echo "FM-SDR-Tuner binary not found/executable: $TUNER" >&2
-  echo "Place it in bin/ (see bin/README.md) or set FM_SDR_TUNER=<path>." >&2
+  echo "No tuner binary available: $TUNER" >&2
+  echo "Install cmake + librtlsdr + liquid-dsp to build the vendored mpx-tuner," >&2
+  echo "or place an fm-sdr-tuner in bin/ (see bin/README.md) / set FM_SDR_TUNER=<path>." >&2
   exit 1
 fi
 
@@ -85,10 +98,15 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Tuning ${FREQ_MHZ} MHz (${KHZ} kHz). Tuner log: $LOG"
-# Tuner: tune, start immediately, no 48 kHz audio, MPX -> FIFO as WAV @ 192 kHz.
-"$TUNER" -f "$KHZ" --auto-start --no-audio \
-  --mpx-wav "$FIFO" --mpx-rate "$RATE" >"$LOG" 2>&1 &
+echo "Tuning ${FREQ_MHZ} MHz (${KHZ} kHz) via $(basename "$TUNER"). Tuner log: $LOG"
+# Launch flags differ: the vendored mpx-tuner uses -o; fm-sdr-tuner uses
+# --mpx-wav (+ --auto-start --no-audio). Both write the MPX WAV to the FIFO.
+if [ "$(basename "$TUNER")" = "mpx-tuner" ]; then
+  "$TUNER" -f "$KHZ" -o "$FIFO" --mpx-rate "$RATE" >"$LOG" 2>&1 &
+else
+  "$TUNER" -f "$KHZ" --auto-start --no-audio \
+    --mpx-wav "$FIFO" --mpx-rate "$RATE" >"$LOG" 2>&1 &
+fi
 TUNER_PID=$!
 
 # Meter reads the MPX from the FIFO via stdin. Monitor is on by default.

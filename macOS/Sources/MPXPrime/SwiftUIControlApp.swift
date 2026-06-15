@@ -8025,7 +8025,11 @@ private struct RDSProgramTab: View {
                 LabeledContent("ECC") {
                     HexCodeField(text: model.hexByteBinding(\.rdsECC), placeholder: "E3", width: 54)
                 }
-                .help("Extended Country Code: one hex byte that, combined with the PI country nibble, uniquely identifies the country. Lets receivers distinguish countries that share a PI prefix. Default E3 is the Netherlands; set the value for your country.")
+                .help("Extended Country Code: one hex byte that, combined with the PI country nibble, uniquely identifies the country. Lets receivers distinguish countries that share a PI prefix. Default E3 is the Netherlands; set the value for your country (e.g. E0 Italy, E1 UK/France, E2 Spain).")
+                LabeledContent("LIC") {
+                    HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
+                }
+                .help("Language Identification Code: one hex byte naming the programme language, sent in Group 1A alongside the ECC. Independent of country. Default 1D is Dutch; e.g. 15 Italian, 09 English, 0F French, 08 German, 0A Spanish.")
                 Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
                     Text("Europe (RDS)").tag(false)
                     Text("USA (RBDS)").tag(true)
@@ -8342,9 +8346,6 @@ private struct RDSScheduleTab: View {
                 title: "Clock Offset",
                 value: model.configBinding(\.rdsTZOffset, runtimeDisposition: .liveRDS),
                 range: -12...14, format: "%.1f h")
-            LabeledContent("LIC") {
-                HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
-            }
         }
     }
 }

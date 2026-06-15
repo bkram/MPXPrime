@@ -253,3 +253,6 @@ captures/**
 
 # Third-party FM-SDR-Tuner binary (build artifact, not ours) -- see bin/README.md
 bin/fm-sdr-tuner
+
+# mpx-tuner CMake build dir
+tuner/build/

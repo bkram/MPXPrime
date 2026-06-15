@@ -94,6 +94,32 @@ struct SnapshotTests {
         #expect(!model.exportSnapshot(slot: 4, to: url))
     }
 
+    @Test func importLoadsConfigFromFileIntoSlot() throws {
+        let exporter = makeViewModel()
+        exporter.config.pilotLevel = 0.091
+        exporter.saveSnapshot(slot: 0, name: "Shared")
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("Shared Setup.ini")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(exporter.exportSnapshot(slot: 0, to: url))
+
+        // A fresh model imports the exported file into a slot.
+        let importer = makeViewModel()
+        #expect(importer.importSnapshot(slot: 4, from: url))
+        #expect(importer.snapshots[4] != nil)
+        #expect(importer.snapshots[4]?.name == "Shared Setup", "name comes from the filename")
+
+        // Loading the imported slot reproduces the original config.
+        importer.loadSnapshot(slot: 4)
+        #expect(abs(importer.config.pilotLevel - 0.091) < 1e-6)
+
+        // A missing file fails cleanly (returns false, slot untouched).
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("does-not-exist-\(UUID().uuidString).ini")
+        #expect(!importer.importSnapshot(slot: 5, from: missing))
+        #expect(importer.snapshots[5] == nil)
+    }
+
     @Test func exportFilenameSanitizesName() {
         let model = makeViewModel()
         model.saveSnapshot(slot: 0, name: "Rock / Pop: A?")

@@ -2516,6 +2516,39 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// Import an INI file into preset `slot`. Validates it parses, normalises it
+    /// through the canonical writer, and names the preset from the filename.
+    /// Populates the slot only (does not load it into the engine). Returns true
+    /// on success.
+    @discardableResult
+    func importSnapshot(slot: Int, from url: URL) -> Bool {
+        guard (0..<snapshots.count).contains(slot) else { return false }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let parsed = try AppConfig.loadFromINIString(text)  // validate
+            let canonical = try parsed.captureAsINIString()     // normalise
+            let rawName = url.deletingPathExtension().lastPathComponent
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let imported = ConfigSnapshot(
+                id: UUID(),
+                name: name.isEmpty ? "Preset \(slot + 1)" : name,
+                savedAt: Date(),
+                configINIText: canonical)
+            // Overwriting the active slot's content untethers the live config.
+            if snapshots[slot]?.id == activeSnapshotID {
+                activeSnapshotID = nil
+                activeSnapshotModified = false
+            }
+            snapshots[slot] = imported
+            writeSnapshotsToDisk()
+            statusText = "Imported preset \"\(imported.name)\" into slot \(slot + 1)."
+            return true
+        } catch {
+            statusText = "Failed to import preset: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     /// A filesystem-safe default filename for exporting the preset in `slot`.
     func exportFilename(slot: Int) -> String {
         let base = snapshots[slot]?.name ?? "Preset \(slot + 1)"
@@ -5458,6 +5491,11 @@ private struct SnapshotSlotRow: View {
                 }
                 .help("Capture the current full configuration into this slot. Overwrites any existing preset here.")
 
+                Button("Import...") {
+                    importPreset()
+                }
+                .help("Load a preset from an MPX Prime Studio .ini file into this slot (overwrites). Does not apply it -- use Load for that.")
+
                 Button("Load") {
                     model.loadSnapshot(slot: slot)
                 }
@@ -5514,6 +5552,19 @@ private struct SnapshotSlotRow: View {
     /// loss) when the text actually changed. For an empty slot, only Enter
     /// (`allowCreate`) creates the snapshot -- clicking away must not silently
     /// save a slot the user never asked for.
+    /// Prompt for an INI file and import it into this slot.
+    private func importPreset() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "ini") ?? .data, .plainText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "Import Preset"
+        panel.prompt = "Import"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.importSnapshot(slot: slot, from: url)
+        }
+    }
+
     /// Prompt for a destination and write the preset's config there.
     private func exportPreset() {
         guard snapshot != nil else { return }

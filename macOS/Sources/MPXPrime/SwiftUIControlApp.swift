@@ -8030,6 +8030,19 @@ private struct RDSProgramTab: View {
                     HexCodeField(text: model.hexByteBinding(\.rdsLIC), placeholder: "1D", width: 54)
                 }
                 .help("Language Identification Code: one hex byte naming the programme language, sent in Group 1A alongside the ECC. Independent of country. Default 1D is Dutch; e.g. 15 Italian, 09 English, 0F French, 08 German, 0A Spanish.")
+                Toggle("Enable PIN (1A)", isOn: model.configBinding(\.rdsEnablePIN, runtimeDisposition: .liveRDS))
+                    .help("Programme Item Number, Group 1A block 4: the scheduled start (day-of-month / hour / minute) of the current programme item. Legacy -- rarely decoded by modern receivers; off transmits 0.")
+                if model.config.rdsEnablePIN {
+                    HStack(spacing: 14) {
+                        Stepper("Day \(model.config.rdsPINDay)",
+                                value: model.configBinding(\.rdsPINDay, runtimeDisposition: .liveRDS), in: 1...31)
+                        Stepper("Hour \(model.config.rdsPINHour)",
+                                value: model.configBinding(\.rdsPINHour, runtimeDisposition: .liveRDS), in: 0...23)
+                        Stepper("Min \(model.config.rdsPINMinute)",
+                                value: model.configBinding(\.rdsPINMinute, runtimeDisposition: .liveRDS), in: 0...59)
+                    }
+                    .font(.callout)
+                }
                 Picker("PTY Region", selection: model.configBinding(\.rdsPtyRBDS, runtimeDisposition: .none)) {
                     Text("Europe (RDS)").tag(false)
                     Text("USA (RBDS)").tag(true)

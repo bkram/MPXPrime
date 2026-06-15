@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **RDS PIN (Programme Item Number).** Group 1A block 4 can now carry a PIN —
+  the scheduled day / hour / minute of the current programme item — instead of
+  always sending 0. Off by default; enable it under RDS → Program → Station
+  Identity (config keys `pin_enabled`, `pin_day`, `pin_hour`, `pin_minute`),
+  live-apply. Legacy field, rarely decoded, added for spec completeness.
+- **RDS LIC moved next to PI/ECC** in the Station Identity group (was orphaned
+  in the Schedule tab's Clock Time card).
 - **PS no longer force-uppercased.** The 8-character Program Service now
   transmits in the case you type it (e.g. "Veronica"), matching RadioText and
   Long PS. Previously PS was always upper-cased for older-receiver

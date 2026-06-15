@@ -58,6 +58,45 @@ struct RDSBitstreamTests {
         BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
     }
 
+    // MARK: - PIN (Programme Item Number, Group 1A block 4)
+
+    @Test("PIN encodes into Group 1A block 4 when enabled, 0 when off")
+    func pinInGroup1ABlock4() {
+        func block4OfFirst1A(_ cfg: AppConfig) -> Int? {
+            let c = coder(cfg)
+            for _ in 0..<60 {
+                let g = RDSGroupDecoder.decode(c.nextGroupBits())
+                if g.groupType == 1, !g.versionB { return g.block4 }
+            }
+            return nil
+        }
+
+        var on = makeConfig(groupSequence: "1A")
+        on.rdsEnableID = true            // gate 1A emission
+        on.rdsEnablePIN = true
+        on.rdsPINDay = 14; on.rdsPINHour = 21; on.rdsPINMinute = 30
+        #expect(on.rdsPINValue == (14 << 11) | (21 << 6) | 30)
+        #expect(block4OfFirst1A(on) == on.rdsPINValue)
+
+        var off = makeConfig(groupSequence: "1A")
+        off.rdsEnableID = true
+        off.rdsEnablePIN = false
+        #expect(off.rdsPINValue == 0)
+        #expect(block4OfFirst1A(off) == 0)
+    }
+
+    @Test("PIN day/hour/minute survive an INI round-trip")
+    func pinRoundTripsThroughINI() throws {
+        var cfg = AppConfig()
+        cfg.rdsEnablePIN = true
+        cfg.rdsPINDay = 7; cfg.rdsPINHour = 18; cfg.rdsPINMinute = 45
+        let reloaded = try AppConfig.loadFromINIString(cfg.captureAsINIString())
+        #expect(reloaded.rdsEnablePIN)
+        #expect(reloaded.rdsPINDay == 7)
+        #expect(reloaded.rdsPINHour == 18)
+        #expect(reloaded.rdsPINMinute == 45)
+    }
+
     // MARK: - RT+ (now-playing) via an RT macro
 
     @Test("RT+ tags emit when the now-playing macro is placed in the RadioText")

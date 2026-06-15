@@ -3435,6 +3435,8 @@ final class BasicRDSCoder {
     private var enID: Bool
     private var eccCode: Int
     private var licCode: Int
+    /// Programme Item Number for Group 1A block 4 (0 = disabled / no PIN).
+    private var pinCode: Int
     private var tzOffset: Double
     private let cachedGroup1Variant = ManagedAtomic<Int>(0)
     private let cachedCTMinuteToken = ManagedAtomic<Int>(-1)
@@ -3678,6 +3680,7 @@ final class BasicRDSCoder {
         self.enID = config.rdsEnableID
         self.eccCode = Self.parseHexByte(config.rdsECC)
         self.licCode = Self.parseHexByte(config.rdsLIC)
+        self.pinCode = config.rdsPINValue
         self.tzOffset = config.rdsTZOffset
         self.sampleRate = max(8_000.0, sampleRate)
         let now = Self.monotonicSeconds()
@@ -3743,6 +3746,7 @@ final class BasicRDSCoder {
         pty = max(0, min(31, config.pty))
         eccCode = config.eccCode
         licCode = config.licCode
+        pinCode = config.pinCode
 
         // Flags ----------------------------------------------------------
         // Detect TA-edge before the assignment so we can schedule a
@@ -4439,12 +4443,13 @@ final class BasicRDSCoder {
         let variant = variants[selector]
         let idValue = (variant == 0) ? eccCode : licCode
         let b3Value = ((variant & 0x0F) << 12) | (idValue & 0xFF)
+        // Block 4 always carries the Programme Item Number (0 = no PIN).
         return buildGroupBits(
             groupType: 1,
             versionB: false,
             b2Tail: 0,
             b3Value: b3Value,
-            b4Value: 0
+            b4Value: pinCode & 0xFFFF
         )
     }
 
@@ -6144,6 +6149,7 @@ final class MPXGenerator {
         let ptynCentered: Bool
         let eccCode: Int
         let licCode: Int
+        let pinCode: Int
 
         // Flags (operationally toggled)
         let tp: Bool
@@ -6211,6 +6217,7 @@ final class MPXGenerator {
                 ptynCentered: config.rdsPTYNCentered,
                 eccCode: BasicRDSCoder.parseHexByte(config.rdsECC),
                 licCode: BasicRDSCoder.parseHexByte(config.rdsLIC),
+                pinCode: config.rdsPINValue,
                 tp: config.rdsTP,
                 ta: config.rdsTA,
                 ms: config.rdsMS,

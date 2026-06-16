@@ -22,13 +22,17 @@ struct RootMeterView: View {
                         HStack(alignment: .top, spacing: 12) {
                             audioSection
                             deviationSection
-                            vectorscopeSection
+                            metricsSection
                             rdsSection
                                 .frame(minWidth: 260, maxWidth: .infinity)
                         }
                         .frame(height: 246)
-                        modulationSection
-                            .frame(height: 210)
+                        HStack(alignment: .top, spacing: 12) {
+                            vectorscopeSection
+                            trendsSection
+                                .frame(maxWidth: .infinity)
+                        }
+                        .frame(height: 210)
                         scopesSection
                         spectrumSection
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -286,49 +290,51 @@ struct RootMeterView: View {
         }
     }
 
-    // MARK: - Modulation (BS.412 power, peak-hold, separation, trends)
+    // MARK: - Modulation metrics (BS.412 power, peak-hold, separation)
 
-    private var modulationSection: some View {
+    private var metricsSection: some View {
         GroupBox("Modulation") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
-                HStack(alignment: .top, spacing: 16) {
-                    // Numeric readouts + reset.
-                    VStack(alignment: .leading, spacing: 10) {
-                        readout("MPX POWER", t.mpxPowerText,
-                                help: "ITU-R BS.412 multiplex power, integrated over ~60 s. "
-                                    + "0 dBr is the power of a +/-19 kHz sine; the regulatory "
-                                    + "limit is 0 dBr. Needs a calibrated scale (SDR / pilot lock).")
-                        readout("PEAK +", "\(t.posPeakText) kHz",
-                                help: "Positive deviation peak, held since the last reset.")
-                        readout("PEAK -", "\(t.negPeakText) kHz",
-                                help: "Negative deviation peak, held since the last reset.")
-                        readout("SEPARATION", t.separationText,
-                                help: "Best stereo separation observed since reset. Truest "
-                                    + "during single-channel / test-tone content; panned "
-                                    + "program reads low.")
-                        Spacer(minLength: 0)
-                        Button("Reset Peaks") { vm.resetPeaks() }
-                            .buttonStyle(.bordered)
-                            .disabled(!vm.running)
-                    }
-                    .frame(width: 168, alignment: .topLeading)
-                    .frame(maxHeight: .infinity)
-
-                    Divider()
-
-                    // Trends.
-                    VStack(spacing: 10) {
-                        labeled("Deviation (kHz, ~60 s)") {
-                            TrendView(samples: t.devHistoryKHz, minValue: 0, maxValue: 90,
-                                      limit: 75, accessibilityName: "Deviation over time")
-                        }
-                        labeled("MPX Power (dBr, ~60 s)") {
-                            TrendView(samples: t.mpxPowerHistoryDBr, minValue: -12, maxValue: 3,
-                                      limit: 0, accessibilityName: "MPX power over time")
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 10) {
+                    readout("MPX POWER", t.mpxPowerText,
+                            help: "ITU-R BS.412 multiplex power, integrated over ~60 s. "
+                                + "0 dBr is the power of a +/-19 kHz sine; the regulatory "
+                                + "limit is 0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                    readout("PEAK +", "\(t.posPeakText) kHz",
+                            help: "Positive deviation peak, held since the last reset.")
+                    readout("PEAK -", "\(t.negPeakText) kHz",
+                            help: "Negative deviation peak, held since the last reset.")
+                    readout("SEPARATION", t.separationText,
+                            help: "Best stereo separation observed since reset. Truest "
+                                + "during single-channel / test-tone content; panned "
+                                + "program reads low.")
+                    Spacer(minLength: 0)
+                    Button("Reset Peaks") { vm.resetPeaks() }
+                        .buttonStyle(.bordered)
+                        .disabled(!vm.running)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(6)
+            }
+        }
+    }
+
+    // MARK: - Trends (deviation + MPX power over ~60 s)
+
+    private var trendsSection: some View {
+        GroupBox("Trends") {
+            LiveTelemetryView(telemetry: vm.telemetry) { t in
+                VStack(spacing: 10) {
+                    labeled("Deviation (kHz, ~60 s)") {
+                        TrendView(samples: t.devHistoryKHz, minValue: 0, maxValue: 90,
+                                  limit: 75, accessibilityName: "Deviation over time")
+                    }
+                    labeled("MPX Power (dBr, ~60 s)") {
+                        TrendView(samples: t.mpxPowerHistoryDBr, minValue: -12, maxValue: 3,
+                                  limit: 0, accessibilityName: "MPX power over time")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(6)
             }
         }

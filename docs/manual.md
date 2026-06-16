@@ -655,9 +655,11 @@ otherwise to **Audio**.
   beside the audio levels.
 - **Modulation**: MPX power (ITU-R BS.412, ~60 s integrated, in dBr vs a
   +/-19 kHz sine); peak-hold +/- deviation (with Reset); best stereo
-  separation; deviation + MPX-power trends.
+  separation. Also on the top row.
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
-  horizontal spread = out-of-phase / mono-incompatible).
+  horizontal spread = out-of-phase / mono-incompatible). On the second row,
+  beside the trends.
+- **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
 - **Scopes**: composite, decoded L, decoded R.
 - **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz
   RDS, 67.65 kHz, 92 kHz SCA). A **60 / 100 kHz** span toggle in the header

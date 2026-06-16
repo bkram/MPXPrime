@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: one launcher.** `run-meter.sh` is now the single script -- with no
+  arguments it opens the GUI, which auto-detects an attached dongle (in-process
+  SDR) or falls back to the audio device; `--sdr-freq <MHz>` opens it pre-tuned,
+  and `--device`/`--stdin` run the headless terminal dashboard. `run-meter-sdr.sh`
+  is removed: its `--gui` mode is redundant now that the GUI auto-starts the
+  in-process SDR, and its headless external-tuner FIFO path is just
+  `./run-meter.sh --stdin` fed by an `fm-sdr-tuner`/`mpx-tuner` composite.
 - **Meter: audio-input deviation calibration (Pilot-referenced or absolute).** The
   audio-device path has no inherent level reference, so a **Calibrate** switch on
   the input bar now offers two modes (audio mode only; both live, scroll-

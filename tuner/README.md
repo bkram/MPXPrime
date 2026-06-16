@@ -17,7 +17,7 @@ Two consumers share these sources:
 - **`mpx-tuner`** (the standalone CMake executable) -- the same demod behind a
   small CLI that writes a 16-bit / 192 kHz mono WAV stream to stdout or a FIFO.
   Kept for CLI debugging; no longer shipped in the app. The Meter's `--stdin`
-  path and `run-meter-sdr.sh` still consume a WAV stream like this.
+  path (e.g. `./run-meter.sh --stdin`) still consumes a WAV stream like this.
 
 ## Provenance
 

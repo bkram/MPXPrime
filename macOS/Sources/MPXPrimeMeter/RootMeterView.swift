@@ -9,23 +9,6 @@ import SwiftUI
 struct RootMeterView: View {
     @ObservedObject var vm: MeterViewModel
 
-    // Frequency is edited as text so it always shows a "." decimal (not the
-    // locale comma) and accepts a typed comma (converted to "."). Kept in sync
-    // with the Stepper-driven vm.frequencyMHz.
-    @State private var freqText = ""
-    @FocusState private var freqFocused: Bool
-
-    private static func formatFreq(_ v: Double) -> String { String(format: "%.1f", v) }
-
-    private func commitFreq() {
-        let normalized = freqText.replacingOccurrences(of: ",", with: ".")
-        if let v = Double(normalized), v >= 64.0, v <= 108.0 {
-            vm.frequencyMHz = (v * 10).rounded() / 10
-            vm.applyFrequencyChange()
-        }
-        freqText = Self.formatFreq(vm.frequencyMHz)
-    }
-
     var body: some View {
         // Fluid, non-scrolling dashboard: fixed-height analysis rows on top,
         // the MPX spectrum (the centerpiece) takes ALL remaining height. The
@@ -102,23 +85,16 @@ struct RootMeterView: View {
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 4) {
-                    TextField("MHz", text: $freqText)
+                    ScrollableNumericField(value: $vm.frequencyMHz,
+                                           range: 64.0...108.0, step: 0.1, decimals: 1)
                         .frame(width: 64)
-                        .multilineTextAlignment(.trailing)
-                        .focused($freqFocused)
-                        .onSubmit { commitFreq() }
-                        .onChange(of: freqFocused) { _, focused in if !focused { commitFreq() } }
-                        .onChange(of: vm.frequencyMHz) { _, v in
-                            if !freqFocused { freqText = Self.formatFreq(v) }
-                        }
-                        .onAppear { freqText = Self.formatFreq(vm.frequencyMHz) }
                     Text("MHz").foregroundStyle(.secondary)
                     Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
                         .labelsHidden()
-                        .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
                 }
-                .help("FM broadcast frequency (RTL-SDR). Type with '.' or ',' -- "
-                    + "both are accepted. Retunes live, no restart.")
+                .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
+                .help("FM broadcast frequency (RTL-SDR). Type with '.' or ',', or "
+                    + "scroll over the field to step. Retunes live, no restart.")
 
                 Divider().frame(height: 16)
 
@@ -128,17 +104,16 @@ struct RootMeterView: View {
                     .onChange(of: vm.sdrAutoGain) { _, _ in vm.applyGainChange() }
                 if !vm.sdrAutoGain {
                     HStack(spacing: 4) {
-                        TextField("dB", value: $vm.sdrGainDB,
-                                  format: .number.precision(.fractionLength(1)))
+                        ScrollableNumericField(value: $vm.sdrGainDB,
+                                               range: 0.0...50.0, step: 1.0, decimals: 1)
                             .frame(width: 52)
-                            .multilineTextAlignment(.trailing)
-                            .onSubmit { vm.applyGainChange() }
                         Text("dB").foregroundStyle(.secondary)
                         Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
                             .labelsHidden()
-                            .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
                     }
-                    .help("Manual RTL-SDR tuner gain in dB (applied live).")
+                    .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
+                    .help("Manual RTL-SDR tuner gain in dB. Scroll over the field to step. "
+                        + "Applied live.")
                 }
 
                 Divider().frame(height: 16)

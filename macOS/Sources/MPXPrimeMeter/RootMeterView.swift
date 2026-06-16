@@ -126,7 +126,7 @@ struct RootMeterView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
+        ToolbarItemGroup(placement: .navigation) {
             Button {
                 vm.running ? vm.stop() : vm.start()
             } label: {
@@ -136,6 +136,14 @@ struct RootMeterView: View {
             .help(vm.running ? "Stop capturing (Command-Return)"
                              : "Start capturing (Command-Return)")
             .keyboardShortcut(.return, modifiers: .command)
+
+            Toggle(isOn: $vm.monitorEnabled) {
+                Label("Monitor", systemImage: vm.monitorEnabled
+                    ? "speaker.wave.2.fill" : "speaker.slash")
+            }
+            .toggleStyle(.button)
+            .help("Play the decoded audio so you hear what a receiver hears.")
+            .onChange(of: vm.monitorEnabled) { _, _ in vm.restartIfRunning() }
         }
         ToolbarItemGroup(placement: .principal) {
             if vm.sdrAvailable {
@@ -149,15 +157,6 @@ struct RootMeterView: View {
                     + "station via FM-SDR-Tuner (mono MPX, absolute calibration).")
                 .onChange(of: vm.inputKind) { _, _ in vm.restartIfRunning() }
             }
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Toggle(isOn: $vm.monitorEnabled) {
-                Label("Monitor", systemImage: vm.monitorEnabled
-                    ? "speaker.wave.2.fill" : "speaker.slash")
-            }
-            .toggleStyle(.button)
-            .help("Play the decoded audio so you hear what a receiver hears.")
-            .onChange(of: vm.monitorEnabled) { _, _ in vm.restartIfRunning() }
         }
     }
 

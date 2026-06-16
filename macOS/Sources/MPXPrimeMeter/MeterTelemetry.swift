@@ -22,12 +22,15 @@ final class MeterTelemetry: ObservableObject {
     @Published var correlationText = "+1.00"
 
     // Deviation: normalized 0..1 (0..100 kHz for the modulation meter) + text.
+    // Idle defaults are unitless to match the live format (the kHz unit is shown
+    // once in the "Deviation (kHz)" group header); a unit here would also shrink
+    // the value via minimumScaleFactor in the narrow scale-less strips.
     @Published var pilotNorm: Double = 0
-    @Published var pilotText = "0.0 kHz"
+    @Published var pilotText = "0.00"
     @Published var rdsNorm: Double = 0
-    @Published var rdsText = "0.0 kHz"
+    @Published var rdsText = "0.00"
     @Published var maxDevNorm: Double = 0
-    @Published var maxDevText = "0.0 kHz"
+    @Published var maxDevText = "0.0"
 
     // Modulation analysis: MPX power (BS.412), +/- peak-hold deviation, best
     // stereo separation. Text "--" when not yet valid.

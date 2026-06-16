@@ -651,9 +651,11 @@ otherwise to **Audio**.
 ### What it shows
 
 - **Audio**: IN / L / R / M / S levels and L/R correlation.
-- **Modulation**: pilot / RDS / total deviation meters; MPX power (ITU-R
-  BS.412, ~60 s integrated, in dBr vs a +/-19 kHz sine); peak-hold +/-
-  deviation (with Reset); best stereo separation; deviation + MPX-power trends.
+- **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
+  beside the audio levels.
+- **Modulation**: MPX power (ITU-R BS.412, ~60 s integrated, in dBr vs a
+  +/-19 kHz sine); peak-hold +/- deviation (with Reset); best stereo
+  separation; deviation + MPX-power trends.
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible).
 - **Scopes**: composite, decoded L, decoded R.

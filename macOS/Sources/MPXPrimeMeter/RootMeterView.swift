@@ -21,13 +21,14 @@ struct RootMeterView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top, spacing: 12) {
                             audioSection
+                            deviationSection
                             vectorscopeSection
                             rdsSection
-                                .frame(minWidth: 280, maxWidth: .infinity)
+                                .frame(minWidth: 260, maxWidth: .infinity)
                         }
                         .frame(height: 246)
                         modulationSection
-                            .frame(height: 246)
+                            .frame(height: 210)
                         scopesSection
                         spectrumSection
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -260,31 +261,37 @@ struct RootMeterView: View {
             label: label, valueText: value, level: level, peakLevel: nil, scale: scale, help: help)
     }
 
+    // MARK: - Deviation meters (pilot / RDS / total)
+
+    private var deviationSection: some View {
+        GroupBox("Deviation") {
+            LiveTelemetryView(telemetry: vm.telemetry) { t in
+                HStack(spacing: 10) {
+                    strip("PILOT", t.pilotText, t.pilotNorm,
+                          .modulationKHz(fullScale: MeterScale.pilotFullKHz, limit: MeterScale.pilotLimitKHz),
+                          "19 kHz stereo pilot deviation. Safe range ~6.75-7.5 kHz (8-10% of "
+                            + "75 kHz); too low loses stereo lock, too high steals modulation.")
+                    strip("RDS", t.rdsText, t.rdsNorm,
+                          .modulationKHz(fullScale: MeterScale.rdsFullKHz, limit: nil),
+                          "57 kHz RDS subcarrier deviation. Typical 2-4 kHz (~3-5%); below ~1.5 "
+                            + "kHz decodes poorly, above ~7.5 kHz wastes deviation.")
+                    strip("MAX", t.maxDevText, t.maxDevNorm,
+                          .modulationKHz(fullScale: MeterScale.maxFullKHz, limit: MeterScale.maxLimitKHz),
+                          "Peak total deviation (2 s hold). Must stay at or below 75 kHz; "
+                            + "sustained excursions above are over-modulation.")
+                }
+                .frame(maxHeight: .infinity)
+                .padding(6)
+            }
+        }
+    }
+
     // MARK: - Modulation (BS.412 power, peak-hold, separation, trends)
 
     private var modulationSection: some View {
         GroupBox("Modulation") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 HStack(alignment: .top, spacing: 16) {
-                    // Deviation / subcarrier meters.
-                    HStack(spacing: 10) {
-                        strip("PILOT", t.pilotText, t.pilotNorm,
-                              .modulationKHz(fullScale: MeterScale.pilotFullKHz, limit: MeterScale.pilotLimitKHz),
-                              "19 kHz stereo pilot deviation. Safe range ~6.75-7.5 kHz (8-10% of "
-                                + "75 kHz); too low loses stereo lock, too high steals modulation.")
-                        strip("RDS", t.rdsText, t.rdsNorm,
-                              .modulationKHz(fullScale: MeterScale.rdsFullKHz, limit: nil),
-                              "57 kHz RDS subcarrier deviation. Typical 2-4 kHz (~3-5%); below ~1.5 "
-                                + "kHz decodes poorly, above ~7.5 kHz wastes deviation.")
-                        strip("MAX", t.maxDevText, t.maxDevNorm,
-                              .modulationKHz(fullScale: MeterScale.maxFullKHz, limit: MeterScale.maxLimitKHz),
-                              "Peak total deviation (2 s hold). Must stay at or below 75 kHz; "
-                                + "sustained excursions above are over-modulation.")
-                    }
-                    .frame(maxHeight: .infinity)
-
-                    Divider()
-
                     // Numeric readouts + reset.
                     VStack(alignment: .leading, spacing: 10) {
                         readout("MPX POWER", t.mpxPowerText,

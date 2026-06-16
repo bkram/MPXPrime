@@ -74,6 +74,15 @@ public struct TrendView: View {
                 let pt = CGPoint(x: CGFloat(idx) * stepX, y: yFor(Double(sample)))
                 if idx == 0 { wave.move(to: pt) } else { wave.addLine(to: pt) }
             }
+            // Soft gradient fill under the trace so a flat, stable reading reads
+            // as a filled band rather than a thin line in a dark void.
+            var area = wave
+            area.addLine(to: CGPoint(x: size.width, y: size.height))
+            area.addLine(to: CGPoint(x: 0, y: size.height))
+            area.closeSubpath()
+            ctx.fill(area, with: .linearGradient(
+                Gradient(colors: [Color.green.opacity(0.28), Color.green.opacity(0.02)]),
+                startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: size.height)))
             ctx.stroke(wave, with: .color(.green.opacity(0.90)), lineWidth: 1.3)
         }
         .frame(maxWidth: .infinity, minHeight: 56, idealHeight: 96)

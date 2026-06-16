@@ -27,15 +27,24 @@ public struct VectorscopeView: View {
             let cy = size.height * 0.5
             let radius = min(cx, cy)
 
-            // Guides: vertical = mono (L=R), the two diagonals = L-only / R-only.
-            var guides = Path()
-            guides.move(to: CGPoint(x: cx, y: cy - radius))
-            guides.addLine(to: CGPoint(x: cx, y: cy + radius))
-            guides.move(to: CGPoint(x: cx - radius, y: cy - radius))
-            guides.addLine(to: CGPoint(x: cx + radius, y: cy + radius))
-            guides.move(to: CGPoint(x: cx + radius, y: cy - radius))
-            guides.addLine(to: CGPoint(x: cx - radius, y: cy + radius))
-            ctx.stroke(guides, with: .color(BroadcastStyle.instrumentGrid), lineWidth: 1)
+            // Faint bounding circle (the full-scale envelope).
+            let circle = Path(ellipseIn: CGRect(
+                x: cx - radius, y: cy - radius, width: radius * 2, height: radius * 2))
+            ctx.stroke(circle, with: .color(BroadcastStyle.instrumentGrid.opacity(0.7)),
+                       lineWidth: 1)
+            // Vertical = mono (L=R) drawn solid; the L-only / R-only diagonals are
+            // dashed and dimmer so they read as reference, not clutter.
+            var axis = Path()
+            axis.move(to: CGPoint(x: cx, y: cy - radius))
+            axis.addLine(to: CGPoint(x: cx, y: cy + radius))
+            ctx.stroke(axis, with: .color(BroadcastStyle.instrumentGrid), lineWidth: 1)
+            var diagonals = Path()
+            diagonals.move(to: CGPoint(x: cx - radius, y: cy - radius))
+            diagonals.addLine(to: CGPoint(x: cx + radius, y: cy + radius))
+            diagonals.move(to: CGPoint(x: cx + radius, y: cy - radius))
+            diagonals.addLine(to: CGPoint(x: cx - radius, y: cy + radius))
+            ctx.stroke(diagonals, with: .color(BroadcastStyle.instrumentGrid.opacity(0.6)),
+                       style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
             guard left.count > 1, right.count == left.count else { return }
             // Rotate 45 deg: x = (L-R), y = (L+R); /sqrt2 keeps full-scale mono

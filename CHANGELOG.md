@@ -15,6 +15,13 @@ combination test suite. Newest first.
   -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
   MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
   weak/noisy reception inflates both peak deviation and MPX power.
+- **Meter visual polish.** Decluttered the meters: the Audio group shares one
+  `MeterScaleRuler` (dBFS) instead of repeating the number column on every bar,
+  and the deviation bars are scale-less (limit line + kHz value). Level bars
+  gained a subtle vertical gradient fill; the trend graphs gained a soft
+  gradient area under the trace; the vectorscope guides are softened (faint
+  bounding circle + dashed diagonals). Tightened the top row to remove dead
+  space. (HIG: clarity / deference.)
 - **Meter is a proper macOS app.** A real **About MPX Prime Meter** panel
   (description, clickable GitHub / User Manual / License links, version, and the
   canonical not-certified disclaimer), a full app menu (About / Services / Hide /

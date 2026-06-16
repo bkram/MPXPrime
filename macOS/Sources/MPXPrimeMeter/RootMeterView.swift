@@ -27,7 +27,7 @@ struct RootMeterView: View {
                             rdsSection
                                 .frame(minWidth: 260, maxWidth: .infinity)
                         }
-                        .frame(height: 246)
+                        .frame(height: 220)
                         HStack(alignment: .top, spacing: 12) {
                             vectorscopeSection
                             trendsSection
@@ -214,6 +214,7 @@ struct RootMeterView: View {
         GroupBox("Audio") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 HStack(alignment: .top, spacing: 10) {
+                    MeterScaleRuler(scale: .dbfs)   // one shared dBFS scale for the group
                     strip("IN", t.inputText, t.inputNorm, .dbfs,
                           "Composite input level (dBFS). Aim for roughly -12 to -6 dBFS peaks; "
                             + "approaching 0 dBFS clips the capture and corrupts every reading.")
@@ -262,8 +263,12 @@ struct RootMeterView: View {
         _ label: String, _ value: String, _ level: Double, _ scale: VerticalMeterStrip.Scale,
         _ help: String = ""
     ) -> some View {
+        // Meter strips are scale-less: the Audio group shares one MeterScaleRuler
+        // and the deviation bars rely on their limit line + the kHz value below
+        // (their three ranges differ, so no single ruler fits).
         VerticalMeterStrip(
-            label: label, valueText: value, level: level, peakLevel: nil, scale: scale, help: help)
+            label: label, valueText: value, level: level, peakLevel: nil,
+            scale: scale, showScale: false, help: help)
     }
 
     // MARK: - Deviation meters (pilot / RDS / total)

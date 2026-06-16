@@ -184,16 +184,17 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Use the bundled app icon for the Dock + About panel. Bundled apps get
-    /// this from CFBundleIconFile; setting it explicitly also covers a couple of
-    /// edge cases and is a no-op when the icns is absent (unbundled `swift run`).
+    /// Set the running process's Dock + About icon. The bundled .app already
+    /// gets its Finder icon from CFBundleIconFile; this also gives the
+    /// *unbundled* `swift run` / CLI binary a real Dock icon (no bundle exists
+    /// for LaunchServices to read). Prefer the bundled .icns if present, else
+    /// draw it at runtime (same art as generate_meter_icon.swift).
     private func applyAppIcon() {
-        for name in ["MPXPrimeMeter", "MPXPrime"] {
-            if let url = Bundle.main.url(forResource: name, withExtension: "icns"),
-               let image = NSImage(contentsOf: url) {
-                NSApp.applicationIconImage = image
-                return
-            }
+        if let url = Bundle.main.url(forResource: "MPXPrimeMeter", withExtension: "icns"),
+           let image = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = image
+        } else {
+            NSApp.applicationIconImage = MeterIcon.image(size: 512)
         }
     }
 }

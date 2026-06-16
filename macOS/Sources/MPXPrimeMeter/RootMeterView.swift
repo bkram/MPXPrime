@@ -33,7 +33,7 @@ struct RootMeterView: View {
                             trendsSection
                                 .frame(maxWidth: .infinity)
                         }
-                        .frame(height: 210)
+                        .frame(height: 248)
                         scopesSection
                         spectrumSection
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -248,7 +248,7 @@ struct RootMeterView: View {
         GroupBox("Vectorscope") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 VectorscopeView(left: t.decodedLScope, right: t.decodedRScope)
-                    .frame(width: 190)
+                    .frame(width: 240)
                     .frame(maxHeight: .infinity)
                     .padding(6)
                     .help("Stereo goniometer of decoded L/R. Vertical line = mono, a tilted "
@@ -298,12 +298,17 @@ struct RootMeterView: View {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 VStack(alignment: .leading, spacing: 10) {
                     readout("MPX POWER", t.mpxPowerText,
+                            valueTint: t.mpxPowerValid
+                                ? limitTint(t.mpxPowerDBr, limit: 0.0, warn: -1.0)
+                                : BroadcastStyle.readoutPrimary,
                             help: "ITU-R BS.412 multiplex power, integrated over ~60 s. "
                                 + "0 dBr is the power of a +/-19 kHz sine; the regulatory "
                                 + "limit is 0 dBr. Needs a calibrated scale (SDR / pilot lock).")
                     readout("PEAK +", "\(t.posPeakText) kHz",
+                            valueTint: limitTint(t.posPeakKHz, limit: 75.0, warn: 71.0),
                             help: "Positive deviation peak, held since the last reset.")
                     readout("PEAK -", "\(t.negPeakText) kHz",
+                            valueTint: limitTint(-t.negPeakKHz, limit: 75.0, warn: 71.0),
                             help: "Negative deviation peak, held since the last reset.")
                     readout("SEPARATION", t.separationText,
                             help: "Best stereo separation observed since reset. Truest "
@@ -341,12 +346,23 @@ struct RootMeterView: View {
         }
     }
 
-    private func readout(_ label: String, _ value: String, help: String) -> some View {
+    private func readout(
+        _ label: String, _ value: String, valueTint: Color = BroadcastStyle.readoutPrimary,
+        help: String
+    ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
-            Text(value).font(BroadcastStyle.valueReadout)
+            Text(value).font(BroadcastStyle.valueReadout).foregroundColor(valueTint)
         }
         .help(help)
+    }
+
+    /// Color a numeric readout by how close it is to a ceiling: red at/over the
+    /// limit, amber within the warn band, normal otherwise.
+    private func limitTint(_ value: Double, limit: Double, warn: Double) -> Color {
+        if value >= limit { return BroadcastStyle.overRed }
+        if value >= warn { return BroadcastStyle.tightAmber }
+        return BroadcastStyle.readoutPrimary
     }
 
     // MARK: - Scopes
@@ -422,8 +438,11 @@ struct RootMeterView: View {
             // layout) instead of a hand-tuned fixed-width HStack.
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
                 rdsRow("RDS", vm.rdsText,
-                       "Decoder status: sync, Program ID (PI), Program Type (PTY), TP/TA/MS "
-                        + "flags and live block-error rate. BER under ~5% is a clean link.")
+                       "Decoder status: sync, Program ID (PI), TP/TA/MS flags and live "
+                        + "block-error rate. BER under ~5% is a clean link.")
+                rdsRow("PTY", vm.ptyText, "Program Type: the format code and its name (e.g. Pop Music).")
+                rdsRow("PTYN", vm.ptynText, "Program Type Name (group 10A) -- an 8-char free-text refinement of PTY.")
+                rdsRow("ECC", vm.eccText, "Extended Country Code (group 1A) -- with the PI's top nibble identifies the country.")
                 rdsRow("PS", vm.psText, "Program Service name (8 characters) -- the static station name.")
                 rdsRow("RT", vm.rtText, "RadioText (up to 64 characters) -- now-playing / scrolling text.")
                 rdsRow("RT+", vm.rtPlusText, "RadioText+ tags marking artist / title inside the RadioText.")

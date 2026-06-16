@@ -63,6 +63,9 @@ final class MeterViewModel: ObservableObject {
 
     // RDS readout (changes per second; updated only when it actually changes).
     @Published var rdsText = "--"
+    @Published var ptyText = "--"
+    @Published var ptynText = "--"
+    @Published var eccText = "--"
     @Published var psText = "--"
     @Published var rtText = "--"
     @Published var rtPlusText = "--"
@@ -297,8 +300,12 @@ final class MeterViewModel: ObservableObject {
             telemetry.mpxPowerText = "--"
             telemetry.mpxPowerNorm = 0
         }
+        telemetry.mpxPowerDBr = Double(s.mpxPowerDBr)
+        telemetry.mpxPowerValid = s.mpxPowerValid
         telemetry.posPeakText = String(format: "%+.1f", s.posPeakDevKHz)
         telemetry.negPeakText = String(format: "%+.1f", s.negPeakDevKHz)
+        telemetry.posPeakKHz = Double(s.posPeakDevKHz)
+        telemetry.negPeakKHz = Double(s.negPeakDevKHz)
         telemetry.separationText = s.separationValid
             ? String(format: "%.0f dB", s.bestSeparationDB) : "--"
 
@@ -319,10 +326,13 @@ final class MeterViewModel: ObservableObject {
     private func pushRDSIfChanged(_ s: MeterSnapshot) {
         let r = s.rds
         let pi = r.pi.map { String(format: "%04X", $0) } ?? "----"
-        let pty = r.pty.map { "\($0)" } ?? "--"
-        let rds = "\(r.synced ? "sync" : "----")  PI \(pi)  PTY \(pty)"
+        let rds = "\(r.synced ? "sync" : "----")  PI \(pi)"
             + "  TP\(boolBit(r.tp)) TA\(boolBit(r.ta)) MS\(boolBit(r.ms))"
             + String(format: "  BER %.1f%%", s.recentBlockErrorRate * 100)
+        let pty = r.pty.map { "\($0)  \(Self.ptyName($0))" } ?? "--"
+        let ptyn = r.programTypeName.trimmingCharacters(in: .whitespaces)
+        let ptynOut = ptyn.isEmpty ? "--" : "\"\(ptyn)\""
+        let ecc = r.ecc.map { String(format: "0x%02X", $0) } ?? "--"
         let ps = "\"\(r.programService)\""
         let rt = r.radioText.isEmpty ? "--" : "\"\(r.radioText)\""
         let rtPlus = r.rtPlusTags.isEmpty
@@ -340,11 +350,28 @@ final class MeterViewModel: ObservableObject {
                 .joined(separator: " ") + " MHz"
         let groups = Self.groupSummary(r.groupCounts)
 
-        let signature = [rds, ps, rt, rtPlus, lps, ct, af, groups].joined(separator: "|")
+        let signature = [rds, pty, ptynOut, ecc, ps, rt, rtPlus, lps, ct, af, groups]
+            .joined(separator: "|")
         guard signature != lastRDSSignature else { return }
         lastRDSSignature = signature
-        rdsText = rds; psText = ps; rtText = rt; rtPlusText = rtPlus
+        rdsText = rds; ptyText = pty; ptynText = ptynOut; eccText = ecc
+        psText = ps; rtText = rt; rtPlusText = rtPlus
         longPSText = lps; ctText = ct; afText = af; groupText = groups
+    }
+
+    /// EN 50067 Programme Type names (RDS / EU set, 0-31).
+    private static let ptyNames: [String] = [
+        "None", "News", "Current Affairs", "Information", "Sport", "Education",
+        "Drama", "Culture", "Science", "Varied", "Pop Music", "Rock Music",
+        "Easy Listening", "Light Classical", "Serious Classical", "Other Music",
+        "Weather", "Finance", "Children's", "Social Affairs", "Religion",
+        "Phone In", "Travel", "Leisure", "Jazz Music", "Country Music",
+        "National Music", "Oldies Music", "Folk Music", "Documentary",
+        "Alarm Test", "Alarm"
+    ]
+
+    private static func ptyName(_ pty: Int) -> String {
+        (pty >= 0 && pty < ptyNames.count) ? ptyNames[pty] : "?"
     }
 
     // MARK: - Formatting

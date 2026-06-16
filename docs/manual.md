@@ -655,7 +655,8 @@ otherwise to **Audio**.
   beside the audio levels.
 - **Modulation**: MPX power (ITU-R BS.412, ~60 s integrated, in dBr vs a
   +/-19 kHz sine); peak-hold +/- deviation (with Reset); best stereo
-  separation. Also on the top row.
+  separation. Also on the top row. MPX power and the +/- peaks turn amber near
+  and red at/over the limit (0 dBr, 75 kHz).
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
   beside the trends.
@@ -665,8 +666,8 @@ otherwise to **Audio**.
   RDS, 67.65 kHz, 92 kHz SCA). A **60 / 100 kHz** span toggle in the header
   picks the display range; 60 kHz (the default) focuses on the modulated bands,
   100 kHz shows the full baseband including SCA.
-- **RDS**: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group histogram and
-  live block-error rate (BER under ~5% is a clean link).
+- **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
+  AF / group histogram and live block-error rate (BER under ~5% is a clean link).
 
 Deviation is referenced to a 75 kHz total; on a weak/noisy signal the
 deviation/MPX-power path is band-limited to 60 kHz so the FM demod noise

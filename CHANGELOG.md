@@ -11,6 +11,9 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter readability.** The RDS panel adds PTY (code + name), PTYN, and ECC
+  rows. The MPX Power / Peak +- readouts turn amber near and red at/over the
+  limit (0 dBr, 75 kHz). The vectorscope is enlarged on the second row.
 - **Meter: spectrum span toggle + SDR-by-default.** The spectrum header has a
   **60 / 100 kHz** span toggle (default 60, focusing on the modulated bands;
   100 kHz shows the full baseband incl. SCA). The input **Source** now defaults

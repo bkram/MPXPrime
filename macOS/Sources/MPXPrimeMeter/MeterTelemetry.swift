@@ -33,8 +33,12 @@ final class MeterTelemetry: ObservableObject {
     // stereo separation. Text "--" when not yet valid.
     @Published var mpxPowerText = "--"
     @Published var mpxPowerNorm: Double = 0      // 0..1 over a -12..+3 dBr display range
+    @Published var mpxPowerDBr: Double = -120    // raw value for over-limit coloring
+    @Published var mpxPowerValid = false
     @Published var posPeakText = "0.0"
     @Published var negPeakText = "0.0"
+    @Published var posPeakKHz: Double = 0        // raw +peak for over-limit coloring
+    @Published var negPeakKHz: Double = 0        // raw -peak (signed) for coloring
     @Published var separationText = "--"
 
     // Scrolling trend history (oldest -> newest).

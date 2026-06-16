@@ -41,6 +41,12 @@ final class MeterTelemetry: ObservableObject {
     @Published var negPeakKHz: Double = 0        // raw -peak (signed) for coloring
     @Published var separationText = "--"
 
+    // SDR signal level (relative RSSI, dBFS). rssiValid is false for the
+    // audio-device input (no RF level there).
+    @Published var rssiText = "--"
+    @Published var rssiNorm: Double = 0          // 0..1 over a -80..0 dBFS range
+    @Published var rssiValid = false
+
     // Scrolling trend history (oldest -> newest).
     @Published var devHistoryKHz: [Float] = []
     @Published var mpxPowerHistoryDBr: [Float] = []

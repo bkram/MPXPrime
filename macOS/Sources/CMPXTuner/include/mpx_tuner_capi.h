@@ -58,6 +58,11 @@ void mpxtuner_close(MpxTuner *t);
 /// (e.g. the dongle was unplugged). The GUI polls this to surface a loss.
 int mpxtuner_is_alive(const MpxTuner *t);
 
+/// Latest filtered-channel signal level in dBFS (<= 0), a relative RSSI
+/// indicator. Most meaningful with manual gain (Auto Gain off); with auto gain
+/// the tuner normalizes the level. -120 before the first block.
+double mpxtuner_signal_dbfs(const MpxTuner *t);
+
 // Live controls. Thread-safe: each enqueues a command applied on the capture
 // thread between IQ blocks, so it never interrupts the MPX stream.
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz);

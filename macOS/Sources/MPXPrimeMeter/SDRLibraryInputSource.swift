@@ -55,6 +55,12 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         return mpxtuner_is_alive(handle) != 0
     }
 
+    /// Latest filtered-channel signal level in dBFS (relative RSSI; <= 0).
+    var signalDBFS: Double {
+        guard let handle else { return -120 }
+        return mpxtuner_signal_dbfs(handle)
+    }
+
     /// The library is always linked into the Meter, so SDR is always offered;
     /// device presence is reported by `start()`.
     static func isAvailable() -> Bool { true }

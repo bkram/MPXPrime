@@ -269,6 +269,21 @@ final class MeterViewModel: ObservableObject {
         guard let s = engine?.snapshot() else { return }
         pushTelemetry(s)
         pushRDSIfChanged(s)
+        pushSignal()
+    }
+
+    /// Push the SDR relative-RSSI readout (no RF level on the audio path).
+    private func pushSignal() {
+        if inputKind == .sdr, let source = sdrSource {
+            let dbfs = source.signalDBFS
+            telemetry.rssiValid = true
+            telemetry.rssiText = String(format: "%.0f dBFS", dbfs)
+            telemetry.rssiNorm = max(0.0, min(1.0, (dbfs + 80.0) / 80.0))
+        } else if telemetry.rssiValid {
+            telemetry.rssiValid = false
+            telemetry.rssiText = "--"
+            telemetry.rssiNorm = 0
+        }
     }
 
     private func pushTelemetry(_ s: MeterSnapshot) {

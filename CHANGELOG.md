@@ -15,6 +15,11 @@ combination test suite. Newest first.
   -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
   MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
   weak/noisy reception inflates both peak deviation and MPX power.
+- **Meter: SDR signal-level (RSSI).** The Modulation group shows a **SIGNAL**
+  readout on the SDR path -- a relative received-level (dBFS) indicator from the
+  filtered IQ channel power (new `mpxtuner_signal_dbfs` C-ABI query), colored
+  green (strong) to red (weak). Most meaningful with Auto Gain off. Hidden on
+  the audio-device input (no RF level there).
 - **Meter readability.** The RDS panel adds PTY (code + name), PTYN, and ECC
   rows. The MPX Power / Peak +- readouts turn amber near and red at/over the
   limit (0 dBr, 75 kHz). The vectorscope is enlarged on the second row.

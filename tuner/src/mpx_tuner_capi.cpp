@@ -53,6 +53,7 @@ struct MpxTuner {
   std::thread thread;
   std::atomic<bool> running{false};
   std::atomic<bool> alive{false};
+  std::atomic<double> signalDbfs{-120.0};  // relative RSSI (filtered channel power)
 
   std::mutex cmdMutex;
   std::vector<Cmd> cmds;
@@ -127,6 +128,8 @@ struct MpxTuner {
         continue;
       }
       demod.processSplit(iq.data(), mpx.data(), nullptr, n);
+      signalDbfs.store(demod.getFilteredChannelPowerDbfs(),
+                       std::memory_order_relaxed);
       out.clear();
       for (size_t i = 0; i < n; i++) {
         const std::uint32_t produced = resampler.execute(mpx[i] * mpxGain, tmp);
@@ -212,6 +215,10 @@ void mpxtuner_close(MpxTuner *t) {
 
 int mpxtuner_is_alive(const MpxTuner *t) {
   return (t && t->alive.load(std::memory_order_relaxed)) ? 1 : 0;
+}
+
+double mpxtuner_signal_dbfs(const MpxTuner *t) {
+  return t ? t->signalDbfs.load(std::memory_order_relaxed) : -120.0;
 }
 
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz) {

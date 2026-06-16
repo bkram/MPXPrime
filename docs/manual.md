@@ -656,7 +656,9 @@ otherwise to **Audio**.
 - **Modulation**: MPX power (ITU-R BS.412, ~60 s integrated, in dBr vs a
   +/-19 kHz sine); peak-hold +/- deviation (with Reset); best stereo
   separation. Also on the top row. MPX power and the +/- peaks turn amber near
-  and red at/over the limit (0 dBr, 75 kHz).
+  and red at/over the limit (0 dBr, 75 kHz). On SDR it also shows **SIGNAL** --
+  a relative received-level (dBFS) RSSI indicator (green strong / red weak);
+  most meaningful with Auto Gain off.
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
   beside the trends.

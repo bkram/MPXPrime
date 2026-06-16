@@ -297,6 +297,15 @@ struct RootMeterView: View {
         GroupBox("Modulation") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 VStack(alignment: .leading, spacing: 10) {
+                    if vm.inputKind == .sdr {
+                        readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
+                                valueTint: t.rssiValid ? signalTint(t.rssiNorm)
+                                    : BroadcastStyle.readoutPrimary,
+                                help: "Relative received signal level (filtered IQ channel, "
+                                    + "dBFS). Higher is stronger; most meaningful with Auto Gain "
+                                    + "off. A valid BS.412 MPX-power reading needs a strong, "
+                                    + "clean signal -- see the manual.")
+                    }
                     readout("MPX POWER", t.mpxPowerText,
                             valueTint: t.mpxPowerValid
                                 ? limitTint(t.mpxPowerDBr, limit: 0.0, warn: -1.0)
@@ -363,6 +372,14 @@ struct RootMeterView: View {
         if value >= limit { return BroadcastStyle.overRed }
         if value >= warn { return BroadcastStyle.tightAmber }
         return BroadcastStyle.readoutPrimary
+    }
+
+    /// Signal-strength tint (higher is better): green strong, amber moderate,
+    /// red weak. `norm` is the 0..1 RSSI over the -80..0 dBFS range.
+    private func signalTint(_ norm: Double) -> Color {
+        if norm >= 0.5 { return BroadcastStyle.safeGreen }   // >= -40 dBFS
+        if norm >= 0.28 { return BroadcastStyle.tightAmber }  // >= ~ -58 dBFS
+        return BroadcastStyle.overRed
     }
 
     // MARK: - Scopes

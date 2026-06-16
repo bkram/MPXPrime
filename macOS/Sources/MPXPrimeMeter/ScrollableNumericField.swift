@@ -33,15 +33,23 @@ struct ScrollableNumericField: NSViewRepresentable {
 
     func updateNSView(_ tf: ScrollNSTextField, context: Context) {
         context.coordinator.parent = self
-        // Don't clobber the user's in-progress text while the field is editing.
-        if tf.currentEditor() == nil {
-            tf.stringValue = context.coordinator.formatted(value)
+        // Reflect the model value unless the user is *actively typing* (a focused
+        // or text-selected field is NOT enough -- otherwise scroll / stepper /
+        // live-retune changes never reach the display while the box has focus).
+        // Only write when the text actually differs, so background re-renders
+        // (RDS/status updates) don't deselect a field the user just clicked.
+        if !context.coordinator.isUserTyping {
+            let s = context.coordinator.formatted(value)
+            if tf.stringValue != s { tf.stringValue = s }
         }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: ScrollableNumericField
+        // True only between the first keystroke and commit/blur -- the window in
+        // which updateNSView must not overwrite what the user is typing.
+        var isUserTyping = false
         init(_ parent: ScrollableNumericField) { self.parent = parent }
 
         func formatted(_ v: Double) -> String { String(format: "%.\(parent.decimals)f", v) }
@@ -51,17 +59,34 @@ struct ScrollableNumericField: NSViewRepresentable {
             parent.value = min(parent.range.upperBound, max(parent.range.lowerBound, stepped))
         }
 
-        @objc func commitAction(_ sender: NSTextField) {
+        private func commit(_ sender: NSTextField) {
             let norm = sender.stringValue.replacingOccurrences(of: ",", with: ".")
             if let d = Double(norm) { apply(d) }
+            isUserTyping = false
             sender.stringValue = formatted(parent.value)
         }
 
+        @objc func commitAction(_ sender: NSTextField) {
+            commit(sender)
+            // Resign first responder on Enter so the box returns to display-sync
+            // mode (a lingering selection otherwise looks "stuck" on the typed
+            // value even though tuning works).
+            sender.window?.makeFirstResponder(nil)
+        }
+
+        // Focused (text auto-selected) but nothing typed yet -- still allow the
+        // display to track the model (scroll/stepper/retune).
+        func controlTextDidBeginEditing(_ obj: Notification) { isUserTyping = false }
+
+        // First keystroke: now protect the in-progress text until commit/blur.
+        func controlTextDidChange(_ obj: Notification) { isUserTyping = true }
+
         func controlTextDidEndEditing(_ obj: Notification) {
-            if let tf = obj.object as? NSTextField { commitAction(tf) }
+            if let tf = obj.object as? NSTextField { commit(tf) }
         }
 
         func scroll(_ direction: Int) {
+            isUserTyping = false   // scrolling means the user is done typing
             apply(parent.value + Double(direction) * parent.step)
         }
     }

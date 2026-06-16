@@ -11,6 +11,17 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: fix the frequency/numeric boxes getting "stuck" after typing.** After
+  entering a value and pressing Enter the field kept first-responder focus, so its
+  display stopped tracking the model -- later scroll / stepper / live-retune
+  changes updated the tuner but the box looked frozen on the typed value ("can't
+  change it after entering", "tuned but the frequency isn't updated", "when the
+  text is selected it can't be changed"). The field now resigns focus on Enter
+  and refreshes its display whenever the user isn't *actively typing* (a focused
+  or text-selected box no longer blocks updates), writing only when the text
+  actually differs so background re-renders don't deselect a box you just
+  clicked. Applies to every Meter numeric field (frequency, gain, LNA, PPM, pilot
+  reference, full-scale).
 - **Meter: remembers the last-used settings.** Frequency, input source, all SDR
   controls (gain / auto-gain, IF bandwidth, LNA, antenna, Bias-T, PPM, RTL AGC),
   channel, monitor on/off + gain, pilot reference, audio calibration mode, record

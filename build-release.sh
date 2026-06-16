@@ -28,8 +28,12 @@ mkdir -p "$OUTPUT_DIR"
 echo "Building arm64..."
 xcrun swift build --package-path macOS -c release --arch arm64 -j "$BUILD_JOBS"
 
-echo "Building x86_64..."
-xcrun swift build --package-path macOS -c release --arch x86_64 -j "$BUILD_JOBS"
+# x86_64: the encoder only. MPX Prime Meter links the arm64-only RTL-SDR tuner
+# libs (CMPXTuner -> librtlsdr/liquid-dsp), so it is Apple-Silicon-only; building
+# the whole package for x86_64 would try to link those and fail. --product keeps
+# the Intel slice to the universal encoder.
+echo "Building x86_64 (encoder only; Meter is Apple-Silicon-only)..."
+xcrun swift build --package-path macOS -c release --arch x86_64 --product MPXPrime -j "$BUILD_JOBS"
 
 # Create .app bundle structure
 APP_DIR="$OUTPUT_DIR/$APP_NAME.app"
@@ -125,10 +129,11 @@ echo "Creating $METER_APP_NAME.app..."
 rm -rf "$METER_APP_DIR"
 mkdir -p "$METER_APP_DIR/Contents/MacOS"
 mkdir -p "$METER_APP_DIR/Contents/Resources"
-lipo -create \
-    "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
-    "macOS/.build/x86_64-apple-macosx/release/MPXPrimeMeter" \
-    -output "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+# MPX Prime Meter is Apple-Silicon-only (it links the arm64 RTL-SDR tuner libs),
+# so it ships as an arm64 binary; the encoder above stays universal.
+cp "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
+    "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+chmod u+w "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
 if [ -f "$ICON_FILE" ]; then
     cp "$ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
 fi
@@ -167,27 +172,22 @@ cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
 </plist>
 EOF
 
-# --- Bundle the mpx-tuner RTL-SDR helper + its dylibs into the Meter app ---
-# Self-contained SDR: no user-placed fm-sdr-tuner, no Homebrew at runtime.
-# arm64-only (the deps are arm64-only Homebrew dylibs; Intel SDR is not
-# supported -- Tier 2). Conditional: if cmake or the deps are missing, skip and
-# the Meter falls back to resolving fm-sdr-tuner from bin/ or $FM_SDR_TUNER.
+# --- Bundle the RTL-SDR dylibs the Meter links + relocate them to @rpath ---
+# The Meter statically links the vendored tuner C++ (CMPXTuner), which pulls in
+# Homebrew librtlsdr + liquid-dsp (and transitively libusb + fftw). Bundle the 4
+# dylibs into the app and rewrite the Meter binary's load commands so it runs
+# without Homebrew. arm64-only. These are REQUIRED now (the Meter links them) --
+# a missing dylib means the Meter would have failed to link above.
 TUNER_RTLSDR_DYLIB="/opt/homebrew/opt/librtlsdr/lib/librtlsdr.0.dylib"
 TUNER_LIQUID_DYLIB="/opt/homebrew/opt/liquid-dsp/lib/libliquid.dylib"
 TUNER_USB_DYLIB="/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib"
 TUNER_FFTW_DYLIB="/opt/homebrew/opt/fftw/lib/libfftw3f.3.dylib"
-if command -v cmake >/dev/null 2>&1 \
-    && [ -f "$TUNER_RTLSDR_DYLIB" ] && [ -f "$TUNER_LIQUID_DYLIB" ] \
+METER_BIN="$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+if [ -f "$TUNER_RTLSDR_DYLIB" ] && [ -f "$TUNER_LIQUID_DYLIB" ] \
     && [ -f "$TUNER_USB_DYLIB" ] && [ -f "$TUNER_FFTW_DYLIB" ]; then
-    echo "Building + bundling mpx-tuner (RTL-SDR helper, arm64)..."
-    cmake -S tuner -B tuner/build-release -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_OSX_ARCHITECTURES=arm64 >/dev/null
-    cmake --build tuner/build-release -j "$BUILD_JOBS" >/dev/null
-    HELPERS_DIR="$METER_APP_DIR/Contents/Helpers"
+    echo "Bundling RTL-SDR dylibs into $METER_APP_NAME.app..."
     FRAMEWORKS_DIR="$METER_APP_DIR/Contents/Frameworks"
-    mkdir -p "$HELPERS_DIR" "$FRAMEWORKS_DIR"
-    cp tuner/build-release/mpx-tuner "$HELPERS_DIR/"
-    chmod u+w "$HELPERS_DIR/mpx-tuner"
+    mkdir -p "$FRAMEWORKS_DIR"
     for d in "$TUNER_RTLSDR_DYLIB" "$TUNER_LIQUID_DYLIB" "$TUNER_USB_DYLIB" "$TUNER_FFTW_DYLIB"; do
         cp "$d" "$FRAMEWORKS_DIR/"; chmod u+w "$FRAMEWORKS_DIR/$(basename "$d")"
     done
@@ -205,17 +205,18 @@ if command -v cmake >/dev/null 2>&1 \
         install_name_tool -id "@rpath/$b" "$FRAMEWORKS_DIR/$b"
         relocate_macho "$FRAMEWORKS_DIR/$b"
     done
-    relocate_macho "$HELPERS_DIR/mpx-tuner"
-    install_name_tool -add_rpath "@executable_path/../Frameworks" "$HELPERS_DIR/mpx-tuner"
-    # Sign the bundled dylibs + helper (the --deep below also covers them, but
-    # sign explicitly so the rewritten load commands have valid signatures).
+    # The Meter binary links librtlsdr + liquid directly; point them at @rpath.
+    relocate_macho "$METER_BIN"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$METER_BIN"
+    # Sign the relocated dylibs (the --deep below also covers them, but sign
+    # explicitly so the rewritten load commands have valid signatures).
     for b in librtlsdr.0.dylib libliquid.dylib libusb-1.0.0.dylib libfftw3f.3.dylib; do
         codesign --force --sign - "$FRAMEWORKS_DIR/$b"
     done
-    codesign --force --sign - "$HELPERS_DIR/mpx-tuner"
 else
-    echo "Skipping mpx-tuner bundle (cmake or librtlsdr/liquid-dsp/libusb/fftw not found);"
-    echo "  the Meter will resolve fm-sdr-tuner from bin/ or \$FM_SDR_TUNER at runtime."
+    echo "ERROR: RTL-SDR dylibs not found, but the Meter links them."
+    echo "  Install them first: brew install librtlsdr liquid-dsp"
+    exit 1
 fi
 
 echo "Ad-hoc signing $METER_APP_NAME.app..."

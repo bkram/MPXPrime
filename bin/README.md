@@ -3,28 +3,16 @@
 **You normally need nothing here.** RTL-SDR support is built from the vendored
 `tuner/` source:
 
-- The packaged **MPX Prime Meter.app** bundles its own stripped helper
-  (`mpx-tuner`) with its dylibs, so the GUI needs no binary here and no
-  Homebrew.
-- The headless **`run-meter-sdr.sh`** builds `tuner/build/mpx-tuner` on demand
-  (needs `cmake` + `brew install librtlsdr liquid-dsp`).
+- The packaged **MPX Prime Meter.app** links the tuner in-process (the
+  `CMPXTuner` library) and bundles the librtlsdr / liquid-dsp dylibs, so the GUI
+  needs no binary here and no Homebrew. (This is why the Meter is
+  Apple-Silicon-only.)
+- The headless **`run-meter-sdr.sh`** builds the standalone `tuner/build/mpx-tuner`
+  CLI on demand (needs `cmake` + `brew install librtlsdr liquid-dsp`) and pipes
+  its WAV stream into the Meter's `--stdin`.
 
 See `tuner/README.md`.
 
-## Optional: `fm-sdr-tuner` (legacy fallback)
 
-`run-meter-sdr.sh` resolves a tuner in this order: `FM_SDR_TUNER` env, the
-vendored `tuner/build/mpx-tuner`, `bin/fm-sdr-tuner`, then a sibling
-`~/Projects/git/FM-SDR-Tuner/build/`. So you only need to put something here if
-you specifically want the **full upstream** [FM-SDR-Tuner](https://github.com/bkram/FM-SDR-Tuner)
-instead of the vendored subset. It is not committed (see `.gitignore`):
-
-```bash
-git clone https://github.com/bkram/FM-SDR-Tuner.git
-cd FM-SDR-Tuner
-cmake -S . -B build && cmake --build build -j
-cp build/fm-sdr-tuner /path/to/MPXPrime/bin/
-```
-
-Requires an RTL-SDR dongle. The vendored `mpx-tuner` is preferred and is what
-the app ships.
+Requires an RTL-SDR dongle. An external `fm-sdr-tuner` placed here (or via
+`$FM_SDR_TUNER`) is only used by the headless script's stdin path.

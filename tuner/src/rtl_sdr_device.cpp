@@ -212,6 +212,35 @@ bool RTLSDRDevice::setAGC(bool enable) {
 #endif
 }
 
+bool RTLSDRDevice::setTunerBandwidth(uint32_t hz) {
+#if defined(FM_TUNER_HAS_RTLSDR)
+  if (!m_connected || !m_deviceHandle) {
+    return false;
+  }
+  // 0 = automatic bandwidth selection (rtl-sdr.h). Live-callable while
+  // streaming, like setFrequency.
+  return rtlsdr_set_tuner_bandwidth(
+             reinterpret_cast<rtlsdr_dev_t *>(m_deviceHandle), hz) == 0;
+#else
+  (void)hz;
+  return false;
+#endif
+}
+
+bool RTLSDRDevice::setBiasTee(bool enable) {
+#if defined(FM_TUNER_HAS_RTLSDR)
+  if (!m_connected || !m_deviceHandle) {
+    return false;
+  }
+  // RTL-SDR v3 5V bias tee for an active antenna / inline LNA.
+  return rtlsdr_set_bias_tee(reinterpret_cast<rtlsdr_dev_t *>(m_deviceHandle),
+                             enable ? 1 : 0) == 0;
+#else
+  (void)enable;
+  return false;
+#endif
+}
+
 void RTLSDRDevice::setLowLatencyMode(bool enable) {
   m_lowLatencyMode.store(enable, std::memory_order_relaxed);
 }

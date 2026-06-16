@@ -1,10 +1,23 @@
-# mpx-tuner
+# mpx-tuner / CMPXTuner
 
-A minimal RTL-SDR -> FM-demodulator -> MPX-composite helper used by **MPX
+A minimal RTL-SDR -> FM-demodulator -> MPX-composite tuner used by **MPX
 Prime Meter** to take live FM off-air for analysis. It tunes an RTL-SDR,
-FM-demodulates, and writes the raw MPX composite (pilot + L-R + RDS) as a
-16-bit / 192 kHz mono WAV stream to stdout (or a FIFO) -- the format the
-Meter's `--stdin` / SDR input expects.
+FM-demodulates, and produces the raw MPX composite (pilot + L-R + RDS) at
+192 kHz.
+
+Two consumers share these sources:
+
+- **`CMPXTuner`** (the primary path) -- the same C++ compiled as a **library
+  with a pure-C ABI** (`capi-include`... see `macOS/Sources/CMPXTuner/include/mpx_tuner_capi.h`)
+  and **linked directly into MPX Prime Meter**. The Meter opens the device with
+  `mpxtuner_open(...)` and receives float MPX blocks (1.0 == 150 kHz) on a
+  callback from the library's capture thread -- no subprocess, no FIFO. Live
+  controls are direct function calls (`mpxtuner_set_*`). This is why the Meter
+  is Apple-Silicon-only.
+- **`mpx-tuner`** (the standalone CMake executable) -- the same demod behind a
+  small CLI that writes a 16-bit / 192 kHz mono WAV stream to stdout or a FIFO.
+  Kept for CLI debugging; no longer shipped in the app. The Meter's `--stdin`
+  path and `run-meter-sdr.sh` still consume a WAV stream like this.
 
 ## Provenance
 
@@ -35,9 +48,11 @@ cmake --build tuner/build
 ```
 
 Requires `librtlsdr` and `liquid-dsp` (e.g. `brew install librtlsdr liquid-dsp`).
-`build-release.sh` builds this universal and bundles it -- with its two dylibs --
+This CMake build produces the standalone `mpx-tuner` debug CLI only. The shipped
+app links these sources via the `CMPXTuner` SPM target instead; `build-release.sh`
+bundles the librtlsdr / liquid-dsp / libusb / fftw dylibs (relocated to `@rpath`)
 inside `MPX Prime Meter.app`, so end users need neither Homebrew nor a
-separately-placed `fm-sdr-tuner`.
+separately-placed binary.
 
 ## Usage
 
@@ -50,13 +65,15 @@ mpx-tuner -f 88600 --control /tmp/ctl.fifo   # live commands while streaming
 
 ## Live control (`--control <fifo>`)
 
-With `--control`, the tuner reads newline commands from a FIFO and applies them
-between IQ blocks -- a retune or gain change never interrupts the MPX stream
-(no device re-open). MPX Prime Meter uses this so changing frequency / gain /
-AGC in the GUI is glitch-free. Commands:
+With `--control`, the standalone `mpx-tuner` reads newline commands from a FIFO
+and applies them between IQ blocks -- a retune or gain change never interrupts
+the MPX stream (no device re-open). (In the app, `CMPXTuner` exposes the same
+operations as direct `mpxtuner_set_*` calls instead.) Commands:
 
 - `freq <kHz>` -- retune
 - `gain <dB>` -- manual gain (also switches to manual mode)
 - `gainmode auto|manual`
 - `agc 0|1` -- RTL2832 digital AGC
 - `ppm <n>` -- frequency correction
+- `bandwidth <kHz>` -- IF channel bandwidth (0 = auto / widest = full MPX)
+- `bias 0|1` -- RTL-SDR v3 5V bias tee

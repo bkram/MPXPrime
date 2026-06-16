@@ -21,23 +21,29 @@ combination test suite. Newest first.
   which vanished on the dark canvas under a light system appearance). The
   deviation and MPX-power trend graphs gained min/max + limit-line scale labels
   (75 kHz / 0 dBr).
-- **Live SDR retune / gain / AGC (no restart).** The bundled `mpx-tuner` takes
-  live commands over a dedicated control FIFO (`--control`), so changing the SDR
-  frequency in the Meter retunes the dongle in place -- no process teardown, no
-  device re-open, no audio gap. The input bar's AGC toggle and manual gain (dB)
-  field are also applied live. (The external `fm-sdr-tuner` has no
-  control channel, so it still restarts on a frequency change.) Retuning also
-  resets the transient meters -- peak-hold, MPX power, separation, BER, trends,
-  and the RDS decoder -- plus a 1 s warm-up, so the new station starts clean.
-- **Built-in RTL-SDR (no external binary).** MPX Prime Meter now bundles its
-  own stripped SDR helper, `mpx-tuner` (a minimal RTL-SDR -> FM-demod -> MPX
-  subset of FM-SDR-Tuner, vendored under `tuner/`, GPL-3.0), with its dylibs
-  (librtlsdr / liquid-dsp / libusb / fftw) inside `MPX Prime Meter.app`. The
-  GUI's `Source -> SDR` now works out of the box on Apple Silicon with just a
-  connected dongle -- no Homebrew, no separately-placed `fm-sdr-tuner`. The
-  Meter prefers the bundled helper, falling back to `FM_SDR_TUNER` / `bin/` for
-  development. SDR is Apple-Silicon-only (the deps are arm64-only). The headless
-  `run-meter-sdr.sh` script still uses an external `fm-sdr-tuner`.
+- **Built-in RTL-SDR, in-process (no external binary, no subprocess).** MPX
+  Prime Meter now links the vendored RTL-SDR -> FM-demod -> MPX tuner directly
+  as a C++ library (`CMPXTuner`, a stripped subset of FM-SDR-Tuner under
+  `tuner/`, GPL-3.0, exposed through a small C ABI `mpx_tuner_capi.h`). The
+  capture+demod runs on a thread inside the app and delivers float MPX blocks
+  straight to the analysis path -- no spawned helper, no FIFO, no int16 WAV
+  round-trip. `Source -> SDR` works out of the box on Apple Silicon with just a
+  connected dongle (the librtlsdr / liquid-dsp / libusb / fftw dylibs are
+  bundled inside the app). **Because it links the arm64-only RTL-SDR libraries,
+  MPX Prime Meter now ships as an Apple-Silicon-only binary; the MPX Prime
+  Studio encoder stays universal.** The headless `run-meter-sdr.sh` script still
+  uses an external `fm-sdr-tuner` over stdin.
+- **Live SDR controls (no restart).** Frequency, **IF bandwidth**, gain / auto
+  gain, **PPM** correction, **Bias-T** (RTL-SDR v3 5V, for an active antenna),
+  and the **RTL2832 digital AGC** all apply live to the running tuner via direct
+  in-process calls -- no device re-open, no audio gap. IF bandwidth (Auto /
+  56-311 kHz) trades adjacent-channel rejection against full-composite passband
+  (RDS / SCA); the tuner's internal channel FIR re-designs on the fly and the
+  hardware IF filter is set to match. Retuning the frequency also resets the
+  transient meters -- peak-hold, MPX power, separation, BER, trends, and the RDS
+  decoder -- plus a 1 s warm-up, so the new station starts clean. The input bar
+  relabels the old "AGC" toggle to "Auto Gain" (tuner gain mode) now that the
+  separate RTL digital AGC is exposed.
 - Docs: documented MPX Prime Meter across README / manual / ARCHITECTURE /
   AGENTS (it shipped in 0.37 but wasn't mentioned).
 

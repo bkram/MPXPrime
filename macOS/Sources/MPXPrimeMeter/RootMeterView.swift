@@ -93,9 +93,9 @@ struct RootMeterView: View {
 
                 Divider().frame(height: 16)
 
-                Toggle("AGC", isOn: $vm.sdrAutoGain)
+                Toggle("Auto Gain", isOn: $vm.sdrAutoGain)
                     .toggleStyle(.switch)
-                    .help("Automatic tuner gain. Off = manual gain (dB field). Applied live.")
+                    .help("Tuner automatic gain. Off = manual gain (dB field). Applied live.")
                     .onChange(of: vm.sdrAutoGain) { _, _ in vm.applyGainChange() }
                 if !vm.sdrAutoGain {
                     HStack(spacing: 4) {
@@ -109,8 +109,50 @@ struct RootMeterView: View {
                             .labelsHidden()
                             .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
                     }
-                    .help("Manual RTL-SDR gain in dB (applied live).")
+                    .help("Manual RTL-SDR tuner gain in dB (applied live).")
                 }
+
+                Divider().frame(height: 16)
+
+                Picker("IF BW", selection: $vm.sdrBandwidthKHz) {
+                    Text("Auto").tag(0)
+                    ForEach([311, 254, 200, 168, 133, 114, 84, 56], id: \.self) { bw in
+                        Text("\(bw) kHz").tag(bw)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .help("IF channel bandwidth. Wide passes the full composite (RDS/SCA) "
+                    + "with more noise; narrow rejects adjacent channels but rolls off "
+                    + "the composite top. Auto = widest. Applied live.")
+                .onChange(of: vm.sdrBandwidthKHz) { _, _ in vm.applyBandwidthChange() }
+
+                Divider().frame(height: 16)
+
+                HStack(spacing: 4) {
+                    Text("PPM").foregroundStyle(.secondary)
+                    TextField("ppm", value: $vm.sdrPPM, format: .number)
+                        .frame(width: 44)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { vm.applyPPMChange() }
+                    Stepper("PPM", value: $vm.sdrPPM, in: -200...200, step: 1)
+                        .labelsHidden()
+                        .onChange(of: vm.sdrPPM) { _, _ in vm.applyPPMChange() }
+                }
+                .help("Frequency-error correction in ppm. Applied live.")
+
+                Toggle("Bias-T", isOn: $vm.sdrBiasTee)
+                    .toggleStyle(.switch)
+                    .help("RTL-SDR v3 5V bias tee: powers an active antenna / inline LNA. "
+                        + "Leave off unless your antenna needs it (never into a DC short). "
+                        + "Applied live.")
+                    .onChange(of: vm.sdrBiasTee) { _, _ in vm.applyBiasTeeChange() }
+
+                Toggle("RTL AGC", isOn: $vm.sdrRTLAGC)
+                    .toggleStyle(.switch)
+                    .help("RTL2832 digital AGC, separate from the tuner gain above. "
+                        + "Applied live.")
+                    .onChange(of: vm.sdrRTLAGC) { _, _ in vm.applyRTLAGCChange() }
             }
             Spacer()
         }

@@ -25,23 +25,33 @@ final class MeterViewModel: ObservableObject {
     let telemetry = MeterTelemetry()
 
     /// Where the composite comes from: a Core Audio input device, or a live
-    /// RTL-SDR via the FM-SDR-Tuner subprocess (mono MPX over a FIFO).
+    /// RTL-SDR decoded in-process by the linked CMPXTuner library (mono MPX).
     enum InputKind: Hashable { case audioDevice, sdr }
 
     // Structural / control state (low frequency).
     @Published var inputKind: InputKind = .audioDevice
     @Published var frequencyMHz: Double = 88.6
-    /// SDR tuner gain (dB) + auto/AGC. Applied live over the control FIFO when
-    /// the bundled mpx-tuner is running; default auto.
+    /// SDR tuner gain (dB) + auto gain. Applied live to the running tuner (no
+    /// restart); default auto.
     @Published var sdrAutoGain: Bool = true
     @Published var sdrGainDB: Double = 30.0
+    /// IF channel bandwidth in kHz (0 = auto / widest = full MPX). Narrower
+    /// rejects adjacent channels at the cost of the composite top end.
+    @Published var sdrBandwidthKHz: Int = 0
+    /// RTL-SDR v3 5V bias tee (power an active antenna / inline LNA).
+    @Published var sdrBiasTee: Bool = false
+    /// Frequency-error correction in ppm.
+    @Published var sdrPPM: Int = 0
+    /// RTL2832 digital AGC (distinct from the tuner gain mode above).
+    @Published var sdrRTLAGC: Bool = false
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputID: AudioDeviceID?
     @Published var selectedOutputID: AudioDeviceID?   // nil = system default
     @Published var channel: MeterChannel = .right
-    /// True when a tuner binary is resolvable -- gates the SDR input option.
-    let sdrAvailable = SDRTunerProcess.isAvailable()
+    /// True when SDR is supported (the tuner library is linked) -- gates the
+    /// SDR input option.
+    let sdrAvailable = SDRLibraryInputSource.isAvailable()
     @Published var monitorEnabled = false
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
@@ -62,7 +72,7 @@ final class MeterViewModel: ObservableObject {
     private var deviceID: AudioDeviceID?
     private var priorDeviceRate: Double?
     private var captureRate: Double = 192_000
-    private var sdrTuner: SDRTunerProcess?
+    private var sdrSource: SDRLibraryInputSource?
     private var timer: Timer?
     private var lastRDSSignature = ""
 
@@ -131,20 +141,18 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
-    // Live RTL-SDR via FM-SDR-Tuner: spawn the tuner, read its mono MPX over a
-    // FIFO at 192 kHz. Absolute calibration (full scale = 150 kHz) -- the
-    // tuner's default -6 dB MPX gain -- so PILOT/RDS/MAX are real measurements,
-    // not pilot-referenced. No device rate to restore.
+    // Live RTL-SDR, decoded in-process by the linked CMPXTuner library: it
+    // delivers mono MPX float blocks at 192 kHz straight to the engine. Absolute
+    // calibration (full scale = 150 kHz, the -6 dB MPX gain) so PILOT/RDS/MAX are
+    // real measurements, not pilot-referenced. No subprocess, no device rate to
+    // restore.
     private func startSDR() {
-        let khz = Int((frequencyMHz * 1000).rounded())
-        let tuner: SDRTunerProcess
-        do {
-            tuner = try SDRTunerProcess(frequencyKHz: khz)
-            try tuner.start()
-        } catch {
-            statusText = "SDR start failed: \(error.localizedDescription)"
-            return
-        }
+        let cfg = SDRLibraryInputSource.Config(
+            frequencyKHz: Int((frequencyMHz * 1000).rounded()),
+            autoGain: sdrAutoGain, gainDB: sdrGainDB,
+            bandwidthKHz: sdrBandwidthKHz, biasTee: sdrBiasTee,
+            ppm: sdrPPM, rtlAGC: sdrRTLAGC)
+        let source = SDRLibraryInputSource(config: cfg)
         deviceID = nil
         priorDeviceRate = nil
         captureRate = 192_000
@@ -153,17 +161,17 @@ final class MeterViewModel: ObservableObject {
             sampleRate: 192_000, channel: channel,
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz), fullScaleKHz: 150,
-            input: StdinInputSource(fifoPath: tuner.fifoPath, sampleRate: 192_000))
+            input: source)
         do {
             _ = try eng.start(monitorDeviceID: selectedOutputID)
             engine = eng
-            sdrTuner = tuner
+            sdrSource = source
             running = true
             statusText = String(format: "Tuned %.2f MHz (SDR, 192 kHz, abs cal)", frequencyMHz)
             startTimer()
         } catch {
-            statusText = "SDR start failed: \(error)"
-            tuner.stop()
+            statusText = error.localizedDescription
+            source.stop()
             engine = nil
         }
     }
@@ -172,10 +180,9 @@ final class MeterViewModel: ObservableObject {
         guard running else { return }
         timer?.invalidate()
         timer = nil
-        engine?.stop()
+        engine?.stop()   // also stops the input source (closes the tuner)
         engine = nil
-        sdrTuner?.stop()
-        sdrTuner = nil
+        sdrSource = nil
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
@@ -188,29 +195,47 @@ final class MeterViewModel: ObservableObject {
         start()
     }
 
-    /// Frequency changed: live-retune the running SDR helper if it supports a
-    /// control channel (no glitch, no device re-open); otherwise restart.
+    /// Frequency changed: live-retune the running tuner (no glitch, no device
+    /// re-open). The in-process library always supports live control.
     func applyFrequencyChange() {
-        guard running, inputKind == .sdr,
-              let tuner = sdrTuner, tuner.supportsLiveControl else {
+        guard running, inputKind == .sdr, let source = sdrSource else {
             restartIfRunning()
             return
         }
-        tuner.setFrequencyKHz(Int((frequencyMHz * 1000).rounded()))
+        source.setFrequencyKHz(Int((frequencyMHz * 1000).rounded()))
         // New station: clear the prior station's peaks / MPX power / BER / RDS.
         engine?.resetForRetune()
         statusText = String(format: "Tuned %.2f MHz (SDR, live)", frequencyMHz)
     }
 
-    /// Gain / AGC changed: live-apply to the running SDR helper (no restart).
+    /// Gain / auto-gain changed: live-apply to the running tuner (no restart).
     func applyGainChange() {
-        guard running, inputKind == .sdr,
-              let tuner = sdrTuner, tuner.supportsLiveControl else { return }
-        if sdrAutoGain {
-            tuner.setGainAuto(true)
-        } else {
-            tuner.setGainDB(sdrGainDB)
-        }
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        if sdrAutoGain { source.setGainAuto(true) } else { source.setGainDB(sdrGainDB) }
+    }
+
+    /// IF channel bandwidth changed (0 = auto). Live, no restart.
+    func applyBandwidthChange() {
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        source.setBandwidthKHz(sdrBandwidthKHz)
+    }
+
+    /// Bias tee toggled. Live, no restart.
+    func applyBiasTeeChange() {
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        source.setBiasTee(sdrBiasTee)
+    }
+
+    /// PPM frequency correction changed. Live, no restart.
+    func applyPPMChange() {
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        source.setPPM(sdrPPM)
+    }
+
+    /// RTL2832 digital AGC toggled. Live, no restart.
+    func applyRTLAGCChange() {
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        source.setRTLAGC(sdrRTLAGC)
     }
 
     // MARK: - Polling
@@ -226,9 +251,9 @@ final class MeterViewModel: ObservableObject {
     private func tick() {
         // Surface an early tuner exit (no RTL-SDR found / device lost) rather
         // than silently showing -120 dBFS as if "Tuned".
-        if inputKind == .sdr, let t = sdrTuner, !t.isRunning {
+        if inputKind == .sdr, let source = sdrSource, !source.isRunning {
             stop()
-            statusText = "SDR stopped: tuner exited (no RTL-SDR found or device lost)"
+            statusText = "SDR stopped: device lost (RTL-SDR unplugged?)"
             return
         }
         guard let s = engine?.snapshot() else { return }

@@ -622,17 +622,28 @@ chrome follows the system appearance.
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
   >= 128 kHz, so the default input prefers a 192 kHz-capable device.
-- **RTL-SDR** (`Source -> SDR`): set the frequency and Start; the Meter spawns
-  its bundled `mpx-tuner` helper, reads its mono MPX over a FIFO at 192 kHz, and
-  measures with absolute calibration (full scale = 150 kHz). The packaged app
-  ships this helper (a stripped subset of FM-SDR-Tuner, from `tuner/`) with its
-  dylibs, so you need only a connected RTL-SDR dongle -- no Homebrew, no
-  separately-placed binary. SDR is Apple Silicon only. `./run-meter-sdr.sh
-  --gui --freq <MHz>` opens the window pre-tuned. (The headless
-  `run-meter-sdr.sh` builds and uses the same vendored `mpx-tuner` on demand,
-  falling back to `FM_SDR_TUNER` / `bin/fm-sdr-tuner` if present.)
-  Changing the frequency, the **Gain** field, or the **AGC** toggle retunes the
-  dongle live over a control channel -- no restart, no audio gap.
+- **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The Meter decodes
+  the dongle **in-process** -- it links the vendored tuner (a stripped subset of
+  FM-SDR-Tuner, from `tuner/`) as a library and runs the RTL-SDR capture + FM
+  demod on its own thread, delivering the mono MPX at 192 kHz with absolute
+  calibration (full scale = 150 kHz). No helper process, no Homebrew, no
+  separately-placed binary -- just a connected dongle. The librtlsdr / liquid-dsp
+  dylibs ship inside the app. **SDR support makes MPX Prime Meter Apple-Silicon
+  only** (the RTL-SDR libraries are arm64-only); the MPX Prime Studio encoder
+  remains universal. (The headless `run-meter-sdr.sh` still uses an external
+  `fm-sdr-tuner` piped over stdin.)
+
+  All SDR controls apply **live** -- no restart, no audio gap:
+  - **Frequency** -- retunes in place (also clears the prior station's meters).
+  - **IF BW** -- the IF channel bandwidth (Auto, or 56-311 kHz). Wide passes the
+    full composite (pilot / RDS / SCA) but lets in more noise and adjacent-channel
+    energy; narrow rejects neighbours but rolls off the composite top end. Auto =
+    widest. Start wide; narrow only to fight a strong adjacent station.
+  - **Auto Gain** -- tuner automatic gain. Off reveals a manual gain (dB) field.
+  - **PPM** -- frequency-error correction in parts per million.
+  - **Bias-T** -- the RTL-SDR v3 5V bias tee, to power an active antenna or inline
+    LNA. Leave off unless your antenna needs it (never feed it into a DC short).
+  - **RTL AGC** -- the RTL2832 digital AGC, separate from the tuner gain above.
 
 ### What it shows
 

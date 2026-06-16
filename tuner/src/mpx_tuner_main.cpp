@@ -32,14 +32,16 @@ namespace {
 std::atomic<bool> g_running{true};
 void onSignal(int) { g_running.store(false); }
 
-// Apply one live control line to the device (called between IQ blocks, so a
-// retune never interrupts the MPX stream). Commands (one per line):
+// Apply one live control line (called between IQ blocks, so a retune never
+// interrupts the MPX stream). Commands (one per line):
 //   freq <kHz>          retune
 //   gain <dB>           manual gain (also forces manual mode)
 //   gainmode auto|manual
 //   agc 0|1             RTL2832 digital AGC
 //   ppm <n>             frequency correction
-void applyControl(RTLSDRDevice &device, const std::string &line) {
+//   bandwidth <kHz>     IF channel bandwidth (0 = auto); 0 = widest/full MPX
+//   bias 0|1            RTL-SDR v3 5V bias tee
+void applyControl(RTLSDRDevice &device, FMDemod &demod, const std::string &line) {
   char verb[32] = {0};
   double value = 0.0;
   char word[32] = {0};
@@ -61,6 +63,15 @@ void applyControl(RTLSDRDevice &device, const std::string &line) {
   } else if (std::strcmp(verb, "ppm") == 0) {
     if (std::sscanf(line.c_str(), "%*s %lf", &value) == 1)
       device.setFrequencyCorrection(static_cast<int>(std::lround(value)));
+  } else if (std::strcmp(verb, "bandwidth") == 0) {
+    if (std::sscanf(line.c_str(), "%*s %lf", &value) == 1 && value >= 0) {
+      const int hz = static_cast<int>(std::lround(value * 1000.0));  // kHz -> Hz
+      demod.setBandwidthHz(hz);            // software channel FIR (binding @ 256 kHz)
+      device.setTunerBandwidth(static_cast<uint32_t>(std::max(0, hz)));  // analog IF
+    }
+  } else if (std::strcmp(verb, "bias") == 0) {
+    if (std::sscanf(line.c_str(), "%*s %lf", &value) == 1)
+      device.setBiasTee(value != 0.0);
   }
 }
 
@@ -156,7 +167,7 @@ int main(int argc, char **argv) {
         controlBuf.append(cbuf, static_cast<size_t>(cn));
         size_t nl;
         while ((nl = controlBuf.find('\n')) != std::string::npos) {
-          applyControl(device, controlBuf.substr(0, nl));
+          applyControl(device, demod, controlBuf.substr(0, nl));
           controlBuf.erase(0, nl + 1);
         }
       }

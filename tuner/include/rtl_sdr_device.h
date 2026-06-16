@@ -23,8 +23,13 @@ public:
   bool setGainMode(bool manual);
   bool setGain(uint32_t gainTenthsDb);
   bool setAGC(bool enable);
+  bool setTunerBandwidth(uint32_t hz);
+  bool setBiasTee(bool enable);
   void setLowLatencyMode(bool enable);
   size_t readIQ(uint8_t *buffer, size_t maxSamples);
+
+  /// True once the async USB read thread has failed (device unplugged / lost).
+  bool failed() const { return m_asyncFailed.load(std::memory_order_relaxed); }
 
 private:
   static void asyncCallback(unsigned char *buf, uint32_t len, void *ctx);

@@ -23,6 +23,7 @@ struct RootMeterView: View {
                             audioSection
                             deviationSection
                             metricsSection
+                                .frame(width: 178)
                             rdsSection
                                 .frame(minWidth: 260, maxWidth: .infinity)
                         }

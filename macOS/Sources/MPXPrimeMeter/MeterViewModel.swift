@@ -68,6 +68,13 @@ final class MeterViewModel: ObservableObject {
     @Published var monitorEnabled = true
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
+    // Audio-path deviation calibration. Pilot-referenced (default) assumes the
+    // 19 kHz pilot equals `pilotRefKHz`. Absolute maps a known input level to
+    // kHz directly (0 dBFS = `audioFullScaleKHz`), independent of pilot recovery
+    // -- the robust mode when the composite is fed at a known level. The SDR
+    // path is always absolute (150) and ignores both.
+    @Published var audioAbsoluteCal = false
+    @Published var audioFullScaleKHz: Double = 150.0
     @Published var running = false
     @Published var statusText = "Stopped"
     /// WAV recording: format (false = decoded stereo, true = MPX composite) and
@@ -155,6 +162,7 @@ final class MeterViewModel: ObservableObject {
             sampleRate: Float(prep.rate), channel: channel,
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz),
+            fullScaleKHz: audioAbsoluteCal ? Float(audioFullScaleKHz) : nil,
             input: AUHALInputSource(deviceID: id))
         do {
             let fmt = try eng.start(monitorDeviceID: selectedOutputID)
@@ -248,6 +256,13 @@ final class MeterViewModel: ObservableObject {
     /// without a restart. (The SDR path is absolutely calibrated and ignores it.)
     func applyPilotRefChange() {
         engine?.setPilotRefKHz(Float(pilotRefKHz))
+    }
+
+    /// Audio-path calibration changed (mode or absolute full-scale): live-apply.
+    /// Absolute maps 0 dBFS to `audioFullScaleKHz` kHz; pilot-referenced passes
+    /// nil so the analyzer falls back to the pilot reference.
+    func applyCalibrationChange() {
+        engine?.setFullScaleKHz(audioAbsoluteCal ? Float(audioFullScaleKHz) : nil)
     }
 
     /// Gain / auto-gain changed: live-apply to the running tuner (no restart).

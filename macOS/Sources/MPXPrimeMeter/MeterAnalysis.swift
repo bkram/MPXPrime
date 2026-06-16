@@ -93,10 +93,14 @@ final class MeterAnalysis {
     private var pilotRefKHz: Float
     private let pilotRefBits: ManagedAtomic<UInt32>
     // When non-nil, the source is absolutely calibrated: amplitude 1.0 == this
-    // many kHz of FM deviation (e.g. FM-SDR-Tuner demod, 1.0 = 75 kHz). All
+    // many kHz of FM deviation (e.g. FM-SDR-Tuner demod, 1.0 = 150 kHz). All
     // deviations are then measured directly and PILOT is a real reading. When
     // nil, fall back to pilot-referenced calibration (uncalibrated audio in).
-    private let fullScaleKHz: Float?
+    // Live-adjustable from the UI (audio path can switch between pilot-referenced
+    // and an absolute "0 dBFS = N kHz" scale). Stored as a bit pattern in an
+    // atomic; a NaN pattern means nil (pilot-referenced). Refreshed per block.
+    private var fullScaleKHz: Float?
+    private let fullScaleBits: ManagedAtomic<UInt32>
     private var pilot = PilotPLL()
     private var decoder = MPXDecoder()
     private let rds: RDSSubcarrierDecoder
@@ -180,6 +184,7 @@ final class MeterAnalysis {
         self.pilotRefKHz = pilotRefKHz
         self.pilotRefBits = ManagedAtomic<UInt32>(pilotRefKHz.bitPattern)
         self.fullScaleKHz = fullScaleKHz
+        self.fullScaleBits = ManagedAtomic<UInt32>((fullScaleKHz ?? Float.nan).bitPattern)
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
@@ -207,9 +212,17 @@ final class MeterAnalysis {
     /// Safe to call from any thread; picked up at the top of the next `process`.
     func setPilotRefKHz(_ k: Float) { pilotRefBits.store(k.bitPattern, ordering: .relaxed) }
 
+    /// Set the absolute deviation scale (amplitude 1.0 == k kHz), or nil to use
+    /// pilot-referenced scaling. Safe from any thread; applied at the next block.
+    func setFullScaleKHz(_ k: Float?) {
+        fullScaleBits.store((k ?? Float.nan).bitPattern, ordering: .relaxed)
+    }
+
     func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
         pilotRefKHz = Float(bitPattern: pilotRefBits.load(ordering: .relaxed))
+        let fs = Float(bitPattern: fullScaleBits.load(ordering: .relaxed))
+        fullScaleKHz = fs.isNaN ? nil : fs
         let doFullReset = fullResetRequested.exchange(false, ordering: .relaxed)
         if doFullReset {
             // Everything transient -- the new station starts clean.

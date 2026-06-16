@@ -88,6 +88,10 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// Live-update the pilot reference (kHz) for the pilot-referenced audio path.
     func setPilotRefKHz(_ k: Float) { analysis.setPilotRefKHz(k) }
 
+    /// Live-switch the audio path between absolute ("0 dBFS = k kHz") and
+    /// pilot-referenced (nil) deviation scaling.
+    func setFullScaleKHz(_ k: Float?) { analysis.setFullScaleKHz(k) }
+
     @discardableResult
     func start(monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring

@@ -94,25 +94,54 @@ struct RootMeterView: View {
 
                 Divider().frame(height: 16)
 
-                // Pilot reference: the audio-input path has no absolute level
-                // reference, so deviation is scaled assuming the 19 kHz pilot
-                // equals this many kHz. Set it to the source's true pilot
-                // deviation (often not 9% / 6.75 kHz) to read accurately.
-                HStack(spacing: 4) {
-                    Text("Pilot Ref").foregroundStyle(.secondary)
-                    ScrollableNumericField(value: $vm.pilotRefKHz,
-                                           range: 4.0...9.0, step: 0.05, decimals: 2)
-                        .frame(width: 48)
-                    Text("kHz").foregroundStyle(.secondary)
-                    Stepper("Pilot Ref", value: $vm.pilotRefKHz, in: 4.0...9.0, step: 0.05)
-                        .labelsHidden()
+                // Audio deviation calibration. The audio-input path has no
+                // absolute level reference, so deviation must be anchored either
+                // to the pilot (assumed kHz) or to an absolute "0 dBFS = N kHz"
+                // scale set against a known input level (the robust mode -- it is
+                // independent of pilot recovery, as MPXTool-style monitors do).
+                Picker("Calibrate", selection: $vm.audioAbsoluteCal) {
+                    Text("Pilot").tag(false)
+                    Text("0 dBFS").tag(true)
                 }
-                .onChange(of: vm.pilotRefKHz) { _, _ in vm.applyPilotRefChange() }
-                .help("Pilot deviation the audio-input path scales from (it has no "
-                    + "absolute reference). Set it to the source's real pilot "
-                    + "deviation -- 6.75 kHz is 9%, but many stations differ. "
-                    + "Scroll to step. Applied live. The SDR path ignores this "
-                    + "(it is absolutely calibrated).")
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .labelsHidden()
+                .help("Deviation calibration for the audio input. Pilot: scale from "
+                    + "the 19 kHz pilot's assumed deviation. 0 dBFS: absolute scale "
+                    + "from a known input level (independent of pilot recovery). "
+                    + "The SDR path is always absolute and ignores this.")
+                .onChange(of: vm.audioAbsoluteCal) { _, _ in vm.applyCalibrationChange() }
+
+                if vm.audioAbsoluteCal {
+                    HStack(spacing: 4) {
+                        Text("0 dBFS =").foregroundStyle(.secondary)
+                        ScrollableNumericField(value: $vm.audioFullScaleKHz,
+                                               range: 50.0...300.0, step: 1.0, decimals: 0)
+                            .frame(width: 50)
+                        Text("kHz").foregroundStyle(.secondary)
+                        Stepper("Full scale", value: $vm.audioFullScaleKHz,
+                                in: 50.0...300.0, step: 1.0)
+                            .labelsHidden()
+                    }
+                    .onChange(of: vm.audioFullScaleKHz) { _, _ in vm.applyCalibrationChange() }
+                    .help("Absolute scale: the FM deviation when the composite hits "
+                        + "0 dBFS. Feed 75 kHz at -6 dBFS -> set 150. Deviation then "
+                        + "comes straight off the input level. Scroll to step. Live.")
+                } else {
+                    HStack(spacing: 4) {
+                        Text("Pilot Ref").foregroundStyle(.secondary)
+                        ScrollableNumericField(value: $vm.pilotRefKHz,
+                                               range: 4.0...9.0, step: 0.05, decimals: 2)
+                            .frame(width: 48)
+                        Text("kHz").foregroundStyle(.secondary)
+                        Stepper("Pilot Ref", value: $vm.pilotRefKHz, in: 4.0...9.0, step: 0.05)
+                            .labelsHidden()
+                    }
+                    .onChange(of: vm.pilotRefKHz) { _, _ in vm.applyPilotRefChange() }
+                    .help("Pilot deviation the audio-input path scales from. Set it to "
+                        + "the source's real pilot deviation -- 6.75 kHz is 9%, but "
+                        + "many stations differ. Scroll to step. Applied live.")
+                }
             } else {
                 if !vm.sdrDeviceName.isEmpty {
                     Label(vm.sdrDeviceName, systemImage: "dot.radiowaves.left.and.right")

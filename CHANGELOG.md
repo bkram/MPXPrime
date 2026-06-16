@@ -11,15 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-- **Meter: adjustable Pilot Reference on the audio-input path.** The audio-device
-  path has no absolute level reference, so it scales deviation by assuming the
-  19 kHz pilot equals a fixed 6.75 kHz (9%). Stations vary -- a pilot that is
-  actually 5.7 kHz made every kHz reading ~18% high. A live **Pilot Ref (kHz)**
-  field (audio mode only; scroll-adjustable) now lets the operator anchor the
-  scale to the source's true pilot deviation. The SDR path is unaffected (it is
-  absolutely calibrated and ignores it). Note this only corrects the overall
-  scale; if the source's composite output rolls off above the audio band, the
-  57 kHz RDS still reads low relative to the pilot -- use the SDR path for an
+- **Meter: audio-input deviation calibration (Pilot-referenced or absolute).** The
+  audio-device path has no inherent level reference, so a **Calibrate** switch on
+  the input bar now offers two modes (audio mode only; both live, scroll-
+  adjustable):
+  - **Pilot** -- the default. Scales deviation by assuming the 19 kHz pilot equals
+    the **Pilot Ref (kHz)** field. Stations vary (a pilot that is actually 5.7 kHz
+    read against 6.75 inflated every kHz value ~18%), so set it to the source's
+    real pilot. Fragile when pilot recovery is marginal.
+  - **0 dBFS = N kHz** -- an absolute scale anchored to a known input level,
+    independent of pilot recovery (the robust mode MPXTool-style monitors use).
+    Feed 75 kHz at -6 dBFS and set 150; deviation then comes straight off the
+    input amplitude, exactly like the SDR path.
+  The SDR path is always absolute (150) and ignores both. Note pilot-referencing
+  only corrects the overall scale; a source whose composite output rolls off
+  above the audio band still reads 57 kHz RDS low -- use the SDR path for an
   accurate RDS-injection measurement.
 - **Meter: SDRplay live retune fixed.** Changing frequency on an SDRplay RSP now
   takes effect cleanly instead of glitching / appearing to do nothing. Two

@@ -19,6 +19,11 @@
 extern "C" {
 #endif
 
+/// Number of RTL-SDR devices currently attached (0 if none / unsupported).
+/// Cheap USB enumeration; does not open a device. Used to decide whether to
+/// default the Meter to SDR input at launch.
+int mpxtuner_device_count(void);
+
 typedef struct MpxTuner MpxTuner;
 
 /// Delivers a block of mono MPX composite float samples at the configured

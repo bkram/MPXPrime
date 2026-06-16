@@ -618,6 +618,9 @@ chrome follows the system appearance.
 
 ### Input
 
+The **Source** defaults to **SDR** when an RTL-SDR dongle is detected at launch,
+otherwise to **Audio**.
+
 - **Audio device** (`Source -> Audio`): pick the input carrying the composite
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
@@ -654,8 +657,10 @@ chrome follows the system appearance.
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible).
 - **Scopes**: composite, decoded L, decoded R.
-- **Spectrum** (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot, Stereo
-  L-R, 57 kHz RDS, 67.65 kHz, 92 kHz SCA).
+- **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz
+  RDS, 67.65 kHz, 92 kHz SCA). A **60 / 100 kHz** span toggle in the header
+  picks the display range; 60 kHz (the default) focuses on the modulated bands,
+  100 kHz shows the full baseband including SCA.
 - **RDS**: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group histogram and
   live block-error rate (BER under ~5% is a clean link).
 

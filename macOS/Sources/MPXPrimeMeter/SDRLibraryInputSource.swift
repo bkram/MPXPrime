@@ -59,6 +59,11 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     /// device presence is reported by `start()`.
     static func isAvailable() -> Bool { true }
 
+    /// Number of RTL-SDR dongles currently attached (cheap USB enumeration,
+    /// does not open a device). Used to default the input source to SDR when a
+    /// dongle is present at launch.
+    static func deviceCount() -> Int { Int(mpxtuner_device_count()) }
+
     @discardableResult
     func start() throws -> (sampleRate: Double, channels: Int) {
         var cfg = MpxTunerConfig()

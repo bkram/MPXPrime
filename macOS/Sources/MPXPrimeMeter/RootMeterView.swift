@@ -368,13 +368,33 @@ struct RootMeterView: View {
     // MARK: - Spectrum
 
     private var spectrumSection: some View {
-        GroupBox("Spectrum (0–100 kHz)") {
+        GroupBox {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
+                // Clip the 0..spectrumMaxHz bins to the selected display span
+                // (the view maps the bins it is given linearly across maxHz).
+                let span = Double(vm.spectrumSpanKHz) * 1000.0
+                let full = max(1.0, t.spectrumMaxHz)
+                let frac = min(1.0, span / full)
+                let count = max(2, Int((Double(t.spectrumDB.count) * frac).rounded()))
                 MPXSpectrumView(
-                    dbBins: t.spectrumDB, maxHz: t.spectrumMaxHz,
+                    dbBins: Array(t.spectrumDB.prefix(count)), maxHz: min(span, full),
                     nyquistHz: t.spectrumNyquistHz, showBandLabels: true
                 )
                 .padding(6)
+            }
+        } label: {
+            HStack {
+                Text("Spectrum")
+                Spacer()
+                Picker("Span", selection: $vm.spectrumSpanKHz) {
+                    Text("60 kHz").tag(60)
+                    Text("100 kHz").tag(100)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Spectrum display span. 60 kHz focuses on the modulated bands "
+                    + "(L+R / pilot / L-R / RDS); 100 kHz shows the full baseband incl. SCA.")
             }
         }
     }

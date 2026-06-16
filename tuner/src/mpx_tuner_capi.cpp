@@ -9,6 +9,10 @@
 #include "fm_demod.h"
 #include "rtl_sdr_device.h"
 
+#if defined(FM_TUNER_HAS_RTLSDR)
+#include <rtl-sdr.h>
+#endif
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -135,6 +139,14 @@ struct MpxTuner {
 };
 
 extern "C" {
+
+int mpxtuner_device_count(void) {
+#if defined(FM_TUNER_HAS_RTLSDR)
+  return static_cast<int>(rtlsdr_get_device_count());
+#else
+  return 0;
+#endif
+}
 
 MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
                         void *ctx, char *err, size_t err_len) {

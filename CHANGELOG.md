@@ -11,6 +11,10 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: spectrum span toggle + SDR-by-default.** The spectrum header has a
+  **60 / 100 kHz** span toggle (default 60, focusing on the modulated bands;
+  100 kHz shows the full baseband incl. SCA). The input **Source** now defaults
+  to **SDR** when an RTL-SDR dongle is detected at launch (Audio otherwise).
 - **Meter HIG pass.** The Meter toolbar is decluttered to the few frequent
   commands (Start/Stop, Source, Monitor); the per-source input settings (audio
   device + channel, or SDR frequency / AGC / gain) moved into a translucent

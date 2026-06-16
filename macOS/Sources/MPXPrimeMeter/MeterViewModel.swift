@@ -57,6 +57,9 @@ final class MeterViewModel: ObservableObject {
     @Published var pilotRefKHz: Double = 6.75
     @Published var running = false
     @Published var statusText = "Stopped"
+    /// Spectrum display span in kHz (60 = focus on the modulated bands, 100 =
+    /// full incl. SCA). Display-only; changes only on toggle, never per tick.
+    @Published var spectrumSpanKHz: Int = 60
 
     // RDS readout (changes per second; updated only when it actually changes).
     @Published var rdsText = "--"
@@ -78,6 +81,10 @@ final class MeterViewModel: ObservableObject {
 
     init() {
         refreshDevices()
+        // Default to SDR when a dongle is detected at launch; audio otherwise.
+        if SDRLibraryInputSource.deviceCount() > 0 {
+            inputKind = .sdr
+        }
     }
 
     func refreshDevices() {

@@ -673,6 +673,36 @@ Deviation is referenced to a 75 kHz total; on a weak/noisy signal the
 deviation/MPX-power path is band-limited to 60 kHz so the FM demod noise
 triangle above the modulated bands doesn't inflate the readings.
 
+### Calibration and measurement validity
+
+**SDR needs no level calibration.** On the SDR path the deviation scale is a
+fixed property of the FM discriminator (kHz per sample is set by math, not by
+the tuner gain, AGC, or RF level), so amplitude maps directly to kHz with no
+calibration step. Tuning to an unmodulated carrier is unnecessary -- and FM
+broadcast has none anyway (even dead air carries the 19 kHz pilot). The
+audio-device path, by contrast, is pilot-referenced (`pilot_ref_khz`, default
+6.75) because the analog input gain is unknown. The only frequency trim is
+**PPM** for precise tuning; the sample-clock error scales readings by far less
+than 0.01% at any sane ppm, so it does not affect deviation.
+
+**MPX power is only valid on a strong, clean signal.** MPX power follows
+ITU-R BS.412 (the limit -- average power over 60 s must not exceed that of a
+sinusoidal tone at +/-19 kHz peak deviation) measured under the ITU-R SM.1268
+conditions: roughly >= 73 dBf signal, >= 50 dB signal-to-noise, and no
+multipath (a directional antenna is effectively required). On a weak, noisy, or
+multipath RTL-SDR reception both the peak deviation and MPX power **read high**
+-- that is a reception artifact, not over-modulation and not a calibration
+error. Rule of thumb: if the peak deviation exceeds about +/-80 kHz and the
+station is not genuinely over-deviating, the signal is too poor for a valid
+BS.412 measurement. For reference, on a clean signal:
+
+| MPX power | Peak deviation of an equivalent sine |
+|-----------|--------------------------------------|
+| 0 dBr     | +/-19 kHz (the reference)            |
+| 3 dBr     | +/-27 kHz                            |
+| 6 dBr     | +/-38 kHz                            |
+| 10 dBr    | +/-60 kHz                            |
+
 
 ## Appendix: RDS PI and ECC Country Table
 

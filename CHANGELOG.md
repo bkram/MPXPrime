@@ -11,6 +11,10 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- Docs: clarified SDR calibration / MPX-power validity in the manual + ARCHITECTURE
+  -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
+  MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
+  weak/noisy reception inflates both peak deviation and MPX power.
 - **Meter readability.** The RDS panel adds PTY (code + name), PTYN, and ECC
   rows. The MPX Power / Peak +- readouts turn amber near and red at/over the
   limit (0 dBr, 75 kHz). The vectorscope is enlarged on the second row.

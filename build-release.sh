@@ -134,8 +134,15 @@ mkdir -p "$METER_APP_DIR/Contents/Resources"
 cp "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
     "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
 chmod u+w "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
-if [ -f "$ICON_FILE" ]; then
+# The Meter has its own icon (analyzer VU gauge) so it is distinct from
+# MPX Prime Studio in the Dock; fall back to the shared icon if it is missing.
+METER_ICON_FILE="macOS/Resources/MPXPrimeMeter.icns"
+if [ -f "$METER_ICON_FILE" ]; then
+    cp "$METER_ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
+    METER_ICON_NAME="MPXPrimeMeter"
+elif [ -f "$ICON_FILE" ]; then
     cp "$ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
+    METER_ICON_NAME="MPXPrime"
 fi
 cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -157,7 +164,7 @@ cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
-    <string>MPXPrime.icns</string>
+    <string>${METER_ICON_NAME}</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSHighResolutionCapable</key>

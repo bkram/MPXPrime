@@ -15,6 +15,12 @@ combination test suite. Newest first.
   -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
   MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
   weak/noisy reception inflates both peak deviation and MPX power.
+- **Meter is a proper macOS app.** A real **About MPX Prime Meter** panel
+  (description, clickable GitHub / User Manual / License links, version, and the
+  canonical not-certified disclaimer), a full app menu (About / Services / Hide /
+  Hide Others / Show All / Quit), a **Help** menu linking the User Manual, and a
+  **distinct app icon** (an analyzer VU-gauge + MPX spectrum bar in a teal
+  palette) so it is no longer confused with MPX Prime Studio in the Dock.
 - **Meter: SDR signal-level (RSSI).** The Modulation group shows a **SIGNAL**
   readout on the SDR path -- a relative received-level (dBFS) indicator from the
   filtered IQ channel power (new `mpxtuner_signal_dbfs` C-ABI query), colored

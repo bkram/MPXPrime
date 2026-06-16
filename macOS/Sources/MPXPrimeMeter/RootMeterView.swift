@@ -149,15 +149,22 @@ struct RootMeterView: View {
 
                 Picker("IF BW", selection: $vm.sdrBandwidthKHz) {
                     Text("Auto").tag(0)
-                    ForEach([311, 254, 200, 168, 133, 114, 84, 56], id: \.self) { bw in
+                    // SDRplay exposes its analog IF filter widths; RTL uses the
+                    // demod channel-FIR steps.
+                    ForEach(vm.sdrIsSDRplay ? [1536, 600, 300, 200]
+                                            : [311, 254, 200, 168, 133, 114, 84, 56], id: \.self) { bw in
                         Text("\(bw) kHz").tag(bw)
                     }
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
-                .help("IF channel bandwidth. Wide passes the full composite (RDS/SCA) "
-                    + "with more noise; narrow rejects adjacent channels but rolls off "
-                    + "the composite top. Auto = widest. Applied live.")
+                .help(vm.sdrIsSDRplay
+                    ? "SDRplay analog IF bandwidth. Narrower rejects adjacent-station "
+                        + "interference; 300 kHz still passes the full composite, 200 kHz "
+                        + "starts to roll off the top (SCA / high RDS). Auto = 600 kHz."
+                    : "IF channel bandwidth. Wide passes the full composite (RDS/SCA) with "
+                        + "more noise; narrow rejects adjacent channels but rolls off the "
+                        + "composite top. Auto = widest.")
                 .onChange(of: vm.sdrBandwidthKHz) { _, _ in vm.applyBandwidthChange() }
 
                 if vm.sdrIsSDRplay && vm.sdrAntennaCount > 1 {

@@ -646,10 +646,12 @@ otherwise to **Audio**.
 
   All SDR controls apply **live** -- no restart, no audio gap:
   - **Frequency** -- retunes in place (also clears the prior station's meters).
-  - **IF BW** -- the IF channel bandwidth (Auto, or 56-311 kHz; mapped to the
-    RSP's bandwidth steps on SDRplay). Wide passes the full composite (pilot /
-    RDS / SCA) but lets in more noise; narrow rejects neighbours but rolls off the
-    composite top end. Start wide; narrow only to fight a strong adjacent station.
+  - **IF BW** -- the IF channel bandwidth. RTL shows the demod channel-FIR steps
+    (Auto, or 56-311 kHz); **SDRplay shows the RSP's analog IF filter widths**
+    (Auto = 600, or 1536 / 600 / 300 / 200 kHz). Narrower **rejects adjacent-
+    station interference** but rolls off the composite top; 300 kHz still passes
+    the full composite, 200 kHz starts to lose the top (SCA / high RDS). Start
+    wide; narrow only to fight a strong neighbour.
   - **Auto Gain** -- automatic gain (RTL: tuner gain mode; SDRplay: AGC on the IF
     gain). Off reveals a manual gain field -- RTL tuner gain in **dB**, or the
     SDRplay **IF** gain.

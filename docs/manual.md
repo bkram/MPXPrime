@@ -676,6 +676,19 @@ Deviation is referenced to a 75 kHz total; on a weak/noisy signal the
 deviation/MPX-power path is band-limited to 60 kHz so the FM demod noise
 triangle above the modulated bands doesn't inflate the readings.
 
+### Recording
+
+The input bar (right side) has a format toggle and a **Record** button. Choose:
+
+- **Stereo** -- the decoded L/R audio (a clean, high-quality stereo capture of
+  what the decoder produced).
+- **MPX** -- the raw MPX composite (mono): pilot + L-R + RDS, the same signal
+  the analyzer sees. Useful to re-analyze a capture later or feed another tool.
+
+Press **Record** while capturing to choose a file and start; press it again to
+stop and finalize. Files are 24-bit PCM WAV at the capture sample rate (192 kHz
+for SDR). Recording is only available while capturing.
+
 ### Calibration and measurement validity
 
 **SDR needs no level calibration.** On the SDR path the deviation scale is a

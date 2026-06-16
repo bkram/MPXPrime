@@ -15,6 +15,11 @@ combination test suite. Newest first.
   -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
   MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
   weak/noisy reception inflates both peak deviation and MPX power.
+- **Meter: WAV recording (stereo or MPX).** A format toggle + Record button in
+  the input bar write a 24-bit PCM WAV at the capture rate: **Stereo** (decoded
+  L/R audio) or **MPX** (the raw mono composite). Start/stop while capturing via
+  a Save panel; `MeterRecorder` gained a mono path and the engine dynamic
+  start/stop (lock-guarded against the analysis thread).
 - **Meter: click a decoded scope for its audio spectrum.** Clicking the
   Decoded L or Decoded R waveform toggles it to an audio spectrum (0-20 kHz)
   drawn with the same gradient FFT graphic as the main spectrum (per-channel

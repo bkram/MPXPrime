@@ -163,6 +163,26 @@ struct RootMeterView: View {
                     .onChange(of: vm.sdrRTLAGC) { _, _ in vm.applyRTLAGCChange() }
             }
             Spacer()
+
+            // Recording: pick the format, then Record to a WAV file.
+            Picker("Record format", selection: $vm.recordMPX) {
+                Text("Stereo").tag(false)
+                Text("MPX").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .labelsHidden()
+            .disabled(vm.isRecording)
+            .help("What Record writes: decoded stereo audio, or the raw MPX composite (mono).")
+            Button {
+                vm.toggleRecording()
+            } label: {
+                Label(vm.isRecording ? "Stop" : "Record",
+                      systemImage: vm.isRecording ? "stop.circle.fill" : "record.circle")
+            }
+            .tint(vm.isRecording ? .red : nil)
+            .disabled(!vm.running)
+            .help("Record the selected format to a WAV file (24-bit, capture rate).")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)

@@ -1,7 +1,9 @@
+import AppKit
 import Combine
 import CoreAudio
 import Foundation
 import MPXPrimeCore
+import UniformTypeIdentifiers
 
 // Drives the Meter window. Owns the audio engine + device selection, polls the
 // engine snapshot at 25 Hz, and routes values to the right observer:
@@ -57,6 +59,10 @@ final class MeterViewModel: ObservableObject {
     @Published var pilotRefKHz: Double = 6.75
     @Published var running = false
     @Published var statusText = "Stopped"
+    /// WAV recording: format (false = decoded stereo, true = MPX composite) and
+    /// live state.
+    @Published var recordMPX = false
+    @Published var isRecording = false
     /// Spectrum display span in kHz (60 = focus on the modulated bands, 100 =
     /// full incl. SCA). Display-only; changes only on toggle, never per tick.
     @Published var spectrumSpanKHz: Int = 60
@@ -190,9 +196,10 @@ final class MeterViewModel: ObservableObject {
         guard running else { return }
         timer?.invalidate()
         timer = nil
-        engine?.stop()   // also stops the input source (closes the tuner)
+        engine?.stop()   // also stops the input source (closes the tuner) + recorder
         engine = nil
         sdrSource = nil
+        isRecording = false
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
@@ -343,6 +350,38 @@ final class MeterViewModel: ObservableObject {
 
     /// Reset the deviation peak-hold + best-separation readouts.
     func resetPeaks() { engine?.resetPeaks() }
+
+    /// Start (with a Save panel) or stop recording. `recordMPX` selects the
+    /// format: decoded stereo audio, or the raw MPX composite (mono).
+    func toggleRecording() {
+        guard running, let eng = engine else { return }
+        if isRecording {
+            eng.stopRecording()
+            isRecording = false
+            statusText = "Recording saved"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.wav]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = defaultRecordName()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try eng.startRecording(url: url, mpx: recordMPX)
+            isRecording = true
+            statusText = recordMPX ? "Recording MPX composite..." : "Recording stereo audio..."
+        } catch {
+            statusText = "Record failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func defaultRecordName() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HHmmss"
+        let kind = recordMPX ? "MPX" : "Stereo"
+        let freq = inputKind == .sdr ? String(format: "%.1fMHz ", frequencyMHz) : ""
+        return "MPX Prime \(freq)\(kind) \(f.string(from: Date())).wav"
+    }
 
     private func pushRDSIfChanged(_ s: MeterSnapshot) {
         let r = s.rds

@@ -713,11 +713,13 @@ The input bar (right side) has a format toggle and a **Record** button. Choose:
   the analyzer sees. Useful to re-analyze a capture later or feed another tool.
 
 Press **Record** while capturing to choose a file and start; press it again to
-stop and finalize. Files are 24-bit PCM WAV: **Stereo at 48 kHz**, **MPX at the
-capture rate** (192 kHz for SDR -- the composite needs the bandwidth for the
-pilot / subcarriers / RDS). They are written as canonical RIFF/WAV (no padding
-chunks) so any audio player or FFT/analysis tool reads them. Recording is only
-available while capturing.
+stop and finalize. Both formats are 24-bit PCM WAV at the **capture rate**
+(192 kHz for SDR -- the composite needs the bandwidth for the pilot /
+subcarriers / RDS, and the stereo file stays at the native rate so recording adds
+no real-time resampling that could disturb capture; resample the file afterwards
+with any tool if you want a 48 kHz copy). They are written as canonical RIFF/WAV
+(no padding chunks) so any audio player or FFT/analysis tool reads them.
+Recording is only available while capturing.
 
 ### Calibration and measurement validity
 

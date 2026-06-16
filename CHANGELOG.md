@@ -11,17 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-- **Meter: fix periodic clicks in stereo recordings.** Recording did the 48 kHz
-  sample-rate conversion (and, before, the disk write) on the analysis thread --
-  the same thread that drains the real-time-fed input ring. The `.max`-quality
-  SRC plus its per-block buffer allocations intermittently stalled that thread
-  long enough for the ring to overflow and overwrite unread samples, leaving a
-  one-sample gap heard as a click (~0.5/s, irregular, in the mono sum, on both
-  SDR and audio-device input). The raw 192 kHz/MPX path, which does no SRC, was
-  unaffected -- which is what isolated the cause. The recorder now copies each
-  decoded block on the analysis thread and performs the SRC, 24-bit packing, and
-  disk write on a private serial queue, so capture is never stalled. The input
-  ring's overflow/underflow counts are logged on stop to confirm (should be 0).
+- **Meter: fix periodic clicks in stereo recordings.** Recording resampled the
+  stereo file to 48 kHz on the analysis thread -- the same thread that drains the
+  real-time-fed input ring. The `.max`-quality SRC plus its per-block buffer
+  allocations intermittently stalled that thread long enough for the ring to
+  overflow and overwrite unread samples, leaving a one-sample gap heard as a
+  click (~0.5/s, irregular, in the mono sum, on both SDR and audio-device input).
+  The raw 192 kHz/MPX path, which does no SRC, was unaffected -- which isolated
+  the cause. Fix: **the stereo file is now written at the capture rate** (e.g.
+  192 kHz), with no real-time resampling at all; resample afterwards with any
+  tool for a 48 kHz copy. Disk writes also run on a private serial queue, and the
+  input ring's overflow/underflow counts are logged on stop. The recorder moved
+  into a testable `MPXPrimeRecording` library target with a deterministic
+  round-trip test (`MeterRecorderTests`) asserting a continuous input comes back
+  sample-accurate and complete (a click would be a value or frame-count
+  mismatch).
 - **Meter: smoother spectrum.** The composite (and decoded L/R) spectrum was
   recomputed only every 4th analysis block (~6/s), so the centerpiece graph
   looked sluggish next to the ~23/s scopes and meters. It now recomputes every

@@ -130,12 +130,20 @@ let package = Package(
                 .linkedLibrary("liquid")
             ]
         ),
+        // Canonical 24-bit WAV writer + the Meter's recorder, isolated in a
+        // pure-Foundation library so the recording path is unit-testable (the
+        // MPXPrimeMeter executable target itself can't be imported by tests).
+        .target(
+            name: "MPXPrimeRecording",
+            path: "Sources/MPXPrimeRecording"
+        ),
         // MPX Prime Meter: companion MPX composite analyzer.
         .executableTarget(
             name: "MPXPrimeMeter",
             dependencies: [
                 "MPXPrimeCore",
                 "MPXPrimeUI",
+                "MPXPrimeRecording",
                 "CMPXTuner",
                 .product(name: "Atomics", package: "swift-atomics")
             ],
@@ -153,7 +161,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MPXPrimeTests",
-            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore", "MPXPrimeUI"],
+            dependencies: ["MPXPrime", "MPXPrimeNative", "MPXPrimeCore", "MPXPrimeUI", "MPXPrimeRecording"],
             path: "Tests/MPXPrimeTests"
         )
     ],

@@ -3,6 +3,7 @@ import CoreAudio
 import Darwin
 import Foundation
 import MPXPrimeCore
+import MPXPrimeRecording
 
 /// Which input channel carries the composite. A composite is a single real
 /// signal patched to one channel of the interface (varies by hardware -- e.g.

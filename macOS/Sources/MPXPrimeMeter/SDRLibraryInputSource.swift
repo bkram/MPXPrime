@@ -74,6 +74,17 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         return Int(mpxtuner_antenna_count(handle))
     }
 
+    /// Human device name, e.g. "SDRplay RSPdx" or "RTL-SDR R820T".
+    var deviceName: String {
+        guard let handle else { return "SDR" }
+        var buf = [CChar](repeating: 0, count: 64)
+        buf.withUnsafeMutableBufferPointer { mpxtuner_device_name(handle, $0.baseAddress, $0.count) }
+        return buf.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return "SDR" }
+            return String(cString: base)
+        }
+    }
+
     /// The library is always linked into the Meter, so SDR is always offered;
     /// device presence is reported by `start()`.
     static func isAvailable() -> Bool { true }

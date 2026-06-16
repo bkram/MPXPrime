@@ -249,6 +249,16 @@ int mpxtuner_antenna_count(const MpxTuner *t) {
   return (t->backend == BackendSDRplay) ? t->sdrplay.antennaCount() : 1;
 }
 
+void mpxtuner_device_name(const MpxTuner *t, char *buf, size_t len) {
+  if (!buf || len == 0) return;
+  if (!t) { std::strncpy(buf, "SDR", len - 1); buf[len - 1] = '\0'; return; }
+  std::string name = (t->backend == BackendSDRplay)
+      ? std::string("SDRplay ") + t->sdrplay.modelName()
+      : std::string("RTL-SDR ") + t->rtl.tunerName();
+  std::strncpy(buf, name.c_str(), len - 1);
+  buf[len - 1] = '\0';
+}
+
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz) {
   if (t) t->enqueue({CmdFreq, static_cast<double>(khz)});
 }

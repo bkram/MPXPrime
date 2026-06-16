@@ -68,6 +68,8 @@ double mpxtuner_signal_dbfs(const MpxTuner *t);
 int mpxtuner_backend(const MpxTuner *t);
 /// Number of selectable antenna inputs (1 = none / not applicable).
 int mpxtuner_antenna_count(const MpxTuner *t);
+/// Human device name, e.g. "SDRplay RSPdx" or "RTL-SDR R820T". Writes into buf.
+void mpxtuner_device_name(const MpxTuner *t, char *buf, size_t len);
 
 // Live controls. Thread-safe: each enqueues a command applied on the capture
 // thread between IQ blocks, so it never interrupts the MPX stream.

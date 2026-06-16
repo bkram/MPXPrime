@@ -51,6 +51,8 @@ final class MeterViewModel: ObservableObject {
     @Published var sdrAntenna: Int = 0
     @Published var sdrIsSDRplay: Bool = false
     @Published var sdrAntennaCount: Int = 1
+    /// Active SDR device label (e.g. "SDRplay RSPdx" / "RTL-SDR R820T").
+    @Published var sdrDeviceName: String = ""
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputID: AudioDeviceID?
@@ -189,6 +191,7 @@ final class MeterViewModel: ObservableObject {
             sdrSource = source
             sdrIsSDRplay = source.isSDRplay
             sdrAntennaCount = source.antennaCount
+            sdrDeviceName = source.deviceName
             running = true
             let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)

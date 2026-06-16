@@ -43,6 +43,8 @@ public:
   int antennaCount() const;
   /// hardware model id (SDRPLAY_*_ID); 0 until connected.
   int hwVer() const { return m_hwVer; }
+  /// Human model name ("RSPdx", "RSP1A", ...); "RSP" if unknown.
+  const char *modelName() const;
 
   /// Effective IQ sample rate delivered to the demod (after RSP decimation).
   int inputRate() const { return m_inputRate; }

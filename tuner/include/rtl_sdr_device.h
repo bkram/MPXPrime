@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -31,12 +32,16 @@ public:
   /// True once the async USB read thread has failed (device unplugged / lost).
   bool failed() const { return m_asyncFailed.load(std::memory_order_relaxed); }
 
+  /// Tuner chip name (e.g. "R820T", "E4000"); valid after connect().
+  const char *tunerName() const { return m_tunerName.c_str(); }
+
 private:
   static void asyncCallback(unsigned char *buf, uint32_t len, void *ctx);
   void asyncReadLoop();
   size_t availableBytesLocked() const;
 
   uint32_t m_deviceIndex;
+  std::string m_tunerName = "RTL-SDR";
   std::atomic<bool> m_connected;
   void *m_deviceHandle;
   std::vector<int> m_supportedGains;

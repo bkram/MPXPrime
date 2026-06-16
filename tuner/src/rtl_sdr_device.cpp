@@ -61,8 +61,8 @@ bool RTLSDRDevice::connect() {
               << "\n";
     return false;
   }
-  std::cout << "[SDR] found " << tunerTypeName(rtlsdr_get_tuner_type(dev))
-            << " tuner\n";
+  m_tunerName = tunerTypeName(rtlsdr_get_tuner_type(dev));
+  std::cout << "[SDR] found " << m_tunerName << " tuner\n";
   if (rtlsdr_reset_buffer(dev) != 0) {
     std::cerr << "[SDR] warning: failed to reset RTL-SDR buffer\n";
   }

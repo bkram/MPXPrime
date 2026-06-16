@@ -85,9 +85,17 @@ struct RootMeterView: View {
                 .help("Which input channel carries the composite (Mix averages both).")
                 .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
             } else {
-                Label("Frequency", systemImage: "dot.radiowaves.left.and.right")
-                    .labelStyle(.titleAndIcon)
-                    .foregroundStyle(.secondary)
+                if !vm.sdrDeviceName.isEmpty {
+                    Label(vm.sdrDeviceName, systemImage: "dot.radiowaves.left.and.right")
+                        .labelStyle(.titleAndIcon)
+                        .font(.callout.weight(.semibold))
+                        .help("Active SDR device (auto-selected).")
+                    Divider().frame(height: 16)
+                } else {
+                    Label("Frequency", systemImage: "dot.radiowaves.left.and.right")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                }
                 HStack(spacing: 4) {
                     ScrollableNumericField(value: $vm.frequencyMHz,
                                            range: 64.0...108.0, step: 0.1, decimals: 1)
@@ -111,12 +119,12 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: $vm.sdrGainDB,
                                                range: 0.0...50.0, step: 1.0, decimals: 1)
                             .frame(width: 52)
-                        Text("dB").foregroundStyle(.secondary)
+                        Text(vm.sdrIsSDRplay ? "gain" : "dB").foregroundStyle(.secondary)
                         Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
                             .labelsHidden()
                     }
                     .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
-                    .help("Manual RTL-SDR tuner gain in dB. Scroll over the field to step. "
+                    .help("Manual tuner gain. Scroll over the field to step. "
                         + "Applied live.")
                 }
 

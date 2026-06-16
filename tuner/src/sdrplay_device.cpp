@@ -18,6 +18,7 @@ struct SDRplayApi {
   void *lib = nullptr;
   sdrplay_api_Open_t Open = nullptr;
   sdrplay_api_Close_t Close = nullptr;
+  sdrplay_api_ApiVersion_t ApiVersion = nullptr;
   sdrplay_api_LockDeviceApi_t Lock = nullptr;
   sdrplay_api_UnlockDeviceApi_t Unlock = nullptr;
   sdrplay_api_GetDevices_t GetDevices = nullptr;
@@ -45,6 +46,7 @@ SDRplayApi &api() {
       auto sym = [&](const char *n) { return dlsym(a.lib, n); };
       a.Open = reinterpret_cast<sdrplay_api_Open_t>(sym("sdrplay_api_Open"));
       a.Close = reinterpret_cast<sdrplay_api_Close_t>(sym("sdrplay_api_Close"));
+      a.ApiVersion = reinterpret_cast<sdrplay_api_ApiVersion_t>(sym("sdrplay_api_ApiVersion"));
       a.Lock = reinterpret_cast<sdrplay_api_LockDeviceApi_t>(sym("sdrplay_api_LockDeviceApi"));
       a.Unlock = reinterpret_cast<sdrplay_api_UnlockDeviceApi_t>(sym("sdrplay_api_UnlockDeviceApi"));
       a.GetDevices = reinterpret_cast<sdrplay_api_GetDevices_t>(sym("sdrplay_api_GetDevices"));
@@ -161,6 +163,13 @@ bool SDRplayDevice::connect(uint32_t freqHz) {
     fprintf(stderr, "[SDRplay] Init failed: %d\n", static_cast<int>(ierr));
     a.ReleaseDevice(&g_device); a.Close(); return false;
   }
+  float apiVer = 0.0f;
+  if (a.ApiVersion) a.ApiVersion(&apiVer);
+  fprintf(stderr,
+          "[SDRplay] %s (SerNo %s) API %.2f | 2 MHz/%d = %d Hz | antennas %d | "
+          "LNAstate %d + AGC | tune %.3f MHz\n",
+          modelName(), g_device.SerNo, apiVer, decim, m_inputRate, antennaCount(),
+          rx->tunerParams.gain.LNAstate, freqHz / 1e6);
   m_handle = g_device.dev;
   m_connected.store(true, std::memory_order_relaxed);
   m_failed.store(false, std::memory_order_relaxed);
@@ -215,6 +224,19 @@ bool SDRplayDevice::setBandwidthHz(int hz) {
   g_params->rxChannelA->tunerParams.bwType = bwForHz(hz);
   return api().Update(m_handle, g_device.tuner, sdrplay_api_Update_Tuner_BwType,
                       sdrplay_api_Update_Ext1_None) == sdrplay_api_Success;
+}
+
+const char *SDRplayDevice::modelName() const {
+  switch (m_hwVer) {
+    case SDRPLAY_RSP1_ID: return "RSP1";
+    case SDRPLAY_RSP1A_ID: return "RSP1A";
+    case SDRPLAY_RSP1B_ID: return "RSP1B";
+    case SDRPLAY_RSP2_ID: return "RSP2";
+    case SDRPLAY_RSPduo_ID: return "RSPduo";
+    case SDRPLAY_RSPdx_ID: return "RSPdx";
+    case SDRPLAY_RSPdxR2_ID: return "RSPdx R2";
+    default: return "RSP";
+  }
 }
 
 int SDRplayDevice::antennaCount() const {
@@ -297,6 +319,7 @@ bool SDRplayDevice::setBandwidthHz(int) { return false; }
 bool SDRplayDevice::setAntenna(int) { return false; }
 bool SDRplayDevice::setBiasTee(bool) { return false; }
 int SDRplayDevice::antennaCount() const { return 1; }
+const char *SDRplayDevice::modelName() const { return "RSP"; }
 void SDRplayDevice::ingest(const short *, const short *, unsigned int) {}
 size_t SDRplayDevice::readIQ(std::complex<float> *, size_t) { return 0; }
 

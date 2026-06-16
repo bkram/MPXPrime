@@ -239,6 +239,14 @@ const char *SDRplayDevice::modelName() const {
   }
 }
 
+bool SDRplayDevice::setLnaState(int state) {
+  if (!m_connected.load() || !g_params || !m_handle) return false;
+  g_params->rxChannelA->tunerParams.gain.LNAstate =
+      static_cast<unsigned char>(std::max(0, std::min(27, state)));
+  return api().Update(m_handle, g_device.tuner, sdrplay_api_Update_Tuner_Gr,
+                      sdrplay_api_Update_Ext1_None) == sdrplay_api_Success;
+}
+
 int SDRplayDevice::antennaCount() const {
   switch (m_hwVer) {
     case SDRPLAY_RSPdx_ID:
@@ -318,6 +326,7 @@ bool SDRplayDevice::setGainAuto(bool) { return false; }
 bool SDRplayDevice::setBandwidthHz(int) { return false; }
 bool SDRplayDevice::setAntenna(int) { return false; }
 bool SDRplayDevice::setBiasTee(bool) { return false; }
+bool SDRplayDevice::setLnaState(int) { return false; }
 int SDRplayDevice::antennaCount() const { return 1; }
 const char *SDRplayDevice::modelName() const { return "RSP"; }
 void SDRplayDevice::ingest(const short *, const short *, unsigned int) {}

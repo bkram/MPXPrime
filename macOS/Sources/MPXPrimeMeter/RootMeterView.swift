@@ -112,20 +112,35 @@ struct RootMeterView: View {
 
                 Toggle("Auto Gain", isOn: $vm.sdrAutoGain)
                     .toggleStyle(.switch)
-                    .help("Tuner automatic gain. Off = manual gain (dB field). Applied live.")
+                    .help(vm.sdrIsSDRplay
+                        ? "SDRplay AGC on the IF gain. The LNA is set separately. Applied live."
+                        : "Tuner automatic gain. Off = manual gain (dB field). Applied live.")
                     .onChange(of: vm.sdrAutoGain) { _, _ in vm.applyGainChange() }
-                if !vm.sdrAutoGain {
+                // RTL manual tuner gain (dB) -- SDRplay uses the LNA control below.
+                if !vm.sdrAutoGain && !vm.sdrIsSDRplay {
                     HStack(spacing: 4) {
                         ScrollableNumericField(value: $vm.sdrGainDB,
                                                range: 0.0...50.0, step: 1.0, decimals: 1)
                             .frame(width: 52)
-                        Text(vm.sdrIsSDRplay ? "gain" : "dB").foregroundStyle(.secondary)
+                        Text("dB").foregroundStyle(.secondary)
                         Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
                             .labelsHidden()
                     }
                     .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
-                    .help("Manual tuner gain. Scroll over the field to step. "
+                    .help("Manual RTL-SDR tuner gain in dB. Scroll over the field to step. "
                         + "Applied live.")
+                }
+                // SDRplay front-end LNA step (independent of AGC; raise to fix overload).
+                if vm.sdrIsSDRplay {
+                    HStack(spacing: 4) {
+                        Text("LNA").foregroundStyle(.secondary)
+                        Text("\(vm.sdrLnaState)").font(.callout.monospacedDigit())
+                        Stepper("LNA", value: $vm.sdrLnaState, in: 0...27, step: 1)
+                            .labelsHidden()
+                            .onChange(of: vm.sdrLnaState) { _, _ in vm.applyLnaChange() }
+                    }
+                    .help("LNA state: front-end gain-reduction step (0 = most gain). "
+                        + "Raise it to relieve overload on strong signals. Applied live.")
                 }
 
                 Divider().frame(height: 16)

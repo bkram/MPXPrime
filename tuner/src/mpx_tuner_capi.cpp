@@ -33,7 +33,7 @@ constexpr int kRtlInputRate = 256000;  // RTL-SDR IQ + demod rate
 
 enum Backend { BackendRTL, BackendSDRplay };
 
-enum CmdType { CmdFreq, CmdGain, CmdGainAuto, CmdBandwidth, CmdBias, CmdPPM, CmdRtlAgc, CmdAntenna };
+enum CmdType { CmdFreq, CmdGain, CmdGainAuto, CmdBandwidth, CmdBias, CmdPPM, CmdRtlAgc, CmdAntenna, CmdLna };
 struct Cmd {
   CmdType type;
   double value;
@@ -102,6 +102,7 @@ struct MpxTuner {
       case CmdPPM:     if (!sp) rtl.setFrequencyCorrection(static_cast<int>(std::lround(c.value))); break;
       case CmdRtlAgc:  if (!sp) rtl.setAGC(c.value != 0.0); break;             // RTL only
       case CmdAntenna: if (sp) sdrplay.setAntenna(static_cast<int>(c.value)); break;
+      case CmdLna:     if (sp) sdrplay.setLnaState(static_cast<int>(c.value)); break;
     }
   }
 
@@ -212,7 +213,7 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
     t->rtl.setTunerBandwidth(0);
   }
   if (useSDRplay) {
-    if (!cfg->auto_gain) t->sdrplay.setGain(cfg->gain_db);
+    t->sdrplay.setLnaState(cfg->lna);   // front-end gain (overload control)
     if (cfg->antenna > 0) t->sdrplay.setAntenna(cfg->antenna);
     if (cfg->bias_tee) t->sdrplay.setBiasTee(true);
   }
@@ -282,6 +283,9 @@ void mpxtuner_set_rtl_agc(MpxTuner *t, int on) {
 }
 void mpxtuner_set_antenna(MpxTuner *t, int index) {
   if (t) t->enqueue({CmdAntenna, static_cast<double>(index)});
+}
+void mpxtuner_set_lna(MpxTuner *t, int state) {
+  if (t) t->enqueue({CmdLna, static_cast<double>(state)});
 }
 
 }  // extern "C"

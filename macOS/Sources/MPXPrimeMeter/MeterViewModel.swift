@@ -49,6 +49,8 @@ final class MeterViewModel: ObservableObject {
     /// SDRplay antenna input index, and the active-backend facts read after
     /// start (drive which SDR controls the UI shows).
     @Published var sdrAntenna: Int = 0
+    /// SDRplay LNA state (front-end gain reduction step; higher = less gain).
+    @Published var sdrLnaState: Int = 4
     @Published var sdrIsSDRplay: Bool = false
     @Published var sdrAntennaCount: Int = 1
     /// Active SDR device label (e.g. "SDRplay RSPdx" / "RTL-SDR R820T").
@@ -174,7 +176,7 @@ final class MeterViewModel: ObservableObject {
             frequencyKHz: Int((frequencyMHz * 1000).rounded()),
             autoGain: sdrAutoGain, gainDB: sdrGainDB,
             bandwidthKHz: sdrBandwidthKHz, biasTee: sdrBiasTee,
-            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna)
+            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna, lna: sdrLnaState)
         let source = SDRLibraryInputSource(config: cfg)
         deviceID = nil
         priorDeviceRate = nil
@@ -270,6 +272,12 @@ final class MeterViewModel: ObservableObject {
     func applyAntennaChange() {
         guard running, inputKind == .sdr, let source = sdrSource else { return }
         source.setAntenna(sdrAntenna)
+    }
+
+    /// SDRplay LNA state changed. Live, no restart.
+    func applyLnaChange() {
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        source.setLnaState(sdrLnaState)
     }
 
     // MARK: - Polling

@@ -36,6 +36,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         var ppm: Int = 0
         var rtlAGC: Bool = false
         var antenna: Int = 0   // SDRplay antenna input index
+        var lna: Int = 4       // SDRplay LNA state (front-end gain reduction step)
     }
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
@@ -108,6 +109,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         cfg.ppm = Int32(config.ppm)
         cfg.rtl_agc = config.rtlAGC ? 1 : 0
         cfg.antenna = Int32(config.antenna)
+        cfg.lna = Int32(config.lna)
 
         var errBuf = [CChar](repeating: 0, count: 256)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
@@ -147,6 +149,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     func setPPM(_ ppm: Int) { if let handle { mpxtuner_set_ppm(handle, Int32(ppm)) } }
     func setRTLAGC(_ on: Bool) { if let handle { mpxtuner_set_rtl_agc(handle, on ? 1 : 0) } }
     func setAntenna(_ index: Int) { if let handle { mpxtuner_set_antenna(handle, Int32(index)) } }
+    func setLnaState(_ state: Int) { if let handle { mpxtuner_set_lna(handle, Int32(state)) } }
 }
 
 // C sample callback: forward the mono MPX block to the source's frameSink

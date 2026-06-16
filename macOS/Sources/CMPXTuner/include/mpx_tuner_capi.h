@@ -44,6 +44,7 @@ typedef struct {
   int ppm;                // frequency correction (ppm)
   int rtl_agc;            // 1 = RTL2832 digital AGC
   int antenna;            // SDRplay antenna input index (0-based; ignored on RTL)
+  int lna;                // SDRplay LNA state (front-end gain reduction step)
 } MpxTunerConfig;
 
 /// Open the device, configure it, and start the capture + demod thread.
@@ -81,6 +82,7 @@ void mpxtuner_set_bias_tee(MpxTuner *t, int on);
 void mpxtuner_set_ppm(MpxTuner *t, int ppm);
 void mpxtuner_set_rtl_agc(MpxTuner *t, int on);
 void mpxtuner_set_antenna(MpxTuner *t, int index);  // SDRplay antenna input
+void mpxtuner_set_lna(MpxTuner *t, int state);      // SDRplay LNA state
 
 #ifdef __cplusplus
 }

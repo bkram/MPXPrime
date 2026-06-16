@@ -38,6 +38,7 @@ public:
   bool setBandwidthHz(int hz);     // IF channel bandwidth (maps to RSP bw steps)
   bool setAntenna(int index);      // RSP antenna input (model-specific)
   bool setBiasTee(bool enable);    // RSP bias tee (model-specific)
+  bool setLnaState(int state);     // front-end LNA gain-reduction step (0 = most gain)
 
   /// Number of selectable antenna inputs for the connected model (1 if none).
   int antennaCount() const;

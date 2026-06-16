@@ -650,8 +650,11 @@ otherwise to **Audio**.
     RSP's bandwidth steps on SDRplay). Wide passes the full composite (pilot /
     RDS / SCA) but lets in more noise; narrow rejects neighbours but rolls off the
     composite top end. Start wide; narrow only to fight a strong adjacent station.
-  - **Auto Gain** -- automatic gain. Off reveals a manual gain (dB) field (on
-    SDRplay this trims the LNA state to relieve front-end overload).
+  - **Auto Gain** -- automatic gain (RTL: tuner gain mode; SDRplay: AGC on the IF
+    gain). Off on RTL reveals a manual gain (dB) field.
+  - **LNA** (SDRplay only) -- the front-end LNA gain-reduction step (0 = most
+    gain), separate from AGC. Raise it to relieve front-end overload on strong
+    broadcast signals.
   - **Antenna** (SDRplay only) -- selects the RSP antenna input (e.g. A / B / C
     on an RSPdx).
   - **Bias-T** -- 5V bias tee to power an active antenna / inline LNA (RTL-SDR v3,

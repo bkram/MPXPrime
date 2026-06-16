@@ -33,7 +33,7 @@ constexpr int kRtlInputRate = 256000;  // RTL-SDR IQ + demod rate
 
 enum Backend { BackendRTL, BackendSDRplay };
 
-enum CmdType { CmdFreq, CmdGain, CmdGainAuto, CmdBandwidth, CmdBias, CmdPPM, CmdRtlAgc };
+enum CmdType { CmdFreq, CmdGain, CmdGainAuto, CmdBandwidth, CmdBias, CmdPPM, CmdRtlAgc, CmdAntenna };
 struct Cmd {
   CmdType type;
   double value;
@@ -96,9 +96,12 @@ struct MpxTuner {
         else rtl.setTunerBandwidth(static_cast<uint32_t>(hz < 0 ? 0 : hz));
         break;
       }
-      case CmdBias:    if (!sp) rtl.setBiasTee(c.value != 0.0); break;          // RTL only
+      case CmdBias:
+        if (sp) sdrplay.setBiasTee(c.value != 0.0); else rtl.setBiasTee(c.value != 0.0);
+        break;
       case CmdPPM:     if (!sp) rtl.setFrequencyCorrection(static_cast<int>(std::lround(c.value))); break;
       case CmdRtlAgc:  if (!sp) rtl.setAGC(c.value != 0.0); break;             // RTL only
+      case CmdAntenna: if (sp) sdrplay.setAntenna(static_cast<int>(c.value)); break;
     }
   }
 
@@ -208,7 +211,11 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
   } else if (!useSDRplay) {
     t->rtl.setTunerBandwidth(0);
   }
-  if (useSDRplay && !cfg->auto_gain) t->sdrplay.setGain(cfg->gain_db);
+  if (useSDRplay) {
+    if (!cfg->auto_gain) t->sdrplay.setGain(cfg->gain_db);
+    if (cfg->antenna > 0) t->sdrplay.setAntenna(cfg->antenna);
+    if (cfg->bias_tee) t->sdrplay.setBiasTee(true);
+  }
 
   t->running.store(true, std::memory_order_relaxed);
   t->alive.store(true, std::memory_order_relaxed);
@@ -233,6 +240,15 @@ double mpxtuner_signal_dbfs(const MpxTuner *t) {
   return t ? t->signalDbfs.load(std::memory_order_relaxed) : -120.0;
 }
 
+int mpxtuner_backend(const MpxTuner *t) {
+  return (t && t->backend == BackendSDRplay) ? 1 : 0;
+}
+
+int mpxtuner_antenna_count(const MpxTuner *t) {
+  if (!t) return 1;
+  return (t->backend == BackendSDRplay) ? t->sdrplay.antennaCount() : 1;
+}
+
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz) {
   if (t) t->enqueue({CmdFreq, static_cast<double>(khz)});
 }
@@ -253,6 +269,9 @@ void mpxtuner_set_ppm(MpxTuner *t, int ppm) {
 }
 void mpxtuner_set_rtl_agc(MpxTuner *t, int on) {
   if (t) t->enqueue({CmdRtlAgc, on ? 1.0 : 0.0});
+}
+void mpxtuner_set_antenna(MpxTuner *t, int index) {
+  if (t) t->enqueue({CmdAntenna, static_cast<double>(index)});
 }
 
 }  // extern "C"

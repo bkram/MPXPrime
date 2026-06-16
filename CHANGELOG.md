@@ -11,6 +11,17 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: SDRplay RSP support (auto-preferred).** When an SDRplay RSP is
+  attached the Meter uses it instead of an RTL-SDR (14-bit ADC -> cleaner audio,
+  better separation, lower MPX-power floor). The backend dlopens the
+  user-installed SDRplay API at runtime (never linked/bundled; GPL-clean) and
+  streams complex IQ at 250 kHz into the demod's complex path. SDRplay-specific
+  controls surface in the input bar: an **Antenna** input picker (A/B/C on an
+  RSPdx) and a manual-gain mapping that backs the LNA off to relieve broadcast-FM
+  overload; the RTL-only PPM / RTL-AGC controls are hidden on SDRplay. Local-build
+  feature (requires the SDRplay SDK at build time); CI/release wiring is a
+  follow-up. Tested live on an RSPdx.
+
 - Docs: clarified SDR calibration / MPX-power validity in the manual + ARCHITECTURE
   -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
   MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);

@@ -43,6 +43,7 @@ typedef struct {
   int bias_tee;           // 1 = enable RTL-SDR v3 5V bias tee
   int ppm;                // frequency correction (ppm)
   int rtl_agc;            // 1 = RTL2832 digital AGC
+  int antenna;            // SDRplay antenna input index (0-based; ignored on RTL)
 } MpxTunerConfig;
 
 /// Open the device, configure it, and start the capture + demod thread.
@@ -63,6 +64,11 @@ int mpxtuner_is_alive(const MpxTuner *t);
 /// the tuner normalizes the level. -120 before the first block.
 double mpxtuner_signal_dbfs(const MpxTuner *t);
 
+/// Active backend: 0 = RTL-SDR, 1 = SDRplay.
+int mpxtuner_backend(const MpxTuner *t);
+/// Number of selectable antenna inputs (1 = none / not applicable).
+int mpxtuner_antenna_count(const MpxTuner *t);
+
 // Live controls. Thread-safe: each enqueues a command applied on the capture
 // thread between IQ blocks, so it never interrupts the MPX stream.
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz);
@@ -72,6 +78,7 @@ void mpxtuner_set_bandwidth_khz(MpxTuner *t, int khz);  // 0 = auto
 void mpxtuner_set_bias_tee(MpxTuner *t, int on);
 void mpxtuner_set_ppm(MpxTuner *t, int ppm);
 void mpxtuner_set_rtl_agc(MpxTuner *t, int on);
+void mpxtuner_set_antenna(MpxTuner *t, int index);  // SDRplay antenna input
 
 #ifdef __cplusplus
 }

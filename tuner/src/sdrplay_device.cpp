@@ -133,6 +133,8 @@ bool SDRplayDevice::connect(uint32_t freqHz) {
     a.ReleaseDevice(&g_device); a.Close(); return false;
   }
 
+  m_hwVer = static_cast<int>(g_device.hwVer);
+
   // 2 MHz IQ, decimate by 8 -> 250 kHz effective (ample for the 0-100 kHz MPX).
   const int decim = 8;
   g_params->devParams->fsFreq.fsHz = 2000000.0;
@@ -141,7 +143,9 @@ bool SDRplayDevice::connect(uint32_t freqHz) {
   rx->tunerParams.bwType = sdrplay_api_BW_0_600;
   rx->tunerParams.ifType = sdrplay_api_IF_Zero;
   rx->tunerParams.gain.gRdB = 40;
-  rx->tunerParams.gain.LNAstate = 0;
+  // Strong broadcast FM overloads the front end at LNAstate 0; back the LNA off
+  // a few steps by default (AGC still trims the IF gain).
+  rx->tunerParams.gain.LNAstate = 4;
   rx->ctrlParams.decimation.enable = 1;
   rx->ctrlParams.decimation.decimationFactor = decim;
   rx->ctrlParams.agc.enable = sdrplay_api_AGC_50HZ;   // auto gain by default
@@ -192,12 +196,14 @@ bool SDRplayDevice::setGainAuto(bool enable) {
 
 bool SDRplayDevice::setGain(double gainDb) {
   if (!m_connected.load() || !g_params || !m_handle) return false;
-  // Disable AGC and set a gain-reduction from our 0..50 "gain" scale (higher
-  // gain = less reduction). RSP gRdB spans ~20..59 dB.
+  // Manual gain: disable AGC and map our 0..50 "gain" to the LNA state (front
+  // end) -- higher gain = lower LNAstate -- with a fixed mid IF gain reduction.
+  // Backing the LNA off is what actually relieves broadcast-FM overload.
   g_params->rxChannelA->ctrlParams.agc.enable = sdrplay_api_AGC_DISABLE;
-  int gr = 59 - static_cast<int>(gainDb);
-  gr = std::max(20, std::min(59, gr));
-  g_params->rxChannelA->tunerParams.gain.gRdB = gr;
+  int lna = static_cast<int>(std::lround((50.0 - gainDb) / 50.0 * 9.0));
+  lna = std::max(0, std::min(9, lna));
+  g_params->rxChannelA->tunerParams.gain.LNAstate = static_cast<unsigned char>(lna);
+  g_params->rxChannelA->tunerParams.gain.gRdB = 40;
   auto &a = api();
   a.Update(m_handle, g_device.tuner, sdrplay_api_Update_Ctrl_Agc, sdrplay_api_Update_Ext1_None);
   return a.Update(m_handle, g_device.tuner, sdrplay_api_Update_Tuner_Gr,
@@ -209,6 +215,39 @@ bool SDRplayDevice::setBandwidthHz(int hz) {
   g_params->rxChannelA->tunerParams.bwType = bwForHz(hz);
   return api().Update(m_handle, g_device.tuner, sdrplay_api_Update_Tuner_BwType,
                       sdrplay_api_Update_Ext1_None) == sdrplay_api_Success;
+}
+
+int SDRplayDevice::antennaCount() const {
+  switch (m_hwVer) {
+    case SDRPLAY_RSPdx_ID:
+    case SDRPLAY_RSPdxR2_ID: return 3;  // Antenna A / B / C
+    case SDRPLAY_RSP2_ID: return 2;     // Antenna A / B
+    default: return 1;                  // RSP1/1A/1B/duo: single input here
+  }
+}
+
+bool SDRplayDevice::setAntenna(int index) {
+  if (!m_connected.load() || !g_params || !m_handle) return false;
+  auto &a = api();
+  if (m_hwVer == SDRPLAY_RSPdx_ID || m_hwVer == SDRPLAY_RSPdxR2_ID) {
+    const int idx = std::max(0, std::min(2, index));
+    g_params->devParams->rspDxParams.antennaSel =
+        static_cast<sdrplay_api_RspDx_AntennaSelectT>(idx);
+    return a.Update(m_handle, g_device.tuner, sdrplay_api_Update_None,
+                    sdrplay_api_Update_RspDx_AntennaControl) == sdrplay_api_Success;
+  }
+  return false;  // other models: single antenna (no-op)
+}
+
+bool SDRplayDevice::setBiasTee(bool enable) {
+  if (!m_connected.load() || !g_params || !m_handle) return false;
+  auto &a = api();
+  if (m_hwVer == SDRPLAY_RSPdx_ID || m_hwVer == SDRPLAY_RSPdxR2_ID) {
+    g_params->devParams->rspDxParams.biasTEnable = enable ? 1 : 0;
+    return a.Update(m_handle, g_device.tuner, sdrplay_api_Update_None,
+                    sdrplay_api_Update_RspDx_BiasTControl) == sdrplay_api_Success;
+  }
+  return false;
 }
 
 void SDRplayDevice::ingest(const short *xi, const short *xq, unsigned int n) {
@@ -255,6 +294,9 @@ bool SDRplayDevice::setFrequency(uint32_t) { return false; }
 bool SDRplayDevice::setGain(double) { return false; }
 bool SDRplayDevice::setGainAuto(bool) { return false; }
 bool SDRplayDevice::setBandwidthHz(int) { return false; }
+bool SDRplayDevice::setAntenna(int) { return false; }
+bool SDRplayDevice::setBiasTee(bool) { return false; }
+int SDRplayDevice::antennaCount() const { return 1; }
 void SDRplayDevice::ingest(const short *, const short *, unsigned int) {}
 size_t SDRplayDevice::readIQ(std::complex<float> *, size_t) { return 0; }
 

@@ -135,32 +135,50 @@ struct RootMeterView: View {
                     + "the composite top. Auto = widest. Applied live.")
                 .onChange(of: vm.sdrBandwidthKHz) { _, _ in vm.applyBandwidthChange() }
 
+                if vm.sdrIsSDRplay && vm.sdrAntennaCount > 1 {
+                    Divider().frame(height: 16)
+                    Picker("Antenna", selection: $vm.sdrAntenna) {
+                        ForEach(0..<vm.sdrAntennaCount, id: \.self) { i in
+                            Text("Ant \(["A", "B", "C"][min(i, 2)])").tag(i)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .labelsHidden()
+                    .help("SDRplay antenna input.")
+                    .onChange(of: vm.sdrAntenna) { _, _ in vm.applyAntennaChange() }
+                }
+
                 Divider().frame(height: 16)
 
-                HStack(spacing: 4) {
-                    Text("PPM").foregroundStyle(.secondary)
-                    TextField("ppm", value: $vm.sdrPPM, format: .number)
-                        .frame(width: 44)
-                        .multilineTextAlignment(.trailing)
-                        .onSubmit { vm.applyPPMChange() }
-                    Stepper("PPM", value: $vm.sdrPPM, in: -200...200, step: 1)
-                        .labelsHidden()
-                        .onChange(of: vm.sdrPPM) { _, _ in vm.applyPPMChange() }
+                if !vm.sdrIsSDRplay {
+                    HStack(spacing: 4) {
+                        Text("PPM").foregroundStyle(.secondary)
+                        TextField("ppm", value: $vm.sdrPPM, format: .number)
+                            .frame(width: 44)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit { vm.applyPPMChange() }
+                        Stepper("PPM", value: $vm.sdrPPM, in: -200...200, step: 1)
+                            .labelsHidden()
+                            .onChange(of: vm.sdrPPM) { _, _ in vm.applyPPMChange() }
+                    }
+                    .help("Frequency-error correction in ppm. Applied live.")
                 }
-                .help("Frequency-error correction in ppm. Applied live.")
 
                 Toggle("Bias-T", isOn: $vm.sdrBiasTee)
                     .toggleStyle(.switch)
-                    .help("RTL-SDR v3 5V bias tee: powers an active antenna / inline LNA. "
+                    .help("5V bias tee: powers an active antenna / inline LNA. "
                         + "Leave off unless your antenna needs it (never into a DC short). "
                         + "Applied live.")
                     .onChange(of: vm.sdrBiasTee) { _, _ in vm.applyBiasTeeChange() }
 
-                Toggle("RTL AGC", isOn: $vm.sdrRTLAGC)
-                    .toggleStyle(.switch)
-                    .help("RTL2832 digital AGC, separate from the tuner gain above. "
-                        + "Applied live.")
-                    .onChange(of: vm.sdrRTLAGC) { _, _ in vm.applyRTLAGCChange() }
+                if !vm.sdrIsSDRplay {
+                    Toggle("RTL AGC", isOn: $vm.sdrRTLAGC)
+                        .toggleStyle(.switch)
+                        .help("RTL2832 digital AGC, separate from the tuner gain above. "
+                            + "Applied live.")
+                        .onChange(of: vm.sdrRTLAGC) { _, _ in vm.applyRTLAGCChange() }
+                }
             }
             Spacer()
 

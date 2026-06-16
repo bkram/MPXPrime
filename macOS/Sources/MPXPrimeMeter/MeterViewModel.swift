@@ -46,6 +46,11 @@ final class MeterViewModel: ObservableObject {
     @Published var sdrPPM: Int = 0
     /// RTL2832 digital AGC (distinct from the tuner gain mode above).
     @Published var sdrRTLAGC: Bool = false
+    /// SDRplay antenna input index, and the active-backend facts read after
+    /// start (drive which SDR controls the UI shows).
+    @Published var sdrAntenna: Int = 0
+    @Published var sdrIsSDRplay: Bool = false
+    @Published var sdrAntennaCount: Int = 1
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputID: AudioDeviceID?
@@ -167,7 +172,7 @@ final class MeterViewModel: ObservableObject {
             frequencyKHz: Int((frequencyMHz * 1000).rounded()),
             autoGain: sdrAutoGain, gainDB: sdrGainDB,
             bandwidthKHz: sdrBandwidthKHz, biasTee: sdrBiasTee,
-            ppm: sdrPPM, rtlAGC: sdrRTLAGC)
+            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna)
         let source = SDRLibraryInputSource(config: cfg)
         deviceID = nil
         priorDeviceRate = nil
@@ -182,8 +187,11 @@ final class MeterViewModel: ObservableObject {
             _ = try eng.start(monitorDeviceID: selectedOutputID)
             engine = eng
             sdrSource = source
+            sdrIsSDRplay = source.isSDRplay
+            sdrAntennaCount = source.antennaCount
             running = true
-            statusText = String(format: "Tuned %.2f MHz (SDR, 192 kHz, abs cal)", frequencyMHz)
+            let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
+            statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
             startTimer()
         } catch {
             statusText = error.localizedDescription
@@ -253,6 +261,12 @@ final class MeterViewModel: ObservableObject {
     func applyRTLAGCChange() {
         guard running, inputKind == .sdr, let source = sdrSource else { return }
         source.setRTLAGC(sdrRTLAGC)
+    }
+
+    /// SDRplay antenna input changed. Live, no restart.
+    func applyAntennaChange() {
+        guard running, inputKind == .sdr, let source = sdrSource else { return }
+        source.setAntenna(sdrAntenna)
     }
 
     // MARK: - Polling

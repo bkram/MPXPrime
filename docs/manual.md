@@ -638,17 +638,26 @@ otherwise to **Audio**.
   **Elonics E4000** tuner dongles; other librtlsdr-supported tuners (R828D,
   FC0012/0013, FC2580) should work but are untested.
 
+  **SDRplay RSP** is also supported and **auto-preferred** when an RSP is
+  attached (its 14-bit ADC and front end give cleaner audio, better separation,
+  and a lower MPX-power noise floor than an RTL dongle). It needs SDRplay's API
+  service installed (the SDRplay driver); the app loads it at runtime and falls
+  back to RTL-SDR if it's absent. Tested on an RSPdx.
+
   All SDR controls apply **live** -- no restart, no audio gap:
   - **Frequency** -- retunes in place (also clears the prior station's meters).
-  - **IF BW** -- the IF channel bandwidth (Auto, or 56-311 kHz). Wide passes the
-    full composite (pilot / RDS / SCA) but lets in more noise and adjacent-channel
-    energy; narrow rejects neighbours but rolls off the composite top end. Auto =
-    widest. Start wide; narrow only to fight a strong adjacent station.
-  - **Auto Gain** -- tuner automatic gain. Off reveals a manual gain (dB) field.
-  - **PPM** -- frequency-error correction in parts per million.
-  - **Bias-T** -- the RTL-SDR v3 5V bias tee, to power an active antenna or inline
-    LNA. Leave off unless your antenna needs it (never feed it into a DC short).
-  - **RTL AGC** -- the RTL2832 digital AGC, separate from the tuner gain above.
+  - **IF BW** -- the IF channel bandwidth (Auto, or 56-311 kHz; mapped to the
+    RSP's bandwidth steps on SDRplay). Wide passes the full composite (pilot /
+    RDS / SCA) but lets in more noise; narrow rejects neighbours but rolls off the
+    composite top end. Start wide; narrow only to fight a strong adjacent station.
+  - **Auto Gain** -- automatic gain. Off reveals a manual gain (dB) field (on
+    SDRplay this trims the LNA state to relieve front-end overload).
+  - **Antenna** (SDRplay only) -- selects the RSP antenna input (e.g. A / B / C
+    on an RSPdx).
+  - **Bias-T** -- 5V bias tee to power an active antenna / inline LNA (RTL-SDR v3,
+    or RSP models that support it). Never feed it into a DC short.
+  - **PPM** / **RTL AGC** (RTL-SDR only) -- ppm frequency trim, and the RTL2832
+    digital AGC separate from the tuner gain.
 
 ### What it shows
 

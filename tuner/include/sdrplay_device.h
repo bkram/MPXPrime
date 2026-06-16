@@ -36,6 +36,13 @@ public:
   bool setGain(double gainDb);     // manual gain (disables AGC)
   bool setGainAuto(bool enable);   // AGC on/off
   bool setBandwidthHz(int hz);     // IF channel bandwidth (maps to RSP bw steps)
+  bool setAntenna(int index);      // RSP antenna input (model-specific)
+  bool setBiasTee(bool enable);    // RSP bias tee (model-specific)
+
+  /// Number of selectable antenna inputs for the connected model (1 if none).
+  int antennaCount() const;
+  /// hardware model id (SDRPLAY_*_ID); 0 until connected.
+  int hwVer() const { return m_hwVer; }
 
   /// Effective IQ sample rate delivered to the demod (after RSP decimation).
   int inputRate() const { return m_inputRate; }
@@ -51,6 +58,7 @@ public:
 
 private:
   int m_inputRate = 250000;
+  int m_hwVer = 0;
   std::atomic<bool> m_connected{false};
   std::atomic<bool> m_failed{false};
 

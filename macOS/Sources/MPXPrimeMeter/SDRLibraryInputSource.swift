@@ -35,6 +35,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         var biasTee: Bool = false
         var ppm: Int = 0
         var rtlAGC: Bool = false
+        var antenna: Int = 0   // SDRplay antenna input index
     }
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
@@ -61,6 +62,18 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         return mpxtuner_signal_dbfs(handle)
     }
 
+    /// True when the active backend is an SDRplay RSP (vs RTL-SDR).
+    var isSDRplay: Bool {
+        guard let handle else { return false }
+        return mpxtuner_backend(handle) != 0
+    }
+
+    /// Number of selectable antenna inputs (1 = none / RTL).
+    var antennaCount: Int {
+        guard let handle else { return 1 }
+        return Int(mpxtuner_antenna_count(handle))
+    }
+
     /// The library is always linked into the Meter, so SDR is always offered;
     /// device presence is reported by `start()`.
     static func isAvailable() -> Bool { true }
@@ -83,6 +96,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         cfg.bias_tee = config.biasTee ? 1 : 0
         cfg.ppm = Int32(config.ppm)
         cfg.rtl_agc = config.rtlAGC ? 1 : 0
+        cfg.antenna = Int32(config.antenna)
 
         var errBuf = [CChar](repeating: 0, count: 256)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
@@ -121,6 +135,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     func setBiasTee(_ on: Bool) { if let handle { mpxtuner_set_bias_tee(handle, on ? 1 : 0) } }
     func setPPM(_ ppm: Int) { if let handle { mpxtuner_set_ppm(handle, Int32(ppm)) } }
     func setRTLAGC(_ on: Bool) { if let handle { mpxtuner_set_rtl_agc(handle, on ? 1 : 0) } }
+    func setAntenna(_ index: Int) { if let handle { mpxtuner_set_antenna(handle, Int32(index)) } }
 }
 
 // C sample callback: forward the mono MPX block to the source's frameSink

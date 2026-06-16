@@ -30,7 +30,7 @@ transport restart since they reconfigure the modulator.
 **MPX Prime Meter** is the receive/analyze counterpart that ships alongside
 the encoder in the same DMG (`MPX Prime Meter.app`). Where Studio *makes* the
 composite, the Meter *measures* it: feed it an MPX composite (a Core Audio
-input device, or a live RTL-SDR station via the bundled FM-SDR-Tuner support)
+input device, or a live RTL-SDR station via its bundled `mpx-tuner` helper)
 and it decodes stereo + full RDS and shows it on a single dashboard window.
 
 - Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope

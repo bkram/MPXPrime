@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Tune an RTL-SDR with the FM-SDR-Tuner project and pipe its MPX composite into
+# Tune an RTL-SDR with the vendored mpx-tuner (built on demand from tuner/;
+# falls back to an external fm-sdr-tuner) and pipe its MPX composite into
 # the MPX Prime Meter over a FIFO -- decode + measure + hear a live station.
 #
 #   ./run-meter-sdr.sh --freq 88.6

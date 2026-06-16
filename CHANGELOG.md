@@ -16,7 +16,9 @@ combination test suite. Newest first.
   frequency in the Meter retunes the dongle in place -- no process teardown, no
   device re-open, no audio gap. The toolbar adds an AGC toggle and a manual
   gain (dB) field, also applied live. (The external `fm-sdr-tuner` has no
-  control channel, so it still restarts on a frequency change.)
+  control channel, so it still restarts on a frequency change.) Retuning also
+  resets the transient meters -- peak-hold, MPX power, separation, BER, trends,
+  and the RDS decoder -- plus a 1 s warm-up, so the new station starts clean.
 - **Built-in RTL-SDR (no external binary).** MPX Prime Meter now bundles its
   own stripped SDR helper, `mpx-tuner` (a minimal RTL-SDR -> FM-demod -> MPX
   subset of FM-SDR-Tuner, vendored under `tuner/`, GPL-3.0), with its dylibs

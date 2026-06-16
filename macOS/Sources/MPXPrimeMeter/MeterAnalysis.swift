@@ -127,8 +127,13 @@ final class MeterAnalysis {
     private var powerHistory = [Float](repeating: -30.0, count: trendPoints)
     private var trendCounter = 0
     private let trendStride = 12
-    // Peak/separation reset requested from the UI thread, applied on this thread.
+    // Reset flags requested from the UI thread, applied on this thread.
+    // `resetRequested`: peak-hold + separation (the "Reset Peaks" button).
+    // `fullResetRequested`: everything transient (peaks, separation, MPX-power
+    // integrator, BER, trends, RDS decoder) + re-arm warm-up -- used on retune
+    // so the previous station's accumulators don't linger.
     private let resetRequested = ManagedAtomic<Bool>(false)
+    private let fullResetRequested = ManagedAtomic<Bool>(false)
 
     // Windowed BER: diff the stream decoder's cumulative block counters per
     // process() call and smooth (~1 s) so the readout tracks current quality.
@@ -177,9 +182,28 @@ final class MeterAnalysis {
     /// to call from any thread; applied at the top of the next `process`.
     func requestPeakReset() { resetRequested.store(true, ordering: .relaxed) }
 
+    /// Clear ALL transient accumulators + re-arm the warm-up gate + reset the
+    /// RDS decoder. Use on retune so the prior station's peaks / MPX power /
+    /// BER / RDS text don't carry over. Safe to call from any thread.
+    func requestFullReset() { fullResetRequested.store(true, ordering: .relaxed) }
+
     func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
-        if resetRequested.exchange(false, ordering: .relaxed) {
+        let doFullReset = fullResetRequested.exchange(false, ordering: .relaxed)
+        if doFullReset {
+            // Everything transient -- the new station starts clean.
+            mpxPowerMS = 0.0
+            mpxPowerPrimed = false
+            berEMA = 0.0
+            prevBlocksReceived = 0
+            prevBlocksValid = 0
+            rdsRMS = 0.0
+            for i in devHistory.indices { devHistory[i] = 0.0 }
+            for i in powerHistory.indices { powerHistory[i] = -30.0 }
+            warmupRemaining = Int(sampleRate)  // ~1 s -- skip the relock transient
+            rds.reset()
+        }
+        if doFullReset || resetRequested.exchange(false, ordering: .relaxed) {
             peakHoldComposite = 0.0
             posPeakRaw = 0.0
             negPeakRaw = 0.0

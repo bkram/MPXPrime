@@ -1,23 +1,23 @@
 # bin/
 
-External helper binaries used by the MPX Prime **helper scripts** (the headless
-`run-meter-sdr.sh`). These are **not committed** (see `.gitignore`) — place the
-binary here yourself.
+**You normally need nothing here.** RTL-SDR support is built from the vendored
+`tuner/` source:
 
-> **You only need this for the headless `run-meter-sdr.sh` script.** The
-> packaged **MPX Prime Meter.app** ships its own stripped, self-contained SDR
-> helper (`mpx-tuner`, built from `tuner/` and bundled with its dylibs), so the
-> GUI needs neither this binary nor Homebrew. See `tuner/README.md`.
+- The packaged **MPX Prime Meter.app** bundles its own stripped helper
+  (`mpx-tuner`) with its dylibs, so the GUI needs no binary here and no
+  Homebrew.
+- The headless **`run-meter-sdr.sh`** builds `tuner/build/mpx-tuner` on demand
+  (needs `cmake` + `brew install librtlsdr liquid-dsp`).
 
-## `fm-sdr-tuner`
+See `tuner/README.md`.
 
-The FM-SDR-Tuner — an RTL-SDR FM broadcast tuner that can emit the MPX
-composite. `run-meter-sdr.sh` uses it to pipe a live station's MPX into the
-MPX Prime Meter.
+## Optional: `fm-sdr-tuner` (legacy fallback)
 
-- Source / releases: https://github.com/bkram/FM-SDR-Tuner
-
-Build it from source, then copy the binary here:
+`run-meter-sdr.sh` resolves a tuner in this order: `FM_SDR_TUNER` env, the
+vendored `tuner/build/mpx-tuner`, `bin/fm-sdr-tuner`, then a sibling
+`~/Projects/git/FM-SDR-Tuner/build/`. So you only need to put something here if
+you specifically want the **full upstream** [FM-SDR-Tuner](https://github.com/bkram/FM-SDR-Tuner)
+instead of the vendored subset. It is not committed (see `.gitignore`):
 
 ```bash
 git clone https://github.com/bkram/FM-SDR-Tuner.git
@@ -26,9 +26,5 @@ cmake -S . -B build && cmake --build build -j
 cp build/fm-sdr-tuner /path/to/MPXPrime/bin/
 ```
 
-`run-meter-sdr.sh` looks for `bin/fm-sdr-tuner` first, then
-`$HOME/Projects/git/FM-SDR-Tuner/build/fm-sdr-tuner`. Override with the
-`FM_SDR_TUNER` environment variable to point at any other location.
-
-Requires an RTL-SDR dongle and the MPX-streaming patches (streaming WAV to a
-FIFO + MPX output headroom) — built into recent FM-SDR-Tuner.
+Requires an RTL-SDR dongle. The vendored `mpx-tuner` is preferred and is what
+the app ships.

@@ -197,6 +197,8 @@ final class MeterViewModel: ObservableObject {
             return
         }
         tuner.setFrequencyKHz(Int((frequencyMHz * 1000).rounded()))
+        // New station: clear the prior station's peaks / MPX power / BER / RDS.
+        engine?.resetForRetune()
         statusText = String(format: "Tuned %.2f MHz (SDR, live)", frequencyMHz)
     }
 

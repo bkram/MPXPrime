@@ -142,6 +142,9 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// Reset the deviation peak-hold + best-separation accumulators.
     func resetPeaks() { analysis.requestPeakReset() }
 
+    /// Reset all transient meters + RDS for a retune (new station starts clean).
+    func resetForRetune() { analysis.requestFullReset() }
+
     /// Raise an input device to the best capture rate before opening it: 192 kHz
     /// if supported, else the highest supported rate >= 128 kHz (RDS at 57 kHz
     /// needs Nyquist > 57 kHz). The AUHAL cannot sample-rate-convert, so it

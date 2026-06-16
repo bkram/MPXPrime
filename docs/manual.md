@@ -618,7 +618,8 @@ check your own air signal, compare against other stations, or validate a chain.
   dylibs, so you need only a connected RTL-SDR dongle -- no Homebrew, no
   separately-placed binary. SDR is Apple Silicon only. `./run-meter-sdr.sh
   --gui --freq <MHz>` opens the window pre-tuned. (The headless
-  `run-meter-sdr.sh` script still uses a `bin/fm-sdr-tuner` or `FM_SDR_TUNER`.)
+  `run-meter-sdr.sh` builds and uses the same vendored `mpx-tuner` on demand,
+  falling back to `FM_SDR_TUNER` / `bin/fm-sdr-tuner` if present.)
   Changing the frequency, the **Gain** field, or the **AGC** toggle retunes the
   dongle live over a control channel -- no restart, no audio gap.
 

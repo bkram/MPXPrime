@@ -205,14 +205,13 @@ bool SDRplayDevice::setGainAuto(bool enable) {
 
 bool SDRplayDevice::setGain(double gainDb) {
   if (!m_connected.load() || !g_params || !m_handle) return false;
-  // Manual gain: disable AGC and map our 0..50 "gain" to the LNA state (front
-  // end) -- higher gain = lower LNAstate -- with a fixed mid IF gain reduction.
-  // Backing the LNA off is what actually relieves broadcast-FM overload.
+  // Manual IF gain: disable AGC and map our 0..50 "gain" to the IF gain
+  // reduction gRdB (~20..59 dB; higher reduction = less gain), leaving the LNA
+  // state to its own control.
   g_params->rxChannelA->ctrlParams.agc.enable = sdrplay_api_AGC_DISABLE;
-  int lna = static_cast<int>(std::lround((50.0 - gainDb) / 50.0 * 9.0));
-  lna = std::max(0, std::min(9, lna));
-  g_params->rxChannelA->tunerParams.gain.LNAstate = static_cast<unsigned char>(lna);
-  g_params->rxChannelA->tunerParams.gain.gRdB = 40;
+  int gr = static_cast<int>(std::lround(59.0 - gainDb * 39.0 / 50.0));
+  gr = std::max(20, std::min(59, gr));
+  g_params->rxChannelA->tunerParams.gain.gRdB = gr;
   auto &a = api();
   a.Update(m_handle, g_device.tuner, sdrplay_api_Update_Ctrl_Agc, sdrplay_api_Update_Ext1_None);
   return a.Update(m_handle, g_device.tuner, sdrplay_api_Update_Tuner_Gr,

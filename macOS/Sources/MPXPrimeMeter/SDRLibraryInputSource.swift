@@ -95,6 +95,10 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     /// dongle is present at launch.
     static func deviceCount() -> Int { Int(mpxtuner_device_count()) }
 
+    /// True if an SDRplay RSP is attached (so the auto-selected backend will be
+    /// SDRplay) -- lets the UI show the right SDR controls before capture.
+    static func sdrplayPresent() -> Bool { mpxtuner_sdrplay_present() != 0 }
+
     @discardableResult
     func start() throws -> (sampleRate: Double, channels: Int) {
         var cfg = MpxTunerConfig()

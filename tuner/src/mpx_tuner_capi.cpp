@@ -164,6 +164,10 @@ int mpxtuner_device_count(void) {
   return n;
 }
 
+int mpxtuner_sdrplay_present(void) {
+  return SDRplayDevice::deviceCount() > 0 ? 1 : 0;
+}
+
 MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
                         void *ctx, char *err, size_t err_len) {
   auto setErr = [&](const char *m) {
@@ -214,6 +218,7 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
   }
   if (useSDRplay) {
     t->sdrplay.setLnaState(cfg->lna);   // front-end gain (overload control)
+    if (!cfg->auto_gain) t->sdrplay.setGain(cfg->gain_db);  // manual IF gain
     if (cfg->antenna > 0) t->sdrplay.setAntenna(cfg->antenna);
     if (cfg->bias_tee) t->sdrplay.setBiasTee(true);
   }

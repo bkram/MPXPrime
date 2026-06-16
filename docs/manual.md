@@ -651,10 +651,12 @@ otherwise to **Audio**.
     RDS / SCA) but lets in more noise; narrow rejects neighbours but rolls off the
     composite top end. Start wide; narrow only to fight a strong adjacent station.
   - **Auto Gain** -- automatic gain (RTL: tuner gain mode; SDRplay: AGC on the IF
-    gain). Off on RTL reveals a manual gain (dB) field.
+    gain). Off reveals a manual gain field -- RTL tuner gain in **dB**, or the
+    SDRplay **IF** gain.
   - **LNA** (SDRplay only) -- the front-end LNA gain-reduction step (0 = most
-    gain), separate from AGC. Raise it to relieve front-end overload on strong
-    broadcast signals.
+    gain), separate from the IF gain / AGC. Raise it to relieve front-end
+    overload on strong broadcast signals. (SDRplay thus has both gain stages:
+    LNA front-end + IF.)
   - **Antenna** (SDRplay only) -- selects the RSP antenna input (e.g. A / B / C
     on an RSPdx).
   - **Bias-T** -- 5V bias tee to power an active antenna / inline LNA (RTL-SDR v3,

@@ -24,6 +24,10 @@ extern "C" {
 /// default the Meter to SDR input at launch.
 int mpxtuner_device_count(void);
 
+/// 1 if an SDRplay RSP is attached (so the auto-selected backend will be
+/// SDRplay). Lets the GUI show the right SDR controls before capture starts.
+int mpxtuner_sdrplay_present(void);
+
 typedef struct MpxTuner MpxTuner;
 
 /// Delivers a block of mono MPX composite float samples at the configured

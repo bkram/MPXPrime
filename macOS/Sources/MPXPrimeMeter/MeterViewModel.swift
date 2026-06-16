@@ -103,6 +103,9 @@ final class MeterViewModel: ObservableObject {
         if SDRLibraryInputSource.deviceCount() > 0 {
             inputKind = .sdr
         }
+        // Show the correct SDR controls before capture: the backend auto-prefers
+        // SDRplay when an RSP is attached, so reflect that up front.
+        sdrIsSDRplay = SDRLibraryInputSource.sdrplayPresent()
     }
 
     func refreshDevices() {

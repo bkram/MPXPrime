@@ -8,10 +8,22 @@ import Foundation
 ///     (a standard high-quality stereo audio file)
 ///   - mono (channels = 1): the raw MPX composite at the capture rate (the
 ///     composite needs the full bandwidth for pilot / subcarriers / RDS)
+///
+/// The analysis thread also drains the real-time-fed input ring, so it must not
+/// stall. Both the sample-rate conversion (`.max` quality SRC + its per-block
+/// buffer allocations) and the disk write are therefore done on a private serial
+/// queue: `write`/`writeMono` only copy the block and hand it off. Doing the SRC
+/// on the analysis thread (as before) intermittently stalled it long enough for
+/// the ring to overflow, dropping samples -- audible as periodic clicks in the
+/// resampled stereo file (the raw 192 kHz path, with no SRC, was unaffected).
+///
+/// `@unchecked Sendable`: the converter / buffers / interleave scratch are
+/// touched only on `ioQueue` after construction.
 final class MeterRecorder: @unchecked Sendable {
     let channels: Int
     private let writer: CanonicalWavWriter
     private let captureRate: Double
+    private let ioQueue = DispatchQueue(label: "com.mpxprime.meter.recorder", qos: .utility)
 
     // Stereo only: resample captureRate -> 48 kHz.
     private static let stereoFileRate: Double = 48_000
@@ -43,22 +55,31 @@ final class MeterRecorder: @unchecked Sendable {
         }
     }
 
-    deinit { writer.close() }
+    deinit {
+        // Flush queued conversions/writes, then finalize the header.
+        ioQueue.sync {}
+        writer.close()
+    }
 
-    /// Stereo write (decoded L/R), resampled to 48 kHz. No-op unless 2-channel.
+    /// Stereo write (decoded L/R), resampled to 48 kHz off-thread. No-op unless
+    /// 2-channel. Copies the block on the caller; SRC + write run on `ioQueue`.
     func write(left: [Float], right: [Float], count: Int) {
-        guard channels == 2, count > 0, let conv = converter, let ib = inBuf,
-              let oFmt = outFmt, count <= Int(ib.frameCapacity),
-              let ich = ib.floatChannelData else { return }
+        guard channels == 2, count > 0 else { return }
+        let l = Array(left[0..<count])
+        let r = Array(right[0..<count])
+        ioQueue.async { [self] in self.resampleAndWrite(l, r) }
+    }
+
+    private func resampleAndWrite(_ left: [Float], _ right: [Float]) {
+        let count = left.count
+        guard let conv = converter, let ib = inBuf, let oFmt = outFmt,
+              count <= Int(ib.frameCapacity), let ich = ib.floatChannelData else { return }
         ib.frameLength = AVAudioFrameCount(count)
         left.withUnsafeBufferPointer { if let b = $0.baseAddress { ich[0].update(from: b, count: count) } }
         right.withUnsafeBufferPointer { if let b = $0.baseAddress { ich[1].update(from: b, count: count) } }
 
         let outCap = AVAudioFrameCount(Double(count) * Self.stereoFileRate / captureRate) + 32
         guard let ob = AVAudioPCMBuffer(pcmFormat: oFmt, frameCapacity: outCap) else { return }
-        // Feed exactly one input buffer per convert call. The block runs
-        // synchronously on this (analysis) thread; state goes through `self`
-        // (the class is @unchecked Sendable) to satisfy the @Sendable block.
         convFed = false
         var err: NSError?
         let status = conv.convert(to: ob, error: &err) { [self] _, outStatus in
@@ -75,12 +96,13 @@ final class MeterRecorder: @unchecked Sendable {
         interleave.withUnsafeBufferPointer { writer.write($0, frames: frames) }
     }
 
-    /// Mono write (MPX composite) at the capture rate. No-op unless 1-channel.
+    /// Mono write (MPX composite) at the capture rate, off-thread. No-op unless
+    /// 1-channel.
     func writeMono(_ samples: [Float], count: Int) {
         guard channels == 1, count > 0 else { return }
-        samples.withUnsafeBufferPointer {
-            guard let base = $0.baseAddress else { return }
-            writer.write(UnsafeBufferPointer(start: base, count: count), frames: count)
+        let s = Array(samples[0..<count])
+        ioQueue.async { [self] in
+            s.withUnsafeBufferPointer { writer.write($0, frames: s.count) }
         }
     }
 }

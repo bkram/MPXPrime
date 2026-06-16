@@ -311,7 +311,10 @@ struct RootMeterView: View {
 
     private var rdsSection: some View {
         GroupBox("RDS") {
-            VStack(alignment: .leading, spacing: 4) {
+            // Native key/value grid: the label column auto-sizes to the widest
+            // label and values share one baseline-aligned column (HIG key-value
+            // layout) instead of a hand-tuned fixed-width HStack.
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
                 rdsRow("RDS", vm.rdsText,
                        "Decoder status: sync, Program ID (PI), Program Type (PTY), TP/TA/MS "
                         + "flags and live block-error rate. BER under ~5% is a clean link.")
@@ -330,17 +333,17 @@ struct RootMeterView: View {
     }
 
     private func rdsRow(_ label: String, _ value: String, _ help: String = "") -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        GridRow(alignment: .firstTextBaseline) {
             Text(label)
                 .font(BroadcastStyle.chipLabel)
                 .foregroundStyle(.secondary)
-                .frame(width: 56, alignment: .leading)
+                .gridColumnAlignment(.leading)
             Text(value)
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .help(help)
     }

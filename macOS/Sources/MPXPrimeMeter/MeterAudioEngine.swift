@@ -139,6 +139,14 @@ final class MeterAudioEngine: @unchecked Sendable {
         // the semaphore is a real happens-before handshake.
         _ = consumerDone.wait(timeout: .now() + 1.0)
         consumer = nil
+        // Report input-ring drops: a non-zero overflow count means the analysis
+        // thread fell behind the real-time capture and the ring overwrote unread
+        // samples -- the gap shows up as clicks (especially while recording).
+        let st = ring.stats()
+        if st.overflows > 0 || st.underflows > 0 {
+            FileHandle.standardError.write(Data(
+                "[Meter] input ring: overflows=\(st.overflows) underflows=\(st.underflows)\n".utf8))
+        }
         monitor?.stop()
         monitor = nil
         // Release the recorder so AVAudioFile finalizes the WAV header. The

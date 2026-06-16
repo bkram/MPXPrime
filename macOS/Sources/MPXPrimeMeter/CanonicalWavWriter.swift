@@ -4,12 +4,25 @@ import Foundation
 // padding chunks, so any FFT/analysis tool reads it (AVAudioFile inserts JUNK +
 // FLLR alignment chunks that strict parsers mishandle). Header sizes are
 // finalized on close(). Float input is clamped and packed to 24-bit LE signed.
-final class CanonicalWavWriter {
+//
+// Disk writes run on a private serial queue, NOT the caller's thread. The
+// recorder is driven from the meter's analysis thread, which also drains the
+// real-time-fed input ring; a synchronous file write there can stall long
+// enough (a filesystem flush) for the ring to overflow and drop samples -- which
+// shows up as periodic clicks in the recording. Packing is cheap and stays on
+// the caller; only the blocking write is handed off.
+//
+// `@unchecked Sendable`: all mutable state (handle, dataBytes, ok, closed) is
+// touched only on `ioQueue` (a serial queue) after the synchronous header write
+// in init, so the cross-thread hand-off is safe.
+final class CanonicalWavWriter: @unchecked Sendable {
     private let handle: FileHandle
     private let channels: Int
+    private let ioQueue = DispatchQueue(label: "com.mpxprime.meter.wavwrite", qos: .utility)
+    // Touched only on ioQueue.
     private var dataBytes: UInt32 = 0
-    private var scratch = [UInt8]()
     private var ok = true
+    private var closed = false
 
     init(url: URL, sampleRate: Int, channels: Int) throws {
         self.channels = channels
@@ -37,38 +50,48 @@ final class CanonicalWavWriter {
         try? handle.write(contentsOf: h)
     }
 
-    /// Append `frames` of interleaved float samples (channels per frame).
+    /// Append `frames` of interleaved float samples (channels per frame). Packs
+    /// to 24-bit LE on the caller, then writes to disk asynchronously so the
+    /// caller (analysis thread) never blocks on I/O.
     func write(_ interleaved: UnsafeBufferPointer<Float>, frames: Int) {
-        guard ok, frames > 0 else { return }
+        guard frames > 0 else { return }
         let total = frames * channels
-        scratch.removeAll(keepingCapacity: true)
-        scratch.reserveCapacity(total * 3)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(total * 3)
         for i in 0..<total {
             var s = interleaved[i]
             if s > 1 { s = 1 } else if s < -1 { s = -1 }
             let v = Int32(s * 8_388_607.0)
-            scratch.append(UInt8(truncatingIfNeeded: v))
-            scratch.append(UInt8(truncatingIfNeeded: v >> 8))
-            scratch.append(UInt8(truncatingIfNeeded: v >> 16))
+            bytes.append(UInt8(truncatingIfNeeded: v))
+            bytes.append(UInt8(truncatingIfNeeded: v >> 8))
+            bytes.append(UInt8(truncatingIfNeeded: v >> 16))
         }
-        do {
-            try handle.write(contentsOf: Data(scratch))
-            dataBytes += UInt32(total * 3)
-        } catch {
-            if ok { FileHandle.standardError.write(Data("WARNING: WAV write failed: \(error)\n".utf8)) }
-            ok = false
+        let data = Data(bytes)
+        ioQueue.async { [self] in
+            guard ok else { return }
+            do {
+                try handle.write(contentsOf: data)
+                dataBytes += UInt32(data.count)
+            } catch {
+                if ok { FileHandle.standardError.write(Data("WARNING: WAV write failed: \(error)\n".utf8)) }
+                ok = false
+            }
         }
     }
 
-    /// Patch the RIFF + data sizes and close. Idempotent.
+    /// Flush pending writes, patch the RIFF + data sizes, and close. Idempotent.
     func close() {
-        func patch(_ offset: UInt64, _ v: UInt32) {
-            try? handle.seek(toOffset: offset)
-            try? handle.write(contentsOf: Data([UInt8(v & 0xff), UInt8((v >> 8) & 0xff),
-                                                UInt8((v >> 16) & 0xff), UInt8((v >> 24) & 0xff)]))
+        ioQueue.sync {
+            guard !closed else { return }
+            closed = true
+            func patch(_ offset: UInt64, _ v: UInt32) {
+                try? handle.seek(toOffset: offset)
+                try? handle.write(contentsOf: Data([UInt8(v & 0xff), UInt8((v >> 8) & 0xff),
+                                                    UInt8((v >> 16) & 0xff), UInt8((v >> 24) & 0xff)]))
+            }
+            patch(4, 36 + dataBytes)   // RIFF chunk size
+            patch(40, dataBytes)        // data chunk size
+            try? handle.close()
         }
-        patch(4, 36 + dataBytes)   // RIFF chunk size
-        patch(40, dataBytes)        // data chunk size
-        try? handle.close()
     }
 }

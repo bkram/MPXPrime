@@ -11,6 +11,16 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: fix periodic clicks in recordings.** WAV recording wrote each block to
+  disk synchronously on the analysis thread -- the same thread that drains the
+  real-time-fed input ring. An occasional long file write (a filesystem flush, or
+  an iCloud sync if recording into `~/Documents`) stalled it long enough for the
+  ring to overflow and overwrite unread samples, leaving a one-sample gap that
+  reads as a click (~0.5/s, irregular, in the mono sum -- on both SDR and
+  audio-device input, both recording formats). Disk writes now run on a private
+  serial queue; the analysis thread only packs samples (cheap) and hands them
+  off, so capture is never stalled by I/O. The input ring's overflow/underflow
+  counts are also logged on stop to confirm.
 - **Meter: smoother spectrum.** The composite (and decoded L/R) spectrum was
   recomputed only every 4th analysis block (~6/s), so the centerpiece graph
   looked sluggish next to the ~23/s scopes and meters. It now recomputes every

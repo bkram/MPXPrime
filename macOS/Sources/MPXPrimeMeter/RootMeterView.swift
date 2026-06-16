@@ -92,13 +92,31 @@ struct RootMeterView: View {
                               format: .number.precision(.fractionLength(1)))
                         .frame(width: 60)
                         .multilineTextAlignment(.trailing)
-                        .onSubmit { vm.restartIfRunning() }
+                        .onSubmit { vm.applyFrequencyChange() }
                     Text("MHz").foregroundStyle(.secondary)
                     Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
                         .labelsHidden()
-                        .onChange(of: vm.frequencyMHz) { _, _ in vm.restartIfRunning() }
+                        .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
                 }
-                .help("FM broadcast frequency to tune (RTL-SDR).")
+                .help("FM broadcast frequency (RTL-SDR). Retunes live -- no restart.")
+
+                Toggle("AGC", isOn: $vm.sdrAutoGain)
+                    .toggleStyle(.button)
+                    .help("Automatic tuner gain. Off = manual gain (dB field). Applied live.")
+                    .onChange(of: vm.sdrAutoGain) { _, _ in vm.applyGainChange() }
+                if !vm.sdrAutoGain {
+                    HStack(spacing: 4) {
+                        TextField("dB", value: $vm.sdrGainDB,
+                                  format: .number.precision(.fractionLength(1)))
+                            .frame(width: 48)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit { vm.applyGainChange() }
+                        Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
+                            .labelsHidden()
+                            .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
+                    }
+                    .help("Manual RTL-SDR gain in dB (applied live).")
+                }
             }
         }
         ToolbarItem(placement: .primaryAction) {

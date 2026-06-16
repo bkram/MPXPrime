@@ -11,6 +11,12 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Live SDR retune / gain / AGC (no restart).** The bundled `mpx-tuner` takes
+  live commands over a dedicated control FIFO (`--control`), so changing the SDR
+  frequency in the Meter retunes the dongle in place -- no process teardown, no
+  device re-open, no audio gap. The toolbar adds an AGC toggle and a manual
+  gain (dB) field, also applied live. (The external `fm-sdr-tuner` has no
+  control channel, so it still restarts on a frequency change.)
 - **Built-in RTL-SDR (no external binary).** MPX Prime Meter now bundles its
   own stripped SDR helper, `mpx-tuner` (a minimal RTL-SDR -> FM-demod -> MPX
   subset of FM-SDR-Tuner, vendored under `tuner/`, GPL-3.0), with its dylibs

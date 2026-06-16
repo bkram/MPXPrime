@@ -44,8 +44,8 @@ and it decodes stereo + full RDS and shows it on a single dashboard window.
 - Input: an audio device, or **native RTL-SDR** tuning (`Source -> SDR`) -- the
   app bundles its own stripped SDR helper (`mpx-tuner`, from `tuner/`), so it
   needs no separate binary or Homebrew, just a connected RTL-SDR dongle
-  (Apple Silicon). Headless terminal modes also exist (`./run-meter.sh`,
-  `./run-meter-sdr.sh`)
+  (Apple Silicon). Frequency / gain / AGC retune **live** (no restart).
+  Headless terminal modes also exist (`./run-meter.sh`, `./run-meter-sdr.sh`)
 
 See the [user manual](docs/manual.md) for details.
 

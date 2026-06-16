@@ -7,7 +7,11 @@ import Foundation
 // `StdinInputSource(fifoPath:)` reads it. Locating the binary mirrors the
 // script: FM_SDR_TUNER env override, then ./bin/fm-sdr-tuner (CWD), then the
 // sibling FM-SDR-Tuner build dir under $HOME.
-final class SDRTunerProcess {
+// @unchecked Sendable: the only state touched off the main thread is the
+// control FIFO write (controlFD + controlPath), and that is confined to the
+// serial `controlQueue`. `process` and the paths are set up on the main thread
+// before any background work and not mutated concurrently.
+final class SDRTunerProcess: @unchecked Sendable {
     enum SDRError: LocalizedError {
         case binaryNotFound(triedPaths: [String])
         case fifoCreateFailed(path: String, errno: Int32)
@@ -33,6 +37,14 @@ final class SDRTunerProcess {
     private let mpxRate = 192_000
     private let process = Process()
 
+    /// The vendored `mpx-tuner` accepts a live-control FIFO; the external
+    /// `fm-sdr-tuner` does not (so the GUI restarts it on a frequency change).
+    let supportsLiveControl: Bool
+    /// FIFO carrying live commands (freq/gain/gainmode) to the helper.
+    private let controlPath: String
+    private let controlQueue = DispatchQueue(label: "com.mpxprime.meter.sdrcontrol")
+    private var controlFD: Int32 = -1
+
     /// - Throws: `SDRError.binaryNotFound` if no tuner binary resolves.
     init(frequencyKHz: Int) throws {
         self.frequencyKHz = frequencyKHz
@@ -43,11 +55,13 @@ final class SDRTunerProcess {
             throw SDRError.binaryNotFound(triedPaths: candidates)
         }
         self.binaryPath = found
+        self.supportsLiveControl = (found as NSString).lastPathComponent == "mpx-tuner"
 
         let token = UUID().uuidString.prefix(8)
         let tmp = NSTemporaryDirectory()
         self.fifoPath = (tmp as NSString).appendingPathComponent("mpxprime-mpx-\(token).fifo")
         self.logPath = (tmp as NSString).appendingPathComponent("fm-sdr-tuner-\(token).log")
+        self.controlPath = (tmp as NSString).appendingPathComponent("mpxprime-ctl-\(token).fifo")
     }
 
     /// False once the tuner subprocess has exited (e.g. no RTL-SDR found, or it
@@ -91,11 +105,15 @@ final class SDRTunerProcess {
 
         process.executableURL = URL(fileURLWithPath: binaryPath)
         // The bundled `mpx-tuner` and the full `fm-sdr-tuner` take different
-        // flags for "write MPX to this FIFO at this rate".
-        if (binaryPath as NSString).lastPathComponent == "mpx-tuner" {
+        // flags for "write MPX to this FIFO at this rate". mpx-tuner also
+        // accepts a live-control FIFO.
+        if supportsLiveControl {
+            unlink(controlPath)
+            _ = mkfifo(controlPath, 0o600)  // best-effort; control is optional
             process.arguments = [
                 "-f", "\(frequencyKHz)",
                 "-o", fifoPath,
+                "--control", controlPath,
                 "--mpx-rate", "\(mpxRate)"
             ]
         } else {
@@ -112,16 +130,54 @@ final class SDRTunerProcess {
             process.standardError = log
         }
         try process.run()
+
+        // Open the control FIFO's write end once the helper's reader is up.
+        // O_WRONLY|O_NONBLOCK returns ENXIO until then, so retry briefly on a
+        // background queue (never blocks the UI; bounded so a dead helper can't
+        // hang us).
+        if supportsLiveControl {
+            controlQueue.async { [weak self] in
+                guard let self else { return }
+                for _ in 0..<40 {  // ~2 s
+                    let fd = open(self.controlPath, O_WRONLY | O_NONBLOCK)
+                    if fd >= 0 { self.controlFD = fd; return }
+                    usleep(50_000)
+                }
+            }
+        }
     }
 
-    /// Terminate the tuner and remove the FIFO. Idempotent / best-effort.
+    // MARK: - Live control (mpx-tuner only)
+
+    func setFrequencyKHz(_ khz: Int) { sendControl("freq \(khz)") }
+    /// Manual gain in dB (also switches the tuner to manual gain mode).
+    func setGainDB(_ db: Double) { sendControl(String(format: "gain %.1f", db)) }
+    func setGainAuto(_ auto: Bool) { sendControl("gainmode \(auto ? "auto" : "manual")") }
+
+    private func sendControl(_ command: String) {
+        guard supportsLiveControl else { return }
+        controlQueue.async { [weak self] in
+            guard let self, self.controlFD >= 0 else { return }
+            let line = command + "\n"
+            _ = line.utf8CString.withUnsafeBufferPointer { buf in
+                // Drop the trailing NUL; write the bytes only.
+                write(self.controlFD, buf.baseAddress, buf.count - 1)
+            }
+        }
+    }
+
+    /// Terminate the tuner and remove the FIFOs. Idempotent / best-effort.
     func stop() {
+        controlQueue.sync {
+            if controlFD >= 0 { close(controlFD); controlFD = -1 }
+        }
         if process.isRunning {
             process.terminate()
             // Give it a moment to release the SDR + close the FIFO write end.
             process.waitUntilExit()
         }
         unlink(fifoPath)
+        unlink(controlPath)
     }
 }
 

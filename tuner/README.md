@@ -45,4 +45,18 @@ separately-placed `fm-sdr-tuner`.
 mpx-tuner -f 88600                 # 88.6 MHz -> MPX WAV stream on stdout
 mpx-tuner -f 88600 -o /tmp/mpx.fifo --mpx-rate 192000
 mpx-tuner -f 105900 -g 30          # manual 30 dB tuner gain (default: auto)
+mpx-tuner -f 88600 --control /tmp/ctl.fifo   # live commands while streaming
 ```
+
+## Live control (`--control <fifo>`)
+
+With `--control`, the tuner reads newline commands from a FIFO and applies them
+between IQ blocks -- a retune or gain change never interrupts the MPX stream
+(no device re-open). MPX Prime Meter uses this so changing frequency / gain /
+AGC in the GUI is glitch-free. Commands:
+
+- `freq <kHz>` -- retune
+- `gain <dB>` -- manual gain (also switches to manual mode)
+- `gainmode auto|manual`
+- `agc 0|1` -- RTL2832 digital AGC
+- `ppm <n>` -- frequency correction

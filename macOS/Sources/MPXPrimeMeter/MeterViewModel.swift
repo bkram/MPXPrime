@@ -31,6 +31,10 @@ final class MeterViewModel: ObservableObject {
     // Structural / control state (low frequency).
     @Published var inputKind: InputKind = .audioDevice
     @Published var frequencyMHz: Double = 88.6
+    /// SDR tuner gain (dB) + auto/AGC. Applied live over the control FIFO when
+    /// the bundled mpx-tuner is running; default auto.
+    @Published var sdrAutoGain: Bool = true
+    @Published var sdrGainDB: Double = 30.0
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputID: AudioDeviceID?
@@ -177,11 +181,34 @@ final class MeterViewModel: ObservableObject {
         statusText = "Stopped"
     }
 
-    /// Apply a control change (device/channel/monitor/gain/ref) by restarting.
+    /// Apply a control change (device/channel/monitor/ref) by restarting.
     func restartIfRunning() {
         guard running else { return }
         stop()
         start()
+    }
+
+    /// Frequency changed: live-retune the running SDR helper if it supports a
+    /// control channel (no glitch, no device re-open); otherwise restart.
+    func applyFrequencyChange() {
+        guard running, inputKind == .sdr,
+              let tuner = sdrTuner, tuner.supportsLiveControl else {
+            restartIfRunning()
+            return
+        }
+        tuner.setFrequencyKHz(Int((frequencyMHz * 1000).rounded()))
+        statusText = String(format: "Tuned %.2f MHz (SDR, live)", frequencyMHz)
+    }
+
+    /// Gain / AGC changed: live-apply to the running SDR helper (no restart).
+    func applyGainChange() {
+        guard running, inputKind == .sdr,
+              let tuner = sdrTuner, tuner.supportsLiveControl else { return }
+        if sdrAutoGain {
+            tuner.setGainAuto(true)
+        } else {
+            tuner.setGainDB(sdrGainDB)
+        }
     }
 
     // MARK: - Polling

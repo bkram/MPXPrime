@@ -112,7 +112,20 @@ struct MpxTuner {
       std::lock_guard<std::mutex> lk(cmdMutex);
       local.swap(cmds);
     }
-    for (const auto &c : local) apply(c);
+    // Coalesce a burst: keep only the last command of each type (every command
+    // is an idempotent "set to value", so earlier duplicates are dead). A
+    // scroll/drag on the frequency or gain field thus issues ONE SDRplay
+    // Update per drain instead of dozens -- the async SDRplay update path drops
+    // or stalls retunes when hit with a rapid burst (RTL's synchronous USB
+    // control transfer does not). Last-occurrence order is preserved so the
+    // GainAuto/Gain disable-AGC interaction still applies in submitted order.
+    std::vector<Cmd> coalesced;
+    for (auto it = local.rbegin(); it != local.rend(); ++it) {
+      bool seen = false;
+      for (const auto &k : coalesced) if (k.type == it->type) { seen = true; break; }
+      if (!seen) coalesced.push_back(*it);
+    }
+    for (auto it = coalesced.rbegin(); it != coalesced.rend(); ++it) apply(*it);
   }
 
   void loop() {

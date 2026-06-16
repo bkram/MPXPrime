@@ -644,6 +644,12 @@ otherwise to **Audio**.
   service installed (the SDRplay driver); the app loads it at runtime and falls
   back to RTL-SDR if it's absent. Tested on an RSPdx.
 
+  When a dongle is attached at launch the Meter opens **already capturing** in
+  SDR mode with audio monitoring on, so it comes up live. Every numeric control
+  below (Frequency, Gain, **LNA**, **PPM**, and the **IF BW** menu) also steps on
+  **mouse-wheel / trackpad scroll** while the pointer is over it -- no need to
+  type or open the menu.
+
   All SDR controls apply **live** -- no restart, no audio gap:
   - **Frequency** -- retunes in place (also clears the prior station's meters).
   - **IF BW** -- the IF channel bandwidth. RTL shows the demod channel-FIR steps

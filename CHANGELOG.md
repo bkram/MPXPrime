@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: SDRplay live retune fixed.** Changing frequency on an SDRplay RSP now
+  takes effect cleanly instead of glitching / appearing to do nothing. Two
+  causes: (1) the stream `reset` flag raised on a retune was ignored, so up to a
+  ring's worth of old-frequency IQ played out before the new station -- the ring
+  is now flushed on reset; (2) a scroll/drag burst fired one async SDRplay
+  `Update` per event, which the API drops or stalls under, so the tuner command
+  queue now coalesces a burst to a single update per type (RTL's synchronous USB
+  retune was unaffected, which is why only SDRplay misbehaved).
+- **Meter: opens live in SDR mode with audio.** When a dongle is present at
+  launch the Meter now starts capturing immediately, and audio monitoring is on
+  by default -- Start produces sound without a second toggle.
+- **Meter: scroll works on every numeric SDR control.** The LNA and PPM steppers
+  and the IF-bandwidth menu now adjust on mouse-wheel / trackpad scroll while the
+  pointer is over them, matching the Frequency and Gain fields. The IF-BW menu
+  still clicks open normally; scrolling steps through its widths.
+- **Meter: IF-bandwidth menu is device-appropriate.** On SDRplay the IF BW picker
+  offers the RSP's analog IF filter widths (Auto / 1536 / 600 / 300 / 200 kHz) so
+  the operator can tighten the IF to reject adjacent-station interference; RTL
+  keeps its demod channel-FIR steps (56-311 kHz).
 - **Meter: SDRplay RSP support (auto-preferred).** When an SDRplay RSP is
   attached the Meter uses it instead of an RTL-SDR (14-bit ADC -> cleaner audio,
   better separation, lower MPX-power floor). The backend dlopens the

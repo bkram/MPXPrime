@@ -67,8 +67,8 @@ sdrplay_api_DeviceParamsT *g_params = nullptr;
 
 void streamA(short *xi, short *xq, sdrplay_api_StreamCbParamsT *p,
              unsigned int n, unsigned int reset, void *ctx) {
-  (void)p; (void)reset;
-  if (ctx) static_cast<SDRplayDevice *>(ctx)->ingest(xi, xq, n);
+  (void)p;
+  if (ctx) static_cast<SDRplayDevice *>(ctx)->ingest(xi, xq, n, reset != 0);
 }
 
 void eventCb(sdrplay_api_EventT id, sdrplay_api_TunerSelectT t,
@@ -279,10 +279,13 @@ bool SDRplayDevice::setBiasTee(bool enable) {
   return false;
 }
 
-void SDRplayDevice::ingest(const short *xi, const short *xq, unsigned int n) {
+void SDRplayDevice::ingest(const short *xi, const short *xq, unsigned int n, bool reset) {
   if (!xi || !xq || n == 0) return;
   std::lock_guard<std::mutex> lk(m_mutex);
   const size_t cap = m_ring.size();
+  // On a retune the API raises `reset`; drop the buffered old-frequency IQ so
+  // the new station is heard immediately instead of after the ring drains.
+  if (reset) { m_readPos = m_writePos = 0; m_full = false; }
   for (unsigned int i = 0; i < n; i++) {
     m_ring[m_writePos] = std::complex<float>(xi[i] / 32768.0f, xq[i] / 32768.0f);
     m_writePos = (m_writePos + 1) % cap;
@@ -328,7 +331,7 @@ bool SDRplayDevice::setBiasTee(bool) { return false; }
 bool SDRplayDevice::setLnaState(int) { return false; }
 int SDRplayDevice::antennaCount() const { return 1; }
 const char *SDRplayDevice::modelName() const { return "RSP"; }
-void SDRplayDevice::ingest(const short *, const short *, unsigned int) {}
+void SDRplayDevice::ingest(const short *, const short *, unsigned int, bool) {}
 size_t SDRplayDevice::readIQ(std::complex<float> *, size_t) { return 0; }
 
 #endif

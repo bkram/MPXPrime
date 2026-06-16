@@ -59,6 +59,10 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
             vm.inputKind = .sdr
             vm.frequencyMHz = freq
             vm.start()
+        } else if vm.inputKind == .sdr, SDRLibraryInputSource.deviceCount() > 0 {
+            // A dongle is present: start capturing (with audio monitoring) right
+            // away so the app opens live in SDR mode instead of idle.
+            vm.start()
         }
     }
 

@@ -56,7 +56,7 @@ public:
   size_t readIQ(std::complex<float> *out, size_t maxSamples);
 
   // Called from the SDRplay stream callback (file-local in the .cpp).
-  void ingest(const short *xi, const short *xq, unsigned int n);
+  void ingest(const short *xi, const short *xq, unsigned int n, bool reset = false);
   void markFailed() { m_failed.store(true, std::memory_order_relaxed); }
 
 private:

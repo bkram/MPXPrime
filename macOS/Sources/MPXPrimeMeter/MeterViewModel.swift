@@ -63,7 +63,9 @@ final class MeterViewModel: ObservableObject {
     /// True when SDR is supported (the tuner library is linked) -- gates the
     /// SDR input option.
     let sdrAvailable = SDRLibraryInputSource.isAvailable()
-    @Published var monitorEnabled = false
+    // Monitor (decoded audio to the speakers) on by default -- pressing Start
+    // should produce sound without an extra toggle.
+    @Published var monitorEnabled = true
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
     @Published var running = false

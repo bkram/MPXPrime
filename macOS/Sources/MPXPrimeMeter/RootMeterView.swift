@@ -13,6 +13,13 @@ struct RootMeterView: View {
     @State private var decodedLSpectrum = false
     @State private var decodedRSpectrum = false
 
+    // Bridge an Int binding to the Double-valued ScrollableNumericField so the
+    // integer SDR steppers (LNA, PPM) also adjust on scroll, like Frequency/Gain.
+    private static func intBinding(_ b: Binding<Int>) -> Binding<Double> {
+        Binding(get: { Double(b.wrappedValue) },
+                set: { b.wrappedValue = Int($0.rounded()) })
+    }
+
     var body: some View {
         // Fluid, non-scrolling dashboard: fixed-height analysis rows on top,
         // the MPX spectrum (the centerpiece) takes ALL remaining height. The
@@ -136,29 +143,31 @@ struct RootMeterView: View {
                 if vm.sdrIsSDRplay {
                     HStack(spacing: 4) {
                         Text("LNA").foregroundStyle(.secondary)
-                        Text("\(vm.sdrLnaState)").font(.callout.monospacedDigit())
+                        ScrollableNumericField(value: Self.intBinding($vm.sdrLnaState),
+                                               range: 0...27, step: 1, decimals: 0)
+                            .frame(width: 34)
                         Stepper("LNA", value: $vm.sdrLnaState, in: 0...27, step: 1)
                             .labelsHidden()
-                            .onChange(of: vm.sdrLnaState) { _, _ in vm.applyLnaChange() }
                     }
+                    .onChange(of: vm.sdrLnaState) { _, _ in vm.applyLnaChange() }
                     .help("LNA state: front-end gain-reduction step (0 = most gain). "
-                        + "Raise it to relieve overload on strong signals. Applied live.")
+                        + "Raise it to relieve overload on strong signals. Scroll to step. "
+                        + "Applied live.")
                 }
 
                 Divider().frame(height: 16)
 
-                Picker("IF BW", selection: $vm.sdrBandwidthKHz) {
-                    Text("Auto").tag(0)
-                    // SDRplay exposes its analog IF filter widths; RTL uses the
-                    // demod channel-FIR steps.
-                    ForEach(vm.sdrIsSDRplay ? [1536, 600, 300, 200]
-                                            : [311, 254, 200, 168, 133, 114, 84, 56], id: \.self) { bw in
-                        Text("\(bw) kHz").tag(bw)
-                    }
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
-                .help(vm.sdrIsSDRplay
+                // SDRplay exposes its analog IF filter widths; RTL uses the demod
+                // channel-FIR steps. Scrollable so the IF can be dialled in/out
+                // without opening the menu.
+                ScrollableMenuPicker(
+                    options: [(label: "Auto", tag: 0)]
+                        + (vm.sdrIsSDRplay ? [1536, 600, 300, 200]
+                                           : [311, 254, 200, 168, 133, 114, 84, 56])
+                            .map { (label: "\($0) kHz", tag: $0) },
+                    selection: $vm.sdrBandwidthKHz)
+                    .fixedSize()
+                    .help(vm.sdrIsSDRplay
                     ? "SDRplay analog IF bandwidth. Narrower rejects adjacent-station "
                         + "interference; 300 kHz still passes the full composite, 200 kHz "
                         + "starts to roll off the top (SCA / high RDS). Auto = 600 kHz."
@@ -186,15 +195,14 @@ struct RootMeterView: View {
                 if !vm.sdrIsSDRplay {
                     HStack(spacing: 4) {
                         Text("PPM").foregroundStyle(.secondary)
-                        TextField("ppm", value: $vm.sdrPPM, format: .number)
+                        ScrollableNumericField(value: Self.intBinding($vm.sdrPPM),
+                                               range: -200...200, step: 1, decimals: 0)
                             .frame(width: 44)
-                            .multilineTextAlignment(.trailing)
-                            .onSubmit { vm.applyPPMChange() }
                         Stepper("PPM", value: $vm.sdrPPM, in: -200...200, step: 1)
                             .labelsHidden()
-                            .onChange(of: vm.sdrPPM) { _, _ in vm.applyPPMChange() }
                     }
-                    .help("Frequency-error correction in ppm. Applied live.")
+                    .onChange(of: vm.sdrPPM) { _, _ in vm.applyPPMChange() }
+                    .help("Frequency-error correction in ppm. Scroll to step. Applied live.")
                 }
 
                 Toggle("Bias-T", isOn: $vm.sdrBiasTee)

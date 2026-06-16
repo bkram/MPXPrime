@@ -19,6 +19,29 @@ let repoRoot = "\(packageDir)/.."
 // HOMEBREW_PREFIX for non-default Homebrew installs.
 let brewPrefix = ProcessInfo.processInfo.environment["HOMEBREW_PREFIX"] ?? "/opt/homebrew"
 
+// Optional SDRplay RSP support: build the SDRplay backend only when the
+// proprietary SDK headers are installed (/Library/SDRplayAPI/<ver>/include).
+// The runtime library is dlopen'd (never linked/bundled), so a build without
+// the SDK simply omits SDRplay and the Meter falls back to RTL-SDR.
+let sdrplayInclude: String? = {
+    let base = "/Library/SDRplayAPI"
+    guard let versions = try? FileManager.default.contentsOfDirectory(atPath: base) else { return nil }
+    for v in versions.sorted(by: >) {   // newest first
+        let inc = "\(base)/\(v)/include"
+        if FileManager.default.fileExists(atPath: "\(inc)/sdrplay_api.h") { return inc }
+    }
+    return nil
+}()
+var cmpxTunerCxx: [CXXSetting] = [
+    .headerSearchPath("include"),
+    .unsafeFlags(["-I\(repoRoot)/tuner/include", "-I\(brewPrefix)/include"]),
+    .define("FM_TUNER_HAS_RTLSDR")
+]
+if let sdrplayInclude {
+    cmpxTunerCxx.append(.unsafeFlags(["-I\(sdrplayInclude)"]))
+    cmpxTunerCxx.append(.define("FM_TUNER_HAS_SDRPLAY"))
+}
+
 let package = Package(
     name: "MPXPrime",
     platforms: [
@@ -100,14 +123,7 @@ let package = Package(
             name: "CMPXTuner",
             path: "Sources/CMPXTuner",
             publicHeadersPath: "include",
-            cxxSettings: [
-                .headerSearchPath("include"),
-                .unsafeFlags([
-                    "-I\(repoRoot)/tuner/include",
-                    "-I\(brewPrefix)/include"
-                ]),
-                .define("FM_TUNER_HAS_RTLSDR")
-            ],
+            cxxSettings: cmpxTunerCxx,
             linkerSettings: [
                 .unsafeFlags(["-L\(brewPrefix)/lib"]),
                 .linkedLibrary("rtlsdr"),

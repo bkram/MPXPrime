@@ -11,6 +11,12 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: smoother spectrum.** The composite (and decoded L/R) spectrum was
+  recomputed only every 4th analysis block (~6/s), so the centerpiece graph
+  looked sluggish next to the ~23/s scopes and meters. It now recomputes every
+  block (~23/s); the FFTs run on the analysis thread (off the audio path) and are
+  cheap beside the per-sample decode already done there, so there is no glitch
+  risk and the throttle was unnecessary.
 - **Meter: one launcher.** `run-meter.sh` is now the single script -- with no
   arguments it opens the GUI, which auto-detects an attached dongle (in-process
   SDR) or falls back to the audio device; `--sdr-freq <MHz>` opens it pre-tuned,

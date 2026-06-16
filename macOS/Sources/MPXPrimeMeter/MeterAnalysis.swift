@@ -174,7 +174,6 @@ final class MeterAnalysis {
     private var spectrumL = MPXSpectrumAnalyzer()
     private var spectrumR = MPXSpectrumAnalyzer()
     private var spectrumInput: [Float] = []
-    private var spectrumTick = 0
 
     init(
         sampleRate: Float, preemphasisUS: Int = 50, pilotRefKHz: Float = 6.75,
@@ -422,8 +421,12 @@ final class MeterAnalysis {
         snap.recentBlockErrorRate = berEMA
 
         // GUI display buffers. Decimate this block to a fixed point count for
-        // the scopes; recompute the composite spectrum every 4th block (~6/s at
-        // 8192-frame blocks @ 192 kHz -- ample for a display, cheap on CPU).
+        // the scopes, and recompute the spectra, every block (~23/s at 8192-frame
+        // blocks @ 192 kHz) so the spectrum refreshes as smoothly as the scopes.
+        // This runs on the analysis thread (off the audio path), and a few vDSP
+        // FFTs are cheap next to the per-sample decode chains already run here,
+        // so there is no need to throttle (the old every-4th-block gate dropped
+        // the spectrum to ~6/s and looked sluggish).
         Self.decimate(into: &scopeComposite, from: samples, count: samples.count)
         decodedL.withUnsafeBufferPointer {
             Self.decimate(into: &scopeL, from: $0, count: lastBlockCount)
@@ -435,36 +438,32 @@ final class MeterAnalysis {
         snap.decodedLScope = scopeL
         snap.decodedRScope = scopeR
 
-        spectrumTick += 1
-        if spectrumTick >= 4 {
-            spectrumTick = 0
-            if spectrumInput.count != samples.count {
-                spectrumInput = [Float](repeating: 0.0, count: samples.count)
-            }
-            for j in 0..<samples.count { spectrumInput[j] = samples[j] }
-            let result = spectrum.compute(
-                samples: spectrumInput, validCount: samples.count,
-                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
-                maxDisplayHz: 100_000)
-            snap.spectrumDB = result.dbBins
-            snap.spectrumMaxHz = result.maxHz
-            snap.spectrumNyquistHz = result.nyquistHz
-
-            // Decoded L / R audio spectra (0..20 kHz) for the click-to-spectrum
-            // scope view. Computed from the full decoded blocks, audio range.
-            let lres = spectrumL.compute(
-                samples: decodedL, validCount: lastBlockCount,
-                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
-                maxDisplayHz: 20_000)
-            let rres = spectrumR.compute(
-                samples: decodedR, validCount: lastBlockCount,
-                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
-                maxDisplayHz: 20_000)
-            snap.decodedLSpectrumDB = lres.dbBins
-            snap.decodedRSpectrumDB = rres.dbBins
-            snap.audioSpectrumMaxHz = lres.maxHz
-            snap.audioSpectrumNyquistHz = lres.nyquistHz
+        if spectrumInput.count != samples.count {
+            spectrumInput = [Float](repeating: 0.0, count: samples.count)
         }
+        for j in 0..<samples.count { spectrumInput[j] = samples[j] }
+        let result = spectrum.compute(
+            samples: spectrumInput, validCount: samples.count,
+            sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+            maxDisplayHz: 100_000)
+        snap.spectrumDB = result.dbBins
+        snap.spectrumMaxHz = result.maxHz
+        snap.spectrumNyquistHz = result.nyquistHz
+
+        // Decoded L / R audio spectra (0..20 kHz) for the click-to-spectrum
+        // scope view. Computed from the full decoded blocks, audio range.
+        let lres = spectrumL.compute(
+            samples: decodedL, validCount: lastBlockCount,
+            sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+            maxDisplayHz: 20_000)
+        let rres = spectrumR.compute(
+            samples: decodedR, validCount: lastBlockCount,
+            sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+            maxDisplayHz: 20_000)
+        snap.decodedLSpectrumDB = lres.dbBins
+        snap.decodedRSpectrumDB = rres.dbBins
+        snap.audioSpectrumMaxHz = lres.maxHz
+        snap.audioSpectrumNyquistHz = lres.nyquistHz
     }
 
     /// Point-decimate a source buffer into a fixed-size destination (stride

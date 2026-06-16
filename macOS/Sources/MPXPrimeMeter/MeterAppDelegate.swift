@@ -50,6 +50,9 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // Don't leave the Frequency text field first-responder (and its contents
+        // selected) on launch -- start with no focused field.
+        DispatchQueue.main.async { [weak w] in w?.makeFirstResponder(nil) }
 
         // Launched via run-meter-sdr.sh --gui: pre-tune the SDR and start.
         if let freq = autoStartSDRFreqMHz, vm.sdrAvailable {

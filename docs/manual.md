@@ -634,7 +634,9 @@ otherwise to **Audio**.
   dylibs ship inside the app. **SDR support makes MPX Prime Meter Apple-Silicon
   only** (the RTL-SDR libraries are arm64-only); the MPX Prime Studio encoder
   remains universal. (The headless `run-meter-sdr.sh` still uses an external
-  `fm-sdr-tuner` piped over stdin.)
+  `fm-sdr-tuner` piped over stdin.) Tested with **Rafael Micro R820T** and
+  **Elonics E4000** tuner dongles; other librtlsdr-supported tuners (R828D,
+  FC0012/0013, FC2580) should work but are untested.
 
   All SDR controls apply **live** -- no restart, no audio gap:
   - **Frequency** -- retunes in place (also clears the prior station's meters).

@@ -663,7 +663,8 @@ otherwise to **Audio**.
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
   beside the trends.
 - **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
-- **Scopes**: composite, decoded L, decoded R.
+- **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
+  it between waveform and its audio spectrum (0-20 kHz).
 - **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz
   RDS, 67.65 kHz, 92 kHz SCA). A **60 / 100 kHz** span toggle in the header
   picks the display range; 60 kHz (the default) focuses on the modulated bands,

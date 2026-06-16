@@ -335,6 +335,10 @@ final class MeterViewModel: ObservableObject {
         telemetry.spectrumDB = s.spectrumDB
         telemetry.spectrumMaxHz = s.spectrumMaxHz
         telemetry.spectrumNyquistHz = s.spectrumNyquistHz
+        telemetry.decodedLSpectrumDB = s.decodedLSpectrumDB
+        telemetry.decodedRSpectrumDB = s.decodedRSpectrumDB
+        telemetry.audioSpectrumMaxHz = s.audioSpectrumMaxHz
+        telemetry.audioSpectrumNyquistHz = s.audioSpectrumNyquistHz
     }
 
     /// Reset the deviation peak-hold + best-separation readouts.

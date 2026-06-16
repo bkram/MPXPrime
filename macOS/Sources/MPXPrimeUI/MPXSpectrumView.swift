@@ -15,6 +15,8 @@ public struct MPXSpectrumView: View {
     /// Stereo L-R, 57 kHz RDS, SCA) as trapezoid outlines + captions along the
     /// bottom, MpxTool-style. Default false leaves transmit call sites unchanged.
     var showBandLabels: Bool
+    var minHeight: CGFloat
+    var idealHeight: CGFloat
 
     private let dbMin: Float = -100.0
     private let dbMax: Float = 0.0
@@ -32,13 +34,16 @@ public struct MPXSpectrumView: View {
 
     public init(
         dbBins: [Float], maxHz: Double, nyquistHz: Double,
-        markersHz: [Double]? = nil, showBandLabels: Bool = false
+        markersHz: [Double]? = nil, showBandLabels: Bool = false,
+        minHeight: CGFloat = 190, idealHeight: CGFloat = 220
     ) {
         self.dbBins = dbBins
         self.maxHz = maxHz
         self.nyquistHz = nyquistHz
         self.markersHz = markersHz
         self.showBandLabels = showBandLabels
+        self.minHeight = minHeight
+        self.idealHeight = idealHeight
     }
 
     public var body: some View {
@@ -193,7 +198,7 @@ public struct MPXSpectrumView: View {
                     }
                 }
             }
-            .frame(minHeight: 190, idealHeight: 220)
+            .frame(minHeight: minHeight, idealHeight: idealHeight)
             .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
 
             HStack(spacing: 14) {

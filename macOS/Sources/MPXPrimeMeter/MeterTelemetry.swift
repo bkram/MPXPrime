@@ -61,4 +61,8 @@ final class MeterTelemetry: ObservableObject {
     @Published var spectrumDB: [Float] = []
     @Published var spectrumMaxHz: Double = 100_000
     @Published var spectrumNyquistHz: Double = 0
+    @Published var decodedLSpectrumDB: [Float] = []
+    @Published var decodedRSpectrumDB: [Float] = []
+    @Published var audioSpectrumMaxHz: Double = 20_000
+    @Published var audioSpectrumNyquistHz: Double = 0
 }

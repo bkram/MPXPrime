@@ -67,6 +67,12 @@ struct MeterSnapshot {
     var spectrumDB: [Float] = []
     var spectrumMaxHz: Double = 100_000
     var spectrumNyquistHz: Double = 0
+    /// Decoded L / R audio spectra (dB bins), 0..audioSpectrumMaxHz. Shown when
+    /// a decoded scope is clicked to switch from waveform to spectrum.
+    var decodedLSpectrumDB: [Float] = []
+    var decodedRSpectrumDB: [Float] = []
+    var audioSpectrumMaxHz: Double = 20_000
+    var audioSpectrumNyquistHz: Double = 0
 
     // Scrolling trend history (oldest -> newest), ~2 points/s. Deviation in kHz
     // and MPX power in dBr. Cross-thread-copied in `isolatedSnapshot()`.
@@ -154,6 +160,8 @@ final class MeterAnalysis {
     private var scopeL = [Float](repeating: 0.0, count: scopePoints)
     private var scopeR = [Float](repeating: 0.0, count: scopePoints)
     private var spectrum = MPXSpectrumAnalyzer()
+    private var spectrumL = MPXSpectrumAnalyzer()
+    private var spectrumR = MPXSpectrumAnalyzer()
     private var spectrumInput: [Float] = []
     private var spectrumTick = 0
 
@@ -415,6 +423,21 @@ final class MeterAnalysis {
             snap.spectrumDB = result.dbBins
             snap.spectrumMaxHz = result.maxHz
             snap.spectrumNyquistHz = result.nyquistHz
+
+            // Decoded L / R audio spectra (0..20 kHz) for the click-to-spectrum
+            // scope view. Computed from the full decoded blocks, audio range.
+            let lres = spectrumL.compute(
+                samples: decodedL, validCount: lastBlockCount,
+                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+                maxDisplayHz: 20_000)
+            let rres = spectrumR.compute(
+                samples: decodedR, validCount: lastBlockCount,
+                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+                maxDisplayHz: 20_000)
+            snap.decodedLSpectrumDB = lres.dbBins
+            snap.decodedRSpectrumDB = rres.dbBins
+            snap.audioSpectrumMaxHz = lres.maxHz
+            snap.audioSpectrumNyquistHz = lres.nyquistHz
         }
     }
 
@@ -461,6 +484,8 @@ final class MeterAnalysis {
         c.decodedLScope = snap.decodedLScope.map { $0 }
         c.decodedRScope = snap.decodedRScope.map { $0 }
         c.spectrumDB = snap.spectrumDB.map { $0 }
+        c.decodedLSpectrumDB = snap.decodedLSpectrumDB.map { $0 }
+        c.decodedRSpectrumDB = snap.decodedRSpectrumDB.map { $0 }
         c.devHistoryKHz = snap.devHistoryKHz.map { $0 }
         c.mpxPowerHistoryDBr = snap.mpxPowerHistoryDBr.map { $0 }
         return c

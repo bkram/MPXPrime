@@ -9,6 +9,10 @@ import SwiftUI
 struct RootMeterView: View {
     @ObservedObject var vm: MeterViewModel
 
+    // Click a decoded scope to switch it between waveform and audio spectrum.
+    @State private var decodedLSpectrum = false
+    @State private var decodedRSpectrum = false
+
     var body: some View {
         // Fluid, non-scrolling dashboard: fixed-height analysis rows on top,
         // the MPX spectrum (the centerpiece) takes ALL remaining height. The
@@ -397,21 +401,49 @@ struct RootMeterView: View {
                                   minHeight: 84, idealHeight: 100)
                     }
                     .frame(maxWidth: .infinity)
-                    labeled("Decoded L") {
-                        ScopeView(samples: t.decodedLScope,
-                                  accessibilityName: "Decoded left waveform scope",
-                                  minHeight: 84, idealHeight: 100)
+                    labeled(decodedLSpectrum ? "Decoded L (spectrum)" : "Decoded L") {
+                        decodedView(spectrum: decodedLSpectrum, wave: t.decodedLScope,
+                                    spectrumDB: t.decodedLSpectrumDB,
+                                    maxHz: t.audioSpectrumMaxHz, nyquistHz: t.audioSpectrumNyquistHz,
+                                    channel: "left")
+                            .contentShape(Rectangle())
+                            .onTapGesture { decodedLSpectrum.toggle() }
+                            .accessibilityAddTraits(.isButton)
+                            .help("Click to toggle between waveform and audio spectrum (0-20 kHz).")
                     }
                     .frame(maxWidth: .infinity)
-                    labeled("Decoded R") {
-                        ScopeView(samples: t.decodedRScope,
-                                  accessibilityName: "Decoded right waveform scope",
-                                  minHeight: 84, idealHeight: 100)
+                    labeled(decodedRSpectrum ? "Decoded R (spectrum)" : "Decoded R") {
+                        decodedView(spectrum: decodedRSpectrum, wave: t.decodedRScope,
+                                    spectrumDB: t.decodedRSpectrumDB,
+                                    maxHz: t.audioSpectrumMaxHz, nyquistHz: t.audioSpectrumNyquistHz,
+                                    channel: "right")
+                            .contentShape(Rectangle())
+                            .onTapGesture { decodedRSpectrum.toggle() }
+                            .accessibilityAddTraits(.isButton)
+                            .help("Click to toggle between waveform and audio spectrum (0-20 kHz).")
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .padding(6)
             }
+        }
+    }
+
+    /// A decoded channel display: waveform scope, or (when toggled) its audio
+    /// spectrum (0-20 kHz) drawn with the same gradient FFT graphic as the main
+    /// spectrum, sized to the scope slot.
+    @ViewBuilder
+    private func decodedView(
+        spectrum: Bool, wave: [Float], spectrumDB: [Float],
+        maxHz: Double, nyquistHz: Double, channel: String
+    ) -> some View {
+        if spectrum {
+            MPXSpectrumView(dbBins: spectrumDB, maxHz: maxHz, nyquistHz: nyquistHz,
+                            minHeight: 84, idealHeight: 100)
+        } else {
+            ScopeView(samples: wave,
+                      accessibilityName: "Decoded \(channel) waveform scope",
+                      minHeight: 84, idealHeight: 100)
         }
     }
 

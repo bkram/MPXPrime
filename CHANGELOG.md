@@ -15,6 +15,10 @@ combination test suite. Newest first.
   -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
   MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
   weak/noisy reception inflates both peak deviation and MPX power.
+- **Meter: click a decoded scope for its audio spectrum.** Clicking the
+  Decoded L or Decoded R waveform toggles it to an audio spectrum (0-20 kHz)
+  drawn with the same gradient FFT graphic as the main spectrum (per-channel
+  FFTs added to the analysis). Click again to return to the waveform.
 - **Meter visual polish.** Decluttered the meters: the Audio group shares one
   `MeterScaleRuler` (dBFS) instead of repeating the number column on every bar,
   and the deviation bars are scale-less (limit line + kHz value). Level bars

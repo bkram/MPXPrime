@@ -605,6 +605,17 @@ check your own air signal, compare against other stations, or validate a chain.
 - Headless terminal dashboards also exist: `./run-meter.sh` (audio-device input)
   and `./run-meter-sdr.sh --freq <MHz>` (RTL-SDR input).
 
+### Window layout
+
+The toolbar carries only the frequent commands -- **Start/Stop** (⌘Return),
+the **Source** switch (Audio / SDR), and the **Monitor** toggle. The detailed
+input settings for the selected source (audio device + channel, or SDR
+frequency / AGC / gain) live in a translucent **input bar** directly below the
+toolbar. The scopes, spectrum, vectorscope, and trend graphs are deliberately
+dark instrument displays in both Light and Dark appearance (the convention for
+audio/SDR instruments) so the traces stay legible; the surrounding window
+chrome follows the system appearance.
+
 ### Input
 
 - **Audio device** (`Source -> Audio`): pick the input carrying the composite

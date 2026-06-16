@@ -46,7 +46,8 @@ public struct MPXSpectrumView: View {
             Canvas { context, size in
                 let rect = CGRect(origin: .zero, size: size)
                 context.fill(
-                    Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius), with: .color(.black.opacity(0.30)))
+                    Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius),
+                    with: .color(BroadcastStyle.instrumentBackground))
                 let maxDisplayHz = max(1_000.0, maxHz)
                 let nyquist = max(0.0, min(maxDisplayHz, nyquistHz))
                 let leftAxisWidth: CGFloat = 42
@@ -72,10 +73,10 @@ public struct MPXSpectrumView: View {
                     grid.move(to: CGPoint(x: x, y: plotRect.minY))
                     grid.addLine(to: CGPoint(x: x, y: plotRect.maxY))
                 }
-                context.stroke(grid, with: .color(.white.opacity(0.18)), lineWidth: 0.9)
+                context.stroke(grid, with: .color(BroadcastStyle.instrumentGrid), lineWidth: 0.9)
                 context.stroke(
                     Path(plotRect),
-                    with: .color(.white.opacity(0.40)),
+                    with: .color(BroadcastStyle.instrumentLabel.opacity(0.5)),
                     lineWidth: 1.0
                 )
 
@@ -85,7 +86,7 @@ public struct MPXSpectrumView: View {
                     let label = db == 0 ? "0 dB" : "\(db) dB"
                     let text = Text(label)
                         .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(BroadcastStyle.instrumentLabel)
                     context.draw(text, at: CGPoint(x: 18, y: y))
                     context.draw(text, at: CGPoint(x: size.width - 18, y: y))
                 }
@@ -96,7 +97,7 @@ public struct MPXSpectrumView: View {
                     let kHz = Int((tick / 1000.0).rounded())
                     let label = Text("\(kHz) kHz")
                         .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(BroadcastStyle.instrumentLabel)
                     context.draw(label, at: CGPoint(x: x, y: plotRect.maxY + 12))
                 }
 

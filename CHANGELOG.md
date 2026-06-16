@@ -11,11 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter HIG pass.** The Meter toolbar is decluttered to the few frequent
+  commands (Start/Stop, Source, Monitor); the per-source input settings (audio
+  device + channel, or SDR frequency / AGC / gain) moved into a translucent
+  in-window input bar below the toolbar. The instrument displays (scopes,
+  spectrum, vectorscope, trends) now share centralized always-dark
+  `BroadcastStyle.instrument*` tokens so their internal labels/grid stay
+  legible in **Light Mode** (they previously used the semantic `.secondary`,
+  which vanished on the dark canvas under a light system appearance). The
+  deviation and MPX-power trend graphs gained min/max + limit-line scale labels
+  (75 kHz / 0 dBr).
 - **Live SDR retune / gain / AGC (no restart).** The bundled `mpx-tuner` takes
   live commands over a dedicated control FIFO (`--control`), so changing the SDR
   frequency in the Meter retunes the dongle in place -- no process teardown, no
-  device re-open, no audio gap. The toolbar adds an AGC toggle and a manual
-  gain (dB) field, also applied live. (The external `fm-sdr-tuner` has no
+  device re-open, no audio gap. The input bar's AGC toggle and manual gain (dB)
+  field are also applied live. (The external `fm-sdr-tuner` has no
   control channel, so it still restarts on a frequency change.) Retuning also
   resets the transient meters -- peak-hold, MPX power, separation, BER, trends,
   and the RDS decoder -- plus a 1 s warm-up, so the new station starts clean.

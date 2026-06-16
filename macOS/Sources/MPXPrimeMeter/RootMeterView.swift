@@ -15,27 +15,111 @@ struct RootMeterView: View {
         // ScrollView only engages as a fallback when the window is squeezed
         // below the content minimum -- on a normal screen nothing scrolls.
         GeometryReader { geo in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        audioSection
-                        vectorscopeSection
-                        rdsSection
-                            .frame(minWidth: 280, maxWidth: .infinity)
-                    }
-                    .frame(height: 246)
-                    modulationSection
+            VStack(spacing: 0) {
+                inputConfigBar
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
+                            audioSection
+                            vectorscopeSection
+                            rdsSection
+                                .frame(minWidth: 280, maxWidth: .infinity)
+                        }
                         .frame(height: 246)
-                    scopesSection
-                    spectrumSection
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .layoutPriority(1)
+                        modulationSection
+                            .frame(height: 246)
+                        scopesSection
+                        spectrumSection
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .layoutPriority(1)
+                    }
+                    .padding(12)
+                    .frame(minWidth: 1020, minHeight: max(760, geo.size.height - 44))
                 }
-                .padding(12)
-                .frame(minWidth: 1020, minHeight: max(820, geo.size.height))
             }
         }
         .toolbar { toolbarContent }
+    }
+
+    // MARK: - Input configuration bar
+    //
+    // Per-source input settings live here in the content area, not the title
+    // bar (HIG: the toolbar carries the few frequent commands -- Start/Stop,
+    // Source, Monitor -- while the source's detailed parameters belong in the
+    // window). A translucent `.bar` material separates it from the dashboard
+    // without painting a hard slab.
+
+    private var inputConfigBar: some View {
+        HStack(spacing: 12) {
+            if vm.inputKind == .audioDevice {
+                Label("Device", systemImage: "waveform")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.secondary)
+                Picker("Input", selection: $vm.selectedInputID) {
+                    ForEach(vm.inputDevices) { dev in
+                        Text(dev.name).tag(Optional(dev.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 240)
+                .help("Audio input device carrying the MPX composite.")
+                .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
+
+                Picker("Channel", selection: $vm.channel) {
+                    Text("L").tag(MeterChannel.left)
+                    Text("R").tag(MeterChannel.right)
+                    Text("Mix").tag(MeterChannel.mix)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Which input channel carries the composite (Mix averages both).")
+                .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
+            } else {
+                Label("Frequency", systemImage: "dot.radiowaves.left.and.right")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    TextField("MHz", value: $vm.frequencyMHz,
+                              format: .number.precision(.fractionLength(1)))
+                        .frame(width: 64)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit { vm.applyFrequencyChange() }
+                    Text("MHz").foregroundStyle(.secondary)
+                    Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
+                        .labelsHidden()
+                        .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
+                }
+                .help("FM broadcast frequency (RTL-SDR). Retunes live -- no restart.")
+
+                Divider().frame(height: 16)
+
+                Toggle("AGC", isOn: $vm.sdrAutoGain)
+                    .toggleStyle(.switch)
+                    .help("Automatic tuner gain. Off = manual gain (dB field). Applied live.")
+                    .onChange(of: vm.sdrAutoGain) { _, _ in vm.applyGainChange() }
+                if !vm.sdrAutoGain {
+                    HStack(spacing: 4) {
+                        TextField("dB", value: $vm.sdrGainDB,
+                                  format: .number.precision(.fractionLength(1)))
+                            .frame(width: 52)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit { vm.applyGainChange() }
+                        Text("dB").foregroundStyle(.secondary)
+                        Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
+                            .labelsHidden()
+                            .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
+                    }
+                    .help("Manual RTL-SDR gain in dB (applied live).")
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.bar)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(BroadcastStyle.panelBorder).frame(height: 1)
+        }
     }
 
     // MARK: - Toolbar (HIG: frequent commands live in the unified title bar)
@@ -64,59 +148,6 @@ struct RootMeterView: View {
                 .help("Audio: a Core Audio input device. SDR: a live RTL-SDR "
                     + "station via FM-SDR-Tuner (mono MPX, absolute calibration).")
                 .onChange(of: vm.inputKind) { _, _ in vm.restartIfRunning() }
-            }
-
-            if vm.inputKind == .audioDevice {
-                Picker("Input", selection: $vm.selectedInputID) {
-                    ForEach(vm.inputDevices) { dev in
-                        Text(dev.name).tag(Optional(dev.id))
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 200)
-                .help("Audio input device carrying the MPX composite.")
-                .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
-
-                Picker("Channel", selection: $vm.channel) {
-                    Text("L").tag(MeterChannel.left)
-                    Text("R").tag(MeterChannel.right)
-                    Text("Mix").tag(MeterChannel.mix)
-                }
-                .pickerStyle(.segmented)
-                .fixedSize()
-                .help("Which input channel carries the composite (Mix averages both).")
-                .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
-            } else {
-                HStack(spacing: 4) {
-                    TextField("MHz", value: $vm.frequencyMHz,
-                              format: .number.precision(.fractionLength(1)))
-                        .frame(width: 60)
-                        .multilineTextAlignment(.trailing)
-                        .onSubmit { vm.applyFrequencyChange() }
-                    Text("MHz").foregroundStyle(.secondary)
-                    Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
-                        .labelsHidden()
-                        .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
-                }
-                .help("FM broadcast frequency (RTL-SDR). Retunes live -- no restart.")
-
-                Toggle("AGC", isOn: $vm.sdrAutoGain)
-                    .toggleStyle(.button)
-                    .help("Automatic tuner gain. Off = manual gain (dB field). Applied live.")
-                    .onChange(of: vm.sdrAutoGain) { _, _ in vm.applyGainChange() }
-                if !vm.sdrAutoGain {
-                    HStack(spacing: 4) {
-                        TextField("dB", value: $vm.sdrGainDB,
-                                  format: .number.precision(.fractionLength(1)))
-                            .frame(width: 48)
-                            .multilineTextAlignment(.trailing)
-                            .onSubmit { vm.applyGainChange() }
-                        Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
-                            .labelsHidden()
-                            .onChange(of: vm.sdrGainDB) { _, _ in vm.applyGainChange() }
-                    }
-                    .help("Manual RTL-SDR gain in dB (applied live).")
-                }
             }
         }
         ToolbarItem(placement: .primaryAction) {

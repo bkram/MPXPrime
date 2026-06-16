@@ -21,7 +21,7 @@ public struct VectorscopeView: View {
             let rect = CGRect(origin: .zero, size: size)
             ctx.fill(
                 Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius),
-                with: .color(.black.opacity(0.22)))
+                with: .color(BroadcastStyle.instrumentBackground))
 
             let cx = size.width * 0.5
             let cy = size.height * 0.5
@@ -35,7 +35,7 @@ public struct VectorscopeView: View {
             guides.addLine(to: CGPoint(x: cx + radius, y: cy + radius))
             guides.move(to: CGPoint(x: cx + radius, y: cy - radius))
             guides.addLine(to: CGPoint(x: cx - radius, y: cy + radius))
-            ctx.stroke(guides, with: .color(.white.opacity(0.10)), lineWidth: 1)
+            ctx.stroke(guides, with: .color(BroadcastStyle.instrumentGrid), lineWidth: 1)
 
             guard left.count > 1, right.count == left.count else { return }
             // Rotate 45 deg: x = (L-R), y = (L+R); /sqrt2 keeps full-scale mono

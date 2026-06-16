@@ -69,7 +69,8 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Restore the input device's prior sample rate.
+        // Persist the last-used settings, then restore the input device rate.
+        vm.saveSettings()
         vm.stop()
     }
 

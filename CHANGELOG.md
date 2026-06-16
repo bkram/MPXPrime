@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: remembers the last-used settings.** Frequency, input source, all SDR
+  controls (gain / auto-gain, IF bandwidth, LNA, antenna, Bias-T, PPM, RTL AGC),
+  channel, monitor on/off + gain, pilot reference, audio calibration mode, record
+  format, spectrum span, and the selected input/output devices now persist across
+  launches via `UserDefaults` (`~/Library/Preferences`). Devices are matched by
+  their stable UID, not the volatile Core Audio device ID. Saved on capture start
+  and on quit; restored at launch (falling back to the SDR-when-a-dongle-present
+  default only when nothing was saved).
 - **Meter: fix periodic clicks in stereo recordings.** Recording resampled the
   stereo file to 48 kHz on the analysis thread -- the same thread that drains the
   real-time-fed input ring. The `.max`-quality SRC plus its per-block buffer

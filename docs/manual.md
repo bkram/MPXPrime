@@ -607,6 +607,12 @@ check your own air signal, compare against other stations, or validate a chain.
   SDR is GUI-only; with no arguments `./run-meter.sh` opens the window and
   auto-detects a dongle. Use `--sdr-freq <MHz>` to open the GUI pre-tuned.
 
+The Meter **remembers your last-used settings** (frequency, input source, all SDR
+controls, channel, monitor, pilot reference / calibration, record format,
+spectrum span, and the selected devices) between launches; they are stored in the
+standard macOS preferences and restored on the next start. Pass `--sdr-freq`
+to override the saved frequency for that launch.
+
 ### Window layout
 
 The toolbar carries only the frequent commands -- **Start/Stop** (⌘Return),

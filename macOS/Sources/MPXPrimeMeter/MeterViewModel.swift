@@ -108,13 +108,12 @@ final class MeterViewModel: ObservableObject {
 
     init() {
         refreshDevices()
-        // Default to SDR when a dongle is detected at launch; audio otherwise.
-        if SDRLibraryInputSource.deviceCount() > 0 {
-            inputKind = .sdr
-        }
         // Show the correct SDR controls before capture: the backend auto-prefers
         // SDRplay when an RSP is attached, so reflect that up front.
         sdrIsSDRplay = SDRLibraryInputSource.sdrplayPresent()
+        // Restore the last-used settings; falls back to SDR-when-a-dongle-is-
+        // present for the input source if nothing was saved.
+        loadSettings(hasDongle: SDRLibraryInputSource.deviceCount() > 0)
     }
 
     func refreshDevices() {
@@ -141,10 +140,103 @@ final class MeterViewModel: ObservableObject {
         return fallback
     }
 
+    // MARK: - Persistence (UserDefaults: ~/Library/Preferences/<bundle>.plist)
+
+    private enum Keys {
+        static let inputKind = "meter.inputKind"
+        static let freq = "meter.frequencyMHz"
+        static let autoGain = "meter.sdrAutoGain"
+        static let gainDB = "meter.sdrGainDB"
+        static let bw = "meter.sdrBandwidthKHz"
+        static let biasTee = "meter.sdrBiasTee"
+        static let ppm = "meter.sdrPPM"
+        static let rtlAGC = "meter.sdrRTLAGC"
+        static let antenna = "meter.sdrAntenna"
+        static let lna = "meter.sdrLnaState"
+        static let channel = "meter.channel"
+        static let monitor = "meter.monitorEnabled"
+        static let monitorGain = "meter.monitorGainDB"
+        static let pilotRef = "meter.pilotRefKHz"
+        static let absCal = "meter.audioAbsoluteCal"
+        static let fullScale = "meter.audioFullScaleKHz"
+        static let recordMPX = "meter.recordMPX"
+        static let spectrumSpan = "meter.spectrumSpanKHz"
+        static let inputUID = "meter.selectedInputUID"
+        static let outputUID = "meter.selectedOutputUID"
+    }
+
+    /// Load the last-used settings. Devices are matched by their stable UID (the
+    /// numeric AudioDeviceID is not stable across reconnects/reboots). `hasDongle`
+    /// chooses the input-source default when nothing was saved.
+    private func loadSettings(hasDongle: Bool) {
+        let d = UserDefaults.standard
+        if let s = d.string(forKey: Keys.inputKind) {
+            inputKind = (s == "sdr" && hasDongle) ? .sdr : .audioDevice
+        } else {
+            inputKind = hasDongle ? .sdr : .audioDevice
+        }
+        if d.object(forKey: Keys.freq) != nil { frequencyMHz = d.double(forKey: Keys.freq) }
+        if d.object(forKey: Keys.autoGain) != nil { sdrAutoGain = d.bool(forKey: Keys.autoGain) }
+        if d.object(forKey: Keys.gainDB) != nil { sdrGainDB = d.double(forKey: Keys.gainDB) }
+        if d.object(forKey: Keys.bw) != nil { sdrBandwidthKHz = d.integer(forKey: Keys.bw) }
+        if d.object(forKey: Keys.biasTee) != nil { sdrBiasTee = d.bool(forKey: Keys.biasTee) }
+        if d.object(forKey: Keys.ppm) != nil { sdrPPM = d.integer(forKey: Keys.ppm) }
+        if d.object(forKey: Keys.rtlAGC) != nil { sdrRTLAGC = d.bool(forKey: Keys.rtlAGC) }
+        if d.object(forKey: Keys.antenna) != nil { sdrAntenna = d.integer(forKey: Keys.antenna) }
+        if d.object(forKey: Keys.lna) != nil { sdrLnaState = d.integer(forKey: Keys.lna) }
+        if let c = d.string(forKey: Keys.channel), let mc = MeterChannel(rawValue: c) { channel = mc }
+        if d.object(forKey: Keys.monitor) != nil { monitorEnabled = d.bool(forKey: Keys.monitor) }
+        if d.object(forKey: Keys.monitorGain) != nil { monitorGainDB = d.double(forKey: Keys.monitorGain) }
+        if d.object(forKey: Keys.pilotRef) != nil { pilotRefKHz = d.double(forKey: Keys.pilotRef) }
+        if d.object(forKey: Keys.absCal) != nil { audioAbsoluteCal = d.bool(forKey: Keys.absCal) }
+        if d.object(forKey: Keys.fullScale) != nil { audioFullScaleKHz = d.double(forKey: Keys.fullScale) }
+        if d.object(forKey: Keys.recordMPX) != nil { recordMPX = d.bool(forKey: Keys.recordMPX) }
+        if d.object(forKey: Keys.spectrumSpan) != nil { spectrumSpanKHz = d.integer(forKey: Keys.spectrumSpan) }
+        if let uid = d.string(forKey: Keys.inputUID),
+           let dev = inputDevices.first(where: { $0.uid == uid }) {
+            selectedInputID = dev.id
+        }
+        if let uid = d.string(forKey: Keys.outputUID) {
+            selectedOutputID = outputDevices.first(where: { $0.uid == uid })?.id
+        }
+    }
+
+    /// Persist the current settings. Called on capture start and app quit.
+    func saveSettings() {
+        let d = UserDefaults.standard
+        d.set(inputKind == .sdr ? "sdr" : "audio", forKey: Keys.inputKind)
+        d.set(frequencyMHz, forKey: Keys.freq)
+        d.set(sdrAutoGain, forKey: Keys.autoGain)
+        d.set(sdrGainDB, forKey: Keys.gainDB)
+        d.set(sdrBandwidthKHz, forKey: Keys.bw)
+        d.set(sdrBiasTee, forKey: Keys.biasTee)
+        d.set(sdrPPM, forKey: Keys.ppm)
+        d.set(sdrRTLAGC, forKey: Keys.rtlAGC)
+        d.set(sdrAntenna, forKey: Keys.antenna)
+        d.set(sdrLnaState, forKey: Keys.lna)
+        d.set(channel.rawValue, forKey: Keys.channel)
+        d.set(monitorEnabled, forKey: Keys.monitor)
+        d.set(monitorGainDB, forKey: Keys.monitorGain)
+        d.set(pilotRefKHz, forKey: Keys.pilotRef)
+        d.set(audioAbsoluteCal, forKey: Keys.absCal)
+        d.set(audioFullScaleKHz, forKey: Keys.fullScale)
+        d.set(recordMPX, forKey: Keys.recordMPX)
+        d.set(spectrumSpanKHz, forKey: Keys.spectrumSpan)
+        if let id = selectedInputID, let dev = inputDevices.first(where: { $0.id == id }) {
+            d.set(dev.uid, forKey: Keys.inputUID)
+        }
+        if let id = selectedOutputID, let dev = outputDevices.first(where: { $0.id == id }) {
+            d.set(dev.uid, forKey: Keys.outputUID)
+        } else {
+            d.removeObject(forKey: Keys.outputUID)   // nil = system default
+        }
+    }
+
     // MARK: - Capture lifecycle
 
     func start() {
         guard !running else { return }
+        saveSettings()   // checkpoint the config we're about to capture with
         switch inputKind {
         case .audioDevice: startAudioDevice()
         case .sdr: startSDR()

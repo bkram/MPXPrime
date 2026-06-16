@@ -300,12 +300,14 @@ final class MeterViewModel: ObservableObject {
         telemetry.correlation = Double(s.stereoCorrelation)
         telemetry.correlationText = String(format: "%+.2f", s.stereoCorrelation)
 
+        // Unitless values so they render at full size in the narrow scale-less
+        // strips; the kHz unit is shown once in the group header.
         telemetry.pilotNorm = Double(s.pilotDevKHz) / MeterScale.pilotFullKHz
-        telemetry.pilotText = String(format: "%.2f kHz", s.pilotDevKHz)
+        telemetry.pilotText = String(format: "%.2f", s.pilotDevKHz)
         telemetry.rdsNorm = Double(s.rdsDevKHz) / MeterScale.rdsFullKHz
-        telemetry.rdsText = String(format: "%.2f kHz", s.rdsDevKHz)
+        telemetry.rdsText = String(format: "%.2f", s.rdsDevKHz)
         telemetry.maxDevNorm = Double(s.maxDevKHz) / MeterScale.maxFullKHz
-        telemetry.maxDevText = String(format: "%.1f kHz", s.maxDevKHz)
+        telemetry.maxDevText = String(format: "%.1f", s.maxDevKHz)
 
         if s.mpxPowerValid {
             telemetry.mpxPowerText = String(format: "%+.1f dBr", s.mpxPowerDBr)

@@ -211,7 +211,7 @@ struct RootMeterView: View {
     // MARK: - Audio levels
 
     private var audioSection: some View {
-        GroupBox("Audio") {
+        GroupBox("Audio (dBFS)") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 HStack(alignment: .top, spacing: 10) {
                     MeterScaleRuler(scale: .dbfs)   // one shared dBFS scale for the group
@@ -274,7 +274,7 @@ struct RootMeterView: View {
     // MARK: - Deviation meters (pilot / RDS / total)
 
     private var deviationSection: some View {
-        GroupBox("Deviation") {
+        GroupBox("Deviation (kHz)") {
             LiveTelemetryView(telemetry: vm.telemetry) { t in
                 HStack(spacing: 10) {
                     strip("PILOT", t.pilotText, t.pilotNorm,

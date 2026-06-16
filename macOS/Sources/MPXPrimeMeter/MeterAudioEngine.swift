@@ -85,6 +85,9 @@ final class MeterAudioEngine: @unchecked Sendable {
         mixScratch.deallocate()
     }
 
+    /// Live-update the pilot reference (kHz) for the pilot-referenced audio path.
+    func setPilotRefKHz(_ k: Float) { analysis.setPilotRefKHz(k) }
+
     @discardableResult
     func start(monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring

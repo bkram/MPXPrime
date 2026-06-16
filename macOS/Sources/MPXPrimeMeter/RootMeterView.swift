@@ -91,6 +91,28 @@ struct RootMeterView: View {
                 .fixedSize()
                 .help("Which input channel carries the composite (Mix averages both).")
                 .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
+
+                Divider().frame(height: 16)
+
+                // Pilot reference: the audio-input path has no absolute level
+                // reference, so deviation is scaled assuming the 19 kHz pilot
+                // equals this many kHz. Set it to the source's true pilot
+                // deviation (often not 9% / 6.75 kHz) to read accurately.
+                HStack(spacing: 4) {
+                    Text("Pilot Ref").foregroundStyle(.secondary)
+                    ScrollableNumericField(value: $vm.pilotRefKHz,
+                                           range: 4.0...9.0, step: 0.05, decimals: 2)
+                        .frame(width: 48)
+                    Text("kHz").foregroundStyle(.secondary)
+                    Stepper("Pilot Ref", value: $vm.pilotRefKHz, in: 4.0...9.0, step: 0.05)
+                        .labelsHidden()
+                }
+                .onChange(of: vm.pilotRefKHz) { _, _ in vm.applyPilotRefChange() }
+                .help("Pilot deviation the audio-input path scales from (it has no "
+                    + "absolute reference). Set it to the source's real pilot "
+                    + "deviation -- 6.75 kHz is 9%, but many stations differ. "
+                    + "Scroll to step. Applied live. The SDR path ignores this "
+                    + "(it is absolutely calibrated).")
             } else {
                 if !vm.sdrDeviceName.isEmpty {
                     Label(vm.sdrDeviceName, systemImage: "dot.radiowaves.left.and.right")

@@ -243,6 +243,13 @@ final class MeterViewModel: ObservableObject {
         statusText = String(format: "Tuned %.2f MHz (SDR, live)", frequencyMHz)
     }
 
+    /// Pilot reference (kHz) changed: live-apply to the pilot-referenced audio
+    /// path so the deviation scale re-anchors to the true transmitted pilot
+    /// without a restart. (The SDR path is absolutely calibrated and ignores it.)
+    func applyPilotRefChange() {
+        engine?.setPilotRefKHz(Float(pilotRefKHz))
+    }
+
     /// Gain / auto-gain changed: live-apply to the running tuner (no restart).
     func applyGainChange() {
         guard running, inputKind == .sdr, let source = sdrSource else { return }

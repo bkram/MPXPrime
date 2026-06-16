@@ -84,7 +84,14 @@ struct MeterSnapshot {
 /// `MeterSnapshot`. Thread-confined: create and call `process` on one thread.
 final class MeterAnalysis {
     private let sampleRate: Float
-    private let pilotRefKHz: Float
+    // Pilot reference (kHz) for the pilot-referenced (audio-input) scaling. Live-
+    // adjustable from the UI: the true transmitted pilot is not always 9% / 6.75
+    // kHz, and an uncalibrated audio source must be anchored to its actual pilot
+    // deviation. Stored as a bit pattern in an atomic so a UI write is visible to
+    // the analysis thread; refreshed once per process() block. Ignored when
+    // fullScaleKHz is set (the SDR path is absolutely calibrated).
+    private var pilotRefKHz: Float
+    private let pilotRefBits: ManagedAtomic<UInt32>
     // When non-nil, the source is absolutely calibrated: amplitude 1.0 == this
     // many kHz of FM deviation (e.g. FM-SDR-Tuner demod, 1.0 = 75 kHz). All
     // deviations are then measured directly and PILOT is a real reading. When
@@ -171,6 +178,7 @@ final class MeterAnalysis {
     ) {
         self.sampleRate = sampleRate
         self.pilotRefKHz = pilotRefKHz
+        self.pilotRefBits = ManagedAtomic<UInt32>(pilotRefKHz.bitPattern)
         self.fullScaleKHz = fullScaleKHz
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
@@ -195,8 +203,13 @@ final class MeterAnalysis {
     /// BER / RDS text don't carry over. Safe to call from any thread.
     func requestFullReset() { fullResetRequested.store(true, ordering: .relaxed) }
 
+    /// Set the pilot reference (kHz) used by the pilot-referenced audio path.
+    /// Safe to call from any thread; picked up at the top of the next `process`.
+    func setPilotRefKHz(_ k: Float) { pilotRefBits.store(k.bitPattern, ordering: .relaxed) }
+
     func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
+        pilotRefKHz = Float(bitPattern: pilotRefBits.load(ordering: .relaxed))
         let doFullReset = fullResetRequested.exchange(false, ordering: .relaxed)
         if doFullReset {
             // Everything transient -- the new station starts clean.

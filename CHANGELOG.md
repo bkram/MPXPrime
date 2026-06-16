@@ -11,6 +11,16 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: adjustable Pilot Reference on the audio-input path.** The audio-device
+  path has no absolute level reference, so it scales deviation by assuming the
+  19 kHz pilot equals a fixed 6.75 kHz (9%). Stations vary -- a pilot that is
+  actually 5.7 kHz made every kHz reading ~18% high. A live **Pilot Ref (kHz)**
+  field (audio mode only; scroll-adjustable) now lets the operator anchor the
+  scale to the source's true pilot deviation. The SDR path is unaffected (it is
+  absolutely calibrated and ignores it). Note this only corrects the overall
+  scale; if the source's composite output rolls off above the audio band, the
+  57 kHz RDS still reads low relative to the pilot -- use the SDR path for an
+  accurate RDS-injection measurement.
 - **Meter: SDRplay live retune fixed.** Changing frequency on an SDRplay RSP now
   takes effect cleanly instead of glitching / appearing to do nothing. Two
   causes: (1) the stream `reset` flag raised on a retune was ignored, so up to a

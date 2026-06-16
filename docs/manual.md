@@ -723,10 +723,18 @@ fixed property of the FM discriminator (kHz per sample is set by math, not by
 the tuner gain, AGC, or RF level), so amplitude maps directly to kHz with no
 calibration step. Tuning to an unmodulated carrier is unnecessary -- and FM
 broadcast has none anyway (even dead air carries the 19 kHz pilot). The
-audio-device path, by contrast, is pilot-referenced (`pilot_ref_khz`, default
-6.75) because the analog input gain is unknown. The only frequency trim is
-**PPM** for precise tuning; the sample-clock error scales readings by far less
-than 0.01% at any sane ppm, so it does not affect deviation.
+audio-device path, by contrast, is **pilot-referenced** (`pilot_ref_khz`,
+default 6.75) because the analog input gain is unknown: it scales deviation by
+assuming the 19 kHz pilot equals the reference value. Set the **Pilot Ref (kHz)**
+field on the audio input bar to the source's actual pilot deviation -- 6.75 kHz
+is 9%, but stations vary, and a pilot that is really 5.7 kHz read against 6.75
+inflates every kHz value by ~18%. The control applies live (the SDR path ignores
+it). Two caveats: (1) pilot-referencing only fixes the *overall* scale -- if the
+source's composite output rolls off above the audio band, the 57 kHz RDS reads
+low relative to the pilot no matter the reference, so use the SDR path for an
+accurate RDS-injection figure; (2) the only frequency trim is **PPM** for precise
+tuning; the sample-clock error scales readings by far less than 0.01% at any sane
+ppm, so it does not affect deviation.
 
 **MPX power is only valid on a strong, clean signal.** MPX power follows
 ITU-R BS.412 (the limit -- average power over 60 s must not exceed that of a

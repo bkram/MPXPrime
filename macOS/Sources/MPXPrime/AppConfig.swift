@@ -106,6 +106,13 @@ struct AppConfig {
     var inputDeviceUID: String?
     var outputDeviceUID: String?
     var monitorDeviceUID: String?
+    // Human device names stored alongside the UIDs. Core Audio device UIDs can
+    // change when a USB interface is moved to a different port; the name is the
+    // stable fallback used to re-match the same device, and to show which device
+    // is remembered when it is currently unplugged.
+    var inputDeviceName: String?
+    var outputDeviceName: String?
+    var monitorDeviceName: String?
     var monitorEnabled: Bool = false
     // Output mode. When true, the MPX output device emits processed stereo L/R
     // audio (post pre-encode limiter) instead of the FM composite — for feeding
@@ -467,6 +474,9 @@ struct AppConfig {
         cfg.inputDeviceUID = interfaces.optionalString("input_device_uid")
         cfg.outputDeviceUID = interfaces.optionalString("output_device_uid")
         cfg.monitorDeviceUID = interfaces.optionalString("monitor_device_uid")
+        cfg.inputDeviceName = interfaces.optionalString("input_device_name")
+        cfg.outputDeviceName = interfaces.optionalString("output_device_name")
+        cfg.monitorDeviceName = interfaces.optionalString("monitor_device_name")
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
         cfg.processedAudioOutput = interfaces.bool(
             "processed_audio_output", defaultValue: cfg.processedAudioOutput)
@@ -1292,7 +1302,10 @@ struct AppConfig {
             "dual_rate_audio_domain_rate_hz = \(Self.formatFloat(dualRateAudioDomainRateHz))",
             "input_device_uid = \(inputDeviceUID ?? "")",
             "output_device_uid = \(outputDeviceUID ?? "")",
-            "monitor_device_uid = \(monitorDeviceUID ?? "")"
+            "monitor_device_uid = \(monitorDeviceUID ?? "")",
+            "input_device_name = \(inputDeviceName ?? "")",
+            "output_device_name = \(outputDeviceName ?? "")",
+            "monitor_device_name = \(monitorDeviceName ?? "")"
         ]
         let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""]).joined(
             separator: "\n")

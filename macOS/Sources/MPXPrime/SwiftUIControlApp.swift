@@ -1791,6 +1791,12 @@ final class MPXPrimeViewModel: ObservableObject {
     // edit diverges from that snapshot.
     @Published var activeSnapshotID: UUID?
     @Published var activeSnapshotModified = false
+    // While applying a loaded config (preset load / disk reload), the control
+    // bindings fire onChange -> setConfigValue -> saveConfig, which would
+    // immediately flip `activeSnapshotModified` true. That made a just-loaded
+    // preset always read "edited since loaded". Suppress the flip for a brief
+    // window after a programmatic load so only genuine user edits set it.
+    private var suppressModifiedFlipUntil: TimeInterval = 0
 
     static let snapshotSlotCount: Int = 8
 
@@ -2125,9 +2131,10 @@ final class MPXPrimeViewModel: ObservableObject {
             let devices = try AudioDevices.list()
             inputDevices = devices.filter { $0.hasInput }
             outputDevices = devices.filter { $0.hasOutput }
-            selectedInputUID = selectUID(preferred: config.inputDeviceUID, from: inputDevices)
-            selectedOutputUID = selectUID(preferred: config.outputDeviceUID, from: outputDevices)
-            selectedMonitorUID = selectUID(preferred: config.monitorDeviceUID, from: outputDevices)
+            selectedInputUID = selectUID(uid: config.inputDeviceUID, name: config.inputDeviceName, from: inputDevices)
+            selectedOutputUID = selectUID(uid: config.outputDeviceUID, name: config.outputDeviceName, from: outputDevices)
+            selectedMonitorUID = selectUID(uid: config.monitorDeviceUID, name: config.monitorDeviceName, from: outputDevices)
+            warnAboutUnavailablePreferredDevices()
         } catch {
             statusText = "Device scan failed: \(error)"
             inputDevices = []
@@ -2135,6 +2142,26 @@ final class MPXPrimeViewModel: ObservableObject {
             selectedInputUID = ""
             selectedOutputUID = ""
             selectedMonitorUID = ""
+        }
+    }
+
+    /// Status note when a remembered device isn't present, so the user knows we
+    /// kept their choice (and did NOT silently switch to a different device).
+    private func warnAboutUnavailablePreferredDevices() {
+        var missing: [String] = []
+        if !selectedInputUID.isEmpty, !inputDevices.contains(where: { $0.uid == selectedInputUID }) {
+            missing.append("input \"\(config.inputDeviceName ?? selectedInputUID)\"")
+        }
+        if !selectedOutputUID.isEmpty, !outputDevices.contains(where: { $0.uid == selectedOutputUID }) {
+            missing.append("output \"\(config.outputDeviceName ?? selectedOutputUID)\"")
+        }
+        if monitorEnabled, !selectedMonitorUID.isEmpty,
+           !outputDevices.contains(where: { $0.uid == selectedMonitorUID }) {
+            missing.append("monitor \"\(config.monitorDeviceName ?? selectedMonitorUID)\"")
+        }
+        if !missing.isEmpty {
+            statusText = "Preferred \(missing.joined(separator: ", ")) device not connected -- "
+                + "selection kept; reconnect it or pick another."
         }
     }
 
@@ -2146,6 +2173,11 @@ final class MPXPrimeViewModel: ObservableObject {
         config.inputDeviceUID = selectedInputUID.isEmpty ? nil : selectedInputUID
         config.outputDeviceUID = selectedOutputUID.isEmpty ? nil : selectedOutputUID
         config.monitorDeviceUID = selectedMonitorUID.isEmpty ? nil : selectedMonitorUID
+        // Remember the name only while the device is actually present, so an
+        // unplugged device keeps its last-known name for re-matching.
+        if let d = inputDevices.first(where: { $0.uid == selectedInputUID }) { config.inputDeviceName = d.name }
+        if let d = outputDevices.first(where: { $0.uid == selectedOutputUID }) { config.outputDeviceName = d.name }
+        if let d = outputDevices.first(where: { $0.uid == selectedMonitorUID }) { config.monitorDeviceName = d.name }
         saveConfig(restartRequired: isRunning)
     }
 
@@ -2761,6 +2793,9 @@ final class MPXPrimeViewModel: ObservableObject {
             defaults.outputDeviceUID = selectedOutputUID.isEmpty ? nil : selectedOutputUID
             defaults.monitorEnabled = monitorEnabled
             defaults.monitorDeviceUID = selectedMonitorUID.isEmpty ? nil : selectedMonitorUID
+            defaults.inputDeviceName = config.inputDeviceName
+            defaults.outputDeviceName = config.outputDeviceName
+            defaults.monitorDeviceName = config.monitorDeviceName
             try defaults.save(toINI: configPath)
             config = defaults
             sourceMode = config.sourceMode
@@ -4578,7 +4613,9 @@ final class MPXPrimeViewModel: ObservableObject {
     private func saveConfig(restartRequired: Bool) {
         // Any user edit diverges the live config from the loaded preset. Persist
         // the flip once (not per keystroke) so "Loaded - edited" survives relaunch.
-        if activeSnapshotID != nil, !activeSnapshotModified {
+        // Skip flips that are just the fallout of a programmatic load settling.
+        if activeSnapshotID != nil, !activeSnapshotModified,
+           Date().timeIntervalSinceReferenceDate >= suppressModifiedFlipUntil {
             activeSnapshotModified = true
             writeSnapshotsToDisk()
         }
@@ -4613,6 +4650,10 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) {
+        // The wholesale config swap + mirror-property writes below make the
+        // control bindings fire onChange asynchronously; ignore the resulting
+        // saveConfig "modified" flips until they settle (see saveConfig).
+        suppressModifiedFlipUntil = Date().timeIntervalSinceReferenceDate + 0.6
         config = loadedConfig
         sourceMode = config.sourceMode
         monitorEnabled = config.monitorEnabled
@@ -4738,9 +4779,20 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
-    private func selectUID(preferred: String?, from devices: [AudioDevice]) -> String {
-        if let preferred, !preferred.isEmpty, devices.contains(where: { $0.uid == preferred }) {
-            return preferred
+    /// Resolve which device UID to select, preferring stability over convenience:
+    /// 1. exact UID match; 2. same device on a different port (UID changed, name
+    /// matches) -> adopt its new UID; 3. a device WAS chosen but isn't connected
+    /// -> keep the preference so it reconnects (do NOT silently switch to another
+    /// device); 4. only with no prior preference at all, default to the first.
+    private func selectUID(uid: String?, name: String?, from devices: [AudioDevice]) -> String {
+        if let uid, !uid.isEmpty, devices.contains(where: { $0.uid == uid }) {
+            return uid
+        }
+        if let name, !name.isEmpty, let byName = devices.first(where: { $0.name == name }) {
+            return byName.uid
+        }
+        if let uid, !uid.isEmpty {
+            return uid   // remembered device is unplugged -- keep it, don't substitute
         }
         return devices.first?.uid ?? ""
     }

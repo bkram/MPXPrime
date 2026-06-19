@@ -11,6 +11,28 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Studio: presets no longer read "edited since loaded" immediately.** Loading a
+  preset replaces the live config, whose control bindings then fire `onChange`
+  asynchronously and tripped the "modified" flag right after the load set it
+  clean. The flip is now suppressed for a short window after any programmatic
+  config load (preset load / disk reload), so only genuine user edits mark the
+  preset edited.
+- **Studio: audio device selection is remembered by UID *and* name, and is never
+  silently swapped.** Each chosen input/output/monitor device now persists its
+  name (`*_device_name`) alongside its UID. On launch the device is matched by
+  UID, then by name (so moving a USB interface to a different port -- which can
+  change its Core Audio UID -- still re-finds the same device), and if it is
+  simply unplugged the selection is **kept** (with a status note) instead of
+  silently falling back to whatever device happens to be first. Only a first run
+  with no prior preference picks a default.
+- **Studio: forces the MPX output device to the configured rate, and warns if it
+  can't.** The composite/processed-audio output device is now set to the
+  configured `sample_rate` (e.g. 192 kHz) before the engine starts -- so the
+  composite is emitted at full rate instead of being silently sample-rate-
+  converted by Core Audio (which also starves the render thread). If the device
+  doesn't support that rate, a routing note explains to set it in Audio MIDI
+  Setup; the device's prior rate is restored on stop. (Mirrors the Meter's
+  input-rate forcing.)
 - **Meter: fix the frequency/numeric boxes getting "stuck" after typing.** After
   entering a value and pressing Enter the field kept first-responder focus, so its
   display stopped tracking the model -- later scroll / stepper / live-retune

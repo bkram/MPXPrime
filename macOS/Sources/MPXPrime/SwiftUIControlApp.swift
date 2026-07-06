@@ -9201,7 +9201,8 @@ struct SpectrumOnlyView: View {
                     MPXSpectrumView(
                         dbBins: t.mpxSpectrumDB,
                         maxHz: t.mpxSpectrumMaxHz,
-                        nyquistHz: t.mpxSpectrumNyquistHz
+                        nyquistHz: t.mpxSpectrumNyquistHz,
+                        showBandLabels: true
                     )
                 }
             }

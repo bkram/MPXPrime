@@ -1,6 +1,6 @@
 # MPX Prime Studio
 
-Version: 0.37
+Version: 0.38
 
 MPX Prime Studio is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -15,7 +15,7 @@ It runs a full broadcast-style processing chain — phase rotator, wideband AGC,
 - `RDS`: status (master enable + live snapshot), identity (PI / PTY / PTYN / ECC + PS banks + runtime flags TP / TA / MS / DI), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (injection level + frequency + Gaussian shaping)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, output mode (MPX composite vs processed audio), audio engine, spectrum options
-- Separate windows: `Scopes`, `Spectrum`, `Levels`, `Help`
+- Separate windows: `Scopes`, `Spectrum` (composite spectrum with FM band captions -- Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz RDS, SCA), `Levels`, `Help`
 
 The RDS detail tabs are organised per UECP message-class taxonomy
 (AF is a peer of PS, RT+ lives under ODA, etc.). Every operationally

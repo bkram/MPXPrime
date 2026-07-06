@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.38 — 2026-07-06
+
+- **Studio: the MPX composite spectrum now shows the FM band-region overlay.**
+  The composite-spectrum window draws the same MpxTool-style band labels the
+  Meter uses (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz RDS, SCA) as trapezoid
+  outlines with captions, via the shared `MPXSpectrumView`'s `showBandLabels`.
+  Gives the transmit-side spectrum the frequency context the receive-side one
+  already had; no new drawing code.
 - **Studio: presets no longer read "edited since loaded" immediately.** Loading a
   preset replaces the live config, whose control bindings then fire `onChange`
   asynchronously and tripped the "modified" flag right after the load set it

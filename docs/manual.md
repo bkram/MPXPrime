@@ -691,19 +691,22 @@ otherwise to **Audio**.
   (50 ms peak-hold slots, the ITU-R SM.1268 display convention). RDS is the
   EN 50067 "equivalent unmodulated subcarrier" level, measured coherently at
   57 kHz -- a solid reading that data modulation does not move.
-- **Modulation**: MPX power (ITU-R BS.412: uniform sliding 60 s window, in
-  dBr vs a +/-19 kHz sine) and **MPX MAX** (the worst 60 s window since
-  reset -- the number BS.412 compliance is judged on; it needs a full 60 s
-  of signal before it reads); **PEAK +/-** deviation over the last 60 s
-  (50 ms peak-hold slots -- a single impulse ages out instead of pinning the
-  reading); **OVER 77 kHz** -- the ITU-R SM.1268 compliance statistic: the
-  share of deviation samples above 77 kHz (75 kHz + the 2 kHz measurement
-  tolerance) since reset. Regulators treat more than 0.0001 % as
-  over-deviation; rare single peaks are not a violation. Plus best stereo
-  separation, and Reset to clear the held values. MPX power and the +/-
-  peaks turn amber near and red at/over the limit (0 dBr, 75 kHz). On SDR
-  it also shows **SIGNAL** -- a relative received-level (dBFS) RSSI
+- **Modulation**: **MPX POWER** (ITU-R BS.412: uniform sliding 60 s window,
+  in dBr vs a +/-19 kHz sine) with the worst 60 s window since reset shown
+  inline as "max" -- the number BS.412 compliance is judged on; it needs a
+  full 60 s of signal before it reads. **PEAK + / -** deviation over the
+  last 60 s (50 ms peak-hold slots -- a single impulse ages out instead of
+  pinning the reading; a persistent +/- asymmetry suggests a carrier offset
+  or one-sided clipping). **OVER 77 kHz** -- the ITU-R SM.1268 compliance
+  statistic: the share of deviation samples above 77 kHz (75 kHz + the
+  2 kHz measurement tolerance) since reset. Regulators treat more than
+  0.0001 % as over-deviation; rare single peaks are not a violation. Plus
+  best stereo separation, and Reset to clear the held values. MPX power and
+  the peaks turn amber near and red at/over the limit (0 dBr, 75 kHz). On
+  SDR it also shows **SIGNAL** -- a relative received-level (dBFS) RSSI
   indicator (green strong / red weak); most meaningful with Auto Gain off.
+  The same figures are printed by the headless CLI dashboard as a `MOD`
+  line (`MPX ... dBr (max ...)   PK +/- kHz   >77k ...%`).
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
   beside the trends.

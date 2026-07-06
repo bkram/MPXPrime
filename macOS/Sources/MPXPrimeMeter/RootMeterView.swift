@@ -444,32 +444,33 @@ struct RootMeterView: View {
                                     + "off. A valid BS.412 MPX-power reading needs a strong, "
                                     + "clean signal -- see the manual.")
                     }
-                    readout("MPX POWER", t.mpxPowerText,
+                    readout("MPX POWER",
+                            t.mpxPowerValid
+                                ? String(format: "%+.1f dBr", t.mpxPowerDBr)
+                                    + (t.mpxPowerMaxValid
+                                        ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
+                                        : "")
+                                : "--",
                             valueTint: t.mpxPowerValid
-                                ? limitTint(t.mpxPowerDBr, limit: 0.0, warn: -1.0)
+                                ? limitTint(
+                                    max(t.mpxPowerDBr,
+                                        t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
+                                    limit: 0.0, warn: -1.0)
                                 : BroadcastStyle.readoutPrimary,
                             help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
-                                + "window. 0 dBr is the power of a +/-19 kHz sine; the "
-                                + "regulatory limit is 0 dBr. Needs a calibrated scale "
-                                + "(SDR / pilot lock).")
-                    readout("MPX MAX", t.mpxPowerMaxText,
-                            valueTint: t.mpxPowerMaxValid
-                                ? limitTint(t.mpxPowerMaxDBr, limit: 0.0, warn: -1.0)
-                                : BroadcastStyle.readoutPrimary,
-                            help: "Highest 60 s MPX power since the last reset. BS.412 "
-                                + "compliance is judged on the worst 60 s interval, so "
-                                + "this is the number that must stay at or below 0 dBr. "
-                                + "Needs a full 60 s of signal before it reads.")
-                    readout("PEAK +", "\(t.posPeakText) kHz",
-                            valueTint: limitTint(t.posPeakKHz, limit: 75.0, warn: 71.0),
-                            help: "Highest positive deviation in the last 60 s "
-                                + "(50 ms peak-hold slots, measuring-receiver style; "
-                                + "a single impulse ages out instead of pinning the "
-                                + "reading).")
-                    readout("PEAK -", "\(t.negPeakText) kHz",
-                            valueTint: limitTint(-t.negPeakKHz, limit: 75.0, warn: 71.0),
-                            help: "Highest negative deviation in the last 60 s "
-                                + "(50 ms peak-hold slots, measuring-receiver style).")
+                                + "window, and (max) the worst 60 s window since reset "
+                                + "-- the number compliance is judged on; it needs a "
+                                + "full 60 s of signal before it reads. 0 dBr is the "
+                                + "power of a +/-19 kHz sine; the regulatory limit is "
+                                + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                    readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
+                            valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
+                                                 limit: 75.0, warn: 71.0),
+                            help: "Highest positive / negative deviation in the last "
+                                + "60 s (50 ms peak-hold slots, measuring-receiver "
+                                + "style; a single impulse ages out instead of pinning "
+                                + "the reading). A persistent +/- asymmetry suggests a "
+                                + "carrier offset or one-sided clipping.")
                     readout("OVER 77 kHz", t.exceedanceText,
                             valueTint: t.exceedanceValid
                                 ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)

@@ -169,6 +169,16 @@ private func dashboard(
                s.inputPeakDBFS, sampleRate / 1000.0, channel),
         String(format: "DEV    PILOT %.2f   RDS %.2f   MAX %5.1f kHz   (%@)",
                s.pilotDevKHz, s.rdsDevKHz, s.maxDevKHz, calLabel),
+        // Modulation compliance: BS.412 sliding-60s MPX power (+ worst window
+        // since start), 60 s +/- deviation peaks, SM.1268-5 >77 kHz share.
+        String(format: "MOD    MPX %@ dBr (max %@)   PK %+.1f/%+.1f kHz   >77k %@",
+               s.mpxPowerValid ? String(format: "%+.1f", s.mpxPowerDBr) : "--",
+               s.mpxPowerMaxValid ? String(format: "%+.1f", s.mpxPowerMaxDBr) : "--",
+               s.posPeakDevKHz, s.negPeakDevKHz,
+               s.exceedanceValid
+                   ? (s.exceedancePct <= 0.0
+                       ? "0%" : String(format: "%.5f%%", s.exceedancePct))
+                   : "--"),
         String(format: "STEREO L %6.1f  R %6.1f dBFS   corr %+.2f",
                s.leftRMSDBFS, s.rightRMSDBFS, s.stereoCorrelation),
         String(format: "RDS    %@  PI %@  PTY %@ (%@)  TP%@ TA%@ MS%@  BER %.1f%%",

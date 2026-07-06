@@ -29,7 +29,8 @@ public struct ScopeView: View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size)
             context.fill(
-                Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius), with: .color(.black.opacity(0.22)))
+                Path(roundedRect: rect, cornerRadius: BroadcastStyle.panelInsetCornerRadius),
+                with: .color(BroadcastStyle.instrumentBackground))
 
             var grid = Path()
             let midY = size.height * 0.5
@@ -40,7 +41,7 @@ public struct ScopeView: View {
                 grid.move(to: CGPoint(x: x, y: 0))
                 grid.addLine(to: CGPoint(x: x, y: size.height))
             }
-            context.stroke(grid, with: .color(.white.opacity(0.12)), lineWidth: 1)
+            context.stroke(grid, with: .color(BroadcastStyle.instrumentGrid), lineWidth: 1)
 
             func makeWavePath(samples: [Float]) -> Path {
                 guard samples.count > 1 else { return Path() }

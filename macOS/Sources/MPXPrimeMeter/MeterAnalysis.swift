@@ -67,6 +67,12 @@ struct MeterSnapshot {
     var spectrumDB: [Float] = []
     var spectrumMaxHz: Double = 100_000
     var spectrumNyquistHz: Double = 0
+    /// Decoded L / R audio spectra (dB bins), 0..audioSpectrumMaxHz. Shown when
+    /// a decoded scope is clicked to switch from waveform to spectrum.
+    var decodedLSpectrumDB: [Float] = []
+    var decodedRSpectrumDB: [Float] = []
+    var audioSpectrumMaxHz: Double = 20_000
+    var audioSpectrumNyquistHz: Double = 0
 
     // Scrolling trend history (oldest -> newest), ~2 points/s. Deviation in kHz
     // and MPX power in dBr. Cross-thread-copied in `isolatedSnapshot()`.
@@ -78,12 +84,23 @@ struct MeterSnapshot {
 /// `MeterSnapshot`. Thread-confined: create and call `process` on one thread.
 final class MeterAnalysis {
     private let sampleRate: Float
-    private let pilotRefKHz: Float
+    // Pilot reference (kHz) for the pilot-referenced (audio-input) scaling. Live-
+    // adjustable from the UI: the true transmitted pilot is not always 9% / 6.75
+    // kHz, and an uncalibrated audio source must be anchored to its actual pilot
+    // deviation. Stored as a bit pattern in an atomic so a UI write is visible to
+    // the analysis thread; refreshed once per process() block. Ignored when
+    // fullScaleKHz is set (the SDR path is absolutely calibrated).
+    private var pilotRefKHz: Float
+    private let pilotRefBits: ManagedAtomic<UInt32>
     // When non-nil, the source is absolutely calibrated: amplitude 1.0 == this
-    // many kHz of FM deviation (e.g. FM-SDR-Tuner demod, 1.0 = 75 kHz). All
+    // many kHz of FM deviation (e.g. FM-SDR-Tuner demod, 1.0 = 150 kHz). All
     // deviations are then measured directly and PILOT is a real reading. When
     // nil, fall back to pilot-referenced calibration (uncalibrated audio in).
-    private let fullScaleKHz: Float?
+    // Live-adjustable from the UI (audio path can switch between pilot-referenced
+    // and an absolute "0 dBFS = N kHz" scale). Stored as a bit pattern in an
+    // atomic; a NaN pattern means nil (pilot-referenced). Refreshed per block.
+    private var fullScaleKHz: Float?
+    private let fullScaleBits: ManagedAtomic<UInt32>
     private var pilot = PilotPLL()
     private var decoder = MPXDecoder()
     private let rds: RDSSubcarrierDecoder
@@ -127,8 +144,13 @@ final class MeterAnalysis {
     private var powerHistory = [Float](repeating: -30.0, count: trendPoints)
     private var trendCounter = 0
     private let trendStride = 12
-    // Peak/separation reset requested from the UI thread, applied on this thread.
+    // Reset flags requested from the UI thread, applied on this thread.
+    // `resetRequested`: peak-hold + separation (the "Reset Peaks" button).
+    // `fullResetRequested`: everything transient (peaks, separation, MPX-power
+    // integrator, BER, trends, RDS decoder) + re-arm warm-up -- used on retune
+    // so the previous station's accumulators don't linger.
     private let resetRequested = ManagedAtomic<Bool>(false)
+    private let fullResetRequested = ManagedAtomic<Bool>(false)
 
     // Windowed BER: diff the stream decoder's cumulative block counters per
     // process() call and smooth (~1 s) so the readout tracks current quality.
@@ -149,8 +171,9 @@ final class MeterAnalysis {
     private var scopeL = [Float](repeating: 0.0, count: scopePoints)
     private var scopeR = [Float](repeating: 0.0, count: scopePoints)
     private var spectrum = MPXSpectrumAnalyzer()
+    private var spectrumL = MPXSpectrumAnalyzer()
+    private var spectrumR = MPXSpectrumAnalyzer()
     private var spectrumInput: [Float] = []
-    private var spectrumTick = 0
 
     init(
         sampleRate: Float, preemphasisUS: Int = 50, pilotRefKHz: Float = 6.75,
@@ -158,7 +181,9 @@ final class MeterAnalysis {
     ) {
         self.sampleRate = sampleRate
         self.pilotRefKHz = pilotRefKHz
+        self.pilotRefBits = ManagedAtomic<UInt32>(pilotRefKHz.bitPattern)
         self.fullScaleKHz = fullScaleKHz
+        self.fullScaleBits = ManagedAtomic<UInt32>((fullScaleKHz ?? Float.nan).bitPattern)
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
@@ -177,9 +202,41 @@ final class MeterAnalysis {
     /// to call from any thread; applied at the top of the next `process`.
     func requestPeakReset() { resetRequested.store(true, ordering: .relaxed) }
 
+    /// Clear ALL transient accumulators + re-arm the warm-up gate + reset the
+    /// RDS decoder. Use on retune so the prior station's peaks / MPX power /
+    /// BER / RDS text don't carry over. Safe to call from any thread.
+    func requestFullReset() { fullResetRequested.store(true, ordering: .relaxed) }
+
+    /// Set the pilot reference (kHz) used by the pilot-referenced audio path.
+    /// Safe to call from any thread; picked up at the top of the next `process`.
+    func setPilotRefKHz(_ k: Float) { pilotRefBits.store(k.bitPattern, ordering: .relaxed) }
+
+    /// Set the absolute deviation scale (amplitude 1.0 == k kHz), or nil to use
+    /// pilot-referenced scaling. Safe from any thread; applied at the next block.
+    func setFullScaleKHz(_ k: Float?) {
+        fullScaleBits.store((k ?? Float.nan).bitPattern, ordering: .relaxed)
+    }
+
     func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
-        if resetRequested.exchange(false, ordering: .relaxed) {
+        pilotRefKHz = Float(bitPattern: pilotRefBits.load(ordering: .relaxed))
+        let fs = Float(bitPattern: fullScaleBits.load(ordering: .relaxed))
+        fullScaleKHz = fs.isNaN ? nil : fs
+        let doFullReset = fullResetRequested.exchange(false, ordering: .relaxed)
+        if doFullReset {
+            // Everything transient -- the new station starts clean.
+            mpxPowerMS = 0.0
+            mpxPowerPrimed = false
+            berEMA = 0.0
+            prevBlocksReceived = 0
+            prevBlocksValid = 0
+            rdsRMS = 0.0
+            for i in devHistory.indices { devHistory[i] = 0.0 }
+            for i in powerHistory.indices { powerHistory[i] = -30.0 }
+            warmupRemaining = Int(sampleRate)  // ~1 s -- skip the relock transient
+            rds.reset()
+        }
+        if doFullReset || resetRequested.exchange(false, ordering: .relaxed) {
             peakHoldComposite = 0.0
             posPeakRaw = 0.0
             negPeakRaw = 0.0
@@ -364,8 +421,12 @@ final class MeterAnalysis {
         snap.recentBlockErrorRate = berEMA
 
         // GUI display buffers. Decimate this block to a fixed point count for
-        // the scopes; recompute the composite spectrum every 4th block (~6/s at
-        // 8192-frame blocks @ 192 kHz -- ample for a display, cheap on CPU).
+        // the scopes, and recompute the spectra, every block (~23/s at 8192-frame
+        // blocks @ 192 kHz) so the spectrum refreshes as smoothly as the scopes.
+        // This runs on the analysis thread (off the audio path), and a few vDSP
+        // FFTs are cheap next to the per-sample decode chains already run here,
+        // so there is no need to throttle (the old every-4th-block gate dropped
+        // the spectrum to ~6/s and looked sluggish).
         Self.decimate(into: &scopeComposite, from: samples, count: samples.count)
         decodedL.withUnsafeBufferPointer {
             Self.decimate(into: &scopeL, from: $0, count: lastBlockCount)
@@ -377,21 +438,32 @@ final class MeterAnalysis {
         snap.decodedLScope = scopeL
         snap.decodedRScope = scopeR
 
-        spectrumTick += 1
-        if spectrumTick >= 4 {
-            spectrumTick = 0
-            if spectrumInput.count != samples.count {
-                spectrumInput = [Float](repeating: 0.0, count: samples.count)
-            }
-            for j in 0..<samples.count { spectrumInput[j] = samples[j] }
-            let result = spectrum.compute(
-                samples: spectrumInput, validCount: samples.count,
-                sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
-                maxDisplayHz: 100_000)
-            snap.spectrumDB = result.dbBins
-            snap.spectrumMaxHz = result.maxHz
-            snap.spectrumNyquistHz = result.nyquistHz
+        if spectrumInput.count != samples.count {
+            spectrumInput = [Float](repeating: 0.0, count: samples.count)
         }
+        for j in 0..<samples.count { spectrumInput[j] = samples[j] }
+        let result = spectrum.compute(
+            samples: spectrumInput, validCount: samples.count,
+            sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+            maxDisplayHz: 100_000)
+        snap.spectrumDB = result.dbBins
+        snap.spectrumMaxHz = result.maxHz
+        snap.spectrumNyquistHz = result.nyquistHz
+
+        // Decoded L / R audio spectra (0..20 kHz) for the click-to-spectrum
+        // scope view. Computed from the full decoded blocks, audio range.
+        let lres = spectrumL.compute(
+            samples: decodedL, validCount: lastBlockCount,
+            sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+            maxDisplayHz: 20_000)
+        let rres = spectrumR.compute(
+            samples: decodedR, validCount: lastBlockCount,
+            sampleRate: Double(sampleRate), displayBins: Self.spectrumBins,
+            maxDisplayHz: 20_000)
+        snap.decodedLSpectrumDB = lres.dbBins
+        snap.decodedRSpectrumDB = rres.dbBins
+        snap.audioSpectrumMaxHz = lres.maxHz
+        snap.audioSpectrumNyquistHz = lres.nyquistHz
     }
 
     /// Point-decimate a source buffer into a fixed-size destination (stride
@@ -437,6 +509,8 @@ final class MeterAnalysis {
         c.decodedLScope = snap.decodedLScope.map { $0 }
         c.decodedRScope = snap.decodedRScope.map { $0 }
         c.spectrumDB = snap.spectrumDB.map { $0 }
+        c.decodedLSpectrumDB = snap.decodedLSpectrumDB.map { $0 }
+        c.decodedRSpectrumDB = snap.decodedRSpectrumDB.map { $0 }
         c.devHistoryKHz = snap.devHistoryKHz.map { $0 }
         c.mpxPowerHistoryDBr = snap.mpxPowerHistoryDBr.map { $0 }
         return c

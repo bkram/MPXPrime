@@ -9,6 +9,211 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
+## Unreleased
+
+## 0.38 — 2026-07-06
+
+- **Studio: the MPX composite spectrum now shows the FM band-region overlay.**
+  The composite-spectrum window draws the same MpxTool-style band labels the
+  Meter uses (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz RDS, SCA) as trapezoid
+  outlines with captions, via the shared `MPXSpectrumView`'s `showBandLabels`.
+  Gives the transmit-side spectrum the frequency context the receive-side one
+  already had; no new drawing code.
+- **Studio: presets no longer read "edited since loaded" immediately.** Loading a
+  preset replaces the live config, whose control bindings then fire `onChange`
+  asynchronously and tripped the "modified" flag right after the load set it
+  clean. The flip is now suppressed for a short window after any programmatic
+  config load (preset load / disk reload), so only genuine user edits mark the
+  preset edited.
+- **Studio: audio device selection is remembered by UID *and* name, and is never
+  silently swapped.** Each chosen input/output/monitor device now persists its
+  name (`*_device_name`) alongside its UID. On launch the device is matched by
+  UID, then by name (so moving a USB interface to a different port -- which can
+  change its Core Audio UID -- still re-finds the same device), and if it is
+  simply unplugged the selection is **kept** (with a status note) instead of
+  silently falling back to whatever device happens to be first. Only a first run
+  with no prior preference picks a default.
+- **Studio: forces the MPX output device to the configured rate, and warns if it
+  can't.** The composite/processed-audio output device is now set to the
+  configured `sample_rate` (e.g. 192 kHz) before the engine starts -- so the
+  composite is emitted at full rate instead of being silently sample-rate-
+  converted by Core Audio (which also starves the render thread). If the device
+  doesn't support that rate, a routing note explains to set it in Audio MIDI
+  Setup; the device's prior rate is restored on stop. (Mirrors the Meter's
+  input-rate forcing.)
+- **Meter: fix the frequency/numeric boxes getting "stuck" after typing.** After
+  entering a value and pressing Enter the field kept first-responder focus, so its
+  display stopped tracking the model -- later scroll / stepper / live-retune
+  changes updated the tuner but the box looked frozen on the typed value ("can't
+  change it after entering", "tuned but the frequency isn't updated", "when the
+  text is selected it can't be changed"). The field now resigns focus on Enter
+  and refreshes its display whenever the user isn't *actively typing* (a focused
+  or text-selected box no longer blocks updates), writing only when the text
+  actually differs so background re-renders don't deselect a box you just
+  clicked. Applies to every Meter numeric field (frequency, gain, LNA, PPM, pilot
+  reference, full-scale).
+- **Meter: remembers the last-used settings.** Frequency, input source, all SDR
+  controls (gain / auto-gain, IF bandwidth, LNA, antenna, Bias-T, PPM, RTL AGC),
+  channel, monitor on/off + gain, pilot reference, audio calibration mode, record
+  format, spectrum span, and the selected input/output devices now persist across
+  launches via `UserDefaults` (`~/Library/Preferences`). Devices are matched by
+  their stable UID, not the volatile Core Audio device ID. Saved on capture start
+  and on quit; restored at launch (falling back to the SDR-when-a-dongle-present
+  default only when nothing was saved).
+- **Meter: fix periodic clicks in stereo recordings.** Recording resampled the
+  stereo file to 48 kHz on the analysis thread -- the same thread that drains the
+  real-time-fed input ring. The `.max`-quality SRC plus its per-block buffer
+  allocations intermittently stalled that thread long enough for the ring to
+  overflow and overwrite unread samples, leaving a one-sample gap heard as a
+  click (~0.5/s, irregular, in the mono sum, on both SDR and audio-device input).
+  The raw 192 kHz/MPX path, which does no SRC, was unaffected -- which isolated
+  the cause. Fix: **the stereo file is now written at the capture rate** (e.g.
+  192 kHz), with no real-time resampling at all; resample afterwards with any
+  tool for a 48 kHz copy. Disk writes also run on a private serial queue, and the
+  input ring's overflow/underflow counts are logged on stop. The recorder moved
+  into a testable `MPXPrimeRecording` library target with a deterministic
+  round-trip test (`MeterRecorderTests`) asserting a continuous input comes back
+  sample-accurate and complete (a click would be a value or frame-count
+  mismatch).
+- **Meter: smoother spectrum.** The composite (and decoded L/R) spectrum was
+  recomputed only every 4th analysis block (~6/s), so the centerpiece graph
+  looked sluggish next to the ~23/s scopes and meters. It now recomputes every
+  block (~23/s); the FFTs run on the analysis thread (off the audio path) and are
+  cheap beside the per-sample decode already done there, so there is no glitch
+  risk and the throttle was unnecessary.
+- **Meter: one launcher.** `run-meter.sh` is now the single script -- with no
+  arguments it opens the GUI, which auto-detects an attached dongle (in-process
+  SDR) or falls back to the audio device; `--sdr-freq <MHz>` opens it pre-tuned,
+  and `--device`/`--stdin` run the headless terminal dashboard. `run-meter-sdr.sh`
+  is removed: its `--gui` mode is redundant now that the GUI auto-starts the
+  in-process SDR, and its headless external-tuner FIFO path is just
+  `./run-meter.sh --stdin` fed by an `fm-sdr-tuner`/`mpx-tuner` composite.
+- **Meter: audio-input deviation calibration (Pilot-referenced or absolute).** The
+  audio-device path has no inherent level reference, so a **Calibrate** switch on
+  the input bar now offers two modes (audio mode only; both live, scroll-
+  adjustable):
+  - **Pilot** -- the default. Scales deviation by assuming the 19 kHz pilot equals
+    the **Pilot Ref (kHz)** field. Stations vary (a pilot that is actually 5.7 kHz
+    read against 6.75 inflated every kHz value ~18%), so set it to the source's
+    real pilot. Fragile when pilot recovery is marginal.
+  - **0 dBFS = N kHz** -- an absolute scale anchored to a known input level,
+    independent of pilot recovery (the robust mode MPXTool-style monitors use).
+    Feed 75 kHz at -6 dBFS and set 150; deviation then comes straight off the
+    input amplitude, exactly like the SDR path.
+  The SDR path is always absolute (150) and ignores both. Note pilot-referencing
+  only corrects the overall scale; a source whose composite output rolls off
+  above the audio band still reads 57 kHz RDS low -- use the SDR path for an
+  accurate RDS-injection measurement.
+- **Meter: SDRplay live retune fixed.** Changing frequency on an SDRplay RSP now
+  takes effect cleanly instead of glitching / appearing to do nothing. Two
+  causes: (1) the stream `reset` flag raised on a retune was ignored, so up to a
+  ring's worth of old-frequency IQ played out before the new station -- the ring
+  is now flushed on reset; (2) a scroll/drag burst fired one async SDRplay
+  `Update` per event, which the API drops or stalls under, so the tuner command
+  queue now coalesces a burst to a single update per type (RTL's synchronous USB
+  retune was unaffected, which is why only SDRplay misbehaved).
+- **Meter: opens live in SDR mode with audio.** When a dongle is present at
+  launch the Meter now starts capturing immediately, and audio monitoring is on
+  by default -- Start produces sound without a second toggle.
+- **Meter: scroll works on every numeric SDR control.** The LNA and PPM steppers
+  and the IF-bandwidth menu now adjust on mouse-wheel / trackpad scroll while the
+  pointer is over them, matching the Frequency and Gain fields. The IF-BW menu
+  still clicks open normally; scrolling steps through its widths.
+- **Meter: IF-bandwidth menu is device-appropriate.** On SDRplay the IF BW picker
+  offers the RSP's analog IF filter widths (Auto / 1536 / 600 / 300 / 200 kHz) so
+  the operator can tighten the IF to reject adjacent-station interference; RTL
+  keeps its demod channel-FIR steps (56-311 kHz).
+- **Meter: SDRplay RSP support (auto-preferred).** When an SDRplay RSP is
+  attached the Meter uses it instead of an RTL-SDR (14-bit ADC -> cleaner audio,
+  better separation, lower MPX-power floor). The backend dlopens the
+  user-installed SDRplay API at runtime (never linked/bundled; GPL-clean) and
+  streams complex IQ at 250 kHz into the demod's complex path. SDRplay-specific
+  controls surface in the input bar: an **Antenna** input picker (A/B/C on an
+  RSPdx) and a manual-gain mapping that backs the LNA off to relieve broadcast-FM
+  overload; the RTL-only PPM / RTL-AGC controls are hidden on SDRplay. Local-build
+  feature (requires the SDRplay SDK at build time); CI/release wiring is a
+  follow-up. Tested live on an RSPdx.
+
+- Docs: clarified SDR calibration / MPX-power validity in the manual + ARCHITECTURE
+  -- SDR deviation is math-absolute (no level calibration), and a valid BS.412
+  MPX-power reading needs a strong, clean, multipath-free signal (SM.1268);
+  weak/noisy reception inflates both peak deviation and MPX power.
+- **Meter: WAV recording (stereo or MPX).** A format toggle + Record button in
+  the input bar write a 24-bit PCM WAV: **Stereo** (decoded L/R, resampled to
+  **48 kHz**) or **MPX** (the raw mono composite at the capture rate, 192 kHz on
+  SDR). Files are **canonical RIFF/WAV** (new `CanonicalWavWriter`, no JUNK/FLLR
+  padding chunks) so any audio player or FFT/analysis tool reads them cleanly --
+  the previous AVAudioFile output padded the header to a 4 KiB offset, which
+  some strict FFT viewers mis-parsed. Start/stop while capturing via a Save
+  panel; `MeterAudioEngine` gained dynamic start/stop (lock-guarded against the
+  analysis thread).
+- **Meter: click a decoded scope for its audio spectrum.** Clicking the
+  Decoded L or Decoded R waveform toggles it to an audio spectrum (0-20 kHz)
+  drawn with the same gradient FFT graphic as the main spectrum (per-channel
+  FFTs added to the analysis). Click again to return to the waveform.
+- **Meter visual polish.** Decluttered the meters: the Audio group shares one
+  `MeterScaleRuler` (dBFS) instead of repeating the number column on every bar,
+  and the deviation bars are scale-less (limit line + kHz value). Level bars
+  gained a subtle vertical gradient fill; the trend graphs gained a soft
+  gradient area under the trace; the vectorscope guides are softened (faint
+  bounding circle + dashed diagonals). Tightened the top row to remove dead
+  space. (HIG: clarity / deference.)
+- **Meter is a proper macOS app.** A real **About MPX Prime Meter** panel
+  (description, clickable GitHub / User Manual / License links, version, and the
+  canonical not-certified disclaimer), a full app menu (About / Services / Hide /
+  Hide Others / Show All / Quit), a **Help** menu linking the User Manual, and a
+  **distinct app icon** (an analyzer VU-gauge + MPX spectrum bar in a teal
+  palette) so it is no longer confused with MPX Prime Studio in the Dock. The
+  icon is drawn at runtime as well, so even the unbundled `swift run` / CLI
+  binary gets a proper Dock icon.
+- **Meter: SDR signal-level (RSSI).** The Modulation group shows a **SIGNAL**
+  readout on the SDR path -- a relative received-level (dBFS) indicator from the
+  filtered IQ channel power (new `mpxtuner_signal_dbfs` C-ABI query), colored
+  green (strong) to red (weak). Most meaningful with Auto Gain off. Hidden on
+  the audio-device input (no RF level there).
+- **Meter readability.** The RDS panel adds PTY (code + name), PTYN, and ECC
+  rows. The MPX Power / Peak +- readouts turn amber near and red at/over the
+  limit (0 dBr, 75 kHz). The vectorscope is enlarged on the second row.
+- **Meter: spectrum span toggle + SDR-by-default.** The spectrum header has a
+  **60 / 100 kHz** span toggle (default 60, focusing on the modulated bands;
+  100 kHz shows the full baseband incl. SCA). The input **Source** now defaults
+  to **SDR** when an RTL-SDR dongle is detected at launch (Audio otherwise).
+- **Meter HIG pass.** The Meter toolbar is decluttered to the few frequent
+  commands (Start/Stop, Source, Monitor); the per-source input settings (audio
+  device + channel, or SDR frequency / AGC / gain) moved into a translucent
+  in-window input bar below the toolbar. The instrument displays (scopes,
+  spectrum, vectorscope, trends) now share centralized always-dark
+  `BroadcastStyle.instrument*` tokens so their internal labels/grid stay
+  legible in **Light Mode** (they previously used the semantic `.secondary`,
+  which vanished on the dark canvas under a light system appearance). The
+  deviation and MPX-power trend graphs gained min/max + limit-line scale labels
+  (75 kHz / 0 dBr).
+- **Built-in RTL-SDR, in-process (no external binary, no subprocess).** MPX
+  Prime Meter now links the vendored RTL-SDR -> FM-demod -> MPX tuner directly
+  as a C++ library (`CMPXTuner`, a stripped subset of FM-SDR-Tuner under
+  `tuner/`, GPL-3.0, exposed through a small C ABI `mpx_tuner_capi.h`). The
+  capture+demod runs on a thread inside the app and delivers float MPX blocks
+  straight to the analysis path -- no spawned helper, no FIFO, no int16 WAV
+  round-trip. `Source -> SDR` works out of the box on Apple Silicon with just a
+  connected dongle (the librtlsdr / liquid-dsp / libusb / fftw dylibs are
+  bundled inside the app). **Because it links the arm64-only RTL-SDR libraries,
+  MPX Prime Meter now ships as an Apple-Silicon-only binary; the MPX Prime
+  Studio encoder stays universal.** The headless `run-meter-sdr.sh` script still
+  uses an external `fm-sdr-tuner` over stdin.
+- **Live SDR controls (no restart).** Frequency, **IF bandwidth**, gain / auto
+  gain, **PPM** correction, **Bias-T** (RTL-SDR v3 5V, for an active antenna),
+  and the **RTL2832 digital AGC** all apply live to the running tuner via direct
+  in-process calls -- no device re-open, no audio gap. IF bandwidth (Auto /
+  56-311 kHz) trades adjacent-channel rejection against full-composite passband
+  (RDS / SCA); the tuner's internal channel FIR re-designs on the fly and the
+  hardware IF filter is set to match. Retuning the frequency also resets the
+  transient meters -- peak-hold, MPX power, separation, BER, trends, and the RDS
+  decoder -- plus a 1 s warm-up, so the new station starts clean. The input bar
+  relabels the old "AGC" toggle to "Auto Gain" (tuner gain mode) now that the
+  separate RTL digital AGC is exposed.
+- Docs: documented MPX Prime Meter across README / manual / ARCHITECTURE /
+  AGENTS (it shipped in 0.37 but wasn't mentioned).
+
 ## 0.37 — 2026-06-15
 
 - **MPX Prime Meter GUI.** The companion analyzer ships a full SwiftUI

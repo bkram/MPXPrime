@@ -1,6 +1,6 @@
 # MPX Prime Studio
 
-Version: 0.37
+Version: 0.38
 
 MPX Prime Studio is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -15,7 +15,7 @@ It runs a full broadcast-style processing chain — phase rotator, wideband AGC,
 - `RDS`: status (master enable + live snapshot), identity (PI / PTY / PTYN / ECC + PS banks + runtime flags TP / TA / MS / DI), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (injection level + frequency + Gaussian shaping)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, output mode (MPX composite vs processed audio), audio engine, spectrum options
-- Separate windows: `Scopes`, `Spectrum`, `Levels`, `Help`
+- Separate windows: `Scopes`, `Spectrum` (composite spectrum with FM band captions -- Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz RDS, SCA), `Levels`, `Help`
 
 The RDS detail tabs are organised per UECP message-class taxonomy
 (AF is a peer of PS, RT+ lives under ODA, etc.). Every operationally
@@ -24,6 +24,30 @@ PI, PTY, PTYN, TP/TA/MS/DI flags, AF list, group sequence, CT
 enable, all RT/PS/Long PS text. Only physical-layer settings
 (`rds_level`, Gaussian shaping FIR taps/BW) require a
 transport restart since they reconfigure the modulator.
+
+## Companion: MPX Prime Meter
+
+**MPX Prime Meter** is the receive/analyze counterpart that ships alongside
+the encoder in the same DMG (`MPX Prime Meter.app`). Where Studio *makes* the
+composite, the Meter *measures* it: feed it an MPX composite (a Core Audio
+input device, or a live RTL-SDR station via its bundled `mpx-tuner` helper)
+and it decodes stereo + full RDS and shows it on a single dashboard window.
+
+- Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope
+- MPX spectrum (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot,
+  Stereo L-R, 57 kHz RDS, SCA)
+- Level + deviation meters (IN / L / R / M / S, pilot / RDS / total deviation,
+  correlation) plus **MPX power (ITU-R BS.412)**, peak-hold +/- deviation,
+  best stereo separation, and deviation / MPX-power trend graphs
+- Full RDS decode: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group
+  histogram + live BER
+- Input: an audio device, or **native RTL-SDR** tuning (`Source -> SDR`) -- the
+  app bundles its own stripped SDR helper (`mpx-tuner`, from `tuner/`), so it
+  needs no separate binary or Homebrew, just a connected RTL-SDR dongle
+  (Apple Silicon). Frequency / gain / AGC retune **live** (no restart).
+  Headless terminal modes also exist (`./run-meter.sh --device <n>` / `--stdin`)
+
+See the [user manual](docs/manual.md) for details.
 
 ## Features
 
@@ -87,7 +111,7 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 
 **[github.com/bkram/MPXPrime/releases](https://github.com/bkram/MPXPrime/releases)**
 
-Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, drag `MPX Prime Studio.app` into `/Applications` (or any folder you prefer), and launch.
+Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) — install whichever you need.
 
 ### First-launch security note
 

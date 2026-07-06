@@ -5,7 +5,7 @@ set -e
 
 cd "$(dirname "$0")"
 
-VERSION=${1:-0.37}
+VERSION=${1:-0.38}
 OUTPUT_DIR="macOS/dist"
 APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"
@@ -28,8 +28,12 @@ mkdir -p "$OUTPUT_DIR"
 echo "Building arm64..."
 xcrun swift build --package-path macOS -c release --arch arm64 -j "$BUILD_JOBS"
 
-echo "Building x86_64..."
-xcrun swift build --package-path macOS -c release --arch x86_64 -j "$BUILD_JOBS"
+# x86_64: the encoder only. MPX Prime Meter links the arm64-only RTL-SDR tuner
+# libs (CMPXTuner -> librtlsdr/liquid-dsp), so it is Apple-Silicon-only; building
+# the whole package for x86_64 would try to link those and fail. --product keeps
+# the Intel slice to the universal encoder.
+echo "Building x86_64 (encoder only; Meter is Apple-Silicon-only)..."
+xcrun swift build --package-path macOS -c release --arch x86_64 --product MPXPrime -j "$BUILD_JOBS"
 
 # Create .app bundle structure
 APP_DIR="$OUTPUT_DIR/$APP_NAME.app"
@@ -125,12 +129,20 @@ echo "Creating $METER_APP_NAME.app..."
 rm -rf "$METER_APP_DIR"
 mkdir -p "$METER_APP_DIR/Contents/MacOS"
 mkdir -p "$METER_APP_DIR/Contents/Resources"
-lipo -create \
-    "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
-    "macOS/.build/x86_64-apple-macosx/release/MPXPrimeMeter" \
-    -output "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
-if [ -f "$ICON_FILE" ]; then
+# MPX Prime Meter is Apple-Silicon-only (it links the arm64 RTL-SDR tuner libs),
+# so it ships as an arm64 binary; the encoder above stays universal.
+cp "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
+    "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+chmod u+w "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+# The Meter has its own icon (analyzer VU gauge) so it is distinct from
+# MPX Prime Studio in the Dock; fall back to the shared icon if it is missing.
+METER_ICON_FILE="macOS/Resources/MPXPrimeMeter.icns"
+if [ -f "$METER_ICON_FILE" ]; then
+    cp "$METER_ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
+    METER_ICON_NAME="MPXPrimeMeter"
+elif [ -f "$ICON_FILE" ]; then
     cp "$ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
+    METER_ICON_NAME="MPXPrime"
 fi
 cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -152,7 +164,7 @@ cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
-    <string>MPXPrime.icns</string>
+    <string>${METER_ICON_NAME}</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSHighResolutionCapable</key>
@@ -166,6 +178,54 @@ cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
 </dict>
 </plist>
 EOF
+
+# --- Bundle the RTL-SDR dylibs the Meter links + relocate them to @rpath ---
+# The Meter statically links the vendored tuner C++ (CMPXTuner), which pulls in
+# Homebrew librtlsdr + liquid-dsp (and transitively libusb + fftw). Bundle the 4
+# dylibs into the app and rewrite the Meter binary's load commands so it runs
+# without Homebrew. arm64-only. These are REQUIRED now (the Meter links them) --
+# a missing dylib means the Meter would have failed to link above.
+TUNER_RTLSDR_DYLIB="/opt/homebrew/opt/librtlsdr/lib/librtlsdr.0.dylib"
+TUNER_LIQUID_DYLIB="/opt/homebrew/opt/liquid-dsp/lib/libliquid.dylib"
+TUNER_USB_DYLIB="/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib"
+TUNER_FFTW_DYLIB="/opt/homebrew/opt/fftw/lib/libfftw3f.3.dylib"
+METER_BIN="$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
+if [ -f "$TUNER_RTLSDR_DYLIB" ] && [ -f "$TUNER_LIQUID_DYLIB" ] \
+    && [ -f "$TUNER_USB_DYLIB" ] && [ -f "$TUNER_FFTW_DYLIB" ]; then
+    echo "Bundling RTL-SDR dylibs into $METER_APP_NAME.app..."
+    FRAMEWORKS_DIR="$METER_APP_DIR/Contents/Frameworks"
+    mkdir -p "$FRAMEWORKS_DIR"
+    for d in "$TUNER_RTLSDR_DYLIB" "$TUNER_LIQUID_DYLIB" "$TUNER_USB_DYLIB" "$TUNER_FFTW_DYLIB"; do
+        cp "$d" "$FRAMEWORKS_DIR/"; chmod u+w "$FRAMEWORKS_DIR/$(basename "$d")"
+    done
+    # Rewrite any Homebrew load command pointing at one of our 4 dylibs to @rpath.
+    relocate_macho() {
+        local f="$1"
+        otool -L "$f" | awk 'NR>1 {print $1}' | grep -E '^/(opt/homebrew|usr/local)/' | while read -r dep; do
+            case "$(basename "$dep")" in
+                librtlsdr.0.dylib|libliquid.dylib|libusb-1.0.0.dylib|libfftw3f.3.dylib)
+                    install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$f" ;;
+            esac
+        done
+    }
+    for b in librtlsdr.0.dylib libliquid.dylib libusb-1.0.0.dylib libfftw3f.3.dylib; do
+        install_name_tool -id "@rpath/$b" "$FRAMEWORKS_DIR/$b"
+        relocate_macho "$FRAMEWORKS_DIR/$b"
+    done
+    # The Meter binary links librtlsdr + liquid directly; point them at @rpath.
+    relocate_macho "$METER_BIN"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$METER_BIN"
+    # Sign the relocated dylibs (the --deep below also covers them, but sign
+    # explicitly so the rewritten load commands have valid signatures).
+    for b in librtlsdr.0.dylib libliquid.dylib libusb-1.0.0.dylib libfftw3f.3.dylib; do
+        codesign --force --sign - "$FRAMEWORKS_DIR/$b"
+    done
+else
+    echo "ERROR: RTL-SDR dylibs not found, but the Meter links them."
+    echo "  Install them first: brew install librtlsdr liquid-dsp"
+    exit 1
+fi
+
 echo "Ad-hoc signing $METER_APP_NAME.app..."
 codesign --force --deep --sign - "$METER_APP_DIR"
 

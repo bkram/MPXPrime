@@ -106,6 +106,10 @@ final class AudioOutputEngine {
     private let requestedBlockSize: Int
     private let requestedInputDeviceID: AudioDeviceID?
     private let requestedOutputDeviceID: AudioDeviceID?
+    // Output device whose nominal rate we forced to the configured rate, plus its
+    // prior rate to restore on stop (composite MPX needs the device actually
+    // running at e.g. 192 kHz, not Core Audio SRC'ing behind our back).
+    private var forcedOutputRate: (deviceID: AudioDeviceID, priorRate: Double)?
     private let outputMode: AudioOutputMode
     private var targetDeviationKHz: Float
     private var configuredRenderSampleRate: Double = 0.0
@@ -595,6 +599,11 @@ final class AudioOutputEngine {
         inputRing = nil
         engine.stop()
         engine.reset()
+        // Restore the output device's prior nominal rate if we forced it.
+        if let forced = forcedOutputRate {
+            _ = AudioDevices.setNominalSampleRate(deviceID: forced.deviceID, forced.priorRate)
+            forcedOutputRate = nil
+        }
         if let inputAU {
             inputAU.stop()
             self.inputAU = nil
@@ -684,11 +693,44 @@ final class AudioOutputEngine {
         if let outputID = requestedOutputDeviceID {
             do {
                 try setCurrentDevice(outputID, for: engine.outputNode, role: "output")
+                forceOutputDeviceRate(deviceID: outputID)
                 applyHALBufferSize(deviceID: outputID, role: "output")
             } catch {
                 routingNote =
                     "Requested output device could not be opened by AVAudioEngine; using macOS default output."
             }
+        }
+    }
+
+    /// Force the MPX output device to the configured render rate (e.g. 192 kHz)
+    /// before AVAudioEngine reads its format, so the composite is emitted at full
+    /// rate instead of being silently sample-rate-converted by Core Audio (which
+    /// also starves the render thread). Warns if the device can't run that rate;
+    /// the prior rate is restored on stop. Composite / processed-audio only --
+    /// the monitor path intentionally tracks the monitor hardware's own rate.
+    private func forceOutputDeviceRate(deviceID: AudioDeviceID) {
+        guard outputMode != .monitorAudio else { return }
+        let target = max(8_000.0, requestedSampleRate)
+        let available = AudioDevices.availableNominalSampleRates(deviceID: deviceID)
+        let current = AudioDevices.currentNominalSampleRate(deviceID: deviceID)
+        // Already at the target (within 1 Hz): nothing to force or restore.
+        if let current, abs(current - target) < 1.0 { return }
+        guard available.isEmpty || available.contains(where: { abs($0 - target) < 1.0 }) else {
+            appendRoutingNote(
+                "Output device cannot run at \(Int(target.rounded())) Hz "
+                + "(supports \(available.map { String(Int($0.rounded())) }.joined(separator: "/")) Hz). "
+                + "Set it to \(Int(target.rounded())) Hz in Audio MIDI Setup; the composite will be "
+                + "sample-rate-converted and may not carry RDS / clean subcarriers otherwise.")
+            return
+        }
+        let prior = current
+        let actual = AudioDevices.setNominalSampleRate(deviceID: deviceID, target)
+        if let actual, abs(actual - target) < 1.0 {
+            if let prior { forcedOutputRate = (deviceID, prior) }
+        } else {
+            appendRoutingNote(
+                "Could not set the output device to \(Int(target.rounded())) Hz; "
+                + "set it manually in Audio MIDI Setup.")
         }
     }
 

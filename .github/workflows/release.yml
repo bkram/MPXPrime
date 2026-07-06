@@ -17,6 +17,13 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
+      # SDR helper (mpx-tuner) build + bundle deps. cmake is preinstalled on the
+      # runner; these provide librtlsdr + liquid-dsp (+ libusb + fftw) so
+      # build-release.sh builds and bundles the helper into MPX Prime Meter.app.
+      # Without them the bundling step skips and the DMG ships without SDR.
+      - name: Install SDR build deps
+        run: brew install librtlsdr liquid-dsp
+
       - name: Build Release (Universal Binary)
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}

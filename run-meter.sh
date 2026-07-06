@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 #
-# Build (release) and run the MPX Prime Meter -- the companion MPX composite
-# analyzer. Defaults to the external USB DAC (device 0), composite on the
-# RIGHT channel, decoded-audio monitor ON. These defaults always apply; pass
-# your own --device / --channel to override (your value wins -- the meter
-# takes the first occurrence of each flag). Examples:
+# Build (release) and run MPX Prime Meter -- the companion MPX composite
+# analyzer. With no arguments it opens the graphical dashboard, which
+# auto-detects an attached SDR dongle (SDRplay RSP or RTL-SDR, decoded
+# in-process) and starts capturing it, or falls back to the audio-device input
+# (the 192 kHz-capable device, composite on the RIGHT channel) when no dongle is
+# present. Examples:
 #
-#   ./run-meter.sh                               # device 0, right, monitor on
-#   ./run-meter.sh --seconds 30                  # ...still device 0 + right
-#   ./run-meter.sh --channel left                # override to left
+#   ./run-meter.sh                       # GUI: SDR if a dongle is attached, else audio
+#   ./run-meter.sh --sdr-freq 96.8       # GUI pre-tuned to an SDR station, capturing
+#   ./run-meter.sh --device 0 --channel right --seconds 30   # headless audio capture
 #   ./run-meter.sh --list-devices
 #
-# RDS needs the input device at >= 128 kHz (192 kHz recommended); set that in
-# Audio MIDI Setup. First run may prompt for microphone/input access -- allow it.
+# Headless terminal modes: pass --device <spec> (audio input) or --stdin (a WAV
+# stream / raw composite on stdin) to run the text dashboard instead of the
+# window. The in-process SDR is GUI-only; for the audio path, RDS needs the input
+# device at >= 128 kHz (192 kHz recommended) -- set that in Audio MIDI Setup.
+# First run may prompt for microphone/input access -- allow it.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -22,7 +26,5 @@ swift build --package-path macOS -c release --product MPXPrimeMeter
 
 BIN="macOS/.build/release/MPXPrimeMeter"
 
-# Append rig defaults AFTER the user's args so an explicit --device/--channel
-# (given first) wins; if the user omits them, these supply device 0 + right.
-echo "Running: $BIN $* --device 0 --channel right"
-exec "$BIN" "$@" --device 0 --channel right
+echo "Running: $BIN $*"
+exec "$BIN" "$@"

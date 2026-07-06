@@ -21,18 +21,23 @@ public struct VerticalMeterStrip: View {
     let level: Double
     let peakLevel: Double?
     let scale: Scale
+    /// Draw the per-strip tick labels on the right edge. Set false when a group
+    /// shares one `MeterScaleRuler` instead (declutters multi-bar groups); the
+    /// strip then centres its bar and stays narrow.
+    let showScale: Bool
     /// Hover tooltip: what the meter shows and its safe range. Empty = none.
     let help: String
 
     public init(
         label: String, valueText: String, level: Double, peakLevel: Double?,
-        scale: Scale, help: String = ""
+        scale: Scale, showScale: Bool = true, help: String = ""
     ) {
         self.label = label
         self.valueText = valueText
         self.level = level
         self.peakLevel = peakLevel
         self.scale = scale
+        self.showScale = showScale
         self.help = help
     }
 
@@ -69,7 +74,7 @@ public struct VerticalMeterStrip: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity)
         }
-        .frame(width: 64)
+        .frame(width: showScale ? 64 : 34)
         // The bar/peak-hold/ticks are decorative to VoiceOver; collapse the
         // strip into one element that announces its name and current reading
         // (e.g. "IN L, -6.2 dB") instead of two disconnected text fragments.
@@ -112,42 +117,52 @@ public struct VerticalMeterStrip: View {
         // the same inset range so labels stay aligned with their ticks.
         let vpad: CGFloat = 8
         let usable = max(1.0, h - 2 * vpad)
+        // With a shared ruler the strip is narrow and the bar is centred; with
+        // per-strip ticks the bar sits left so the labels have room on the right.
+        let barX: CGFloat = showScale ? 0 : (size.width - barW) / 2
         func yFor(_ position: Double) -> CGFloat { vpad + usable * CGFloat(1.0 - clamp(position)) }
 
-        let barRect = CGRect(x: 0, y: vpad, width: barW, height: usable)
+        let barRect = CGRect(x: barX, y: vpad, width: barW, height: usable)
         let barPath = Path(roundedRect: barRect, cornerRadius: radius, style: .continuous)
         ctx.fill(barPath, with: .color(BroadcastStyle.meterSurface))
 
         let fillH = usable * CGFloat(clamp(level))
         if fillH > 0.5 {
-            let fillRect = CGRect(x: 0, y: vpad + usable - fillH, width: barW, height: fillH)
+            let fillRect = CGRect(x: barX, y: vpad + usable - fillH, width: barW, height: fillH)
+            // Subtle vertical gradient (brighter toward the top of the fill) for
+            // a less utilitarian, more dimensional bar.
             ctx.fill(
                 Path(roundedRect: fillRect, cornerRadius: radius, style: .continuous),
-                with: .color(tint.opacity(0.80)))
+                with: .linearGradient(
+                    Gradient(colors: [tint.opacity(0.60), tint.opacity(0.95)]),
+                    startPoint: CGPoint(x: 0, y: vpad + usable),
+                    endPoint: CGPoint(x: 0, y: vpad + usable - fillH)))
         }
         ctx.stroke(barPath, with: .color(BroadcastStyle.panelBorder), lineWidth: 0.5)
 
-        for tick in scaleTicks {
-            let y = yFor(tick.position)
-            ctx.fill(
-                Path(CGRect(x: barW - 6, y: y - 0.5, width: 6, height: 1)),
-                with: .color(BroadcastStyle.scaleTick))
-            ctx.draw(
-                Text(tick.label).font(BroadcastStyle.scaleLabel).foregroundColor(.secondary),
-                at: CGPoint(x: barW + 6, y: y), anchor: .leading)
+        if showScale {
+            for tick in scaleTicks {
+                let y = yFor(tick.position)
+                ctx.fill(
+                    Path(CGRect(x: barX + barW - 6, y: y - 0.5, width: 6, height: 1)),
+                    with: .color(BroadcastStyle.scaleTick))
+                ctx.draw(
+                    Text(tick.label).font(BroadcastStyle.scaleLabel).foregroundColor(.secondary),
+                    at: CGPoint(x: barX + barW + 6, y: y), anchor: .leading)
+            }
         }
 
         if let targetNorm {
             let y = yFor(targetNorm)
             ctx.fill(
-                Path(CGRect(x: 0, y: y - 0.75, width: barW, height: 1.5)),
+                Path(CGRect(x: barX, y: y - 0.75, width: barW, height: 1.5)),
                 with: .color(BroadcastStyle.accent.opacity(0.85)))
         }
 
         if let peak = peakLevel {
             let y = yFor(peak)
             ctx.fill(
-                Path(CGRect(x: 0, y: y - 1, width: barW, height: 2)),
+                Path(CGRect(x: barX, y: y - 1, width: barW, height: 2)),
                 with: .color(Color.primary.opacity(0.95)))
         }
     }
@@ -182,14 +197,19 @@ public struct VerticalMeterStrip: View {
     }
 
     private var scaleTicks: [Tick] {
-        switch scale {
+        scale.tickMarks().map { Tick(position: $0.position, label: $0.label) }
+    }
+}
+
+public extension VerticalMeterStrip.Scale {
+    /// Scale tick positions (0..1, bottom..top) + labels. Shared by the strip's
+    /// own ticks and by `MeterScaleRuler` so a group's shared ruler stays in
+    /// register with the bars.
+    func tickMarks() -> [(position: Double, label: String)] {
+        switch self {
         case .dbfs:
-            let points: [Double] = [-36, -24, -12, -6, -3, 0]
-            return points.map {
-                Tick(position: (($0 - -36) / 36), label: "\(Int($0))")
-            }
+            return [-36, -24, -12, -6, -3, 0].map { (($0 - -36) / 36, "\(Int($0))") }
         case .modulationKHz(let fullScale, _):
-            // Pick a tick step that yields ~4-6 labels for the given range.
             let step: Double
             switch fullScale {
             case ...10: step = 2
@@ -198,17 +218,45 @@ public struct VerticalMeterStrip: View {
             case ...60: step = 10
             default: step = 25
             }
-            var ticks: [Tick] = []
+            var ticks: [(Double, String)] = []
             var v = 0.0
             while v <= fullScale + 0.001 {
-                ticks.append(Tick(position: v / fullScale, label: "\(Int(v.rounded()))"))
+                ticks.append((v / fullScale, "\(Int(v.rounded()))"))
                 v += step
             }
             return ticks
         case .gainReductionDB:
-            return [0, 3, 6, 9, 12, 16].map {
-                Tick(position: $0 / 16.0, label: "\(Int($0))")
-            }
+            return [0, 3, 6, 9, 12, 16].map { ($0 / 16.0, "\(Int($0))") }
         }
+    }
+}
+
+/// A standalone scale column matching `VerticalMeterStrip`'s vertical layout, so
+/// a group of same-scale bars can share one ruler instead of repeating the
+/// number column on every bar. Place it as the first item in the group's HStack.
+public struct MeterScaleRuler: View {
+    let scale: VerticalMeterStrip.Scale
+    public init(scale: VerticalMeterStrip.Scale) { self.scale = scale }
+
+    public var body: some View {
+        VStack(spacing: 6) {
+            // Spacers match the strip's label (top) and value (bottom) rows so
+            // the Canvas region lines up with the bars' Canvas region exactly.
+            Text(" ").font(BroadcastStyle.chipLabel).hidden()
+            Canvas { ctx, size in
+                let vpad: CGFloat = 8
+                let usable = max(1.0, size.height - 2 * vpad)
+                for tick in scale.tickMarks() {
+                    let y = vpad + usable * CGFloat(1.0 - tick.position)
+                    ctx.draw(
+                        Text(tick.label).font(BroadcastStyle.scaleLabel).foregroundColor(.secondary),
+                        at: CGPoint(x: size.width - 2, y: y), anchor: .trailing)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Text(" ").font(BroadcastStyle.valueReadout).hidden()
+        }
+        .frame(width: 26)
+        .accessibilityHidden(true)
     }
 }

@@ -3,6 +3,7 @@ import CoreAudio
 import Darwin
 import Foundation
 import MPXPrimeCore
+import MPXPrimeRecording
 
 /// Which input channel carries the composite. A composite is a single real
 /// signal patched to one channel of the interface (varies by hardware -- e.g.
@@ -39,9 +40,14 @@ final class MeterAudioEngine: @unchecked Sendable {
     private let monitorRing: StereoInputRingBuffer
     private var monitor: MeterMonitor?
 
-    // Optional WAV capture of the decoded audio.
+    // WAV capture. `wavURL` is the CLI's record-on-start path (decoded stereo);
+    // the GUI starts/stops dynamically via startRecording/stopRecording. The
+    // recorder is touched by the analysis thread (writes) and the main thread
+    // (start/stop), so guard it with recordLock.
     private let wavURL: URL?
+    private let recordLock = NSLock()
     private var recorder: MeterRecorder?
+    private var recordMPX = false
 
     private var consumer: Thread?
     private let runningFlag = ManagedAtomic<Bool>(false)
@@ -80,6 +86,13 @@ final class MeterAudioEngine: @unchecked Sendable {
         mixScratch.deallocate()
     }
 
+    /// Live-update the pilot reference (kHz) for the pilot-referenced audio path.
+    func setPilotRefKHz(_ k: Float) { analysis.setPilotRefKHz(k) }
+
+    /// Live-switch the audio path between absolute ("0 dBFS = k kHz") and
+    /// pilot-referenced (nil) deviation scaling.
+    func setFullScaleKHz(_ k: Float?) { analysis.setFullScaleKHz(k) }
+
     @discardableResult
     func start(monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring
@@ -107,7 +120,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
 
         if let wavURL {
-            recorder = try MeterRecorder(url: wavURL, sampleRate: Double(sampleRate))
+            recorder = try MeterRecorder(url: wavURL, sampleRate: Double(sampleRate), channels: 2)
         }
 
         runningFlag.store(true, ordering: .relaxed)
@@ -127,10 +140,20 @@ final class MeterAudioEngine: @unchecked Sendable {
         // the semaphore is a real happens-before handshake.
         _ = consumerDone.wait(timeout: .now() + 1.0)
         consumer = nil
+        // Report input-ring drops: a non-zero overflow count means the analysis
+        // thread fell behind the real-time capture and the ring overwrote unread
+        // samples -- the gap shows up as clicks (especially while recording).
+        let st = ring.stats()
+        if st.overflows > 0 || st.underflows > 0 {
+            FileHandle.standardError.write(Data(
+                "[Meter] input ring: overflows=\(st.overflows) underflows=\(st.underflows)\n".utf8))
+        }
         monitor?.stop()
         monitor = nil
-        // Release the recorder so AVAudioFile finalizes the WAV header.
-        recorder = nil
+        // Release the recorder so AVAudioFile finalizes the WAV header. The
+        // consumer thread has exited (handshake above), so no lock is needed,
+        // but take it for consistency with the dynamic start/stop path.
+        recordLock.lock(); recorder = nil; recordLock.unlock()
     }
 
     func snapshot() -> MeterSnapshot {
@@ -139,8 +162,34 @@ final class MeterAudioEngine: @unchecked Sendable {
         return published
     }
 
+    // MARK: - Recording (dynamic, GUI)
+
+    /// Begin recording to `url`: stereo (decoded L/R) or mono (raw MPX
+    /// composite) at the capture sample rate. Replaces any active recording.
+    func startRecording(url: URL, mpx: Bool) throws {
+        let rec = try MeterRecorder(
+            url: url, sampleRate: Double(sampleRate), channels: mpx ? 1 : 2)
+        recordLock.lock()
+        recorder = rec
+        recordMPX = mpx
+        recordLock.unlock()
+    }
+
+    /// Stop recording and finalize the WAV header.
+    func stopRecording() {
+        recordLock.lock(); recorder = nil; recordLock.unlock()
+    }
+
+    var isRecording: Bool {
+        recordLock.lock(); defer { recordLock.unlock() }
+        return recorder != nil
+    }
+
     /// Reset the deviation peak-hold + best-separation accumulators.
     func resetPeaks() { analysis.requestPeakReset() }
+
+    /// Reset all transient meters + RDS for a retune (new station starts clean).
+    func resetForRetune() { analysis.requestFullReset() }
 
     /// Raise an input device to the best capture rate before opening it: 192 kHz
     /// if supported, else the highest supported rate >= 128 kHz (RDS at 57 kHz
@@ -205,7 +254,15 @@ final class MeterAudioEngine: @unchecked Sendable {
                         }
                     }
                 }
-                recorder?.write(left: analysis.decodedL, right: analysis.decodedR, count: count)
+                recordLock.lock()
+                if let rec = recorder {
+                    if recordMPX {
+                        rec.writeMono(left, count: got)        // raw composite
+                    } else {
+                        rec.write(left: analysis.decodedL, right: analysis.decodedR, count: count)
+                    }
+                }
+                recordLock.unlock()
                 // Isolated copy: the snapshot crosses to the display thread,
                 // and the decoder keeps mutating its CoW buffers each block.
                 let s = analysis.isolatedSnapshot()

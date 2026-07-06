@@ -65,6 +65,21 @@ public enum BroadcastStyle {
     /// Panel / Card body — sits atop the window content background.
     public static let panelSurface = Color(nsColor: .controlBackgroundColor)
 
+    // MARK: - Instrument displays
+    // Scopes, spectrum, vectorscope, and trend graphs are deliberately DARK in
+    // both light and dark appearance — the convention for audio/SDR instruments
+    // (DAWs, SDR#, RDS Spy) — so the green/cyan traces stay legible. Their
+    // internal labels/grid must therefore use these fixed light tones, not the
+    // semantic `.secondary` (which would vanish on dark in Light Mode). The
+    // surrounding chrome (cards, toolbar, text) still adapts normally.
+
+    /// Always-dark backing for instrument Canvas displays.
+    public static let instrumentBackground = Color(.sRGB, red: 0.07, green: 0.08, blue: 0.10, opacity: 1.0)
+    /// Light label tone for text drawn on `instrumentBackground`.
+    public static let instrumentLabel = Color(.sRGB, white: 1.0, opacity: 0.62)
+    /// Subtle grid/axis tone on `instrumentBackground`.
+    public static let instrumentGrid = Color(.sRGB, white: 1.0, opacity: 0.12)
+
     /// Hairline border between panels. Kept very subtle so it reads as
     /// broadcast chassis division, not a boxy UI.
     public static let panelBorder = Color.adaptive(

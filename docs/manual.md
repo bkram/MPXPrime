@@ -39,9 +39,11 @@ macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applic
 
 **Output device** (feeding your exciter / SDR / RF generator):
 
-1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly. **Required for RDS** — the 57 kHz RDS subcarrier needs at least ~119 kHz Nyquist; 176.4 kHz is the lowest device rate that carries it correctly, 192 kHz is the canonical default. The in-app warning chip flags this misconfiguration but it shouldn't get that far in practice.
+1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly. **Required for RDS** — the 57 kHz RDS subcarrier needs at least ~119 kHz Nyquist; 176.4 kHz is the lowest device rate that carries it correctly, 192 kHz is the canonical default. On start MPX Prime Studio now **sets the output device to the configured rate itself** (and restores the device's prior rate on stop); if the device can't run that rate it surfaces a routing note telling you to set it in Audio MIDI Setup, rather than letting Core Audio quietly resample.
 2. **Bit depth**: **24-bit integer or 32-bit float**. Either is fine; 32-bit float is the AVAudioEngine native format. 16-bit also *works* for the composite (96 dB SNR is well above any FM receiver's noise floor and you cannot hear the difference at the listener), but 24/32-bit is best practice — no extra dither/truncation step at the chain output, and headroom for downstream tools that further process the composite (resamplers, SDR DSPs).
 3. **Volume / output gain**: **100 % (0 dB) on every channel**. This is the critical one. The macOS volume slider is post-mix — it scales the engine's already-finalised composite. If output volume is at, say, 75 %, the FM exciter receives a signal at 0.75× amplitude and your modulation undershoots by ~2.5 dB; the loudness target the chain just enforced is silently wrong. Audio MIDI Setup → device → "Master Stream" or per-channel volume sliders. Lock these at unity for any broadcast use.
+
+**Device selection is remembered by UID and name.** Each selected input / output / monitor device is stored by its Core Audio UID *and* its name (`input_device_uid` / `input_device_name`, etc.). At launch the device is matched by UID first, then by name — so moving a USB interface to a different port (which can change its UID) still re-finds the same device. If a remembered device is simply unplugged, MPX Prime Studio **keeps** your selection (and shows a status note) instead of silently switching to whatever device is first in the list; reconnect it, or pick another.
 
 **Input device** (your audio source — interface, BlackHole loopback, or built-in audio):
 
@@ -590,6 +592,189 @@ Disabled by bypass:
 - Mono bass
 - Multiband processing
 - Stereo widener
+
+
+## MPX Prime Meter (companion analyzer)
+
+MPX Prime Meter is the receive/analyze counterpart to the encoder, shipped as
+`MPX Prime Meter.app` in the same DMG. It takes an FM MPX composite, decodes
+stereo + full RDS, and shows everything on one dashboard window. Use it to
+check your own air signal, compare against other stations, or validate a chain.
+
+### Launching
+
+- Double-click `MPX Prime Meter.app`, or run `macOS/.build/release/MPXPrimeMeter --gui`.
+- Headless terminal dashboard: `./run-meter.sh --device <spec>` (audio-device
+  input) or `./run-meter.sh --stdin` (a composite piped on stdin). The in-process
+  SDR is GUI-only; with no arguments `./run-meter.sh` opens the window and
+  auto-detects a dongle. Use `--sdr-freq <MHz>` to open the GUI pre-tuned.
+
+The Meter **remembers your last-used settings** (frequency, input source, all SDR
+controls, channel, monitor, pilot reference / calibration, record format,
+spectrum span, and the selected devices) between launches; they are stored in the
+standard macOS preferences and restored on the next start. Pass `--sdr-freq`
+to override the saved frequency for that launch.
+
+### Window layout
+
+The toolbar carries only the frequent commands -- **Start/Stop** (⌘Return),
+the **Source** switch (Audio / SDR), and the **Monitor** toggle. The detailed
+input settings for the selected source (audio device + channel, or SDR
+frequency / AGC / gain) live in a translucent **input bar** directly below the
+toolbar. The scopes, spectrum, vectorscope, and trend graphs are deliberately
+dark instrument displays in both Light and Dark appearance (the convention for
+audio/SDR instruments) so the traces stay legible; the surrounding window
+chrome follows the system appearance.
+
+### Input
+
+The **Source** defaults to **SDR** when an RTL-SDR dongle is detected at launch,
+otherwise to **Audio**.
+
+- **Audio device** (`Source -> Audio`): pick the input carrying the composite
+  and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
+  start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
+  >= 128 kHz, so the default input prefers a 192 kHz-capable device.
+- **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The Meter decodes
+  the dongle **in-process** -- it links the vendored tuner (a stripped subset of
+  FM-SDR-Tuner, from `tuner/`) as a library and runs the RTL-SDR capture + FM
+  demod on its own thread, delivering the mono MPX at 192 kHz with absolute
+  calibration (full scale = 150 kHz). No helper process, no Homebrew, no
+  separately-placed binary -- just a connected dongle. The librtlsdr / liquid-dsp
+  dylibs ship inside the app. **SDR support makes MPX Prime Meter Apple-Silicon
+  only** (the RTL-SDR libraries are arm64-only); the MPX Prime Studio encoder
+  remains universal. (For a headless terminal SDR readout, pipe an external
+  `fm-sdr-tuner`/`mpx-tuner` composite into `./run-meter.sh --stdin`; the
+  in-process SDR backend is GUI-only.) Tested with **Rafael Micro R820T** and
+  **Elonics E4000** tuner dongles; other librtlsdr-supported tuners (R828D,
+  FC0012/0013, FC2580) should work but are untested.
+
+  **SDRplay RSP** is also supported and **auto-preferred** when an RSP is
+  attached (its 14-bit ADC and front end give cleaner audio, better separation,
+  and a lower MPX-power noise floor than an RTL dongle). It needs SDRplay's API
+  service installed (the SDRplay driver); the app loads it at runtime and falls
+  back to RTL-SDR if it's absent. Tested on an RSPdx.
+
+  When a dongle is attached at launch the Meter opens **already capturing** in
+  SDR mode with audio monitoring on, so it comes up live. Every numeric control
+  below (Frequency, Gain, **LNA**, **PPM**, and the **IF BW** menu) also steps on
+  **mouse-wheel / trackpad scroll** while the pointer is over it -- no need to
+  type or open the menu.
+
+  All SDR controls apply **live** -- no restart, no audio gap:
+  - **Frequency** -- retunes in place (also clears the prior station's meters).
+  - **IF BW** -- the IF channel bandwidth. RTL shows the demod channel-FIR steps
+    (Auto, or 56-311 kHz); **SDRplay shows the RSP's analog IF filter widths**
+    (Auto = 600, or 1536 / 600 / 300 / 200 kHz). Narrower **rejects adjacent-
+    station interference** but rolls off the composite top; 300 kHz still passes
+    the full composite, 200 kHz starts to lose the top (SCA / high RDS). Start
+    wide; narrow only to fight a strong neighbour.
+  - **Auto Gain** -- automatic gain (RTL: tuner gain mode; SDRplay: AGC on the IF
+    gain). Off reveals a manual gain field -- RTL tuner gain in **dB**, or the
+    SDRplay **IF** gain.
+  - **LNA** (SDRplay only) -- the front-end LNA gain-reduction step (0 = most
+    gain), separate from the IF gain / AGC. Raise it to relieve front-end
+    overload on strong broadcast signals. (SDRplay thus has both gain stages:
+    LNA front-end + IF.)
+  - **Antenna** (SDRplay only) -- selects the RSP antenna input (e.g. A / B / C
+    on an RSPdx).
+  - **Bias-T** -- 5V bias tee to power an active antenna / inline LNA (RTL-SDR v3,
+    or RSP models that support it). Never feed it into a DC short.
+  - **PPM** / **RTL AGC** (RTL-SDR only) -- ppm frequency trim, and the RTL2832
+    digital AGC separate from the tuner gain.
+
+### What it shows
+
+- **Audio**: IN / L / R / M / S levels and L/R correlation.
+- **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
+  beside the audio levels.
+- **Modulation**: MPX power (ITU-R BS.412, ~60 s integrated, in dBr vs a
+  +/-19 kHz sine); peak-hold +/- deviation (with Reset); best stereo
+  separation. Also on the top row. MPX power and the +/- peaks turn amber near
+  and red at/over the limit (0 dBr, 75 kHz). On SDR it also shows **SIGNAL** --
+  a relative received-level (dBFS) RSSI indicator (green strong / red weak);
+  most meaningful with Auto Gain off.
+- **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
+  horizontal spread = out-of-phase / mono-incompatible). On the second row,
+  beside the trends.
+- **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
+- **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
+  it between waveform and its audio spectrum (0-20 kHz).
+- **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz
+  RDS, 67.65 kHz, 92 kHz SCA). A **60 / 100 kHz** span toggle in the header
+  picks the display range; 60 kHz (the default) focuses on the modulated bands,
+  100 kHz shows the full baseband including SCA.
+- **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
+  AF / group histogram and live block-error rate (BER under ~5% is a clean link).
+
+Deviation is referenced to a 75 kHz total; on a weak/noisy signal the
+deviation/MPX-power path is band-limited to 60 kHz so the FM demod noise
+triangle above the modulated bands doesn't inflate the readings.
+
+### Recording
+
+The input bar (right side) has a format toggle and a **Record** button. Choose:
+
+- **Stereo** -- the decoded L/R audio (a clean, high-quality stereo capture of
+  what the decoder produced).
+- **MPX** -- the raw MPX composite (mono): pilot + L-R + RDS, the same signal
+  the analyzer sees. Useful to re-analyze a capture later or feed another tool.
+
+Press **Record** while capturing to choose a file and start; press it again to
+stop and finalize. Both formats are 24-bit PCM WAV at the **capture rate**
+(192 kHz for SDR -- the composite needs the bandwidth for the pilot /
+subcarriers / RDS, and the stereo file stays at the native rate so recording adds
+no real-time resampling that could disturb capture; resample the file afterwards
+with any tool if you want a 48 kHz copy). They are written as canonical RIFF/WAV
+(no padding chunks) so any audio player or FFT/analysis tool reads them.
+Recording is only available while capturing.
+
+### Calibration and measurement validity
+
+**SDR needs no level calibration.** On the SDR path the deviation scale is a
+fixed property of the FM discriminator (kHz per sample is set by math, not by
+the tuner gain, AGC, or RF level), so amplitude maps directly to kHz with no
+calibration step. Tuning to an unmodulated carrier is unnecessary -- and FM
+broadcast has none anyway (even dead air carries the 19 kHz pilot). The
+audio-device path, by contrast, needs a reference because the analog input gain
+is unknown. The **Calibrate** switch on the audio input bar picks how:
+
+- **Pilot** (default, `pilot_ref_khz`, default 6.75) -- scales deviation by
+  assuming the 19 kHz pilot equals the **Pilot Ref (kHz)** field. Set it to the
+  source's actual pilot deviation: 6.75 kHz is 9%, but stations vary, and a pilot
+  that is really 5.7 kHz read against 6.75 inflates every kHz value by ~18%.
+- **0 dBFS = N kHz** -- an absolute scale anchored to a known input level, the way
+  MPXTool-style monitors calibrate (against a tuner's known composite output, a
+  Bessel-null, or a known-deviation tone). If you feed the composite so that
+  75 kHz peak deviation lands at -6 dBFS, set N = 150; deviation then comes
+  straight off the input amplitude, **independent of pilot recovery** -- the
+  robust choice, and identical to what the SDR path does internally.
+
+Both apply live; the SDR path is always absolute and ignores them. Two caveats:
+(1) pilot-referencing only fixes the *overall* scale -- if the source's composite
+output rolls off above the audio band, the 57 kHz RDS reads low relative to the
+pilot no matter the reference, so use the SDR path for an accurate RDS-injection
+figure; (2) the only frequency trim is **PPM** for precise tuning; the
+sample-clock error scales readings by far less than 0.01% at any sane ppm, so it
+does not affect deviation.
+
+**MPX power is only valid on a strong, clean signal.** MPX power follows
+ITU-R BS.412 (the limit -- average power over 60 s must not exceed that of a
+sinusoidal tone at +/-19 kHz peak deviation) measured under the ITU-R SM.1268
+conditions: roughly >= 73 dBf signal, >= 50 dB signal-to-noise, and no
+multipath (a directional antenna is effectively required). On a weak, noisy, or
+multipath RTL-SDR reception both the peak deviation and MPX power **read high**
+-- that is a reception artifact, not over-modulation and not a calibration
+error. Rule of thumb: if the peak deviation exceeds about +/-80 kHz and the
+station is not genuinely over-deviating, the signal is too poor for a valid
+BS.412 measurement. For reference, on a clean signal:
+
+| MPX power | Peak deviation of an equivalent sine |
+|-----------|--------------------------------------|
+| 0 dBr     | +/-19 kHz (the reference)            |
+| 3 dBr     | +/-27 kHz                            |
+| 6 dBr     | +/-38 kHz                            |
+| 10 dBr    | +/-60 kHz                            |
 
 
 ## Appendix: RDS PI and ECC Country Table

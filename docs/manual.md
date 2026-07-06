@@ -687,13 +687,23 @@ otherwise to **Audio**.
 
 - **Audio**: IN / L / R / M / S levels and L/R correlation.
 - **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
-  beside the audio levels.
-- **Modulation**: MPX power (ITU-R BS.412, ~60 s integrated, in dBr vs a
-  +/-19 kHz sine); peak-hold +/- deviation (with Reset); best stereo
-  separation. Also on the top row. MPX power and the +/- peaks turn amber near
-  and red at/over the limit (0 dBr, 75 kHz). On SDR it also shows **SIGNAL** --
-  a relative received-level (dBFS) RSSI indicator (green strong / red weak);
-  most meaningful with Auto Gain off.
+  beside the audio levels. MAX is the highest excursion in the last second
+  (50 ms peak-hold slots, the ITU-R SM.1268 display convention). RDS is the
+  EN 50067 "equivalent unmodulated subcarrier" level, measured coherently at
+  57 kHz -- a solid reading that data modulation does not move.
+- **Modulation**: MPX power (ITU-R BS.412: uniform sliding 60 s window, in
+  dBr vs a +/-19 kHz sine) and **MPX MAX** (the worst 60 s window since
+  reset -- the number BS.412 compliance is judged on; it needs a full 60 s
+  of signal before it reads); **PEAK +/-** deviation over the last 60 s
+  (50 ms peak-hold slots -- a single impulse ages out instead of pinning the
+  reading); **OVER 77 kHz** -- the ITU-R SM.1268 compliance statistic: the
+  share of deviation samples above 77 kHz (75 kHz + the 2 kHz measurement
+  tolerance) since reset. Regulators treat more than 0.0001 % as
+  over-deviation; rare single peaks are not a violation. Plus best stereo
+  separation, and Reset to clear the held values. MPX power and the +/-
+  peaks turn amber near and red at/over the limit (0 dBr, 75 kHz). On SDR
+  it also shows **SIGNAL** -- a relative received-level (dBFS) RSSI
+  indicator (green strong / red weak); most meaningful with Auto Gain off.
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
   beside the trends.
@@ -707,9 +717,13 @@ otherwise to **Audio**.
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
   AF / group histogram and live block-error rate (BER under ~5% is a clean link).
 
-Deviation is referenced to a 75 kHz total; on a weak/noisy signal the
-deviation/MPX-power path is band-limited to 60 kHz so the FM demod noise
-triangle above the modulated bands doesn't inflate the readings.
+Deviation is referenced to a 75 kHz total. The deviation/MPX-power
+measurement path is DC-tracked (an SDR tuning offset otherwise skews the
++/- peaks apart) and band-limited to 60 kHz with a linear-phase FIR so the
+FM demod noise triangle above the modulated bands doesn't inflate the
+readings -- linear-phase because a steep IIR filter overshoots on a clipped
+composite's edges and reads deviation the transmitter never emitted. The
+scopes, spectrum, and IN meter stay unfiltered so noise remains visible.
 
 ### Recording
 

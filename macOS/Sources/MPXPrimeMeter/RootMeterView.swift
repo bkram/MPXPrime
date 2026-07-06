@@ -418,8 +418,10 @@ struct RootMeterView: View {
                             + "kHz decodes poorly, above ~7.5 kHz wastes deviation.")
                     strip("MAX", t.maxDevText, t.maxDevNorm,
                           .modulationKHz(fullScale: MeterScale.maxFullKHz, limit: MeterScale.maxLimitKHz),
-                          "Peak total deviation (2 s hold). Must stay at or below 75 kHz; "
-                            + "sustained excursions above are over-modulation.")
+                          "Peak total deviation: the highest excursion in the last second "
+                            + "(50 ms peak-hold slots, ITU-R SM.1268 display convention). "
+                            + "Must stay at or below 75 kHz; sustained excursions above "
+                            + "are over-modulation.")
                 }
                 .frame(maxHeight: .infinity)
                 .padding(6)
@@ -446,15 +448,37 @@ struct RootMeterView: View {
                             valueTint: t.mpxPowerValid
                                 ? limitTint(t.mpxPowerDBr, limit: 0.0, warn: -1.0)
                                 : BroadcastStyle.readoutPrimary,
-                            help: "ITU-R BS.412 multiplex power, integrated over ~60 s. "
-                                + "0 dBr is the power of a +/-19 kHz sine; the regulatory "
-                                + "limit is 0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                            help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
+                                + "window. 0 dBr is the power of a +/-19 kHz sine; the "
+                                + "regulatory limit is 0 dBr. Needs a calibrated scale "
+                                + "(SDR / pilot lock).")
+                    readout("MPX MAX", t.mpxPowerMaxText,
+                            valueTint: t.mpxPowerMaxValid
+                                ? limitTint(t.mpxPowerMaxDBr, limit: 0.0, warn: -1.0)
+                                : BroadcastStyle.readoutPrimary,
+                            help: "Highest 60 s MPX power since the last reset. BS.412 "
+                                + "compliance is judged on the worst 60 s interval, so "
+                                + "this is the number that must stay at or below 0 dBr. "
+                                + "Needs a full 60 s of signal before it reads.")
                     readout("PEAK +", "\(t.posPeakText) kHz",
                             valueTint: limitTint(t.posPeakKHz, limit: 75.0, warn: 71.0),
-                            help: "Positive deviation peak, held since the last reset.")
+                            help: "Highest positive deviation in the last 60 s "
+                                + "(50 ms peak-hold slots, measuring-receiver style; "
+                                + "a single impulse ages out instead of pinning the "
+                                + "reading).")
                     readout("PEAK -", "\(t.negPeakText) kHz",
                             valueTint: limitTint(-t.negPeakKHz, limit: 75.0, warn: 71.0),
-                            help: "Negative deviation peak, held since the last reset.")
+                            help: "Highest negative deviation in the last 60 s "
+                                + "(50 ms peak-hold slots, measuring-receiver style).")
+                    readout("OVER 77 kHz", t.exceedanceText,
+                            valueTint: t.exceedanceValid
+                                ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
+                                : BroadcastStyle.readoutPrimary,
+                            help: "ITU-R SM.1268 deviation compliance: the share of "
+                                + "measured samples above 77 kHz (75 kHz + 2 kHz "
+                                + "tolerance) since the last reset. Regulators treat "
+                                + "more than 0.0001 % as over-deviation; rare single "
+                                + "peaks are not a violation.")
                     readout("SEPARATION", t.separationText,
                             help: "Best stereo separation observed since reset. Truest "
                                 + "during single-channel / test-tone content; panned "

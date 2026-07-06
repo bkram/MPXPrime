@@ -474,6 +474,21 @@ final class MeterViewModel: ObservableObject {
         telemetry.negPeakText = String(format: "%+.1f", s.negPeakDevKHz)
         telemetry.posPeakKHz = Double(s.posPeakDevKHz)
         telemetry.negPeakKHz = Double(s.negPeakDevKHz)
+        // SM.1268-5 exceedance readout: the compliance criterion is 1e-4 %,
+        // so show enough digits for the tail (e.g. "0.00003 %"); an exact
+        // zero displays as "0 %".
+        if s.exceedanceValid {
+            telemetry.exceedanceText = s.exceedancePct <= 0.0
+                ? "0 %" : String(format: "%.5f %%", s.exceedancePct)
+        } else {
+            telemetry.exceedanceText = "--"
+        }
+        telemetry.exceedancePct = Double(s.exceedancePct)
+        telemetry.exceedanceValid = s.exceedanceValid
+        telemetry.mpxPowerMaxText = s.mpxPowerMaxValid
+            ? String(format: "%+.1f dBr", s.mpxPowerMaxDBr) : "--"
+        telemetry.mpxPowerMaxDBr = Double(s.mpxPowerMaxDBr)
+        telemetry.mpxPowerMaxValid = s.mpxPowerMaxValid
         telemetry.separationText = s.separationValid
             ? String(format: "%.0f dB", s.bestSeparationDB) : "--"
 

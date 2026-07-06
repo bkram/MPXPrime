@@ -11,6 +11,46 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: measurement-grade metering, verified against the standards.** The
+  operator report "deviation reads a bit too high" was audited against
+  ITU-R SM.1268-5 / BS.412-9 / EN 50067 and professional-instrument practice
+  (R&S, Pira, Belar, Deva, Inovonics), and four real over-read mechanisms were
+  found and fixed:
+  - The deviation/MPX-power measurement low-pass (60 kHz) is now a
+    **linear-phase Kaiser FIR** instead of a 6th-order Butterworth IIR -- the
+    IIR overshot and rang on clipped-composite edges, manufacturing deviation
+    the transmitter never emitted.
+  - **PEAK +/-** no longer latches the single largest sample forever: peaks
+    are 50 ms peak-hold slots (20/s, the Pira / SM.1268 model); PEAK +/- is
+    the trailing-60 s max (one impulse ages out instead of pinning the
+    reading), and MAX DEV is the trailing-1 s max (SM.1268-5's 1 s display
+    integration).
+  - **MPX power is a true uniform sliding 60 s window** (ring of 1 s
+    mean-squares, sample-exact rolls, oldest slot complement-weighted so the
+    window is exactly 60 s at any instant) -- the old ~60 s EMA over-weighted
+    recent loud audio and disagreed with the transmit-side BS.412 limiter.
+    New **MPX MAX** readout shows the worst 60 s window since reset (what
+    BS.412 compliance is actually judged on).
+  - **RDS deviation is measured coherently** (57 kHz quadrature mix, flat
+    low-pass, decimated FIR): the EN 50067 "equivalent unmodulated
+    subcarrier" level, envelope-invariant under data modulation, with 53 kHz
+    stereo-difference energy rejected > 85 dB -- the old single Q=10 biquad
+    bandpass leaked adjacent stereo energy and noise into the reading.
+  - The measurement path is **DC-tracked** (fast acquisition during warm-up,
+    then 0.2 Hz): an SDR carrier/tuning offset no longer skews the + and -
+    peaks apart or biases MPX power.
+  - New **OVER 77 kHz** readout: the ITU-R SM.1268-5 compliance statistic
+    (share of deviation samples above 75 kHz + 2 kHz tolerance; regulators
+    treat > 0.0001 % as over-deviation -- rare single peaks are not a
+    violation).
+  - `MeterAnalysis` moved into the `MPXPrimeCore` library and the math is now
+    covered by a deterministic test suite (`MeterAnalysisTests`): synthesized
+    composites with exactly-known deviation (bare pilot = 6.75 kHz, aligned
+    tone+pilot+RDS = exactly 75.0 kHz, sine at 19 kHz deviation = exactly
+    0 dBr, 80 kHz tone = analytic 17.45 % exceedance, clipped+bandlimited
+    program = no measurement overshoot, DC-offset composite = symmetric
+    peaks, BPSK-modulated RDS = same reading as unmodulated).
+
 ## 0.38 — 2026-07-06
 
 - **Studio: the MPX composite spectrum now shows the FM band-region overlay.**

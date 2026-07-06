@@ -11,6 +11,8 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.39 — 2026-07-06
+
 - **Meter: measurement-grade metering, verified against the standards.** The
   operator report "deviation reads a bit too high" was audited against
   ITU-R SM.1268-5 / BS.412-9 / EN 50067 and professional-instrument practice
@@ -50,6 +52,20 @@ combination test suite. Newest first.
     0 dBr, 80 kHz tone = analytic 17.45 % exceedance, clipped+bandlimited
     program = no measurement overshoot, DC-offset composite = symmetric
     peaks, BPSK-modulated RDS = same reading as unmodulated).
+  - Validated off-air on 88.6 MHz (Radio Veronica) via RTL-SDR and SDRplay
+    RSPdx: the GUI (in-process SDR) and the headless `--stdin` path agree on
+    the same recorded composite within inter-window variance.
+- **Meter: headless CLI dashboard gains a `MOD` compliance line** (BS.412
+  sliding MPX power + worst-window max, 60 s +/- deviation peaks, and the
+  SM.1268 >77 kHz exceedance share) -- the same figures the GUI Modulation
+  panel shows.
+- **CI: the manual "Build Release" workflow is fixed and dispatch-only.** It
+  fired on every `v*` tag alongside the Release workflow (double-building)
+  and, once the 0.38 SDR tuner landed, failed for lack of the librtlsdr /
+  liquid-dsp build deps. It now installs the same SDR deps as release.yml,
+  runs only on manual dispatch, and uploads the correctly-named app bundles
+  ("MPX Prime Studio.app" / "MPX Prime Meter.app" -- the old path pointed at
+  the pre-0.37 "MPX Prime.app" name and uploaded nothing).
 
 ## 0.38 — 2026-07-06
 

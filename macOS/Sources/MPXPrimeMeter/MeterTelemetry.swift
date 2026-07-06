@@ -42,6 +42,15 @@ final class MeterTelemetry: ObservableObject {
     @Published var negPeakText = "0.0"
     @Published var posPeakKHz: Double = 0        // raw +peak for over-limit coloring
     @Published var negPeakKHz: Double = 0        // raw -peak (signed) for coloring
+    // ITU-R SM.1268-5 exceedance: % of deviation samples > 77 kHz since reset.
+    @Published var exceedanceText = "--"
+    @Published var exceedancePct: Double = 0     // raw value for over-limit coloring
+    @Published var exceedanceValid = false
+    // Highest fully-primed 60 s sliding MPX power since reset (BS.412
+    // compliance = max over window placements).
+    @Published var mpxPowerMaxText = "--"
+    @Published var mpxPowerMaxDBr: Double = -120
+    @Published var mpxPowerMaxValid = false
     @Published var separationText = "--"
 
     // SDR signal level (relative RSSI, dBFS). rssiValid is false for the

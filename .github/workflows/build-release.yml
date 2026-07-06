@@ -1,9 +1,11 @@
 name: Build Release
 
+# Manual universal-binary + artifact builder (dispatch-only). Tag pushes are
+# handled by release.yml, which also installs the SDR deps and publishes the
+# DMG as a GitHub Release -- this workflow used to also fire on `v*` tags,
+# which double-built and (once the SDR tuner landed in 0.38) failed here for
+# lack of librtlsdr. It now runs only on demand.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -21,13 +23,19 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
+      # SDR helper (mpx-tuner) build deps -- must match release.yml, or
+      # build-release.sh fails to compile the vendored RTL-SDR tuner
+      # (rtl-sdr.h not found) and the SDR bundling step silently skips.
+      - name: Install SDR build deps
+        run: brew install librtlsdr liquid-dsp
+
       - name: Build Release (Universal Binary)
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           # Prefer workflow_dispatch input; fall back to the tag-derived
           # version. Previously the dispatched value was silently dropped
-          # because INPUT_VERSION wasn't passed to the step env — the
+          # because INPUT_VERSION wasn't passed to the step env -- the
           # substitution against GITHUB_REF then produced a path with
           # "refs/heads/develop/v.NNN" in it and hdiutil failed.
           VERSION="${INPUT_VERSION:-${GITHUB_REF#refs/tags/v}}"
@@ -40,9 +48,11 @@ jobs:
           path: macOS/dist/MPX_Prime-*.dmg
           retention-days: 90
 
-      - name: Upload App Bundle
+      - name: Upload App Bundles
         uses: actions/upload-artifact@v5
         with:
-          name: MPXPrime.app
-          path: macOS/dist/MPX Prime.app
+          name: MPXPrime-apps
+          path: |
+            macOS/dist/MPX Prime Studio.app
+            macOS/dist/MPX Prime Meter.app
           retention-days: 90

@@ -418,8 +418,10 @@ struct RootMeterView: View {
                             + "kHz decodes poorly, above ~7.5 kHz wastes deviation.")
                     strip("MAX", t.maxDevText, t.maxDevNorm,
                           .modulationKHz(fullScale: MeterScale.maxFullKHz, limit: MeterScale.maxLimitKHz),
-                          "Peak total deviation (2 s hold). Must stay at or below 75 kHz; "
-                            + "sustained excursions above are over-modulation.")
+                          "Peak total deviation: the highest excursion in the last second "
+                            + "(50 ms peak-hold slots, ITU-R SM.1268 display convention). "
+                            + "Must stay at or below 75 kHz; sustained excursions above "
+                            + "are over-modulation.")
                 }
                 .frame(maxHeight: .infinity)
                 .padding(6)
@@ -442,19 +444,42 @@ struct RootMeterView: View {
                                     + "off. A valid BS.412 MPX-power reading needs a strong, "
                                     + "clean signal -- see the manual.")
                     }
-                    readout("MPX POWER", t.mpxPowerText,
+                    readout("MPX POWER",
+                            t.mpxPowerValid
+                                ? String(format: "%+.1f dBr", t.mpxPowerDBr)
+                                    + (t.mpxPowerMaxValid
+                                        ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
+                                        : "")
+                                : "--",
                             valueTint: t.mpxPowerValid
-                                ? limitTint(t.mpxPowerDBr, limit: 0.0, warn: -1.0)
+                                ? limitTint(
+                                    max(t.mpxPowerDBr,
+                                        t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
+                                    limit: 0.0, warn: -1.0)
                                 : BroadcastStyle.readoutPrimary,
-                            help: "ITU-R BS.412 multiplex power, integrated over ~60 s. "
-                                + "0 dBr is the power of a +/-19 kHz sine; the regulatory "
-                                + "limit is 0 dBr. Needs a calibrated scale (SDR / pilot lock).")
-                    readout("PEAK +", "\(t.posPeakText) kHz",
-                            valueTint: limitTint(t.posPeakKHz, limit: 75.0, warn: 71.0),
-                            help: "Positive deviation peak, held since the last reset.")
-                    readout("PEAK -", "\(t.negPeakText) kHz",
-                            valueTint: limitTint(-t.negPeakKHz, limit: 75.0, warn: 71.0),
-                            help: "Negative deviation peak, held since the last reset.")
+                            help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
+                                + "window, and (max) the worst 60 s window since reset "
+                                + "-- the number compliance is judged on; it needs a "
+                                + "full 60 s of signal before it reads. 0 dBr is the "
+                                + "power of a +/-19 kHz sine; the regulatory limit is "
+                                + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                    readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
+                            valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
+                                                 limit: 75.0, warn: 71.0),
+                            help: "Highest positive / negative deviation in the last "
+                                + "60 s (50 ms peak-hold slots, measuring-receiver "
+                                + "style; a single impulse ages out instead of pinning "
+                                + "the reading). A persistent +/- asymmetry suggests a "
+                                + "carrier offset or one-sided clipping.")
+                    readout("OVER 77 kHz", t.exceedanceText,
+                            valueTint: t.exceedanceValid
+                                ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
+                                : BroadcastStyle.readoutPrimary,
+                            help: "ITU-R SM.1268 deviation compliance: the share of "
+                                + "measured samples above 77 kHz (75 kHz + 2 kHz "
+                                + "tolerance) since the last reset. Regulators treat "
+                                + "more than 0.0001 % as over-deviation; rare single "
+                                + "peaks are not a violation.")
                     readout("SEPARATION", t.separationText,
                             help: "Best stereo separation observed since reset. Truest "
                                 + "during single-channel / test-tone content; panned "

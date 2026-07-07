@@ -137,7 +137,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - About / Help / icon
 
     private static let projectURL = URL(string: "https://github.com/bkram/MPXPrime")!
-    private static let manualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual.md")!
+    private static let manualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual-meter.md")!
     private static let licenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 
     private var appVersion: String {

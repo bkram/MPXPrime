@@ -11,6 +11,26 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: disable implicit animations on all live Canvas views.** The scope,
+  trend, vectorscope, and vertical-meter Canvas views repainted at 25 Hz
+  without disabling SwiftUI's implicit animations (only the spectrum had the
+  guard); they now all carry `.transaction { $0.animation = nil }`. This removes
+  real per-frame animation-transaction overhead but is only a partial mitigation
+  of the reported over-time GUI lag / audio stutter -- runtime profiling
+  localized the dominant cost to SwiftUI's Observation dependency-tracking
+  (`ObservationRegistrar` / `AnyKeyPath` hashing) growing over a session
+  (measured ~36% CPU fresh -> ~87% after 14 min on an SDR capture), which a
+  fresh launch clears but Stop/Start does not. Full fix tracked separately.
+- **Docs: the user manual is split per app.** `docs/manual.md` is now the
+  **MPX Prime Studio** manual (encoder) and the new `docs/manual-meter.md` is
+  the **MPX Prime Meter** manual (analyzer); the shared RDS PI/ECC + PTY
+  reference tables stay in the Studio manual and the Meter manual links to them.
+  The Meter's in-app "User Manual" link points to the Meter manual. Also brought
+  README / ARCHITECTURE / BUILDING / AGENTS / tuner docs current: in-process SDR
+  (not a helper binary), SDRplay RSP support, WAV recording + the
+  `MPXPrimeRecording` target, the full seven-target layout, the Studio
+  spectrum FM band overlay and monitoring windows, the SFP-X cross-validation,
+  and the corrected default config path / build prerequisites.
 - **Meter: RDS deviation now reads the injection level the encoder was set
   to (fixes the 0.39 under-read).** Reports after 0.39 said the RDS readout
   was too low -- correct: the coherent meter implemented an RMS-equivalent

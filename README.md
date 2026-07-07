@@ -30,24 +30,33 @@ transport restart since they reconfigure the modulator.
 **MPX Prime Meter** is the receive/analyze counterpart that ships alongside
 the encoder in the same DMG (`MPX Prime Meter.app`). Where Studio *makes* the
 composite, the Meter *measures* it: feed it an MPX composite (a Core Audio
-input device, or a live RTL-SDR station via its bundled `mpx-tuner` helper)
-and it decodes stereo + full RDS and shows it on a single dashboard window.
+input device, or a live station via an in-process RTL-SDR / SDRplay tuner) and
+it decodes stereo + full RDS and shows it on a single dashboard window. Its
+deviation, MPX-power, and SM.1268 readings were cross-validated against a
+Profline SFP-X measuring receiver (pilot / RDS matched exactly, peak deviation
+within the SM.1268 +/-2 kHz tolerance).
 
 - Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope
 - MPX spectrum (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot,
-  Stereo L-R, 57 kHz RDS, SCA)
-- Level + deviation meters (IN / L / R / M / S, pilot / RDS / total deviation,
-  correlation) plus **MPX power (ITU-R BS.412)**, peak-hold +/- deviation,
-  best stereo separation, and deviation / MPX-power trend graphs
+  Stereo L-R, 57 kHz RDS, 67.65 kHz Direct Band, 92 kHz SCA)
+- Measurement-grade deviation + modulation metering to ITU-R SM.1268-5 /
+  BS.412-9: IN / L / R / M / S levels + correlation; pilot / RDS / total (MAX)
+  deviation; **MPX power (ITU-R BS.412** uniform sliding 60 s window) with the
+  worst-window **MPX MAX**; trailing-60 s **peak +/- deviation**; the
+  **OVER 77 kHz** SM.1268 exceedance statistic; best stereo separation;
+  **SIGNAL** (SDR RSSI); and deviation / MPX-power trend graphs
 - Full RDS decode: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group
   histogram + live BER
-- Input: an audio device, or **native RTL-SDR** tuning (`Source -> SDR`) -- the
-  app bundles its own stripped SDR helper (`mpx-tuner`, from `tuner/`), so it
-  needs no separate binary or Homebrew, just a connected RTL-SDR dongle
-  (Apple Silicon). Frequency / gain / AGC retune **live** (no restart).
+- **WAV recording**: the decoded stereo audio, or the raw MPX composite
+  (24-bit, capture rate), for later re-analysis
+- Input: an audio device, or **in-process SDR** tuning (`Source -> SDR`) --
+  **RTL-SDR** and **SDRplay RSP** (auto-preferred when present) are decoded by a
+  linked-in tuner library (no helper process, no Homebrew for end users), just a
+  connected dongle (Apple Silicon). Frequency, IF bandwidth, gain / auto gain,
+  LNA, antenna, Bias-T, PPM, and RTL AGC all retune **live** (no restart).
   Headless terminal modes also exist (`./run-meter.sh --device <n>` / `--stdin`)
 
-See the [user manual](docs/manual.md) for details.
+See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
 
 ## Features
 
@@ -133,7 +142,8 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 
 ## Documentation
 
-- [docs/manual.md](docs/manual.md) — **user manual**: usage, first-time setup, configuration, RDS text, monitoring, verification, and the RDS PI/ECC + PTY reference tables
+- [docs/manual.md](docs/manual.md) — **MPX Prime Studio manual**: usage, first-time setup, configuration, RDS text, monitoring windows, verification, and the RDS PI/ECC + PTY reference tables
+- [docs/manual-meter.md](docs/manual-meter.md) — **MPX Prime Meter manual**: SDR/audio input, the measurement readouts, WAV recording, and calibration
 - [docs/BUILDING.md](docs/BUILDING.md) — build, run, verify, test, and package from source
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — detailed DSP chain and stage descriptions
 - [`AGENTS.md`](AGENTS.md) — contributor / agent workflow guidance and release checklist

@@ -13,21 +13,30 @@ combination test suite. Newest first.
 
 - **Meter: RDS deviation now reads the injection level the encoder was set
   to (fixes the 0.39 under-read).** Reports after 0.39 said the RDS readout
-  was too low -- correct: the coherent meter implemented the RMS-equivalent
+  was too low -- correct: the coherent meter implemented an RMS-equivalent
   convention, which sits ~24% below the set injection on real shaped biphase
   (the envelope dips through zero at symbol transitions; the pre-0.39 leaky
   bandpass had masked this by inflating the RMS with 53 kHz leakage and
-  noise). RDS encoders -- BasicRDSCoder included -- normalize the shaped
-  waveform by its peak, so the set kHz IS the envelope peak; EN 50067's
-  "+/-1.0 to +/-7.5 kHz deviation range due to the unmodulated subcarrier"
-  is likewise a peak range, and deviation budgeting against the 75 kHz
-  ceiling needs the peak contribution. The meter now reads the coherent
-  envelope peak (50 ms slot maxima averaged over 1 s -- steady under data
-  modulation, equal to the unmodulated amplitude for unmodulated,
-  all-zeroes, and shaped random data alike). New regression gate:
+  noise). The industry display convention is PEAK-referenced (verified
+  against Inovonics 531/541/730, R&S K7S default +/-Peak/2 detector, Pira
+  peak-to-peak setting practice, and FCC/NRSC peak-budget arithmetic):
+  encoders -- BasicRDSCoder included -- normalize the shaped waveform by
+  its peak, so the set kHz IS the envelope peak, and EN 50067's "+/-1.0 to
+  +/-7.5 kHz deviation range due to the unmodulated subcarrier" is a peak
+  range. The meter now reports that number, derived robustly: coherent
+  in-band RMS scaled by the EN 50067 shaped-biphase peak/RMS form factor
+  (1.320, a constant of the spec's pulse shaping) -- a raw envelope-peak
+  detector was tried first and rode composite-clipper intermod inside the
+  57 kHz window on heavily-processed stations (2.5-3x over-read off-air,
+  unsteady), while the RMS-derived reading responds to in-band IM only in
+  the power domain and stays steady. New regression gates:
   `encoderRoundTripReadsTheSetInjection` renders spec-exact shaped RDS from
   our own encoder at `rds_level = 2.0` and asserts the meter reads 2.0
-  (plus a guard that it never regresses to the ~1.51 RMS reading).
+  (with a guard against regressing to the ~1.51 RMS reading), and
+  `readingIsSteadyUnderDataModulation`. Off-air validation on a heavily
+  processed commercial station (same recorded composite through all three):
+  steady 3.4-3.8 kHz (~4.8% injection) where 0.39 read 2.6 and the raw
+  peak detector bounced between 6.5 and 8.4.
 
 ## 0.39 — 2026-07-06
 

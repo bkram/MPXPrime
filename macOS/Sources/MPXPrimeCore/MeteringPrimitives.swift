@@ -169,16 +169,24 @@ public struct DCTracker {
 /// level RDS encoders set (they normalize the shaped biphase waveform by
 /// its peak, so "rds_level 2.0 kHz" means the envelope peak hits 2.0 kHz;
 /// EN 50067's "deviation range +/-1.0 to +/-7.5 kHz" is likewise a peak
-/// range). For x = a(t)*cos(57k*t + phi), the mixed+filtered z =
-/// (a/2)*e^{j phi}; the reading is 2*max|z| taken as 50 ms slot maxima
-/// averaged over ~1 s -- steady under data modulation ("solid reading" per
-/// instrument practice), and equal to the unmodulated amplitude A for an
-/// unmodulated carrier, an all-zeroes stream, and shaped random data alike.
-/// An RMS-equivalent reading (2*sqrt(E[|z|^2])) sits ~24% LOW on real
-/// shaped biphase because the envelope dips through zero at symbol
-/// transitions -- that was the 0.39 under-read. A free-running NCO suffices
-/// because a few Hz of rotation does not change |z|.
-/// Thread-confined; allocation-free after init.
+/// range, and the 75 kHz total-deviation budget sums peak contributions).
+///
+/// HOW it is derived matters on real off-air signals: the statistic is the
+/// coherent in-band RMS scaled by the EN 50067 shaped-biphase peak/RMS
+/// form factor (`shapedBiphasePeakOverRMSSqrt2` = 1.320, a constant of the
+/// spec's cos(pi*f*td/4) pulse shaping measured from a spec-exact encoder;
+/// see `encoderRoundTripReadsTheSetInjection`). A raw RMS-equivalent
+/// reading (2*sqrt(E[|z|^2])) sits ~24% LOW on real shaped biphase because
+/// the envelope dips through zero at symbol transitions -- the 0.39
+/// under-read. A raw envelope-PEAK detector is exact on a clean loopback
+/// but rides composite-clipper intermod spikes inside the 57 kHz window on
+/// heavily-processed stations (measured 2.5-3x over-read off-air, and
+/// unsteady) -- peaks add linearly, power adds quadratically, so the
+/// RMS-derived reading is far more robust to in-band IM and noise while
+/// still reporting the encoder's set injection for spec-shaped data.
+/// For x = a(t)*cos(57k*t + phi), the mixed+filtered z = (a/2)*e^{j phi}.
+/// A free-running NCO suffices because a few Hz of rotation does not
+/// change |z|. Thread-confined; allocation-free after init.
 public final class RDSSubcarrierLevelMeter {
     private var oscC: Float = 1.0
     private var oscS: Float = 0.0
@@ -195,16 +203,16 @@ public final class RDSSubcarrierLevelMeter {
     private var decQ: [Float]
     private var outI: [Float]
     private var outQ: [Float]
-    // Envelope-peak statistic: max of |z|^2 per 50 ms slot, ring of 20 slots
-    // (1 s). The reading is the mean of the filled slot maxima -- each slot
-    // spans ~60 symbol periods, so its max reaches the shaped waveform's
-    // recurring envelope peak; averaging slots keeps the display steady.
-    private let slotLen: Int
-    private var slotSampleCount = 0
-    private var curSlotMaxSq: Float = 0.0
-    private var slotMaxSq: [Float]
-    private var slotWrite = 0
-    private var slotsFilled = 0
+    /// Peak/(RMS*sqrt2) of EN 50067 shaped biphase with random group data --
+    /// a constant of the spec's pulse shaping, measured from the spec-exact
+    /// BasicRDSCoder (envelope peak 2.000 vs RMS*sqrt2 1.515 at any level).
+    /// Pinned by the encoder round-trip test.
+    public static let shapedBiphasePeakOverRMSSqrt2: Float = 1.320
+    // Coherent in-band mean-square |z|^2, EMA'd over ~1 s for a steady
+    // display; the reading applies sqrt + the form factor above.
+    private var meanSquare: Float = 0.0
+    private var primed = false
+    private let emaAlphaPerSample: Float
 
     /// Whether the sample rate can carry a 57 kHz subcarrier at all.
     public let usable: Bool
@@ -229,8 +237,8 @@ public final class RDSSubcarrierLevelMeter {
         decQ = [Float](repeating: 0.0, count: maxDec)
         outI = [Float](repeating: 0.0, count: maxDec)
         outQ = [Float](repeating: 0.0, count: maxDec)
-        slotLen = max(1, Int(decRate / 20.0))  // 50 ms at the decimated rate
-        slotMaxSq = [Float](repeating: 0.0, count: 20)  // 1 s of slots
+        // ~1 s smoothing, applied per decimated sample.
+        emaAlphaPerSample = 1.0 - expf(-1.0 / (1.0 * decRate))
     }
 
     /// Feed a block of composite samples; updates the smoothed level.
@@ -266,35 +274,28 @@ public final class RDSSubcarrierLevelMeter {
         decQ.withUnsafeBufferPointer { firQ.process(input: $0, output: &outQ, count: dn) }
         for i in 0..<dn {
             let envSq = outI[i] * outI[i] + outQ[i] * outQ[i]
-            if envSq > curSlotMaxSq { curSlotMaxSq = envSq }
-            slotSampleCount += 1
-            if slotSampleCount >= slotLen {
-                slotMaxSq[slotWrite] = curSlotMaxSq
-                slotWrite = (slotWrite + 1) % slotMaxSq.count
-                if slotsFilled < slotMaxSq.count { slotsFilled += 1 }
-                curSlotMaxSq = 0.0
-                slotSampleCount = 0
+            if primed {
+                meanSquare += emaAlphaPerSample * (envSq - meanSquare)
+            } else {
+                meanSquare = envSq
+                primed = true
             }
         }
     }
 
-    /// Peak deviation amplitude of the 57 kHz subcarrier: the mean of the
-    /// per-50 ms envelope-peak slots over the last ~1 s. Equals the injection
-    /// level the encoder was set to (encoders peak-normalize the shaped
-    /// waveform), for unmodulated, all-zeroes, and shaped random data alike.
+    /// Peak deviation amplitude of the 57 kHz subcarrier -- the injection
+    /// level the encoder was set to for EN 50067 shaped biphase: coherent
+    /// in-band RMS scaled to the shaped waveform's envelope peak by the spec
+    /// form factor (robust to in-band clipper IM / noise, which a raw peak
+    /// detector rides).
     public var peakAmplitude: Float {
-        guard slotsFilled > 0 else { return 0.0 }
-        var sum: Float = 0.0
-        for k in 0..<slotsFilled { sum += sqrtf(max(0.0, slotMaxSq[k])) }
-        return 2.0 * (sum / Float(slotsFilled))
+        guard primed else { return 0.0 }
+        return 2.0 * sqrtf(max(0.0, meanSquare)) * Self.shapedBiphasePeakOverRMSSqrt2
     }
 
     public func reset() {
-        curSlotMaxSq = 0.0
-        slotSampleCount = 0
-        slotWrite = 0
-        slotsFilled = 0
-        for i in slotMaxSq.indices { slotMaxSq[i] = 0.0 }
+        meanSquare = 0.0
+        primed = false
         decimPhase = 0
         oscC = 1.0
         oscS = 0.0

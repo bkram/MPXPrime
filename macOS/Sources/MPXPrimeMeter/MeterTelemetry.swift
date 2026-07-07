@@ -69,6 +69,23 @@ final class MeterTelemetry {
     var rssiNorm: Double = 0          // 0..1 over a -80..0 dBFS range
     var rssiValid = false
 
+    // RDS display strings (decoded text + group histogram). On telemetry, not
+    // the view model: the group counters advance with every received group
+    // (~10/s) and must never invalidate the window body / toolbar.
+    // (rdsStatusText = the decoder status line; rdsText above is the
+    // deviation strip's kHz reading.)
+    var rdsStatusText = "--"
+    var ptyText = "--"
+    var ptynText = "--"
+    var eccText = "--"
+    var psText = "--"
+    var rtText = "--"
+    var rtPlusText = "--"
+    var longPSText = "--"
+    var ctText = "--"
+    var afText = "--"
+    var groupText = "--"
+
     // Scrolling trend history (oldest -> newest).
     var devHistoryKHz: [Float] = []
     var mpxPowerHistoryDBr: [Float] = []

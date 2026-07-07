@@ -642,24 +642,30 @@ struct RootMeterView: View {
             // Native key/value grid: the label column auto-sizes to the widest
             // label and values share one baseline-aligned column (HIG key-value
             // layout) instead of a hand-tuned fixed-width HStack.
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
-                rdsRow("RDS", vm.rdsText,
-                       "Decoder status: sync, Program ID (PI), TP/TA/MS flags and live "
-                        + "block-error rate. BER under ~5% is a clean link.")
-                rdsRow("PTY", vm.ptyText, "Program Type: the format code and its name (e.g. Pop Music).")
-                rdsRow("PTYN", vm.ptynText, "Program Type Name (group 10A) -- an 8-char free-text refinement of PTY.")
-                rdsRow("ECC", vm.eccText, "Extended Country Code (group 1A) -- with the PI's top nibble identifies the country.")
-                rdsRow("PS", vm.psText, "Program Service name (8 characters) -- the static station name.")
-                rdsRow("RT", vm.rtText, "RadioText (up to 64 characters) -- now-playing / scrolling text.")
-                rdsRow("RT+", vm.rtPlusText, "RadioText+ tags marking artist / title inside the RadioText.")
-                rdsRow("LongPS", vm.longPSText, "Long Program Service name (UTF-8, longer than the 8-char PS).")
-                rdsRow("CT", vm.ctText, "Clock Time + date sent by the station (UTC plus local offset).")
-                rdsRow("AF", vm.afText, "Alternative Frequencies carrying the same program for retuning.")
-                rdsRow("Groups", vm.groupText,
-                       "RDS group types received and their counts (0A = PS/AF, 2A = RadioText, 4A = CT...).")
+            // Wrapped in LiveObservationView: the group counters advance with
+            // every received RDS group (~10/s), and these strings live on the
+            // telemetry object so the updates re-evaluate ONLY this grid --
+            // never the window body/toolbar (the 0.34 toolbar-relayout leak).
+            LiveObservationView(telemetry: vm.telemetry) { t in
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
+                    rdsRow("RDS", t.rdsStatusText,
+                           "Decoder status: sync, Program ID (PI), TP/TA/MS flags and live "
+                            + "block-error rate. BER under ~5% is a clean link.")
+                    rdsRow("PTY", t.ptyText, "Program Type: the format code and its name (e.g. Pop Music).")
+                    rdsRow("PTYN", t.ptynText, "Program Type Name (group 10A) -- an 8-char free-text refinement of PTY.")
+                    rdsRow("ECC", t.eccText, "Extended Country Code (group 1A) -- with the PI's top nibble identifies the country.")
+                    rdsRow("PS", t.psText, "Program Service name (8 characters) -- the static station name.")
+                    rdsRow("RT", t.rtText, "RadioText (up to 64 characters) -- now-playing / scrolling text.")
+                    rdsRow("RT+", t.rtPlusText, "RadioText+ tags marking artist / title inside the RadioText.")
+                    rdsRow("LongPS", t.longPSText, "Long Program Service name (UTF-8, longer than the 8-char PS).")
+                    rdsRow("CT", t.ctText, "Clock Time + date sent by the station (UTC plus local offset).")
+                    rdsRow("AF", t.afText, "Alternative Frequencies carrying the same program for retuning.")
+                    rdsRow("Groups", t.groupText,
+                           "RDS group types received and their counts (0A = PS/AF, 2A = RadioText, 4A = CT...).")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(6)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(6)
         }
     }
 

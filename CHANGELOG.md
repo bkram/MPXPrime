@@ -12,23 +12,37 @@ combination test suite. Newest first.
 ## Unreleased
 
 - **Meter: fix the GUI graphs getting slow/laggy -- and eventually the audio
-  stuttering -- over a long session.** Runtime profiling localized the
-  dominant, accumulating cost to SwiftUI's dependency tracking for the
-  `ObservableObject`/`@Published` bridge (`ObservationRegistrar` /
-  `AnyKeyPath`-set hashing), measured growing from ~36% to ~87% process CPU
-  in 14 minutes on an SDR capture -- eventually starving the real-time audio
-  thread. Engine Stop/Start did not clear it (the view tree persists); only
-  a fresh launch did. Two changes:
+  stuttering -- over a long session.** Profiled live: main-thread CPU grew
+  from ~33% fresh to ~87%+ within 14 minutes of an SDR capture, eventually
+  starving the real-time audio thread; engine Stop/Start did not clear it
+  (the view tree persists), only a fresh launch did. The aged profile showed
+  ~42% of main-thread time inside AppKit layout flush with
+  `NSToolbarItemViewer _layoutSubtreeWithOldSize:` prominent -- the
+  documented SwiftUI-on-macOS **toolbar relayout leak** (the same mechanism
+  as Studio's 0.34 multi-hour freeze). Root cause: the RDS display strings
+  (including the group-counter line, which changes with every received RDS
+  group, ~10/s) lived as `@Published` on `MeterViewModel`, so each update
+  re-evaluated the whole window body INCLUDING `.toolbar{}`. Fixes, in
+  order of importance:
+  - The 11 RDS display strings moved off the view model onto the telemetry
+    object, and the RDS grid is wrapped in the isolation view -- RDS updates
+    now re-evaluate only the grid, never the window body/toolbar.
+  - The RDS panel refresh is throttled to 2 Hz (it is text for humans; the
+    fast movers -- BER digit, group counters -- don't need the tick rate).
   - `MeterTelemetry` migrated from `ObservableObject`/`@Published` to the
-    **`@Observable` macro** (per-property tracking with flat cost; a tick
-    re-evaluates only the leaves whose read values changed), wrapped by the
-    new `LiveObservationView` in `MPXPrimeUI`. Project convention going
-    forward (AGENTS.md): all new observable state uses `@Observable`;
-    mandatory for per-tick telemetry.
+    **`@Observable` macro** with the new `LiveObservationView` wrapper in
+    `MPXPrimeUI`. Project convention going forward (AGENTS.md): all new
+    observable state uses `@Observable`; mandatory for per-tick telemetry.
   - All live Canvas views (scope, trend, vectorscope, vertical meter) now
     disable implicit animations via `.transaction { $0.animation = nil }`
-    like the spectrum already did, removing per-frame animation-transaction
-    overhead.
+    like the spectrum already did.
+- **Meter: lower GUI CPU while keeping the graphs fluid.** Telemetry writes
+  are change-guarded and quantized to display resolution (a stable readout
+  or bar now costs zero per tick; the trend graphs drop to their real ~2/s
+  data rate), the GUI tick runs at 20 Hz (was 25 -- imperceptible on the
+  scopes), and GUI pushes are skipped entirely while the window is
+  minimized or fully covered (capture, analysis, and recording continue).
+  Fresh-launch process CPU on an SDR capture drops ~33% -> ~23%.
 - **Docs: the user manual is split per app.** `docs/manual.md` is now the
   **MPX Prime Studio** manual (encoder) and the new `docs/manual-meter.md` is
   the **MPX Prime Meter** manual (analyzer); the shared RDS PI/ECC + PTY

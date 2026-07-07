@@ -1,7 +1,7 @@
 import Foundation
 
 struct AppConfig {
-    static let appVersion: String = "0.39"
+    static let appVersion: String = "0.40"
 
     // App-support folder / config filename for MPX Prime Studio (the encoder,
     // paired with "MPX Prime Meter").

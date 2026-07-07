@@ -11,6 +11,8 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.40 — 2026-07-08
+
 - **Meter: fix the GUI graphs getting slow/laggy -- and eventually the audio
   stuttering -- over a long session.** Profiled live: main-thread CPU grew
   from ~33% fresh to ~87%+ within 14 minutes of an SDR capture, eventually

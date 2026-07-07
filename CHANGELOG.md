@@ -37,6 +37,13 @@ combination test suite. Newest first.
   processed commercial station (same recorded composite through all three):
   steady 3.4-3.8 kHz (~4.8% injection) where 0.39 read 2.6 and the raw
   peak detector bounced between 6.5 and 8.4.
+- **Meter: readings confirmed against a Profline SFP-X measuring receiver**
+  on the same live station (2026-07-07): RDS -- SFP-X 3.5-3.7 kHz vs Meter
+  3.4-3.8; pilot -- SFP-X 5.6-5.7 kHz vs Meter 5.58-5.73; max deviation
+  (live side-by-side, same moment) within 1-2 kHz, inside ITU-R SM.1268's
+  +/-2 kHz instrument accuracy requirement. All three headline deviation
+  readings now have independent professional-receiver confirmation on top
+  of the deterministic test suite.
 
 ## 0.39 — 2026-07-06
 

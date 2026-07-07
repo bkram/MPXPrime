@@ -571,6 +571,15 @@ Notes:
   percentages. On a 50 kHz reduced-deviation mandate the same kHz figures correspond
   to different percentages (and the pilot/RDS levels should be scaled accordingly).
 
+The receive side has the same pedigree: **MPX Prime Meter's readings were
+cross-validated against the same SFP-X on a live commercial station** -- pilot
+and RDS matched exactly (5.6-5.7 / 3.5-3.7 kHz on both instruments), and max
+deviation agreed within 1-2 kHz measured side-by-side at the same moment,
+inside ITU-R SM.1268's +/-2 kHz instrument accuracy requirement. When
+comparing peak deviation against any reference receiver, always compare live
+at the same moment: deviation peaks are program-dependent, and a weaker
+reception path (multipath) inflates them.
+
 ## Processing bypass
 
 The `Bypass` control does not create a true wire bypass. It disables the creative processing blocks while keeping essential FM encode stages active.

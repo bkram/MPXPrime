@@ -4,7 +4,7 @@ import SwiftUI
 
 // Single-window Meter dashboard: input controls, level meters + deviation,
 // scopes, spectrum, and an RDS panel. Per-tick graphics are wrapped in
-// LiveTelemetryView(vm.telemetry) so a 25 Hz refresh repaints only those
+// LiveObservationView(vm.telemetry) so a 25 Hz refresh repaints only those
 // Canvas leaves, not the window (the freeze-prevention rule).
 struct RootMeterView: View {
     @ObservedObject var vm: MeterViewModel
@@ -343,7 +343,7 @@ struct RootMeterView: View {
 
     private var audioSection: some View {
         GroupBox("Audio (dBFS)") {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 HStack(alignment: .top, spacing: 10) {
                     MeterScaleRuler(scale: .dbfs)   // one shared dBFS scale for the group
                     strip("IN", t.inputText, t.inputNorm, .dbfs,
@@ -378,7 +378,7 @@ struct RootMeterView: View {
 
     private var vectorscopeSection: some View {
         GroupBox("Vectorscope") {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 VectorscopeView(left: t.decodedLScope, right: t.decodedRScope)
                     .frame(width: 240)
                     .frame(maxHeight: .infinity)
@@ -406,7 +406,7 @@ struct RootMeterView: View {
 
     private var deviationSection: some View {
         GroupBox("Deviation (kHz)") {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 HStack(spacing: 10) {
                     strip("PILOT", t.pilotText, t.pilotNorm,
                           .modulationKHz(fullScale: MeterScale.pilotFullKHz, limit: MeterScale.pilotLimitKHz),
@@ -433,7 +433,7 @@ struct RootMeterView: View {
 
     private var metricsSection: some View {
         GroupBox("Modulation") {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 VStack(alignment: .leading, spacing: 10) {
                     if vm.inputKind == .sdr {
                         readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
@@ -499,7 +499,7 @@ struct RootMeterView: View {
 
     private var trendsSection: some View {
         GroupBox("Trends") {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 VStack(spacing: 10) {
                     labeled("Deviation (kHz, ~60 s)") {
                         TrendView(samples: t.devHistoryKHz, minValue: 0, maxValue: 90,
@@ -547,7 +547,7 @@ struct RootMeterView: View {
 
     private var scopesSection: some View {
         GroupBox("Scopes") {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 HStack(alignment: .top, spacing: 12) {
                     labeled("Composite") {
                         ScopeView(samples: t.compositeScope,
@@ -605,7 +605,7 @@ struct RootMeterView: View {
 
     private var spectrumSection: some View {
         GroupBox {
-            LiveTelemetryView(telemetry: vm.telemetry) { t in
+            LiveObservationView(telemetry: vm.telemetry) { t in
                 // Clip the 0..spectrumMaxHz bins to the selected display span
                 // (the view maps the bins it is given linearly across maxHz).
                 let span = Double(vm.spectrumSpanKHz) * 1000.0

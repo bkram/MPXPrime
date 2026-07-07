@@ -11,16 +11,24 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-- **Meter: disable implicit animations on all live Canvas views.** The scope,
-  trend, vectorscope, and vertical-meter Canvas views repainted at 25 Hz
-  without disabling SwiftUI's implicit animations (only the spectrum had the
-  guard); they now all carry `.transaction { $0.animation = nil }`. This removes
-  real per-frame animation-transaction overhead but is only a partial mitigation
-  of the reported over-time GUI lag / audio stutter -- runtime profiling
-  localized the dominant cost to SwiftUI's Observation dependency-tracking
-  (`ObservationRegistrar` / `AnyKeyPath` hashing) growing over a session
-  (measured ~36% CPU fresh -> ~87% after 14 min on an SDR capture), which a
-  fresh launch clears but Stop/Start does not. Full fix tracked separately.
+- **Meter: fix the GUI graphs getting slow/laggy -- and eventually the audio
+  stuttering -- over a long session.** Runtime profiling localized the
+  dominant, accumulating cost to SwiftUI's dependency tracking for the
+  `ObservableObject`/`@Published` bridge (`ObservationRegistrar` /
+  `AnyKeyPath`-set hashing), measured growing from ~36% to ~87% process CPU
+  in 14 minutes on an SDR capture -- eventually starving the real-time audio
+  thread. Engine Stop/Start did not clear it (the view tree persists); only
+  a fresh launch did. Two changes:
+  - `MeterTelemetry` migrated from `ObservableObject`/`@Published` to the
+    **`@Observable` macro** (per-property tracking with flat cost; a tick
+    re-evaluates only the leaves whose read values changed), wrapped by the
+    new `LiveObservationView` in `MPXPrimeUI`. Project convention going
+    forward (AGENTS.md): all new observable state uses `@Observable`;
+    mandatory for per-tick telemetry.
+  - All live Canvas views (scope, trend, vectorscope, vertical meter) now
+    disable implicit animations via `.transaction { $0.animation = nil }`
+    like the spectrum already did, removing per-frame animation-transaction
+    overhead.
 - **Docs: the user manual is split per app.** `docs/manual.md` is now the
   **MPX Prime Studio** manual (encoder) and the new `docs/manual-meter.md` is
   the **MPX Prime Meter** manual (analyzer); the shared RDS PI/ECC + PTY

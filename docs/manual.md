@@ -689,8 +689,11 @@ otherwise to **Audio**.
 - **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
   beside the audio levels. MAX is the highest excursion in the last second
   (50 ms peak-hold slots, the ITU-R SM.1268 display convention). RDS is the
-  EN 50067 "equivalent unmodulated subcarrier" level, measured coherently at
-  57 kHz -- a solid reading that data modulation does not move.
+  **peak deviation of the 57 kHz subcarrier, measured coherently -- the
+  injection level the RDS encoder was set to** (encoders normalize the
+  shaped data waveform by its peak, and EN 50067's +/-1.0 to +/-7.5 kHz
+  deviation range is a peak range). It is a solid reading that data
+  modulation does not move; set 2.0 kHz on the encoder and this reads 2.0.
 - **Modulation**: **MPX POWER** (ITU-R BS.412: uniform sliding 60 s window,
   in dBr vs a +/-19 kHz sine) with the worst 60 s window since reset shown
   inline as "max" -- the number BS.412 compliance is judged on; it needs a

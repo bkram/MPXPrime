@@ -165,11 +165,18 @@ public struct DCTracker {
 /// give: 53 kHz stereo-difference energy lands at a 4 kHz offset after the
 /// mix and is rejected > 85 dB in total, instead of ~8-10 dB.
 ///
-/// The reading is the EN 50067 "equivalent unmodulated subcarrier" level:
-/// for x = a(t)*cos(57k*t + phi), the mixed+filtered z = (a/2)*e^{j phi}, so
-/// equivalentPeakAmplitude = 2*sqrt(E[|z|^2]) = sqrt(E[a^2]) -- the amplitude
-/// an unmodulated subcarrier of the same power would have. Envelope-invariant
-/// (a "solid reading" per instrument practice); a free-running NCO suffices
+/// The reading is the PEAK deviation of the subcarrier -- the injection
+/// level RDS encoders set (they normalize the shaped biphase waveform by
+/// its peak, so "rds_level 2.0 kHz" means the envelope peak hits 2.0 kHz;
+/// EN 50067's "deviation range +/-1.0 to +/-7.5 kHz" is likewise a peak
+/// range). For x = a(t)*cos(57k*t + phi), the mixed+filtered z =
+/// (a/2)*e^{j phi}; the reading is 2*max|z| taken as 50 ms slot maxima
+/// averaged over ~1 s -- steady under data modulation ("solid reading" per
+/// instrument practice), and equal to the unmodulated amplitude A for an
+/// unmodulated carrier, an all-zeroes stream, and shaped random data alike.
+/// An RMS-equivalent reading (2*sqrt(E[|z|^2])) sits ~24% LOW on real
+/// shaped biphase because the envelope dips through zero at symbol
+/// transitions -- that was the 0.39 under-read. A free-running NCO suffices
 /// because a few Hz of rotation does not change |z|.
 /// Thread-confined; allocation-free after init.
 public final class RDSSubcarrierLevelMeter {
@@ -188,10 +195,16 @@ public final class RDSSubcarrierLevelMeter {
     private var decQ: [Float]
     private var outI: [Float]
     private var outQ: [Float]
-    private let emaAlphaPerSample: Float
-    /// EMA'd mean-square of the filtered baseband |z|^2 (~0.5 s).
-    private var meanSquare: Float = 0.0
-    private var primed = false
+    // Envelope-peak statistic: max of |z|^2 per 50 ms slot, ring of 20 slots
+    // (1 s). The reading is the mean of the filled slot maxima -- each slot
+    // spans ~60 symbol periods, so its max reaches the shaped waveform's
+    // recurring envelope peak; averaging slots keeps the display steady.
+    private let slotLen: Int
+    private var slotSampleCount = 0
+    private var curSlotMaxSq: Float = 0.0
+    private var slotMaxSq: [Float]
+    private var slotWrite = 0
+    private var slotsFilled = 0
 
     /// Whether the sample rate can carry a 57 kHz subcarrier at all.
     public let usable: Bool
@@ -216,8 +229,8 @@ public final class RDSSubcarrierLevelMeter {
         decQ = [Float](repeating: 0.0, count: maxDec)
         outI = [Float](repeating: 0.0, count: maxDec)
         outQ = [Float](repeating: 0.0, count: maxDec)
-        // ~0.5 s smoothing, applied per decimated sample.
-        emaAlphaPerSample = 1.0 - expf(-1.0 / (0.5 * decRate))
+        slotLen = max(1, Int(decRate / 20.0))  // 50 ms at the decimated rate
+        slotMaxSq = [Float](repeating: 0.0, count: 20)  // 1 s of slots
     }
 
     /// Feed a block of composite samples; updates the smoothed level.
@@ -252,25 +265,36 @@ public final class RDSSubcarrierLevelMeter {
         decI.withUnsafeBufferPointer { firI.process(input: $0, output: &outI, count: dn) }
         decQ.withUnsafeBufferPointer { firQ.process(input: $0, output: &outQ, count: dn) }
         for i in 0..<dn {
-            let ms = outI[i] * outI[i] + outQ[i] * outQ[i]
-            if primed {
-                meanSquare += emaAlphaPerSample * Float(decim) * (ms - meanSquare)
-            } else {
-                meanSquare = ms
-                primed = true
+            let envSq = outI[i] * outI[i] + outQ[i] * outQ[i]
+            if envSq > curSlotMaxSq { curSlotMaxSq = envSq }
+            slotSampleCount += 1
+            if slotSampleCount >= slotLen {
+                slotMaxSq[slotWrite] = curSlotMaxSq
+                slotWrite = (slotWrite + 1) % slotMaxSq.count
+                if slotsFilled < slotMaxSq.count { slotsFilled += 1 }
+                curSlotMaxSq = 0.0
+                slotSampleCount = 0
             }
         }
     }
 
-    /// Equivalent unmodulated-subcarrier peak amplitude (EN 50067 sec 1.3):
-    /// the amplitude an unmodulated 57 kHz sine of the same power would have.
-    public var equivalentPeakAmplitude: Float {
-        primed ? 2.0 * sqrtf(max(0.0, meanSquare)) : 0.0
+    /// Peak deviation amplitude of the 57 kHz subcarrier: the mean of the
+    /// per-50 ms envelope-peak slots over the last ~1 s. Equals the injection
+    /// level the encoder was set to (encoders peak-normalize the shaped
+    /// waveform), for unmodulated, all-zeroes, and shaped random data alike.
+    public var peakAmplitude: Float {
+        guard slotsFilled > 0 else { return 0.0 }
+        var sum: Float = 0.0
+        for k in 0..<slotsFilled { sum += sqrtf(max(0.0, slotMaxSq[k])) }
+        return 2.0 * (sum / Float(slotsFilled))
     }
 
     public func reset() {
-        meanSquare = 0.0
-        primed = false
+        curSlotMaxSq = 0.0
+        slotSampleCount = 0
+        slotWrite = 0
+        slotsFilled = 0
+        for i in slotMaxSq.indices { slotMaxSq[i] = 0.0 }
         decimPhase = 0
         oscC = 1.0
         oscS = 0.0

@@ -11,6 +11,84 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.40 — 2026-07-08
+
+- **Meter: fix the GUI graphs getting slow/laggy -- and eventually the audio
+  stuttering -- over a long session.** Profiled live: main-thread CPU grew
+  from ~33% fresh to ~87%+ within 14 minutes of an SDR capture, eventually
+  starving the real-time audio thread; engine Stop/Start did not clear it
+  (the view tree persists), only a fresh launch did. The aged profile showed
+  ~42% of main-thread time inside AppKit layout flush with
+  `NSToolbarItemViewer _layoutSubtreeWithOldSize:` prominent -- the
+  documented SwiftUI-on-macOS **toolbar relayout leak** (the same mechanism
+  as Studio's 0.34 multi-hour freeze). Root cause: the RDS display strings
+  (including the group-counter line, which changes with every received RDS
+  group, ~10/s) lived as `@Published` on `MeterViewModel`, so each update
+  re-evaluated the whole window body INCLUDING `.toolbar{}`. Fixes, in
+  order of importance:
+  - The 11 RDS display strings moved off the view model onto the telemetry
+    object, and the RDS grid is wrapped in the isolation view -- RDS updates
+    now re-evaluate only the grid, never the window body/toolbar.
+  - The RDS panel refresh is throttled to 2 Hz (it is text for humans; the
+    fast movers -- BER digit, group counters -- don't need the tick rate).
+  - `MeterTelemetry` migrated from `ObservableObject`/`@Published` to the
+    **`@Observable` macro** with the new `LiveObservationView` wrapper in
+    `MPXPrimeUI`. Project convention going forward (AGENTS.md): all new
+    observable state uses `@Observable`; mandatory for per-tick telemetry.
+  - All live Canvas views (scope, trend, vectorscope, vertical meter) now
+    disable implicit animations via `.transaction { $0.animation = nil }`
+    like the spectrum already did.
+- **Meter: lower GUI CPU while keeping the graphs fluid.** Telemetry writes
+  are change-guarded and quantized to display resolution (a stable readout
+  or bar now costs zero per tick; the trend graphs drop to their real ~2/s
+  data rate), the GUI tick runs at 20 Hz (was 25 -- imperceptible on the
+  scopes), and GUI pushes are skipped entirely while the window is
+  minimized or fully covered (capture, analysis, and recording continue).
+  Fresh-launch process CPU on an SDR capture drops ~33% -> ~23%.
+- **Docs: the user manual is split per app.** `docs/manual.md` is now the
+  **MPX Prime Studio** manual (encoder) and the new `docs/manual-meter.md` is
+  the **MPX Prime Meter** manual (analyzer); the shared RDS PI/ECC + PTY
+  reference tables stay in the Studio manual and the Meter manual links to them.
+  The Meter's in-app "User Manual" link points to the Meter manual. Also brought
+  README / ARCHITECTURE / BUILDING / AGENTS / tuner docs current: in-process SDR
+  (not a helper binary), SDRplay RSP support, WAV recording + the
+  `MPXPrimeRecording` target, the full seven-target layout, the Studio
+  spectrum FM band overlay and monitoring windows, the SFP-X cross-validation,
+  and the corrected default config path / build prerequisites.
+- **Meter: RDS deviation now reads the injection level the encoder was set
+  to (fixes the 0.39 under-read).** Reports after 0.39 said the RDS readout
+  was too low -- correct: the coherent meter implemented an RMS-equivalent
+  convention, which sits ~24% below the set injection on real shaped biphase
+  (the envelope dips through zero at symbol transitions; the pre-0.39 leaky
+  bandpass had masked this by inflating the RMS with 53 kHz leakage and
+  noise). The industry display convention is PEAK-referenced (verified
+  against Inovonics 531/541/730, R&S K7S default +/-Peak/2 detector, Pira
+  peak-to-peak setting practice, and FCC/NRSC peak-budget arithmetic):
+  encoders -- BasicRDSCoder included -- normalize the shaped waveform by
+  its peak, so the set kHz IS the envelope peak, and EN 50067's "+/-1.0 to
+  +/-7.5 kHz deviation range due to the unmodulated subcarrier" is a peak
+  range. The meter now reports that number, derived robustly: coherent
+  in-band RMS scaled by the EN 50067 shaped-biphase peak/RMS form factor
+  (1.320, a constant of the spec's pulse shaping) -- a raw envelope-peak
+  detector was tried first and rode composite-clipper intermod inside the
+  57 kHz window on heavily-processed stations (2.5-3x over-read off-air,
+  unsteady), while the RMS-derived reading responds to in-band IM only in
+  the power domain and stays steady. New regression gates:
+  `encoderRoundTripReadsTheSetInjection` renders spec-exact shaped RDS from
+  our own encoder at `rds_level = 2.0` and asserts the meter reads 2.0
+  (with a guard against regressing to the ~1.51 RMS reading), and
+  `readingIsSteadyUnderDataModulation`. Off-air validation on a heavily
+  processed commercial station (same recorded composite through all three):
+  steady 3.4-3.8 kHz (~4.8% injection) where 0.39 read 2.6 and the raw
+  peak detector bounced between 6.5 and 8.4.
+- **Meter: readings confirmed against a Profline SFP-X measuring receiver**
+  on the same live station (2026-07-07): RDS -- SFP-X 3.5-3.7 kHz vs Meter
+  3.4-3.8; pilot -- SFP-X 5.6-5.7 kHz vs Meter 5.58-5.73; max deviation
+  (live side-by-side, same moment) within 1-2 kHz, inside ITU-R SM.1268's
+  +/-2 kHz instrument accuracy requirement. All three headline deviation
+  readings now have independent professional-receiver confirmation on top
+  of the deterministic test suite.
+
 ## 0.39 — 2026-07-06
 
 - **Meter: measurement-grade metering, verified against the standards.** The

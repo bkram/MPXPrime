@@ -165,13 +165,28 @@ public struct DCTracker {
 /// give: 53 kHz stereo-difference energy lands at a 4 kHz offset after the
 /// mix and is rejected > 85 dB in total, instead of ~8-10 dB.
 ///
-/// The reading is the EN 50067 "equivalent unmodulated subcarrier" level:
-/// for x = a(t)*cos(57k*t + phi), the mixed+filtered z = (a/2)*e^{j phi}, so
-/// equivalentPeakAmplitude = 2*sqrt(E[|z|^2]) = sqrt(E[a^2]) -- the amplitude
-/// an unmodulated subcarrier of the same power would have. Envelope-invariant
-/// (a "solid reading" per instrument practice); a free-running NCO suffices
-/// because a few Hz of rotation does not change |z|.
-/// Thread-confined; allocation-free after init.
+/// The reading is the PEAK deviation of the subcarrier -- the injection
+/// level RDS encoders set (they normalize the shaped biphase waveform by
+/// its peak, so "rds_level 2.0 kHz" means the envelope peak hits 2.0 kHz;
+/// EN 50067's "deviation range +/-1.0 to +/-7.5 kHz" is likewise a peak
+/// range, and the 75 kHz total-deviation budget sums peak contributions).
+///
+/// HOW it is derived matters on real off-air signals: the statistic is the
+/// coherent in-band RMS scaled by the EN 50067 shaped-biphase peak/RMS
+/// form factor (`shapedBiphasePeakOverRMSSqrt2` = 1.320, a constant of the
+/// spec's cos(pi*f*td/4) pulse shaping measured from a spec-exact encoder;
+/// see `encoderRoundTripReadsTheSetInjection`). A raw RMS-equivalent
+/// reading (2*sqrt(E[|z|^2])) sits ~24% LOW on real shaped biphase because
+/// the envelope dips through zero at symbol transitions -- the 0.39
+/// under-read. A raw envelope-PEAK detector is exact on a clean loopback
+/// but rides composite-clipper intermod spikes inside the 57 kHz window on
+/// heavily-processed stations (measured 2.5-3x over-read off-air, and
+/// unsteady) -- peaks add linearly, power adds quadratically, so the
+/// RMS-derived reading is far more robust to in-band IM and noise while
+/// still reporting the encoder's set injection for spec-shaped data.
+/// For x = a(t)*cos(57k*t + phi), the mixed+filtered z = (a/2)*e^{j phi}.
+/// A free-running NCO suffices because a few Hz of rotation does not
+/// change |z|. Thread-confined; allocation-free after init.
 public final class RDSSubcarrierLevelMeter {
     private var oscC: Float = 1.0
     private var oscS: Float = 0.0
@@ -188,10 +203,16 @@ public final class RDSSubcarrierLevelMeter {
     private var decQ: [Float]
     private var outI: [Float]
     private var outQ: [Float]
-    private let emaAlphaPerSample: Float
-    /// EMA'd mean-square of the filtered baseband |z|^2 (~0.5 s).
+    /// Peak/(RMS*sqrt2) of EN 50067 shaped biphase with random group data --
+    /// a constant of the spec's pulse shaping, measured from the spec-exact
+    /// BasicRDSCoder (envelope peak 2.000 vs RMS*sqrt2 1.515 at any level).
+    /// Pinned by the encoder round-trip test.
+    public static let shapedBiphasePeakOverRMSSqrt2: Float = 1.320
+    // Coherent in-band mean-square |z|^2, EMA'd over ~1 s for a steady
+    // display; the reading applies sqrt + the form factor above.
     private var meanSquare: Float = 0.0
     private var primed = false
+    private let emaAlphaPerSample: Float
 
     /// Whether the sample rate can carry a 57 kHz subcarrier at all.
     public let usable: Bool
@@ -216,8 +237,8 @@ public final class RDSSubcarrierLevelMeter {
         decQ = [Float](repeating: 0.0, count: maxDec)
         outI = [Float](repeating: 0.0, count: maxDec)
         outQ = [Float](repeating: 0.0, count: maxDec)
-        // ~0.5 s smoothing, applied per decimated sample.
-        emaAlphaPerSample = 1.0 - expf(-1.0 / (0.5 * decRate))
+        // ~1 s smoothing, applied per decimated sample.
+        emaAlphaPerSample = 1.0 - expf(-1.0 / (1.0 * decRate))
     }
 
     /// Feed a block of composite samples; updates the smoothed level.
@@ -252,20 +273,24 @@ public final class RDSSubcarrierLevelMeter {
         decI.withUnsafeBufferPointer { firI.process(input: $0, output: &outI, count: dn) }
         decQ.withUnsafeBufferPointer { firQ.process(input: $0, output: &outQ, count: dn) }
         for i in 0..<dn {
-            let ms = outI[i] * outI[i] + outQ[i] * outQ[i]
+            let envSq = outI[i] * outI[i] + outQ[i] * outQ[i]
             if primed {
-                meanSquare += emaAlphaPerSample * Float(decim) * (ms - meanSquare)
+                meanSquare += emaAlphaPerSample * (envSq - meanSquare)
             } else {
-                meanSquare = ms
+                meanSquare = envSq
                 primed = true
             }
         }
     }
 
-    /// Equivalent unmodulated-subcarrier peak amplitude (EN 50067 sec 1.3):
-    /// the amplitude an unmodulated 57 kHz sine of the same power would have.
-    public var equivalentPeakAmplitude: Float {
-        primed ? 2.0 * sqrtf(max(0.0, meanSquare)) : 0.0
+    /// Peak deviation amplitude of the 57 kHz subcarrier -- the injection
+    /// level the encoder was set to for EN 50067 shaped biphase: coherent
+    /// in-band RMS scaled to the shaped waveform's envelope peak by the spec
+    /// form factor (robust to in-band clipper IM / noise, which a raw peak
+    /// detector rides).
+    public var peakAmplitude: Float {
+        guard primed else { return 0.0 }
+        return 2.0 * sqrtf(max(0.0, meanSquare)) * Self.shapedBiphasePeakOverRMSSqrt2
     }
 
     public func reset() {

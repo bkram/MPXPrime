@@ -75,6 +75,10 @@ public struct VerticalMeterStrip: View {
                 .frame(maxWidth: .infinity)
         }
         .frame(width: showScale ? 64 : 34)
+        // Disable implicit animations on the ~25 Hz level/peak updates; queued
+        // frame interpolations otherwise accumulate into GUI lag that only a
+        // fresh launch clears (same fix as MPXSpectrumView).
+        .transaction { txn in txn.animation = nil }
         // The bar/peak-hold/ticks are decorative to VoiceOver; collapse the
         // strip into one element that announces its name and current reading
         // (e.g. "IN L, -6.2 dB") instead of two disconnected text fragments.

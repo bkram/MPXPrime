@@ -29,6 +29,9 @@ projects are GPL-3.0, so vendoring is license-clean.
 Only the capture + demod + writer path is kept:
 
 - `rtl_sdr_device.{h,cpp}` -- librtlsdr USB capture
+- `sdrplay_device.{h,cpp}` -- SDRplay RSP capture via the dlopened SDRplay API
+  (compiled only when the SDRplay SDK is present, gated by `FM_TUNER_HAS_SDRPLAY`;
+  auto-preferred over RTL-SDR at runtime when an RSP is attached)
 - `fm_demod.{h,cpp}` -- FM discriminator (produces the MPX composite)
 - `wav_writer.{h,cpp}` -- gain + int16 clamp + resample + WAV stream to a pipe
 - `dsp/liquid_primitives.{h,cpp}`, `dsp/multipath_eq.{h,cpp}`, `dsp/iq_saturation.h`
@@ -38,7 +41,10 @@ Everything else from upstream is intentionally dropped: the XDR server
 (removing the openssl dependency), its own 48 kHz audio output (removing
 CoreAudio/AudioToolbox), RDS decoding (the Meter decodes RDS itself),
 calibration / band scan, the rtl_tcp source, and INI config. Remaining
-external deps: **librtlsdr + liquid-dsp** only.
+external deps: **librtlsdr + liquid-dsp** (always), plus the **SDRplay API**
+(optional, dlopened at runtime, never linked -- present only if the SDK was
+installed at build time). Note the standalone `mpx-tuner` CLI is RTL-SDR only;
+the SDRplay backend is reached through the in-process `CMPXTuner` library.
 
 ## Build
 

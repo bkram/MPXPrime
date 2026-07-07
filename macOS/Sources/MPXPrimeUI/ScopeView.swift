@@ -77,6 +77,12 @@ public struct ScopeView: View {
         }
         .frame(maxWidth: .infinity, minHeight: minHeight, idealHeight: idealHeight)
         .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+        // Disable SwiftUI implicit animations on the ~25 Hz sample updates.
+        // Without this, frame-to-frame interpolations queue and accumulate in
+        // the view tree as GUI lag that grows over a session and only clears on
+        // a fresh launch (stop/start does not reset the view tree). Same fix as
+        // MPXSpectrumView.
+        .transaction { txn in txn.animation = nil }
         // A Canvas exposes no children; without this it is silent noise to
         // VoiceOver. Give the region a name + image role.
         .accessibilityElement()

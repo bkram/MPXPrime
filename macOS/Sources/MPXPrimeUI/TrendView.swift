@@ -88,6 +88,10 @@ public struct TrendView: View {
         .frame(maxWidth: .infinity, minHeight: 56, idealHeight: 96)
         .clipShape(RoundedRectangle(
             cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+        // Disable implicit animations on the scrolling-history updates; queued
+        // frame interpolations otherwise accumulate into GUI lag that only a
+        // fresh launch clears (same fix as MPXSpectrumView).
+        .transaction { txn in txn.animation = nil }
         .accessibilityElement()
         .accessibilityLabel(accessibilityName)
         .accessibilityAddTraits(.isImage)

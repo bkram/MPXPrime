@@ -2,6 +2,8 @@ import Foundation
 import MPXPrimeCore
 import Testing
 
+@testable import MPXPrime
+
 // Deterministic verification of the MPX Prime Meter's measurement math.
 // Every test synthesizes a composite whose deviation is known EXACTLY from
 // first principles (absolute calibration: amplitude 1.0 == 150 kHz, the SDR
@@ -79,7 +81,11 @@ struct MeterDeviationTests {
         #expect(abs(s.posPeakDevKHz - 75.0) < 0.7)
         #expect(s.negPeakDevKHz < -57.0 && s.negPeakDevKHz > -75.7)
         #expect(abs(s.pilotDevKHz - 6.75) < 0.1)
-        #expect(abs(s.rdsDevKHz - 2.0) < 0.12)
+        // An UNMODULATED 57 kHz carrier reads its amplitude times the shaped-
+        // biphase form factor (the reading is calibrated so spec-shaped DATA
+        // reads the set injection; see encoderRoundTripReadsTheSetInjection).
+        let unmodFactor = RDSSubcarrierLevelMeter.shapedBiphasePeakOverRMSSqrt2
+        #expect(abs(s.rdsDevKHz - 2.0 * unmodFactor) < 0.15)
         // Nothing exceeds 77 kHz: the SM.1268 statistic must be exactly 0.
         #expect(s.exceedanceValid)
         #expect(s.exceedancePct == 0.0)
@@ -98,7 +104,10 @@ struct MeterDeviationTests {
         let s = a.snapshot()
         #expect(s.pilotDevKHz == 6.75)  // echoes the reference
         #expect(abs(s.maxDevKHz - 75.0) < 1.0)
-        #expect(abs(s.rdsDevKHz - 2.0) < 0.15)
+        // Unmodulated test carrier: reads amplitude x form factor (see
+        // fullCompositeReadsExactTotalDeviation).
+        let unmodFactor = RDSSubcarrierLevelMeter.shapedBiphasePeakOverRMSSqrt2
+        #expect(abs(s.rdsDevKHz - 2.0 * unmodFactor) < 0.2)
     }
 
     @Test func dcOffsetDoesNotSkewPeakSymmetry() {
@@ -173,44 +182,99 @@ struct MeterDeviationTests {
     }
 }
 
-@Suite("Meter RDS deviation (EN 50067 equivalent unmodulated subcarrier)")
+@Suite("Meter RDS deviation (peak subcarrier level, encoder-consistent)")
 struct MeterRDSDeviationTests {
     @Test func strongStereoDifferenceContentDoesNotLeakIntoRDS() {
         // 53 kHz is the top of the stereo L-R band, only 4 kHz below the RDS
-        // subcarrier. 30 kHz of deviation there must not move the 2.0 kHz
-        // RDS reading (the old single Q=10 biquad bandpass leaked badly).
-        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        // subcarrier. 30 kHz of deviation there must not move the RDS
+        // reading (the old single Q=10 biquad bandpass leaked badly).
+        let clean = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let leaky = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
         let pilot = amp(6.75)
         let rds = amp(2.0)
         let edge = amp(30.0)
-        feed(a, seconds: 3.0) { t in
+        feed(clean, seconds: 3.0) { t in
+            pilot * cosf(twoPi(19_000, t)) + rds * cosf(twoPi(57_000, t))
+        }
+        feed(leaky, seconds: 3.0) { t in
             pilot * cosf(twoPi(19_000, t)) + rds * cosf(twoPi(57_000, t))
                 + edge * cosf(twoPi(53_000, t))
         }
-        let s = a.snapshot()
-        #expect(abs(s.rdsDevKHz - 2.0) < 0.15)
+        let c = clean.snapshot().rdsDevKHz
+        let l = leaky.snapshot().rdsDevKHz
+        #expect(abs(l - c) < 0.1)  // the 53 kHz tone must not move the reading
+        let unmodFactor = RDSSubcarrierLevelMeter.shapedBiphasePeakOverRMSSqrt2
+        #expect(abs(c - 2.0 * unmodFactor) < 0.2)
     }
 
-    @Test func bpskModulationDoesNotChangeTheReading() {
-        // EN 50067 quotes RDS deviation as the level of the UNMODULATED
-        // subcarrier; instruments show a "solid reading" regardless of data.
-        // A constant-modulus BPSK (sign flips) has the same power as the
-        // unmodulated carrier, so the reading must be identical.
-        let unmod = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
-        let bpsk = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
-        let rds = amp(2.0)
-        feed(unmod, seconds: 3.0) { t in rds * cosf(twoPi(57_000, t)) }
-        feed(bpsk, seconds: 3.0) { t in
-            // ~300 Hz deterministic sign pattern (slow enough that the
-            // sidebands stay inside the measurement passband).
-            let sym = Int(t * 300.0)
-            let sign: Float = (sym % 2 == 0) ? 1.0 : -1.0
-            return sign * rds * cosf(twoPi(57_000, t))
+    @Test func encoderRoundTripReadsTheSetInjection() {
+        // THE RDS-level contract: an EN 50067-exact shaped biphase stream
+        // from our own encoder at rds_level = 2.0 kHz must read 2.0 kHz.
+        // Encoders normalize the shaped waveform by its peak, so the set
+        // level IS the envelope peak; the meter reads the coherent envelope
+        // peak (50 ms slot maxima, 1 s mean). An RMS-equivalent reading sits
+        // ~24% low on real shaped data (the 0.39 under-read regression).
+        let sr192: Float = 192_000.0
+        var cfg = AppConfig()
+        cfg.enRDS = true
+        cfg.rdsLevel = 2.0
+        cfg.rdsPI = "83E1"
+        cfg.rdsPSA = "TESTCASE"
+        cfg.rdsRTText = "RDS level round-trip regression"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: sr192)
+
+        let a = MeterAnalysis(sampleRate: sr192, fullScaleKHz: 75.0)
+        let total = Int(5.0 * sr192)
+        var block = [Float](repeating: 0.0, count: blockLen)
+        let pilotAmp: Float = 6.75 / 75.0
+        var idx = 0
+        while idx < total {
+            let n = min(blockLen, total - idx)
+            for i in 0..<n {
+                let t = Float(idx + i) / sr192
+                block[i] = coder.nextSample() + pilotAmp * cosf(twoPi(19_000, t))
+            }
+            block.withUnsafeBufferPointer {
+                a.process(UnsafeBufferPointer(rebasing: $0[0..<n]))
+            }
+            idx += n
         }
-        let u = unmod.snapshot().rdsDevKHz
-        let b = bpsk.snapshot().rdsDevKHz
-        #expect(abs(u - 2.0) < 0.1)
-        #expect(abs(b - u) < 0.12)
+        let s = a.snapshot()
+        #expect(abs(s.rdsDevKHz - 2.0) < 0.12)
+        // Guard against regressing to the RMS convention (~1.51 kHz).
+        #expect(s.rdsDevKHz > 1.85)
+        #expect(abs(s.pilotDevKHz - 6.75) < 0.1)
+    }
+
+    @Test func readingIsSteadyUnderDataModulation() {
+        // Instruments show a "solid reading": two snapshots ~1 s apart over
+        // live shaped data must agree closely.
+        let sr192: Float = 192_000.0
+        var cfg = AppConfig()
+        cfg.enRDS = true
+        cfg.rdsLevel = 2.0
+        cfg.rdsPI = "83E1"
+        cfg.rdsRTText = "Steadiness check with changing group content"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: sr192)
+        let a = MeterAnalysis(sampleRate: sr192, fullScaleKHz: 75.0)
+        var block = [Float](repeating: 0.0, count: blockLen)
+        func run(seconds: Float) {
+            let total = Int(seconds * sr192)
+            var idx = 0
+            while idx < total {
+                let n = min(blockLen, total - idx)
+                for i in 0..<n { block[i] = coder.nextSample() }
+                block.withUnsafeBufferPointer {
+                    a.process(UnsafeBufferPointer(rebasing: $0[0..<n]))
+                }
+                idx += n
+            }
+        }
+        run(seconds: 3.0)
+        let first = a.snapshot().rdsDevKHz
+        run(seconds: 1.0)
+        let second = a.snapshot().rdsDevKHz
+        #expect(abs(first - second) < 0.08)
     }
 }
 

@@ -433,8 +433,9 @@ public final class MeterAnalysis {
         let rms = sqrtf(sumSq / n)
         // PilotPLL lock-in I/Q each converge to (A/2)*{cos,sin}(phi); |I,Q| = A/2.
         let pilotAmp = 2.0 * sqrtf(pilotMagMax)
-        // EN 50067 equivalent unmodulated-subcarrier amplitude at 57 kHz.
-        let rdsEquivAmp = rdsMeter.equivalentPeakAmplitude
+        // Peak deviation amplitude of the 57 kHz subcarrier (the injection
+        // level the encoder was set to -- encoders peak-normalize).
+        let rdsEquivAmp = rdsMeter.peakAmplitude
         let corr: Float = (lSq > 1e-12 && rSq > 1e-12) ? (lr / sqrtf(lSq * rSq)) : 0.0
 
         snap.hasSignal = peak > 1e-4

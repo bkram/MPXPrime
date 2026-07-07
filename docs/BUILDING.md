@@ -11,8 +11,15 @@ the [Download](../README.md#download) section of the README.
 - For running the **test suite**: a full Xcode install (the Command Line Tools
   do not ship `Testing.framework`)
 
-The package is a Swift Package Manager project rooted at `macOS/`. The sole
-external dependency is `swift-atomics`.
+The package is a Swift Package Manager project rooted at `macOS/`. The only
+SwiftPM dependency is `swift-atomics`. Building the **`MPXPrime`** encoder needs
+nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
+Homebrew SDR libraries its in-process tuner links — `brew install librtlsdr
+liquid-dsp` — and, optionally, the SDRplay API SDK (installed under
+`/Library/SDRplayAPI/`) to compile the SDRplay RSP backend; without the SDK the
+Meter still builds and falls back to RTL-SDR. Because the Meter links the
+arm64-only RTL-SDR libraries it is **Apple-Silicon-only**; build the x86_64
+release slice with `--product MPXPrime` to skip the Meter and its `CMPXTuner`.
 
 ## Build
 
@@ -47,11 +54,28 @@ From the repository root:
 swift run --package-path macOS MPXPrime                       # GUI
 swift run --package-path macOS MPXPrime --nogui               # headless
 swift run --package-path macOS MPXPrime --seconds 10          # fixed runtime
-swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime.ini"
+swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime Studio.ini"
 ```
 
 The default user config lives at
-`~/Library/Application Support/MPX Prime/MPX Prime.ini`.
+`~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`.
+
+### Running the Meter (`MPXPrimeMeter`)
+
+The companion analyzer builds and runs the same way (Apple Silicon; needs
+`brew install librtlsdr liquid-dsp`). The `run-meter.sh` helper builds a release
+Meter and launches it:
+
+```bash
+./run-meter.sh                       # GUI; auto-detects an SDRplay / RTL-SDR dongle, else audio
+./run-meter.sh --sdr-freq 88.6       # GUI pre-tuned to an SDR station, capturing
+./run-meter.sh --device 0 --channel right --seconds 30   # headless audio-device capture
+./run-meter.sh --stdin --full-scale-khz 150              # headless, composite piped on stdin
+```
+
+The in-process SDR (RTL-SDR / SDRplay) is GUI-only; the headless dashboard takes
+an audio device (`--device`) or a composite on stdin (`--stdin`). See the
+[Meter manual](manual-meter.md) for the full control surface.
 
 ## Offline verification
 
@@ -117,7 +141,7 @@ The project ships a `.swiftlint.yml` that runs only
 Build a universal release app bundle and DMG:
 
 ```bash
-./build-release.sh 0.32
+./build-release.sh 0.40
 ```
 
 Artifacts are written to `macOS/dist/`.

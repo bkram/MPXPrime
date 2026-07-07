@@ -86,17 +86,13 @@ final class MeterViewModel: ObservableObject {
     @Published var spectrumSpanKHz: Int = 60
 
     // RDS readout (changes per second; updated only when it actually changes).
-    @Published var rdsText = "--"
-    @Published var ptyText = "--"
-    @Published var ptynText = "--"
-    @Published var eccText = "--"
-    @Published var psText = "--"
-    @Published var rtText = "--"
-    @Published var rtPlusText = "--"
-    @Published var longPSText = "--"
-    @Published var ctText = "--"
-    @Published var afText = "--"
-    @Published var groupText = "--"
+    // RDS display strings live on MeterTelemetry (@Observable), NOT here:
+    // the group-count line changes with every received RDS group (~10/s), and
+    // a @Published write on this view model re-evaluates the whole window
+    // body INCLUDING the toolbar -- the documented SwiftUI-on-macOS toolbar
+    // relayout leak (CHANGELOG 0.34) that progressively saturated the main
+    // thread and stuttered audio. Keep per-tick/high-frequency state off this
+    // view model.
 
     private var engine: MeterAudioEngine?
     private var deviceID: AudioDeviceID?
@@ -105,6 +101,10 @@ final class MeterViewModel: ObservableObject {
     private var sdrSource: SDRLibraryInputSource?
     private var timer: Timer?
     private var lastRDSSignature = ""
+    // RDS panel refresh throttle: the signature includes the live BER digit
+    // and the group counters, which advance with every received group
+    // (~10/s), but the text panel only needs a human reading rate. 2 Hz.
+    private var lastRDSPush: TimeInterval = 0
 
     init() {
         refreshDevices()
@@ -402,7 +402,7 @@ final class MeterViewModel: ObservableObject {
     // MARK: - Polling
 
     private func startTimer() {
-        let t = Timer(timeInterval: 1.0 / 25.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -415,6 +415,13 @@ final class MeterViewModel: ObservableObject {
         if inputKind == .sdr, let source = sdrSource, !source.isRunning {
             stop()
             statusText = "SDR stopped: device lost (RTL-SDR unplugged?)"
+            return
+        }
+        // Skip GUI pushes while the window is minimized / fully covered --
+        // capture, analysis, and recording continue untouched (same gating
+        // Studio applies to its monitoring windows).
+        if let w = NSApp.windows.first(where: { $0.isVisible || $0.isMiniaturized }),
+           !w.occlusionState.contains(.visible) {
             return
         }
         guard let s = engine?.snapshot() else { return }
@@ -437,74 +444,94 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
+    // Change-guarded telemetry writes: with @Observable, every write fires the
+    // observers of that property even if the value is identical, so a tick
+    // that writes ~30 properties re-evaluates every wrapped leaf regardless.
+    // Guarding on equality makes stable readouts cost zero per tick, and the
+    // trend graphs drop to their real ~2/s data rate automatically. Bar norms
+    // are quantized to display resolution first so sub-pixel changes don't
+    // repaint a strip.
+    @inline(__always)
+    private func put<T: Equatable>(
+        _ kp: ReferenceWritableKeyPath<MeterTelemetry, T>, _ v: T
+    ) {
+        if telemetry[keyPath: kp] != v { telemetry[keyPath: kp] = v }
+    }
+
+    /// Quantize a 0..1 bar level to ~1/500 (sub-pixel at meter sizes).
+    @inline(__always)
+    private static func qNorm(_ v: Double) -> Double { (v * 500).rounded() / 500 }
+
     private func pushTelemetry(_ s: MeterSnapshot) {
-        telemetry.inputNorm = Self.dbNorm(s.inputPeakDBFS)
-        telemetry.inputText = Self.dbText(s.inputPeakDBFS)
-        telemetry.leftNorm = Self.dbNorm(s.leftRMSDBFS)
-        telemetry.leftText = Self.dbText(s.leftRMSDBFS)
-        telemetry.rightNorm = Self.dbNorm(s.rightRMSDBFS)
-        telemetry.rightText = Self.dbText(s.rightRMSDBFS)
-        telemetry.midNorm = Self.dbNorm(s.midRMSDBFS)
-        telemetry.midText = Self.dbText(s.midRMSDBFS)
-        telemetry.sideNorm = Self.dbNorm(s.sideRMSDBFS)
-        telemetry.sideText = Self.dbText(s.sideRMSDBFS)
-        telemetry.correlation = Double(s.stereoCorrelation)
-        telemetry.correlationText = String(format: "%+.2f", s.stereoCorrelation)
+        put(\.inputNorm, Self.qNorm(Self.dbNorm(s.inputPeakDBFS)))
+        put(\.inputText, Self.dbText(s.inputPeakDBFS))
+        put(\.leftNorm, Self.qNorm(Self.dbNorm(s.leftRMSDBFS)))
+        put(\.leftText, Self.dbText(s.leftRMSDBFS))
+        put(\.rightNorm, Self.qNorm(Self.dbNorm(s.rightRMSDBFS)))
+        put(\.rightText, Self.dbText(s.rightRMSDBFS))
+        put(\.midNorm, Self.qNorm(Self.dbNorm(s.midRMSDBFS)))
+        put(\.midText, Self.dbText(s.midRMSDBFS))
+        put(\.sideNorm, Self.qNorm(Self.dbNorm(s.sideRMSDBFS)))
+        put(\.sideText, Self.dbText(s.sideRMSDBFS))
+        put(\.correlation, Double((s.stereoCorrelation * 100).rounded() / 100))
+        put(\.correlationText, String(format: "%+.2f", s.stereoCorrelation))
 
         // Unitless values so they render at full size in the narrow scale-less
         // strips; the kHz unit is shown once in the group header.
-        telemetry.pilotNorm = Double(s.pilotDevKHz) / MeterScale.pilotFullKHz
-        telemetry.pilotText = String(format: "%.2f", s.pilotDevKHz)
-        telemetry.rdsNorm = Double(s.rdsDevKHz) / MeterScale.rdsFullKHz
-        telemetry.rdsText = String(format: "%.2f", s.rdsDevKHz)
-        telemetry.maxDevNorm = Double(s.maxDevKHz) / MeterScale.maxFullKHz
-        telemetry.maxDevText = String(format: "%.1f", s.maxDevKHz)
+        put(\.pilotNorm, Self.qNorm(Double(s.pilotDevKHz) / MeterScale.pilotFullKHz))
+        put(\.pilotText, String(format: "%.2f", s.pilotDevKHz))
+        put(\.rdsNorm, Self.qNorm(Double(s.rdsDevKHz) / MeterScale.rdsFullKHz))
+        put(\.rdsText, String(format: "%.2f", s.rdsDevKHz))
+        put(\.maxDevNorm, Self.qNorm(Double(s.maxDevKHz) / MeterScale.maxFullKHz))
+        put(\.maxDevText, String(format: "%.1f", s.maxDevKHz))
 
         if s.mpxPowerValid {
-            telemetry.mpxPowerText = String(format: "%+.1f dBr", s.mpxPowerDBr)
+            put(\.mpxPowerText, String(format: "%+.1f dBr", s.mpxPowerDBr))
             // Display range -12..+3 dBr (0 dBr = BS.412 limit).
-            telemetry.mpxPowerNorm = Double(max(0, min(1, (s.mpxPowerDBr + 12.0) / 15.0)))
+            put(\.mpxPowerNorm, Self.qNorm(Double(max(0, min(1, (s.mpxPowerDBr + 12.0) / 15.0)))))
         } else {
-            telemetry.mpxPowerText = "--"
-            telemetry.mpxPowerNorm = 0
+            put(\.mpxPowerText, "--")
+            put(\.mpxPowerNorm, 0)
         }
-        telemetry.mpxPowerDBr = Double(s.mpxPowerDBr)
-        telemetry.mpxPowerValid = s.mpxPowerValid
-        telemetry.posPeakText = String(format: "%+.1f", s.posPeakDevKHz)
-        telemetry.negPeakText = String(format: "%+.1f", s.negPeakDevKHz)
-        telemetry.posPeakKHz = Double(s.posPeakDevKHz)
-        telemetry.negPeakKHz = Double(s.negPeakDevKHz)
+        put(\.mpxPowerDBr, Double((s.mpxPowerDBr * 10).rounded() / 10))
+        put(\.mpxPowerValid, s.mpxPowerValid)
+        put(\.posPeakText, String(format: "%+.1f", s.posPeakDevKHz))
+        put(\.negPeakText, String(format: "%+.1f", s.negPeakDevKHz))
+        put(\.posPeakKHz, Double((s.posPeakDevKHz * 10).rounded() / 10))
+        put(\.negPeakKHz, Double((s.negPeakDevKHz * 10).rounded() / 10))
         // SM.1268-5 exceedance readout: the compliance criterion is 1e-4 %,
         // so show enough digits for the tail (e.g. "0.00003 %"); an exact
         // zero displays as "0 %".
         if s.exceedanceValid {
-            telemetry.exceedanceText = s.exceedancePct <= 0.0
-                ? "0 %" : String(format: "%.5f %%", s.exceedancePct)
+            put(\.exceedanceText, s.exceedancePct <= 0.0
+                ? "0 %" : String(format: "%.5f %%", s.exceedancePct))
         } else {
-            telemetry.exceedanceText = "--"
+            put(\.exceedanceText, "--")
         }
-        telemetry.exceedancePct = Double(s.exceedancePct)
-        telemetry.exceedanceValid = s.exceedanceValid
-        telemetry.mpxPowerMaxText = s.mpxPowerMaxValid
-            ? String(format: "%+.1f dBr", s.mpxPowerMaxDBr) : "--"
-        telemetry.mpxPowerMaxDBr = Double(s.mpxPowerMaxDBr)
-        telemetry.mpxPowerMaxValid = s.mpxPowerMaxValid
-        telemetry.separationText = s.separationValid
-            ? String(format: "%.0f dB", s.bestSeparationDB) : "--"
+        put(\.exceedancePct, Double(s.exceedancePct))
+        put(\.exceedanceValid, s.exceedanceValid)
+        put(\.mpxPowerMaxText, s.mpxPowerMaxValid
+            ? String(format: "%+.1f dBr", s.mpxPowerMaxDBr) : "--")
+        put(\.mpxPowerMaxDBr, Double((s.mpxPowerMaxDBr * 10).rounded() / 10))
+        put(\.mpxPowerMaxValid, s.mpxPowerMaxValid)
+        put(\.separationText, s.separationValid
+            ? String(format: "%.0f dB", s.bestSeparationDB) : "--")
 
-        telemetry.devHistoryKHz = s.devHistoryKHz
-        telemetry.mpxPowerHistoryDBr = s.mpxPowerHistoryDBr
+        put(\.devHistoryKHz, s.devHistoryKHz)
+        put(\.mpxPowerHistoryDBr, s.mpxPowerHistoryDBr)
 
+        // Waveforms/spectra genuinely change every tick; write unguarded
+        // (an equality compare of 512 floats that always differs is waste).
         telemetry.compositeScope = s.compositeScope
         telemetry.decodedLScope = s.decodedLScope
         telemetry.decodedRScope = s.decodedRScope
         telemetry.spectrumDB = s.spectrumDB
-        telemetry.spectrumMaxHz = s.spectrumMaxHz
-        telemetry.spectrumNyquistHz = s.spectrumNyquistHz
+        put(\.spectrumMaxHz, s.spectrumMaxHz)
+        put(\.spectrumNyquistHz, s.spectrumNyquistHz)
         telemetry.decodedLSpectrumDB = s.decodedLSpectrumDB
         telemetry.decodedRSpectrumDB = s.decodedRSpectrumDB
-        telemetry.audioSpectrumMaxHz = s.audioSpectrumMaxHz
-        telemetry.audioSpectrumNyquistHz = s.audioSpectrumNyquistHz
+        put(\.audioSpectrumMaxHz, s.audioSpectrumMaxHz)
+        put(\.audioSpectrumNyquistHz, s.audioSpectrumNyquistHz)
     }
 
     /// Reset the deviation peak-hold + best-separation readouts.
@@ -543,6 +570,11 @@ final class MeterViewModel: ObservableObject {
     }
 
     private func pushRDSIfChanged(_ s: MeterSnapshot) {
+        // Throttle to 2 Hz: the panel is text for humans; the fast movers
+        // (BER digit, group counters) don't need the tick rate, and skipping
+        // early avoids building eleven Strings per tick just to discard them.
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastRDSPush >= 0.5 else { return }
         let r = s.rds
         let pi = r.pi.map { String(format: "%04X", $0) } ?? "----"
         let rds = "\(r.synced ? "sync" : "----")  PI \(pi)"
@@ -573,9 +605,12 @@ final class MeterViewModel: ObservableObject {
             .joined(separator: "|")
         guard signature != lastRDSSignature else { return }
         lastRDSSignature = signature
-        rdsText = rds; ptyText = pty; ptynText = ptynOut; eccText = ecc
-        psText = ps; rtText = rt; rtPlusText = rtPlus
-        longPSText = lps; ctText = ct; afText = af; groupText = groups
+        lastRDSPush = now
+        telemetry.rdsStatusText = rds; telemetry.ptyText = pty
+        telemetry.ptynText = ptynOut; telemetry.eccText = ecc
+        telemetry.psText = ps; telemetry.rtText = rt; telemetry.rtPlusText = rtPlus
+        telemetry.longPSText = lps; telemetry.ctText = ct; telemetry.afText = af
+        telemetry.groupText = groups
     }
 
     /// EN 50067 Programme Type names (RDS / EU set, 0-31).

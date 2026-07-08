@@ -664,9 +664,18 @@ final class MeterViewModel: ObservableObject {
 
         // Vectorscope display gain: target fills ~85% of the field at the
         // block's decoded peak; fast attack (shrink), slow release (grow).
+        // Peak on the ROTATED goniometer axes (|L+R|, |L-R|, normalized /2):
+        // a per-channel peak under-scales mono program (its energy lands
+        // entirely on the L+R axis at twice the per-channel value), which
+        // made near-mono signals overshoot the circle.
         var vsPeak: Float = 1e-3
-        for v in s.decodedLScope { let a = abs(v); if a > vsPeak { vsPeak = a } }
-        for v in s.decodedRScope { let a = abs(v); if a > vsPeak { vsPeak = a } }
+        let vsN = min(s.decodedLScope.count, s.decodedRScope.count)
+        for i in 0..<vsN {
+            let l = s.decodedLScope[i]
+            let r = s.decodedRScope[i]
+            let m = max(abs(l + r), abs(l - r)) * 0.5
+            if m > vsPeak { vsPeak = m }
+        }
         let vsTarget = min(10.0, max(1.0, 0.85 / Double(vsPeak)))
         if vsTarget < vectorAutoGain {
             vectorAutoGain += 0.5 * (vsTarget - vectorAutoGain)   // fast shrink

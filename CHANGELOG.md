@@ -15,7 +15,13 @@ combination test suite. Newest first.
   program level (fast shrink / slow grow, filling ~85% of the field --
   hardware-goniometer style) so quiet program no longer draws a tiny
   figure. Points past full scale saturate at the field edge like the real
-  thing. Always on -- no knob to mis-set.
+  thing. Always on -- no knob to mis-set. The projection math was also
+  corrected: the rotated (L+R)/(L-R) axes span twice the per-channel range,
+  so full-scale mono previously overshot the reference circle by ~30% and
+  the auto-zoom (driven by per-channel peaks) overfilled on near-mono
+  program; scaling is now inscribe-safe, the auto-zoom targets the
+  rotated-axis peaks (exact fill at any stereo correlation), and the
+  reference circle is inset so its stroke never clips at the panel edges.
 - **Meter: DC block for the decoded audio** (input-bar checkbox, default
   on, live): a transmitter carrier offset becomes DC after FM demod,
   showing as an off-center vectorscope, offset waveforms, and DC in the

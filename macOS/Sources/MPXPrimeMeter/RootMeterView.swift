@@ -438,7 +438,10 @@ struct RootMeterView: View {
                     .padding(6)
                     .help("Stereo goniometer of decoded L/R. Vertical line = mono, a tilted "
                         + "line = single channel, a filled field = wide stereo. A horizontal "
-                        + "spread warns of out-of-phase (mono-incompatible) audio.")
+                        + "spread warns of out-of-phase (mono-incompatible) audio. The display "
+                        + "gain auto-rides the program level so the figure fills the scope "
+                        + "(hardware-goniometer style); points past full scale saturate at "
+                        + "the field edge.")
             }
         } label: {
             Text("Vectorscope")
@@ -572,6 +575,10 @@ struct RootMeterView: View {
                 .labelsHidden()
                 .frame(width: 260)
                 .disabled(!vm.mpxPassEnabled)
+                .help("Where the raw composite plays -- use a genuinely "
+                    + "192 kHz-capable interface (its rate is forced to the "
+                    + "capture rate while the pass-through runs, and restored "
+                    + "after). Applies live; remembered by device UID.")
                 .onChange(of: vm.selectedMPXOutID) { _, _ in vm.applyMPXPassChange() }
                 HStack(spacing: 4) {
                     Text("Gain").foregroundStyle(.secondary)

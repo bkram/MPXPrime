@@ -31,7 +31,8 @@ public struct VectorscopeView: View {
 
             let cx = size.width * 0.5
             let cy = size.height * 0.5
-            let radius = min(cx, cy)
+            // Inset so the circle's stroke never clips at the panel edges.
+            let radius = min(cx, cy) - 4
 
             // Faint bounding circle (the full-scale envelope).
             let circle = Path(ellipseIn: CGRect(
@@ -53,9 +54,13 @@ public struct VectorscopeView: View {
                        style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
             guard left.count > 1, right.count == left.count else { return }
-            // Rotate 45 deg: x = (L-R), y = (L+R); /sqrt2 keeps full-scale mono
-            // inside the field. 0.92 leaves a small margin.
-            let k = radius * 0.92 / 1.41421356
+            // Rotate 45 deg: x = (L-R), y = (L+R). The rotated axes span 2x
+            // the per-channel range (mono L=R=1 gives y = 2), so k = r/2
+            // guarantees every |L|,|R| <= 1 point stays inside the circle --
+            // the earlier /sqrt2 let full-scale mono overshoot the field by
+            // ~30%. 0.92 leaves a small margin; the auto-zoom (driven by the
+            // rotated-axis peaks) provides the fill.
+            let k = radius * 0.92 / 2.0
             let g = Float(zoom)
             var path = Path()
             for i in 0..<left.count {

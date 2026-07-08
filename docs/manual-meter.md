@@ -191,6 +191,21 @@ readings -- linear-phase because a steep IIR filter overshoots on a clipped
 composite's edges and reads deviation the transmitter never emitted. The
 scopes, spectrum, and IN meter stay unfiltered so noise remains visible.
 
+## SDR troubleshooting
+
+- **"Device lost" while capturing**: the dongle dropped off the USB bus (or
+  was unplugged). The Meter stops and deliberately abandons the dead handle
+  -- closing it would crash inside the USB stack -- which keeps that unit's
+  USB claim until you **replug it or quit the app** (the status line says
+  so). Replug the dongle before reusing it.
+- **SDRplay missing from the picker**: if a previous Meter was killed
+  uncleanly (force-quit, crash), the SDRplay service can briefly hold the
+  RSP for the dead process. Replug the RSP or restart the SDRplay service.
+  Normal quits -- including `kill`/logout, which the Meter handles
+  gracefully -- always release it.
+- A wedged RTL dongle (garbage demod, BER pinned near 75%) needs a physical
+  replug; no software reset recovers it.
+
 ## Recording
 
 The input bar (right side) has a format toggle and a **Record** button. Choose:

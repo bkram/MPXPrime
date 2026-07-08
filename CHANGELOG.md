@@ -29,7 +29,11 @@ combination test suite. Newest first.
   Live-apply; the output device is switched to the capture rate while the
   pass-through runs and restored afterwards (a 48 kHz output would lose
   the subcarriers). The decoded-monitor device picker moved into the same
-  popover.
+  popover. A **Gain** control (0..+12 dB, live) matches the analog level to
+  the analyzer/exciter: 0 dB keeps the SDR scaling (0 dBFS = 150 kHz, a
+  75 kHz station peaks at -6 dBFS -- why the output reads "low" into an
+  analyzer by default); +6 dB puts 75 kHz at full scale at the cost of
+  clip headroom above it.
 - **Meter: the SDR picker now reliably lists the unit in use.** The SDRplay
   API omits in-use devices from enumeration (including our own active RSP),
   which could hide the picker entirely. The tuner now reports the active

@@ -75,6 +75,11 @@ final class MeterViewModel: ObservableObject {
     /// addition to the decoded monitor.
     @Published var mpxPassEnabled = false
     @Published var selectedMPXOutID: AudioDeviceID?
+    /// Pass-through output gain (dB). 0 = the SDR scaling (0 dBFS = 150 kHz;
+    /// a 75 kHz station peaks at -6 dBFS). Raise to match an analyzer's or
+    /// exciter's expected composite level; +6 dB puts 75 kHz at 0 dBFS (then
+    /// deviation beyond 75 kHz clips the DAC -- keep some headroom).
+    @Published var mpxPassGainDB: Double = 0
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
     // Audio-path deviation calibration. Pilot-referenced (default) assumes the
@@ -207,6 +212,7 @@ final class MeterViewModel: ObservableObject {
         static let sdrDeviceID = "meter.selectedSDRDeviceID"
         static let mpxPass = "meter.mpxPassEnabled"
         static let mpxPassUID = "meter.mpxPassOutputUID"
+        static let mpxPassGain = "meter.mpxPassGainDB"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -247,6 +253,7 @@ final class MeterViewModel: ObservableObject {
         // (same keep-the-selection convention as the audio devices).
         selectedSDRID = d.string(forKey: Keys.sdrDeviceID)
         if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
+        if d.object(forKey: Keys.mpxPassGain) != nil { mpxPassGainDB = d.double(forKey: Keys.mpxPassGain) }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
             selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
         }
@@ -287,6 +294,7 @@ final class MeterViewModel: ObservableObject {
             d.removeObject(forKey: Keys.sdrDeviceID)  // nil = auto
         }
         d.set(mpxPassEnabled, forKey: Keys.mpxPass)
+        d.set(mpxPassGainDB, forKey: Keys.mpxPassGain)
         if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.mpxPassUID)
         } else {
@@ -326,7 +334,8 @@ final class MeterViewModel: ObservableObject {
             statusText = String(format: "Capturing %.0f kHz", fmt.sampleRate / 1000)
             if let w = prep.warning { statusText += " — \(w)" }
             if mpxPassEnabled {
-                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID)
+                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID,
+                                      gainDB: mpxPassGainDB)
             }
             startTimer()
         } catch {
@@ -387,7 +396,8 @@ final class MeterViewModel: ObservableObject {
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
             if let selectionNote { statusText += " — \(selectionNote)" }
             if mpxPassEnabled {
-                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID)
+                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID,
+                                      gainDB: mpxPassGainDB)
             }
             startTimer()
         } catch {
@@ -423,7 +433,8 @@ final class MeterViewModel: ObservableObject {
     func applyMPXPassChange() {
         saveSettings()
         engine?.setMPXPassThrough(
-            enabled: mpxPassEnabled, deviceID: selectedMPXOutID)
+            enabled: mpxPassEnabled, deviceID: selectedMPXOutID,
+            gainDB: mpxPassGainDB)
     }
 
     /// Monitor output device changed: swap just the monitor, live -- the

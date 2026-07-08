@@ -548,9 +548,27 @@ struct RootMeterView: View {
                 .frame(width: 260)
                 .disabled(!vm.mpxPassEnabled)
                 .onChange(of: vm.selectedMPXOutID) { _, _ in vm.applyMPXPassChange() }
+                HStack(spacing: 4) {
+                    Text("Gain").foregroundStyle(.secondary)
+                    ScrollableNumericField(value: $vm.mpxPassGainDB,
+                                           range: 0.0...12.0, step: 0.5, decimals: 1)
+                        .frame(width: 48)
+                    Text("dB").foregroundStyle(.secondary).fixedSize()
+                    Stepper("MPX gain", value: $vm.mpxPassGainDB,
+                            in: 0.0...12.0, step: 0.5)
+                        .labelsHidden()
+                }
+                .disabled(!vm.mpxPassEnabled)
+                .onChange(of: vm.mpxPassGainDB) { _, _ in vm.applyMPXPassChange() }
+                .help("Output level into the analyzer/exciter. 0 dB = the SDR "
+                    + "scaling (0 dBFS = 150 kHz; a 75 kHz station peaks at "
+                    + "-6 dBFS). +6 dB puts 75 kHz at digital full scale -- "
+                    + "deviation beyond that clips the DAC, so leave ~1 dB "
+                    + "headroom (+5 dB covers peaks to ~84 kHz). Applies live.")
                 Text("The device is switched to the capture rate (192 kHz) "
                     + "while the pass-through runs, and restored after -- a "
-                    + "48 kHz output would lose the pilot and subcarriers.")
+                    + "48 kHz output would lose the pilot and subcarriers. "
+                    + "Scale: 0 dBFS = 150 kHz at 0 dB gain.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: 260, alignment: .leading)

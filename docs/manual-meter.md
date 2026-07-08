@@ -65,6 +65,11 @@ remembered by device UID):
   device is switched to the capture rate (192 kHz) while the pass-through
   runs and restored afterwards -- a 48 kHz output would low-pass away the
   pilot and subcarriers, so use a genuinely 192 kHz-capable interface.
+  A **Gain** field (0..+12 dB, live) matches the analog level to your
+  analyzer or exciter: at 0 dB the scale is the SDR convention (0 dBFS =
+  150 kHz, so a 75 kHz station peaks at -6 dBFS); +6 dB puts 75 kHz at
+  digital full scale, but deviation beyond that then clips the DAC --
+  leave ~1 dB of headroom (+5 dB covers peaks to ~84 kHz).
 
 - **Audio device** (`Source -> Audio`): pick the input carrying the composite
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on

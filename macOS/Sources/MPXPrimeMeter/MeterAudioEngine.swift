@@ -184,7 +184,7 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// device would low-pass away the pilot/subcarriers in SRC), so the
     /// device's nominal rate is forced to the capture rate and restored when
     /// the pass-through stops (the Studio MPX-output convention).
-    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?) {
+    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?, gainDB: Double = 0) {
         // Tear down the current player + restore the prior device rate.
         mpxPassOn.store(false, ordering: .relaxed)
         mpxMonitor?.stop()
@@ -206,7 +206,12 @@ final class MeterAudioEngine: @unchecked Sendable {
             }
             mpxOutDeviceID = dev
         }
-        let mon = MeterMonitor(ring: mpxRing, sampleRate: Double(sampleRate), gain: 1.0)
+        // Output gain: 0 dB keeps the SDR scaling (0 dBFS = 150 kHz, so a
+        // 75 kHz station peaks at -6 dBFS). Positive gain raises the analog
+        // level into an analyzer/exciter -- at +6 dB, deviation above
+        // 150/2 = 75 kHz clips the DAC, so keep a little headroom.
+        let gain = Float(pow(10.0, gainDB / 20.0))
+        let mon = MeterMonitor(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
         if (try? mon.start(outputDeviceID: deviceID)) != nil {
             mpxMonitor = mon
             mpxPassOn.store(true, ordering: .relaxed)

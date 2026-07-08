@@ -98,8 +98,10 @@ detected at launch, otherwise to **Audio**.
 
 ## What it shows
 
-- **Audio**: IN / L / R / M / S levels and L/R correlation (CORR: +1 = mono,
-  ~0.7-0.95 = normal stereo, negative = out-of-phase / mono-incompatible).
+- **Audio**: IN / L / R / M / S levels and the **PHASE CORR** readout (L/R
+  phase correlation: +1 = mono, ~+0.7-0.95 = normal stereo, negative =
+  out-of-phase / mono-incompatible -- it turns amber near zero and red when
+  negative). Hover any readout, meter, or control for an explanation tooltip.
 - **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
   beside the audio levels. MAX is the highest excursion in the last second
   (50 ms peak-hold slots, the ITU-R SM.1268 display convention). RDS is the

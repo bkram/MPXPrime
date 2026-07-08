@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: dashboard top row makes better use of the screen.** The Modulation
+  panel is sized so its readouts never truncate (the "MPX POWER ... max ..."
+  compliance figure was ellipsized), readout values shrink slightly rather
+  than ellipsize on extreme values, the RDS text grid is capped at a
+  comfortable reading width instead of swallowing the whole row on wide
+  displays, and the instrument cluster left-aligns on ultrawide screens.
+  Measurements get layout priority -- they are the product.
+- **Meter: CORR renamed to PHASE CORR and color-coded** like a hardware
+  correlation meter: normal while safely positive, amber near zero, red when
+  negative (out of phase = mono receivers cancel the audio). Tooltip
+  clarified; every readout in the app has a hover tooltip.
+
 - **Meter: fix a crash on quit (or on stopping) after the RTL-SDR dongle was
   unplugged.** `rtlsdr_close()` writes shutdown registers over USB
   (`rtlsdr_deinit_baseband` -> `libusb_control_transfer`), which SEGVs inside

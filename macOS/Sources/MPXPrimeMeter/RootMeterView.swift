@@ -33,10 +33,17 @@ struct RootMeterView: View {
                         HStack(alignment: .top, spacing: 12) {
                             audioSection
                             deviationSection
+                            // Sized to the widest Modulation readout
+                            // ("+12.0 dBr  max +12.0" / "+199.9 / -199.9 kHz")
+                            // so values never truncate.
                             metricsSection
-                                .frame(width: 150)
+                                .frame(width: 210)
+                            // RDS is a key/value text grid: cap it at a
+                            // comfortable reading width instead of swallowing
+                            // all remaining row width on wide displays.
                             rdsSection
-                                .frame(minWidth: 260, maxWidth: .infinity)
+                                .frame(minWidth: 260, maxWidth: 760)
+                            Spacer(minLength: 0)
                         }
                         .frame(height: 220)
                         HStack(alignment: .top, spacing: 12) {
@@ -360,13 +367,21 @@ struct RootMeterView: View {
                             + "approaching Mid = very wide stereo.")
                     Divider()
                     VStack(spacing: 6) {
-                        Text("CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
+                        Text("PHASE CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
+                        // Hardware-correlation-meter color language: green-ish
+                        // (normal) while safely positive, amber near zero, red
+                        // when negative (out of phase = mono-compatibility risk).
                         Text(t.correlationText).font(BroadcastStyle.heroReadout)
+                            .foregroundColor(
+                                t.correlation < 0 ? BroadcastStyle.overRed
+                                    : (t.correlation < 0.3 ? BroadcastStyle.tightAmber
+                                        : BroadcastStyle.readoutPrimary))
                         Spacer(minLength: 0)
                     }
-                    .frame(width: 64)
-                    .help("L/R correlation: +1 = mono, ~0 = wide stereo. Negative means L and R "
-                        + "are out of phase -- a mono-compatibility risk; keep it positive.")
+                    .frame(width: 74)
+                    .help("Left/right phase correlation: +1 = mono, ~+0.7-0.95 = normal stereo, "
+                        + "~0 = very wide. Negative means L and R are out of phase -- mono "
+                        + "receivers cancel the audio; keep it positive.")
                 }
                 .frame(maxHeight: .infinity)
                 .padding(6)
@@ -522,7 +537,12 @@ struct RootMeterView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
+            // A measurement readout must never ellipsize ("+7.1 dBr max +7..."
+            // hides the compliance figure); shrink slightly instead if an
+            // extreme value outgrows the panel.
             Text(value).font(BroadcastStyle.valueReadout).foregroundColor(valueTint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .help(help)
     }

@@ -114,7 +114,42 @@ int SDRplayDevice::deviceCount() {
   return static_cast<int>(n);
 }
 
-bool SDRplayDevice::connect(uint32_t freqHz) {
+namespace {
+const char *modelNameForHwVer(int hwVer) {
+  switch (hwVer) {
+    case SDRPLAY_RSP1_ID: return "RSP1";
+    case SDRPLAY_RSP1A_ID: return "RSP1A";
+    case SDRPLAY_RSP1B_ID: return "RSP1B";
+    case SDRPLAY_RSP2_ID: return "RSP2";
+    case SDRPLAY_RSPduo_ID: return "RSPduo";
+    case SDRPLAY_RSPdx_ID: return "RSPdx";
+    case SDRPLAY_RSPdxR2_ID: return "RSPdx R2";
+    default: return "RSP";
+  }
+}
+}  // namespace
+
+int SDRplayDevice::listDevices(Info *out, int max) {
+  if (!out || max <= 0) return 0;
+  auto &a = api();
+  if (!a.ok()) return 0;
+  if (a.Open() != sdrplay_api_Success) return 0;
+  unsigned int n = 0;
+  sdrplay_api_DeviceT devs[8];
+  a.Lock();
+  a.GetDevices(devs, &n, 8);
+  a.Unlock();
+  a.Close();
+  const int count = std::min(static_cast<int>(n), max);
+  for (int i = 0; i < count; ++i) {
+    std::snprintf(out[i].name, sizeof(out[i].name), "SDRplay %s",
+                  modelNameForHwVer(static_cast<int>(devs[i].hwVer)));
+    std::snprintf(out[i].serial, sizeof(out[i].serial), "%s", devs[i].SerNo);
+  }
+  return count;
+}
+
+bool SDRplayDevice::connect(uint32_t freqHz, const char *serial) {
   auto &a = api();
   if (!a.ok()) return false;
   if (a.Open() != sdrplay_api_Success) return false;
@@ -125,7 +160,21 @@ bool SDRplayDevice::connect(uint32_t freqHz) {
   if (a.GetDevices(devs, &n, 8) != sdrplay_api_Success || n == 0) {
     a.Unlock(); a.Close(); return false;
   }
-  g_device = devs[0];
+  // Select by serial when requested (multi-RSP benches); else the first.
+  int pick = 0;
+  if (serial && serial[0] != '\0') {
+    pick = -1;
+    for (unsigned int i = 0; i < n; ++i) {
+      if (std::strncmp(devs[i].SerNo, serial, sizeof(devs[i].SerNo)) == 0) {
+        pick = static_cast<int>(i);
+        break;
+      }
+    }
+    if (pick < 0) {  // requested RSP not attached
+      a.Unlock(); a.Close(); return false;
+    }
+  }
+  g_device = devs[pick];
   if (a.SelectDevice(&g_device) != sdrplay_api_Success) {
     a.Unlock(); a.Close(); return false;
   }
@@ -225,18 +274,7 @@ bool SDRplayDevice::setBandwidthHz(int hz) {
                       sdrplay_api_Update_Ext1_None) == sdrplay_api_Success;
 }
 
-const char *SDRplayDevice::modelName() const {
-  switch (m_hwVer) {
-    case SDRPLAY_RSP1_ID: return "RSP1";
-    case SDRPLAY_RSP1A_ID: return "RSP1A";
-    case SDRPLAY_RSP1B_ID: return "RSP1B";
-    case SDRPLAY_RSP2_ID: return "RSP2";
-    case SDRPLAY_RSPduo_ID: return "RSPduo";
-    case SDRPLAY_RSPdx_ID: return "RSPdx";
-    case SDRPLAY_RSPdxR2_ID: return "RSPdx R2";
-    default: return "RSP";
-  }
-}
+const char *SDRplayDevice::modelName() const { return modelNameForHwVer(m_hwVer); }
 
 bool SDRplayDevice::setLnaState(int state) {
   if (!m_connected.load() || !g_params || !m_handle) return false;
@@ -320,7 +358,8 @@ SDRplayDevice::SDRplayDevice() {}
 SDRplayDevice::~SDRplayDevice() {}
 bool SDRplayDevice::apiAvailable() { return false; }
 int SDRplayDevice::deviceCount() { return 0; }
-bool SDRplayDevice::connect(uint32_t) { return false; }
+int SDRplayDevice::listDevices(Info *, int) { return 0; }
+bool SDRplayDevice::connect(uint32_t, const char *) { return false; }
 void SDRplayDevice::disconnect() {}
 bool SDRplayDevice::setFrequency(uint32_t) { return false; }
 bool SDRplayDevice::setGain(double) { return false; }

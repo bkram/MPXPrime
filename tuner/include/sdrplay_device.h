@@ -29,7 +29,17 @@ public:
   /// Number of attached RSP devices (0 if API unavailable).
   static int deviceCount();
 
-  bool connect(uint32_t freqHz);
+  /// Attached-RSP inventory entry (model name + serial).
+  struct Info {
+    char name[64];
+    char serial[64];
+  };
+  /// Fill `out` with up to `max` attached RSPs. Returns the count written.
+  static int listDevices(Info *out, int max);
+
+  /// Connect; when `serial` is non-null/non-empty, select the RSP with that
+  /// serial number (fails if absent). Null/empty selects the first device.
+  bool connect(uint32_t freqHz, const char *serial = nullptr);
   void disconnect();
 
   bool setFrequency(uint32_t freqHz);

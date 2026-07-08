@@ -44,6 +44,18 @@ chrome follows the system appearance.
 The **Source** defaults to **SDR** when a dongle (SDRplay RSP or RTL-SDR) is
 detected at launch, otherwise to **Audio**.
 
+With **more than one SDR attached** (any mix of RSPs and RTL dongles) an **SDR
+picker** appears in the input bar: Auto (prefers SDRplay) or a specific unit,
+remembered by **serial number** so the choice survives replugging. If the
+chosen unit is absent at start, the Meter starts on Auto with a note and keeps
+your selection. To meter two stations at once, launch the app twice and give
+each instance its own SDR -- and its own **Out** device (below).
+
+The input bar's right side has an **Out** picker for the decoded monitor
+audio (System Default, or any output device). It applies **live** -- only the
+monitor moves; capture, analysis, and recording are untouched. Remembered by
+device UID. With two Meter instances, give each its own output.
+
 - **Audio device** (`Source -> Audio`): pick the input carrying the composite
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate

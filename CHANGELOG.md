@@ -11,6 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: pick your SDR when several are attached.** New SDR picker in the
+  input bar (shown with more than one unit): any mix of SDRplay RSPs and
+  RTL-SDR dongles, listed by model + serial. The choice is remembered by
+  serial (survives replug/reorder); Auto keeps the old behavior (SDRplay
+  preferred). If the chosen unit is absent at start, the Meter starts on
+  Auto with a note and keeps the selection. Run the app twice to meter two
+  stations on two units. (C ABI: `mpxtuner_list_devices` +
+  `MpxTunerConfig.backend`/`device_serial`; SDRplay selection by SerNo,
+  RTL by USB serial.)
+- **Meter: monitor Output device picker** in the input bar (both source
+  modes): System Default or any output device, applied **live** -- only the
+  monitor restarts; capture, analysis, and recording are untouched.
+  Remembered by device UID. Essential when two Meter instances run side by
+  side.
+
 - **Meter: SDR tuning is no longer fenced to the broadcast band.** The
   frequency field now spans the ACTIVE tuner's real range -- RTL-SDR
   ~24-1766 MHz, SDRplay RSP 0.1-2000 MHz -- because FM-stereo MPX also

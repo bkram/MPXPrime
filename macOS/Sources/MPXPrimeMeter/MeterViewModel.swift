@@ -52,6 +52,10 @@ final class MeterViewModel: ObservableObject {
     /// SDRplay LNA state (front-end gain reduction step; higher = less gain).
     @Published var sdrLnaState: Int = 4
     @Published var sdrIsSDRplay: Bool = false
+    /// Attached SDRs (both backends) + the persisted selection (by
+    /// backend+serial, stable across replug). nil = auto (SDRplay preferred).
+    @Published var sdrDevices: [SDRLibraryInputSource.DeviceInfo] = []
+    @Published var selectedSDRID: String?
     @Published var sdrAntennaCount: Int = 1
     /// Active SDR device label (e.g. "SDRplay RSPdx" / "RTL-SDR R820T").
     @Published var sdrDeviceName: String = ""
@@ -111,9 +115,15 @@ final class MeterViewModel: ObservableObject {
         // Show the correct SDR controls before capture: the backend auto-prefers
         // SDRplay when an RSP is attached, so reflect that up front.
         sdrIsSDRplay = SDRLibraryInputSource.sdrplayPresent()
+        refreshSDRDevices()
         // Restore the last-used settings; falls back to SDR-when-a-dongle-is-
         // present for the input source if nothing was saved.
         loadSettings(hasDongle: SDRLibraryInputSource.deviceCount() > 0)
+    }
+
+    /// Re-enumerate attached SDRs (cheap USB/API scan; no device is opened).
+    func refreshSDRDevices() {
+        sdrDevices = SDRLibraryInputSource.listDevices()
     }
 
     func refreshDevices() {
@@ -163,6 +173,7 @@ final class MeterViewModel: ObservableObject {
         static let spectrumSpan = "meter.spectrumSpanKHz"
         static let inputUID = "meter.selectedInputUID"
         static let outputUID = "meter.selectedOutputUID"
+        static let sdrDeviceID = "meter.selectedSDRDeviceID"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -199,6 +210,9 @@ final class MeterViewModel: ObservableObject {
         if let uid = d.string(forKey: Keys.outputUID) {
             selectedOutputID = outputDevices.first(where: { $0.uid == uid })?.id
         }
+        // SDR unit: keep the saved identity even if not currently attached
+        // (same keep-the-selection convention as the audio devices).
+        selectedSDRID = d.string(forKey: Keys.sdrDeviceID)
     }
 
     /// Persist the current settings. Called on capture start and app quit.
@@ -229,6 +243,11 @@ final class MeterViewModel: ObservableObject {
             d.set(dev.uid, forKey: Keys.outputUID)
         } else {
             d.removeObject(forKey: Keys.outputUID)   // nil = system default
+        }
+        if let id = selectedSDRID {
+            d.set(id, forKey: Keys.sdrDeviceID)
+        } else {
+            d.removeObject(forKey: Keys.sdrDeviceID)  // nil = auto
         }
     }
 
@@ -277,11 +296,28 @@ final class MeterViewModel: ObservableObject {
     // real measurements, not pilot-referenced. No subprocess, no device rate to
     // restore.
     private func startSDR() {
+        refreshSDRDevices()
+        // Resolve the persisted unit selection (backend+serial). If the
+        // selected unit is not attached, KEEP the selection but start on
+        // auto with a status note -- never silently adopt another unit as
+        // the new preference (the audio-device convention).
+        var backend = 0
+        var serial = ""
+        var selectionNote: String?
+        if let id = selectedSDRID {
+            if let dev = sdrDevices.first(where: { $0.id == id }) {
+                backend = dev.backend
+                serial = dev.serial
+            } else {
+                selectionNote = "Selected SDR not attached -- using auto"
+            }
+        }
         let cfg = SDRLibraryInputSource.Config(
             frequencyKHz: Int((frequencyMHz * 1000).rounded()),
             autoGain: sdrAutoGain, gainDB: sdrGainDB,
             bandwidthKHz: sdrBandwidthKHz, biasTee: sdrBiasTee,
-            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna, lna: sdrLnaState)
+            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna, lna: sdrLnaState,
+            deviceBackend: backend, deviceSerial: serial)
         let source = SDRLibraryInputSource(config: cfg)
         deviceID = nil
         priorDeviceRate = nil
@@ -302,6 +338,7 @@ final class MeterViewModel: ObservableObject {
             running = true
             let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
+            if let selectionNote { statusText += " — \(selectionNote)" }
             startTimer()
         } catch {
             statusText = error.localizedDescription
@@ -321,6 +358,20 @@ final class MeterViewModel: ObservableObject {
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
+    }
+
+    /// SDR unit changed: reopen on the chosen device (device open is not a
+    /// live-tunable parameter).
+    func applySDRDeviceChange() {
+        saveSettings()
+        restartIfRunning()
+    }
+
+    /// Monitor output device changed: swap just the monitor, live -- the
+    /// capture, analysis, and recording are untouched.
+    func applyOutputDeviceChange() {
+        saveSettings()
+        engine?.setMonitorDevice(selectedOutputID)
     }
 
     /// Apply a control change (device/channel/monitor/ref) by restarting.

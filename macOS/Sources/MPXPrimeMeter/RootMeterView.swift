@@ -150,7 +150,28 @@ struct RootMeterView: View {
                         + "many stations differ. Scroll to step. Applied live.")
                 }
             } else {
-                if !vm.sdrDeviceName.isEmpty {
+                if vm.sdrDevices.count > 1 {
+                    // Multi-SDR bench: pick the unit (persisted by serial, so
+                    // the choice survives replug; two Meter instances can each
+                    // grab a different unit).
+                    Label("SDR", systemImage: "dot.radiowaves.left.and.right")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                    Picker("SDR device", selection: $vm.selectedSDRID) {
+                        Text("Auto").tag(String?.none)
+                        ForEach(vm.sdrDevices) { dev in
+                            Text(dev.displayName).tag(Optional(dev.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 250)
+                    .help("Which SDR to capture from when several are attached "
+                        + "(multiple RSPs / RTL dongles supported). Remembered by "
+                        + "serial number. Auto prefers SDRplay. Launch the app "
+                        + "twice to run two meters on two units.")
+                    .onChange(of: vm.selectedSDRID) { _, _ in vm.applySDRDeviceChange() }
+                    Divider().frame(height: 16)
+                } else if !vm.sdrDeviceName.isEmpty {
                     Label(vm.sdrDeviceName, systemImage: "dot.radiowaves.left.and.right")
                         .labelStyle(.titleAndIcon)
                         .font(.callout.weight(.semibold))
@@ -269,6 +290,28 @@ struct RootMeterView: View {
                 }
             }
             Spacer()
+
+            // Monitor output device (both source modes). Live-applies: only
+            // the monitor restarts, capture/analysis/recording untouched.
+            // Essential when two Meter instances run side by side -- each
+            // needs its own output or both land on the system default.
+            Label("Out", systemImage: "speaker.wave.2")
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(.secondary)
+            Picker("Monitor output", selection: $vm.selectedOutputID) {
+                Text("System Default").tag(AudioDeviceID?.none)
+                ForEach(vm.outputDevices) { dev in
+                    Text(dev.name).tag(Optional(dev.id))
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 190)
+            .help("Where the decoded monitor audio plays. Applies live "
+                + "(capture and recording are not interrupted). Remembered "
+                + "per launch by device UID.")
+            .onChange(of: vm.selectedOutputID) { _, _ in vm.applyOutputDeviceChange() }
+
+            Divider().frame(height: 16)
 
             // Recording: pick the format, then Record to a WAV file.
             Picker("Record format", selection: $vm.recordMPX) {

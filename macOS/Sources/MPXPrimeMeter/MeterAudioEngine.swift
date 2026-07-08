@@ -156,6 +156,18 @@ final class MeterAudioEngine: @unchecked Sendable {
         recordLock.lock(); recorder = nil; recordLock.unlock()
     }
 
+    /// Swap the monitor output device live: only the monitor restarts; the
+    /// input source, ring, analysis thread, and recorder are untouched.
+    func setMonitorDevice(_ deviceID: AudioDeviceID?) {
+        monitor?.stop()
+        monitor = nil
+        guard monitorEnabled else { return }
+        let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
+        if (try? mon.start(outputDeviceID: deviceID)) != nil {
+            monitor = mon
+        }
+    }
+
     func snapshot() -> MeterSnapshot {
         lock.lock()
         defer { lock.unlock() }

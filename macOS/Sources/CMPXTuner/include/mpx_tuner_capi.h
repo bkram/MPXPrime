@@ -36,6 +36,14 @@ typedef struct MpxTuner MpxTuner;
 typedef void (*MpxTunerSampleCallback)(const float *samples, size_t count,
                                        void *ctx);
 
+/// One attached SDR device (either backend), for building a device picker.
+typedef struct {
+  int backend;      // 1 = RTL-SDR, 2 = SDRplay
+  uint32_t index;   // per-backend device index
+  char name[64];    // e.g. "SDRplay RSPdx", "RTL-SDR Blog V3"
+  char serial[64];  // USB / API serial (stable identity across replug)
+} MpxTunerDeviceInfo;
+
 typedef struct {
   uint32_t device_index;  // RTL-SDR device index (usually 0)
   uint32_t freq_khz;      // tune frequency in kHz
@@ -49,7 +57,13 @@ typedef struct {
   int rtl_agc;            // 1 = RTL2832 digital AGC
   int antenna;            // SDRplay antenna input index (0-based; ignored on RTL)
   int lna;                // SDRplay LNA state (front-end gain reduction step)
+  int backend;            // 0 = auto (SDRplay preferred), 1 = RTL-SDR, 2 = SDRplay
+  char device_serial[64]; // non-empty: select the device with this serial
 } MpxTunerConfig;
+
+/// List attached SDR devices across both backends (SDRplay first, then
+/// RTL-SDR). Returns the number written (<= max).
+int mpxtuner_list_devices(MpxTunerDeviceInfo *out, int max);
 
 /// Open the device, configure it, and start the capture + demod thread.
 /// Returns NULL on failure (no device, allocation, etc.) and writes a message

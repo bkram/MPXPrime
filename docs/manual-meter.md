@@ -180,7 +180,14 @@ remembered by device UID):
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
   AF / group histogram and live block-error rate. The **RDS** row (top of the RDS
   panel) shows sync, PI, the TP/TA/MS flags, and **BER** at the end (BER under
-  ~5% is a clean link). PI and PTY are decoded against the reference tables in
+  ~5% is a clean link). The readout is **gated by reception quality**: an RDS
+  block decoder syncs on noise easily and would hallucinate random PI/PTY, so
+  the panel shows `no usable RDS -- BER ..% . .. kHz` until the link is
+  plausible (BER at or under ~15% to open, over ~25% to close again, a
+  detectable 57 kHz subcarrier, and a few valid blocks decoded); after 10 s
+  gated the decoder is cleared so stale garbage never flashes when it opens.
+  Tick **Force** in the panel header to bypass the gate and watch the raw
+  decoder output (diagnostics -- expect garbage on noise). PI and PTY are decoded against the reference tables in
   the [Studio manual's appendices](manual.md#appendix-rds-pi-and-ecc-country-table).
 
 Deviation is referenced to a 75 kHz total. The deviation/MPX-power
@@ -205,6 +212,11 @@ scopes, spectrum, and IN meter stay unfiltered so noise remains visible.
   gracefully -- always release it.
 - A wedged RTL dongle (garbage demod, BER pinned near 75%) needs a physical
   replug; no software reset recovers it.
+- **RDS panel shows "no usable RDS"**: the reception-quality gate is holding
+  back the decode readout because BER is too high or the 57 kHz subcarrier is
+  too weak -- the signal genuinely has no trustworthy RDS (many audio links
+  carry none at all). The BER/level evidence stays live in that line; Force
+  (panel header) shows the raw decoder output anyway.
 
 ## Recording
 

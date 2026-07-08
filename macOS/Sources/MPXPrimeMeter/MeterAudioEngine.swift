@@ -102,6 +102,9 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// Decode-path DC blocker (live).
     func setDCBlock(_ on: Bool) { analysis.setDCBlock(on) }
 
+    /// Bypass the RDS reception-quality gate (live).
+    func setForceRDS(_ on: Bool) { analysis.setForceRDS(on) }
+
     /// Live-switch the audio path between absolute ("0 dBFS = k kHz") and
     /// pilot-referenced (nil) deviation scaling.
     func setFullScaleKHz(_ k: Float?) { analysis.setFullScaleKHz(k) }

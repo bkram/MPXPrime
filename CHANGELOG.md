@@ -84,6 +84,20 @@ combination test suite. Newest first.
   Remembered by device UID. Essential when two Meter instances run side by
   side.
 
+- **Meter: RDS readout gated by reception quality (+ Force override).** An
+  RDS block decoder syncs on a single accidental syndrome match and accepts
+  PI from any single CRC-passing block, so on noise the panel hallucinated
+  data (random PI/PTY at ~74% BER on a no-RDS audio link). The published
+  readout now opens only when reception is plausible -- BER <= 15% (with
+  hysteresis: closes above 25%), a detectable 57 kHz subcarrier (>= 0.8 kHz
+  when a kHz scale exists), and at least a few valid blocks decoded -- and
+  shows "no usable RDS -- BER ..% . .. kHz" (the live evidence) while gated.
+  After 10 s gated the decoder is cleared so stale garbage never flashes
+  when the gate opens. BER/level keep measuring regardless. A **Force**
+  checkbox in the RDS panel header bypasses the gate for diagnostics.
+  Deterministic tests: seeded-noise hallucinations stay suppressed, real
+  encoder-generated RDS opens the gate and decodes the true PI, Force
+  publishes raw.
 - **Meter: 1 kHz tuning resolution.** The frequency field accepts 1 kHz
   precision (e.g. 864.540 for an audio link) instead of the broadcast
   band's 100 kHz raster; scroll/stepper keep 0.1 MHz steps. Tuning

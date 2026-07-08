@@ -101,6 +101,9 @@ final class MeterViewModel: ObservableObject {
     /// Decode-path DC blocker: removes demod carrier-offset DC from the
     /// decoded audio (vectorscope centering, clean monitor/recordings).
     @Published var dcBlockEnabled = true
+    /// Bypass the RDS reception-quality gate: show the raw decoder output
+    /// even when reception is too poor to trust (expect garbage on noise).
+    @Published var forceRDS = false
 
     // RDS readout (changes per second; updated only when it actually changes).
     // RDS display strings live on MeterTelemetry (@Observable), NOT here:
@@ -220,6 +223,7 @@ final class MeterViewModel: ObservableObject {
         static let mpxPassUID = "meter.mpxPassOutputUID"
         static let mpxPassGain = "meter.mpxPassGainDB"
         static let dcBlock = "meter.dcBlockEnabled"
+        static let forceRDS = "meter.forceRDS"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -262,6 +266,7 @@ final class MeterViewModel: ObservableObject {
         if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
         if d.object(forKey: Keys.mpxPassGain) != nil { mpxPassGainDB = d.double(forKey: Keys.mpxPassGain) }
         if d.object(forKey: Keys.dcBlock) != nil { dcBlockEnabled = d.bool(forKey: Keys.dcBlock) }
+        if d.object(forKey: Keys.forceRDS) != nil { forceRDS = d.bool(forKey: Keys.forceRDS) }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
             selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
         }
@@ -304,6 +309,7 @@ final class MeterViewModel: ObservableObject {
         d.set(mpxPassEnabled, forKey: Keys.mpxPass)
         d.set(mpxPassGainDB, forKey: Keys.mpxPassGain)
         d.set(dcBlockEnabled, forKey: Keys.dcBlock)
+        d.set(forceRDS, forKey: Keys.forceRDS)
         if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.mpxPassUID)
         } else {
@@ -347,6 +353,7 @@ final class MeterViewModel: ObservableObject {
                                       gainDB: mpxPassGainDB)
             }
             if !dcBlockEnabled { eng.setDCBlock(false) }
+            if forceRDS { eng.setForceRDS(true) }
             startTimer()
         } catch {
             statusText = "Start failed: \(error)"
@@ -410,6 +417,7 @@ final class MeterViewModel: ObservableObject {
                                       gainDB: mpxPassGainDB)
             }
             if !dcBlockEnabled { eng.setDCBlock(false) }
+            if forceRDS { eng.setForceRDS(true) }
             startTimer()
         } catch {
             statusText = error.localizedDescription
@@ -444,6 +452,12 @@ final class MeterViewModel: ObservableObject {
     func applyDCBlockChange() {
         saveSettings()
         engine?.setDCBlock(dcBlockEnabled)
+    }
+
+    /// Force-RDS toggled: applies live (bypasses the reception-quality gate).
+    func applyForceRDSChange() {
+        saveSettings()
+        engine?.setForceRDS(forceRDS)
     }
 
     /// MPX pass-through toggled or its device changed: applies live.
@@ -741,9 +755,17 @@ final class MeterViewModel: ObservableObject {
         guard now - lastRDSPush >= 0.5 else { return }
         let r = s.rds
         let pi = r.pi.map { String(format: "%04X", $0) } ?? "----"
-        let rds = "\(r.synced ? "sync" : "----")  PI \(pi)"
-            + "  TP\(boolBit(r.tp)) TA\(boolBit(r.ta)) MS\(boolBit(r.ms))"
-            + String(format: "  BER %.1f%%", s.recentBlockErrorRate * 100)
+        // While the reception-quality gate suppresses the readout, the status
+        // line explains itself with the live evidence instead of blanks.
+        let rds: String
+        if s.rdsGated {
+            rds = String(format: "no usable RDS — BER %.0f%% · %.1f kHz",
+                         s.recentBlockErrorRate * 100, s.rdsDevKHz)
+        } else {
+            rds = "\(r.synced ? "sync" : "----")  PI \(pi)"
+                + "  TP\(boolBit(r.tp)) TA\(boolBit(r.ta)) MS\(boolBit(r.ms))"
+                + String(format: "  BER %.1f%%", s.recentBlockErrorRate * 100)
+        }
         let pty = r.pty.map { "\($0)  \(Self.ptyName($0))" } ?? "--"
         let ptyn = r.programTypeName.trimmingCharacters(in: .whitespaces)
         let ptynOut = ptyn.isEmpty ? "--" : "\"\(ptyn)\""

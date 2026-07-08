@@ -840,7 +840,7 @@ struct RootMeterView: View {
     // MARK: - RDS
 
     private var rdsSection: some View {
-        GroupBox("RDS") {
+        GroupBox {
             // Native key/value grid: the label column auto-sizes to the widest
             // label and values share one baseline-aligned column (HIG key-value
             // layout) instead of a hand-tuned fixed-width HStack.
@@ -867,6 +867,20 @@ struct RootMeterView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(6)
+            }
+        } label: {
+            HStack {
+                Text("RDS")
+                Spacer()
+                Toggle("Force", isOn: $vm.forceRDS)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .help("Bypass the RDS reception-quality gate and show the raw "
+                        + "decoder output even when BER is high or the 57 kHz "
+                        + "subcarrier is weak -- expect garbage on noise (random "
+                        + "PI/PTY). Diagnostics only; deviation measurements are "
+                        + "unaffected. Applies live.")
+                    .onChange(of: vm.forceRDS) { _, _ in vm.applyForceRDSChange() }
             }
         }
     }

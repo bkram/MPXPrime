@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: fix a crash on quit (or on stopping) after the RTL-SDR dongle was
+  unplugged.** `rtlsdr_close()` writes shutdown registers over USB
+  (`rtlsdr_deinit_baseband` -> `libusb_control_transfer`), which SEGVs inside
+  libusb when the device has already vanished -- seen as an
+  `applicationWillTerminate` crash after pulling the dongle mid-session. The
+  vendored tuner already tracks unexpected stream death (`m_asyncFailed`);
+  `RTLSDRDevice::disconnect()` now skips the register-writing close for a
+  lost device and abandons the dead handle instead (nothing to deinit on a
+  vanished device; the leak is bounded by process lifetime). Covers both the
+  quit path and the dashboard's "device lost" auto-stop, which used the same
+  crashing close.
+
 ## 0.40 — 2026-07-08
 
 - **Meter: fix the GUI graphs getting slow/laggy -- and eventually the audio

@@ -105,7 +105,18 @@ void RTLSDRDevice::disconnect() {
     m_asyncThread.join();
   }
   if (m_deviceHandle) {
-    rtlsdr_close(reinterpret_cast<rtlsdr_dev_t *>(m_deviceHandle));
+    if (m_asyncFailed.load()) {
+      // The stream died under us (dongle unplugged / USB handle dead).
+      // rtlsdr_close() writes shutdown registers over USB
+      // (rtlsdr_deinit_baseband -> libusb_control_transfer) and SEGVs
+      // inside libusb on a vanished device -- observed as a crash in
+      // applicationWillTerminate after an unplug. There is nothing to
+      // deinit on a device that is gone: abandon the handle instead
+      // (the leak is bounded by process lifetime).
+      std::cerr << "[SDR] device lost; skipping close of dead RTL-SDR handle\n";
+    } else {
+      rtlsdr_close(reinterpret_cast<rtlsdr_dev_t *>(m_deviceHandle));
+    }
     m_deviceHandle = nullptr;
   }
 #endif

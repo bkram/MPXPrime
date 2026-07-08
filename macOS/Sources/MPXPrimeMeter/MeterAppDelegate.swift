@@ -8,6 +8,13 @@ import SwiftUI
 // MPX Prime transmit AppDelegate window pattern.
 @MainActor
 final class MeterAppDelegate: NSObject, NSApplicationDelegate {
+    // Graceful SIGTERM: a bare AppKit process dies from SIGTERM (pkill,
+    // logout, scripts) WITHOUT applicationWillTerminate, so the SDRplay
+    // service was never told to release the RSP -- it then ghost-holds the
+    // unit for a dead PID and the device vanishes from enumeration until
+    // replug/service restart. Route SIGTERM into the normal terminate path
+    // so every shutdown releases devices cleanly.
+    private var sigtermSource: DispatchSourceSignal?
     private var window: NSWindow?
     private let vm = MeterViewModel()
     private let autoStartSDRFreqMHz: Double?
@@ -19,6 +26,12 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        signal(SIGTERM, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        src.setEventHandler { NSApp.terminate(nil) }
+        src.resume()
+        sigtermSource = src
+
         let hosting = NSHostingController(rootView: RootMeterView(vm: vm))
         hosting.sizingOptions = []
 

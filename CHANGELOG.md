@@ -11,11 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-- **Meter: vectorscope auto-zoom + manual zoom.** The goniometer's display
-  gain now rides the program level (fast shrink / slow grow, filling ~85%
-  of the field -- hardware-goniometer style) so quiet program no longer
-  draws a tiny figure; untick Auto zoom for a fixed 1x-10x slider. Points
-  past full scale saturate at the field edge like the real thing.
+- **Meter: vectorscope auto-zoom.** The goniometer's display gain rides the
+  program level (fast shrink / slow grow, filling ~85% of the field --
+  hardware-goniometer style) so quiet program no longer draws a tiny
+  figure. Points past full scale saturate at the field edge like the real
+  thing. Always on -- no knob to mis-set.
+- **Meter: DC block for the decoded audio** (input-bar checkbox, default
+  on, live): a transmitter carrier offset becomes DC after FM demod,
+  showing as an off-center vectorscope, offset waveforms, and DC in the
+  monitor/recordings -- as observed on an 864.5 MHz wireless audio link.
+  Broadcast FM has no legitimate DC. Deviation measurements were already
+  DC-tracked; this extends the cleanup to the decode path (scopes,
+  vectorscope, monitor, recordings, L/R/M/S levels).
 - **Meter: graceful SIGTERM.** pkill / logout / scripted termination now
   runs the normal shutdown, releasing the SDRplay selection and RTL handle
   (previously the SDRplay service ghost-held the RSP for the dead PID and

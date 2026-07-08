@@ -99,6 +99,9 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// Live-update the pilot reference (kHz) for the pilot-referenced audio path.
     func setPilotRefKHz(_ k: Float) { analysis.setPilotRefKHz(k) }
 
+    /// Decode-path DC blocker (live).
+    func setDCBlock(_ on: Bool) { analysis.setDCBlock(on) }
+
     /// Live-switch the audio path between absolute ("0 dBFS = k kHz") and
     /// pilot-referenced (nil) deviation scaling.
     func setFullScaleKHz(_ k: Float?) { analysis.setFullScaleKHz(k) }

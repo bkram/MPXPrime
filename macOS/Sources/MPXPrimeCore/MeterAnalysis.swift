@@ -149,6 +149,15 @@ public final class MeterAnalysis {
     // a clipped composite's edges, manufacturing deviation the transmitter
     // never emitted. Scopes, spectrum, and IN stay raw.
     private var dcTracker: DCTracker
+    // Decode-path DC blocker (live-toggleable, default on): a link
+    // transmitter's carrier offset becomes DC after FM demod; the decoder
+    // then puts that DC into both L and R (off-center vectorscope, offset
+    // waveforms, DC in the monitor audio and recordings, inflated M level).
+    // Broadcast FM carries no legitimate DC, so blocking is safe; the
+    // checkbox exists for purists and A/B checks. The measurement path has
+    // its own always-on tracker (above); composite scope/IN stay raw.
+    private var decodeDC: DCTracker
+    private let dcBlockOn = ManagedAtomic<Bool>(true)
     private let measurementFIR: BlockFIRFilter
     private var dcBlock: [Float]
     private var measBlock: [Float]
@@ -252,6 +261,7 @@ public final class MeterAnalysis {
         // drop to 0.2 Hz for tracking -- otherwise the acquisition residual
         // of an SDR carrier offset lands in the peak windows.
         dcTracker = DCTracker(cutoffHz: 5.0, sampleRate: sampleRate)
+        decodeDC = DCTracker(cutoffHz: 2.0, sampleRate: sampleRate)
         // Clamp below Nyquist for low-rate captures (no RDS there anyway).
         let cutoff = min(60_000.0, 0.45 * sampleRate)
         let transition = min(8_000.0, 0.5 * sampleRate - cutoff - 1.0)
@@ -283,6 +293,9 @@ public final class MeterAnalysis {
     /// RDS decoder. Use on retune so the prior station's peaks / MPX power /
     /// BER / RDS text don't carry over. Safe to call from any thread.
     public func requestFullReset() { fullResetRequested.store(true, ordering: .relaxed) }
+
+    /// Enable/disable the decode-path DC blocker (live; default on).
+    public func setDCBlock(_ on: Bool) { dcBlockOn.store(on, ordering: .relaxed) }
 
     /// Set the pilot reference (kHz) used by the pilot-referenced audio path.
     /// Safe to call from any thread; picked up at the top of the next `process`.
@@ -365,6 +378,7 @@ public final class MeterAnalysis {
         var sSq: Float = 0.0
         var over77 = 0
         let threshAmp = exceedanceThreshAmp
+        let dcBlock = dcBlockOn.load(ordering: .relaxed)
 
         var i = 0
         for s in samples {
@@ -408,7 +422,8 @@ public final class MeterAnalysis {
             // expectedSide = 0 disables the decoder's stereo-collapse self-heal
             // (a meter must not silently reconfigure); programActivity = |s|
             // keeps the noise gate open while signal is present.
-            let (l, r) = decoder.process(s, programActivity: a, expectedSide: 0.0)
+            let dIn = dcBlock ? decodeDC.process(s) : s
+            let (l, r) = decoder.process(dIn, programActivity: a, expectedSide: 0.0)
             lSq += l * l
             rSq += r * r
             lr += l * r

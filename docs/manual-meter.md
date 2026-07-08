@@ -51,7 +51,13 @@ chosen unit is absent at start, the Meter starts on Auto with a note and keeps
 your selection. To meter two stations at once, launch the app twice and give
 each instance its own SDR -- and its own **Out** device (below).
 
-The input bar's right side has an **Outputs** button opening the routing
+The input bar's right side has a **DC block** checkbox (default on): a
+transmitter carrier offset becomes DC after FM demod -- an off-center
+vectorscope, offset waveforms, and DC in the monitor audio and recordings
+(common on wireless audio links). Broadcast FM has no legitimate DC, so
+leave it on; deviation measurements are always DC-tracked separately.
+
+The input bar's right side also has an **Outputs** button opening the routing
 popover (all live-apply; capture, analysis, and recording are untouched;
 remembered by device UID):
 
@@ -159,10 +165,9 @@ remembered by device UID):
   line (`MPX ... dBr (max ...)   PK +/- kHz   >77k ...%`).
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
-  beside the trends. **Auto zoom** (default) rides the display gain with the
-  program level so the figure fills the scope, hardware-goniometer style --
-  fast shrink when the program gets hot, slow grow as it quiets; untick it
-  for a fixed **1x-10x zoom slider**.
+  beside the trends. The display gain automatically rides the program level
+  so the figure fills the scope, hardware-goniometer style -- fast shrink
+  when the program gets hot, slow grow as it quiets.
 - **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
 - **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
   it between waveform and its audio spectrum (0-20 kHz).

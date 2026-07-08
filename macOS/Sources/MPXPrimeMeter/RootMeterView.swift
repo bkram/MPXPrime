@@ -296,6 +296,10 @@ struct RootMeterView: View {
             }
             Spacer()
 
+            dcBlockToggle
+
+            Divider().frame(height: 16)
+
             // Output routing (both source modes), consolidated in a popover:
             // the decoded-monitor device, and the MPX pass-through (raw
             // composite to its own device). All live-apply.
@@ -437,26 +441,7 @@ struct RootMeterView: View {
                         + "spread warns of out-of-phase (mono-incompatible) audio.")
             }
         } label: {
-            HStack {
-                Text("Vectorscope")
-                Spacer()
-                Toggle("Auto zoom", isOn: $vm.vectorAutoZoom)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-                    .help("Ride the display gain with the program level so the "
-                        + "figure fills the scope (hardware-goniometer style). "
-                        + "Off: use the fixed zoom slider.")
-                    .onChange(of: vm.vectorAutoZoom) { _, _ in vm.saveSettings() }
-                if !vm.vectorAutoZoom {
-                    Slider(value: $vm.vectorZoomManual, in: 1...10)
-                        .frame(width: 90)
-                        .help("Fixed vectorscope zoom (1x-10x).")
-                        .onChange(of: vm.vectorZoomManual) { _, _ in vm.saveSettings() }
-                    Text(String(format: "%.1fx", vm.vectorZoomManual))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text("Vectorscope")
         }
     }
 
@@ -531,6 +516,21 @@ struct RootMeterView: View {
         }
         .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
         .help(frequencyHelp)
+    }
+
+    private static let dcBlockHelp = "Remove DC offset from the decoded "
+        + "audio (default on). A transmitter carrier offset becomes DC after "
+        + "FM demod -- an off-center vectorscope, offset waveforms, and DC in "
+        + "the monitor/recordings; common on wireless audio links. Broadcast "
+        + "FM has no legitimate DC, so leave it on. Deviation measurements "
+        + "are always DC-tracked separately. Applies live."
+
+    private var dcBlockToggle: some View {
+        Toggle("DC block", isOn: $vm.dcBlockEnabled)
+            .toggleStyle(.checkbox)
+            .fixedSize()
+            .help(Self.dcBlockHelp)
+            .onChange(of: vm.dcBlockEnabled) { _, _ in vm.applyDCBlockChange() }
     }
 
     // MARK: - Output routing popover

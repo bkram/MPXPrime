@@ -78,6 +78,11 @@ combination test suite. Newest first.
   Remembered by device UID. Essential when two Meter instances run side by
   side.
 
+- **Meter: 1 kHz tuning resolution.** The frequency field accepts 1 kHz
+  precision (e.g. 864.540 for an audio link) instead of the broadcast
+  band's 100 kHz raster; scroll/stepper keep 0.1 MHz steps. Tuning
+  off-grid carriers exactly also removes the demod DC offset at its
+  source.
 - **Meter: SDR tuning is no longer fenced to the broadcast band.** The
   frequency field now spans the ACTIVE tuner's real range -- RTL-SDR
   ~24-1766 MHz, SDRplay RSP 0.1-2000 MHz -- because FM-stereo MPX also

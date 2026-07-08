@@ -496,18 +496,21 @@ struct RootMeterView: View {
     private var frequencyHelp: String {
         let range = vm.sdrIsSDRplay
             ? "SDRplay RSP: 0.1-2000 MHz" : "RTL-SDR: 24-1766 MHz"
-        return "Tune frequency in MHz -- the FM broadcast band, or any "
-            + "FM-stereo signal in the active tuner's range (audio links, "
-            + "license-exempt stereo transmitters, e.g. 886 MHz). "
-            + "\(range). Type with '.' or ',', or scroll over the field to "
-            + "step. Retunes live, no restart."
+        return "Tune frequency in MHz, 1 kHz resolution -- the FM broadcast "
+            + "band, or any FM-stereo signal in the active tuner's range "
+            + "(audio links / license-exempt transmitters, e.g. 864.540). "
+            + "\(range). Type with '.' or ',' (scroll steps 0.1 MHz). "
+            + "Retunes live, no restart."
     }
 
     private var frequencyField: some View {
         HStack(spacing: 4) {
+            // decimals: 3 gives 1 kHz typing resolution -- broadcast sits on
+            // the 100 kHz raster, but audio links do not (e.g. 864.540).
+            // Scroll/stepper keep the 0.1 MHz step for band-surfing.
             ScrollableNumericField(value: $vm.frequencyMHz,
-                                   range: tuneRangeMHz, step: 0.1, decimals: 1)
-                .frame(width: 64)
+                                   range: tuneRangeMHz, step: 0.1, decimals: 3)
+                .frame(width: 76)
             Text("MHz").foregroundStyle(.secondary)
                 .fixedSize()
             Stepper("Frequency", value: $vm.frequencyMHz,

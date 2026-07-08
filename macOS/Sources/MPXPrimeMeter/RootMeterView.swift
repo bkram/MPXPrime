@@ -33,11 +33,11 @@ struct RootMeterView: View {
                         HStack(alignment: .top, spacing: 12) {
                             audioSection
                             deviationSection
-                            // Sized to the widest Modulation readout
+                            // Two-column grid, sized so the widest readouts
                             // ("+12.0 dBr  max +12.0" / "+199.9 / -199.9 kHz")
-                            // so values never truncate.
+                            // never truncate.
                             metricsSection
-                                .frame(width: 210)
+                                .frame(width: 420)
                             // RDS is a key/value text grid: cap it at a
                             // comfortable reading width instead of swallowing
                             // all remaining row width on wide displays.
@@ -58,7 +58,7 @@ struct RootMeterView: View {
                             .layoutPriority(1)
                     }
                     .padding(12)
-                    .frame(minWidth: 1020, minHeight: max(760, geo.size.height - 44))
+                    .frame(minWidth: 1260, minHeight: max(760, geo.size.height - 44))
                 }
             }
         }
@@ -161,17 +161,7 @@ struct RootMeterView: View {
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
                 }
-                HStack(spacing: 4) {
-                    ScrollableNumericField(value: $vm.frequencyMHz,
-                                           range: 64.0...108.0, step: 0.1, decimals: 1)
-                        .frame(width: 64)
-                    Text("MHz").foregroundStyle(.secondary)
-                    Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
-                        .labelsHidden()
-                }
-                .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
-                .help("FM broadcast frequency (RTL-SDR). Type with '.' or ',', or "
-                    + "scroll over the field to step. Retunes live, no restart.")
+                frequencyField
 
                 Divider().frame(height: 16)
 
@@ -444,65 +434,114 @@ struct RootMeterView: View {
         }
     }
 
+    // Full tuning range of the ACTIVE tuner, not just the 87.5-108 MHz
+    // broadcast band: FM-stereo MPX also rides analog audio links and
+    // license-exempt stereo transmitters well outside it (e.g. 863-865 /
+    // 886 MHz). RTL-SDR (R820T-class) tunes ~24-1766 MHz; SDRplay RSPs go
+    // from 1 kHz to 2 GHz. Unsupported tunes fail gracefully in the driver.
+    private var tuneRangeMHz: ClosedRange<Double> {
+        vm.sdrIsSDRplay ? 0.1...2000.0 : 24.0...1766.0
+    }
+
+    private var frequencyHelp: String {
+        let range = vm.sdrIsSDRplay
+            ? "SDRplay RSP: 0.1-2000 MHz" : "RTL-SDR: 24-1766 MHz"
+        return "Tune frequency in MHz -- the FM broadcast band, or any "
+            + "FM-stereo signal in the active tuner's range (audio links, "
+            + "license-exempt stereo transmitters, e.g. 886 MHz). "
+            + "\(range). Type with '.' or ',', or scroll over the field to "
+            + "step. Retunes live, no restart."
+    }
+
+    private var frequencyField: some View {
+        HStack(spacing: 4) {
+            ScrollableNumericField(value: $vm.frequencyMHz,
+                                   range: tuneRangeMHz, step: 0.1, decimals: 1)
+                .frame(width: 64)
+            Text("MHz").foregroundStyle(.secondary)
+            Stepper("Frequency", value: $vm.frequencyMHz,
+                    in: tuneRangeMHz, step: 0.1)
+                .labelsHidden()
+        }
+        .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
+        .help(frequencyHelp)
+    }
+
     // MARK: - Modulation metrics (BS.412 power, peak-hold, separation)
 
     private var metricsSection: some View {
         GroupBox("Modulation") {
             LiveObservationView(telemetry: vm.telemetry) { t in
+                // Two-column grid so the card fills the fixed-height top row
+                // compactly instead of stacking one tall airy column (which
+                // pushed Reset Peaks below the card). SDR adds SIGNAL as a
+                // sixth cell; audio input leaves that cell empty.
                 VStack(alignment: .leading, spacing: 10) {
-                    if vm.inputKind == .sdr {
-                        readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
-                                valueTint: t.rssiValid ? signalTint(t.rssiNorm)
-                                    : BroadcastStyle.readoutPrimary,
-                                help: "Relative received signal level (filtered IQ channel, "
-                                    + "dBFS). Higher is stronger; most meaningful with Auto Gain "
-                                    + "off. A valid BS.412 MPX-power reading needs a strong, "
-                                    + "clean signal -- see the manual.")
+                    Grid(alignment: .topLeading, horizontalSpacing: 20, verticalSpacing: 12) {
+                        GridRow {
+                            readout("MPX POWER",
+                                    t.mpxPowerValid
+                                        ? String(format: "%+.1f dBr", t.mpxPowerDBr)
+                                            + (t.mpxPowerMaxValid
+                                                ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
+                                                : "")
+                                        : "--",
+                                    valueTint: t.mpxPowerValid
+                                        ? limitTint(
+                                            max(t.mpxPowerDBr,
+                                                t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
+                                            limit: 0.0, warn: -1.0)
+                                        : BroadcastStyle.readoutPrimary,
+                                    help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
+                                        + "window, and (max) the worst 60 s window since reset "
+                                        + "-- the number compliance is judged on; it needs a "
+                                        + "full 60 s of signal before it reads. 0 dBr is the "
+                                        + "power of a +/-19 kHz sine; the regulatory limit is "
+                                        + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                            readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
+                                    valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
+                                                         limit: 75.0, warn: 71.0),
+                                    help: "Highest positive / negative deviation in the last "
+                                        + "60 s (50 ms peak-hold slots, measuring-receiver "
+                                        + "style; a single impulse ages out instead of pinning "
+                                        + "the reading). A persistent +/- asymmetry suggests a "
+                                        + "carrier offset or one-sided clipping.")
+                        }
+                        GridRow {
+                            readout("OVER 77 kHz", t.exceedanceText,
+                                    valueTint: t.exceedanceValid
+                                        ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
+                                        : BroadcastStyle.readoutPrimary,
+                                    help: "ITU-R SM.1268 deviation compliance: the share of "
+                                        + "measured samples above 77 kHz (75 kHz + 2 kHz "
+                                        + "tolerance) since the last reset. Regulators treat "
+                                        + "more than 0.0001 % as over-deviation; rare single "
+                                        + "peaks are not a violation.")
+                            readout("SEPARATION", t.separationText,
+                                    help: "Best stereo separation observed since reset. Truest "
+                                        + "during single-channel / test-tone content; panned "
+                                        + "program reads low.")
+                        }
+                        GridRow {
+                            if vm.inputKind == .sdr {
+                                readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
+                                        valueTint: t.rssiValid ? signalTint(t.rssiNorm)
+                                            : BroadcastStyle.readoutPrimary,
+                                        help: "Relative received signal level (filtered IQ "
+                                            + "channel, dBFS). Higher is stronger; most "
+                                            + "meaningful with Auto Gain off. A valid BS.412 "
+                                            + "MPX-power reading needs a strong, clean signal "
+                                            + "-- see the manual.")
+                            } else {
+                                Color.clear.frame(width: 1, height: 1)
+                            }
+                            Button("Reset Peaks") { vm.resetPeaks() }
+                                .buttonStyle(.bordered)
+                                .disabled(!vm.running)
+                                .gridColumnAlignment(.leading)
+                        }
                     }
-                    readout("MPX POWER",
-                            t.mpxPowerValid
-                                ? String(format: "%+.1f dBr", t.mpxPowerDBr)
-                                    + (t.mpxPowerMaxValid
-                                        ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
-                                        : "")
-                                : "--",
-                            valueTint: t.mpxPowerValid
-                                ? limitTint(
-                                    max(t.mpxPowerDBr,
-                                        t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
-                                    limit: 0.0, warn: -1.0)
-                                : BroadcastStyle.readoutPrimary,
-                            help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
-                                + "window, and (max) the worst 60 s window since reset "
-                                + "-- the number compliance is judged on; it needs a "
-                                + "full 60 s of signal before it reads. 0 dBr is the "
-                                + "power of a +/-19 kHz sine; the regulatory limit is "
-                                + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
-                    readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
-                            valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
-                                                 limit: 75.0, warn: 71.0),
-                            help: "Highest positive / negative deviation in the last "
-                                + "60 s (50 ms peak-hold slots, measuring-receiver "
-                                + "style; a single impulse ages out instead of pinning "
-                                + "the reading). A persistent +/- asymmetry suggests a "
-                                + "carrier offset or one-sided clipping.")
-                    readout("OVER 77 kHz", t.exceedanceText,
-                            valueTint: t.exceedanceValid
-                                ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
-                                : BroadcastStyle.readoutPrimary,
-                            help: "ITU-R SM.1268 deviation compliance: the share of "
-                                + "measured samples above 77 kHz (75 kHz + 2 kHz "
-                                + "tolerance) since the last reset. Regulators treat "
-                                + "more than 0.0001 % as over-deviation; rare single "
-                                + "peaks are not a violation.")
-                    readout("SEPARATION", t.separationText,
-                            help: "Best stereo separation observed since reset. Truest "
-                                + "during single-channel / test-tone content; panned "
-                                + "program reads low.")
                     Spacer(minLength: 0)
-                    Button("Reset Peaks") { vm.resetPeaks() }
-                        .buttonStyle(.bordered)
-                        .disabled(!vm.running)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(6)

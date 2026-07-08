@@ -11,6 +11,15 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: SDR tuning is no longer fenced to the broadcast band.** The
+  frequency field now spans the ACTIVE tuner's real range -- RTL-SDR
+  ~24-1766 MHz, SDRplay RSP 0.1-2000 MHz -- because FM-stereo MPX also
+  rides analog audio links and license-exempt stereo transmitters outside
+  87.5-108 MHz (e.g. 886 MHz). Out-of-range tunes are rejected gracefully
+  by the driver; the tooltip states the active device's range.
+- **Meter: the Modulation card is a two-column grid** (MPX POWER | PEAK,
+  OVER 77 kHz | SEPARATION, SIGNAL | Reset Peaks) so it fills the top row
+  compactly instead of stacking one tall column.
 - **Meter: dashboard top row makes better use of the screen.** The Modulation
   panel is sized so its readouts never truncate (the "MPX POWER ... max ..."
   compliance figure was ellipsized), readout values shrink slightly rather

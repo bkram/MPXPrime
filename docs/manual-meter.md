@@ -48,7 +48,11 @@ detected at launch, otherwise to **Audio**.
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
   >= 128 kHz, so the default input prefers a 192 kHz-capable device.
-- **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The Meter decodes
+- **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The frequency
+  field spans the active tuner's full range (RTL-SDR ~24-1766 MHz, SDRplay
+  RSP 0.1-2000 MHz), not just the broadcast band -- any FM-stereo signal
+  measures the same way, including analog audio links and license-exempt
+  stereo transmitters (e.g. 886 MHz). The Meter decodes
   the dongle **in-process** -- it links the vendored tuner (a stripped subset of
   FM-SDR-Tuner, from `tuner/`) as a library and runs the RTL-SDR capture + FM
   demod on its own thread, delivering the mono MPX at 192 kHz with absolute

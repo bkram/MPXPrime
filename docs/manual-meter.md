@@ -159,7 +159,10 @@ remembered by device UID):
   line (`MPX ... dBr (max ...)   PK +/- kHz   >77k ...%`).
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
-  beside the trends.
+  beside the trends. **Auto zoom** (default) rides the display gain with the
+  program level so the figure fills the scope, hardware-goniometer style --
+  fast shrink when the program gets hot, slow grow as it quiets; untick it
+  for a fixed **1x-10x zoom slider**.
 - **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
 - **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
   it between waveform and its audio spectrum (0-20 kHz).

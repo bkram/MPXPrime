@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: vectorscope auto-zoom + manual zoom.** The goniometer's display
+  gain now rides the program level (fast shrink / slow grow, filling ~85%
+  of the field -- hardware-goniometer style) so quiet program no longer
+  draws a tiny figure; untick Auto zoom for a fixed 1x-10x slider. Points
+  past full scale saturate at the field edge like the real thing.
+- **Meter: graceful SIGTERM.** pkill / logout / scripted termination now
+  runs the normal shutdown, releasing the SDRplay selection and RTL handle
+  (previously the SDRplay service ghost-held the RSP for the dead PID and
+  the unit vanished from enumeration until replug).
+- **Meter: the device-lost status now explains the held USB claim** (a
+  dead handle is deliberately abandoned; the unit needs a replug or app
+  restart before reuse).
 - **Meter: harden the RTL-SDR close against the remaining crash paths.**
   A second SEGV-in-libusb crash (via the Stop button, on a wedged dongle)
   showed two holes in the earlier unplug fix: (a) `rtlsdr_read_async` can

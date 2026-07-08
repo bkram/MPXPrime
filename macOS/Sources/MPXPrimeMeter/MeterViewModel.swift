@@ -98,6 +98,10 @@ final class MeterViewModel: ObservableObject {
     /// Spectrum display span in kHz (60 = focus on the modulated bands, 100 =
     /// full incl. SCA). Display-only; changes only on toggle, never per tick.
     @Published var spectrumSpanKHz: Int = 60
+    /// Vectorscope zoom: auto rides the program level (hardware-goniometer
+    /// style); manual uses the fixed factor below.
+    @Published var vectorAutoZoom = true
+    @Published var vectorZoomManual: Double = 2.0
 
     // RDS readout (changes per second; updated only when it actually changes).
     // RDS display strings live on MeterTelemetry (@Observable), NOT here:
@@ -119,6 +123,9 @@ final class MeterViewModel: ObservableObject {
     // and the group counters, which advance with every received group
     // (~10/s), but the text panel only needs a human reading rate. 2 Hz.
     private var lastRDSPush: TimeInterval = 0
+    // Smoothed vectorscope auto-gain (display-only): fast attack when the
+    // figure would clip the field, slow release as program quiets.
+    private var vectorAutoGain: Double = 1.0
 
     init() {
         refreshDevices()
@@ -213,6 +220,8 @@ final class MeterViewModel: ObservableObject {
         static let mpxPass = "meter.mpxPassEnabled"
         static let mpxPassUID = "meter.mpxPassOutputUID"
         static let mpxPassGain = "meter.mpxPassGainDB"
+        static let vectorAuto = "meter.vectorAutoZoom"
+        static let vectorZoom = "meter.vectorZoomManual"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -254,6 +263,8 @@ final class MeterViewModel: ObservableObject {
         selectedSDRID = d.string(forKey: Keys.sdrDeviceID)
         if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
         if d.object(forKey: Keys.mpxPassGain) != nil { mpxPassGainDB = d.double(forKey: Keys.mpxPassGain) }
+        if d.object(forKey: Keys.vectorAuto) != nil { vectorAutoZoom = d.bool(forKey: Keys.vectorAuto) }
+        if d.object(forKey: Keys.vectorZoom) != nil { vectorZoomManual = d.double(forKey: Keys.vectorZoom) }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
             selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
         }
@@ -295,6 +306,8 @@ final class MeterViewModel: ObservableObject {
         }
         d.set(mpxPassEnabled, forKey: Keys.mpxPass)
         d.set(mpxPassGainDB, forKey: Keys.mpxPassGain)
+        d.set(vectorAutoZoom, forKey: Keys.vectorAuto)
+        d.set(vectorZoomManual, forKey: Keys.vectorZoom)
         if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.mpxPassUID)
         } else {
@@ -644,6 +657,23 @@ final class MeterViewModel: ObservableObject {
 
         put(\.devHistoryKHz, s.devHistoryKHz)
         put(\.mpxPowerHistoryDBr, s.mpxPowerHistoryDBr)
+
+        // Vectorscope display gain: target fills ~85% of the field at the
+        // block's decoded peak; fast attack (shrink), slow release (grow).
+        if vectorAutoZoom {
+            var peak: Float = 1e-3
+            for v in s.decodedLScope { let a = abs(v); if a > peak { peak = a } }
+            for v in s.decodedRScope { let a = abs(v); if a > peak { peak = a } }
+            let target = min(10.0, max(1.0, 0.85 / Double(peak)))
+            if target < vectorAutoGain {
+                vectorAutoGain += 0.5 * (target - vectorAutoGain)   // ~fast shrink
+            } else {
+                vectorAutoGain += 0.03 * (target - vectorAutoGain)  // slow grow
+            }
+            put(\.vectorZoom, (vectorAutoGain * 20).rounded() / 20)
+        } else {
+            put(\.vectorZoom, vectorZoomManual)
+        }
 
         // Waveforms/spectra genuinely change every tick; write unguarded
         // (an equality compare of 512 floats that always differs is waste).

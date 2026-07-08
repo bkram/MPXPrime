@@ -276,6 +276,10 @@ bool SDRplayDevice::setBandwidthHz(int hz) {
 
 const char *SDRplayDevice::modelName() const { return modelNameForHwVer(m_hwVer); }
 
+const char *SDRplayDevice::serialNumber() const {
+  return m_connected.load() ? g_device.SerNo : "";
+}
+
 bool SDRplayDevice::setLnaState(int state) {
   if (!m_connected.load() || !g_params || !m_handle) return false;
   g_params->rxChannelA->tunerParams.gain.LNAstate =
@@ -359,6 +363,7 @@ SDRplayDevice::~SDRplayDevice() {}
 bool SDRplayDevice::apiAvailable() { return false; }
 int SDRplayDevice::deviceCount() { return 0; }
 int SDRplayDevice::listDevices(Info *, int) { return 0; }
+const char *SDRplayDevice::serialNumber() const { return ""; }
 bool SDRplayDevice::connect(uint32_t, const char *) { return false; }
 void SDRplayDevice::disconnect() {}
 bool SDRplayDevice::setFrequency(uint32_t) { return false; }

@@ -11,6 +11,16 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: the SDR picker now reliably lists the unit in use.** The SDRplay
+  API omits in-use devices from enumeration (including our own active RSP),
+  which could hide the picker entirely. The tuner now reports the active
+  unit's serial (`mpxtuner_device_serial`), the picker merges it in, a
+  mid-capture rescan can only add devices (never shrink the list), and a
+  full rescan runs on Stop.
+- **Meter: input-bar cleanups.** Small captions (MHz / IF / kHz / Bias-T) no
+  longer wrap into vertical letter stacks on narrower windows; the SDRplay
+  antenna control is a compact menu; the SDR and Out pickers are slightly
+  tighter so the bar fits on one line.
 - **Meter: pick your SDR when several are attached.** New SDR picker in the
   input bar (shown with more than one unit): any mix of SDRplay RSPs and
   RTL-SDR dongles, listed by model + serial. The choice is remembered by

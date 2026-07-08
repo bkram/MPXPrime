@@ -126,6 +126,7 @@ struct RootMeterView: View {
                                                range: 50.0...300.0, step: 1.0, decimals: 0)
                             .frame(width: 50)
                         Text("kHz").foregroundStyle(.secondary)
+                            .fixedSize()
                         Stepper("Full scale", value: $vm.audioFullScaleKHz,
                                 in: 50.0...300.0, step: 1.0)
                             .labelsHidden()
@@ -141,6 +142,7 @@ struct RootMeterView: View {
                                                range: 4.0...9.0, step: 0.05, decimals: 2)
                             .frame(width: 48)
                         Text("kHz").foregroundStyle(.secondary)
+                            .fixedSize()
                         Stepper("Pilot Ref", value: $vm.pilotRefKHz, in: 4.0...9.0, step: 0.05)
                             .labelsHidden()
                     }
@@ -164,7 +166,7 @@ struct RootMeterView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 250)
+                    .frame(maxWidth: 220)
                     .help("Which SDR to capture from when several are attached "
                         + "(multiple RSPs / RTL dongles supported). Remembered by "
                         + "serial number. Auto prefers SDRplay. Launch the app "
@@ -200,6 +202,7 @@ struct RootMeterView: View {
                                                range: 0.0...50.0, step: 1.0, decimals: 1)
                             .frame(width: 52)
                         Text(vm.sdrIsSDRplay ? "IF" : "dB").foregroundStyle(.secondary)
+                            .fixedSize()
                         Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
                             .labelsHidden()
                     }
@@ -252,7 +255,7 @@ struct RootMeterView: View {
                             Text("Ant \(["A", "B", "C"][min(i, 2)])").tag(i)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     .fixedSize()
                     .labelsHidden()
                     .help("SDRplay antenna input.")
@@ -275,6 +278,7 @@ struct RootMeterView: View {
                 }
 
                 Toggle("Bias-T", isOn: $vm.sdrBiasTee)
+                    .fixedSize()
                     .toggleStyle(.switch)
                     .help("5V bias tee: powers an active antenna / inline LNA. "
                         + "Leave off unless your antenna needs it (never into a DC short). "
@@ -295,9 +299,9 @@ struct RootMeterView: View {
             // the monitor restarts, capture/analysis/recording untouched.
             // Essential when two Meter instances run side by side -- each
             // needs its own output or both land on the system default.
-            Label("Out", systemImage: "speaker.wave.2")
-                .labelStyle(.titleAndIcon)
+            Image(systemName: "speaker.wave.2")
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)  // the picker below carries the label
             Picker("Monitor output", selection: $vm.selectedOutputID) {
                 Text("System Default").tag(AudioDeviceID?.none)
                 ForEach(vm.outputDevices) { dev in
@@ -305,7 +309,7 @@ struct RootMeterView: View {
                 }
             }
             .labelsHidden()
-            .frame(maxWidth: 190)
+            .frame(maxWidth: 165)
             .help("Where the decoded monitor audio plays. Applies live "
                 + "(capture and recording are not interrupted). Remembered "
                 + "per launch by device UID.")
@@ -502,6 +506,7 @@ struct RootMeterView: View {
                                    range: tuneRangeMHz, step: 0.1, decimals: 1)
                 .frame(width: 64)
             Text("MHz").foregroundStyle(.secondary)
+                .fixedSize()
             Stepper("Frequency", value: $vm.frequencyMHz,
                     in: tuneRangeMHz, step: 0.1)
                 .labelsHidden()

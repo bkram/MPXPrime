@@ -122,8 +122,34 @@ final class MeterViewModel: ObservableObject {
     }
 
     /// Re-enumerate attached SDRs (cheap USB/API scan; no device is opened).
+    /// While capturing, MERGE instead of replace: the SDRplay API omits
+    /// in-use units from enumeration (including our own), so a mid-capture
+    /// scan must never shrink the picker. A full replace happens only when
+    /// idle (drops unplugged units).
     func refreshSDRDevices() {
-        sdrDevices = SDRLibraryInputSource.listDevices()
+        let scanned = SDRLibraryInputSource.listDevices()
+        if running {
+            var merged = sdrDevices
+            for dev in scanned where !merged.contains(where: { $0.id == dev.id }) {
+                merged.append(dev)
+            }
+            sdrDevices = merged
+        } else {
+            sdrDevices = scanned
+        }
+    }
+
+    /// Ensure the unit we are actively capturing from is in the picker list
+    /// (backend enumeration hides in-use devices).
+    private func mergeActiveSDRDevice(_ source: SDRLibraryInputSource) {
+        let serial = source.deviceSerial
+        guard !serial.isEmpty else { return }
+        let backend = source.isSDRplay ? 2 : 1
+        let active = SDRLibraryInputSource.DeviceInfo(
+            backend: backend, index: 0, name: source.deviceName, serial: serial)
+        if !sdrDevices.contains(where: { $0.id == active.id }) {
+            sdrDevices.append(active)
+        }
     }
 
     func refreshDevices() {
@@ -335,6 +361,7 @@ final class MeterViewModel: ObservableObject {
             sdrIsSDRplay = source.isSDRplay
             sdrAntennaCount = source.antennaCount
             sdrDeviceName = source.deviceName
+            mergeActiveSDRDevice(source)
             running = true
             let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
@@ -358,6 +385,8 @@ final class MeterViewModel: ObservableObject {
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
+        // Devices are all free now: refresh the picker with a full scan.
+        refreshSDRDevices()
     }
 
     /// SDR unit changed: reopen on the chosen device (device open is not a

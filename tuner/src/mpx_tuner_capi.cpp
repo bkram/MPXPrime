@@ -333,6 +333,25 @@ void mpxtuner_device_name(const MpxTuner *t, char *buf, size_t len) {
   buf[len - 1] = '\0';
 }
 
+void mpxtuner_device_serial(const MpxTuner *t, char *buf, size_t len) {
+  if (!buf || len == 0) return;
+  buf[0] = '\0';
+  if (!t) return;
+  if (t->backend == BackendSDRplay) {
+    std::strncpy(buf, t->sdrplay.serialNumber(), len - 1);
+    buf[len - 1] = '\0';
+    return;
+  }
+#if defined(FM_TUNER_HAS_RTLSDR)
+  char manufact[256] = {0}, product[256] = {0}, serial[256] = {0};
+  if (rtlsdr_get_device_usb_strings(t->rtl.deviceIndex(), manufact, product,
+                                    serial) == 0) {
+    std::strncpy(buf, serial, len - 1);
+    buf[len - 1] = '\0';
+  }
+#endif
+}
+
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz) {
   if (t) t->enqueue({CmdFreq, static_cast<double>(khz)});
 }

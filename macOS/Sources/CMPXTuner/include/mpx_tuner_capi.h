@@ -61,6 +61,11 @@ typedef struct {
   char device_serial[64]; // non-empty: select the device with this serial
 } MpxTunerConfig;
 
+/// Serial of the ACTIVE device ("" if unknown). Lets the UI list the unit it
+/// is capturing from even when the backend API hides in-use devices from
+/// enumeration (SDRplay GetDevices omits selected units).
+void mpxtuner_device_serial(const MpxTuner *t, char *buf, size_t len);
+
 /// List attached SDR devices across both backends (SDRplay first, then
 /// RTL-SDR). Returns the number written (<= max).
 int mpxtuner_list_devices(MpxTunerDeviceInfo *out, int max);

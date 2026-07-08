@@ -17,6 +17,7 @@ public:
 
   bool connect();
   void disconnect();
+  uint32_t deviceIndex() const { return m_deviceIndex; }
 
   bool setFrequency(uint32_t freqHz);
   bool setSampleRate(uint32_t rate);

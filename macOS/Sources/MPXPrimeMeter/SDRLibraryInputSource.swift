@@ -117,6 +117,19 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         return Int(mpxtuner_antenna_count(handle))
     }
 
+    /// Serial of the ACTIVE device ("" if unknown) -- lets the picker list
+    /// the in-use unit even when backend enumeration hides it (SDRplay
+    /// GetDevices omits selected devices).
+    var deviceSerial: String {
+        guard let handle else { return "" }
+        var buf = [CChar](repeating: 0, count: 64)
+        buf.withUnsafeMutableBufferPointer { mpxtuner_device_serial(handle, $0.baseAddress, $0.count) }
+        return buf.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return "" }
+            return String(cString: base)
+        }
+    }
+
     /// Human device name, e.g. "SDRplay RSPdx" or "RTL-SDR R820T".
     var deviceName: String {
         guard let handle else { return "SDR" }

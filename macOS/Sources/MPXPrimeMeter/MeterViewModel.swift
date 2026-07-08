@@ -535,7 +535,11 @@ final class MeterViewModel: ObservableObject {
         // than silently showing -120 dBFS as if "Tuned".
         if inputKind == .sdr, let source = sdrSource, !source.isRunning {
             stop()
-            statusText = "SDR stopped: device lost (RTL-SDR unplugged?)"
+            // The dead handle is deliberately abandoned (closing it would
+            // crash in libusb), which keeps the unit's USB claim until the
+            // dongle is replugged or the app restarts -- say so.
+            statusText = "SDR stopped: device lost — replug the unit before "
+                + "reusing it (its USB claim is held until replug or app restart)"
             return
         }
         // Skip GUI pushes while the window is minimized / fully covered --

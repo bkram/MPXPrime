@@ -306,6 +306,15 @@ void mpxtuner_close(MpxTuner *t) {
   delete t;
 }
 
+void mpxtuner_close_fast(MpxTuner *t) {
+  if (!t) return;
+  t->running.store(false, std::memory_order_relaxed);
+  if (t->thread.joinable()) t->thread.join();
+  if (t->backend == BackendSDRplay) t->sdrplay.disconnect();
+  else t->rtl.disconnect(true /*skipDeviceClose*/);
+  delete t;
+}
+
 int mpxtuner_is_alive(const MpxTuner *t) {
   return (t && t->alive.load(std::memory_order_relaxed)) ? 1 : 0;
 }

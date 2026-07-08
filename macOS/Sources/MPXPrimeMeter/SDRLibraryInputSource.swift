@@ -201,6 +201,16 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         }
     }
 
+    /// Termination-time variant: skips the register-writing RTL device close
+    /// (a dead USB handle SEGVs in libusb; the kernel releases the claim as
+    /// the process exits).
+    func stopForTermination() {
+        if let handle {
+            mpxtuner_close_fast(handle)
+            self.handle = nil
+        }
+    }
+
     // MARK: - Live control (applied on the capture thread, no restart)
 
     func setFrequencyKHz(_ khz: Int) {

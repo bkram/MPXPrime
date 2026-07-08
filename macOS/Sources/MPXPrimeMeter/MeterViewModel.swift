@@ -397,11 +397,11 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
-    func stop() {
+    func stop(forTermination: Bool = false) {
         guard running else { return }
         timer?.invalidate()
         timer = nil
-        engine?.stop()   // also stops the input source (closes the tuner) + recorder
+        engine?.stop(forTermination: forTermination)   // also stops the input source + recorder
         engine = nil
         sdrSource = nil
         isRecording = false

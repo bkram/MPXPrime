@@ -11,6 +11,17 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: harden the RTL-SDR close against the remaining crash paths.**
+  A second SEGV-in-libusb crash (via the Stop button, on a wedged dongle)
+  showed two holes in the earlier unplug fix: (a) `rtlsdr_read_async` can
+  exit with rc == 0 on device loss, leaving the failed flag unset -- any
+  unexpected stream exit now marks the device lost regardless of rc;
+  (b) a wedged dongle can drop/re-enumerate on the bus leaving a stale
+  handle -- the close now also verifies the same physical unit (by USB
+  serial captured at open) is still enumerable before writing shutdown
+  registers. Belt-and-braces: app termination uses a new
+  `mpxtuner_close_fast` that never performs the register-writing device
+  close at all (the kernel releases the USB claim as the process exits).
 - **Meter: MPX pass-through.** New in the input bar's **Outputs** popover:
   play the received RAW composite (pilot + stereo subcarrier + RDS) to its
   own output device, in addition to the decoded monitor -- feed a 192 kHz

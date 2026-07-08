@@ -79,6 +79,11 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
 /// Stop the capture thread, close the device, and free. Safe on NULL.
 void mpxtuner_close(MpxTuner *t);
 
+/// Like mpxtuner_close but NEVER performs the register-writing RTL-SDR device
+/// close -- for process-termination paths, where a dead USB handle would SEGV
+/// in libusb and the kernel is about to release the claim anyway.
+void mpxtuner_close_fast(MpxTuner *t);
+
 /// 1 while the capture thread is alive; 0 after a fatal device error
 /// (e.g. the dongle was unplugged). The GUI polls this to surface a loss.
 int mpxtuner_is_alive(const MpxTuner *t);

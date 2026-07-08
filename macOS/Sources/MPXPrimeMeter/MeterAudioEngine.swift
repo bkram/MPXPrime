@@ -142,9 +142,13 @@ final class MeterAudioEngine: @unchecked Sendable {
         return fmt
     }
 
-    func stop() {
+    func stop(forTermination: Bool = false) {
         runningFlag.store(false, ordering: .relaxed)
-        input.stop()
+        if forTermination, let sdr = input as? SDRLibraryInputSource {
+            sdr.stopForTermination()
+        } else {
+            input.stop()
+        }
         // Wait for the consumer thread to actually exit before tearing down
         // the monitor/recorder it touches -- a bare sleep races (TSan-flagged);
         // the semaphore is a real happens-before handshake.

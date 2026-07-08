@@ -61,6 +61,16 @@ bool RTLSDRDevice::connect() {
               << "\n";
     return false;
   }
+  {
+    char manufact[256] = {0}, product[256] = {0}, serial[256] = {0};
+    if (rtlsdr_get_device_usb_strings(m_deviceIndex, manufact, product,
+                                      serial) == 0) {
+      std::strncpy(m_serial, serial, sizeof(m_serial) - 1);
+      m_serial[sizeof(m_serial) - 1] = '\0';
+    } else {
+      m_serial[0] = '\0';
+    }
+  }
   m_tunerName = tunerTypeName(rtlsdr_get_tuner_type(dev));
   std::cout << "[SDR] found " << m_tunerName << " tuner\n";
   if (rtlsdr_reset_buffer(dev) != 0) {
@@ -95,7 +105,7 @@ bool RTLSDRDevice::connect() {
 #endif
 }
 
-void RTLSDRDevice::disconnect() {
+void RTLSDRDevice::disconnect(bool skipDeviceClose) {
 #if defined(FM_TUNER_HAS_RTLSDR)
   m_asyncRunning = false;
   if (m_deviceHandle) {
@@ -105,17 +115,33 @@ void RTLSDRDevice::disconnect() {
     m_asyncThread.join();
   }
   if (m_deviceHandle) {
-    if (m_asyncFailed.load()) {
-      // The stream died under us (dongle unplugged / USB handle dead).
-      // rtlsdr_close() writes shutdown registers over USB
-      // (rtlsdr_deinit_baseband -> libusb_control_transfer) and SEGVs
-      // inside libusb on a vanished device -- observed as a crash in
-      // applicationWillTerminate after an unplug. There is nothing to
-      // deinit on a device that is gone: abandon the handle instead
-      // (the leak is bounded by process lifetime).
-      std::cerr << "[SDR] device lost; skipping close of dead RTL-SDR handle\n";
-    } else {
+    // rtlsdr_close() writes shutdown registers over USB
+    // (rtlsdr_deinit_baseband -> libusb_control_transfer) and SEGVs inside
+    // libusb when the handle's underlying device connection is dead --
+    // observed after an unplug AND after a wedged dongle silently dropped/
+    // re-enumerated on the bus. Only close when (a) the stream ended
+    // cleanly and (b) the same physical unit (by serial) is still
+    // enumerable right now. Otherwise abandon the handle: nothing to
+    // deinit on a dead connection (the leak is bounded by process
+    // lifetime; a fresh open re-enumerates by index/serial anyway).
+    bool safeToClose = !skipDeviceClose && !m_asyncFailed.load();
+    if (safeToClose && m_serial[0] != '\0') {
+      bool present = false;
+      const uint32_t n = rtlsdr_get_device_count();
+      for (uint32_t i = 0; i < n; ++i) {
+        char manufact[256] = {0}, product[256] = {0}, serial[256] = {0};
+        if (rtlsdr_get_device_usb_strings(i, manufact, product, serial) == 0 &&
+            std::strncmp(serial, m_serial, sizeof(m_serial)) == 0) {
+          present = true;
+          break;
+        }
+      }
+      safeToClose = present;
+    }
+    if (safeToClose) {
       rtlsdr_close(reinterpret_cast<rtlsdr_dev_t *>(m_deviceHandle));
+    } else {
+      std::cerr << "[SDR] device lost/failed; skipping close of dead RTL-SDR handle\n";
     }
     m_deviceHandle = nullptr;
   }
@@ -389,8 +415,12 @@ void RTLSDRDevice::asyncReadLoop() {
   }
   const int rc =
       rtlsdr_read_async(dev, &RTLSDRDevice::asyncCallback, this, 12, 16384);
-  if (m_asyncRunning.load() && rc != 0) {
-    std::cerr << "[SDR] read_async stopped with error rc=" << rc << "\n";
+  if (m_asyncRunning.load()) {
+    // We did NOT request this stop: the stream died under us. Treat it as
+    // device loss regardless of rc -- librtlsdr can return 0 here when the
+    // loss surfaced internally as a transfer cancel (the rc==0 hole that
+    // let rtlsdr_close run against a dead handle and SEGV in libusb).
+    std::cerr << "[SDR] read_async stopped unexpectedly rc=" << rc << "\n";
     m_asyncFailed = true;
   }
   m_asyncRunning = false;

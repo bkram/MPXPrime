@@ -71,7 +71,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Persist the last-used settings, then restore the input device rate.
         vm.saveSettings()
-        vm.stop()
+        vm.stop(forTermination: true)
     }
 
     // Standard macOS main menu: App (About / Hide / Quit), Edit (text

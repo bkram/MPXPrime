@@ -84,6 +84,18 @@ combination test suite. Newest first.
   Remembered by device UID. Essential when two Meter instances run side by
   side.
 
+- **Studio: refuses to start when a preferred device is unplugged.** Starting
+  with a remembered input / output / monitor device absent no longer silently
+  streams to the OS default (a broadcast chain must never swap its
+  transmitter feed unannounced): Start is refused with a visible alert
+  ("reconnect the device, or choose another in Settings"). A device that was
+  never chosen keeps the default-device behavior.
+- **Studio: telemetry migrated to @Observable.** `LiveTelemetry` (65
+  per-tick fields) moved from `ObservableObject`/`@Published` to the
+  `@Observable` macro, matching the Meter and the project convention (the
+  bridge's dependency tracking accumulates over long sessions); all 23
+  monitoring call sites use `LiveObservationView`, and the legacy
+  `LiveTelemetryView` wrapper is removed.
 - **Meter: RDS readout gated by reception quality (+ Force override).** An
   RDS block decoder syncs on a single accidental syndrome match and accepts
   PI from any single CRC-passing block, so on noise the panel hallucinated

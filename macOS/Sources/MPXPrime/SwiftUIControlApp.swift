@@ -1777,6 +1777,10 @@ final class MPXPrimeViewModel: ObservableObject {
     /// Release sliders re-target. 0 = Low, 1 = Mid, 2 = High.
     @Published var activeMultibandBand: Int = 1
     @Published var statusText: String = "Idle"
+    /// Start-refusal message shown as an alert: statusText has no on-screen
+    /// surface in Studio, and refusing to start MUST be visible (the user
+    /// clicked Start and nothing began).
+    @Published var startBlockedMessage: String?
     @Published var pendingRuntimeApply: Bool = false
 
     // Named snapshot slots — persistent operator-saved setups beyond
@@ -3248,6 +3252,36 @@ final class MPXPrimeViewModel: ObservableObject {
         let outputID: AudioDeviceID? = outputDevices.first(where: { $0.uid == selectedOutUID })?.id
         let outputMode: AudioOutputMode =
             processedAudio ? .processedAudio : (useMonitor ? .monitorAudio : .mpxComposite)
+
+        // REFUSE to start when a PREFERRED device is unplugged, instead of
+        // silently streaming to whatever the OS default happens to be (a
+        // broadcast chain must never swap its transmitter feed unannounced;
+        // matches the keep-the-selection convention of selectUID / the
+        // device-scan warning). An empty UID (no preference ever chosen)
+        // keeps the default-device behavior.
+        var missingAtStart: [String] = []
+        if runConfig.sourceMode.lowercased() == "input",
+           !selectedInputUID.isEmpty, inputID == nil {
+            missingAtStart.append("input \"\(config.inputDeviceName ?? selectedInputUID)\"")
+        }
+        if !selectedOutUID.isEmpty, outputID == nil {
+            let roleName = useMonitor ? "monitor" : "output"
+            let name = useMonitor
+                ? (config.monitorDeviceName ?? selectedOutUID)
+                : (config.outputDeviceName ?? selectedOutUID)
+            missingAtStart.append("\(roleName) \"\(name)\"")
+        }
+        if !missingAtStart.isEmpty {
+            let list = missingAtStart.joined(separator: ", ")
+            statusText = "Not started: preferred \(list) device not connected -- "
+                + "reconnect it or pick another device."
+            startBlockedMessage = "The preferred \(list) device is not connected.\n\n"
+                + "MPX Prime Studio will not silently use a different device: "
+                + "reconnect the device, or choose another one in Settings, "
+                + "then press Start again."
+            isRunning = false
+            return
+        }
 
         let generator = MPXGenerator(
             config: runConfig,
@@ -5001,6 +5035,14 @@ private struct RootView: View {
         } detail: {
             StageContentView(model: model)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .alert("Cannot Start",
+                       isPresented: Binding(
+                           get: { model.startBlockedMessage != nil },
+                           set: { if !$0 { model.startBlockedMessage = nil } })) {
+                    Button("OK", role: .cancel) { model.startBlockedMessage = nil }
+                } message: {
+                    Text(model.startBlockedMessage ?? "")
+                }
                 // Always-visible broadcast status header (transport / peaks /
                 // deviation / GR / budget / injections). On the detail column
                 // so the sidebar runs full height under the title bar, the
@@ -5944,7 +5986,7 @@ private struct MonitoringDashboardView: View {
         // audio-composite peak are all meaningless. Show the output level and the
         // (still-valid) stereo image instead.
         Card(title: model.processedAudioOutputActive ? "Output" : "MPX") {
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
                 if model.processedAudioOutputActive {
                     metricsGrid([
                         ("OUTPUT", model.outputText.ifEmpty("—")),
@@ -5966,7 +6008,7 @@ private struct MonitoringDashboardView: View {
         // Composite clipper / safety limiter / BS.412 don't run in processed-audio
         // output — only the pre-encode limiter does.
         Card(title: "Headroom") {
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
                 if model.processedAudioOutputActive {
                     metricsGrid([
                         ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
@@ -5985,7 +6027,7 @@ private struct MonitoringDashboardView: View {
 
     private var subcarriersPanel: some View {
         Card(title: "Subcarriers") {
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
                 metricsGrid([
                     ("PILOT", String(format: "%5.1f%%", model.pilotInjectionPercentValue)),
                     ("RDS", String(format: "%5.1f%%", model.rdsInjectionPercentValue)),
@@ -6123,7 +6165,7 @@ private struct MonitoringDashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            LiveTelemetryView(telemetry: model.telemetry) { t in
+            LiveObservationView(telemetry: model.telemetry) { t in
                 VStack(alignment: .leading, spacing: 6) {
                     MeterRow(
                         label: "L",
@@ -6157,7 +6199,7 @@ private struct MonitoringDashboardView: View {
                 .font(BroadcastStyle.chipLabel)
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
                 Text(streamRateText)
                     .font(BroadcastStyle.valueReadout)
             }
@@ -6180,13 +6222,13 @@ private struct MonitoringDashboardView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                 Spacer()
-                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                LiveObservationView(telemetry: model.telemetry) { _ in
                     Text(delayText)
                         .font(BroadcastStyle.valueReadout)
                         .foregroundStyle(.secondary)
                 }
             }
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
                 ProgressView(value: bufferFill)
                     .progressViewStyle(.linear)
                     .tint(bufferTint)
@@ -6209,7 +6251,7 @@ private struct MonitoringDashboardView: View {
                 .font(BroadcastStyle.chipLabel)
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            LiveTelemetryView(telemetry: model.telemetry) { t in
+            LiveObservationView(telemetry: model.telemetry) { t in
                 HStack(spacing: 12) {
                     dropoutPill(label: "OVR", count: t.streamHealth.overflowsRecent)
                     dropoutPill(label: "UND", count: t.streamHealth.underflowsRecent)
@@ -6260,7 +6302,7 @@ private struct MonitoringDashboardView: View {
     private var chainPanel: some View {
         Card(title: "Signal Chain") {
             VStack(alignment: .leading, spacing: 12) {
-                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                LiveObservationView(telemetry: model.telemetry) { _ in
                     FlowStatusRow(items: [
                         ("AGC", agcPillText, agcDotColor),
                         ("Stereo", stereoPillText, .secondary.opacity(0.75)),
@@ -6277,7 +6319,7 @@ private struct MonitoringDashboardView: View {
 
     private var rdsPanel: some View {
         Card(title: "RDS") {
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
               VStack(alignment: .leading, spacing: 10) {
                 FlowStatusRow(items: [
                     ("PS", model.rdsPS.ifEmpty("—"), .secondary.opacity(0.75)),
@@ -6642,12 +6684,12 @@ private struct RuntimeCardView: View {
                 }
 
                 Divider()
-                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                LiveObservationView(telemetry: model.telemetry) { _ in
                     Text(model.runtimeText)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
-                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                LiveObservationView(telemetry: model.telemetry) { _ in
                     ProgressView(value: model.inputBufferValue, total: max(1.0, model.inputBufferMax))
                         .tint(
                             model.inputBufferValue >= model.inputBufferCritical
@@ -6655,7 +6697,7 @@ private struct RuntimeCardView: View {
                                 : (model.inputBufferValue >= model.inputBufferWarning
                                     ? .yellow : .green))
                 }
-                LiveTelemetryView(telemetry: model.telemetry) { _ in
+                LiveObservationView(telemetry: model.telemetry) { _ in
                     Text(model.inputRingText)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -6705,7 +6747,7 @@ struct LevelsCardView: View {
 
     var body: some View {
         Card(title: "Levels", style: .meter) {
-            LiveTelemetryView(telemetry: model.telemetry) { _ in
+            LiveObservationView(telemetry: model.telemetry) { _ in
               HStack(alignment: .center, spacing: 12) {
                 VerticalMeterStrip(
                     label: "IN L",
@@ -7855,7 +7897,7 @@ private struct ProcessingCompositeClipperTab: View {
             DoubleSliderRow(title: "Look-ahead", value: model.configBinding(\.compositeClipperLookaheadMS, runtimeDisposition: .live), range: 0...5, format: "%.1f ms",
                 tooltip: "Predictive peak shaving. 0.0 disables; 2.0 ms = recommended preset. Sliding-window-max detector + half-cosine attack + 200 Hz smoother bound overshoots tighter than the soft-clip alone, at the cost of N ms added chain latency. Hardcoded internals: 1.5 ms attack, 80 ms release, 200 Hz smoothing.").disabled(disabled)
             LabeledContent("Look-ahead GR") {
-                LiveTelemetryView(telemetry: model.telemetry) { t in
+                LiveObservationView(telemetry: model.telemetry) { t in
                     Text(String(format: "%5.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
@@ -8320,7 +8362,7 @@ private struct RDSRadiotextTab: View {
                 TextField("RT+ Format A", text: model.configBinding(\.rdsRTPlusFormatA, runtimeDisposition: .liveRDS))
                 TextField("RT+ Format B", text: model.configBinding(\.rdsRTPlusFormatB, runtimeDisposition: .liveRDS))
             }
-            LiveTelemetryView(telemetry: model.telemetry) { t in
+            LiveObservationView(telemetry: model.telemetry) { t in
                 Text(t.rdsNowPlayingStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -9161,13 +9203,13 @@ struct ScopesOnlyView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Stereo Input").font(.subheadline).foregroundStyle(.secondary)
-                    LiveTelemetryView(telemetry: model.telemetry) { t in
+                    LiveObservationView(telemetry: model.telemetry) { t in
                         ScopeView(samples: t.inputScopeLeft, secondarySamples: t.inputScopeRight)
                     }
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("MPX Output").font(.subheadline).foregroundStyle(.secondary)
-                    LiveTelemetryView(telemetry: model.telemetry) { t in
+                    LiveObservationView(telemetry: model.telemetry) { t in
                         ScopeView(samples: t.outputScope)
                     }
                 }
@@ -9197,7 +9239,7 @@ struct SpectrumOnlyView: View {
             .padding(.horizontal)
 
             VStack(alignment: .leading, spacing: 6) {
-                LiveTelemetryView(telemetry: model.telemetry) { t in
+                LiveObservationView(telemetry: model.telemetry) { t in
                     MPXSpectrumView(
                         dbBins: t.mpxSpectrumDB,
                         maxHz: t.mpxSpectrumMaxHz,
@@ -9223,7 +9265,7 @@ struct PreMPXSpectrumOnlyView: View {
                 subtitle: "Raw stereo input spectrum before processing."
             )
 
-            LiveTelemetryView(telemetry: model.telemetry) { t in
+            LiveObservationView(telemetry: model.telemetry) { t in
                 StereoPreMPXSpectrumView(
                     leftBins: t.preMPXSpectrumLeftDB,
                     rightBins: t.preMPXSpectrumRightDB,

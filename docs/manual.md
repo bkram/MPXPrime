@@ -459,6 +459,7 @@ INI keys: `processed_audio_output`, `preemphasis_us`,
 - `Monitor Output Device (Decoded MPX Simulation)` is used when monitor output is enabled
 - The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input
 - `Mono Mode` now transmits true mono composite and suppresses pilot, stereo subcarrier, and RDS while enabled
+- If a remembered input / output / monitor device is not connected, **Start is refused** with an alert rather than silently streaming to the OS default -- reconnect the device or pick another in `Settings`. (Devices are remembered by UID and name, so moving an interface to another USB port keeps the selection.)
 
 ### Monitoring windows
 

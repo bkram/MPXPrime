@@ -190,7 +190,7 @@ struct ProcessingOverviewGrid: View {
                     // propagates a layout pass out to the card (the
                     // load-bearing Canvas/LiveTelemetry rule).
                     if let liveReadout {
-                        LiveTelemetryView(telemetry: model.telemetry) { t in
+                        LiveObservationView(telemetry: model.telemetry) { t in
                             Text(liveReadout(t))
                                 .font(BroadcastStyle.valueReadout)
                                 .monospacedDigit()

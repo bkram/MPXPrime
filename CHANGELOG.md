@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: MPX pass-through.** New in the input bar's **Outputs** popover:
+  play the received RAW composite (pilot + stereo subcarrier + RDS) to its
+  own output device, in addition to the decoded monitor -- feed a 192 kHz
+  DAC into an FM exciter (rebroadcast / translator) or a hardware analyzer.
+  Live-apply; the output device is switched to the capture rate while the
+  pass-through runs and restored afterwards (a 48 kHz output would lose
+  the subcarriers). The decoded-monitor device picker moved into the same
+  popover.
 - **Meter: the SDR picker now reliably lists the unit in use.** The SDRplay
   API omits in-use devices from enumeration (including our own active RSP),
   which could hide the picker entirely. The tuner now reports the active

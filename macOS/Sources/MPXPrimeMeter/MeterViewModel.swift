@@ -70,6 +70,11 @@ final class MeterViewModel: ObservableObject {
     // Monitor (decoded audio to the speakers) on by default -- pressing Start
     // should produce sound without an extra toggle.
     @Published var monitorEnabled = true
+    /// MPX pass-through: play the RAW composite to its own output device
+    /// (e.g. a 192 kHz DAC feeding an exciter / hardware analyzer), in
+    /// addition to the decoded monitor.
+    @Published var mpxPassEnabled = false
+    @Published var selectedMPXOutID: AudioDeviceID?
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
     // Audio-path deviation calibration. Pilot-referenced (default) assumes the
@@ -200,6 +205,8 @@ final class MeterViewModel: ObservableObject {
         static let inputUID = "meter.selectedInputUID"
         static let outputUID = "meter.selectedOutputUID"
         static let sdrDeviceID = "meter.selectedSDRDeviceID"
+        static let mpxPass = "meter.mpxPassEnabled"
+        static let mpxPassUID = "meter.mpxPassOutputUID"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -239,6 +246,10 @@ final class MeterViewModel: ObservableObject {
         // SDR unit: keep the saved identity even if not currently attached
         // (same keep-the-selection convention as the audio devices).
         selectedSDRID = d.string(forKey: Keys.sdrDeviceID)
+        if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
+        if let uid = d.string(forKey: Keys.mpxPassUID) {
+            selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
+        }
     }
 
     /// Persist the current settings. Called on capture start and app quit.
@@ -275,6 +286,12 @@ final class MeterViewModel: ObservableObject {
         } else {
             d.removeObject(forKey: Keys.sdrDeviceID)  // nil = auto
         }
+        d.set(mpxPassEnabled, forKey: Keys.mpxPass)
+        if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
+            d.set(dev.uid, forKey: Keys.mpxPassUID)
+        } else {
+            d.removeObject(forKey: Keys.mpxPassUID)
+        }
     }
 
     // MARK: - Capture lifecycle
@@ -308,6 +325,9 @@ final class MeterViewModel: ObservableObject {
             running = true
             statusText = String(format: "Capturing %.0f kHz", fmt.sampleRate / 1000)
             if let w = prep.warning { statusText += " — \(w)" }
+            if mpxPassEnabled {
+                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID)
+            }
             startTimer()
         } catch {
             statusText = "Start failed: \(error)"
@@ -366,6 +386,9 @@ final class MeterViewModel: ObservableObject {
             let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
             if let selectionNote { statusText += " — \(selectionNote)" }
+            if mpxPassEnabled {
+                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID)
+            }
             startTimer()
         } catch {
             statusText = error.localizedDescription
@@ -394,6 +417,13 @@ final class MeterViewModel: ObservableObject {
     func applySDRDeviceChange() {
         saveSettings()
         restartIfRunning()
+    }
+
+    /// MPX pass-through toggled or its device changed: applies live.
+    func applyMPXPassChange() {
+        saveSettings()
+        engine?.setMPXPassThrough(
+            enabled: mpxPassEnabled, deviceID: selectedMPXOutID)
     }
 
     /// Monitor output device changed: swap just the monitor, live -- the

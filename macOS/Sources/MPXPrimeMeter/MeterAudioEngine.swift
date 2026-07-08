@@ -38,6 +38,15 @@ final class MeterAudioEngine: @unchecked Sendable {
     private let monitorEnabled: Bool
     private let monitorGain: Float
     private let monitorRing: StereoInputRingBuffer
+    // MPX pass-through: the RAW composite duplicated to both channels of its
+    // own ring, played to a user-chosen output device (e.g. a 192 kHz DAC
+    // feeding an exciter or a hardware analyzer). Independent of the decoded
+    // monitor. The flag is read on the analysis thread.
+    private let mpxRing: StereoInputRingBuffer
+    private var mpxMonitor: MeterMonitor?
+    private let mpxPassOn = ManagedAtomic<Bool>(false)
+    private var mpxOutDeviceID: AudioDeviceID?
+    private var mpxOutPriorRate: Double?
     private var monitor: MeterMonitor?
 
     // WAV capture. `wavURL` is the CLI's record-on-start path (decoded stereo);
@@ -78,6 +87,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         self.monitorEnabled = monitorEnabled
         self.monitorGain = monitorGain
         self.monitorRing = StereoInputRingBuffer(capacityFrames: 1 << 15)
+        self.mpxRing = StereoInputRingBuffer(capacityFrames: 1 << 15)
         self.wavURL = wavURL
     }
 
@@ -150,10 +160,53 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
         monitor?.stop()
         monitor = nil
+        mpxPassOn.store(false, ordering: .relaxed)
+        mpxMonitor?.stop()
+        mpxMonitor = nil
+        if let dev = mpxOutDeviceID, let prior = mpxOutPriorRate {
+            _ = AudioDevices.setNominalSampleRate(deviceID: dev, prior)
+        }
+        mpxOutDeviceID = nil
+        mpxOutPriorRate = nil
         // Release the recorder so AVAudioFile finalizes the WAV header. The
         // consumer thread has exited (handshake above), so no lock is needed,
         // but take it for consistency with the dynamic start/stop path.
         recordLock.lock(); recorder = nil; recordLock.unlock()
+    }
+
+    /// Enable/disable the MPX pass-through or move it to another device,
+    /// live: capture, analysis, decoded monitor, and recording are untouched.
+    /// The composite needs the device at the capture rate (192 kHz -- a 48 kHz
+    /// device would low-pass away the pilot/subcarriers in SRC), so the
+    /// device's nominal rate is forced to the capture rate and restored when
+    /// the pass-through stops (the Studio MPX-output convention).
+    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?) {
+        // Tear down the current player + restore the prior device rate.
+        mpxPassOn.store(false, ordering: .relaxed)
+        mpxMonitor?.stop()
+        mpxMonitor = nil
+        if let dev = mpxOutDeviceID, let prior = mpxOutPriorRate {
+            _ = AudioDevices.setNominalSampleRate(deviceID: dev, prior)
+        }
+        mpxOutDeviceID = nil
+        mpxOutPriorRate = nil
+        guard enabled else { return }
+        if let dev = deviceID {
+            let prior = AudioDevices.currentNominalSampleRate(deviceID: dev)
+            let got = AudioDevices.setNominalSampleRate(deviceID: dev, Double(sampleRate))
+            if let got, abs(got - Double(sampleRate)) < 1.0 {
+                mpxOutPriorRate = prior
+            } else {
+                FileHandle.standardError.write(Data(
+                    "WARNING: MPX pass-through device would not switch to \(Int(sampleRate)) Hz; composite will be band-limited by SRC.\n".utf8))
+            }
+            mpxOutDeviceID = dev
+        }
+        let mon = MeterMonitor(ring: mpxRing, sampleRate: Double(sampleRate), gain: 1.0)
+        if (try? mon.start(outputDeviceID: deviceID)) != nil {
+            mpxMonitor = mon
+            mpxPassOn.store(true, ordering: .relaxed)
+        }
     }
 
     /// Swap the monitor output device live: only the monitor restarts; the
@@ -161,6 +214,14 @@ final class MeterAudioEngine: @unchecked Sendable {
     func setMonitorDevice(_ deviceID: AudioDeviceID?) {
         monitor?.stop()
         monitor = nil
+        mpxPassOn.store(false, ordering: .relaxed)
+        mpxMonitor?.stop()
+        mpxMonitor = nil
+        if let dev = mpxOutDeviceID, let prior = mpxOutPriorRate {
+            _ = AudioDevices.setNominalSampleRate(deviceID: dev, prior)
+        }
+        mpxOutDeviceID = nil
+        mpxOutPriorRate = nil
         guard monitorEnabled else { return }
         let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
         if (try? mon.start(outputDeviceID: deviceID)) != nil {
@@ -263,6 +324,13 @@ final class MeterAudioEngine: @unchecked Sendable {
                             if let lb = lp.baseAddress, let rb = rp.baseAddress {
                                 monitorRing.write(left: lb, right: rb, frameCount: count)
                             }
+                        }
+                    }
+                }
+                if mpxPassOn.load(ordering: .relaxed) {
+                    left.withUnsafeBufferPointer { lp in
+                        if let lb = lp.baseAddress {
+                            mpxRing.write(left: lb, right: lb, frameCount: got)
                         }
                     }
                 }

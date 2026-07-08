@@ -12,6 +12,7 @@ struct RootMeterView: View {
     // Click a decoded scope to switch it between waveform and audio spectrum.
     @State private var decodedLSpectrum = false
     @State private var decodedRSpectrum = false
+    @State private var showOutputs = false
 
     // Bridge an Int binding to the Double-valued ScrollableNumericField so the
     // integer SDR steppers (LNA, PPM) also adjust on scroll, like Frequency/Gain.
@@ -295,25 +296,20 @@ struct RootMeterView: View {
             }
             Spacer()
 
-            // Monitor output device (both source modes). Live-applies: only
-            // the monitor restarts, capture/analysis/recording untouched.
-            // Essential when two Meter instances run side by side -- each
-            // needs its own output or both land on the system default.
-            Image(systemName: "speaker.wave.2")
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)  // the picker below carries the label
-            Picker("Monitor output", selection: $vm.selectedOutputID) {
-                Text("System Default").tag(AudioDeviceID?.none)
-                ForEach(vm.outputDevices) { dev in
-                    Text(dev.name).tag(Optional(dev.id))
-                }
+            // Output routing (both source modes), consolidated in a popover:
+            // the decoded-monitor device, and the MPX pass-through (raw
+            // composite to its own device). All live-apply.
+            Button {
+                showOutputs.toggle()
+            } label: {
+                Label("Outputs", systemImage: "speaker.wave.2")
             }
-            .labelsHidden()
-            .frame(maxWidth: 165)
-            .help("Where the decoded monitor audio plays. Applies live "
-                + "(capture and recording are not interrupted). Remembered "
-                + "per launch by device UID.")
-            .onChange(of: vm.selectedOutputID) { _, _ in vm.applyOutputDeviceChange() }
+            .buttonStyle(.bordered)
+            .help("Output routing: decoded monitor device, and MPX "
+                + "pass-through (raw composite to a second device).")
+            .popover(isPresented: $showOutputs, arrowEdge: .bottom) {
+                outputsPopover
+            }
 
             Divider().frame(height: 16)
 
@@ -513,6 +509,55 @@ struct RootMeterView: View {
         }
         .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
         .help(frequencyHelp)
+    }
+
+    // MARK: - Output routing popover
+
+    private var outputsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Monitor (decoded audio)").font(.headline)
+                Picker("Monitor output", selection: $vm.selectedOutputID) {
+                    Text("System Default").tag(AudioDeviceID?.none)
+                    ForEach(vm.outputDevices) { dev in
+                        Text(dev.name).tag(Optional(dev.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 260)
+                .help("Where the decoded stereo audio plays. Applies live.")
+                .onChange(of: vm.selectedOutputID) { _, _ in vm.applyOutputDeviceChange() }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("MPX pass-through (raw composite)", isOn: $vm.mpxPassEnabled)
+                    .toggleStyle(.switch)
+                    .help("Play the received MPX composite -- pilot, stereo "
+                        + "subcarrier, RDS and all -- to its own output device, "
+                        + "in addition to the decoded monitor. Feed a 192 kHz "
+                        + "DAC into an exciter (rebroadcast/translator) or a "
+                        + "hardware analyzer.")
+                    .onChange(of: vm.mpxPassEnabled) { _, _ in vm.applyMPXPassChange() }
+                Picker("MPX output", selection: $vm.selectedMPXOutID) {
+                    Text("System Default").tag(AudioDeviceID?.none)
+                    ForEach(vm.outputDevices) { dev in
+                        Text(dev.name).tag(Optional(dev.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 260)
+                .disabled(!vm.mpxPassEnabled)
+                .onChange(of: vm.selectedMPXOutID) { _, _ in vm.applyMPXPassChange() }
+                Text("The device is switched to the capture rate (192 kHz) "
+                    + "while the pass-through runs, and restored after -- a "
+                    + "48 kHz output would lose the pilot and subcarriers.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 260, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
     }
 
     // MARK: - Modulation metrics (BS.412 power, peak-hold, separation)

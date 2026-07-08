@@ -51,10 +51,20 @@ chosen unit is absent at start, the Meter starts on Auto with a note and keeps
 your selection. To meter two stations at once, launch the app twice and give
 each instance its own SDR -- and its own **Out** device (below).
 
-The input bar's right side has an **Out** picker for the decoded monitor
-audio (System Default, or any output device). It applies **live** -- only the
-monitor moves; capture, analysis, and recording are untouched. Remembered by
-device UID. With two Meter instances, give each its own output.
+The input bar's right side has an **Outputs** button opening the routing
+popover (all live-apply; capture, analysis, and recording are untouched;
+remembered by device UID):
+
+- **Monitor (decoded audio)** -- where the decoded stereo plays (System
+  Default, or any output device). With two Meter instances, give each its
+  own output.
+- **MPX pass-through (raw composite)** -- plays the received composite
+  (pilot + stereo subcarrier + RDS) to its own output device, in addition
+  to the decoded monitor. Feed a 192 kHz-capable DAC into an FM exciter
+  (instant rebroadcast / translator) or into a hardware analyzer. The
+  device is switched to the capture rate (192 kHz) while the pass-through
+  runs and restored afterwards -- a 48 kHz output would low-pass away the
+  pilot and subcarriers, so use a genuinely 192 kHz-capable interface.
 
 - **Audio device** (`Source -> Audio`): pick the input carrying the composite
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on

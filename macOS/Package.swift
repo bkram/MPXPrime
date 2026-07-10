@@ -214,7 +214,10 @@ targets.append(
     .testTarget(
         name: "MPXPrimeTests",
         dependencies: testDeps,
-        path: "Tests/MPXPrimeTests"
+        path: "Tests/MPXPrimeTests",
+        // Read via #filePath from the source tree (AccelerateShimTests), not
+        // bundled; excluded so SPM does not warn about an unhandled file.
+        exclude: ["Support/accelerate_golden.json"]
     )
 )
 

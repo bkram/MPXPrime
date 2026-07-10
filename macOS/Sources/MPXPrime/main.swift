@@ -248,6 +248,30 @@ func startControlServerIfEnabled(
     }
 }
 
+/// Load the headless run's config. A missing file at the DEFAULT path is
+/// first-run, not an error: create it with defaults (like the GUI does) so
+/// `MPXPrime --web` works out of the box. An explicit --config path that
+/// does not exist stays a hard error (probably a typo).
+func loadOrCreateHeadlessConfig(path: String, explicit: Bool) throws -> AppConfig {
+    if FileManager.default.fileExists(atPath: path) {
+        return try AppConfig.load(fromINI: path)
+    }
+    if explicit {
+        throw INIParserError.unreadableFile(path)
+    }
+    let config = AppConfig()
+    let directory = (path as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(
+        atPath: directory, withIntermediateDirectories: true)
+    do {
+        try config.save(toINI: path)
+        fputs("MPX Prime: created default config at \(path)\n", stderr)
+    } catch {
+        fputs("MPX Prime: running on defaults (could not write \(path): \(error))\n", stderr)
+    }
+    return config
+}
+
 let options = parseCLI()
 if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-h") {
     printUsage()
@@ -294,7 +318,8 @@ do {
         app.setActivationPolicy(.regular)
         app.run()
     }
-    let config = try AppConfig.load(fromINI: configPath)
+    let config = try loadOrCreateHeadlessConfig(
+        path: configPath, explicit: options.configPathExplicit)
     let nowPlayingState = NowPlayingState()
     let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
         fputs("[NowPlaying] \(status)\n", stderr)
@@ -381,7 +406,8 @@ do {
         fputs("MPX Prime: the GUI is macOS-only; this Linux build is CLI-only (--nogui).\n", stderr)
         exit(1)
     }
-    let config = try AppConfig.load(fromINI: configPath)
+    let config = try loadOrCreateHeadlessConfig(
+        path: configPath, explicit: options.configPathExplicit)
     let nowPlayingState = NowPlayingState()
     let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
         fputs("[NowPlaying] \(status)\n", stderr)

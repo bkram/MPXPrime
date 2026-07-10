@@ -67,6 +67,10 @@ public struct MeterSnapshot {
 
     public var rdsLocked = false
     public var rds = RDSReceiverState()
+    /// True while the RDS reception-quality gate is suppressing the decode
+    /// readout (poor BER / weak subcarrier): `rds` above is blank, but
+    /// `recentBlockErrorRate` and `rdsDevKHz` stay live as evidence.
+    public var rdsGated = false
     /// Windowed block-error rate (~1 s smoothing). `rds.blockErrorRate` is
     /// cumulative since start and never recovers after a retune; this one
     /// reflects current link quality.
@@ -149,6 +153,32 @@ public final class MeterAnalysis {
     // a clipped composite's edges, manufacturing deviation the transmitter
     // never emitted. Scopes, spectrum, and IN stay raw.
     private var dcTracker: DCTracker
+    // Decode-path DC blocker (live-toggleable, default on): a link
+    // transmitter's carrier offset becomes DC after FM demod; the decoder
+    // then puts that DC into both L and R (off-center vectorscope, offset
+    // waveforms, DC in the monitor audio and recordings, inflated M level).
+    // Broadcast FM carries no legitimate DC, so blocking is safe; the
+    // checkbox exists for purists and A/B checks. The measurement path has
+    // its own always-on tracker (above); composite scope/IN stay raw.
+    private var decodeDC: DCTracker
+    private let dcBlockOn = ManagedAtomic<Bool>(true)
+
+    // RDS reception-quality gate: the stream decoder syncs on a single
+    // accidental syndrome match and accepts PI/PTY from any single
+    // CRC-passing block, so on noise it hallucinates data (random PI at
+    // ~74% BER). Publish the decode readout only when reception is
+    // plausible; keep measuring BER/level regardless so the gate can
+    // reopen and the operator sees the evidence. Force (checkbox) bypasses
+    // for diagnostics. Thresholds: clean links are <=5% BER, stressed-real
+    // <=15% (test ceilings); EN 50067 minimum injection is 1.0 kHz and a
+    // no-RDS noise floor reads ~0.5 kHz on the coherent level meter.
+    private static let rdsGateBEROpen: Float = 0.15
+    private static let rdsGateBERClose: Float = 0.25
+    private static let rdsGateMinLevelKHz: Float = 0.8
+    private static let rdsGateMinBlocksValid = 8
+    private let forceRDSOn = ManagedAtomic<Bool>(false)
+    private var rdsGateOpen = false
+    private var rdsGateClosedSamples = 0
     private let measurementFIR: BlockFIRFilter
     private var dcBlock: [Float]
     private var measBlock: [Float]
@@ -252,6 +282,7 @@ public final class MeterAnalysis {
         // drop to 0.2 Hz for tracking -- otherwise the acquisition residual
         // of an SDR carrier offset lands in the peak windows.
         dcTracker = DCTracker(cutoffHz: 5.0, sampleRate: sampleRate)
+        decodeDC = DCTracker(cutoffHz: 2.0, sampleRate: sampleRate)
         // Clamp below Nyquist for low-rate captures (no RDS there anyway).
         let cutoff = min(60_000.0, 0.45 * sampleRate)
         let transition = min(8_000.0, 0.5 * sampleRate - cutoff - 1.0)
@@ -283,6 +314,13 @@ public final class MeterAnalysis {
     /// RDS decoder. Use on retune so the prior station's peaks / MPX power /
     /// BER / RDS text don't carry over. Safe to call from any thread.
     public func requestFullReset() { fullResetRequested.store(true, ordering: .relaxed) }
+
+    /// Enable/disable the decode-path DC blocker (live; default on).
+    public func setDCBlock(_ on: Bool) { dcBlockOn.store(on, ordering: .relaxed) }
+
+    /// Bypass the RDS reception-quality gate (live; default off): publish the
+    /// raw decoder state even when reception is too poor to trust.
+    public func setForceRDS(_ on: Bool) { forceRDSOn.store(on, ordering: .relaxed) }
 
     /// Set the pilot reference (kHz) used by the pilot-referenced audio path.
     /// Safe to call from any thread; picked up at the top of the next `process`.
@@ -337,6 +375,8 @@ public final class MeterAnalysis {
             for i in powerHistory.indices { powerHistory[i] = -30.0 }
             warmupRemaining = Int(sampleRate)  // ~1 s -- skip the relock transient
             rds.reset()
+            rdsGateOpen = false
+            rdsGateClosedSamples = 0
         }
         if doFullReset || resetRequested.exchange(false, ordering: .relaxed) {
             resetPeakAccumulators()
@@ -365,6 +405,7 @@ public final class MeterAnalysis {
         var sSq: Float = 0.0
         var over77 = 0
         let threshAmp = exceedanceThreshAmp
+        let dcBlock = dcBlockOn.load(ordering: .relaxed)
 
         var i = 0
         for s in samples {
@@ -408,7 +449,8 @@ public final class MeterAnalysis {
             // expectedSide = 0 disables the decoder's stereo-collapse self-heal
             // (a meter must not silently reconfigure); programActivity = |s|
             // keeps the noise gate open while signal is present.
-            let (l, r) = decoder.process(s, programActivity: a, expectedSide: 0.0)
+            let dIn = dcBlock ? decodeDC.process(s) : s
+            let (l, r) = decoder.process(dIn, programActivity: a, expectedSide: 0.0)
             lSq += l * l
             rSq += r * r
             lr += l * r
@@ -597,18 +639,52 @@ public final class MeterAnalysis {
         snap.midRMSDBFS = Self.dbfs(sqrtf(mSq / n))
         snap.sideRMSDBFS = Self.dbfs(sqrtf(sSq / n))
         snap.stereoCorrelation = corr
-        snap.rdsLocked = rds.locked
-        snap.rds = rds.state
-
-        let deltaReceived = snap.rds.blocksReceived - prevBlocksReceived
-        let deltaValid = snap.rds.blocksValid - prevBlocksValid
+        // Windowed BER from the LIVE decoder state (must keep measuring even
+        // while the gate blanks the published readout).
+        let rdsLive = rds.state
+        let deltaReceived = rdsLive.blocksReceived - prevBlocksReceived
+        let deltaValid = rdsLive.blocksValid - prevBlocksValid
         if deltaReceived > 0 {
             let instant = Float(deltaReceived - deltaValid) / Float(deltaReceived)
             berEMA = (0.95 * berEMA) + (0.05 * instant)
-            prevBlocksReceived = snap.rds.blocksReceived
-            prevBlocksValid = snap.rds.blocksValid
+            prevBlocksReceived = rdsLive.blocksReceived
+            prevBlocksValid = rdsLive.blocksValid
         }
         snap.recentBlockErrorRate = berEMA
+
+        // RDS reception-quality gate (see the threshold rationale at the
+        // declarations). Level criterion applies only when a kHz scale
+        // exists; hysteresis (open <=15%, close >25%) prevents flapping;
+        // blocksValid floor prevents a fresh-reset berEMA==0 false-open.
+        let forceRDS = forceRDSOn.load(ordering: .relaxed)
+        let levelOK = devScaleKHz == nil || snap.rdsDevKHz >= Self.rdsGateMinLevelKHz
+        if rdsGateOpen {
+            if berEMA > Self.rdsGateBERClose || !levelOK { rdsGateOpen = false }
+        } else if berEMA <= Self.rdsGateBEROpen, levelOK,
+                  rdsLive.blocksValid >= Self.rdsGateMinBlocksValid {
+            rdsGateOpen = true
+        }
+        if rdsGateOpen || forceRDS {
+            snap.rdsLocked = rds.locked
+            snap.rds = rdsLive
+            snap.rdsGated = false
+            rdsGateClosedSamples = 0
+        } else {
+            snap.rdsLocked = false
+            snap.rds = RDSReceiverState()
+            snap.rdsGated = true
+            // After 10 s continuously gated, clear the decoder so
+            // hallucinated PS/RT/group counts don't flash when the gate
+            // later opens. berEMA is kept (it is the gate input); the
+            // delta counters re-sync to the fresh decoder state.
+            rdsGateClosedSamples += count
+            if rdsGateClosedSamples >= 10 * secLen {
+                rds.reset()
+                prevBlocksReceived = 0
+                prevBlocksValid = 0
+                rdsGateClosedSamples = 0
+            }
+        }
 
         // GUI display buffers. Decimate this block to a fixed point count for
         // the scopes, and recompute the spectra, every block (~23/s at 8192-frame

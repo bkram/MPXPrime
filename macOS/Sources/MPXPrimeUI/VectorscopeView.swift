@@ -8,11 +8,17 @@ import SwiftUI
 public struct VectorscopeView: View {
     let left: [Float]
     let right: [Float]
+    /// Display gain applied before the +/-1 clamp: hardware goniometers ride
+    /// their display gain so quiet program still fills the field. Points
+    /// pushed past full scale saturate at the edge, like the real thing.
+    var zoom: Double
     var accessibilityName: String
 
-    public init(left: [Float], right: [Float], accessibilityName: String = "Stereo vectorscope") {
+    public init(left: [Float], right: [Float], zoom: Double = 1.0,
+                accessibilityName: String = "Stereo vectorscope") {
         self.left = left
         self.right = right
+        self.zoom = zoom
         self.accessibilityName = accessibilityName
     }
 
@@ -25,7 +31,8 @@ public struct VectorscopeView: View {
 
             let cx = size.width * 0.5
             let cy = size.height * 0.5
-            let radius = min(cx, cy)
+            // Inset so the circle's stroke never clips at the panel edges.
+            let radius = min(cx, cy) - 4
 
             // Faint bounding circle (the full-scale envelope).
             let circle = Path(ellipseIn: CGRect(
@@ -47,13 +54,18 @@ public struct VectorscopeView: View {
                        style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
             guard left.count > 1, right.count == left.count else { return }
-            // Rotate 45 deg: x = (L-R), y = (L+R); /sqrt2 keeps full-scale mono
-            // inside the field. 0.92 leaves a small margin.
-            let k = radius * 0.92 / 1.41421356
+            // Rotate 45 deg: x = (L-R), y = (L+R). The rotated axes span 2x
+            // the per-channel range (mono L=R=1 gives y = 2), so k = r/2
+            // guarantees every |L|,|R| <= 1 point stays inside the circle --
+            // the earlier /sqrt2 let full-scale mono overshoot the field by
+            // ~30%. 0.92 leaves a small margin; the auto-zoom (driven by the
+            // rotated-axis peaks) provides the fill.
+            let k = radius * 0.92 / 2.0
+            let g = Float(zoom)
             var path = Path()
             for i in 0..<left.count {
-                let l = CGFloat(max(-1.0, min(1.0, left[i])))
-                let r = CGFloat(max(-1.0, min(1.0, right[i])))
+                let l = CGFloat(max(-1.0, min(1.0, left[i] * g)))
+                let r = CGFloat(max(-1.0, min(1.0, right[i] * g)))
                 let pt = CGPoint(x: cx + (l - r) * k, y: cy - (l + r) * k)
                 if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
             }

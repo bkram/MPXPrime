@@ -52,6 +52,10 @@ final class MeterViewModel: ObservableObject {
     /// SDRplay LNA state (front-end gain reduction step; higher = less gain).
     @Published var sdrLnaState: Int = 4
     @Published var sdrIsSDRplay: Bool = false
+    /// Attached SDRs (both backends) + the persisted selection (by
+    /// backend+serial, stable across replug). nil = auto (SDRplay preferred).
+    @Published var sdrDevices: [SDRLibraryInputSource.DeviceInfo] = []
+    @Published var selectedSDRID: String?
     @Published var sdrAntennaCount: Int = 1
     /// Active SDR device label (e.g. "SDRplay RSPdx" / "RTL-SDR R820T").
     @Published var sdrDeviceName: String = ""
@@ -66,6 +70,16 @@ final class MeterViewModel: ObservableObject {
     // Monitor (decoded audio to the speakers) on by default -- pressing Start
     // should produce sound without an extra toggle.
     @Published var monitorEnabled = true
+    /// MPX pass-through: play the RAW composite to its own output device
+    /// (e.g. a 192 kHz DAC feeding an exciter / hardware analyzer), in
+    /// addition to the decoded monitor.
+    @Published var mpxPassEnabled = false
+    @Published var selectedMPXOutID: AudioDeviceID?
+    /// Pass-through output gain (dB). 0 = the SDR scaling (0 dBFS = 150 kHz;
+    /// a 75 kHz station peaks at -6 dBFS). Raise to match an analyzer's or
+    /// exciter's expected composite level; +6 dB puts 75 kHz at 0 dBFS (then
+    /// deviation beyond 75 kHz clips the DAC -- keep some headroom).
+    @Published var mpxPassGainDB: Double = 0
     @Published var monitorGainDB: Double = 0
     @Published var pilotRefKHz: Double = 6.75
     // Audio-path deviation calibration. Pilot-referenced (default) assumes the
@@ -84,6 +98,12 @@ final class MeterViewModel: ObservableObject {
     /// Spectrum display span in kHz (60 = focus on the modulated bands, 100 =
     /// full incl. SCA). Display-only; changes only on toggle, never per tick.
     @Published var spectrumSpanKHz: Int = 60
+    /// Decode-path DC blocker: removes demod carrier-offset DC from the
+    /// decoded audio (vectorscope centering, clean monitor/recordings).
+    @Published var dcBlockEnabled = true
+    /// Bypass the RDS reception-quality gate: show the raw decoder output
+    /// even when reception is too poor to trust (expect garbage on noise).
+    @Published var forceRDS = false
 
     // RDS readout (changes per second; updated only when it actually changes).
     // RDS display strings live on MeterTelemetry (@Observable), NOT here:
@@ -105,15 +125,50 @@ final class MeterViewModel: ObservableObject {
     // and the group counters, which advance with every received group
     // (~10/s), but the text panel only needs a human reading rate. 2 Hz.
     private var lastRDSPush: TimeInterval = 0
+    // Smoothed vectorscope auto-gain (display-only): fast attack when the
+    // figure would clip the field, slow release as program quiets.
+    private var vectorAutoGain: Double = 1.0
 
     init() {
         refreshDevices()
         // Show the correct SDR controls before capture: the backend auto-prefers
         // SDRplay when an RSP is attached, so reflect that up front.
         sdrIsSDRplay = SDRLibraryInputSource.sdrplayPresent()
+        refreshSDRDevices()
         // Restore the last-used settings; falls back to SDR-when-a-dongle-is-
         // present for the input source if nothing was saved.
         loadSettings(hasDongle: SDRLibraryInputSource.deviceCount() > 0)
+    }
+
+    /// Re-enumerate attached SDRs (cheap USB/API scan; no device is opened).
+    /// While capturing, MERGE instead of replace: the SDRplay API omits
+    /// in-use units from enumeration (including our own), so a mid-capture
+    /// scan must never shrink the picker. A full replace happens only when
+    /// idle (drops unplugged units).
+    func refreshSDRDevices() {
+        let scanned = SDRLibraryInputSource.listDevices()
+        if running {
+            var merged = sdrDevices
+            for dev in scanned where !merged.contains(where: { $0.id == dev.id }) {
+                merged.append(dev)
+            }
+            sdrDevices = merged
+        } else {
+            sdrDevices = scanned
+        }
+    }
+
+    /// Ensure the unit we are actively capturing from is in the picker list
+    /// (backend enumeration hides in-use devices).
+    private func mergeActiveSDRDevice(_ source: SDRLibraryInputSource) {
+        let serial = source.deviceSerial
+        guard !serial.isEmpty else { return }
+        let backend = source.isSDRplay ? 2 : 1
+        let active = SDRLibraryInputSource.DeviceInfo(
+            backend: backend, index: 0, name: source.deviceName, serial: serial)
+        if !sdrDevices.contains(where: { $0.id == active.id }) {
+            sdrDevices.append(active)
+        }
     }
 
     func refreshDevices() {
@@ -163,6 +218,12 @@ final class MeterViewModel: ObservableObject {
         static let spectrumSpan = "meter.spectrumSpanKHz"
         static let inputUID = "meter.selectedInputUID"
         static let outputUID = "meter.selectedOutputUID"
+        static let sdrDeviceID = "meter.selectedSDRDeviceID"
+        static let mpxPass = "meter.mpxPassEnabled"
+        static let mpxPassUID = "meter.mpxPassOutputUID"
+        static let mpxPassGain = "meter.mpxPassGainDB"
+        static let dcBlock = "meter.dcBlockEnabled"
+        static let forceRDS = "meter.forceRDS"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -199,6 +260,16 @@ final class MeterViewModel: ObservableObject {
         if let uid = d.string(forKey: Keys.outputUID) {
             selectedOutputID = outputDevices.first(where: { $0.uid == uid })?.id
         }
+        // SDR unit: keep the saved identity even if not currently attached
+        // (same keep-the-selection convention as the audio devices).
+        selectedSDRID = d.string(forKey: Keys.sdrDeviceID)
+        if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
+        if d.object(forKey: Keys.mpxPassGain) != nil { mpxPassGainDB = d.double(forKey: Keys.mpxPassGain) }
+        if d.object(forKey: Keys.dcBlock) != nil { dcBlockEnabled = d.bool(forKey: Keys.dcBlock) }
+        if d.object(forKey: Keys.forceRDS) != nil { forceRDS = d.bool(forKey: Keys.forceRDS) }
+        if let uid = d.string(forKey: Keys.mpxPassUID) {
+            selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
+        }
     }
 
     /// Persist the current settings. Called on capture start and app quit.
@@ -229,6 +300,20 @@ final class MeterViewModel: ObservableObject {
             d.set(dev.uid, forKey: Keys.outputUID)
         } else {
             d.removeObject(forKey: Keys.outputUID)   // nil = system default
+        }
+        if let id = selectedSDRID {
+            d.set(id, forKey: Keys.sdrDeviceID)
+        } else {
+            d.removeObject(forKey: Keys.sdrDeviceID)  // nil = auto
+        }
+        d.set(mpxPassEnabled, forKey: Keys.mpxPass)
+        d.set(mpxPassGainDB, forKey: Keys.mpxPassGain)
+        d.set(dcBlockEnabled, forKey: Keys.dcBlock)
+        d.set(forceRDS, forKey: Keys.forceRDS)
+        if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
+            d.set(dev.uid, forKey: Keys.mpxPassUID)
+        } else {
+            d.removeObject(forKey: Keys.mpxPassUID)
         }
     }
 
@@ -263,6 +348,12 @@ final class MeterViewModel: ObservableObject {
             running = true
             statusText = String(format: "Capturing %.0f kHz", fmt.sampleRate / 1000)
             if let w = prep.warning { statusText += " — \(w)" }
+            if mpxPassEnabled {
+                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID,
+                                      gainDB: mpxPassGainDB)
+            }
+            if !dcBlockEnabled { eng.setDCBlock(false) }
+            if forceRDS { eng.setForceRDS(true) }
             startTimer()
         } catch {
             statusText = "Start failed: \(error)"
@@ -277,11 +368,28 @@ final class MeterViewModel: ObservableObject {
     // real measurements, not pilot-referenced. No subprocess, no device rate to
     // restore.
     private func startSDR() {
+        refreshSDRDevices()
+        // Resolve the persisted unit selection (backend+serial). If the
+        // selected unit is not attached, KEEP the selection but start on
+        // auto with a status note -- never silently adopt another unit as
+        // the new preference (the audio-device convention).
+        var backend = 0
+        var serial = ""
+        var selectionNote: String?
+        if let id = selectedSDRID {
+            if let dev = sdrDevices.first(where: { $0.id == id }) {
+                backend = dev.backend
+                serial = dev.serial
+            } else {
+                selectionNote = "Selected SDR not attached -- using auto"
+            }
+        }
         let cfg = SDRLibraryInputSource.Config(
             frequencyKHz: Int((frequencyMHz * 1000).rounded()),
             autoGain: sdrAutoGain, gainDB: sdrGainDB,
             bandwidthKHz: sdrBandwidthKHz, biasTee: sdrBiasTee,
-            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna, lna: sdrLnaState)
+            ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna, lna: sdrLnaState,
+            deviceBackend: backend, deviceSerial: serial)
         let source = SDRLibraryInputSource(config: cfg)
         deviceID = nil
         priorDeviceRate = nil
@@ -299,9 +407,17 @@ final class MeterViewModel: ObservableObject {
             sdrIsSDRplay = source.isSDRplay
             sdrAntennaCount = source.antennaCount
             sdrDeviceName = source.deviceName
+            mergeActiveSDRDevice(source)
             running = true
             let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
+            if let selectionNote { statusText += " — \(selectionNote)" }
+            if mpxPassEnabled {
+                eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID,
+                                      gainDB: mpxPassGainDB)
+            }
+            if !dcBlockEnabled { eng.setDCBlock(false) }
+            if forceRDS { eng.setForceRDS(true) }
             startTimer()
         } catch {
             statusText = error.localizedDescription
@@ -310,17 +426,53 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
-    func stop() {
+    func stop(forTermination: Bool = false) {
         guard running else { return }
         timer?.invalidate()
         timer = nil
-        engine?.stop()   // also stops the input source (closes the tuner) + recorder
+        engine?.stop(forTermination: forTermination)   // also stops the input source + recorder
         engine = nil
         sdrSource = nil
         isRecording = false
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
+        // Devices are all free now: refresh the picker with a full scan.
+        refreshSDRDevices()
+    }
+
+    /// SDR unit changed: reopen on the chosen device (device open is not a
+    /// live-tunable parameter).
+    func applySDRDeviceChange() {
+        saveSettings()
+        restartIfRunning()
+    }
+
+    /// Decode-path DC blocker toggled: applies live.
+    func applyDCBlockChange() {
+        saveSettings()
+        engine?.setDCBlock(dcBlockEnabled)
+    }
+
+    /// Force-RDS toggled: applies live (bypasses the reception-quality gate).
+    func applyForceRDSChange() {
+        saveSettings()
+        engine?.setForceRDS(forceRDS)
+    }
+
+    /// MPX pass-through toggled or its device changed: applies live.
+    func applyMPXPassChange() {
+        saveSettings()
+        engine?.setMPXPassThrough(
+            enabled: mpxPassEnabled, deviceID: selectedMPXOutID,
+            gainDB: mpxPassGainDB)
+    }
+
+    /// Monitor output device changed: swap just the monitor, live -- the
+    /// capture, analysis, and recording are untouched.
+    func applyOutputDeviceChange() {
+        saveSettings()
+        engine?.setMonitorDevice(selectedOutputID)
     }
 
     /// Apply a control change (device/channel/monitor/ref) by restarting.
@@ -414,7 +566,11 @@ final class MeterViewModel: ObservableObject {
         // than silently showing -120 dBFS as if "Tuned".
         if inputKind == .sdr, let source = sdrSource, !source.isRunning {
             stop()
-            statusText = "SDR stopped: device lost (RTL-SDR unplugged?)"
+            // The dead handle is deliberately abandoned (closing it would
+            // crash in libusb), which keeps the unit's USB claim until the
+            // dongle is replugged or the app restarts -- say so.
+            statusText = "SDR stopped: device lost — replug the unit before "
+                + "reusing it (its USB claim is held until replug or app restart)"
             return
         }
         // Skip GUI pushes while the window is minimized / fully covered --
@@ -520,6 +676,28 @@ final class MeterViewModel: ObservableObject {
         put(\.devHistoryKHz, s.devHistoryKHz)
         put(\.mpxPowerHistoryDBr, s.mpxPowerHistoryDBr)
 
+        // Vectorscope display gain: target fills ~85% of the field at the
+        // block's decoded peak; fast attack (shrink), slow release (grow).
+        // Peak on the ROTATED goniometer axes (|L+R|, |L-R|, normalized /2):
+        // a per-channel peak under-scales mono program (its energy lands
+        // entirely on the L+R axis at twice the per-channel value), which
+        // made near-mono signals overshoot the circle.
+        var vsPeak: Float = 1e-3
+        let vsN = min(s.decodedLScope.count, s.decodedRScope.count)
+        for i in 0..<vsN {
+            let l = s.decodedLScope[i]
+            let r = s.decodedRScope[i]
+            let m = max(abs(l + r), abs(l - r)) * 0.5
+            if m > vsPeak { vsPeak = m }
+        }
+        let vsTarget = min(10.0, max(1.0, 0.85 / Double(vsPeak)))
+        if vsTarget < vectorAutoGain {
+            vectorAutoGain += 0.5 * (vsTarget - vectorAutoGain)   // fast shrink
+        } else {
+            vectorAutoGain += 0.03 * (vsTarget - vectorAutoGain)  // slow grow
+        }
+        put(\.vectorZoom, (vectorAutoGain * 20).rounded() / 20)
+
         // Waveforms/spectra genuinely change every tick; write unguarded
         // (an equality compare of 512 floats that always differs is waste).
         telemetry.compositeScope = s.compositeScope
@@ -577,9 +755,17 @@ final class MeterViewModel: ObservableObject {
         guard now - lastRDSPush >= 0.5 else { return }
         let r = s.rds
         let pi = r.pi.map { String(format: "%04X", $0) } ?? "----"
-        let rds = "\(r.synced ? "sync" : "----")  PI \(pi)"
-            + "  TP\(boolBit(r.tp)) TA\(boolBit(r.ta)) MS\(boolBit(r.ms))"
-            + String(format: "  BER %.1f%%", s.recentBlockErrorRate * 100)
+        // While the reception-quality gate suppresses the readout, the status
+        // line explains itself with the live evidence instead of blanks.
+        let rds: String
+        if s.rdsGated {
+            rds = String(format: "no usable RDS — BER %.0f%% · %.1f kHz",
+                         s.recentBlockErrorRate * 100, s.rdsDevKHz)
+        } else {
+            rds = "\(r.synced ? "sync" : "----")  PI \(pi)"
+                + "  TP\(boolBit(r.tp)) TA\(boolBit(r.ta)) MS\(boolBit(r.ms))"
+                + String(format: "  BER %.1f%%", s.recentBlockErrorRate * 100)
+        }
         let pty = r.pty.map { "\($0)  \(Self.ptyName($0))" } ?? "--"
         let ptyn = r.programTypeName.trimmingCharacters(in: .whitespaces)
         let ptynOut = ptyn.isEmpty ? "--" : "\"\(ptyn)\""

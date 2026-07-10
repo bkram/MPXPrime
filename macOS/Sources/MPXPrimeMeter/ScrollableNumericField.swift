@@ -54,9 +54,13 @@ struct ScrollableNumericField: NSViewRepresentable {
 
         func formatted(_ v: Double) -> String { String(format: "%.\(parent.decimals)f", v) }
 
+        // Clamp only -- do NOT snap to the step grid. `step` is the scroll/
+        // stepper increment, not a value raster: typed values keep their full
+        // precision (864.540 must not round to 864.5 -- audio links sit off
+        // the broadcast raster), and scrolling from an off-raster value
+        // increments it without destroying the fine offset.
         private func apply(_ raw: Double) {
-            let stepped = (raw / parent.step).rounded() * parent.step
-            parent.value = min(parent.range.upperBound, max(parent.range.lowerBound, stepped))
+            parent.value = min(parent.range.upperBound, max(parent.range.lowerBound, raw))
         }
 
         private func commit(_ sender: NSTextField) {

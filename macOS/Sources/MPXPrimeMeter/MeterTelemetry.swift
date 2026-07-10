@@ -86,6 +86,9 @@ final class MeterTelemetry {
     var afText = "--"
     var groupText = "--"
 
+    /// Vectorscope display gain (auto-ridden or the manual zoom).
+    var vectorZoom: Double = 1
+
     // Scrolling trend history (oldest -> newest).
     var devHistoryKHz: [Float] = []
     var mpxPowerHistoryDBr: [Float] = []

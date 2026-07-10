@@ -11,6 +11,145 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.41 — 2026-07-10
+
+- **Meter: vectorscope auto-zoom.** The goniometer's display gain rides the
+  program level (fast shrink / slow grow, filling ~85% of the field --
+  hardware-goniometer style) so quiet program no longer draws a tiny
+  figure. Points past full scale saturate at the field edge like the real
+  thing. Always on -- no knob to mis-set. The projection math was also
+  corrected: the rotated (L+R)/(L-R) axes span twice the per-channel range,
+  so full-scale mono previously overshot the reference circle by ~30% and
+  the auto-zoom (driven by per-channel peaks) overfilled on near-mono
+  program; scaling is now inscribe-safe, the auto-zoom targets the
+  rotated-axis peaks (exact fill at any stereo correlation), and the
+  reference circle is inset so its stroke never clips at the panel edges.
+- **Meter: DC block for the decoded audio** (input-bar checkbox, default
+  on, live): a transmitter carrier offset becomes DC after FM demod,
+  showing as an off-center vectorscope, offset waveforms, and DC in the
+  monitor/recordings -- as observed on an 864.5 MHz wireless audio link.
+  Broadcast FM has no legitimate DC. Deviation measurements were already
+  DC-tracked; this extends the cleanup to the decode path (scopes,
+  vectorscope, monitor, recordings, L/R/M/S levels).
+- **Meter: graceful SIGTERM.** pkill / logout / scripted termination now
+  runs the normal shutdown, releasing the SDRplay selection and RTL handle
+  (previously the SDRplay service ghost-held the RSP for the dead PID and
+  the unit vanished from enumeration until replug).
+- **Meter: the device-lost status now explains the held USB claim** (a
+  dead handle is deliberately abandoned; the unit needs a replug or app
+  restart before reuse).
+- **Meter: harden the RTL-SDR close against the remaining crash paths.**
+  A second SEGV-in-libusb crash (via the Stop button, on a wedged dongle)
+  showed two holes in the earlier unplug fix: (a) `rtlsdr_read_async` can
+  exit with rc == 0 on device loss, leaving the failed flag unset -- any
+  unexpected stream exit now marks the device lost regardless of rc;
+  (b) a wedged dongle can drop/re-enumerate on the bus leaving a stale
+  handle -- the close now also verifies the same physical unit (by USB
+  serial captured at open) is still enumerable before writing shutdown
+  registers. Belt-and-braces: app termination uses a new
+  `mpxtuner_close_fast` that never performs the register-writing device
+  close at all (the kernel releases the USB claim as the process exits).
+- **Meter: MPX pass-through.** New in the input bar's **Outputs** popover:
+  play the received RAW composite (pilot + stereo subcarrier + RDS) to its
+  own output device, in addition to the decoded monitor -- feed a 192 kHz
+  DAC into an FM exciter (rebroadcast / translator) or a hardware analyzer.
+  Live-apply; the output device is switched to the capture rate while the
+  pass-through runs and restored afterwards (a 48 kHz output would lose
+  the subcarriers). The decoded-monitor device picker moved into the same
+  popover. A **Gain** control (0..+12 dB, live) matches the analog level to
+  the analyzer/exciter: 0 dB keeps the SDR scaling (0 dBFS = 150 kHz, a
+  75 kHz station peaks at -6 dBFS -- why the output reads "low" into an
+  analyzer by default); +6 dB puts 75 kHz at full scale at the cost of
+  clip headroom above it.
+- **Meter: the SDR picker now reliably lists the unit in use.** The SDRplay
+  API omits in-use devices from enumeration (including our own active RSP),
+  which could hide the picker entirely. The tuner now reports the active
+  unit's serial (`mpxtuner_device_serial`), the picker merges it in, a
+  mid-capture rescan can only add devices (never shrink the list), and a
+  full rescan runs on Stop.
+- **Meter: input-bar cleanups.** Small captions (MHz / IF / kHz / Bias-T) no
+  longer wrap into vertical letter stacks on narrower windows; the SDRplay
+  antenna control is a compact menu; the SDR and Out pickers are slightly
+  tighter so the bar fits on one line.
+- **Meter: pick your SDR when several are attached.** New SDR picker in the
+  input bar (shown with more than one unit): any mix of SDRplay RSPs and
+  RTL-SDR dongles, listed by model + serial. The choice is remembered by
+  serial (survives replug/reorder); Auto keeps the old behavior (SDRplay
+  preferred). If the chosen unit is absent at start, the Meter starts on
+  Auto with a note and keeps the selection. Run the app twice to meter two
+  stations on two units. (C ABI: `mpxtuner_list_devices` +
+  `MpxTunerConfig.backend`/`device_serial`; SDRplay selection by SerNo,
+  RTL by USB serial.)
+- **Meter: monitor Output device picker** in the input bar (both source
+  modes): System Default or any output device, applied **live** -- only the
+  monitor restarts; capture, analysis, and recording are untouched.
+  Remembered by device UID. Essential when two Meter instances run side by
+  side.
+
+- **Studio: refuses to start when a preferred device is unplugged.** Starting
+  with a remembered input / output / monitor device absent no longer silently
+  streams to the OS default (a broadcast chain must never swap its
+  transmitter feed unannounced): Start is refused with a visible alert
+  ("reconnect the device, or choose another in Settings"). A device that was
+  never chosen keeps the default-device behavior.
+- **Studio: telemetry migrated to @Observable.** `LiveTelemetry` (65
+  per-tick fields) moved from `ObservableObject`/`@Published` to the
+  `@Observable` macro, matching the Meter and the project convention (the
+  bridge's dependency tracking accumulates over long sessions); all 23
+  monitoring call sites use `LiveObservationView`, and the legacy
+  `LiveTelemetryView` wrapper is removed.
+- **Meter: RDS readout gated by reception quality (+ Force override).** An
+  RDS block decoder syncs on a single accidental syndrome match and accepts
+  PI from any single CRC-passing block, so on noise the panel hallucinated
+  data (random PI/PTY at ~74% BER on a no-RDS audio link). The published
+  readout now opens only when reception is plausible -- BER <= 15% (with
+  hysteresis: closes above 25%), a detectable 57 kHz subcarrier (>= 0.8 kHz
+  when a kHz scale exists), and at least a few valid blocks decoded -- and
+  shows "no usable RDS -- BER ..% . .. kHz" (the live evidence) while gated.
+  After 10 s gated the decoder is cleared so stale garbage never flashes
+  when the gate opens. BER/level keep measuring regardless. A **Force**
+  checkbox in the RDS panel header bypasses the gate for diagnostics.
+  Deterministic tests: seeded-noise hallucinations stay suppressed, real
+  encoder-generated RDS opens the gate and decodes the true PI, Force
+  publishes raw.
+- **Meter: 1 kHz tuning resolution.** The frequency field accepts 1 kHz
+  precision (e.g. 864.540 for an audio link) instead of the broadcast
+  band's 100 kHz raster; scroll/stepper keep 0.1 MHz steps. Tuning
+  off-grid carriers exactly also removes the demod DC offset at its
+  source.
+- **Meter: SDR tuning is no longer fenced to the broadcast band.** The
+  frequency field now spans the ACTIVE tuner's real range -- RTL-SDR
+  ~24-1766 MHz, SDRplay RSP 0.1-2000 MHz -- because FM-stereo MPX also
+  rides analog audio links and license-exempt stereo transmitters outside
+  87.5-108 MHz (e.g. 886 MHz). Out-of-range tunes are rejected gracefully
+  by the driver; the tooltip states the active device's range.
+- **Meter: the Modulation card is a two-column grid** (MPX POWER | PEAK,
+  OVER 77 kHz | SEPARATION, SIGNAL | Reset Peaks) so it fills the top row
+  compactly instead of stacking one tall column.
+- **Meter: dashboard top row makes better use of the screen.** The Modulation
+  panel is sized so its readouts never truncate (the "MPX POWER ... max ..."
+  compliance figure was ellipsized), readout values shrink slightly rather
+  than ellipsize on extreme values, the RDS text grid is capped at a
+  comfortable reading width instead of swallowing the whole row on wide
+  displays, and the instrument cluster left-aligns on ultrawide screens.
+  Measurements get layout priority -- they are the product.
+- **Meter: CORR renamed to PHASE CORR and color-coded** like a hardware
+  correlation meter: normal while safely positive, amber near zero, red when
+  negative (out of phase = mono receivers cancel the audio). Tooltip
+  clarified; every readout in the app has a hover tooltip.
+
+- **Meter: fix a crash on quit (or on stopping) after the RTL-SDR dongle was
+  unplugged.** `rtlsdr_close()` writes shutdown registers over USB
+  (`rtlsdr_deinit_baseband` -> `libusb_control_transfer`), which SEGVs inside
+  libusb when the device has already vanished -- seen as an
+  `applicationWillTerminate` crash after pulling the dongle mid-session. The
+  vendored tuner already tracks unexpected stream death (`m_asyncFailed`);
+  `RTLSDRDevice::disconnect()` now skips the register-writing close for a
+  lost device and abandons the dead handle instead (nothing to deinit on a
+  vanished device; the leak is bounded by process lifetime). Covers both the
+  quit path and the dashboard's "device lost" auto-stop, which used the same
+  crashing close.
+
 ## 0.40 — 2026-07-08
 
 - **Meter: fix the GUI graphs getting slow/laggy -- and eventually the audio

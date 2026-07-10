@@ -16,7 +16,10 @@ public:
   ~RTLSDRDevice();
 
   bool connect();
-  void disconnect();
+  /// `skipDeviceClose` skips the register-writing rtlsdr_close entirely
+  /// (process-termination path: a dead USB handle SEGVs in libusb).
+  void disconnect(bool skipDeviceClose = false);
+  uint32_t deviceIndex() const { return m_deviceIndex; }
 
   bool setFrequency(uint32_t freqHz);
   bool setSampleRate(uint32_t rate);
@@ -41,6 +44,9 @@ private:
   size_t availableBytesLocked() const;
 
   uint32_t m_deviceIndex;
+  // USB serial of the opened unit (captured at connect); used to verify the
+  // same physical device is still enumerable before a register-writing close.
+  char m_serial[64] = {0};
   std::string m_tunerName = "RTL-SDR";
   std::atomic<bool> m_connected;
   void *m_deviceHandle;

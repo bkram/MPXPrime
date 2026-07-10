@@ -44,11 +44,50 @@ chrome follows the system appearance.
 The **Source** defaults to **SDR** when a dongle (SDRplay RSP or RTL-SDR) is
 detected at launch, otherwise to **Audio**.
 
+With **more than one SDR attached** (any mix of RSPs and RTL dongles) an **SDR
+picker** appears in the input bar: Auto (prefers SDRplay) or a specific unit,
+remembered by **serial number** so the choice survives replugging. If the
+chosen unit is absent at start, the Meter starts on Auto with a note and keeps
+your selection. To meter two stations at once, launch the app twice and give
+each instance its own SDR -- and its own **Out** device (below).
+
+The input bar's right side has a **DC block** checkbox (default on): a
+transmitter carrier offset becomes DC after FM demod -- an off-center
+vectorscope, offset waveforms, and DC in the monitor audio and recordings
+(common on wireless audio links). Broadcast FM has no legitimate DC, so
+leave it on; deviation measurements are always DC-tracked separately.
+
+The input bar's right side also has an **Outputs** button opening the routing
+popover (all live-apply; capture, analysis, and recording are untouched;
+remembered by device UID):
+
+- **Monitor (decoded audio)** -- where the decoded stereo plays (System
+  Default, or any output device). With two Meter instances, give each its
+  own output.
+- **MPX pass-through (raw composite)** -- plays the received composite
+  (pilot + stereo subcarrier + RDS) to its own output device, in addition
+  to the decoded monitor. Feed a 192 kHz-capable DAC into an FM exciter
+  (instant rebroadcast / translator) or into a hardware analyzer. The
+  device is switched to the capture rate (192 kHz) while the pass-through
+  runs and restored afterwards -- a 48 kHz output would low-pass away the
+  pilot and subcarriers, so use a genuinely 192 kHz-capable interface.
+  A **Gain** field (0..+12 dB, live) matches the analog level to your
+  analyzer or exciter: at 0 dB the scale is the SDR convention (0 dBFS =
+  150 kHz, so a 75 kHz station peaks at -6 dBFS); +6 dB puts 75 kHz at
+  digital full scale, but deviation beyond that then clips the DAC --
+  leave ~1 dB of headroom (+5 dB covers peaks to ~84 kHz).
+
 - **Audio device** (`Source -> Audio`): pick the input carrying the composite
   and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
   >= 128 kHz, so the default input prefers a 192 kHz-capable device.
-- **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The Meter decodes
+- **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The frequency
+  field spans the active tuner's full range (RTL-SDR ~24-1766 MHz, SDRplay
+  RSP 0.1-2000 MHz) at **1 kHz resolution** -- not just the broadcast band's
+  100 kHz raster. Any FM-stereo signal measures the same way, including
+  analog audio links and license-exempt stereo transmitters (e.g. 864.540);
+  typing takes 1 kHz precision, scrolling steps 0.1 MHz. Off-grid carriers
+  otherwise show up as DC offset after demod (see DC block). The Meter decodes
   the dongle **in-process** -- it links the vendored tuner (a stripped subset of
   FM-SDR-Tuner, from `tuner/`) as a library and runs the RTL-SDR capture + FM
   demod on its own thread, delivering the mono MPX at 192 kHz with absolute
@@ -98,8 +137,10 @@ detected at launch, otherwise to **Audio**.
 
 ## What it shows
 
-- **Audio**: IN / L / R / M / S levels and L/R correlation (CORR: +1 = mono,
-  ~0.7-0.95 = normal stereo, negative = out-of-phase / mono-incompatible).
+- **Audio**: IN / L / R / M / S levels and the **PHASE CORR** readout (L/R
+  phase correlation: +1 = mono, ~+0.7-0.95 = normal stereo, negative =
+  out-of-phase / mono-incompatible -- it turns amber near zero and red when
+  negative). Hover any readout, meter, or control for an explanation tooltip.
 - **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
   beside the audio levels. MAX is the highest excursion in the last second
   (50 ms peak-hold slots, the ITU-R SM.1268 display convention). RDS is the
@@ -126,7 +167,9 @@ detected at launch, otherwise to **Audio**.
   line (`MPX ... dBr (max ...)   PK +/- kHz   >77k ...%`).
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
   horizontal spread = out-of-phase / mono-incompatible). On the second row,
-  beside the trends.
+  beside the trends. The display gain automatically rides the program level
+  so the figure fills the scope, hardware-goniometer style -- fast shrink
+  when the program gets hot, slow grow as it quiets.
 - **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
 - **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
   it between waveform and its audio spectrum (0-20 kHz).
@@ -137,7 +180,14 @@ detected at launch, otherwise to **Audio**.
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
   AF / group histogram and live block-error rate. The **RDS** row (top of the RDS
   panel) shows sync, PI, the TP/TA/MS flags, and **BER** at the end (BER under
-  ~5% is a clean link). PI and PTY are decoded against the reference tables in
+  ~5% is a clean link). The readout is **gated by reception quality**: an RDS
+  block decoder syncs on noise easily and would hallucinate random PI/PTY, so
+  the panel shows `no usable RDS -- BER ..% . .. kHz` until the link is
+  plausible (BER at or under ~15% to open, over ~25% to close again, a
+  detectable 57 kHz subcarrier, and a few valid blocks decoded); after 10 s
+  gated the decoder is cleared so stale garbage never flashes when it opens.
+  Tick **Force** in the panel header to bypass the gate and watch the raw
+  decoder output (diagnostics -- expect garbage on noise). PI and PTY are decoded against the reference tables in
   the [Studio manual's appendices](manual.md#appendix-rds-pi-and-ecc-country-table).
 
 Deviation is referenced to a 75 kHz total. The deviation/MPX-power
@@ -147,6 +197,26 @@ FM demod noise triangle above the modulated bands doesn't inflate the
 readings -- linear-phase because a steep IIR filter overshoots on a clipped
 composite's edges and reads deviation the transmitter never emitted. The
 scopes, spectrum, and IN meter stay unfiltered so noise remains visible.
+
+## SDR troubleshooting
+
+- **"Device lost" while capturing**: the dongle dropped off the USB bus (or
+  was unplugged). The Meter stops and deliberately abandons the dead handle
+  -- closing it would crash inside the USB stack -- which keeps that unit's
+  USB claim until you **replug it or quit the app** (the status line says
+  so). Replug the dongle before reusing it.
+- **SDRplay missing from the picker**: if a previous Meter was killed
+  uncleanly (force-quit, crash), the SDRplay service can briefly hold the
+  RSP for the dead process. Replug the RSP or restart the SDRplay service.
+  Normal quits -- including `kill`/logout, which the Meter handles
+  gracefully -- always release it.
+- A wedged RTL dongle (garbage demod, BER pinned near 75%) needs a physical
+  replug; no software reset recovers it.
+- **RDS panel shows "no usable RDS"**: the reception-quality gate is holding
+  back the decode readout because BER is too high or the 57 kHz subcarrier is
+  too weak -- the signal genuinely has no trustworthy RDS (many audio links
+  carry none at all). The BER/level evidence stays live in that line; Force
+  (panel header) shows the raw decoder output anyway.
 
 ## Recording
 

@@ -358,3 +358,83 @@ struct MeterWindowedPeakTests {
         #expect(abs(a.snapshot().maxDevKHz - 30.0) < 1.0)
     }
 }
+
+@Suite("Meter RDS reception-quality gate")
+struct MeterRDSGateTests {
+    /// Deterministic broadband noise (seeded LCG; no Math.random in tests).
+    private struct LCG {
+        var state: UInt64
+        mutating func nextFloat() -> Float {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Float(Int32(truncatingIfNeeded: Int64(bitPattern: state >> 33))) / Float(Int32.max)
+        }
+    }
+
+    @Test func gateSuppressesNoiseHallucinations() {
+        // Pilot + broadband noise, NO RDS: the stream decoder happily syncs
+        // on accidental syndrome matches and hallucinates PI/PTY at ~74%
+        // BER -- the published readout must stay blank and be marked gated.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        var rng = LCG(state: 0x4d585052494d45)
+        let pilot = amp(6.75)
+        let noise = amp(25.0)
+        feed(a, seconds: 5.0) { t in
+            pilot * cosf(twoPi(19_000, t)) + noise * rng.nextFloat()
+        }
+        let s = a.snapshot()
+        #expect(s.rdsGated)
+        #expect(s.rds.pi == nil)
+        #expect(!s.rds.synced)
+        #expect(!s.rdsLocked)
+        // Note: broadband noise at this level legitimately reads a few kHz on
+        // the coherent 57 kHz level meter (in-band noise energy) -- the BER
+        // criterion is what holds the gate closed here, by design.
+    }
+
+    @Test func gateOpensOnRealRDS() {
+        // Spec-exact shaped RDS from our own encoder: the gate must open and
+        // the real PI must publish.
+        let sr192: Float = 192_000.0
+        var cfg = AppConfig()
+        cfg.enRDS = true
+        cfg.rdsLevel = 2.0
+        cfg.rdsPI = "83E1"
+        cfg.rdsPSA = "GATETEST"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: sr192)
+        let a = MeterAnalysis(sampleRate: sr192, fullScaleKHz: 75.0)
+        var block = [Float](repeating: 0.0, count: blockLen)
+        let pilotAmp: Float = 6.75 / 75.0
+        let total = Int(6.0 * sr192)
+        var idx = 0
+        while idx < total {
+            let n = min(blockLen, total - idx)
+            for i in 0..<n {
+                let t = Float(idx + i) / sr192
+                block[i] = coder.nextSample() + pilotAmp * cosf(twoPi(19_000, t))
+            }
+            block.withUnsafeBufferPointer {
+                a.process(UnsafeBufferPointer(rebasing: $0[0..<n]))
+            }
+            idx += n
+        }
+        let s = a.snapshot()
+        #expect(!s.rdsGated)
+        #expect(s.rds.pi == 0x83E1)
+        #expect(s.rds.synced)
+    }
+
+    @Test func forceBypassesTheGate() {
+        // Same noise as the suppress test, but Force on: publishing must not
+        // be gated (whatever junk the decoder produced is shown verbatim).
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        a.setForceRDS(true)
+        var rng = LCG(state: 0x4d585052494d45)
+        let pilot = amp(6.75)
+        let noise = amp(25.0)
+        feed(a, seconds: 5.0) { t in
+            pilot * cosf(twoPi(19_000, t)) + noise * rng.nextFloat()
+        }
+        let s = a.snapshot()
+        #expect(!s.rdsGated)
+    }
+}

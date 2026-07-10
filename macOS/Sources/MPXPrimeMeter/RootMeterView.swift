@@ -12,6 +12,7 @@ struct RootMeterView: View {
     // Click a decoded scope to switch it between waveform and audio spectrum.
     @State private var decodedLSpectrum = false
     @State private var decodedRSpectrum = false
+    @State private var showOutputs = false
 
     // Bridge an Int binding to the Double-valued ScrollableNumericField so the
     // integer SDR steppers (LNA, PPM) also adjust on scroll, like Frequency/Gain.
@@ -33,10 +34,17 @@ struct RootMeterView: View {
                         HStack(alignment: .top, spacing: 12) {
                             audioSection
                             deviationSection
+                            // Two-column grid, sized so the widest readouts
+                            // ("+12.0 dBr  max +12.0" / "+199.9 / -199.9 kHz")
+                            // never truncate.
                             metricsSection
-                                .frame(width: 150)
+                                .frame(width: 420)
+                            // RDS is a key/value text grid: cap it at a
+                            // comfortable reading width instead of swallowing
+                            // all remaining row width on wide displays.
                             rdsSection
-                                .frame(minWidth: 260, maxWidth: .infinity)
+                                .frame(minWidth: 260, maxWidth: 760)
+                            Spacer(minLength: 0)
                         }
                         .frame(height: 220)
                         HStack(alignment: .top, spacing: 12) {
@@ -51,7 +59,7 @@ struct RootMeterView: View {
                             .layoutPriority(1)
                     }
                     .padding(12)
-                    .frame(minWidth: 1020, minHeight: max(760, geo.size.height - 44))
+                    .frame(minWidth: 1260, minHeight: max(760, geo.size.height - 44))
                 }
             }
         }
@@ -119,6 +127,7 @@ struct RootMeterView: View {
                                                range: 50.0...300.0, step: 1.0, decimals: 0)
                             .frame(width: 50)
                         Text("kHz").foregroundStyle(.secondary)
+                            .fixedSize()
                         Stepper("Full scale", value: $vm.audioFullScaleKHz,
                                 in: 50.0...300.0, step: 1.0)
                             .labelsHidden()
@@ -134,6 +143,7 @@ struct RootMeterView: View {
                                                range: 4.0...9.0, step: 0.05, decimals: 2)
                             .frame(width: 48)
                         Text("kHz").foregroundStyle(.secondary)
+                            .fixedSize()
                         Stepper("Pilot Ref", value: $vm.pilotRefKHz, in: 4.0...9.0, step: 0.05)
                             .labelsHidden()
                     }
@@ -143,7 +153,28 @@ struct RootMeterView: View {
                         + "many stations differ. Scroll to step. Applied live.")
                 }
             } else {
-                if !vm.sdrDeviceName.isEmpty {
+                if vm.sdrDevices.count > 1 {
+                    // Multi-SDR bench: pick the unit (persisted by serial, so
+                    // the choice survives replug; two Meter instances can each
+                    // grab a different unit).
+                    Label("SDR", systemImage: "dot.radiowaves.left.and.right")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                    Picker("SDR device", selection: $vm.selectedSDRID) {
+                        Text("Auto").tag(String?.none)
+                        ForEach(vm.sdrDevices) { dev in
+                            Text(dev.displayName).tag(Optional(dev.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 220)
+                    .help("Which SDR to capture from when several are attached "
+                        + "(multiple RSPs / RTL dongles supported). Remembered by "
+                        + "serial number. Auto prefers SDRplay. Launch the app "
+                        + "twice to run two meters on two units.")
+                    .onChange(of: vm.selectedSDRID) { _, _ in vm.applySDRDeviceChange() }
+                    Divider().frame(height: 16)
+                } else if !vm.sdrDeviceName.isEmpty {
                     Label(vm.sdrDeviceName, systemImage: "dot.radiowaves.left.and.right")
                         .labelStyle(.titleAndIcon)
                         .font(.callout.weight(.semibold))
@@ -154,17 +185,7 @@ struct RootMeterView: View {
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
                 }
-                HStack(spacing: 4) {
-                    ScrollableNumericField(value: $vm.frequencyMHz,
-                                           range: 64.0...108.0, step: 0.1, decimals: 1)
-                        .frame(width: 64)
-                    Text("MHz").foregroundStyle(.secondary)
-                    Stepper("Frequency", value: $vm.frequencyMHz, in: 64.0...108.0, step: 0.1)
-                        .labelsHidden()
-                }
-                .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
-                .help("FM broadcast frequency (RTL-SDR). Type with '.' or ',', or "
-                    + "scroll over the field to step. Retunes live, no restart.")
+                frequencyField
 
                 Divider().frame(height: 16)
 
@@ -182,6 +203,7 @@ struct RootMeterView: View {
                                                range: 0.0...50.0, step: 1.0, decimals: 1)
                             .frame(width: 52)
                         Text(vm.sdrIsSDRplay ? "IF" : "dB").foregroundStyle(.secondary)
+                            .fixedSize()
                         Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
                             .labelsHidden()
                     }
@@ -234,7 +256,7 @@ struct RootMeterView: View {
                             Text("Ant \(["A", "B", "C"][min(i, 2)])").tag(i)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     .fixedSize()
                     .labelsHidden()
                     .help("SDRplay antenna input.")
@@ -257,6 +279,7 @@ struct RootMeterView: View {
                 }
 
                 Toggle("Bias-T", isOn: $vm.sdrBiasTee)
+                    .fixedSize()
                     .toggleStyle(.switch)
                     .help("5V bias tee: powers an active antenna / inline LNA. "
                         + "Leave off unless your antenna needs it (never into a DC short). "
@@ -272,6 +295,27 @@ struct RootMeterView: View {
                 }
             }
             Spacer()
+
+            dcBlockToggle
+
+            Divider().frame(height: 16)
+
+            // Output routing (both source modes), consolidated in a popover:
+            // the decoded-monitor device, and the MPX pass-through (raw
+            // composite to its own device). All live-apply.
+            Button {
+                showOutputs.toggle()
+            } label: {
+                Label("Outputs", systemImage: "speaker.wave.2")
+            }
+            .buttonStyle(.bordered)
+            .help("Output routing: decoded monitor device, and MPX "
+                + "pass-through (raw composite to a second device).")
+            .popover(isPresented: $showOutputs, arrowEdge: .bottom) {
+                outputsPopover
+            }
+
+            Divider().frame(height: 16)
 
             // Recording: pick the format, then Record to a WAV file.
             Picker("Record format", selection: $vm.recordMPX) {
@@ -360,13 +404,21 @@ struct RootMeterView: View {
                             + "approaching Mid = very wide stereo.")
                     Divider()
                     VStack(spacing: 6) {
-                        Text("CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
+                        Text("PHASE CORR").font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
+                        // Hardware-correlation-meter color language: green-ish
+                        // (normal) while safely positive, amber near zero, red
+                        // when negative (out of phase = mono-compatibility risk).
                         Text(t.correlationText).font(BroadcastStyle.heroReadout)
+                            .foregroundColor(
+                                t.correlation < 0 ? BroadcastStyle.overRed
+                                    : (t.correlation < 0.3 ? BroadcastStyle.tightAmber
+                                        : BroadcastStyle.readoutPrimary))
                         Spacer(minLength: 0)
                     }
-                    .frame(width: 64)
-                    .help("L/R correlation: +1 = mono, ~0 = wide stereo. Negative means L and R "
-                        + "are out of phase -- a mono-compatibility risk; keep it positive.")
+                    .frame(width: 74)
+                    .help("Left/right phase correlation: +1 = mono, ~+0.7-0.95 = normal stereo, "
+                        + "~0 = very wide. Negative means L and R are out of phase -- mono "
+                        + "receivers cancel the audio; keep it positive.")
                 }
                 .frame(maxHeight: .infinity)
                 .padding(6)
@@ -377,16 +429,22 @@ struct RootMeterView: View {
     // MARK: - Stereo vectorscope
 
     private var vectorscopeSection: some View {
-        GroupBox("Vectorscope") {
+        GroupBox {
             LiveObservationView(telemetry: vm.telemetry) { t in
-                VectorscopeView(left: t.decodedLScope, right: t.decodedRScope)
+                VectorscopeView(left: t.decodedLScope, right: t.decodedRScope,
+                                zoom: t.vectorZoom)
                     .frame(width: 240)
                     .frame(maxHeight: .infinity)
                     .padding(6)
                     .help("Stereo goniometer of decoded L/R. Vertical line = mono, a tilted "
                         + "line = single channel, a filled field = wide stereo. A horizontal "
-                        + "spread warns of out-of-phase (mono-incompatible) audio.")
+                        + "spread warns of out-of-phase (mono-incompatible) audio. The display "
+                        + "gain auto-rides the program level so the figure fills the scope "
+                        + "(hardware-goniometer style); points past full scale saturate at "
+                        + "the field edge.")
             }
+        } label: {
+            Text("Vectorscope")
         }
     }
 
@@ -429,65 +487,204 @@ struct RootMeterView: View {
         }
     }
 
+    // Full tuning range of the ACTIVE tuner, not just the 87.5-108 MHz
+    // broadcast band: FM-stereo MPX also rides analog audio links and
+    // license-exempt stereo transmitters well outside it (e.g. 863-865 /
+    // 886 MHz). RTL-SDR (R820T-class) tunes ~24-1766 MHz; SDRplay RSPs go
+    // from 1 kHz to 2 GHz. Unsupported tunes fail gracefully in the driver.
+    private var tuneRangeMHz: ClosedRange<Double> {
+        vm.sdrIsSDRplay ? 0.1...2000.0 : 24.0...1766.0
+    }
+
+    private var frequencyHelp: String {
+        let range = vm.sdrIsSDRplay
+            ? "SDRplay RSP: 0.1-2000 MHz" : "RTL-SDR: 24-1766 MHz"
+        return "Tune frequency in MHz, 1 kHz resolution -- the FM broadcast "
+            + "band, or any FM-stereo signal in the active tuner's range "
+            + "(audio links / license-exempt transmitters, e.g. 864.540). "
+            + "\(range). Type with '.' or ',' (scroll steps 0.1 MHz). "
+            + "Retunes live, no restart."
+    }
+
+    private var frequencyField: some View {
+        HStack(spacing: 4) {
+            // decimals: 3 gives 1 kHz typing resolution -- broadcast sits on
+            // the 100 kHz raster, but audio links do not (e.g. 864.540).
+            // Scroll/stepper keep the 0.1 MHz step for band-surfing.
+            ScrollableNumericField(value: $vm.frequencyMHz,
+                                   range: tuneRangeMHz, step: 0.1, decimals: 3)
+                .frame(width: 76)
+            Text("MHz").foregroundStyle(.secondary)
+                .fixedSize()
+            Stepper("Frequency", value: $vm.frequencyMHz,
+                    in: tuneRangeMHz, step: 0.1)
+                .labelsHidden()
+        }
+        .onChange(of: vm.frequencyMHz) { _, _ in vm.applyFrequencyChange() }
+        .help(frequencyHelp)
+    }
+
+    private static let dcBlockHelp = "Remove DC offset from the decoded "
+        + "audio (default on). A transmitter carrier offset becomes DC after "
+        + "FM demod -- an off-center vectorscope, offset waveforms, and DC in "
+        + "the monitor/recordings; common on wireless audio links. Broadcast "
+        + "FM has no legitimate DC, so leave it on. Deviation measurements "
+        + "are always DC-tracked separately. Applies live."
+
+    private var dcBlockToggle: some View {
+        Toggle("DC block", isOn: $vm.dcBlockEnabled)
+            .toggleStyle(.checkbox)
+            .fixedSize()
+            .help(Self.dcBlockHelp)
+            .onChange(of: vm.dcBlockEnabled) { _, _ in vm.applyDCBlockChange() }
+    }
+
+    // MARK: - Output routing popover
+
+    private var outputsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Monitor (decoded audio)").font(.headline)
+                Picker("Monitor output", selection: $vm.selectedOutputID) {
+                    Text("System Default").tag(AudioDeviceID?.none)
+                    ForEach(vm.outputDevices) { dev in
+                        Text(dev.name).tag(Optional(dev.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 260)
+                .help("Where the decoded stereo audio plays. Applies live.")
+                .onChange(of: vm.selectedOutputID) { _, _ in vm.applyOutputDeviceChange() }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("MPX pass-through (raw composite)", isOn: $vm.mpxPassEnabled)
+                    .toggleStyle(.switch)
+                    .help("Play the received MPX composite -- pilot, stereo "
+                        + "subcarrier, RDS and all -- to its own output device, "
+                        + "in addition to the decoded monitor. Feed a 192 kHz "
+                        + "DAC into an exciter (rebroadcast/translator) or a "
+                        + "hardware analyzer.")
+                    .onChange(of: vm.mpxPassEnabled) { _, _ in vm.applyMPXPassChange() }
+                Picker("MPX output", selection: $vm.selectedMPXOutID) {
+                    Text("System Default").tag(AudioDeviceID?.none)
+                    ForEach(vm.outputDevices) { dev in
+                        Text(dev.name).tag(Optional(dev.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 260)
+                .disabled(!vm.mpxPassEnabled)
+                .help("Where the raw composite plays -- use a genuinely "
+                    + "192 kHz-capable interface (its rate is forced to the "
+                    + "capture rate while the pass-through runs, and restored "
+                    + "after). Applies live; remembered by device UID.")
+                .onChange(of: vm.selectedMPXOutID) { _, _ in vm.applyMPXPassChange() }
+                HStack(spacing: 4) {
+                    Text("Gain").foregroundStyle(.secondary)
+                    ScrollableNumericField(value: $vm.mpxPassGainDB,
+                                           range: 0.0...12.0, step: 0.5, decimals: 1)
+                        .frame(width: 48)
+                    Text("dB").foregroundStyle(.secondary).fixedSize()
+                    Stepper("MPX gain", value: $vm.mpxPassGainDB,
+                            in: 0.0...12.0, step: 0.5)
+                        .labelsHidden()
+                }
+                .disabled(!vm.mpxPassEnabled)
+                .onChange(of: vm.mpxPassGainDB) { _, _ in vm.applyMPXPassChange() }
+                .help("Output level into the analyzer/exciter. 0 dB = the SDR "
+                    + "scaling (0 dBFS = 150 kHz; a 75 kHz station peaks at "
+                    + "-6 dBFS). +6 dB puts 75 kHz at digital full scale -- "
+                    + "deviation beyond that clips the DAC, so leave ~1 dB "
+                    + "headroom (+5 dB covers peaks to ~84 kHz). Applies live.")
+                Text("The device is switched to the capture rate (192 kHz) "
+                    + "while the pass-through runs, and restored after -- a "
+                    + "48 kHz output would lose the pilot and subcarriers. "
+                    + "Scale: 0 dBFS = 150 kHz at 0 dB gain.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 260, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+    }
+
     // MARK: - Modulation metrics (BS.412 power, peak-hold, separation)
 
     private var metricsSection: some View {
         GroupBox("Modulation") {
             LiveObservationView(telemetry: vm.telemetry) { t in
+                // Two-column grid so the card fills the fixed-height top row
+                // compactly instead of stacking one tall airy column (which
+                // pushed Reset Peaks below the card). SDR adds SIGNAL as a
+                // sixth cell; audio input leaves that cell empty.
                 VStack(alignment: .leading, spacing: 10) {
-                    if vm.inputKind == .sdr {
-                        readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
-                                valueTint: t.rssiValid ? signalTint(t.rssiNorm)
-                                    : BroadcastStyle.readoutPrimary,
-                                help: "Relative received signal level (filtered IQ channel, "
-                                    + "dBFS). Higher is stronger; most meaningful with Auto Gain "
-                                    + "off. A valid BS.412 MPX-power reading needs a strong, "
-                                    + "clean signal -- see the manual.")
+                    Grid(alignment: .topLeading, horizontalSpacing: 20, verticalSpacing: 12) {
+                        GridRow {
+                            readout("MPX POWER",
+                                    t.mpxPowerValid
+                                        ? String(format: "%+.1f dBr", t.mpxPowerDBr)
+                                            + (t.mpxPowerMaxValid
+                                                ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
+                                                : "")
+                                        : "--",
+                                    valueTint: t.mpxPowerValid
+                                        ? limitTint(
+                                            max(t.mpxPowerDBr,
+                                                t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
+                                            limit: 0.0, warn: -1.0)
+                                        : BroadcastStyle.readoutPrimary,
+                                    help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
+                                        + "window, and (max) the worst 60 s window since reset "
+                                        + "-- the number compliance is judged on; it needs a "
+                                        + "full 60 s of signal before it reads. 0 dBr is the "
+                                        + "power of a +/-19 kHz sine; the regulatory limit is "
+                                        + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                            readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
+                                    valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
+                                                         limit: 75.0, warn: 71.0),
+                                    help: "Highest positive / negative deviation in the last "
+                                        + "60 s (50 ms peak-hold slots, measuring-receiver "
+                                        + "style; a single impulse ages out instead of pinning "
+                                        + "the reading). A persistent +/- asymmetry suggests a "
+                                        + "carrier offset or one-sided clipping.")
+                        }
+                        GridRow {
+                            readout("OVER 77 kHz", t.exceedanceText,
+                                    valueTint: t.exceedanceValid
+                                        ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
+                                        : BroadcastStyle.readoutPrimary,
+                                    help: "ITU-R SM.1268 deviation compliance: the share of "
+                                        + "measured samples above 77 kHz (75 kHz + 2 kHz "
+                                        + "tolerance) since the last reset. Regulators treat "
+                                        + "more than 0.0001 % as over-deviation; rare single "
+                                        + "peaks are not a violation.")
+                            readout("SEPARATION", t.separationText,
+                                    help: "Best stereo separation observed since reset. Truest "
+                                        + "during single-channel / test-tone content; panned "
+                                        + "program reads low.")
+                        }
+                        GridRow {
+                            if vm.inputKind == .sdr {
+                                readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
+                                        valueTint: t.rssiValid ? signalTint(t.rssiNorm)
+                                            : BroadcastStyle.readoutPrimary,
+                                        help: "Relative received signal level (filtered IQ "
+                                            + "channel, dBFS). Higher is stronger; most "
+                                            + "meaningful with Auto Gain off. A valid BS.412 "
+                                            + "MPX-power reading needs a strong, clean signal "
+                                            + "-- see the manual.")
+                            } else {
+                                Color.clear.frame(width: 1, height: 1)
+                            }
+                            Button("Reset Peaks") { vm.resetPeaks() }
+                                .buttonStyle(.bordered)
+                                .disabled(!vm.running)
+                                .gridColumnAlignment(.leading)
+                        }
                     }
-                    readout("MPX POWER",
-                            t.mpxPowerValid
-                                ? String(format: "%+.1f dBr", t.mpxPowerDBr)
-                                    + (t.mpxPowerMaxValid
-                                        ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
-                                        : "")
-                                : "--",
-                            valueTint: t.mpxPowerValid
-                                ? limitTint(
-                                    max(t.mpxPowerDBr,
-                                        t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
-                                    limit: 0.0, warn: -1.0)
-                                : BroadcastStyle.readoutPrimary,
-                            help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
-                                + "window, and (max) the worst 60 s window since reset "
-                                + "-- the number compliance is judged on; it needs a "
-                                + "full 60 s of signal before it reads. 0 dBr is the "
-                                + "power of a +/-19 kHz sine; the regulatory limit is "
-                                + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
-                    readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
-                            valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
-                                                 limit: 75.0, warn: 71.0),
-                            help: "Highest positive / negative deviation in the last "
-                                + "60 s (50 ms peak-hold slots, measuring-receiver "
-                                + "style; a single impulse ages out instead of pinning "
-                                + "the reading). A persistent +/- asymmetry suggests a "
-                                + "carrier offset or one-sided clipping.")
-                    readout("OVER 77 kHz", t.exceedanceText,
-                            valueTint: t.exceedanceValid
-                                ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
-                                : BroadcastStyle.readoutPrimary,
-                            help: "ITU-R SM.1268 deviation compliance: the share of "
-                                + "measured samples above 77 kHz (75 kHz + 2 kHz "
-                                + "tolerance) since the last reset. Regulators treat "
-                                + "more than 0.0001 % as over-deviation; rare single "
-                                + "peaks are not a violation.")
-                    readout("SEPARATION", t.separationText,
-                            help: "Best stereo separation observed since reset. Truest "
-                                + "during single-channel / test-tone content; panned "
-                                + "program reads low.")
                     Spacer(minLength: 0)
-                    Button("Reset Peaks") { vm.resetPeaks() }
-                        .buttonStyle(.bordered)
-                        .disabled(!vm.running)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(6)
@@ -522,7 +719,12 @@ struct RootMeterView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(BroadcastStyle.chipLabel).foregroundStyle(.secondary)
+            // A measurement readout must never ellipsize ("+7.1 dBr max +7..."
+            // hides the compliance figure); shrink slightly instead if an
+            // extreme value outgrows the panel.
             Text(value).font(BroadcastStyle.valueReadout).foregroundColor(valueTint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .help(help)
     }
@@ -638,7 +840,7 @@ struct RootMeterView: View {
     // MARK: - RDS
 
     private var rdsSection: some View {
-        GroupBox("RDS") {
+        GroupBox {
             // Native key/value grid: the label column auto-sizes to the widest
             // label and values share one baseline-aligned column (HIG key-value
             // layout) instead of a hand-tuned fixed-width HStack.
@@ -665,6 +867,20 @@ struct RootMeterView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(6)
+            }
+        } label: {
+            HStack {
+                Text("RDS")
+                Spacer()
+                Toggle("Force", isOn: $vm.forceRDS)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .help("Bypass the RDS reception-quality gate and show the raw "
+                        + "decoder output even when BER is high or the 57 kHz "
+                        + "subcarrier is weak -- expect garbage on noise (random "
+                        + "PI/PTY). Diagnostics only; deviation measurements are "
+                        + "unaffected. Applies live.")
+                    .onChange(of: vm.forceRDS) { _, _ in vm.applyForceRDSChange() }
             }
         }
     }

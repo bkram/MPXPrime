@@ -181,6 +181,33 @@ int mpxtuner_sdrplay_present(void) {
   return SDRplayDevice::deviceCount() > 0 ? 1 : 0;
 }
 
+int mpxtuner_list_devices(MpxTunerDeviceInfo *out, int max) {
+  if (!out || max <= 0) return 0;
+  int n = 0;
+  SDRplayDevice::Info rsp[8];
+  const int nr = SDRplayDevice::listDevices(rsp, 8);
+  for (int i = 0; i < nr && n < max; ++i, ++n) {
+    out[n].backend = 2;
+    out[n].index = static_cast<uint32_t>(i);
+    std::snprintf(out[n].name, sizeof(out[n].name), "%s", rsp[i].name);
+    std::snprintf(out[n].serial, sizeof(out[n].serial), "%s", rsp[i].serial);
+  }
+#if defined(FM_TUNER_HAS_RTLSDR)
+  const uint32_t nrtl = rtlsdr_get_device_count();
+  for (uint32_t i = 0; i < nrtl && n < max; ++i, ++n) {
+    char manufact[256] = {0}, product[256] = {0}, serial[256] = {0};
+    rtlsdr_get_device_usb_strings(i, manufact, product, serial);
+    const char *name = product[0] ? product : rtlsdr_get_device_name(i);
+    out[n].backend = 1;
+    out[n].index = i;
+    std::snprintf(out[n].name, sizeof(out[n].name), "%s",
+                  (name && name[0]) ? name : "RTL-SDR");
+    std::snprintf(out[n].serial, sizeof(out[n].serial), "%s", serial);
+  }
+#endif
+  return n;
+}
+
 MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
                         void *ctx, char *err, size_t err_len) {
   auto setErr = [&](const char *m) {
@@ -188,17 +215,45 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
   };
   if (!cfg) { setErr("null config"); return nullptr; }
   const uint32_t rate = cfg->mpx_rate ? cfg->mpx_rate : 192000;
-  MpxTuner *t = new (std::nothrow) MpxTuner(cfg->device_index, rate);
+
+  // Backend: explicit from the config, or auto (SDRplay preferred).
+  int backend = cfg->backend;
+  if (backend != 1 && backend != 2) {
+    backend = SDRplayDevice::deviceCount() > 0 ? 2 : 1;
+  }
+  const bool useSDRplay = (backend == 2);
+
+  // RTL device index: explicit, or resolved from the requested serial.
+  uint32_t rtlIndex = cfg->device_index;
+#if defined(FM_TUNER_HAS_RTLSDR)
+  if (!useSDRplay && cfg->device_serial[0] != '\0') {
+    const uint32_t nrtl = rtlsdr_get_device_count();
+    bool found = false;
+    for (uint32_t i = 0; i < nrtl; ++i) {
+      char manufact[256] = {0}, product[256] = {0}, serial[256] = {0};
+      rtlsdr_get_device_usb_strings(i, manufact, product, serial);
+      if (std::strncmp(serial, cfg->device_serial, sizeof(serial)) == 0) {
+        rtlIndex = i;
+        found = true;
+        break;
+      }
+    }
+    if (!found) { setErr("requested RTL-SDR serial not attached"); return nullptr; }
+  }
+#endif
+
+  MpxTuner *t = new (std::nothrow) MpxTuner(rtlIndex, rate);
   if (!t) { setErr("out of memory"); return nullptr; }
   t->cb = cb;
   t->ctx = ctx;
 
-  // Auto-prefer SDRplay when an RSP is attached; else RTL-SDR.
-  const bool useSDRplay = SDRplayDevice::deviceCount() > 0;
   if (useSDRplay) {
     t->backend = BackendSDRplay;
-    if (!t->sdrplay.connect(cfg->freq_khz * 1000)) {
-      setErr("SDRplay device open failed"); delete t; return nullptr;
+    const char *serial = cfg->device_serial[0] ? cfg->device_serial : nullptr;
+    if (!t->sdrplay.connect(cfg->freq_khz * 1000, serial)) {
+      setErr(serial ? "requested SDRplay serial not attached (or open failed)"
+                    : "SDRplay device open failed");
+      delete t; return nullptr;
     }
     t->inputRate = t->sdrplay.inputRate();
   } else {
@@ -251,6 +306,15 @@ void mpxtuner_close(MpxTuner *t) {
   delete t;
 }
 
+void mpxtuner_close_fast(MpxTuner *t) {
+  if (!t) return;
+  t->running.store(false, std::memory_order_relaxed);
+  if (t->thread.joinable()) t->thread.join();
+  if (t->backend == BackendSDRplay) t->sdrplay.disconnect();
+  else t->rtl.disconnect(true /*skipDeviceClose*/);
+  delete t;
+}
+
 int mpxtuner_is_alive(const MpxTuner *t) {
   return (t && t->alive.load(std::memory_order_relaxed)) ? 1 : 0;
 }
@@ -276,6 +340,25 @@ void mpxtuner_device_name(const MpxTuner *t, char *buf, size_t len) {
       : std::string("RTL-SDR ") + t->rtl.tunerName();
   std::strncpy(buf, name.c_str(), len - 1);
   buf[len - 1] = '\0';
+}
+
+void mpxtuner_device_serial(const MpxTuner *t, char *buf, size_t len) {
+  if (!buf || len == 0) return;
+  buf[0] = '\0';
+  if (!t) return;
+  if (t->backend == BackendSDRplay) {
+    std::strncpy(buf, t->sdrplay.serialNumber(), len - 1);
+    buf[len - 1] = '\0';
+    return;
+  }
+#if defined(FM_TUNER_HAS_RTLSDR)
+  char manufact[256] = {0}, product[256] = {0}, serial[256] = {0};
+  if (rtlsdr_get_device_usb_strings(t->rtl.deviceIndex(), manufact, product,
+                                    serial) == 0) {
+    std::strncpy(buf, serial, len - 1);
+    buf[len - 1] = '\0';
+  }
+#endif
 }
 
 void mpxtuner_set_frequency_khz(MpxTuner *t, uint32_t khz) {

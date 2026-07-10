@@ -145,7 +145,7 @@ struct BroadcastStatusBar: View {
     // otherwise the always-visible header would only refresh on a view-model
     // change and read a stale "-" until the next one.
     private var sourceChip: some View {
-        LiveTelemetryView(telemetry: model.telemetry) { t in
+        LiveObservationView(telemetry: model.telemetry) { t in
             let raw = t.streamHealth.inputName.trimmingCharacters(in: .whitespacesAndNewlines)
             let value = (t.streamHealth.isRunning && !raw.isEmpty) ? raw : "—"
             chipLabelledValue(
@@ -157,7 +157,7 @@ struct BroadcastStatusBar: View {
     }
 
     private var sampleRateChip: some View {
-        LiveTelemetryView(telemetry: model.telemetry) { t in
+        LiveObservationView(telemetry: model.telemetry) { t in
             let rate = t.streamHealth.renderHz
             let value = rate > 0 ? "\(rate / 1_000) kHz" : "—"
             chipLabelledValue(

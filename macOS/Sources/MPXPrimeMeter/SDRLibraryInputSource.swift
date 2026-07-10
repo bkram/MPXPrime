@@ -37,6 +37,48 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         var rtlAGC: Bool = false
         var antenna: Int = 0   // SDRplay antenna input index
         var lna: Int = 4       // SDRplay LNA state (front-end gain reduction step)
+        /// Device selection: backend 0 = auto (SDRplay preferred), 1 = RTL-SDR,
+        /// 2 = SDRplay; a non-empty serial pins the exact unit (multi-SDR
+        /// benches -- selection persists by serial across replug/reorder).
+        var deviceBackend: Int = 0
+        var deviceSerial: String = ""
+    }
+
+    /// One attached SDR (either backend), for the device picker.
+    struct DeviceInfo: Identifiable, Hashable {
+        let backend: Int       // 1 = RTL-SDR, 2 = SDRplay
+        let index: Int
+        let name: String
+        let serial: String
+        /// Stable identity: backend + serial (index as a fallback for units
+        /// with blank serials).
+        var id: String { "\(backend):\(serial.isEmpty ? "#\(index)" : serial)" }
+        var isSDRplay: Bool { backend == 2 }
+        var displayName: String {
+            serial.isEmpty ? name : "\(name) (\(serial))"
+        }
+    }
+
+    /// Enumerate attached SDRs across both backends (SDRplay first).
+    static func listDevices() -> [DeviceInfo] {
+        var raw = [MpxTunerDeviceInfo](repeating: MpxTunerDeviceInfo(), count: 16)
+        let n = raw.withUnsafeMutableBufferPointer { buf -> Int32 in
+            guard let base = buf.baseAddress else { return 0 }
+            return mpxtuner_list_devices(base, Int32(buf.count))
+        }
+        return (0..<Int(n)).map { i in
+            var info = raw[i]
+            let name = withUnsafeBytes(of: &info.name) { ptr -> String in
+                guard let base = ptr.bindMemory(to: CChar.self).baseAddress else { return "SDR" }
+                return String(cString: base)
+            }
+            let serial = withUnsafeBytes(of: &info.serial) { ptr -> String in
+                guard let base = ptr.bindMemory(to: CChar.self).baseAddress else { return "" }
+                return String(cString: base)
+            }
+            return DeviceInfo(backend: Int(info.backend), index: Int(info.index),
+                              name: name, serial: serial)
+        }
     }
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
@@ -73,6 +115,19 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     var antennaCount: Int {
         guard let handle else { return 1 }
         return Int(mpxtuner_antenna_count(handle))
+    }
+
+    /// Serial of the ACTIVE device ("" if unknown) -- lets the picker list
+    /// the in-use unit even when backend enumeration hides it (SDRplay
+    /// GetDevices omits selected devices).
+    var deviceSerial: String {
+        guard let handle else { return "" }
+        var buf = [CChar](repeating: 0, count: 64)
+        buf.withUnsafeMutableBufferPointer { mpxtuner_device_serial(handle, $0.baseAddress, $0.count) }
+        return buf.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return "" }
+            return String(cString: base)
+        }
     }
 
     /// Human device name, e.g. "SDRplay RSPdx" or "RTL-SDR R820T".
@@ -114,6 +169,12 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         cfg.rtl_agc = config.rtlAGC ? 1 : 0
         cfg.antenna = Int32(config.antenna)
         cfg.lna = Int32(config.lna)
+        cfg.backend = Int32(config.deviceBackend)
+        withUnsafeMutableBytes(of: &cfg.device_serial) { ptr in
+            let bytes = Array(config.deviceSerial.utf8.prefix(63))
+            ptr.copyBytes(from: bytes)
+            ptr[bytes.count] = 0
+        }
 
         var errBuf = [CChar](repeating: 0, count: 256)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
@@ -136,6 +197,16 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     func stop() {
         if let handle {
             mpxtuner_close(handle)  // joins the capture thread; no callback after this
+            self.handle = nil
+        }
+    }
+
+    /// Termination-time variant: skips the register-writing RTL device close
+    /// (a dead USB handle SEGVs in libusb; the kernel releases the claim as
+    /// the process exits).
+    func stopForTermination() {
+        if let handle {
+            mpxtuner_close_fast(handle)
             self.handle = nil
         }
     }

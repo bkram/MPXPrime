@@ -36,6 +36,14 @@ typedef struct MpxTuner MpxTuner;
 typedef void (*MpxTunerSampleCallback)(const float *samples, size_t count,
                                        void *ctx);
 
+/// One attached SDR device (either backend), for building a device picker.
+typedef struct {
+  int backend;      // 1 = RTL-SDR, 2 = SDRplay
+  uint32_t index;   // per-backend device index
+  char name[64];    // e.g. "SDRplay RSPdx", "RTL-SDR Blog V3"
+  char serial[64];  // USB / API serial (stable identity across replug)
+} MpxTunerDeviceInfo;
+
 typedef struct {
   uint32_t device_index;  // RTL-SDR device index (usually 0)
   uint32_t freq_khz;      // tune frequency in kHz
@@ -49,7 +57,18 @@ typedef struct {
   int rtl_agc;            // 1 = RTL2832 digital AGC
   int antenna;            // SDRplay antenna input index (0-based; ignored on RTL)
   int lna;                // SDRplay LNA state (front-end gain reduction step)
+  int backend;            // 0 = auto (SDRplay preferred), 1 = RTL-SDR, 2 = SDRplay
+  char device_serial[64]; // non-empty: select the device with this serial
 } MpxTunerConfig;
+
+/// Serial of the ACTIVE device ("" if unknown). Lets the UI list the unit it
+/// is capturing from even when the backend API hides in-use devices from
+/// enumeration (SDRplay GetDevices omits selected units).
+void mpxtuner_device_serial(const MpxTuner *t, char *buf, size_t len);
+
+/// List attached SDR devices across both backends (SDRplay first, then
+/// RTL-SDR). Returns the number written (<= max).
+int mpxtuner_list_devices(MpxTunerDeviceInfo *out, int max);
 
 /// Open the device, configure it, and start the capture + demod thread.
 /// Returns NULL on failure (no device, allocation, etc.) and writes a message
@@ -59,6 +78,11 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
 
 /// Stop the capture thread, close the device, and free. Safe on NULL.
 void mpxtuner_close(MpxTuner *t);
+
+/// Like mpxtuner_close but NEVER performs the register-writing RTL-SDR device
+/// close -- for process-termination paths, where a dead USB handle would SEGV
+/// in libusb and the kernel is about to release the claim anyway.
+void mpxtuner_close_fast(MpxTuner *t);
 
 /// 1 while the capture thread is alive; 0 after a fatal device error
 /// (e.g. the dongle was unplugged). The GUI polls this to surface a loss.

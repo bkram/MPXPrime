@@ -21,9 +21,13 @@ combination test suite. Newest first.
   drift); changes hot-apply through the existing render-thread hand-off and
   persist to the INI. Localhost binds are open; any remote bind requires an
   API key (Bearer / X-API-Key, constant-time compare) and refuses to start
-  without one; TLS is delegated to a reverse proxy. The dashboard at `/` is
-  a single self-contained page: transport, level/GR/injection meters, live
-  RDS with a TA button, presets, and an all-settings editor. Built on
+  without one; TLS is delegated to a reverse proxy. The dashboard at `/`
+  mirrors the Studio GUI: pinned broadcast status bar (transport, level +
+  gain-reduction meters, deviation/pilot/RDS/margin readouts) over sidebar
+  sections -- Sound stage cards with real switches/sliders in the GUI's
+  control vocabulary (per-stage preset pickers included), RDS (on-air
+  PS/RT, identity, text, flags), Test Tone, Presets, and an Advanced raw
+  all-settings editor -- one self-contained page, no build step. Built on
   Hummingbird 2 (new dependency, with SwiftNIO transitively). Internals:
   preset tables extracted to a shared `PresetCatalog` (GUI behavior
   unchanged); `ALSAAudioEngine` gained the live-apply hand-off, RDS

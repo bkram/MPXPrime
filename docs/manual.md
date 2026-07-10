@@ -514,11 +514,19 @@ without one. Clients send the key as `Authorization: Bearer <key>` or
 `X-API-Key: <key>`. The server speaks plain HTTP; for access beyond a
 trusted network, front it with a TLS reverse proxy (nginx/caddy).
 
-Open `http://<host>:8737/` in a browser for the dashboard: transport
-start/stop/restart, live level/GR/injection meters, on-air RDS PS/RT with
-live text editing and a TA button, sound presets, and a collapsible
-all-settings editor. It is a single self-contained page (no internet
-access needed) and prompts for the API key when one is configured.
+Open `http://<host>:8737/` in a browser for the dashboard. It mirrors the
+Studio GUI: a pinned broadcast status bar (transport, IN/MPX level bars,
+AGC/limiter/clipper gain-reduction meters, deviation / pilot / RDS
+injection / budget-margin readouts, restart-pending badge) above sidebar
+sections -- Sound (Input, AGC, PrimeBass, Stereo Image, Multiband, Audio
+Clipper, Composite Clipper, Output -- real switches and sliders with the
+GUI's control vocabulary, applied live on release), RDS (on-air PS/RT
+display, identity, PS banks, RadioText, TP/TA/MS/CT flags), Test Tone,
+Presets (with per-stage preset pickers on the Sound cards too), and an
+Advanced page holding the raw all-settings editor. Every change reports
+back live / live-RDS / needs-restart. It is a single self-contained page
+(no internet access needed) and prompts for the API key when one is
+configured.
 
 ### Endpoints
 

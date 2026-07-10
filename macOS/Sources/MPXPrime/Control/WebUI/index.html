@@ -3,126 +3,120 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MPX Prime Studio - Remote</title>
+<title>MPX Prime Studio</title>
 <style>
   :root {
-    --bg: #101418; --panel: #181e24; --panel2: #1f2730; --line: #2a343f;
-    --text: #d8e0e8; --dim: #8a97a4; --accent: #38b6ff; --ok: #35c46f;
-    --warn: #e0a53c; --bad: #e05252; --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --bg: #0e1216; --bar: #12181e; --panel: #171e25; --panel2: #1e2731; --line: #2a343f;
+    --text: #d9e1e9; --dim: #8a97a4; --accent: #38b6ff; --ok: #35c46f; --warn: #e0a53c;
+    --bad: #e05252; --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 18px; }
-  h1 { font-size: 17px; letter-spacing: 0.06em; }
-  h1 small { color: var(--dim); font-weight: 400; margin-left: 10px; font-size: 12px; }
-  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
-  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bad); display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+
+  /* ---- broadcast status bar (pinned) ---- */
+  #statusbar { background: var(--bar); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  #brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: 0.05em; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
   .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
-  .badge.warn { color: var(--warn); border-color: var(--warn); }
-  .spacer { flex: 1; }
-  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  #meta { color: var(--dim); font-size: 11px; }
+  .strip { display: flex; gap: 14px; align-items: flex-end; }
+  .vm { width: 46px; text-align: center; }
+  .vm .track { height: 42px; width: 10px; margin: 0 auto 3px; background: #0a0e12; border-radius: 3px; position: relative; overflow: hidden; }
+  .vm .fill { position: absolute; bottom: 0; left: 0; right: 0; height: 0; background: linear-gradient(0deg, #2f9e5f, #7ec843 70%, #e0a53c 88%, #e05252); }
+  .vm.gr .fill { background: var(--warn); }
+  .vm .cap { font-size: 9px; color: var(--dim); letter-spacing: 0.06em; }
+  .vm .val { font-family: var(--mono); font-size: 10px; }
+  .bigread { text-align: center; min-width: 86px; }
+  .bigread b { font-family: var(--mono); font-size: 21px; font-weight: 500; display: block; line-height: 1.1; }
+  .bigread span { font-size: 9px; color: var(--dim); letter-spacing: 0.08em; }
+  .bigread.alert b { color: var(--bad); }
+  #transport { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 9px; border: 1px solid var(--warn); color: var(--warn); }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 13px; font-size: 12px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #06131c; font-weight: 600; }
   button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
-  button.ta-on { background: var(--warn); border-color: var(--warn); color: #131313; font-weight: 700; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
-  .panel h2 { font-size: 11px; letter-spacing: 0.14em; color: var(--dim); text-transform: uppercase; margin-bottom: 12px; }
-  .meter { margin-bottom: 9px; }
-  .meter label { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); margin-bottom: 3px; }
-  .meter label b { color: var(--text); font-family: var(--mono); font-weight: 500; }
-  .bar { height: 9px; background: #0b0f13; border-radius: 4px; overflow: hidden; }
-  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2f9e5f, #7ec843 70%, #e0a53c 88%, #e05252); transition: width 90ms linear; }
-  .bar.gr i { background: var(--warn); }
-  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13px; }
-  .kv div span { color: var(--dim); font-size: 11px; display: block; }
-  .kv div b { font-family: var(--mono); font-weight: 500; font-size: 15px; }
-  .rds-live { background: #0b0f13; border-radius: 6px; padding: 10px 12px; font-family: var(--mono); margin-bottom: 12px; }
-  .rds-live .ps { font-size: 20px; letter-spacing: 0.12em; color: var(--accent); }
-  .rds-live .rt { font-size: 12px; color: var(--dim); margin-top: 4px; min-height: 16px; }
-  .field { display: flex; gap: 8px; margin-bottom: 8px; }
-  .field input, .field select { flex: 1; background: #0b0f13; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px 9px; font-family: var(--mono); font-size: 13px; }
-  .field input:focus { border-color: var(--accent); outline: none; }
-  details { margin-top: 16px; }
-  summary { cursor: pointer; color: var(--dim); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+
+  /* ---- layout: sidebar + content ---- */
+  #main { display: flex; flex: 1; min-height: 0; }
+  #sidebar { width: 172px; background: var(--bar); border-right: 1px solid var(--line); padding: 10px 0; overflow-y: auto; flex-shrink: 0; }
+  #sidebar .nav { padding: 7px 18px; cursor: pointer; color: var(--dim); font-size: 13px; border-left: 3px solid transparent; user-select: none; }
+  #sidebar .nav:hover { color: var(--text); }
+  #sidebar .nav.active { color: var(--text); border-left-color: var(--accent); background: rgba(56,182,255,0.06); }
+  #sidebar .sep { margin: 8px 18px; border-top: 1px solid var(--line); }
+  #content { flex: 1; overflow-y: auto; padding: 18px; }
+  #content h1 { font-size: 15px; margin-bottom: 4px; }
+  #content .pagehelp { color: var(--dim); font-size: 12px; margin-bottom: 14px; max-width: 78ch; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; align-items: start; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h2 { font-size: 11px; letter-spacing: 0.13em; color: var(--dim); text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+
+  /* ---- controls ---- */
+  .ctl { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid rgba(42,52,63,0.5); }
+  .ctl:last-child { border-bottom: none; }
+  .ctl label { flex: 1; }
+  .ctl .sub { display: block; color: var(--dim); font-size: 10px; }
+  .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .knob { position: absolute; inset: 0; background: #39434e; border-radius: 10px; transition: background 120ms; cursor: pointer; }
+  .knob:before { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: transform 120ms; }
+  .switch input:checked + .knob { background: var(--ok); }
+  .switch input:checked + .knob:before { transform: translateX(16px); }
+  .sliderwrap { display: flex; align-items: center; gap: 10px; flex: 1.2; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .sval { font-family: var(--mono); font-size: 12px; min-width: 74px; text-align: right; }
+  select, input[type=text], input[type=number], input[type=password] { background: #0a0e12; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 5px 8px; font-family: var(--mono); font-size: 12px; }
+  select:focus, input:focus { border-color: var(--accent); outline: none; }
+  input[type=text] { width: 200px; }
+  .rds-live { background: #0a0e12; border-radius: 8px; padding: 12px 14px; font-family: var(--mono); margin-bottom: 12px; }
+  .rds-live .ps { font-size: 24px; letter-spacing: 0.14em; color: var(--accent); }
+  .rds-live .rt { font-size: 12px; color: var(--dim); margin-top: 5px; min-height: 16px; white-space: pre-wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
   th { color: var(--dim); font-weight: 500; }
-  td input { width: 100%; background: #0b0f13; border: 1px solid var(--line); color: var(--text); border-radius: 4px; padding: 3px 6px; font-family: var(--mono); font-size: 12px; }
-  .section-title { color: var(--accent); font-family: var(--mono); padding-top: 12px; }
-  #toast { position: fixed; right: 18px; bottom: 18px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; font-size: 13px; opacity: 0; transition: opacity 200ms; pointer-events: none; max-width: 46ch; }
+  td input { width: 100%; }
+  .section-title { color: var(--accent); font-family: var(--mono); padding: 12px 0 4px; }
+  #toast { position: fixed; right: 16px; bottom: 16px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 15px; font-size: 12px; opacity: 0; transition: opacity 200ms; pointer-events: none; max-width: 46ch; z-index: 10; }
   #toast.show { opacity: 1; }
-  #keybar { display: none; gap: 8px; margin-bottom: 14px; align-items: center; background: var(--panel); border: 1px solid var(--warn); border-radius: 8px; padding: 10px 14px; }
+  #keybar { display: none; gap: 8px; margin: 12px 16px 0; align-items: center; background: var(--panel); border: 1px solid var(--warn); border-radius: 8px; padding: 10px 14px; }
   #keybar.show { display: flex; }
 </style>
 </head>
 <body>
-<header>
-  <h1><span class="dot" id="dot"></span>MPX PRIME STUDIO<small id="meta">connecting...</small></h1>
-  <span class="badge warn" id="restartBadge" hidden>restart pending</span>
-  <span class="spacer"></span>
-  <button class="primary" id="btnStart">Start</button>
-  <button id="btnRestart">Restart</button>
-  <button class="danger" id="btnStop">Stop</button>
-</header>
+
+<div id="statusbar">
+  <div id="brand"><span class="dot" id="dot"></span>MPX PRIME<div id="meta">connecting...</div></div>
+  <div class="strip">
+    <div class="vm"><div class="track"><div class="fill" id="mInL"></div></div><div class="val" id="vInL">-</div><div class="cap">IN L</div></div>
+    <div class="vm"><div class="track"><div class="fill" id="mInR"></div></div><div class="val" id="vInR">-</div><div class="cap">IN R</div></div>
+    <div class="vm"><div class="track"><div class="fill" id="mOut"></div></div><div class="val" id="vOut">-</div><div class="cap">MPX</div></div>
+    <div class="vm gr"><div class="track"><div class="fill" id="mAGC"></div></div><div class="val" id="vAGC">-</div><div class="cap">AGC</div></div>
+    <div class="vm gr"><div class="track"><div class="fill" id="mLim"></div></div><div class="val" id="vLim">-</div><div class="cap">LIM</div></div>
+    <div class="vm gr"><div class="track"><div class="fill" id="mClip"></div></div><div class="val" id="vClip">-</div><div class="cap">CLIP</div></div>
+  </div>
+  <div class="bigread" id="devRead"><b id="vDev">-</b><span>DEVIATION kHz</span></div>
+  <div class="bigread"><b id="vPilot">-</b><span>PILOT %</span></div>
+  <div class="bigread"><b id="vRDSInj">-</b><span>RDS %</span></div>
+  <div class="bigread"><b id="vMargin">-</b><span>MARGIN dB</span></div>
+  <div id="transport">
+    <span class="badge" id="restartBadge" hidden>restart pending</span>
+    <button class="primary" id="btnStart">Start</button>
+    <button id="btnRestart">Restart</button>
+    <button class="danger" id="btnStop">Stop</button>
+  </div>
+</div>
 
 <div id="keybar">
   <span>API key required:</span>
-  <input type="password" id="keyInput" placeholder="paste API key" style="flex:1;background:#0b0f13;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 9px;">
+  <input type="password" id="keyInput" placeholder="paste API key" style="flex:1">
   <button class="primary" id="keySave">Unlock</button>
 </div>
 
-<div class="grid">
-  <div class="panel">
-    <h2>Levels</h2>
-    <div class="meter"><label>INPUT L <b id="vInL">-</b></label><div class="bar"><i id="mInL"></i></div></div>
-    <div class="meter"><label>INPUT R <b id="vInR">-</b></label><div class="bar"><i id="mInR"></i></div></div>
-    <div class="meter"><label>MPX OUT <b id="vOut">-</b></label><div class="bar"><i id="mOut"></i></div></div>
-    <div class="meter"><label>CLIPPER GR <b id="vClipGR">-</b></label><div class="bar gr"><i id="mClipGR"></i></div></div>
-    <div class="meter"><label>LIMITER GR <b id="vLimGR">-</b></label><div class="bar gr"><i id="mLimGR"></i></div></div>
-  </div>
-
-  <div class="panel">
-    <h2>Modulation</h2>
-    <div class="kv">
-      <div><span>DEVIATION</span><b id="vDev">-</b></div>
-      <div><span>BUDGET MARGIN</span><b id="vBudget">-</b></div>
-      <div><span>PILOT</span><b id="vPilot">-</b></div>
-      <div><span>RDS</span><b id="vRDSInj">-</b></div>
-      <div><span>AGC GAIN</span><b id="vAGC">-</b></div>
-      <div><span>STEREO CORR</span><b id="vCorr">-</b></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>RDS</h2>
-    <div class="rds-live">
-      <div class="ps" id="rdsPS">--------</div>
-      <div class="rt" id="rdsRT"></div>
-    </div>
-    <div class="field"><input id="psInput" maxlength="200" placeholder="PS text (bank A)"><button id="psApply">Set PS</button></div>
-    <div class="field"><input id="rtInput" maxlength="64" placeholder="RadioText"><button id="rtApply">Set RT</button></div>
-    <div class="field">
-      <button id="taBtn" style="flex:1">TA off</button>
-      <span style="align-self:center;color:var(--dim);font-size:12px" id="rdsIds">PI - / PTY -</span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Presets</h2>
-    <div class="field">
-      <select id="presetKind"></select>
-      <select id="presetId"></select>
-      <button id="presetApply">Apply</button>
-    </div>
-    <div style="color:var(--dim);font-size:12px">Sound presets apply live; the change is saved to the config.</div>
-  </div>
+<div id="main">
+  <nav id="sidebar"></nav>
+  <div id="content"></div>
 </div>
-
-<details id="advanced">
-  <summary>Advanced configuration (all settings)</summary>
-  <div id="configTables" class="panel" style="margin-top:10px"></div>
-</details>
 
 <div id="toast"></div>
 
@@ -130,6 +124,9 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 let apiKey = localStorage.getItem("mpxprime_api_key") || "";
+let configValues = {};   // flat ini key -> string value
+let presetLists = {};
+let taState = false;
 
 function headers(json) {
   const h = {};
@@ -137,159 +134,391 @@ function headers(json) {
   if (json) h["Content-Type"] = "application/json";
   return h;
 }
-
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { ...headers(!!opts.body), ...(opts.headers || {}) } });
   if (res.status === 401) { $("keybar").classList.add("show"); throw new Error("unauthorized"); }
   $("keybar").classList.remove("show");
   if (!res.ok) {
     let msg = res.statusText;
-    try { msg = (await res.json()).error?.message || msg; } catch (e) { /* keep statusText */ }
+    try { msg = (await res.json()).error?.message || msg; } catch (e) { /* keep */ }
     throw new Error(msg);
   }
   return res.json();
 }
-
 function toast(msg, bad) {
   const t = $("toast");
   t.textContent = msg;
   t.style.borderColor = bad ? "var(--bad)" : "var(--line)";
   t.classList.add("show");
   clearTimeout(t._h);
-  t._h = setTimeout(() => t.classList.remove("show"), 2600);
+  t._h = setTimeout(() => t.classList.remove("show"), 2400);
 }
+const isTrue = (v) => /^(true|yes|1|on)$/i.test(String(v || ""));
 
-// dB text + bar width from a linear 0..1 peak
-function levelText(v) {
-  if (v == null) return "-";
-  if (v <= 0.00001) return "-inf";
-  return (20 * Math.log10(v)).toFixed(1) + " dB";
-}
-function levelWidth(v) {
-  if (v == null || v <= 0.00001) return 0;
-  const db = 20 * Math.log10(v);
-  return Math.max(0, Math.min(100, (db + 48) / 48 * 100));
-}
-function grWidth(db) {
-  if (db == null) return 0;
-  return Math.max(0, Math.min(100, db / 12 * 100));
-}
-function fmt(v, suffix, digits = 1) {
-  return v == null ? "-" : v.toFixed(digits) + suffix;
-}
+// ---------------- control schema (mirrors the Studio GUI sections) --------
+// kinds: toggle | slider (min,max,step,unit,decimals) | select (options) |
+//        text | number | presetSelect (presetKind)
+const PAGES = [
+  { id: "sound", title: "Sound",
+    help: "The audio processing chain, in signal order. Everything here applies live to the running encoder and is saved to the config.",
+    cards: [
+      { title: "Input", ctls: [
+        { key: "source_mode", label: "Source", kind: "select", options: ["input", "tone"] },
+        { key: "input_gain_db", label: "Input Gain", kind: "slider", min: -24, max: 24, step: 0.5, unit: " dB" },
+        { key: "hpf_hz", label: "High-Pass Filter", kind: "slider", min: 0, max: 120, step: 1, unit: " Hz", decimals: 0 },
+        { key: "preemphasis_us", label: "Pre-emphasis", kind: "select", options: ["50", "75"], unit: " us" },
+        { key: "processing_bypass", label: "Processing Bypass", sub: "restart-applied in GUI builds", kind: "toggle" }
+      ]},
+      { title: "AGC", ctls: [
+        { key: "wideband_agc_enabled", label: "Wideband AGC", kind: "toggle" },
+        { key: "wideband_agc_target_db", label: "Target", kind: "slider", min: -30, max: -6, step: 0.5, unit: " dB" },
+        { key: "wideband_agc_attack_ms", label: "Attack", kind: "slider", min: 20, max: 4000, step: 10, unit: " ms", decimals: 0 },
+        { key: "wideband_agc_release_ms", label: "Release", kind: "slider", min: 100, max: 20000, step: 100, unit: " ms", decimals: 0 },
+        { key: "wideband_agc_max_gain_db", label: "Max Gain", kind: "slider", min: 0, max: 24, step: 0.5, unit: " dB" },
+        { key: "wideband_agc_bass_desensitize", label: "Bass-Desensitized Detector", kind: "toggle" }
+      ]},
+      { title: "PrimeBass", presetKind: "primebass", ctls: [
+        { key: "primebass_enabled", label: "PrimeBass Enhancement", kind: "toggle" },
+        { key: "primebass_amount", label: "Amount", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
+        { key: "primebass_freq_hz", label: "Frequency", kind: "slider", min: 40, max: 160, step: 1, unit: " Hz", decimals: 0 },
+        { key: "primebass_harmonics", label: "Harmonics", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
+        { key: "primebass_drive", label: "Drive", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
+        { key: "primebass_subharmonics_enabled", label: "Subharmonics", kind: "toggle" }
+      ]},
+      { title: "Stereo Image", presetKind: "widener", ctls: [
+        { key: "stereo_widen_enabled", label: "Stereo Widener", kind: "toggle" },
+        { key: "stereo_widen_width", label: "Width", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
+        { key: "stereo_widen_mix", label: "Mix", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
+        { key: "mono_bass_enabled", label: "Mono Bass", kind: "toggle" },
+        { key: "mono_bass_freq_hz", label: "Mono Bass Below", kind: "slider", min: 60, max: 240, step: 5, unit: " Hz", decimals: 0 }
+      ]},
+      { title: "Multiband", presetKind: "multiband", ctls: [
+        { key: "multiband_enabled", label: "Multiband Compressor", kind: "toggle" },
+        { key: "multiband_mode", label: "Bands", kind: "select", options: ["3", "5"] },
+        { key: "multiband_link_strength", label: "Band Link", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
+        { key: "multiband_knee_db", label: "Knee", kind: "slider", min: 0, max: 8, step: 0.1, unit: " dB" },
+        { key: "multiband_limiter_enabled", label: "Per-Band Limiter", kind: "toggle" }
+      ]},
+      { title: "Audio Clipper", ctls: [
+        { key: "bass_clipper_enabled", label: "Bass Clipper", kind: "toggle" },
+        { key: "bass_clipper_threshold_db", label: "Bass Threshold", kind: "slider", min: -12, max: 0, step: 0.1, unit: " dB" },
+        { key: "hf_clipper_enabled", label: "HF Clipper", kind: "toggle" },
+        { key: "pre_encode_limiter_enabled", label: "Audio Limiter", kind: "toggle" },
+        { key: "pre_encode_threshold", label: "Limiter Threshold", kind: "slider", min: 0.5, max: 1, step: 0.01, decimals: 2 }
+      ]},
+      { title: "Composite Clipper", ctls: [
+        { key: "mpx_clipper_enabled", label: "Composite Clipper", kind: "toggle" },
+        { key: "mpx_clipper_threshold_db", label: "Threshold", kind: "slider", min: -6, max: 0, step: 0.1, unit: " dB" },
+        { key: "mpx_clipper_ceiling_db", label: "Ceiling", kind: "slider", min: -3, max: 0, step: 0.1, unit: " dB" },
+        { key: "mpx_clipper_cancel_pilot", label: "Protect Stereo Pilot", kind: "toggle" },
+        { key: "mpx_clipper_cancel_rds", label: "Protect RDS", kind: "toggle" },
+        { key: "mpx_clipper_cancel_stereo", label: "Protect Stereo Subcarrier", kind: "toggle" },
+        { key: "mpx_clipper_cancel_audio", label: "Protect Audio (0-17 kHz)", kind: "toggle" }
+      ]},
+      { title: "Output", ctls: [
+        { key: "output_gain_db", label: "Output Gain", kind: "slider", min: -40, max: 6, step: 0.5, unit: " dB" },
+        { key: "final_drive_db", label: "Final Drive", kind: "slider", min: -6, max: 6, step: 0.1, unit: " dB" },
+        { key: "mpx_deviation_khz", label: "Deviation", kind: "slider", min: 40, max: 80, step: 1, unit: " kHz", decimals: 0 },
+        { key: "bs412_enabled", label: "BS.412 Power Limiter", kind: "toggle" },
+        { key: "mono_mode", label: "Mono Mode", sub: "suppresses pilot, stereo, RDS", kind: "toggle" },
+        { key: "pilot_level", label: "Pilot Level", sub: "fraction of carrier; restart", kind: "slider", min: 0, max: 0.12, step: 0.005, decimals: 3 },
+        { key: "rds_level", label: "RDS Injection", sub: "kHz deviation; restart", kind: "slider", min: 0, max: 7.5, step: 0.1, unit: " kHz" }
+      ]}
+    ]},
+  { id: "rds", title: "RDS",
+    help: "Station identity and RDS data. Text and flags apply live on air; injection level (Sound > Output) needs a restart.",
+    cards: [
+      { title: "On Air", special: "rdsLive" },
+      { title: "Identity", ctls: [
+        { key: "en_rds", label: "RDS Enabled", kind: "toggle" },
+        { key: "pi", label: "PI Code", kind: "text", width: 90 },
+        { key: "pty", label: "PTY", kind: "number", min: 0, max: 31 },
+        { key: "ptyn", label: "PTY Name", kind: "text" },
+        { key: "ps_active_bank", label: "Active PS Bank", kind: "select", options: ["A", "B", "C", "D"] }
+      ]},
+      { title: "Program Service (PS)", ctls: [
+        { key: "ps_a", label: "PS Bank A", kind: "text", wide: true },
+        { key: "ps_b", label: "PS Bank B", kind: "text", wide: true },
+        { key: "ps_long_32", label: "Long PS", kind: "text", wide: true }
+      ]},
+      { title: "RadioText", ctls: [
+        { key: "rt_text", label: "RadioText", kind: "text", wide: true },
+        { key: "rt_cycle_time", label: "Cycle Time", kind: "slider", min: 4, max: 60, step: 1, unit: " s", decimals: 0 }
+      ]},
+      { title: "Flags", ctls: [
+        { key: "tp", label: "TP (Traffic Program)", kind: "toggle" },
+        { key: "ta", label: "TA (Traffic Announcement)", sub: "forces a 0A group on air at the edge", kind: "toggle" },
+        { key: "ms", label: "M/S Music", kind: "toggle" },
+        { key: "en_ct", label: "Clock Time (CT)", kind: "toggle" }
+      ]}
+    ]},
+  { id: "tone", title: "Test Tone",
+    help: "Built-in generator for line-up and testing. Switch Source back to input when done (Sound > Input).",
+    cards: [
+      { title: "Generator", ctls: [
+        { key: "source_mode", label: "Source", kind: "select", options: ["input", "tone"] },
+        { key: "test_tone_type", label: "Type", kind: "select", options: ["sine", "pink", "white"] },
+        { key: "test_tone_mode", label: "Routing", kind: "select", options: ["mono", "left", "right", "stereo"] },
+        { key: "test_tone_freq", label: "Frequency", kind: "slider", min: 20, max: 15000, step: 10, unit: " Hz", decimals: 0 },
+        { key: "test_tone_level_db", label: "Level", kind: "slider", min: -60, max: 0, step: 1, unit: " dB", decimals: 0 }
+      ]}
+    ]},
+  { id: "presets", title: "Presets",
+    help: "Factory sound presets. Applying one changes several settings at once, live, and records the choice in the config.",
+    cards: [{ title: "Apply Preset", special: "presets" }]},
+  { id: "advanced", title: "Advanced",
+    help: "Every configuration key, exactly as stored in the INI. Values are applied with the same validation as a config file load; the response reports whether each change was live, needs a restart, or was clamped.",
+    cards: [{ title: "All Settings", special: "rawConfig" }]}
+];
 
-let taState = false;
-
-async function pollStatus() {
-  try {
-    const s = await api("/api/status");
-    $("dot").classList.toggle("on", s.running);
-    $("meta").textContent =
-      `${s.platform} v${s.version} - ${(s.sampleRateHz / 1000).toFixed(0)} kHz - ${s.sourceMode} - ${s.outputMode}` +
-      (s.uptimeSeconds ? ` - up ${Math.floor(s.uptimeSeconds / 60)}m` : "");
-    $("restartBadge").hidden = !s.restartPending;
-  } catch (e) {
-    $("meta").textContent = "unreachable: " + e.message;
-    $("dot").classList.remove("on");
+// ---------------- rendering ------------------------------------------------
+function renderSidebar() {
+  const nav = $("sidebar");
+  nav.innerHTML = "";
+  for (const p of PAGES) {
+    const el = document.createElement("div");
+    el.className = "nav";
+    el.dataset.page = p.id;
+    el.textContent = p.title;
+    el.onclick = () => showPage(p.id);
+    nav.appendChild(el);
+    if (p.id === "tone") nav.appendChild(Object.assign(document.createElement("div"), { className: "sep" }));
   }
 }
 
-async function pollMeters() {
-  let m = null;
-  try { m = await api("/api/meters"); } catch (e) { /* engine stopped */ }
-  $("vInL").textContent = levelText(m?.inputLeftPeak);
-  $("mInL").style.width = levelWidth(m?.inputLeftPeak) + "%";
-  $("vInR").textContent = levelText(m?.inputRightPeak);
-  $("mInR").style.width = levelWidth(m?.inputRightPeak) + "%";
-  $("vOut").textContent = levelText(m?.outputPeak);
-  $("mOut").style.width = levelWidth(m?.outputPeak) + "%";
-  $("vClipGR").textContent = fmt(m?.compositeClipperGainReductionDB, " dB");
-  $("mClipGR").style.width = grWidth(m?.compositeClipperGainReductionDB) + "%";
-  $("vLimGR").textContent = fmt(m?.preEncodeLimiterGainReductionDB, " dB");
-  $("mLimGR").style.width = grWidth(m?.preEncodeLimiterGainReductionDB) + "%";
-  $("vDev").textContent = fmt(m?.deviationKHzPeak, " kHz");
-  $("vBudget").textContent = fmt(m?.compositeBudgetMarginDB, " dB");
-  $("vPilot").textContent = fmt(m?.pilotInjectionPercent, " %");
-  $("vRDSInj").textContent = fmt(m?.rdsInjectionPercent, " %");
-  $("vAGC").textContent = fmt(m?.agcGainDB, " dB");
-  $("vCorr").textContent = fmt(m?.stereoCorrelation, "", 2);
+let currentPage = "sound";
+function showPage(id) {
+  currentPage = id;
+  document.querySelectorAll("#sidebar .nav").forEach(n => n.classList.toggle("active", n.dataset.page === id));
+  const page = PAGES.find(p => p.id === id);
+  const c = $("content");
+  c.innerHTML = "";
+  const h = document.createElement("h1");
+  h.textContent = page.title;
+  c.appendChild(h);
+  const help = document.createElement("div");
+  help.className = "pagehelp";
+  help.textContent = page.help;
+  c.appendChild(help);
+  const cards = document.createElement("div");
+  cards.className = "cards";
+  for (const card of page.cards) cards.appendChild(renderCard(card));
+  c.appendChild(cards);
+  refreshControlValues();
+  if (id === "advanced") loadRawConfig();
+  if (id === "rds") pollRDS();
 }
 
-async function pollRDS() {
-  try {
-    const r = await api("/api/rds");
-    $("rdsPS").textContent = r.livePS || (r.enabled ? "........" : "RDS OFF");
-    $("rdsRT").textContent = r.liveRT || "";
-    $("rdsIds").textContent = `PI ${r.pi} / PTY ${r.pty}`;
-    taState = r.ta;
-    const b = $("taBtn");
-    b.textContent = taState ? "TA ACTIVE - click to end" : "TA off - click to activate";
-    b.classList.toggle("ta-on", taState);
-  } catch (e) { /* keep last */ }
+function renderCard(card) {
+  const el = document.createElement("div");
+  el.className = "card";
+  const h = document.createElement("h2");
+  h.textContent = card.title;
+  el.appendChild(h);
+  if (card.presetKind) h.appendChild(presetPicker(card.presetKind));
+  if (card.special === "rdsLive") {
+    el.insertAdjacentHTML("beforeend",
+      '<div class="rds-live"><div class="ps" id="rdsPS">--------</div><div class="rt" id="rdsRT"></div></div>' +
+      '<div style="color:var(--dim);font-size:11px" id="rdsIds"></div>');
+    return el;
+  }
+  if (card.special === "presets") {
+    el.insertAdjacentHTML("beforeend",
+      '<div class="ctl"><label>Kind</label><select id="presetKind"></select></div>' +
+      '<div class="ctl"><label>Preset</label><select id="presetId"></select></div>' +
+      '<div class="ctl"><label>Intensity (multiband)</label><select id="presetIntensity">' +
+      '<option value="0.5">light</option><option value="1.0" selected>normal</option><option value="1.5">heavy</option></select></div>' +
+      '<div style="text-align:right;margin-top:8px"><button class="primary" id="presetApply">Apply Live</button></div>');
+    queueMicrotask(wirePresetCard);
+    return el;
+  }
+  if (card.special === "rawConfig") {
+    const host = document.createElement("div");
+    host.id = "configTables";
+    el.appendChild(host);
+    return el;
+  }
+  for (const ctl of card.ctls || []) el.appendChild(renderControl(ctl));
+  return el;
 }
 
-async function loadPresets() {
-  try {
-    const kinds = await api("/api/presets");
-    const kindSel = $("presetKind");
-    kindSel.innerHTML = "";
-    for (const k of Object.keys(kinds).sort()) {
-      const o = document.createElement("option");
-      o.value = k; o.textContent = k; kindSel.appendChild(o);
+function renderControl(ctl) {
+  const row = document.createElement("div");
+  row.className = "ctl";
+  row.dataset.key = ctl.key;
+  const label = document.createElement("label");
+  label.textContent = ctl.label;
+  if (ctl.sub) label.insertAdjacentHTML("beforeend", `<span class="sub">${ctl.sub}</span>`);
+  row.appendChild(label);
+
+  if (ctl.kind === "toggle") {
+    const sw = document.createElement("label");
+    sw.className = "switch";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.onchange = () => patchKey(ctl.key, input.checked ? "True" : "False");
+    sw.appendChild(input);
+    sw.insertAdjacentHTML("beforeend", '<span class="knob"></span>');
+    row.appendChild(sw);
+    row._sync = (v) => { input.checked = isTrue(v); };
+  } else if (ctl.kind === "slider") {
+    const wrap = document.createElement("div");
+    wrap.className = "sliderwrap";
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = ctl.min; input.max = ctl.max; input.step = ctl.step;
+    const val = document.createElement("span");
+    val.className = "sval";
+    const dec = ctl.decimals ?? 1;
+    const fmtv = (v) => Number(v).toFixed(dec) + (ctl.unit || "");
+    input.oninput = () => { val.textContent = fmtv(input.value); };
+    input.onchange = () => patchKey(ctl.key, String(input.value));
+    wrap.appendChild(input); wrap.appendChild(val);
+    row.appendChild(wrap);
+    row._sync = (v) => { input.value = v; val.textContent = fmtv(v); };
+  } else if (ctl.kind === "select") {
+    const sel = document.createElement("select");
+    for (const o of ctl.options) {
+      const opt = document.createElement("option");
+      opt.value = o; opt.textContent = o + (ctl.unit || "");
+      sel.appendChild(opt);
     }
-    const fill = () => {
-      const idSel = $("presetId");
-      idSel.innerHTML = "";
-      for (const id of kinds[kindSel.value] || []) {
-        const o = document.createElement("option");
-        o.value = id; o.textContent = id; idSel.appendChild(o);
-      }
-    };
-    kindSel.onchange = fill;
-    fill();
-  } catch (e) { /* auth pending */ }
+    sel.onchange = () => patchKey(ctl.key, sel.value);
+    row.appendChild(sel);
+    row._sync = (v) => { sel.value = String(v); };
+  } else if (ctl.kind === "text") {
+    const input = document.createElement("input");
+    input.type = "text";
+    if (ctl.width) input.style.width = ctl.width + "px";
+    if (ctl.wide) input.style.width = "260px";
+    input.onchange = () => patchKey(ctl.key, input.value);
+    row.appendChild(input);
+    row._sync = (v) => { if (document.activeElement !== input) input.value = v ?? ""; };
+  } else if (ctl.kind === "number") {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = ctl.min; input.max = ctl.max;
+    input.style.width = "70px";
+    input.onchange = () => patchKey(ctl.key, input.value);
+    row.appendChild(input);
+    row._sync = (v) => { if (document.activeElement !== input) input.value = v ?? ""; };
+  }
+  return row;
 }
 
-async function loadConfig() {
+function presetPicker(kind) {
+  const sel = document.createElement("select");
+  sel.style.fontSize = "11px";
+  const first = document.createElement("option");
+  first.value = ""; first.textContent = "preset...";
+  sel.appendChild(first);
+  for (const id of presetLists[kind] || []) {
+    const o = document.createElement("option");
+    o.value = id; o.textContent = id;
+    sel.appendChild(o);
+  }
+  sel.onchange = async () => {
+    if (!sel.value) return;
+    try {
+      await api("/api/presets", { method: "POST", body: JSON.stringify({ kind, id: sel.value }) });
+      toast(kind + " preset '" + sel.value + "' applied live");
+      await loadConfigValues();
+      refreshControlValues();
+    } catch (e) { toast("preset failed: " + e.message, true); }
+    sel.value = "";
+  };
+  return sel;
+}
+
+function wirePresetCard() {
+  const kindSel = $("presetKind");
+  if (!kindSel) return;
+  kindSel.innerHTML = "";
+  for (const k of Object.keys(presetLists).sort()) {
+    const o = document.createElement("option");
+    o.value = k; o.textContent = k;
+    kindSel.appendChild(o);
+  }
+  const fill = () => {
+    const idSel = $("presetId");
+    idSel.innerHTML = "";
+    for (const id of presetLists[kindSel.value] || []) {
+      const o = document.createElement("option");
+      o.value = id; o.textContent = id;
+      idSel.appendChild(o);
+    }
+  };
+  kindSel.onchange = fill;
+  fill();
+  $("presetApply").onclick = async () => {
+    try {
+      await api("/api/presets", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: kindSel.value, id: $("presetId").value,
+          intensity: parseFloat($("presetIntensity").value)
+        })
+      });
+      toast("preset applied live");
+      await loadConfigValues();
+    } catch (e) { toast("preset failed: " + e.message, true); }
+  };
+}
+
+// ---------------- data flow ------------------------------------------------
+async function loadConfigValues() {
+  const sections = await api("/api/config");
+  configValues = {};
+  for (const sec of Object.values(sections)) Object.assign(configValues, sec);
+}
+function refreshControlValues() {
+  document.querySelectorAll(".ctl").forEach(row => {
+    if (row._sync && row.dataset.key in configValues) row._sync(configValues[row.dataset.key]);
+  });
+}
+async function patchKey(key, value) {
+  try {
+    const r = await api("/api/config", { method: "PATCH", body: JSON.stringify({ [key]: value }) });
+    const o = r.outcomes[0];
+    if (o.effectiveValue != null) configValues[key] = o.effectiveValue;
+    const label = { live: "live", liveRDS: "live (RDS)", restartRequired: "saved - needs restart", unchanged: "unchanged" }[o.disposition];
+    toast(key + ": " + label);
+    if (o.disposition === "unchanged" && o.effectiveValue != null) refreshControlValues();
+    pollStatus();
+  } catch (e) { toast(key + ": " + e.message, true); }
+}
+
+async function loadRawConfig() {
   try {
     const sections = await api("/api/config");
     const host = $("configTables");
+    if (!host) return;
     host.innerHTML = "";
     for (const sec of Object.keys(sections).sort()) {
       const keys = Object.keys(sections[sec]).sort();
       if (!keys.length) continue;
-      const title = document.createElement("div");
-      title.className = "section-title";
-      title.textContent = "[" + sec + "]";
-      host.appendChild(title);
+      host.insertAdjacentHTML("beforeend", `<div class="section-title">[${sec}]</div>`);
       const table = document.createElement("table");
-      table.innerHTML = "<tr><th style='width:38%'>key</th><th>value</th><th style='width:90px'></th></tr>";
+      table.innerHTML = "<tr><th style='width:40%'>key</th><th>value</th><th style='width:80px'></th></tr>";
       for (const k of keys) {
         const tr = document.createElement("tr");
-        const keyCell = document.createElement("td");
-        keyCell.style.fontFamily = "var(--mono)";
-        keyCell.textContent = k;
-        tr.appendChild(keyCell);
-        const valCell = document.createElement("td");
+        const kc = document.createElement("td");
+        kc.style.fontFamily = "var(--mono)";
+        kc.textContent = k;
+        const vc = document.createElement("td");
         const input = document.createElement("input");
+        input.type = "text";
         input.value = sections[sec][k];
-        valCell.appendChild(input);
-        tr.appendChild(valCell);
-        const btnCell = document.createElement("td");
+        vc.appendChild(input);
+        const bc = document.createElement("td");
         const btn = document.createElement("button");
         btn.textContent = "Apply";
         btn.onclick = async () => {
-          try {
-            const r = await api("/api/config", {
-              method: "PATCH", body: JSON.stringify({ [k]: input.value })
-            });
-            const o = r.outcomes[0];
-            input.value = o.effectiveValue ?? input.value;
-            toast(`${k}: ${o.disposition}` + (r.restartPending ? " (restart pending)" : ""));
-          } catch (e) { toast(k + ": " + e.message, true); }
+          await patchKey(k, input.value);
+          if (configValues[k] != null) input.value = configValues[k];
         };
-        btnCell.appendChild(btn);
-        tr.appendChild(btnCell);
+        bc.appendChild(btn);
+        tr.appendChild(kc); tr.appendChild(vc); tr.appendChild(bc);
         table.appendChild(tr);
       }
       host.appendChild(table);
@@ -297,6 +526,61 @@ async function loadConfig() {
   } catch (e) { /* auth pending */ }
 }
 
+// ---------------- polling ---------------------------------------------------
+function levelText(v) {
+  if (v == null) return "-";
+  if (v <= 0.00001) return "-inf";
+  return (20 * Math.log10(v)).toFixed(1);
+}
+function levelPct(v) {
+  if (v == null || v <= 0.00001) return 0;
+  return Math.max(0, Math.min(100, (20 * Math.log10(v) + 48) / 48 * 100));
+}
+const grPct = (db) => db == null ? 0 : Math.max(0, Math.min(100, db / 12 * 100));
+const fmt = (v, d = 1) => v == null ? "-" : Number(v).toFixed(d);
+
+async function pollStatus() {
+  try {
+    const s = await api("/api/status");
+    $("dot").classList.toggle("on", s.running);
+    $("meta").textContent = `${s.platform} v${s.version} | ${(s.sampleRateHz / 1000).toFixed(0)} kHz | ${s.sourceMode}`;
+    $("restartBadge").hidden = !s.restartPending;
+  } catch (e) {
+    $("meta").textContent = "unreachable";
+    $("dot").classList.remove("on");
+  }
+}
+async function pollMeters() {
+  let m = null;
+  try { m = await api("/api/meters"); } catch (e) { /* stopped */ }
+  const set = (bar, val, pct) => { $(bar).style.height = pct + "%"; };
+  set("mInL", 0, levelPct(m?.inputLeftPeak)); $("vInL").textContent = levelText(m?.inputLeftPeak);
+  set("mInR", 0, levelPct(m?.inputRightPeak)); $("vInR").textContent = levelText(m?.inputRightPeak);
+  set("mOut", 0, levelPct(m?.outputPeak)); $("vOut").textContent = levelText(m?.outputPeak);
+  const agcGR = m?.agcGainDB != null ? Math.max(0, -m.agcGainDB) : null;
+  $("mAGC").style.height = grPct(agcGR) + "%"; $("vAGC").textContent = fmt(m?.agcGainDB);
+  $("mLim").style.height = grPct(m?.preEncodeLimiterGainReductionDB) + "%";
+  $("vLim").textContent = fmt(m?.preEncodeLimiterGainReductionDB);
+  $("mClip").style.height = grPct(m?.compositeClipperGainReductionDB) + "%";
+  $("vClip").textContent = fmt(m?.compositeClipperGainReductionDB);
+  $("vDev").textContent = fmt(m?.deviationKHzPeak);
+  $("devRead").classList.toggle("alert", (m?.deviationKHzPeak || 0) > 75);
+  $("vPilot").textContent = fmt(m?.pilotInjectionPercent);
+  $("vRDSInj").textContent = fmt(m?.rdsInjectionPercent);
+  $("vMargin").textContent = fmt(m?.compositeBudgetMarginDB);
+}
+async function pollRDS() {
+  if (currentPage !== "rds") return;
+  try {
+    const r = await api("/api/rds");
+    if ($("rdsPS")) {
+      $("rdsPS").textContent = r.livePS || (r.enabled ? "........" : "RDS OFF");
+      $("rdsRT").textContent = r.liveRT || "";
+      $("rdsIds").textContent = `PI ${r.pi}  PTY ${r.pty}  TP ${r.tp ? "on" : "off"}  TA ${r.ta ? "ON" : "off"}`;
+    }
+    taState = r.ta;
+  } catch (e) { /* keep */ }
+}
 async function transport(action) {
   try {
     await api("/api/transport/" + action, { method: "POST" });
@@ -308,45 +592,21 @@ async function transport(action) {
 $("btnStart").onclick = () => transport("start");
 $("btnStop").onclick = () => transport("stop");
 $("btnRestart").onclick = () => transport("restart");
-
-$("psApply").onclick = async () => {
-  try {
-    await api("/api/rds", { method: "PUT", body: JSON.stringify({ ps: $("psInput").value }) });
-    toast("PS updated (live)");
-  } catch (e) { toast("PS failed: " + e.message, true); }
-};
-$("rtApply").onclick = async () => {
-  try {
-    await api("/api/rds", { method: "PUT", body: JSON.stringify({ rt: $("rtInput").value }) });
-    toast("RadioText updated (live)");
-  } catch (e) { toast("RT failed: " + e.message, true); }
-};
-$("taBtn").onclick = async () => {
-  try {
-    await api("/api/rds", { method: "PUT", body: JSON.stringify({ ta: !taState }) });
-    toast(taState ? "TA cleared" : "TA activated (forced 0A group on air)");
-    pollRDS();
-  } catch (e) { toast("TA failed: " + e.message, true); }
-};
-$("presetApply").onclick = async () => {
-  try {
-    await api("/api/presets", {
-      method: "POST",
-      body: JSON.stringify({ kind: $("presetKind").value, id: $("presetId").value })
-    });
-    toast("preset applied live");
-    loadConfig();
-  } catch (e) { toast("preset failed: " + e.message, true); }
-};
 $("keySave").onclick = () => {
   apiKey = $("keyInput").value.trim();
   localStorage.setItem("mpxprime_api_key", apiKey);
   boot();
 };
-$("advanced").addEventListener("toggle", () => { if ($("advanced").open) loadConfig(); });
 
-function boot() {
-  pollStatus(); pollMeters(); pollRDS(); loadPresets();
+async function boot() {
+  renderSidebar();
+  pollStatus();
+  pollMeters();
+  try {
+    presetLists = await api("/api/presets");
+    await loadConfigValues();
+  } catch (e) { /* auth pending; key prompt shown */ }
+  showPage(currentPage);
 }
 boot();
 setInterval(pollStatus, 2000);

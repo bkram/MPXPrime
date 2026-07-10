@@ -11,6 +11,8 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.41 — 2026-07-10
+
 - **Meter: vectorscope auto-zoom.** The goniometer's display gain rides the
   program level (fast shrink / slow grow, filling ~85% of the field --
   hardware-goniometer style) so quiet program no longer draws a tiny

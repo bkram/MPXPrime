@@ -768,57 +768,6 @@ private struct AudioPeakHoldState {
     var holdRemaining: Double = 0.0
 }
 
-private struct PrimeBassPreset {
-    let id: String
-    let title: String
-    let enabled: Bool
-    let amount: Double
-    let freqHz: Double
-    let harmonics: Double
-    let drive: Double
-    let density: Double
-    let subharmonicsEnabled: Bool
-    let subharmonicsAmount: Double
-}
-
-private struct WidenerPreset {
-    let id: String
-    let title: String
-    let stereoWidenEnabled: Bool
-    let monoBassEnabled: Bool
-    let monoBassFreqHz: Double
-    let width: Double
-    let center: Double
-    let mix: Double
-}
-
-private struct MultibandPreset {
-    let id: String
-    let title: String
-    let mode: Int
-    let lowHz: Double?
-    let highHz: Double?
-    let x1Hz: Double?
-    let x2Hz: Double?
-    let x3Hz: Double?
-    let x4Hz: Double?
-    let lowThresholdDB: Double
-    let lowRatio: Double
-    let lowAttackMS: Double
-    let lowReleaseMS: Double
-    let midThresholdDB: Double
-    let midRatio: Double
-    let midAttackMS: Double
-    let midReleaseMS: Double
-    let highThresholdDB: Double
-    let highRatio: Double
-    let highAttackMS: Double
-    let highReleaseMS: Double
-    let kneeDB: Double
-    let linkStrength: Double
-    let releaseProgramDependent: Bool
-}
-
 private struct FinalStagePreset {
     let id: String
     let title: String
@@ -830,54 +779,6 @@ private struct FinalStagePreset {
     let agcMinGainDB: Double
     let finalDriveDB: Double
     let preEncodeAudioLimiterEnabled: Bool
-}
-
-enum MultibandPresetIntensity: String, CaseIterable, Identifiable {
-    case light
-    case normal
-    case heavy
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .light: return "Light"
-        case .normal: return "Normal"
-        case .heavy: return "Heavy"
-        }
-    }
-
-    var thresholdDbOffset: Double {
-        switch self {
-        case .light: return 1.5
-        case .normal: return 0.0
-        case .heavy: return -1.5
-        }
-    }
-
-    var ratioMul: Double {
-        switch self {
-        case .light: return 0.9
-        case .normal: return 1.0
-        case .heavy: return 1.12
-        }
-    }
-
-    var attackMul: Double {
-        switch self {
-        case .light: return 1.2
-        case .normal: return 1.0
-        case .heavy: return 0.88
-        }
-    }
-
-    var releaseMul: Double {
-        switch self {
-        case .light: return 1.15
-        case .normal: return 1.0
-        case .heavy: return 0.9
-        }
-    }
 }
 
 @MainActor
@@ -1931,6 +1832,7 @@ final class MPXPrimeViewModel: ObservableObject {
     private let nowPlayingRunner: NowPlayingScriptRunner
     var config: AppConfig
     private var runningEngine: AudioOutputEngine?
+    private var controlServerTask: Task<Void, Never>?
     private var activeRuntimeSnapshot: RuntimeSnapshot?
     private var monitorTimer: Timer?
     private var lastMonitorRefreshTime: TimeInterval?
@@ -2028,6 +1930,7 @@ final class MPXPrimeViewModel: ObservableObject {
         startConfigWatcher()
         loadSnapshotsFromDisk()
         refreshMonitoringSnapshot()
+        startControlServerIfEnabled()
     }
 
     var autoStartEnabled: Bool { config.rdsAutoStart }
@@ -2051,16 +1954,16 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     var primeBassPresetChoices: [PresetChoice] {
-        Self.primeBassPresets.map { PresetChoice(id: $0.id, title: $0.title) }
+        PresetCatalog.primeBassPresets.map { PresetChoice(id: $0.id, title: $0.title) }
     }
 
     var widenerPresetChoices: [PresetChoice] {
         [PresetChoice(id: "custom", title: "Custom")]
-            + Self.widenerPresets.map { PresetChoice(id: $0.id, title: $0.title) }
+            + PresetCatalog.widenerPresets.map { PresetChoice(id: $0.id, title: $0.title) }
     }
 
     var multibandPresetChoices: [PresetChoice] {
-        Self.multibandPresets.map { PresetChoice(id: $0.id, title: $0.title) }
+        PresetCatalog.multibandPresets.map { PresetChoice(id: $0.id, title: $0.title) }
     }
 
     var finalStagePresetChoices: [PresetChoice] {
@@ -2630,133 +2533,42 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func applyPrimeBassPreset(id: String) {
-        guard let preset = Self.primeBassPresets.first(where: { $0.id == id }) else { return }
+        // Parameter sets live in PresetCatalog (shared with the remote API).
         publishConfigChange()
-        config.primeBassEnabled = preset.enabled
-        config.primeBassPresetID = id
-        config.primeBassAmount = preset.amount
-        config.primeBassFreqHz = preset.freqHz
-        config.primeBassHarmonics = preset.harmonics
-        config.primeBassDrive = preset.drive
-        config.primeBassDensity = preset.density
-        config.primeBassSubharmonicsEnabled = preset.subharmonicsEnabled
-        config.primeBassSubharmonicsAmount = preset.subharmonicsAmount
+        guard let title = PresetCatalog.applyPrimeBass(id: id, to: &config) else { return }
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded PrimeBass preset \(preset.title) live."
-            : "Loaded PrimeBass preset \(preset.title)."
+            ? "Loaded PrimeBass preset \(title) live."
+            : "Loaded PrimeBass preset \(title)."
     }
 
     var currentWidenerPresetID: String {
-        guard let preset = Self.widenerPresets.first(where: {
-            $0.stereoWidenEnabled == config.stereoWidenEnabled
-                && $0.monoBassEnabled == config.monoBassEnabled
-                && Self.approxEqual($0.monoBassFreqHz, config.monoBassFreqHz)
-                && Self.approxEqual($0.width, config.stereoWidenWidth)
-                && Self.approxEqual($0.center, config.stereoWidenCenter)
-                && Self.approxEqual($0.mix, config.stereoWidenMix)
-        }) else {
-            return "custom"
-        }
-        return preset.id
+        PresetCatalog.currentWidenerPresetID(of: config)
     }
 
     func applyWidenerPreset(id: String) {
-        guard let preset = Self.widenerPresets.first(where: { $0.id == id }) else { return }
         publishConfigChange()
-        config.stereoWidenEnabled = preset.stereoWidenEnabled
-        config.monoBassEnabled = preset.monoBassEnabled
-        config.monoBassFreqHz = preset.monoBassFreqHz
-        config.stereoWidenWidth = preset.width
-        config.stereoWidenCenter = preset.center
-        config.stereoWidenMix = preset.mix
+        guard let title = PresetCatalog.applyWidener(id: id, to: &config) else { return }
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded image preset \(preset.title) live."
-            : "Loaded image preset \(preset.title)."
+            ? "Loaded image preset \(title) live."
+            : "Loaded image preset \(title)."
     }
 
     func applyMultibandPreset(id: String, intensity: MultibandPresetIntensity) {
-        guard let preset = Self.multibandPresets.first(where: { $0.id == id }) else { return }
         publishConfigChange()
-
-        config.multibandEnabled = true
-        config.multibandMode = preset.mode
-        config.multibandPresetID = id
-        config.multibandIntensity = intensity.rawValue
-
-        if let lowHz = preset.lowHz {
-            config.multibandLowHz = lowHz
-            config.multibandX1Hz = lowHz
-        }
-        if let highHz = preset.highHz {
-            config.multibandHighHz = highHz
-            config.multibandX2Hz = highHz
-        }
-        if let x1Hz = preset.x1Hz {
-            config.multibandX1Hz = x1Hz
-        }
-        if let x2Hz = preset.x2Hz {
-            config.multibandX2Hz = x2Hz
-        }
-        if let x3Hz = preset.x3Hz {
-            config.multibandX3Hz = x3Hz
-        }
-        if let x4Hz = preset.x4Hz {
-            config.multibandX4Hz = x4Hz
-        }
-
-        config.multibandLowThresholdDB = Self.clamp(
-            preset.lowThresholdDB + intensity.thresholdDbOffset,
-            min: -36.0,
-            max: -6.0
-        )
-        config.multibandMidThresholdDB = Self.clamp(
-            preset.midThresholdDB + intensity.thresholdDbOffset,
-            min: -36.0,
-            max: -6.0
-        )
-        config.multibandHighThresholdDB = Self.clamp(
-            preset.highThresholdDB + intensity.thresholdDbOffset,
-            min: -36.0,
-            max: -6.0
-        )
-
-        config.multibandLowRatio = Self.clamp(
-            preset.lowRatio * intensity.ratioMul, min: 1.0, max: 4.0)
-        config.multibandMidRatio = Self.clamp(
-            preset.midRatio * intensity.ratioMul, min: 1.0, max: 4.0)
-        config.multibandHighRatio = Self.clamp(
-            preset.highRatio * intensity.ratioMul, min: 1.0, max: 4.0)
-
-        config.multibandLowAttackMS = Self.clamp(
-            preset.lowAttackMS * intensity.attackMul, min: 1.0, max: 200.0)
-        config.multibandMidAttackMS = Self.clamp(
-            preset.midAttackMS * intensity.attackMul, min: 1.0, max: 200.0)
-        config.multibandHighAttackMS = Self.clamp(
-            preset.highAttackMS * intensity.attackMul, min: 1.0, max: 200.0)
-
-        config.multibandLowReleaseMS = Self.clamp(
-            preset.lowReleaseMS * intensity.releaseMul, min: 50.0, max: 1000.0)
-        config.multibandMidReleaseMS = Self.clamp(
-            preset.midReleaseMS * intensity.releaseMul, min: 50.0, max: 1000.0)
-        config.multibandHighReleaseMS = Self.clamp(
-            preset.highReleaseMS * intensity.releaseMul, min: 50.0, max: 1000.0)
-
-        config.multibandKneeDB = preset.kneeDB
-        config.multibandLinkStrength = preset.linkStrength
-        config.multibandReleaseProgramDependent = preset.releaseProgramDependent
-
+        guard let title = PresetCatalog.applyMultiband(id: id, intensity: intensity, to: &config)
+        else { return }
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded Multiband preset \(preset.title) (\(intensity.title)) live."
-            : "Loaded Multiband preset \(preset.title) (\(intensity.title))."
+            ? "Loaded Multiband preset \(title) (\(intensity.title)) live."
+            : "Loaded Multiband preset \(title) (\(intensity.title))."
     }
 
     func applyFinalStagePreset(id: String) {
@@ -3155,6 +2967,137 @@ final class MPXPrimeViewModel: ObservableObject {
         sourceMode = config.sourceMode
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
+    }
+
+    // MARK: - Remote control (REST API surface; called via GUIControlBackend)
+
+    /// Whole-config apply for the remote API -- setConfigValue's semantics at
+    /// patch granularity: mutate config, sync the VM runtime mirrors, save,
+    /// hot-apply the classified planes, refresh now-playing.
+    func applyRemoteConfigPatch(_ patch: [String: String]) throws -> ConfigApplyResult {
+        let (newConfig, outcomes, planes) = try ConfigPatch.apply(patch, to: config)
+        publishConfigChange()
+        config = newConfig
+        // The live-apply overlay reads these VM mirrors; sync them so
+        // remote changes to the mirrored keys actually land.
+        sourceMode = newConfig.sourceMode
+        monitorEnabled = newConfig.monitorEnabled
+        inputGainDB = newConfig.inputGainDB
+        saveConfig(restartRequired: planes.restartRequired)
+        if planes.dspLive { applyLiveRuntimeConfigIfRunning() }
+        if planes.rdsLive { applyLiveRDSConfigIfRunning() }
+        updateNowPlayingRunner()
+        statusText = "Remote control: applied \(patch.count) setting(s)"
+        return ConfigApplyResult(
+            outcomes: outcomes,
+            appliedLive: (planes.dspLive || planes.rdsLive) && isRunning,
+            restartPending: runtimeApplyPending
+        )
+    }
+
+    func remoteStatus() -> ControlStatus {
+        ControlStatus(
+            running: isRunning,
+            platform: "macOS (GUI)",
+            version: AppConfig.appVersion,
+            sampleRateHz: config.sampleRate,
+            uptimeSeconds: nil,
+            restartPending: runtimeApplyPending,
+            sourceMode: config.sourceMode,
+            outputMode: config.processedAudioOutput ? "processedAudio" : "mpxComposite",
+            notes: statusText.isEmpty ? [] : [statusText]
+        )
+    }
+
+    func remoteMeters() -> ControlMeters? {
+        runningEngine?.controlMeters
+    }
+
+    func remoteRDS() -> ControlRDS {
+        let live = runningEngine?.currentRDSLiveSnapshot
+        return ControlRDS(
+            enabled: config.enRDS,
+            pi: config.rdsPI,
+            pty: config.rdsPTY,
+            ta: config.rdsTA,
+            tp: config.rdsTP,
+            livePS: live?.ps,
+            liveRT: live?.rt,
+            livePTYN: live?.ptyn,
+            liveLongPS: live?.longPS,
+            configuredRT: config.rdsRTText,
+            configuredPSActiveBank: config.rdsPSActiveBank
+        )
+    }
+
+    func remoteTransport(_ action: TransportAction) -> ControlStatus {
+        switch action {
+        case .start: startOrStopTransport(forceStart: true)
+        case .stop: startOrStopTransport(forceStart: false)
+        case .restart: restartEngineWithStatus("Remote restart")
+        }
+        return remoteStatus()
+    }
+
+    func remotePresets() -> [String: [String]] {
+        [
+            "primebass": PresetCatalog.primeBassPresets.map(\.id),
+            "widener": PresetCatalog.widenerPresets.map(\.id),
+            "multiband": PresetCatalog.multibandPresets.map(\.id),
+            "format_profile": Self.formatProfiles.map(\.id)
+        ]
+    }
+
+    func remoteApplyPreset(kind: String, id: String, intensity: Double?) throws {
+        switch kind.lowercased() {
+        case "primebass":
+            guard PresetCatalog.primeBassPresets.contains(where: { $0.id == id }) else {
+                throw ControlError.invalidRequest("unknown primebass preset '\(id)'")
+            }
+            applyPrimeBassPreset(id: id)
+        case "widener":
+            guard PresetCatalog.widenerPresets.contains(where: { $0.id == id }) else {
+                throw ControlError.invalidRequest("unknown widener preset '\(id)'")
+            }
+            applyWidenerPreset(id: id)
+        case "multiband":
+            guard PresetCatalog.multibandPresets.contains(where: { $0.id == id }) else {
+                throw ControlError.invalidRequest("unknown multiband preset '\(id)'")
+            }
+            let level: MultibandPresetIntensity
+            switch intensity {
+            case .some(let v) where v < 0.75: level = .light
+            case .some(let v) where v > 1.25: level = .heavy
+            default: level = .normal
+            }
+            applyMultibandPreset(id: id, intensity: level)
+        case "format_profile":
+            guard Self.formatProfile(forID: id) != nil else {
+                throw ControlError.invalidRequest("unknown format profile '\(id)'")
+            }
+            applyFormatProfile(id)
+        default:
+            throw ControlError.invalidRequest("unknown preset kind '\(kind)'")
+        }
+    }
+
+    /// Start the control server once at launch when [CONTROL] enables it.
+    /// Settings changes take effect at the next app launch (documented in
+    /// the Settings card).
+    func startControlServerIfEnabled() {
+        guard config.controlEnabled, controlServerTask == nil else { return }
+        let settings = ControlServerSettings(config: config)
+        let backend = GUIControlBackend(vm: self)
+        statusText = "Remote control: http://\(settings.host):\(settings.port)/"
+        controlServerTask = Task {
+            do {
+                try await ControlServer.run(backend: backend, settings: settings)
+            } catch {
+                await MainActor.run {
+                    self.statusText = "Remote control server failed: \(error)"
+                }
+            }
+        }
     }
 
     private func applyLiveRuntimeConfigIfRunning() {
@@ -4189,210 +4132,6 @@ final class MPXPrimeViewModel: ObservableObject {
     ]
 
     static func ptyNames(rbds: Bool) -> [String] { rbds ? ptyNamesRBDS : ptyNamesRDS }
-
-    private static let primeBassPresets: [PrimeBassPreset] = [
-        .init(
-            id: "chr", title: "CHR/EDM", enabled: true, amount: 0.34, freqHz: 78, harmonics: 0.28,
-            drive: 0.92, density: 0.56, subharmonicsEnabled: true, subharmonicsAmount: 0.16),
-        .init(
-            id: "urban", title: "Urban", enabled: true, amount: 0.32, freqHz: 74, harmonics: 0.24,
-            drive: 0.88, density: 0.54, subharmonicsEnabled: true, subharmonicsAmount: 0.14),
-        .init(
-            id: "rock", title: "Rock", enabled: true, amount: 0.24, freqHz: 90, harmonics: 0.16,
-            drive: 0.76, density: 0.44, subharmonicsEnabled: false, subharmonicsAmount: 0.08),
-        .init(
-            id: "ac", title: "AC/Pop", enabled: true, amount: 0.18, freqHz: 100, harmonics: 0.10,
-            drive: 0.68, density: 0.36, subharmonicsEnabled: false, subharmonicsAmount: 0.06),
-        .init(
-            id: "talk", title: "Talk", enabled: true, amount: 0.08, freqHz: 120, harmonics: 0.04,
-            drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0)
-    ]
-
-    private static let widenerPresets: [WidenerPreset] = [
-        .init(
-            id: "safe_fm",
-            title: "Safe FM",
-            stereoWidenEnabled: false,
-            monoBassEnabled: true,
-            monoBassFreqHz: 140.0,
-            width: 0.30,
-            center: 0.50,
-            mix: 0.60
-        ),
-        .init(
-            id: "open_music",
-            title: "Open Music",
-            stereoWidenEnabled: true,
-            monoBassEnabled: true,
-            monoBassFreqHz: 125.0,
-            width: 0.46,
-            center: 0.50,
-            mix: 0.76
-        ),
-        .init(
-            id: "wide_chr",
-            title: "Wide CHR",
-            stereoWidenEnabled: true,
-            monoBassEnabled: true,
-            monoBassFreqHz: 115.0,
-            width: 0.46,
-            center: 0.50,
-            mix: 0.76
-        )
-    ]
-
-    private static let multibandPresets: [MultibandPreset] = [
-        .init(
-            id: "3_chr", title: "3B CHR/EDM", mode: 3, lowHz: 290, highHz: 2500, x1Hz: nil,
-            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 20,
-            lowReleaseMS: 310, midThresholdDB: -21, midRatio: 2.0, midAttackMS: 14,
-            midReleaseMS: 235, highThresholdDB: -19, highRatio: 1.6, highAttackMS: 8,
-            highReleaseMS: 165, kneeDB: 2.4, linkStrength: 0.42, releaseProgramDependent: true),
-        .init(
-            id: "3_rock", title: "3B Rock", mode: 3, lowHz: 310, highHz: 2550, x1Hz: nil, x2Hz: nil,
-            x3Hz: nil, x4Hz: nil, lowThresholdDB: -21, lowRatio: 2.1, lowAttackMS: 22,
-            lowReleaseMS: 325, midThresholdDB: -19, midRatio: 1.9, midAttackMS: 14,
-            midReleaseMS: 245, highThresholdDB: -18, highRatio: 1.55, highAttackMS: 9,
-            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 0.44, releaseProgramDependent: true),
-        .init(
-            id: "3_ac", title: "3B AC/Pop", mode: 3, lowHz: 320, highHz: 2650, x1Hz: nil, x2Hz: nil,
-            x3Hz: nil, x4Hz: nil, lowThresholdDB: -19, lowRatio: 1.9, lowAttackMS: 24,
-            lowReleaseMS: 340, midThresholdDB: -17, midRatio: 1.7, midAttackMS: 16,
-            midReleaseMS: 260, highThresholdDB: -16, highRatio: 1.4, highAttackMS: 10,
-            highReleaseMS: 190, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true),
-        .init(
-            id: "3_country", title: "3B Country", mode: 3, lowHz: 300, highHz: 2450, x1Hz: nil,
-            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -21, lowRatio: 2.2, lowAttackMS: 22,
-            lowReleaseMS: 320, midThresholdDB: -19, midRatio: 1.9, midAttackMS: 15,
-            midReleaseMS: 250, highThresholdDB: -17, highRatio: 1.5, highAttackMS: 10,
-            highReleaseMS: 185, kneeDB: 2.6, linkStrength: 0.42, releaseProgramDependent: true),
-        .init(
-            id: "3_talk", title: "3B Talk", mode: 3, lowHz: 360, highHz: 3200, x1Hz: nil, x2Hz: nil,
-            x3Hz: nil, x4Hz: nil, lowThresholdDB: -15, lowRatio: 1.5, lowAttackMS: 36,
-            lowReleaseMS: 440, midThresholdDB: -14, midRatio: 1.4, midAttackMS: 30,
-            midReleaseMS: 360, highThresholdDB: -13, highRatio: 1.22, highAttackMS: 20,
-            highReleaseMS: 290, kneeDB: 4.0, linkStrength: 0.62, releaseProgramDependent: true),
-        .init(
-            id: "3_urban", title: "3B Urban", mode: 3, lowHz: 250, highHz: 2200, x1Hz: nil,
-            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -24, lowRatio: 2.7, lowAttackMS: 16,
-            lowReleaseMS: 280, midThresholdDB: -22, midRatio: 2.4, midAttackMS: 11,
-            midReleaseMS: 210, highThresholdDB: -20, highRatio: 1.9, highAttackMS: 6,
-            highReleaseMS: 145, kneeDB: 2.1, linkStrength: 0.38, releaseProgramDependent: true),
-        .init(
-            id: "3_dance", title: "3B Dance", mode: 3, lowHz: 240, highHz: 2100, x1Hz: nil,
-            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -26, lowRatio: 2.9, lowAttackMS: 14,
-            lowReleaseMS: 260, midThresholdDB: -24, midRatio: 2.6, midAttackMS: 10,
-            midReleaseMS: 200, highThresholdDB: -22, highRatio: 2.0, highAttackMS: 5,
-            highReleaseMS: 135, kneeDB: 1.9, linkStrength: 0.34, releaseProgramDependent: true),
-        // Italo / disco / synthwave pump. Tempo-synced low-band release
-        // (~60 ms = 12% of a 120-BPM quarter note) gives audible kick-driven
-        // ducking; bright high band stays glossy. Tighter linkStrength widens
-        // the bass image.
-        .init(
-            id: "3_italo", title: "3B Italo / Pump", mode: 3, lowHz: 240, highHz: 2100,
-            x1Hz: nil, x2Hz: nil, x3Hz: nil, x4Hz: nil,
-            lowThresholdDB: -28, lowRatio: 3.6, lowAttackMS: 6,
-            lowReleaseMS: 60,
-            midThresholdDB: -23, midRatio: 2.2, midAttackMS: 10,
-            midReleaseMS: 130,
-            highThresholdDB: -18, highRatio: 1.3, highAttackMS: 4,
-            highReleaseMS: 100,
-            kneeDB: 1.5, linkStrength: 0.30, releaseProgramDependent: true),
-        .init(
-            id: "3_news", title: "3B News", mode: 3, lowHz: 360, highHz: 3200, x1Hz: nil, x2Hz: nil,
-            x3Hz: nil, x4Hz: nil, lowThresholdDB: -15, lowRatio: 1.4, lowAttackMS: 38,
-            lowReleaseMS: 480, midThresholdDB: -14, midRatio: 1.35, midAttackMS: 30,
-            midReleaseMS: 390, highThresholdDB: -13, highRatio: 1.25, highAttackMS: 22,
-            highReleaseMS: 320, kneeDB: 4.0, linkStrength: 0.62, releaseProgramDependent: true),
-        .init(
-            id: "3_jazz", title: "3B Jazz", mode: 3, lowHz: 330, highHz: 2800, x1Hz: nil, x2Hz: nil,
-            x3Hz: nil, x4Hz: nil, lowThresholdDB: -18, lowRatio: 1.7, lowAttackMS: 30,
-            lowReleaseMS: 420, midThresholdDB: -17, midRatio: 1.55, midAttackMS: 24,
-            midReleaseMS: 330, highThresholdDB: -16, highRatio: 1.35, highAttackMS: 16,
-            highReleaseMS: 250, kneeDB: 3.2, linkStrength: 0.52, releaseProgramDependent: true),
-        .init(
-            id: "3_classic", title: "3B Classical", mode: 3, lowHz: 360, highHz: 3400, x1Hz: nil,
-            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -14, lowRatio: 1.35, lowAttackMS: 42,
-            lowReleaseMS: 520, midThresholdDB: -13, midRatio: 1.3, midAttackMS: 36,
-            midReleaseMS: 430, highThresholdDB: -12, highRatio: 1.2, highAttackMS: 26,
-            highReleaseMS: 340, kneeDB: 4.6, linkStrength: 0.66, releaseProgramDependent: true),
-        .init(
-            id: "5_chr", title: "5B CHR/EDM", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 320,
-            x3Hz: 1600, x4Hz: 6200, lowThresholdDB: -23, lowRatio: 2.25, lowAttackMS: 20,
-            lowReleaseMS: 320, midThresholdDB: -21, midRatio: 1.9, midAttackMS: 13,
-            midReleaseMS: 240, highThresholdDB: -19, highRatio: 1.6, highAttackMS: 8,
-            highReleaseMS: 180, kneeDB: 2.6, linkStrength: 0.48, releaseProgramDependent: true),
-        .init(
-            id: "5_rock", title: "5B Rock", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 340,
-            x3Hz: 1550, x4Hz: 6100, lowThresholdDB: -21, lowRatio: 2.1, lowAttackMS: 20,
-            lowReleaseMS: 320, midThresholdDB: -19, midRatio: 1.85, midAttackMS: 13,
-            midReleaseMS: 240, highThresholdDB: -18, highRatio: 1.55, highAttackMS: 8,
-            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 0.46, releaseProgramDependent: true),
-        .init(
-            id: "5_ac", title: "5B AC/Pop", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 350,
-            x3Hz: 1800, x4Hz: 6800, lowThresholdDB: -17.5, lowRatio: 1.75, lowAttackMS: 28,
-            lowReleaseMS: 375, midThresholdDB: -16.0, midRatio: 1.55, midAttackMS: 19,
-            midReleaseMS: 300, highThresholdDB: -14.5, highRatio: 1.28, highAttackMS: 13,
-            highReleaseMS: 225, kneeDB: 3.6, linkStrength: 0.52, releaseProgramDependent: true),
-        .init(
-            id: "5_classic", title: "5B Classical/Jazz", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90,
-            x2Hz: 360, x3Hz: 1700, x4Hz: 6500, lowThresholdDB: -17, lowRatio: 1.5, lowAttackMS: 36,
-            lowReleaseMS: 450, midThresholdDB: -16, midRatio: 1.4, midAttackMS: 30,
-            midReleaseMS: 360, highThresholdDB: -15, highRatio: 1.25, highAttackMS: 20,
-            highReleaseMS: 280, kneeDB: 4.5, linkStrength: 0.60, releaseProgramDependent: true),
-        .init(
-            id: "5_talk", title: "5B Talk", mode: 5, lowHz: nil, highHz: nil, x1Hz: 110, x2Hz: 420,
-            x3Hz: 2200, x4Hz: 7600, lowThresholdDB: -12.5, lowRatio: 1.24, lowAttackMS: 48,
-            lowReleaseMS: 560, midThresholdDB: -11.8, midRatio: 1.18, midAttackMS: 40,
-            midReleaseMS: 450, highThresholdDB: -11.2, highRatio: 1.08, highAttackMS: 30,
-            highReleaseMS: 360, kneeDB: 5.2, linkStrength: 0.46, releaseProgramDependent: true),
-        .init(
-            id: "5_urban", title: "5B Urban", mode: 5, lowHz: nil, highHz: nil, x1Hz: 85, x2Hz: 300,
-            x3Hz: 1300, x4Hz: 5400, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 18,
-            lowReleaseMS: 295, midThresholdDB: -21, midRatio: 2.0, midAttackMS: 12,
-            midReleaseMS: 220, highThresholdDB: -19, highRatio: 1.7, highAttackMS: 7,
-            highReleaseMS: 155, kneeDB: 2.2, linkStrength: 0.42, releaseProgramDependent: true),
-        .init(
-            id: "5_dance", title: "5B Dance", mode: 5, lowHz: nil, highHz: nil, x1Hz: 80, x2Hz: 290,
-            x3Hz: 1200, x4Hz: 5000, lowThresholdDB: -24, lowRatio: 2.5, lowAttackMS: 16,
-            lowReleaseMS: 285, midThresholdDB: -22, midRatio: 2.1, midAttackMS: 11,
-            midReleaseMS: 215, highThresholdDB: -20, highRatio: 1.75, highAttackMS: 6,
-            highReleaseMS: 150, kneeDB: 2.0, linkStrength: 0.40, releaseProgramDependent: true),
-        // Italo / disco / synthwave pump. The 5-band variant linearly
-        // interpolates band 2 from low+mid, so the low values are pushed
-        // hard to make band 2 (the kick band, 80–280 Hz) aggressive enough
-        // for audible pump. Resulting band 2: ~-26.5 dB, 3.1:1, 8 ms / 90 ms
-        // — at 120 BPM that release is ~18% of a quarter note, plenty of
-        // ducking. High band stays light (1.3:1) so cymbals/synths sparkle.
-        .init(
-            id: "5_italo", title: "5B Italo / Pump", mode: 5, lowHz: nil, highHz: nil,
-            x1Hz: 80, x2Hz: 280, x3Hz: 1200, x4Hz: 5000,
-            lowThresholdDB: -30, lowRatio: 4.0, lowAttackMS: 5,
-            lowReleaseMS: 50,
-            midThresholdDB: -23, midRatio: 2.2, midAttackMS: 10,
-            midReleaseMS: 130,
-            highThresholdDB: -18, highRatio: 1.3, highAttackMS: 4,
-            highReleaseMS: 100,
-            kneeDB: 1.5, linkStrength: 0.30, releaseProgramDependent: true),
-        .init(
-            id: "5_news", title: "5B News", mode: 5, lowHz: nil, highHz: nil, x1Hz: 110, x2Hz: 450,
-            x3Hz: 2100, x4Hz: 7600, lowThresholdDB: -15, lowRatio: 1.4, lowAttackMS: 40,
-            lowReleaseMS: 500, midThresholdDB: -14, midRatio: 1.35, midAttackMS: 34,
-            midReleaseMS: 400, highThresholdDB: -13, highRatio: 1.25, highAttackMS: 24,
-            highReleaseMS: 320, kneeDB: 4.3, linkStrength: 0.64, releaseProgramDependent: true),
-        .init(
-            id: "5_jazz", title: "5B Jazz", mode: 5, lowHz: nil, highHz: nil, x1Hz: 95, x2Hz: 360,
-            x3Hz: 1600, x4Hz: 6200, lowThresholdDB: -18, lowRatio: 1.65, lowAttackMS: 32,
-            lowReleaseMS: 430, midThresholdDB: -17, midRatio: 1.5, midAttackMS: 26,
-            midReleaseMS: 340, highThresholdDB: -16, highRatio: 1.35, highAttackMS: 17,
-            highReleaseMS: 260, kneeDB: 3.4, linkStrength: 0.54, releaseProgramDependent: true),
-        .init(
-            id: "5_oldies", title: "5B Oldies", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90,
-            x2Hz: 340, x3Hz: 1450, x4Hz: 5600, lowThresholdDB: -20, lowRatio: 1.8, lowAttackMS: 26,
-            lowReleaseMS: 360, midThresholdDB: -18, midRatio: 1.7, midAttackMS: 18,
-            midReleaseMS: 280, highThresholdDB: -17, highRatio: 1.45, highAttackMS: 11,
-            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true)
-    ]
 
     private static let finalStagePresets: [FinalStagePreset] = [
         .init(
@@ -8615,6 +8354,42 @@ private struct SettingsSectionView: View {
             Section("Spectrum") {
                 Toggle("96 kHz Window", isOn: model.configBinding(\.fftWindow96kHz))
                 Text("When enabled, shows full 96 kHz spectrum. When disabled, shows the 60 kHz FM band.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Remote Control") {
+                Toggle(
+                    "Enable REST API + Web Dashboard",
+                    isOn: model.configBinding(\.controlEnabled, runtimeDisposition: .none)
+                )
+                .help("Serves a control API and web dashboard over HTTP. Applied at the next app launch.")
+                LabeledContent("Address") {
+                    TextField(
+                        "127.0.0.1",
+                        text: model.configBinding(\.controlBind, runtimeDisposition: .none)
+                    )
+                    .frame(maxWidth: 180)
+                    .help("Interface to listen on. 127.0.0.1 = this Mac only; 0.0.0.0 = all interfaces (requires an API key).")
+                }
+                LabeledContent("Port") {
+                    TextField(
+                        "8737",
+                        value: model.configBinding(\.controlPort, runtimeDisposition: .none),
+                        format: .number.grouping(.never)
+                    )
+                    .frame(maxWidth: 100)
+                    .help("TCP port for the control server (default 8737).")
+                }
+                LabeledContent("API Key") {
+                    TextField(
+                        "required for non-local access",
+                        text: model.configBinding(\.controlAPIKey, runtimeDisposition: .none)
+                    )
+                    .frame(maxWidth: 260)
+                    .help("Clients send this as 'Authorization: Bearer <key>' or 'X-API-Key'. Mandatory when the address is not 127.0.0.1; the server refuses to start remote-exposed without one.")
+                }
+                Text("Changes take effect at the next app launch. For access beyond the local network, front with a TLS reverse proxy.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

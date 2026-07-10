@@ -125,12 +125,14 @@ var targets: [Target] = [
 // are whole-file #if os(macOS); the ALSA engine is whole-file #if os(Linux)).
 var mpxPrimeDeps: [Target.Dependency] = [
     .product(name: "Atomics", package: "swift-atomics"),
+    .product(name: "Hummingbird", package: "hummingbird"),
     "MPXPrimeNative",
     "MPXPrimeCore",
     "MPXPrimeAcceleration"
 ]
 var testDeps: [Target.Dependency] = [
-    "MPXPrime", "MPXPrimeNative", "MPXPrimeCore", "MPXPrimeAcceleration", "MPXPrimeRecording"
+    "MPXPrime", "MPXPrimeNative", "MPXPrimeCore", "MPXPrimeAcceleration", "MPXPrimeRecording",
+    .product(name: "HummingbirdTesting", package: "hummingbird")
 ]
 
 if buildingForLinux {
@@ -201,6 +203,10 @@ targets.append(
         name: "MPXPrime",
         dependencies: mpxPrimeDeps,
         path: "Sources/MPXPrime",
+        resources: [
+            // The remote-control web dashboard (served at / by ControlServer).
+            .copy("Control/WebUI")
+        ],
         linkerSettings: infoPlistEmbed("MPXPrime-Info.plist")
     )
 )
@@ -226,7 +232,10 @@ let package = Package(
     ],
     products: products,
     dependencies: [
-        .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0")
+        .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0"),
+        // Remote-control REST API + embedded web dashboard (Control/*.swift).
+        // Hummingbird 2: lightweight SwiftNIO-based server, macOS + Linux.
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0")
     ],
     targets: targets,
     cxxLanguageStandard: .cxx17

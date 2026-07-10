@@ -143,6 +143,12 @@ are untouched. The shim is pinned against real Accelerate by a golden fixture
 (`AccelerateShimTests`; regenerate on macOS with `MPXPRIME_CAPTURE_GOLDEN=1`).
 The ALSA engine lives in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
 
+## Remote control server
+
+`--control` / `--control-port N` enable the REST API + web dashboard for a
+headless run (or set `[CONTROL] control_enabled = True`). See the user
+manual's "Remote control" section for endpoints and the security model.
+
 ## Offline verification
 
 The verification harness renders deterministic test scenarios without opening

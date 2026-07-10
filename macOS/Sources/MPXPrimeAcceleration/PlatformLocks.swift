@@ -72,6 +72,12 @@ extension OSAllocatedUnfairLock where State == Void {
         pthread_mutex_unlock(storage.mutex)
     }
 
+    /// Non-blocking acquire, mirroring os.OSAllocatedUnfairLock's API --
+    /// used by render threads that must never block on a producer.
+    public func lockIfAvailable() -> Bool {
+        pthread_mutex_trylock(storage.mutex) == 0
+    }
+
     public func withLock<R>(_ body: () throws -> R) rethrows -> R {
         pthread_mutex_lock(storage.mutex)
         defer { pthread_mutex_unlock(storage.mutex) }

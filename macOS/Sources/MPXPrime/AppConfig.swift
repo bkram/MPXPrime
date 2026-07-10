@@ -1,7 +1,18 @@
 import Foundation
 
-struct AppConfig {
+// Equatable: synthesized whole-config equality is the remote-control API's
+// change detector (see Control/ConfigPatch.swift); must live on the
+// declaration for synthesis.
+struct AppConfig: Equatable {
     static let appVersion: String = "0.41"
+
+    // Remote-control server ([CONTROL] section; server ships disabled).
+    // control_bind other than 127.0.0.1 REQUIRES control_api_key
+    // (ControlServer refuses to start otherwise).
+    var controlEnabled: Bool = false
+    var controlBind: String = "127.0.0.1"
+    var controlPort: Int = 8737
+    var controlAPIKey: String = ""
 
     // App-support folder / config filename for MPX Prime Studio (the encoder,
     // paired with "MPX Prime Meter").
@@ -832,6 +843,12 @@ struct AppConfig {
         cfg.rdsGaussianBWHZ = rds.double("rds_gaussian_bw_hz", defaultValue: cfg.rdsGaussianBWHZ)
         cfg.rdsGaussianTaps = rds.int("rds_gaussian_taps", defaultValue: cfg.rdsGaussianTaps)
         cfg.sampleRate = interfaces.double("sample_rate", defaultValue: cfg.sampleRate)
+
+        let control = parsed["CONTROL"] ?? [:]
+        cfg.controlEnabled = control.bool("control_enabled", defaultValue: cfg.controlEnabled)
+        cfg.controlBind = control.string("control_bind", defaultValue: cfg.controlBind)
+        cfg.controlPort = control.int("control_port", defaultValue: cfg.controlPort)
+        cfg.controlAPIKey = control.string("control_api_key", defaultValue: cfg.controlAPIKey)
         cfg.blockSize = interfaces.int("blocksize", defaultValue: cfg.blockSize)
         cfg.fftWindow96kHz = interfaces.bool("fft_window_92khz", defaultValue: cfg.fftWindow96kHz)
         cfg.dualRateAudioDomainEnabled = interfaces.bool(
@@ -1296,6 +1313,10 @@ struct AppConfig {
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
             "processed_audio_output = \(Self.boolString(processedAudioOutput))",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
+            // sample_rate was read but never written (a non-default rate
+            // vanished on the first autosave); persisted since the remote
+            // API made config round-tripping load-bearing.
+            "sample_rate = \(Self.formatFloat(sampleRate))",
             "blocksize = \(blockSize)",
             "fft_window_92khz = \(Self.boolString(fftWindow96kHz))",
             "dual_rate_audio_domain_enabled = \(Self.boolString(dualRateAudioDomainEnabled))",
@@ -1307,7 +1328,14 @@ struct AppConfig {
             "output_device_name = \(outputDeviceName ?? "")",
             "monitor_device_name = \(monitorDeviceName ?? "")"
         ]
-        let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""]).joined(
+        let controlLines: [String] = [
+            "[CONTROL]",
+            "control_enabled = \(Self.boolString(controlEnabled))",
+            "control_bind = \(controlBind)",
+            "control_port = \(controlPort)",
+            "control_api_key = \(controlAPIKey)"
+        ]
+        let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""] + controlLines + [""]).joined(
             separator: "\n")
         let resolvedPath = Self.resolveINIPath(path, forWrite: true)
         let fileManager = FileManager.default

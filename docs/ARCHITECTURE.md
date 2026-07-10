@@ -214,6 +214,28 @@ Further Meter runtime behavior (0.41 cycle): an **MPX pass-through** duplicates 
 - `AudioDevices.swift`: CoreAudio device enumeration; resolves UIDs to `AudioDeviceID`s and provides the `defaultInputDeviceID()` helper AUHAL needs (AUHAL requires an explicit device, unlike AVAudioEngine which inferred the default implicitly).
 - `INIParser.swift`: INI file read/write.
 
+## Remote control plane
+
+An embedded Hummingbird 2 HTTP server (`Control/ControlServer.swift`, default
+off via `[CONTROL]`) exposes REST endpoints plus a self-contained web
+dashboard. All routes speak to a `ControlBackend` protocol with two
+implementations: `HeadlessControlBackend` (an actor owning AppConfig + engine
+lifecycle for `--nogui` on macOS and Linux; API restarts rebuild
+generator+engine via a platform engine factory from main.swift) and
+`GUIControlBackend` (macOS GUI: a MainActor adapter over the view model, so
+remote changes flow through the same setConfigValue-style choke points as
+window controls and the GUI stays consistent). Config PATCHes use
+`ConfigPatch`: the request's INI keys are overlaid onto the current config
+through the existing INI parser (defaults/validators/clamps apply), and each
+key's live/liveRDS/restartRequired disposition is DERIVED by diffing the
+engine's own `RuntimeConfig`/`RDSRuntimeConfig` value structs -- the API can
+never disagree with what `applyRuntimeConfig` actually hot-applies. Live
+planes route through the same lock+atomic pending-config hand-off the GUI
+uses (AudioOutputEngine on macOS; the equivalent surface added to
+ALSAAudioEngine on Linux, consumed at the top of each render period).
+Security: loopback binds are open; any other bind refuses to start without
+`control_api_key`, checked constant-time as Bearer/X-API-Key on /api routes.
+
 ## Threading Model
 
 - Main thread: SwiftUI UI, user interaction

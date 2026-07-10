@@ -11,6 +11,29 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Remote control: REST API + embedded web dashboard** (both platforms,
+  default off; `[CONTROL]` INI section / GUI Settings card / `--control`).
+  Endpoints: status, meters, RDS live snapshot + curated live updates
+  (PS/RT/TA/PI/PTY), full config GET/PATCH by INI key, sound presets,
+  transport start/stop/restart. PATCH classifies every key as
+  live / liveRDS / restartRequired by DERIVING the disposition from the
+  engine's own RuntimeConfig/RDSRuntimeConfig structs (no per-key table to
+  drift); changes hot-apply through the existing render-thread hand-off and
+  persist to the INI. Localhost binds are open; any remote bind requires an
+  API key (Bearer / X-API-Key, constant-time compare) and refuses to start
+  without one; TLS is delegated to a reverse proxy. The dashboard at `/` is
+  a single self-contained page: transport, level/GR/injection meters, live
+  RDS with a TA button, presets, and an all-settings editor. Built on
+  Hummingbird 2 (new dependency, with SwiftNIO transitively). Internals:
+  preset tables extracted to a shared `PresetCatalog` (GUI behavior
+  unchanged); `ALSAAudioEngine` gained the live-apply hand-off, RDS
+  snapshot, and peak/xrun meters; the headless runtimes now run through a
+  `HeadlessControlBackend` actor (API restarts rebuild the engine); GUI
+  mode routes remote changes through the view model on the MainActor so
+  the window and web UI stay consistent. Also fixed: `sample_rate` was
+  read from the INI but never written back, so a non-default rate vanished
+  on the first autosave.
+
 - **Linux command-line port of the encoder (milestone 1, experimental).** The
   `MPXPrime` executable now builds and runs on Linux (dev-tested: Ubuntu 24.04
   x86_64, Swift 6.3): headless `--nogui` encoding into an ALSA device (capture

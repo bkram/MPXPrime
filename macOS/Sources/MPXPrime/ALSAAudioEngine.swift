@@ -22,6 +22,7 @@ import Atomics
 import CAlsa
 import Foundation
 import Glibc
+import MPXPrimeAcceleration   // OSAllocatedUnfairLock polyfill
 import MPXPrimeCore
 import MPXPrimeNative
 
@@ -200,7 +201,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private let generator: MPXGenerator
     private let outputMode: AudioOutputMode
     private let sampleRate: Double
-    private let useInputSource: Bool
+    // Mutable: applyRuntimeConfig can flip tone<->input live when the
+    // capture PCM was opened at start (render thread reads it per period).
+    private var useInputSource: Bool
     private let inputDeviceName: String
     private let outputDeviceName: String
 
@@ -212,6 +215,24 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private let running = ManagedAtomic<Bool>(false)
     private let renderXruns = ManagedAtomic<Int>(0)
     private let captureXruns = ManagedAtomic<Int>(0)
+
+    // Live-apply hand-off, mirroring AudioOutputEngine: any thread produces
+    // a pending runtime struct under the lock; the render thread consumes it
+    // at the top of each period with a try-lock (never blocks).
+    private let runtimeConfigLock = OSAllocatedUnfairLock()
+    private var pendingRuntimeConfig: MPXGenerator.RuntimeConfig?
+    private var lastQueuedRuntimeConfig: MPXGenerator.RuntimeConfig?
+    private var pendingRDSRuntimeConfig: MPXGenerator.RDSRuntimeConfig?
+    private var lastQueuedRDSRuntimeConfig: MPXGenerator.RDSRuntimeConfig?
+    private let runtimeConfigPending = ManagedAtomic<Bool>(false)
+    private let rdsRuntimeConfigPending = ManagedAtomic<Bool>(false)
+
+    // Minimal meters (milestone 1): per-period peaks published for the
+    // remote API. Written by the audio threads, read at a few Hz.
+    private let meterLock = OSAllocatedUnfairLock()
+    private var meterInputLeftPeak: Float = 0
+    private var meterInputRightPeak: Float = 0
+    private var meterOutputPeak: Float = 0
 
     // Ring prime/regulate depths (same policy as the macOS engine, derived
     // from the period size at start()).
@@ -329,6 +350,119 @@ final class ALSAAudioEngine: @unchecked Sendable {
         fputs("[ALSA] stopped. xruns: render \(xr), capture \(xc)\n", stderr)
     }
 
+    // MARK: - Live apply + telemetry (remote-control surface)
+
+    /// Thread-safe producer; the render thread applies within ~one period.
+    func applyRuntimeConfig(_ config: AppConfig) {
+        let runtime = MPXGenerator.makeRuntimeConfig(from: config)
+        runtimeConfigLock.lock()
+        if lastQueuedRuntimeConfig == runtime {
+            runtimeConfigLock.unlock()
+            return
+        }
+        pendingRuntimeConfig = runtime
+        lastQueuedRuntimeConfig = runtime
+        runtimeConfigPending.store(true, ordering: .relaxed)
+        runtimeConfigLock.unlock()
+    }
+
+    func applyRDSRuntimeConfig(_ config: AppConfig) {
+        let runtime = MPXGenerator.RDSRuntimeConfig.make(from: config)
+        runtimeConfigLock.lock()
+        if lastQueuedRDSRuntimeConfig == runtime {
+            runtimeConfigLock.unlock()
+            return
+        }
+        pendingRDSRuntimeConfig = runtime
+        lastQueuedRDSRuntimeConfig = runtime
+        rdsRuntimeConfigPending.store(true, ordering: .relaxed)
+        runtimeConfigLock.unlock()
+    }
+
+    var currentRDSLiveSnapshot: BasicRDSCoder.LiveSnapshot? {
+        generator.currentRDSLiveSnapshot()
+    }
+
+    /// Peaks are per-period (no hold/decay smoothing in milestone 1).
+    var peakMeters: (inputL: Float, inputR: Float, output: Float) {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return (meterInputLeftPeak, meterInputRightPeak, meterOutputPeak)
+    }
+
+    var xrunCounts: (render: Int, capture: Int) {
+        (renderXruns.load(ordering: .relaxed), captureXruns.load(ordering: .relaxed))
+    }
+
+    /// Render-thread consumer (try-lock; never blocks the period deadline).
+    private func applyPendingRuntimeConfigIfNeeded() {
+        if runtimeConfigPending.load(ordering: .acquiring),
+            runtimeConfigLock.lockIfAvailable() {
+            let runtime = pendingRuntimeConfig
+            pendingRuntimeConfig = nil
+            runtimeConfigPending.store(false, ordering: .relaxed)
+            runtimeConfigLock.unlock()
+            if let runtime {
+                generator.applyRuntimeConfig(runtime)
+                // Source flip is honoured only when the capture path exists
+                // (capture PCM is opened at start; adding one mid-run is a
+                // restart-class change on Linux).
+                let nextUseInput = runtime.sourceMode.lowercased() == "input"
+                if nextUseInput != useInputSource {
+                    if input != nil || !nextUseInput {
+                        if nextUseInput, let ring = inputRing {
+                            ring.dropToTargetBufferedFrames(inputPrimeThresholdFrames)
+                            inputPrimed = false
+                        }
+                        useInputSource = nextUseInput
+                    }
+                }
+            }
+        }
+        if rdsRuntimeConfigPending.load(ordering: .acquiring),
+            runtimeConfigLock.lockIfAvailable() {
+            let runtime = pendingRDSRuntimeConfig
+            pendingRDSRuntimeConfig = nil
+            rdsRuntimeConfigPending.store(false, ordering: .relaxed)
+            runtimeConfigLock.unlock()
+            if let runtime {
+                generator.applyRDSRuntimeConfig(runtime)
+            }
+        }
+    }
+
+    @inline(__always)
+    private func publishPeaks(frames: Int) {
+        // Output only: renderLeft belongs to this (render) thread. Input
+        // peaks are published by the capture thread, which owns its buffers.
+        var outPeak: Float = 0
+        for i in 0..<frames {
+            let m = abs(renderLeft[i])
+            if m > outPeak { outPeak = m }
+        }
+        if meterLock.lockIfAvailable() {
+            meterOutputPeak = outPeak
+            meterLock.unlock()
+        }
+    }
+
+    @inline(__always)
+    private func publishInputPeaks(frames: Int) {
+        var inL: Float = 0
+        var inR: Float = 0
+        for i in 0..<frames {
+            let l = abs(captureLeft[i])
+            let r = abs(captureRight[i])
+            if l > inL { inL = l }
+            if r > inR { inR = r }
+        }
+        if meterLock.lockIfAvailable() {
+            meterInputLeftPeak = inL
+            meterInputRightPeak = inR
+            meterLock.unlock()
+        }
+    }
+
     // MARK: - Render loop (playback pacing)
 
     private func renderLoop() {
@@ -338,6 +472,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
 
         let frames = out.periodFrames
         while running.load(ordering: .acquiring) {
+            applyPendingRuntimeConfigIfNeeded()
             renderLeft.withUnsafeMutableBufferPointer { lBuf in
                 renderRight.withUnsafeMutableBufferPointer { rBuf in
                     // Preallocated at start() with periodFrames > 0 elements;
@@ -388,6 +523,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
                     }
                 }
             }
+            publishPeaks(frames: frames)
             if !writePeriod(out) { break }
         }
     }
@@ -537,6 +673,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
                     ring.write(left: leftBase, right: rightBase, frameCount: got)
                 }
             }
+            publishInputPeaks(frames: got)
         }
     }
 

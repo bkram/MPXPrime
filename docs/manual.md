@@ -485,6 +485,66 @@ triggers a layout pass:
 - **Scopes** -- composite / decoded-monitor waveforms.
 - **Levels** -- the vertical deviation / level meters as a standalone window.
 
+## Remote control (REST API + web dashboard)
+
+The encoder embeds an HTTP control server for remote and automation use --
+on macOS (GUI or `--nogui`) and on the Linux CLI build. It is **disabled by
+default**.
+
+Enable it in the INI (`[CONTROL]` section, also editable in the GUI's
+Settings tab; GUI changes take effect at the next app launch):
+
+```ini
+[CONTROL]
+control_enabled = True
+control_bind = 127.0.0.1   ; 0.0.0.0 = all interfaces (requires API key)
+control_port = 8737
+control_api_key =          ; required for any non-127.0.0.1 bind
+```
+
+For one-off headless runs, `--control` (or `--control-port 9000`) enables it
+without editing the INI.
+
+**Security:** binding 127.0.0.1 needs no key. Binding any other interface
+REQUIRES `control_api_key` -- the server refuses to start remote-exposed
+without one. Clients send the key as `Authorization: Bearer <key>` or
+`X-API-Key: <key>`. The server speaks plain HTTP; for access beyond a
+trusted network, front it with a TLS reverse proxy (nginx/caddy).
+
+Open `http://<host>:8737/` in a browser for the dashboard: transport
+start/stop/restart, live level/GR/injection meters, on-air RDS PS/RT with
+live text editing and a TA button, sound presets, and a collapsible
+all-settings editor. It is a single self-contained page (no internet
+access needed) and prompts for the API key when one is configured.
+
+### Endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending |
+| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation, budget margin (subset on Linux) |
+| GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |
+| PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
+| GET | `/api/config` | every INI setting, grouped by section |
+| PATCH | `/api/config` | `{"<ini_key>": "<value>", ...}` -- any key from this manual's tables |
+| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband; + format_profile in GUI mode) |
+| POST | `/api/presets` | `{"kind": "multiband", "id": "3_chr", "intensity": 1.0}` (intensity <0.75 light / >1.25 heavy) |
+| POST | `/api/transport/start\|stop\|restart` | engine lifecycle |
+
+`PATCH /api/config` responds with a per-key **disposition**: `live` /
+`liveRDS` (hot-applied to the running engine, no restart), `restartRequired`
+(saved; takes effect at the next start -- e.g. `rds_level`, `pilot_level`,
+`sample_rate`, devices), or `unchanged` (value identical after
+clamping/parsing, or unknown key). The classification is derived from the
+same runtime structures the engine hot-applies, so it always matches what
+the engine actually does. Every change is saved to the INI immediately.
+Values follow INI text conventions (booleans `True`/`False`; no `;` in
+values).
+
+The now-playing script integration (see RDS) keeps working alongside the
+API; automation systems that only need RT/PS updates can use `PUT /api/rds`
+instead of a polling script.
+
 ## Offline verification
 
 MPX Prime Studio includes an offline MPX verification mode that renders deterministic test scenarios without opening audio devices.

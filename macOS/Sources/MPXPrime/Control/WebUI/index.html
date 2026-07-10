@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPX Prime Studio - Remote</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #181e24; --panel2: #1f2730; --line: #2a343f;
+    --text: #d8e0e8; --dim: #8a97a4; --accent: #38b6ff; --ok: #35c46f;
+    --warn: #e0a53c; --bad: #e05252; --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 18px; }
+  h1 { font-size: 17px; letter-spacing: 0.06em; }
+  h1 small { color: var(--dim); font-weight: 400; margin-left: 10px; font-size: 12px; }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bad); display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .spacer { flex: 1; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06131c; font-weight: 600; }
+  button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+  button.ta-on { background: var(--warn); border-color: var(--warn); color: #131313; font-weight: 700; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .panel h2 { font-size: 11px; letter-spacing: 0.14em; color: var(--dim); text-transform: uppercase; margin-bottom: 12px; }
+  .meter { margin-bottom: 9px; }
+  .meter label { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+  .meter label b { color: var(--text); font-family: var(--mono); font-weight: 500; }
+  .bar { height: 9px; background: #0b0f13; border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2f9e5f, #7ec843 70%, #e0a53c 88%, #e05252); transition: width 90ms linear; }
+  .bar.gr i { background: var(--warn); }
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13px; }
+  .kv div span { color: var(--dim); font-size: 11px; display: block; }
+  .kv div b { font-family: var(--mono); font-weight: 500; font-size: 15px; }
+  .rds-live { background: #0b0f13; border-radius: 6px; padding: 10px 12px; font-family: var(--mono); margin-bottom: 12px; }
+  .rds-live .ps { font-size: 20px; letter-spacing: 0.12em; color: var(--accent); }
+  .rds-live .rt { font-size: 12px; color: var(--dim); margin-top: 4px; min-height: 16px; }
+  .field { display: flex; gap: 8px; margin-bottom: 8px; }
+  .field input, .field select { flex: 1; background: #0b0f13; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px 9px; font-family: var(--mono); font-size: 13px; }
+  .field input:focus { border-color: var(--accent); outline: none; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--dim); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  td input { width: 100%; background: #0b0f13; border: 1px solid var(--line); color: var(--text); border-radius: 4px; padding: 3px 6px; font-family: var(--mono); font-size: 12px; }
+  .section-title { color: var(--accent); font-family: var(--mono); padding-top: 12px; }
+  #toast { position: fixed; right: 18px; bottom: 18px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; font-size: 13px; opacity: 0; transition: opacity 200ms; pointer-events: none; max-width: 46ch; }
+  #toast.show { opacity: 1; }
+  #keybar { display: none; gap: 8px; margin-bottom: 14px; align-items: center; background: var(--panel); border: 1px solid var(--warn); border-radius: 8px; padding: 10px 14px; }
+  #keybar.show { display: flex; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot" id="dot"></span>MPX PRIME STUDIO<small id="meta">connecting...</small></h1>
+  <span class="badge warn" id="restartBadge" hidden>restart pending</span>
+  <span class="spacer"></span>
+  <button class="primary" id="btnStart">Start</button>
+  <button id="btnRestart">Restart</button>
+  <button class="danger" id="btnStop">Stop</button>
+</header>
+
+<div id="keybar">
+  <span>API key required:</span>
+  <input type="password" id="keyInput" placeholder="paste API key" style="flex:1;background:#0b0f13;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 9px;">
+  <button class="primary" id="keySave">Unlock</button>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Levels</h2>
+    <div class="meter"><label>INPUT L <b id="vInL">-</b></label><div class="bar"><i id="mInL"></i></div></div>
+    <div class="meter"><label>INPUT R <b id="vInR">-</b></label><div class="bar"><i id="mInR"></i></div></div>
+    <div class="meter"><label>MPX OUT <b id="vOut">-</b></label><div class="bar"><i id="mOut"></i></div></div>
+    <div class="meter"><label>CLIPPER GR <b id="vClipGR">-</b></label><div class="bar gr"><i id="mClipGR"></i></div></div>
+    <div class="meter"><label>LIMITER GR <b id="vLimGR">-</b></label><div class="bar gr"><i id="mLimGR"></i></div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Modulation</h2>
+    <div class="kv">
+      <div><span>DEVIATION</span><b id="vDev">-</b></div>
+      <div><span>BUDGET MARGIN</span><b id="vBudget">-</b></div>
+      <div><span>PILOT</span><b id="vPilot">-</b></div>
+      <div><span>RDS</span><b id="vRDSInj">-</b></div>
+      <div><span>AGC GAIN</span><b id="vAGC">-</b></div>
+      <div><span>STEREO CORR</span><b id="vCorr">-</b></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>RDS</h2>
+    <div class="rds-live">
+      <div class="ps" id="rdsPS">--------</div>
+      <div class="rt" id="rdsRT"></div>
+    </div>
+    <div class="field"><input id="psInput" maxlength="200" placeholder="PS text (bank A)"><button id="psApply">Set PS</button></div>
+    <div class="field"><input id="rtInput" maxlength="64" placeholder="RadioText"><button id="rtApply">Set RT</button></div>
+    <div class="field">
+      <button id="taBtn" style="flex:1">TA off</button>
+      <span style="align-self:center;color:var(--dim);font-size:12px" id="rdsIds">PI - / PTY -</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Presets</h2>
+    <div class="field">
+      <select id="presetKind"></select>
+      <select id="presetId"></select>
+      <button id="presetApply">Apply</button>
+    </div>
+    <div style="color:var(--dim);font-size:12px">Sound presets apply live; the change is saved to the config.</div>
+  </div>
+</div>
+
+<details id="advanced">
+  <summary>Advanced configuration (all settings)</summary>
+  <div id="configTables" class="panel" style="margin-top:10px"></div>
+</details>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let apiKey = localStorage.getItem("mpxprime_api_key") || "";
+
+function headers(json) {
+  const h = {};
+  if (apiKey) h["X-API-Key"] = apiKey;
+  if (json) h["Content-Type"] = "application/json";
+  return h;
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { ...headers(!!opts.body), ...(opts.headers || {}) } });
+  if (res.status === 401) { $("keybar").classList.add("show"); throw new Error("unauthorized"); }
+  $("keybar").classList.remove("show");
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).error?.message || msg; } catch (e) { /* keep statusText */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+function toast(msg, bad) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.style.borderColor = bad ? "var(--bad)" : "var(--line)";
+  t.classList.add("show");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+// dB text + bar width from a linear 0..1 peak
+function levelText(v) {
+  if (v == null) return "-";
+  if (v <= 0.00001) return "-inf";
+  return (20 * Math.log10(v)).toFixed(1) + " dB";
+}
+function levelWidth(v) {
+  if (v == null || v <= 0.00001) return 0;
+  const db = 20 * Math.log10(v);
+  return Math.max(0, Math.min(100, (db + 48) / 48 * 100));
+}
+function grWidth(db) {
+  if (db == null) return 0;
+  return Math.max(0, Math.min(100, db / 12 * 100));
+}
+function fmt(v, suffix, digits = 1) {
+  return v == null ? "-" : v.toFixed(digits) + suffix;
+}
+
+let taState = false;
+
+async function pollStatus() {
+  try {
+    const s = await api("/api/status");
+    $("dot").classList.toggle("on", s.running);
+    $("meta").textContent =
+      `${s.platform} v${s.version} - ${(s.sampleRateHz / 1000).toFixed(0)} kHz - ${s.sourceMode} - ${s.outputMode}` +
+      (s.uptimeSeconds ? ` - up ${Math.floor(s.uptimeSeconds / 60)}m` : "");
+    $("restartBadge").hidden = !s.restartPending;
+  } catch (e) {
+    $("meta").textContent = "unreachable: " + e.message;
+    $("dot").classList.remove("on");
+  }
+}
+
+async function pollMeters() {
+  let m = null;
+  try { m = await api("/api/meters"); } catch (e) { /* engine stopped */ }
+  $("vInL").textContent = levelText(m?.inputLeftPeak);
+  $("mInL").style.width = levelWidth(m?.inputLeftPeak) + "%";
+  $("vInR").textContent = levelText(m?.inputRightPeak);
+  $("mInR").style.width = levelWidth(m?.inputRightPeak) + "%";
+  $("vOut").textContent = levelText(m?.outputPeak);
+  $("mOut").style.width = levelWidth(m?.outputPeak) + "%";
+  $("vClipGR").textContent = fmt(m?.compositeClipperGainReductionDB, " dB");
+  $("mClipGR").style.width = grWidth(m?.compositeClipperGainReductionDB) + "%";
+  $("vLimGR").textContent = fmt(m?.preEncodeLimiterGainReductionDB, " dB");
+  $("mLimGR").style.width = grWidth(m?.preEncodeLimiterGainReductionDB) + "%";
+  $("vDev").textContent = fmt(m?.deviationKHzPeak, " kHz");
+  $("vBudget").textContent = fmt(m?.compositeBudgetMarginDB, " dB");
+  $("vPilot").textContent = fmt(m?.pilotInjectionPercent, " %");
+  $("vRDSInj").textContent = fmt(m?.rdsInjectionPercent, " %");
+  $("vAGC").textContent = fmt(m?.agcGainDB, " dB");
+  $("vCorr").textContent = fmt(m?.stereoCorrelation, "", 2);
+}
+
+async function pollRDS() {
+  try {
+    const r = await api("/api/rds");
+    $("rdsPS").textContent = r.livePS || (r.enabled ? "........" : "RDS OFF");
+    $("rdsRT").textContent = r.liveRT || "";
+    $("rdsIds").textContent = `PI ${r.pi} / PTY ${r.pty}`;
+    taState = r.ta;
+    const b = $("taBtn");
+    b.textContent = taState ? "TA ACTIVE - click to end" : "TA off - click to activate";
+    b.classList.toggle("ta-on", taState);
+  } catch (e) { /* keep last */ }
+}
+
+async function loadPresets() {
+  try {
+    const kinds = await api("/api/presets");
+    const kindSel = $("presetKind");
+    kindSel.innerHTML = "";
+    for (const k of Object.keys(kinds).sort()) {
+      const o = document.createElement("option");
+      o.value = k; o.textContent = k; kindSel.appendChild(o);
+    }
+    const fill = () => {
+      const idSel = $("presetId");
+      idSel.innerHTML = "";
+      for (const id of kinds[kindSel.value] || []) {
+        const o = document.createElement("option");
+        o.value = id; o.textContent = id; idSel.appendChild(o);
+      }
+    };
+    kindSel.onchange = fill;
+    fill();
+  } catch (e) { /* auth pending */ }
+}
+
+async function loadConfig() {
+  try {
+    const sections = await api("/api/config");
+    const host = $("configTables");
+    host.innerHTML = "";
+    for (const sec of Object.keys(sections).sort()) {
+      const keys = Object.keys(sections[sec]).sort();
+      if (!keys.length) continue;
+      const title = document.createElement("div");
+      title.className = "section-title";
+      title.textContent = "[" + sec + "]";
+      host.appendChild(title);
+      const table = document.createElement("table");
+      table.innerHTML = "<tr><th style='width:38%'>key</th><th>value</th><th style='width:90px'></th></tr>";
+      for (const k of keys) {
+        const tr = document.createElement("tr");
+        const keyCell = document.createElement("td");
+        keyCell.style.fontFamily = "var(--mono)";
+        keyCell.textContent = k;
+        tr.appendChild(keyCell);
+        const valCell = document.createElement("td");
+        const input = document.createElement("input");
+        input.value = sections[sec][k];
+        valCell.appendChild(input);
+        tr.appendChild(valCell);
+        const btnCell = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.textContent = "Apply";
+        btn.onclick = async () => {
+          try {
+            const r = await api("/api/config", {
+              method: "PATCH", body: JSON.stringify({ [k]: input.value })
+            });
+            const o = r.outcomes[0];
+            input.value = o.effectiveValue ?? input.value;
+            toast(`${k}: ${o.disposition}` + (r.restartPending ? " (restart pending)" : ""));
+          } catch (e) { toast(k + ": " + e.message, true); }
+        };
+        btnCell.appendChild(btn);
+        tr.appendChild(btnCell);
+        table.appendChild(tr);
+      }
+      host.appendChild(table);
+    }
+  } catch (e) { /* auth pending */ }
+}
+
+async function transport(action) {
+  try {
+    await api("/api/transport/" + action, { method: "POST" });
+    toast("transport: " + action);
+    pollStatus();
+  } catch (e) { toast("transport failed: " + e.message, true); }
+}
+
+$("btnStart").onclick = () => transport("start");
+$("btnStop").onclick = () => transport("stop");
+$("btnRestart").onclick = () => transport("restart");
+
+$("psApply").onclick = async () => {
+  try {
+    await api("/api/rds", { method: "PUT", body: JSON.stringify({ ps: $("psInput").value }) });
+    toast("PS updated (live)");
+  } catch (e) { toast("PS failed: " + e.message, true); }
+};
+$("rtApply").onclick = async () => {
+  try {
+    await api("/api/rds", { method: "PUT", body: JSON.stringify({ rt: $("rtInput").value }) });
+    toast("RadioText updated (live)");
+  } catch (e) { toast("RT failed: " + e.message, true); }
+};
+$("taBtn").onclick = async () => {
+  try {
+    await api("/api/rds", { method: "PUT", body: JSON.stringify({ ta: !taState }) });
+    toast(taState ? "TA cleared" : "TA activated (forced 0A group on air)");
+    pollRDS();
+  } catch (e) { toast("TA failed: " + e.message, true); }
+};
+$("presetApply").onclick = async () => {
+  try {
+    await api("/api/presets", {
+      method: "POST",
+      body: JSON.stringify({ kind: $("presetKind").value, id: $("presetId").value })
+    });
+    toast("preset applied live");
+    loadConfig();
+  } catch (e) { toast("preset failed: " + e.message, true); }
+};
+$("keySave").onclick = () => {
+  apiKey = $("keyInput").value.trim();
+  localStorage.setItem("mpxprime_api_key", apiKey);
+  boot();
+};
+$("advanced").addEventListener("toggle", () => { if ($("advanced").open) loadConfig(); });
+
+function boot() {
+  pollStatus(); pollMeters(); pollRDS(); loadPresets();
+}
+boot();
+setInterval(pollStatus, 2000);
+setInterval(pollMeters, 250);
+setInterval(pollRDS, 1000);
+</script>
+</body>
+</html>

@@ -76,6 +76,15 @@ See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
 - Scopes, spectrum, levels, sticky peaks, and live monitoring views
 - Config persisted to `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 
+## Remote control
+
+An embedded, default-off **REST API + web dashboard** (`[CONTROL]` in the
+INI, or the GUI Settings tab) controls the encoder locally or remotely:
+transport, live meters, RDS text/TA, sound presets, and every INI setting
+with live-apply where the engine supports it. Localhost needs no
+authentication; any wider bind requires an API key. See the
+[user manual](docs/manual.md#remote-control-rest-api--web-dashboard).
+
 ## Output modes
 
 MPX Prime Studio drives its main output device in one of two modes, chosen in

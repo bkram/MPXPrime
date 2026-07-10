@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// RDS 57 kHz subcarrier front-end: composite samples -> recovered 1187.5 bps

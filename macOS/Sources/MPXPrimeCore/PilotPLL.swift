@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Lightweight 19 kHz pilot lock-in for receive-side coherent demodulation.

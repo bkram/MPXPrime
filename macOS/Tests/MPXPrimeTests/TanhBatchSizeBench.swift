@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 @testable import MPXPrime
 
 // Diagnostic micro-benchmark: at what batch size does vvtanhf beat

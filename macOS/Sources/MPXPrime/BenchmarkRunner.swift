@@ -218,7 +218,11 @@ struct BenchmarkRunner {
         var lines = ["# MPXPrime DSP benchmark"]
         lines.append("")
         lines.append("Captured: \(ISO8601DateFormatter().string(from: Date()))")
+        #if os(macOS)
         lines.append("Machine: \(sysctlString("hw.model")) / \(sysctlString("machdep.cpu.brand_string"))")
+        #else
+        lines.append("Machine: \(linuxCPUModel())")
+        #endif
         lines.append("Cores: \(ProcessInfo.processInfo.processorCount) logical, \(ProcessInfo.processInfo.activeProcessorCount) active")
         lines.append("OS: \(ProcessInfo.processInfo.operatingSystemVersionString)")
         #if DEBUG
@@ -445,6 +449,7 @@ struct BenchmarkRunner {
         return right ? (space + s) : (s + space)
     }
 
+    #if os(macOS)
     private func sysctlString(_ name: String) -> String {
         var size = 0
         if sysctlbyname(name, nil, &size, nil, 0) != 0 { return "?" }
@@ -453,4 +458,17 @@ struct BenchmarkRunner {
         let nullIdx = buf.firstIndex(of: 0) ?? buf.endIndex
         return String(bytes: buf[..<nullIdx], encoding: .utf8) ?? "?"
     }
+    #else
+    /// Linux counterpart of the sysctl machine line: CPU model from /proc.
+    private func linuxCPUModel() -> String {
+        guard let cpuinfo = try? String(contentsOfFile: "/proc/cpuinfo", encoding: .utf8)
+        else { return "?" }
+        for line in cpuinfo.split(separator: "\n") where line.hasPrefix("model name") {
+            if let value = line.split(separator: ":", maxSplits: 1).last {
+                return value.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return "?"
+    }
+    #endif
 }

@@ -77,6 +77,72 @@ The in-process SDR (RTL-SDR / SDRplay) is GUI-only; the headless dashboard takes
 an audio device (`--device`) or a composite on stdin (`--stdin`). See the
 [Meter manual](manual-meter.md) for the full control surface.
 
+## Linux (CLI-only)
+
+The encoder also builds and runs on Linux as a **command-line-only** port
+(experimental; dev-tested on Ubuntu 24.04 x86_64). The GUI, the MPX Prime
+Meter, and the SDR tuner remain macOS-only. Everything the headless encoder
+offers works: `--nogui` live encoding into an ALSA device, all `--verify*`
+modes, `--capture-baseline`, and `--bench`.
+
+Install the toolchain and dependencies:
+
+```bash
+sudo apt install -y build-essential curl pkg-config binutils libc6-dev \
+  libcurl4-openssl-dev libedit2 libgcc-13-dev libpython3-dev libsqlite3-0 \
+  libstdc++-13-dev libxml2-dev libz3-dev tzdata unzip zlib1g-dev \
+  libasound2-dev alsa-utils
+# Swift 6 via swiftly (the official toolchain manager):
+curl -O "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+tar zxf "swiftly-$(uname -m).tar.gz" && ./swiftly init
+swiftly install latest
+```
+
+Build, verify, and test exactly as on macOS, except no `DEVELOPER_DIR`
+override is needed (the Linux toolchain ships Testing.framework):
+
+```bash
+swift build --package-path macOS -c release
+swift test --package-path macOS
+macOS/.build/release/MPXPrime --verify --seconds 5
+macOS/.build/release/MPXPrime --nogui --config /path/to/config.ini
+```
+
+Linux specifics:
+
+- **Devices are ALSA PCM names.** The `input_device_uid` / `output_device_uid`
+  INI keys hold ALSA device strings (`default`, `hw:0,0`,
+  `plughw:CARD=Loopback,DEV=0`) instead of CoreAudio UIDs; empty means
+  `default`. List devices with `aplay -l` / `arecord -l`. A `hw:` device must
+  support the configured `sample_rate` natively or start-up fails with a clear
+  error; `plughw:`/`default` let alsa-lib convert (with an SRC warning printed).
+  Your user must be in the `audio` group.
+- **Default config path** is `~/.local/share/MPX Prime Studio/MPX Prime
+  Studio.ini` (the XDG mapping of Application Support).
+- **Real-time scheduling** is best-effort: the audio threads request
+  SCHED_FIFO and silently fall back if the rtprio rlimit forbids it
+  (`ulimit -r`; configure `/etc/security/limits.d/` for production use).
+  Xrun counts are printed at stop.
+- **Per-platform strict baseline.** Apple and Glibc libm (and vvtanhf vs the
+  scalar tanh shim) differ at rounding level, so Linux pins its own
+  `--baseline-strict` file, `macOS/verifier_baselines/default-linux-x86_64.json`
+  (`default.json` stays macOS-only). The physical `--verify` thresholds are
+  identical on both platforms.
+- **Loopback smoke test** without audio hardware: `sudo modprobe snd-aloop`,
+  point `output_device_uid` at `hw:Loopback,0,0`, run the encoder with
+  `source_mode = tone`, and capture the composite from the other end:
+  `arecord -D hw:Loopback,1,0 -f FLOAT_LE -r 192000 -c 2 -d 8 capture.wav`.
+  The pilot (19 kHz, 8 percent) and RDS sidebands (around a suppressed 57 kHz
+  carrier) should be visible in any spectrum tool.
+
+Internals: the `MPXPrimeAcceleration` target supplies same-name implementations
+of the small vDSP/vForce surface the encoder uses (plus an
+`OSAllocatedUnfairLock` polyfill) on platforms without Accelerate -- on macOS it
+compiles to an empty module and the real Accelerate is used, so macOS numerics
+are untouched. The shim is pinned against real Accelerate by a golden fixture
+(`AccelerateShimTests`; regenerate on macOS with `MPXPRIME_CAPTURE_GOLDEN=1`).
+The ALSA engine lives in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
+
 ## Offline verification
 
 The verification harness renders deterministic test scenarios without opening

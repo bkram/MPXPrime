@@ -1,3 +1,6 @@
+// macOS-only (AUHAL input capture): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import AudioToolbox
 import CoreAudio
 import Foundation
@@ -452,3 +455,5 @@ private let auhalInputProc: AURenderCallback = {
         frameCount: inNumberFrames
     )
 }
+
+#endif  // os(macOS)

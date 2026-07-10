@@ -1,0 +1,5 @@
+module CAlsa [system] {
+    header "shim.h"
+    link "asound"
+    export *
+}

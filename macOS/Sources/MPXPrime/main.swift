@@ -1,9 +1,27 @@
+#if os(macOS)
 import AppKit
 import CoreAudio
+#endif
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import MPXPrimeCore
 
+#if !canImport(Darwin)
+// Glibc imports C's `stderr` as a mutable global, which Swift 6 strict
+// concurrency rejects at use sites. Rebind file-locally to a fresh
+// unbuffered FILE* on fd 2 (identical behavior: stderr is unbuffered).
+nonisolated(unsafe) private let stderr: UnsafeMutablePointer<FILE> = {
+    guard let f = fdopen(2, "w") else { fatalError("fdopen(2) failed") }
+    setvbuf(f, nil, _IONBF, 0)
+    return f
+}()
+#endif
+
+#if os(macOS)
 @discardableResult
 func applyRealtimePriorityHints() -> Bool {
     var qosApplied = false
@@ -14,12 +32,19 @@ func applyRealtimePriorityHints() -> Bool {
     }
     return qosApplied
 }
+#endif
 
 struct CLIOptions {
     var configPath: String = AppConfig.defaultINIPath
     var configPathExplicit: Bool = false
     var runSeconds: Double?
+    // The GUI is macOS-only; Linux defaults to headless (a bare `MPXPrime`
+    // there behaves like `--nogui`, and an explicit `--gui` is rejected).
+    #if os(macOS)
     var gui: Bool = true
+    #else
+    var gui: Bool = false
+    #endif
     var verify: Bool = false
     var verifyPresets: Bool = false
     var verifyLong: Bool = false
@@ -155,6 +180,7 @@ func printUsage() {
     print(text)
 }
 
+#if os(macOS)
 func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevices: [AudioDevice])
     -> String {
     var parts: [String] = []
@@ -174,6 +200,7 @@ func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevic
     }
     return parts.isEmpty ? "" : "devices: \(parts.joined(separator: ", "))"
 }
+#endif
 
 let options = parseCLI()
 if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-h") {
@@ -208,6 +235,7 @@ do {
         )
     }
 
+    #if os(macOS)
     let qosApplied = applyRealtimePriorityHints()
     if !qosApplied {
         fputs("MPX Prime: unable to apply QoS hint\n", stderr)
@@ -298,6 +326,56 @@ do {
 
     // Run the application event loop - same as GUI does
     app.run()
+    #else
+    // Linux CLI runtime: headless encoder into an ALSA device. The GUI does
+    // not exist here; --verify/--bench were dispatched above.
+    if options.gui {
+        fputs("MPX Prime: the GUI is macOS-only; this Linux build is CLI-only (--nogui).\n", stderr)
+        exit(1)
+    }
+    let config = try AppConfig.load(fromINI: configPath)
+    let nowPlayingState = NowPlayingState()
+    let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
+        fputs("[NowPlaying] \(status)\n", stderr)
+    }
+    nowPlayingRunner.updateConfig(config)
+    let generator = MPXGenerator(
+        config: config,
+        sampleRate: config.sampleRate,
+        nowPlayingState: nowPlayingState
+    )
+    // Device names are ALSA PCM names ("default", "hw:0,0", "plughw:...")
+    // carried in the same INI keys that hold CoreAudio UIDs on macOS.
+    let audioEngine = ALSAAudioEngine(
+        generator: generator,
+        config: config,
+        outputMode: config.processedAudioOutput ? .processedAudio : .mpxComposite
+    )
+    try audioEngine.start()
+
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+    let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    let shutdown = {
+        nowPlayingRunner.stop()
+        audioEngine.stop()
+        exit(0)
+    }
+    sigintSource.setEventHandler(handler: DispatchWorkItem { shutdown() })
+    sigtermSource.setEventHandler(handler: DispatchWorkItem { shutdown() })
+    sigintSource.resume()
+    sigtermSource.resume()
+
+    if let secs = options.runSeconds {
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + secs,
+            execute: DispatchWorkItem { shutdown() })
+    }
+
+    print("MPX Prime running. Press Ctrl-C to stop.")
+    dispatchMain()
+    #endif
 } catch {
     fputs("Error: \(error)\n", stderr)
     exit(1)

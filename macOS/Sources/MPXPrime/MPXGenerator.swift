@@ -1,9 +1,26 @@
+// Platform split: on macOS these resolve to the real Accelerate / Darwin /
+// os modules (numerics and locking untouched); on Linux the
+// MPXPrimeAcceleration shim provides same-name vDSP/vvtanhf functions and an
+// OSAllocatedUnfairLock polyfill, and Glibc provides libm.
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 import Atomics
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import MPXPrimeCore
+#if canImport(FoundationNetworking)
+import FoundationNetworking   // URLSession/URLRequest on Linux corelibs
+#endif
+#if canImport(os)
 import os
+#endif
 
 // Biquad, BiquadCascade6, and DeemphasisFilter were moved to the shared
 // MPXPrimeCore target in the v0.31 modularization step (imported above).

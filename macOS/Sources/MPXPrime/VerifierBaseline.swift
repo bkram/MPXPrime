@@ -352,6 +352,22 @@ func saveVerifierBaseline(_ baseline: VerifierBaselineFile, to url: URL) throws 
 
 // MARK: - Path helpers
 
+/// Baseline filename, per platform. Composite output is numerics-identical
+/// only within a platform (Apple libm + vvtanhf vs Glibc libm + scalar tanhf),
+/// so each platform pins its own strict baseline: `default.json` on macOS
+/// (unchanged), `default-linux-<arch>.json` on Linux.
+private func verifierBaselineFileName() -> String {
+    #if os(Linux)
+    #if arch(x86_64)
+    return "default-linux-x86_64.json"
+    #else
+    return "default-linux-arm64.json"
+    #endif
+    #else
+    return "default.json"
+    #endif
+}
+
 /// Resolves the default baseline path. Prefers `macOS/verifier_baselines/`
 /// when run from the repo root (detected by presence of `macOS/Package.swift`),
 /// otherwise `./verifier_baselines/` — so the same binary works whether it's
@@ -365,11 +381,11 @@ func defaultVerifierBaselinePath() -> URL {
         return URL(fileURLWithPath: cwd)
             .appendingPathComponent("macOS")
             .appendingPathComponent("verifier_baselines")
-            .appendingPathComponent("default.json")
+            .appendingPathComponent(verifierBaselineFileName())
     }
     return URL(fileURLWithPath: cwd)
         .appendingPathComponent("verifier_baselines")
-        .appendingPathComponent("default.json")
+        .appendingPathComponent(verifierBaselineFileName())
 }
 
 /// ISO-8601 timestamp for capture metadata. Truncated to whole seconds so

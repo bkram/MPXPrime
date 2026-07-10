@@ -1,4 +1,8 @@
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 import Foundation
 
 // Hann-windowed real-input FFT spectrum analyzer (Accelerate-only).

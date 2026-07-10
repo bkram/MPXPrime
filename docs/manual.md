@@ -76,6 +76,13 @@ If you cannot hear anything, check `Settings` → output device routing, that th
 
 ## Configuration
 
+> **Linux (experimental CLI port):** the encoder also runs headless on Linux
+> (`--nogui`; no GUI, no Meter). The same INI works, with two differences:
+> the default config path is `~/.local/share/MPX Prime Studio/MPX Prime
+> Studio.ini`, and the `input_device_uid` / `output_device_uid` keys hold
+> ALSA PCM names (`default`, `hw:0,0`, `plughw:...`) instead of CoreAudio
+> UIDs. See docs/BUILDING.md "Linux (CLI-only)" for setup and device notes.
+
 Default config location:
 
 ```text

@@ -1,3 +1,6 @@
+// macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import Observation
 import SwiftUI
 
@@ -96,3 +99,5 @@ final class LiveTelemetry {
 
 // `LiveTelemetryView` (the generic isolation wrapper) now lives in the shared
 // MPXPrimeUI target so both the transmit GUI and the Meter window reuse it.
+
+#endif  // os(macOS)

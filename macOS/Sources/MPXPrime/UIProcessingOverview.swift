@@ -1,3 +1,6 @@
+// macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import MPXPrimeUI
 import SwiftUI
 
@@ -324,3 +327,5 @@ struct ProcessingOverviewGrid: View {
     }
 
 }
+
+#endif  // os(macOS)

@@ -11,6 +11,29 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Linux command-line port of the encoder (milestone 1, experimental).** The
+  `MPXPrime` executable now builds and runs on Linux (dev-tested: Ubuntu 24.04
+  x86_64, Swift 6.3): headless `--nogui` encoding into an ALSA device (capture
+  and playback, FLOAT/S32/S16 negotiation, xrun recovery, SCHED_FIFO
+  best-effort), all `--verify*` modes, `--capture-baseline`, and `--bench`.
+  The GUI, MPX Prime Meter, and SDR tuner remain macOS-only. Key pieces:
+  - New `MPXPrimeAcceleration` target: same-name implementations of the vDSP /
+    vvtanhf surface the encoder uses plus an `OSAllocatedUnfairLock` polyfill
+    (pthread PI mutex). On macOS it compiles empty and the real Accelerate/os
+    are used -- macOS composite output is bit-identical (verified: the
+    pre-port `--verify --baseline-strict` passes unchanged). A golden fixture
+    captured from real Accelerate pins the shim's FFT packing/scaling and
+    window constants (`AccelerateShimTests`).
+  - New `ALSAAudioEngine` (Linux counterpart of `AudioOutputEngine`) and a
+    `CAlsa` system-library target; `input_device_uid` / `output_device_uid`
+    carry ALSA PCM names on Linux.
+  - Per-platform strict baselines: Linux pins
+    `verifier_baselines/default-linux-x86_64.json` (Glibc libm and the scalar
+    tanh shim differ from Apple's at rounding level); physical verify
+    thresholds are identical and pass on both platforms.
+  - Test suite runs on Linux (425 tests; GUI/view-model suites and the
+    absolute wall-clock budget test are macOS-gated).
+
 ## 0.41 — 2026-07-10
 
 - **Meter: vectorscope auto-zoom.** The goniometer's display gain rides the

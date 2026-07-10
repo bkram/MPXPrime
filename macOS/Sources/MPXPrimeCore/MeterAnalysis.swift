@@ -1,6 +1,9 @@
-import Accelerate
 import Atomics
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// One coherent snapshot of the meter's measurements, copied out for display.

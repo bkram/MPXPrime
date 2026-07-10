@@ -1,3 +1,6 @@
+// macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import Accelerate
 import AppKit
 import AVFoundation
@@ -9319,3 +9322,5 @@ private struct StereoPreMPXSpectrumView: View {
         }
     }
 }
+
+#endif  // os(macOS)

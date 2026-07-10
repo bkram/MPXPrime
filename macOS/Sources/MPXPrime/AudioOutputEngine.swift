@@ -1,3 +1,6 @@
+// macOS-only (AVAudioEngine output; Linux uses ALSAAudioEngine): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import AVFoundation
 import AudioToolbox
 import Foundation
@@ -1957,3 +1960,5 @@ final class AudioOutputEngine {
         return max(lo, min(hi, x))
     }
 }
+
+#endif  // os(macOS)

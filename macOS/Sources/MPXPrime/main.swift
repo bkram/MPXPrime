@@ -320,6 +320,7 @@ do {
     }
     let config = try loadOrCreateHeadlessConfig(
         path: configPath, explicit: options.configPathExplicit)
+    fputs("MPX Prime: config \(configPath)\n", stderr)
     let nowPlayingState = NowPlayingState()
     let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
         fputs("[NowPlaying] \(status)\n", stderr)
@@ -408,6 +409,7 @@ do {
     }
     let config = try loadOrCreateHeadlessConfig(
         path: configPath, explicit: options.configPathExplicit)
+    fputs("MPX Prime: config \(configPath)\n", stderr)
     let nowPlayingState = NowPlayingState()
     let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
         fputs("[NowPlaying] \(status)\n", stderr)

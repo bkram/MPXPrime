@@ -46,6 +46,7 @@ enum ControlServerError: Error, CustomStringConvertible {
 extension ControlStatus: ResponseEncodable {}
 extension ControlMeters: ResponseEncodable {}
 extension ControlRDS: ResponseEncodable {}
+extension ControlDevices: ResponseEncodable {}
 extension ConfigApplyResult: ResponseEncodable {}
 extension ConfigKeyOutcome: ResponseEncodable {}
 
@@ -145,6 +146,10 @@ enum ControlServer {
 
         router.get("/api/rds") { _, _ in
             await backend.rds()
+        }
+
+        router.get("/api/devices") { _, _ in
+            await backend.devices()
         }
 
         router.put("/api/rds") { request, context -> ConfigApplyResult in

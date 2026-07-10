@@ -27,7 +27,7 @@ combination test suite. Newest first.
   sections -- Sound stage cards with real switches/sliders in the GUI's
   control vocabulary (per-stage preset pickers included), RDS (on-air
   PS/RT, identity, text, flags), Test Tone, Presets, and an Advanced raw
-  all-settings editor -- one self-contained page, no build step. Built on
+  all-settings editor -- one self-contained page, no build step. All ~150 stage controls carry the GUI's exact ranges/labels (extracted from the GUI source), an Interfaces page offers audio-device dropdowns (CoreAudio / ALSA PCM enumeration via GET /api/devices), and the headless session shares the GUI's config file (loaded/created at the standard path; printed at startup). Built on
   Hummingbird 2 (new dependency, with SwiftNIO transitively). Internals:
   preset tables extracted to a shared `PresetCatalog` (GUI behavior
   unchanged); `ALSAAudioEngine` gained the live-apply hand-off, RDS

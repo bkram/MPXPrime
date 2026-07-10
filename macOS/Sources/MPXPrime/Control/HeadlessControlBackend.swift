@@ -74,6 +74,15 @@ actor HeadlessControlBackend: ControlBackend {
         )
     }
 
+    func devices() -> ControlDevices {
+        let (inputs, outputs, note) = AudioDeviceListing.enumerate()
+        return ControlDevices(
+            inputs: inputs, outputs: outputs,
+            selectedInput: config.inputDeviceUID ?? "",
+            selectedOutput: config.outputDeviceUID ?? "",
+            note: note)
+    }
+
     func configSections() throws -> [String: [String: String]] {
         try ConfigPatch.sectionedValues(of: config)
     }

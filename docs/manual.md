@@ -502,6 +502,12 @@ control_port = 8737
 control_api_key =          ; required for any non-127.0.0.1 bind
 ```
 
+The web session reads and writes the SAME configuration file as the
+Studio GUI (the default `~/Library/Application Support/MPX Prime
+Studio/MPX Prime Studio.ini`, or whatever `--config` names) -- so it
+starts from your existing station setup, and its changes persist for
+the next GUI launch. The resolved path is printed at startup.
+
 For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
 enables it without editing the INI; these flags imply `--nogui` (run
 headless, serve the dashboard). In the GUI app, use the Settings tab.
@@ -524,7 +530,9 @@ GUI's control vocabulary, applied live on release), RDS (on-air PS/RT
 display, identity, PS banks, RadioText, TP/TA/MS/CT flags), Test Tone,
 Presets (with per-stage preset pickers on the Sound cards too), and an
 Advanced page holding the raw all-settings editor. Every change reports
-back live / live-RDS / needs-restart. It is a single self-contained page
+back live / live-RDS / needs-restart. The Interfaces page lists the
+machine's audio devices (CoreAudio on macOS, ALSA PCM names on Linux) as
+input/output dropdowns -- selecting one is a restart-class change. It is a single self-contained page
 (no internet access needed) and prompts for the API key when one is
 configured.
 

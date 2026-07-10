@@ -55,6 +55,15 @@ private actor MockBackend: ControlBackend {
         )
     }
 
+    func devices() -> ControlDevices {
+        ControlDevices(
+            inputs: [ControlDevice(id: "hw:0,0", name: "Mock In", canInput: true, canOutput: false)],
+            outputs: [ControlDevice(id: "hw:0,0", name: "Mock Out", canInput: false, canOutput: true)],
+            selectedInput: config.inputDeviceUID ?? "",
+            selectedOutput: config.outputDeviceUID ?? "",
+            note: "mock")
+    }
+
     func configSections() throws -> [String: [String: String]] {
         try ConfigPatch.sectionedValues(of: config)
     }
@@ -180,6 +189,21 @@ struct ControlServerTests {
             }
             try await client.execute(uri: "/api/transport/bogus", method: .post) { response in
                 #expect(response.status == .badRequest)
+            }
+        }
+    }
+
+    @Test func devicesRouteReturnsLists() async throws {
+        let backend = MockBackend()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/api/devices", method: .get) { response in
+                #expect(response.status == .ok)
+                let d = try JSONDecoder().decode(
+                    ControlDevices.self, from: Data(response.body.readableBytesView))
+                #expect(d.inputs.first?.canInput == true)
+                #expect(d.outputs.first?.canOutput == true)
             }
         }
     }

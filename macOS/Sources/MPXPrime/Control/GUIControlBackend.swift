@@ -41,6 +41,12 @@ struct GUIControlBackend: ControlBackend {
                 configuredRT: "", configuredPSActiveBank: "")
     }
 
+    func devices() async -> ControlDevices {
+        (try? await withVM { $0.remoteDevices() })
+            ?? ControlDevices(
+                inputs: [], outputs: [], selectedInput: "", selectedOutput: "", note: "")
+    }
+
     func configSections() async throws -> [String: [String: String]] {
         try await withVM { try ConfigPatch.sectionedValues(of: $0.config) }
     }

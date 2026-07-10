@@ -3013,6 +3013,19 @@ final class MPXPrimeViewModel: ObservableObject {
         runningEngine?.controlMeters
     }
 
+    func remoteDevices() -> ControlDevices {
+        ControlDevices(
+            inputs: inputDevices.map {
+                ControlDevice(id: $0.uid, name: $0.name, canInput: true, canOutput: $0.hasOutput)
+            },
+            outputs: outputDevices.map {
+                ControlDevice(id: $0.uid, name: $0.name, canInput: $0.hasInput, canOutput: true)
+            },
+            selectedInput: config.inputDeviceUID ?? "",
+            selectedOutput: config.outputDeviceUID ?? "",
+            note: "")
+    }
+
     func remoteRDS() -> ControlRDS {
         let live = runningEngine?.currentRDSLiveSnapshot
         return ControlRDS(

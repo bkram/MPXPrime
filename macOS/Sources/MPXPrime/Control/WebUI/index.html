@@ -6,85 +6,78 @@
 <title>MPX Prime Studio</title>
 <style>
   :root {
-    --bg: #0e1216; --bar: #12181e; --panel: #171e25; --panel2: #1e2731; --line: #2a343f;
-    --text: #d9e1e9; --dim: #8a97a4; --accent: #38b6ff; --ok: #35c46f; --warn: #e0a53c;
-    --bad: #e05252; --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --bg:#0e1216; --bar:#12181e; --panel:#171e25; --panel2:#1e2731; --line:#2a343f;
+    --text:#d9e1e9; --dim:#8a97a4; --accent:#38b6ff; --ok:#35c46f; --warn:#e0a53c;
+    --bad:#e05252; --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body { background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
-
-  /* ---- broadcast status bar (pinned) ---- */
-  #statusbar { background: var(--bar); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
-  #brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: 0.05em; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
-  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  #meta { color: var(--dim); font-size: 11px; }
-  .strip { display: flex; gap: 14px; align-items: flex-end; }
-  .vm { width: 46px; text-align: center; }
-  .vm .track { height: 42px; width: 10px; margin: 0 auto 3px; background: #0a0e12; border-radius: 3px; position: relative; overflow: hidden; }
-  .vm .fill { position: absolute; bottom: 0; left: 0; right: 0; height: 0; background: linear-gradient(0deg, #2f9e5f, #7ec843 70%, #e0a53c 88%, #e05252); }
-  .vm.gr .fill { background: var(--warn); }
-  .vm .cap { font-size: 9px; color: var(--dim); letter-spacing: 0.06em; }
-  .vm .val { font-family: var(--mono); font-size: 10px; }
-  .bigread { text-align: center; min-width: 86px; }
-  .bigread b { font-family: var(--mono); font-size: 21px; font-weight: 500; display: block; line-height: 1.1; }
-  .bigread span { font-size: 9px; color: var(--dim); letter-spacing: 0.08em; }
-  .bigread.alert b { color: var(--bad); }
-  #transport { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-  .badge { font-size: 10px; padding: 2px 8px; border-radius: 9px; border: 1px solid var(--warn); color: var(--warn); }
-  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 13px; font-size: 12px; cursor: pointer; }
-  button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #06131c; font-weight: 600; }
-  button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
-
-  /* ---- layout: sidebar + content ---- */
-  #main { display: flex; flex: 1; min-height: 0; }
-  #sidebar { width: 172px; background: var(--bar); border-right: 1px solid var(--line); padding: 10px 0; overflow-y: auto; flex-shrink: 0; }
-  #sidebar .nav { padding: 7px 18px; cursor: pointer; color: var(--dim); font-size: 13px; border-left: 3px solid transparent; user-select: none; }
-  #sidebar .nav:hover { color: var(--text); }
-  #sidebar .nav.active { color: var(--text); border-left-color: var(--accent); background: rgba(56,182,255,0.06); }
-  #sidebar .sep { margin: 8px 18px; border-top: 1px solid var(--line); }
-  #content { flex: 1; overflow-y: auto; padding: 18px; }
-  #content h1 { font-size: 15px; margin-bottom: 4px; }
-  #content .pagehelp { color: var(--dim); font-size: 12px; margin-bottom: 14px; max-width: 78ch; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; align-items: start; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-  .card h2 { font-size: 11px; letter-spacing: 0.13em; color: var(--dim); text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-
-  /* ---- controls ---- */
-  .ctl { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid rgba(42,52,63,0.5); }
-  .ctl:last-child { border-bottom: none; }
-  .ctl label { flex: 1; }
-  .ctl .sub { display: block; color: var(--dim); font-size: 10px; }
-  .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
-  .switch input { opacity: 0; width: 0; height: 0; }
-  .knob { position: absolute; inset: 0; background: #39434e; border-radius: 10px; transition: background 120ms; cursor: pointer; }
-  .knob:before { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: transform 120ms; }
-  .switch input:checked + .knob { background: var(--ok); }
-  .switch input:checked + .knob:before { transform: translateX(16px); }
-  .sliderwrap { display: flex; align-items: center; gap: 10px; flex: 1.2; }
-  input[type=range] { flex: 1; accent-color: var(--accent); }
-  .sval { font-family: var(--mono); font-size: 12px; min-width: 74px; text-align: right; }
-  select, input[type=text], input[type=number], input[type=password] { background: #0a0e12; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 5px 8px; font-family: var(--mono); font-size: 12px; }
-  select:focus, input:focus { border-color: var(--accent); outline: none; }
-  input[type=text] { width: 200px; }
-  .rds-live { background: #0a0e12; border-radius: 8px; padding: 12px 14px; font-family: var(--mono); margin-bottom: 12px; }
-  .rds-live .ps { font-size: 24px; letter-spacing: 0.14em; color: var(--accent); }
-  .rds-live .rt { font-size: 12px; color: var(--dim); margin-top: 5px; min-height: 16px; white-space: pre-wrap; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
-  th { color: var(--dim); font-weight: 500; }
-  td input { width: 100%; }
-  .section-title { color: var(--accent); font-family: var(--mono); padding: 12px 0 4px; }
-  #toast { position: fixed; right: 16px; bottom: 16px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 15px; font-size: 12px; opacity: 0; transition: opacity 200ms; pointer-events: none; max-width: 46ch; z-index: 10; }
-  #toast.show { opacity: 1; }
-  #keybar { display: none; gap: 8px; margin: 12px 16px 0; align-items: center; background: var(--panel); border: 1px solid var(--warn); border-radius: 8px; padding: 10px 14px; }
-  #keybar.show { display: flex; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body { background:var(--bg); color:var(--text); font:13px/1.45 -apple-system,"Segoe UI",Roboto,sans-serif; display:flex; flex-direction:column; }
+  #statusbar { background:var(--bar); border-bottom:1px solid var(--line); padding:9px 16px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  #brand { display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:0.05em; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--bad); }
+  .dot.on { background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  #meta { color:var(--dim); font-size:11px; }
+  .strip { display:flex; gap:12px; align-items:flex-end; }
+  .vm { width:42px; text-align:center; }
+  .vm .track { height:40px; width:9px; margin:0 auto 3px; background:#0a0e12; border-radius:3px; position:relative; overflow:hidden; }
+  .vm .fill { position:absolute; bottom:0; left:0; right:0; height:0; background:linear-gradient(0deg,#2f9e5f,#7ec843 70%,#e0a53c 88%,#e05252); }
+  .vm.gr .fill { background:var(--warn); }
+  .vm .cap { font-size:9px; color:var(--dim); letter-spacing:0.05em; }
+  .vm .val { font-family:var(--mono); font-size:10px; }
+  .bigread { text-align:center; min-width:78px; }
+  .bigread b { font-family:var(--mono); font-size:20px; font-weight:500; display:block; line-height:1.1; }
+  .bigread span { font-size:9px; color:var(--dim); letter-spacing:0.07em; }
+  .bigread.alert b { color:var(--bad); }
+  #transport { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .badge { font-size:10px; padding:2px 8px; border-radius:9px; border:1px solid var(--warn); color:var(--warn); }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 13px; font-size:12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#06131c; font-weight:600; }
+  button.danger { background:var(--bad); border-color:var(--bad); color:#fff; font-weight:600; }
+  #main { display:flex; flex:1; min-height:0; }
+  #sidebar { width:150px; background:var(--bar); border-right:1px solid var(--line); padding:10px 0; overflow-y:auto; flex-shrink:0; }
+  #sidebar .nav { padding:7px 18px; cursor:pointer; color:var(--dim); font-size:13px; border-left:3px solid transparent; user-select:none; }
+  #sidebar .nav:hover { color:var(--text); }
+  #sidebar .nav.active { color:var(--text); border-left-color:var(--accent); background:rgba(56,182,255,0.06); }
+  #content { flex:1; overflow-y:auto; padding:18px; }
+  #content h1 { font-size:15px; margin-bottom:4px; }
+  #content .pagehelp { color:var(--dim); font-size:12px; margin-bottom:14px; max-width:80ch; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:14px; align-items:start; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:13px 15px; }
+  .card h2 { font-size:11px; letter-spacing:0.12em; color:var(--dim); text-transform:uppercase; margin-bottom:9px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .ctl { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 0; border-bottom:1px solid rgba(42,52,63,0.5); }
+  .ctl:last-child { border-bottom:none; }
+  .ctl label { flex:1; }
+  .ctl .sub { display:block; color:var(--dim); font-size:10px; }
+  .switch { position:relative; width:36px; height:20px; flex-shrink:0; }
+  .switch input { opacity:0; width:0; height:0; }
+  .knob { position:absolute; inset:0; background:#39434e; border-radius:10px; transition:background 120ms; cursor:pointer; }
+  .knob:before { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:#fff; top:2px; left:2px; transition:transform 120ms; }
+  .switch input:checked + .knob { background:var(--ok); }
+  .switch input:checked + .knob:before { transform:translateX(16px); }
+  .sliderwrap { display:flex; align-items:center; gap:10px; flex:1.2; }
+  input[type=range] { flex:1; accent-color:var(--accent); }
+  .sval { font-family:var(--mono); font-size:12px; min-width:78px; text-align:right; }
+  select,input[type=text],input[type=number],input[type=password] { background:#0a0e12; border:1px solid var(--line); color:var(--text); border-radius:6px; padding:5px 8px; font-family:var(--mono); font-size:12px; }
+  select:focus,input:focus { border-color:var(--accent); outline:none; }
+  input[type=text] { width:210px; }
+  .rds-live { background:#0a0e12; border-radius:8px; padding:12px 14px; font-family:var(--mono); margin-bottom:10px; }
+  .rds-live .ps { font-size:24px; letter-spacing:0.14em; color:var(--accent); }
+  .rds-live .rt { font-size:12px; color:var(--dim); margin-top:5px; min-height:16px; white-space:pre-wrap; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th,td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; }
+  td input { width:100%; }
+  .section-title { color:var(--accent); font-family:var(--mono); padding:12px 0 4px; }
+  .hint { color:var(--dim); font-size:11px; margin-top:8px; }
+  #toast { position:fixed; right:16px; bottom:16px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 15px; font-size:12px; opacity:0; transition:opacity 200ms; pointer-events:none; max-width:48ch; z-index:10; }
+  #toast.show { opacity:1; }
+  #keybar { display:none; gap:8px; margin:12px 16px 0; align-items:center; background:var(--panel); border:1px solid var(--warn); border-radius:8px; padding:10px 14px; }
+  #keybar.show { display:flex; }
 </style>
 </head>
 <body>
-
 <div id="statusbar">
   <div id="brand"><span class="dot" id="dot"></span>MPX PRIME<div id="meta">connecting...</div></div>
   <div class="strip">
@@ -106,27 +99,77 @@
     <button class="danger" id="btnStop">Stop</button>
   </div>
 </div>
-
 <div id="keybar">
   <span>API key required:</span>
   <input type="password" id="keyInput" placeholder="paste API key" style="flex:1">
   <button class="primary" id="keySave">Unlock</button>
 </div>
-
 <div id="main">
   <nav id="sidebar"></nav>
   <div id="content"></div>
 </div>
-
 <div id="toast"></div>
-
 <script>
 "use strict";
+const SCHEMA = {"af_list":{"kind":"text","label":"AF List (MHz)"},"auto_start":{"kind":"toggle","label":"Auto Start at Launch"},"bass_clipper_crossover_hz":{"decimals":0,"kind":"slider","label":"Crossover","max":300.0,"min":60.0,"step":1,"unit":" Hz"},"bass_clipper_drive":{"decimals":2,"kind":"slider","label":"Drive","max":3.0,"min":0.5,"step":0.01,"unit":""},"bass_clipper_enabled":{"kind":"toggle","label":"Bass Clipper"},"bass_clipper_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":0.0,"min":-12.0,"step":0.1,"unit":" dB"},"bs412_enabled":{"kind":"toggle","label":"BS.412"},"bs412_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":0.0,"min":-20.0,"step":0.1,"unit":" dB"},"bs412_window_seconds":{"decimals":0,"kind":"slider","label":"Window","max":90.0,"min":30.0,"step":1,"unit":" s"},"control_enabled":{"kind":"toggle","label":"REST API + Web Dashboard"},"dc_clipper_cancel_freq_hz":{"decimals":0,"kind":"slider","label":"Cancel Freq","max":4000.0,"min":500.0,"step":1,"unit":" Hz"},"dc_clipper_ceiling_db":{"decimals":1,"kind":"slider","label":"Ceiling","max":0.0,"min":-6.0,"step":0.1,"unit":" dB"},"dc_clipper_enabled":{"kind":"toggle","label":"Audio Clipper"},"di_comp":{"kind":"toggle","label":"DI Comp"},"di_dyn":{"kind":"toggle","label":"DI Dyn PTY"},"di_head":{"kind":"toggle","label":"DI Head"},"di_stereo":{"kind":"toggle","label":"DI Stereo"},"downward_expander_enabled":{"kind":"toggle","label":"Expander"},"ecc":{"kind":"text","label":"ECC"},"en_af":{"kind":"toggle","label":"AF"},"en_ct":{"kind":"toggle","label":"CT (4A)"},"en_id":{"kind":"toggle","label":"ID (1A)"},"en_lps":{"kind":"toggle","label":"Long PS (15A)"},"en_ptyn":{"kind":"toggle","label":"PTYN"},"en_rds":{"kind":"toggle","label":"RDS"},"en_rt_plus":{"kind":"toggle","label":"RT+"},"encoder_fir_enabled":{"kind":"toggle","label":"Encoder Lowpass: linear-phase FIR"},"expander_attack_ms":{"decimals":1,"kind":"slider","label":"Attack","max":100.0,"min":0.1,"step":0.1,"unit":" ms"},"expander_ratio":{"decimals":1,"kind":"slider","label":"Ratio","max":8.0,"min":1.0,"step":0.1,"unit":" :1"},"expander_release_ms":{"decimals":0,"kind":"slider","label":"Release","max":2000.0,"min":10.0,"step":1,"unit":" ms"},"expander_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":-20.0,"min":-60.0,"step":0.1,"unit":" dB"},"fft_window_92khz":{"kind":"toggle","label":"96 kHz Window"},"final_drive_db":{"decimals":1,"kind":"slider","label":"Final Drive","max":12.0,"min":0.0,"step":0.1,"unit":" dB"},"group_sequence":{"kind":"text","label":"Group Sequence"},"hf_clipper_crossover_hz":{"decimals":0,"kind":"slider","label":"Crossover","max":8000.0,"min":3000.0,"step":1,"unit":" Hz"},"hf_clipper_drive":{"decimals":2,"kind":"slider","label":"Drive","max":3.0,"min":0.5,"step":0.01,"unit":""},"hf_clipper_enabled":{"kind":"toggle","label":"HF Clipper"},"hf_clipper_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":0.0,"min":-12.0,"step":0.1,"unit":" dB"},"hf_trim_db":{"decimals":1,"kind":"slider","label":"HF Trim","max":12.0,"min":-12.0,"step":0.1,"unit":" dB"},"hf_trim_hz":{"decimals":0,"kind":"slider","label":"HF Trim Freq","max":12000.0,"min":1000.0,"step":1,"unit":" Hz"},"hpf_hz":{"decimals":0,"kind":"slider","label":"HPF","max":180.0,"min":10.0,"step":1,"unit":" Hz"},"input_gain_db":{"decimals":1,"kind":"slider","label":"Input Gain","max":24.0,"min":-24.0,"step":0.1,"unit":" dB"},"lic":{"kind":"text","label":"LIC"},"limit_lookahead_enabled":{"kind":"toggle","label":"Look-Ahead"},"limit_lookahead_ms":{"decimals":1,"kind":"slider","label":"Look-Ahead","max":20.0,"min":0.0,"step":0.1,"unit":" ms"},"limit_mpx":{"kind":"toggle","label":"Safety Limiter"},"limit_threshold":{"decimals":3,"kind":"slider","label":"Threshold","max":0.999,"min":0.5,"step":0.001,"unit":""},"lps_centered":{"kind":"toggle","label":"Center Long PS"},"lps_cr":{"kind":"toggle","label":"Append CR"},"mono_bass_enabled":{"kind":"toggle","label":"Mono Bass"},"mono_mode":{"kind":"toggle","label":"Mono Mode"},"mpx_clipper_cancel_audio":{"kind":"toggle","label":"Protect Audio Highs"},"mpx_clipper_cancel_pilot":{"kind":"toggle","label":"Protect Stereo Pilot"},"mpx_clipper_cancel_rds":{"kind":"toggle","label":"Protect RDS"},"mpx_clipper_cancel_stereo":{"kind":"toggle","label":"Protect Stereo Subcarrier"},"mpx_clipper_ceiling_db":{"decimals":1,"kind":"slider","label":"Ceiling","max":0.0,"min":-6.0,"step":0.1,"unit":" dB"},"mpx_clipper_enabled":{"kind":"toggle","label":"Composite Clipper"},"mpx_clipper_lookahead_ms":{"decimals":1,"kind":"slider","label":"Look-ahead","max":5.0,"min":0.0,"step":0.1,"unit":" ms"},"mpx_clipper_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":0.0,"min":-12.0,"step":0.1,"unit":" dB"},"mpx_deviation_khz":{"decimals":1,"kind":"slider","label":"Composite Deviation","max":90.0,"min":40.0,"step":0.1,"unit":" kHz"},"mpx_multiband_clipper_enabled":{"kind":"toggle","label":"Multiband Composite Clipping"},"ms":{"kind":"toggle","label":"MS"},"multiband_enabled":{"kind":"toggle","label":"Multiband"},"multiband_fir_enabled":{"kind":"toggle","label":"Multiband Crossovers: linear-phase FIR"},"multiband_high_attack_ms":{"decimals":1,"kind":"slider","label":"Attack","max":120.0,"min":1.0,"step":0.1,"unit":" ms"},"multiband_high_ratio":{"decimals":2,"kind":"slider","label":"Ratio","max":8.0,"min":1.0,"step":0.01,"unit":""},"multiband_high_release_ms":{"decimals":0,"kind":"slider","label":"Release","max":1200.0,"min":40.0,"step":1,"unit":" ms"},"multiband_high_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":-6.0,"min":-40.0,"step":0.1,"unit":" dB"},"multiband_inter_band_coupling_enabled":{"kind":"toggle","label":"Inter-band Coupling"},"multiband_knee_db":{"decimals":1,"kind":"slider","label":"Knee","max":12.0,"min":0.0,"step":0.1,"unit":" dB"},"multiband_limiter_enabled":{"kind":"toggle","label":"Multiband Limiter"},"multiband_link_strength":{"decimals":2,"kind":"slider","label":"Link","max":1.0,"min":0.0,"step":0.01,"unit":""},"multiband_low_attack_ms":{"decimals":1,"kind":"slider","label":"Attack","max":120.0,"min":1.0,"step":0.1,"unit":" ms"},"multiband_low_ratio":{"decimals":2,"kind":"slider","label":"Ratio","max":8.0,"min":1.0,"step":0.01,"unit":""},"multiband_low_release_ms":{"decimals":0,"kind":"slider","label":"Release","max":1200.0,"min":40.0,"step":1,"unit":" ms"},"multiband_low_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":-6.0,"min":-40.0,"step":0.1,"unit":" dB"},"multiband_makeup_db":{"decimals":1,"kind":"slider","label":"Makeup","max":18.0,"min":-12.0,"step":0.1,"unit":" dB"},"multiband_mid_attack_ms":{"decimals":1,"kind":"slider","label":"Attack","max":120.0,"min":1.0,"step":0.1,"unit":" ms"},"multiband_mid_ratio":{"decimals":2,"kind":"slider","label":"Ratio","max":8.0,"min":1.0,"step":0.01,"unit":""},"multiband_mid_release_ms":{"decimals":0,"kind":"slider","label":"Release","max":1200.0,"min":40.0,"step":1,"unit":" ms"},"multiband_mid_threshold_db":{"decimals":1,"kind":"slider","label":"Threshold","max":-6.0,"min":-40.0,"step":0.1,"unit":" dB"},"multiband_mode":{"kind":"select","label":"Bands","options":["3","5"]},"multiband_release_program_dependent":{"kind":"toggle","label":"Program-dependent Release"},"multiband_transient_aware_attack_enabled":{"kind":"toggle","label":"Transient-aware Attack"},"multiband_x1_hz":{"decimals":0,"kind":"slider","label":"X1 (Low / Low-Mid)","max":300.0,"min":30.0,"step":1,"unit":" Hz"},"multiband_x2_hz":{"decimals":0,"kind":"slider","label":"X2 (Low-Mid / Mid)","max":1200.0,"min":120.0,"step":1,"unit":" Hz"},"multiband_x3_hz":{"decimals":0,"kind":"slider","label":"X3 (Mid / High-Mid)","max":4000.0,"min":600.0,"step":1,"unit":" Hz"},"multiband_x4_hz":{"decimals":0,"kind":"slider","label":"X4 (High-Mid / High)","max":12000.0,"min":2500.0,"step":1,"unit":" Hz"},"now_playing_enabled":{"kind":"toggle","label":"Now Playing Script"},"output_gain_db":{"decimals":1,"kind":"slider","label":"Output Level","max":18.0,"min":-18.0,"step":0.1,"unit":" dB"},"parametric_eq_enabled":{"kind":"toggle","label":"Parametric EQ"},"peq_b1_freq_hz":{"decimals":0,"kind":"slider","label":"Freq","max":500.0,"min":20.0,"step":1,"unit":" Hz"},"peq_b1_gain_db":{"decimals":1,"kind":"slider","label":"Gain","max":12.0,"min":-12.0,"step":0.1,"unit":" dB"},"peq_b2_freq_hz":{"decimals":0,"kind":"slider","label":"Freq","max":5000.0,"min":100.0,"step":1,"unit":" Hz"},"peq_b2_gain_db":{"decimals":1,"kind":"slider","label":"Gain","max":12.0,"min":-12.0,"step":0.1,"unit":" dB"},"peq_b2_q":{"decimals":2,"kind":"slider","label":"Q","max":10.0,"min":0.1,"step":0.01,"unit":""},"peq_b3_freq_hz":{"decimals":0,"kind":"slider","label":"Freq","max":12000.0,"min":500.0,"step":1,"unit":" Hz"},"peq_b3_gain_db":{"decimals":1,"kind":"slider","label":"Gain","max":12.0,"min":-12.0,"step":0.1,"unit":" dB"},"peq_b3_q":{"decimals":2,"kind":"slider","label":"Q","max":10.0,"min":0.1,"step":0.01,"unit":""},"peq_b4_freq_hz":{"decimals":0,"kind":"slider","label":"Freq","max":16000.0,"min":1000.0,"step":1,"unit":" Hz"},"peq_b4_gain_db":{"decimals":1,"kind":"slider","label":"Gain","max":12.0,"min":-12.0,"step":0.1,"unit":" dB"},"phase_rotation_enabled":{"kind":"toggle","label":"Phase Rotator"},"phase_rotation_freq_hz":{"decimals":0,"kind":"slider","label":"Frequency","max":500.0,"min":50.0,"step":1,"unit":" Hz"},"pi":{"kind":"text","label":"PI Code"},"pilot_level":{"decimals":3,"kind":"slider","label":"Pilot Level","max":0.12,"min":0.0,"step":0.005,"unit":""},"pin_day":{"kind":"number","label":"PIN Day","max":31,"min":0},"pin_enabled":{"kind":"toggle","label":"PIN (1A)"},"pin_hour":{"kind":"number","label":"PIN Hour","max":23,"min":0},"pin_minute":{"kind":"number","label":"PIN Min","max":59,"min":0},"pre_encode_bandlimited_residual_enabled":{"kind":"toggle","label":"Reduce Clipping Distortion"},"pre_encode_limiter_enabled":{"kind":"toggle","label":"Pre-Encode Limiter"},"preemphasis_us":{"kind":"select","label":"Pre-emphasis","options":["50","75"]},"primebass_amount":{"decimals":2,"kind":"slider","label":"Amount","max":1.0,"min":0.0,"step":0.01,"unit":""},"primebass_density":{"decimals":2,"kind":"slider","label":"Density","max":1.0,"min":0.0,"step":0.01,"unit":""},"primebass_drive":{"decimals":2,"kind":"slider","label":"Drive","max":2.0,"min":0.2,"step":0.01,"unit":""},"primebass_enabled":{"kind":"toggle","label":"PrimeBass"},"primebass_freq_hz":{"decimals":1,"kind":"slider","label":"Frequency","max":180.0,"min":40.0,"step":0.1,"unit":" Hz"},"primebass_harmonics":{"decimals":2,"kind":"slider","label":"Harmonics","max":1.0,"min":0.0,"step":0.01,"unit":""},"primebass_subharmonics_amount":{"decimals":2,"kind":"slider","label":"Subharmonics","max":1.0,"min":0.0,"step":0.01,"unit":""},"primebass_subharmonics_enabled":{"kind":"toggle","label":"Subharmonics"},"processed_audio_coder_has_clipper":{"kind":"toggle","label":"External coder has its own clipper"},"program_lowpass_hz":{"decimals":0,"kind":"slider","label":"Program Lowpass","max":16000.0,"min":8000.0,"step":1,"unit":" Hz"},"ps_a":{"kind":"text","label":"PS Bank A"},"ps_active_bank":{"kind":"select","label":"Active PS Bank","options":["A","B","C","D"]},"ps_b":{"kind":"text","label":"PS Bank B"},"ps_c":{"kind":"text","label":"PS Bank C"},"ps_centered":{"kind":"toggle","label":"Center PS"},"ps_d":{"kind":"text","label":"PS Bank D"},"ps_long_32":{"kind":"text","label":"Long PS"},"pty":{"kind":"number","label":"PTY","max":31,"min":0},"ptyn":{"kind":"text","label":"PTY Name"},"ptyn_centered":{"kind":"toggle","label":"Center PTYN"},"rds_level":{"decimals":1,"kind":"slider","label":"RDS Injection","max":7.5,"min":0.0,"step":0.1,"unit":" kHz"},"rt_centered":{"kind":"toggle","label":"Center RT"},"rt_cr":{"kind":"toggle","label":"Append CR"},"rt_text":{"kind":"text","label":"RadioText"},"source_mode":{"kind":"select","label":"Source","options":["input","tone"]},"stereo_widen_center":{"decimals":2,"kind":"slider","label":"Center","max":1.0,"min":0.0,"step":0.01,"unit":""},"stereo_widen_enabled":{"kind":"toggle","label":"Stereo Widener"},"stereo_widen_mix":{"decimals":2,"kind":"slider","label":"Mix","max":1.0,"min":0.0,"step":0.01,"unit":""},"stereo_widen_width":{"decimals":2,"kind":"slider","label":"Width","max":1.0,"min":0.0,"step":0.01,"unit":""},"ta":{"kind":"toggle","label":"TA"},"test_tone_mode":{"kind":"select","label":"Routing","options":["mono","left","right","stereo"]},"test_tone_type":{"kind":"select","label":"Type","options":["sine","pink","white"]},"tp":{"kind":"toggle","label":"TP"},"wideband_agc_attack_ms":{"decimals":1,"kind":"slider","label":"Attack","max":150.0,"min":1.0,"step":0.1,"unit":" ms"},"wideband_agc_bass_desensitize":{"kind":"toggle","label":"Bass-Desensitised Sidechain"},"wideband_agc_enabled":{"kind":"toggle","label":"Wideband AGC"},"wideband_agc_k_weighting":{"kind":"toggle","label":"K-Weighted Detector"},"wideband_agc_max_gain_db":{"decimals":1,"kind":"slider","label":"Max Gain","max":24.0,"min":0.0,"step":0.1,"unit":" dB"},"wideband_agc_min_gain_db":{"decimals":1,"kind":"slider","label":"Min Gain","max":0.0,"min":-24.0,"step":0.1,"unit":" dB"},"wideband_agc_release_ms":{"decimals":1,"kind":"slider","label":"Release","max":5000.0,"min":40.0,"step":0.1,"unit":" ms"},"wideband_agc_release_program_dependent":{"kind":"toggle","label":"Program-Dependent Release"},"wideband_agc_target_db":{"decimals":1,"kind":"slider","label":"Platform Target","max":-6.0,"min":-36.0,"step":0.1,"unit":" dB"}};
+const PAGES = [
+  { id:"processing", title:"Processing",
+    help:"The audio processing chain in signal order, mirroring the Studio's Processing tabs. Controls apply live on release and are saved to the config; a few (marked) need a restart.",
+    cards:[
+      {title:"Input / Core", keys:["source_mode","input_gain_db","hpf_hz","program_lowpass_hz","hf_trim_hz","hf_trim_db","preemphasis_us","mono_mode","processing_bypass"]},
+      {title:"Phase Rotator", keys:["phase_rotation_enabled","phase_rotation_freq_hz"]},
+      {title:"AGC", keys:["wideband_agc_enabled","wideband_agc_target_db","wideband_agc_attack_ms","wideband_agc_release_ms","wideband_agc_max_gain_db","wideband_agc_min_gain_db","wideband_agc_k_weighting","wideband_agc_release_program_dependent","wideband_agc_bass_desensitize"]},
+      {title:"Parametric EQ", keys:["parametric_eq_enabled","peq_b1_freq_hz","peq_b1_gain_db","peq_b2_freq_hz","peq_b2_gain_db","peq_b2_q","peq_b3_freq_hz","peq_b3_gain_db","peq_b3_q","peq_b4_freq_hz","peq_b4_gain_db"]},
+      {title:"Multiband", presetKind:"multiband", keys:["multiband_enabled","multiband_mode","multiband_low_threshold_db","multiband_low_ratio","multiband_mid_threshold_db","multiband_mid_ratio","multiband_high_threshold_db","multiband_high_ratio","multiband_makeup_db","multiband_knee_db","multiband_link_strength","multiband_release_program_dependent","multiband_transient_aware_attack_enabled","multiband_inter_band_coupling_enabled","multiband_fir_enabled"]},
+      {title:"Expander", keys:["downward_expander_enabled","expander_threshold_db","expander_ratio","expander_attack_ms","expander_release_ms"]},
+      {title:"Multiband Limiter", keys:["multiband_limiter_enabled","multiband_limiter_threshold_db","multiband_limiter_attack_ms","multiband_limiter_release_ms"]},
+      {title:"Stereo Image", presetKind:"widener", keys:["stereo_widen_enabled","stereo_widen_width","stereo_widen_center","stereo_widen_mix","mono_bass_enabled","mono_bass_freq_hz"]},
+      {title:"PrimeBass", presetKind:"primebass", keys:["primebass_enabled","primebass_amount","primebass_freq_hz","primebass_harmonics","primebass_drive","primebass_density","primebass_subharmonics_enabled","primebass_subharmonics_amount"]},
+      {title:"Bass Clipper", keys:["bass_clipper_enabled","bass_clipper_crossover_hz","bass_clipper_threshold_db","bass_clipper_drive"]},
+      {title:"Audio Clipper", keys:["dc_clipper_enabled","dc_clipper_ceiling_db"]},
+      {title:"HF Clipper", keys:["hf_clipper_enabled","hf_clipper_crossover_hz","hf_clipper_threshold_db","hf_clipper_drive"]},
+      {title:"Audio Limiter", keys:["pre_encode_limiter_enabled","pre_encode_threshold","pre_encode_release_ms","limit_lookahead_enabled","limit_lookahead_ms","pre_encode_bandlimited_residual_enabled"]},
+      {title:"Composite Clipper", keys:["mpx_clipper_enabled","mpx_clipper_threshold_db","mpx_clipper_ceiling_db","mpx_clipper_cancel_pilot","mpx_clipper_cancel_rds","mpx_clipper_cancel_stereo","mpx_clipper_cancel_audio","mpx_multiband_clipper_enabled"]},
+      {title:"BS.412 Power", keys:["bs412_enabled","bs412_threshold_db","bs412_window_seconds"]},
+      {title:"Output / Final Stage", keys:["output_gain_db","final_drive_db","mpx_deviation_khz","limit_mpx","limit_threshold","pilot_level","rds_level"]}
+    ]},
+  { id:"rds", title:"RDS",
+    help:"Station identity and RDS data. Text and flags apply live on air; injection level (Processing > Output) needs a restart. TA forces a 0A group at the edge.",
+    cards:[
+      {title:"On Air", special:"rdsLive"},
+      {title:"Identity", keys:["en_rds","pi","pty","ecc","lic","ptyn","en_ptyn","ptyn_centered"]},
+      {title:"Program Service (PS)", keys:["ps_active_bank","ps_a","ps_b","ps_c","ps_d","ps_centered","en_lps","ps_long_32","lps_centered","lps_cr"]},
+      {title:"RadioText", keys:["rt_text","rt_centered","rt_cr","en_rt_plus"]},
+      {title:"Flags", keys:["tp","ta","ms","di_stereo","di_head","di_comp","di_dyn"]},
+      {title:"AF & Clock", keys:["en_af","af_list","en_ct","en_id","pin_enabled","pin_day","pin_hour","pin_minute"]},
+      {title:"Groups", keys:["group_sequence"]}
+    ]},
+  { id:"interfaces", title:"Interfaces",
+    help:"Audio devices, sample rate, and output mode. These are restart-class settings: change them, then press Restart. On Linux devices are ALSA PCM names.",
+    cards:[
+      {title:"Audio Devices", special:"devices"},
+      {title:"Format", keys:["sample_rate","processed_audio_output","blocksize"]}
+    ]},
+  { id:"tone", title:"Test Tone",
+    help:"Built-in generator for line-up. Switch Source back to input when done.",
+    cards:[
+      {title:"Generator", keys:["source_mode","test_tone_type","test_tone_mode","test_tone_freq","test_tone_level_db"]}
+    ]},
+  { id:"presets", title:"Presets",
+    help:"Factory sound presets. Applying one changes several settings at once, live, and records the choice.",
+    cards:[{title:"Apply Preset", special:"presets"}]},
+  { id:"advanced", title:"Advanced",
+    help:"Every configuration key exactly as stored in the INI, applied with the same validation as a file load. Use when a control is not on the stage cards.",
+    cards:[{title:"All Settings", special:"rawConfig"}]}
+];
+SCHEMA["sample_rate"] = { kind:"select", label:"Sample Rate", options:["192000","96000","48000"], sub:"restart" };
+SCHEMA["blocksize"] = { kind:"select", label:"Block Size", options:["256","512","1024","2048"], sub:"restart" };
+
 const $ = (id) => document.getElementById(id);
 let apiKey = localStorage.getItem("mpxprime_api_key") || "";
-let configValues = {};   // flat ini key -> string value
+let configValues = {};
 let presetLists = {};
-let taState = false;
+let currentPage = "processing";
 
 function headers(json) {
   const h = {};
@@ -135,12 +178,12 @@ function headers(json) {
   return h;
 }
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { ...headers(!!opts.body), ...(opts.headers || {}) } });
+  const res = await fetch(path, { ...opts, headers:{ ...headers(!!opts.body), ...(opts.headers||{}) } });
   if (res.status === 401) { $("keybar").classList.add("show"); throw new Error("unauthorized"); }
   $("keybar").classList.remove("show");
   if (!res.ok) {
     let msg = res.statusText;
-    try { msg = (await res.json()).error?.message || msg; } catch (e) { /* keep */ }
+    try { msg = (await res.json()).error?.message || msg; } catch (e) {}
     throw new Error(msg);
   }
   return res.json();
@@ -153,125 +196,8 @@ function toast(msg, bad) {
   clearTimeout(t._h);
   t._h = setTimeout(() => t.classList.remove("show"), 2400);
 }
-const isTrue = (v) => /^(true|yes|1|on)$/i.test(String(v || ""));
+const isTrue = (v) => /^(true|yes|1|on)$/i.test(String(v||""));
 
-// ---------------- control schema (mirrors the Studio GUI sections) --------
-// kinds: toggle | slider (min,max,step,unit,decimals) | select (options) |
-//        text | number | presetSelect (presetKind)
-const PAGES = [
-  { id: "sound", title: "Sound",
-    help: "The audio processing chain, in signal order. Everything here applies live to the running encoder and is saved to the config.",
-    cards: [
-      { title: "Input", ctls: [
-        { key: "source_mode", label: "Source", kind: "select", options: ["input", "tone"] },
-        { key: "input_gain_db", label: "Input Gain", kind: "slider", min: -24, max: 24, step: 0.5, unit: " dB" },
-        { key: "hpf_hz", label: "High-Pass Filter", kind: "slider", min: 0, max: 120, step: 1, unit: " Hz", decimals: 0 },
-        { key: "preemphasis_us", label: "Pre-emphasis", kind: "select", options: ["50", "75"], unit: " us" },
-        { key: "processing_bypass", label: "Processing Bypass", sub: "restart-applied in GUI builds", kind: "toggle" }
-      ]},
-      { title: "AGC", ctls: [
-        { key: "wideband_agc_enabled", label: "Wideband AGC", kind: "toggle" },
-        { key: "wideband_agc_target_db", label: "Target", kind: "slider", min: -30, max: -6, step: 0.5, unit: " dB" },
-        { key: "wideband_agc_attack_ms", label: "Attack", kind: "slider", min: 20, max: 4000, step: 10, unit: " ms", decimals: 0 },
-        { key: "wideband_agc_release_ms", label: "Release", kind: "slider", min: 100, max: 20000, step: 100, unit: " ms", decimals: 0 },
-        { key: "wideband_agc_max_gain_db", label: "Max Gain", kind: "slider", min: 0, max: 24, step: 0.5, unit: " dB" },
-        { key: "wideband_agc_bass_desensitize", label: "Bass-Desensitized Detector", kind: "toggle" }
-      ]},
-      { title: "PrimeBass", presetKind: "primebass", ctls: [
-        { key: "primebass_enabled", label: "PrimeBass Enhancement", kind: "toggle" },
-        { key: "primebass_amount", label: "Amount", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
-        { key: "primebass_freq_hz", label: "Frequency", kind: "slider", min: 40, max: 160, step: 1, unit: " Hz", decimals: 0 },
-        { key: "primebass_harmonics", label: "Harmonics", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
-        { key: "primebass_drive", label: "Drive", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
-        { key: "primebass_subharmonics_enabled", label: "Subharmonics", kind: "toggle" }
-      ]},
-      { title: "Stereo Image", presetKind: "widener", ctls: [
-        { key: "stereo_widen_enabled", label: "Stereo Widener", kind: "toggle" },
-        { key: "stereo_widen_width", label: "Width", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
-        { key: "stereo_widen_mix", label: "Mix", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
-        { key: "mono_bass_enabled", label: "Mono Bass", kind: "toggle" },
-        { key: "mono_bass_freq_hz", label: "Mono Bass Below", kind: "slider", min: 60, max: 240, step: 5, unit: " Hz", decimals: 0 }
-      ]},
-      { title: "Multiband", presetKind: "multiband", ctls: [
-        { key: "multiband_enabled", label: "Multiband Compressor", kind: "toggle" },
-        { key: "multiband_mode", label: "Bands", kind: "select", options: ["3", "5"] },
-        { key: "multiband_link_strength", label: "Band Link", kind: "slider", min: 0, max: 1, step: 0.01, decimals: 2 },
-        { key: "multiband_knee_db", label: "Knee", kind: "slider", min: 0, max: 8, step: 0.1, unit: " dB" },
-        { key: "multiband_limiter_enabled", label: "Per-Band Limiter", kind: "toggle" }
-      ]},
-      { title: "Audio Clipper", ctls: [
-        { key: "bass_clipper_enabled", label: "Bass Clipper", kind: "toggle" },
-        { key: "bass_clipper_threshold_db", label: "Bass Threshold", kind: "slider", min: -12, max: 0, step: 0.1, unit: " dB" },
-        { key: "hf_clipper_enabled", label: "HF Clipper", kind: "toggle" },
-        { key: "pre_encode_limiter_enabled", label: "Audio Limiter", kind: "toggle" },
-        { key: "pre_encode_threshold", label: "Limiter Threshold", kind: "slider", min: 0.5, max: 1, step: 0.01, decimals: 2 }
-      ]},
-      { title: "Composite Clipper", ctls: [
-        { key: "mpx_clipper_enabled", label: "Composite Clipper", kind: "toggle" },
-        { key: "mpx_clipper_threshold_db", label: "Threshold", kind: "slider", min: -6, max: 0, step: 0.1, unit: " dB" },
-        { key: "mpx_clipper_ceiling_db", label: "Ceiling", kind: "slider", min: -3, max: 0, step: 0.1, unit: " dB" },
-        { key: "mpx_clipper_cancel_pilot", label: "Protect Stereo Pilot", kind: "toggle" },
-        { key: "mpx_clipper_cancel_rds", label: "Protect RDS", kind: "toggle" },
-        { key: "mpx_clipper_cancel_stereo", label: "Protect Stereo Subcarrier", kind: "toggle" },
-        { key: "mpx_clipper_cancel_audio", label: "Protect Audio (0-17 kHz)", kind: "toggle" }
-      ]},
-      { title: "Output", ctls: [
-        { key: "output_gain_db", label: "Output Gain", kind: "slider", min: -40, max: 6, step: 0.5, unit: " dB" },
-        { key: "final_drive_db", label: "Final Drive", kind: "slider", min: -6, max: 6, step: 0.1, unit: " dB" },
-        { key: "mpx_deviation_khz", label: "Deviation", kind: "slider", min: 40, max: 80, step: 1, unit: " kHz", decimals: 0 },
-        { key: "bs412_enabled", label: "BS.412 Power Limiter", kind: "toggle" },
-        { key: "mono_mode", label: "Mono Mode", sub: "suppresses pilot, stereo, RDS", kind: "toggle" },
-        { key: "pilot_level", label: "Pilot Level", sub: "fraction of carrier; restart", kind: "slider", min: 0, max: 0.12, step: 0.005, decimals: 3 },
-        { key: "rds_level", label: "RDS Injection", sub: "kHz deviation; restart", kind: "slider", min: 0, max: 7.5, step: 0.1, unit: " kHz" }
-      ]}
-    ]},
-  { id: "rds", title: "RDS",
-    help: "Station identity and RDS data. Text and flags apply live on air; injection level (Sound > Output) needs a restart.",
-    cards: [
-      { title: "On Air", special: "rdsLive" },
-      { title: "Identity", ctls: [
-        { key: "en_rds", label: "RDS Enabled", kind: "toggle" },
-        { key: "pi", label: "PI Code", kind: "text", width: 90 },
-        { key: "pty", label: "PTY", kind: "number", min: 0, max: 31 },
-        { key: "ptyn", label: "PTY Name", kind: "text" },
-        { key: "ps_active_bank", label: "Active PS Bank", kind: "select", options: ["A", "B", "C", "D"] }
-      ]},
-      { title: "Program Service (PS)", ctls: [
-        { key: "ps_a", label: "PS Bank A", kind: "text", wide: true },
-        { key: "ps_b", label: "PS Bank B", kind: "text", wide: true },
-        { key: "ps_long_32", label: "Long PS", kind: "text", wide: true }
-      ]},
-      { title: "RadioText", ctls: [
-        { key: "rt_text", label: "RadioText", kind: "text", wide: true },
-        { key: "rt_cycle_time", label: "Cycle Time", kind: "slider", min: 4, max: 60, step: 1, unit: " s", decimals: 0 }
-      ]},
-      { title: "Flags", ctls: [
-        { key: "tp", label: "TP (Traffic Program)", kind: "toggle" },
-        { key: "ta", label: "TA (Traffic Announcement)", sub: "forces a 0A group on air at the edge", kind: "toggle" },
-        { key: "ms", label: "M/S Music", kind: "toggle" },
-        { key: "en_ct", label: "Clock Time (CT)", kind: "toggle" }
-      ]}
-    ]},
-  { id: "tone", title: "Test Tone",
-    help: "Built-in generator for line-up and testing. Switch Source back to input when done (Sound > Input).",
-    cards: [
-      { title: "Generator", ctls: [
-        { key: "source_mode", label: "Source", kind: "select", options: ["input", "tone"] },
-        { key: "test_tone_type", label: "Type", kind: "select", options: ["sine", "pink", "white"] },
-        { key: "test_tone_mode", label: "Routing", kind: "select", options: ["mono", "left", "right", "stereo"] },
-        { key: "test_tone_freq", label: "Frequency", kind: "slider", min: 20, max: 15000, step: 10, unit: " Hz", decimals: 0 },
-        { key: "test_tone_level_db", label: "Level", kind: "slider", min: -60, max: 0, step: 1, unit: " dB", decimals: 0 }
-      ]}
-    ]},
-  { id: "presets", title: "Presets",
-    help: "Factory sound presets. Applying one changes several settings at once, live, and records the choice in the config.",
-    cards: [{ title: "Apply Preset", special: "presets" }]},
-  { id: "advanced", title: "Advanced",
-    help: "Every configuration key, exactly as stored in the INI. Values are applied with the same validation as a config file load; the response reports whether each change was live, needs a restart, or was clamped.",
-    cards: [{ title: "All Settings", special: "rawConfig" }]}
-];
-
-// ---------------- rendering ------------------------------------------------
 function renderSidebar() {
   const nav = $("sidebar");
   nav.innerHTML = "";
@@ -282,33 +208,25 @@ function renderSidebar() {
     el.textContent = p.title;
     el.onclick = () => showPage(p.id);
     nav.appendChild(el);
-    if (p.id === "tone") nav.appendChild(Object.assign(document.createElement("div"), { className: "sep" }));
   }
 }
-
-let currentPage = "sound";
 function showPage(id) {
   currentPage = id;
   document.querySelectorAll("#sidebar .nav").forEach(n => n.classList.toggle("active", n.dataset.page === id));
   const page = PAGES.find(p => p.id === id);
   const c = $("content");
   c.innerHTML = "";
-  const h = document.createElement("h1");
-  h.textContent = page.title;
-  c.appendChild(h);
-  const help = document.createElement("div");
-  help.className = "pagehelp";
-  help.textContent = page.help;
-  c.appendChild(help);
+  c.appendChild(Object.assign(document.createElement("h1"), { textContent: page.title }));
+  c.appendChild(Object.assign(document.createElement("div"), { className:"pagehelp", textContent: page.help }));
   const cards = document.createElement("div");
   cards.className = "cards";
   for (const card of page.cards) cards.appendChild(renderCard(card));
   c.appendChild(cards);
   refreshControlValues();
   if (id === "advanced") loadRawConfig();
+  if (id === "interfaces") loadDevices();
   if (id === "rds") pollRDS();
 }
-
 function renderCard(card) {
   const el = document.createElement("div");
   el.className = "card";
@@ -318,154 +236,129 @@ function renderCard(card) {
   if (card.presetKind) h.appendChild(presetPicker(card.presetKind));
   if (card.special === "rdsLive") {
     el.insertAdjacentHTML("beforeend",
-      '<div class="rds-live"><div class="ps" id="rdsPS">--------</div><div class="rt" id="rdsRT"></div></div>' +
-      '<div style="color:var(--dim);font-size:11px" id="rdsIds"></div>');
+      '<div class="rds-live"><div class="ps" id="rdsPS">--------</div><div class="rt" id="rdsRT"></div></div><div class="hint" id="rdsIds"></div>');
+    return el;
+  }
+  if (card.special === "devices") {
+    el.insertAdjacentHTML("beforeend",
+      '<div class="ctl"><label>Input Device</label><select id="devIn" style="max-width:210px"></select></div>' +
+      '<div class="ctl"><label>Output Device</label><select id="devOut" style="max-width:210px"></select></div>' +
+      '<div class="hint" id="devNote"></div>' +
+      '<div class="hint">Changing a device is a restart-class setting: pick it, then press Restart.</div>');
     return el;
   }
   if (card.special === "presets") {
     el.insertAdjacentHTML("beforeend",
       '<div class="ctl"><label>Kind</label><select id="presetKind"></select></div>' +
       '<div class="ctl"><label>Preset</label><select id="presetId"></select></div>' +
-      '<div class="ctl"><label>Intensity (multiband)</label><select id="presetIntensity">' +
-      '<option value="0.5">light</option><option value="1.0" selected>normal</option><option value="1.5">heavy</option></select></div>' +
+      '<div class="ctl"><label>Intensity (multiband)</label><select id="presetIntensity"><option value="0.5">light</option><option value="1.0" selected>normal</option><option value="1.5">heavy</option></select></div>' +
       '<div style="text-align:right;margin-top:8px"><button class="primary" id="presetApply">Apply Live</button></div>');
     queueMicrotask(wirePresetCard);
     return el;
   }
   if (card.special === "rawConfig") {
-    const host = document.createElement("div");
-    host.id = "configTables";
-    el.appendChild(host);
+    el.appendChild(Object.assign(document.createElement("div"), { id:"configTables" }));
     return el;
   }
-  for (const ctl of card.ctls || []) el.appendChild(renderControl(ctl));
+  let added = 0;
+  for (const key of card.keys || []) {
+    const def = SCHEMA[key];
+    if (!def) continue;
+    el.appendChild(renderControl(key, def));
+    added++;
+  }
+  if (!added) el.appendChild(Object.assign(document.createElement("div"), { className:"hint", textContent:"(no live controls; see Advanced)" }));
   return el;
 }
-
-function renderControl(ctl) {
+function renderControl(key, def) {
   const row = document.createElement("div");
   row.className = "ctl";
-  row.dataset.key = ctl.key;
+  row.dataset.key = key;
   const label = document.createElement("label");
-  label.textContent = ctl.label;
-  if (ctl.sub) label.insertAdjacentHTML("beforeend", `<span class="sub">${ctl.sub}</span>`);
+  label.textContent = def.label;
+  if (def.sub) label.insertAdjacentHTML("beforeend", `<span class="sub">${def.sub}</span>`);
   row.appendChild(label);
-
-  if (ctl.kind === "toggle") {
+  if (def.kind === "toggle") {
     const sw = document.createElement("label");
     sw.className = "switch";
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.onchange = () => patchKey(ctl.key, input.checked ? "True" : "False");
+    input.onchange = () => patchKey(key, input.checked ? "True" : "False");
     sw.appendChild(input);
     sw.insertAdjacentHTML("beforeend", '<span class="knob"></span>');
     row.appendChild(sw);
     row._sync = (v) => { input.checked = isTrue(v); };
-  } else if (ctl.kind === "slider") {
+  } else if (def.kind === "slider") {
     const wrap = document.createElement("div");
     wrap.className = "sliderwrap";
     const input = document.createElement("input");
     input.type = "range";
-    input.min = ctl.min; input.max = ctl.max; input.step = ctl.step;
+    input.min = def.min; input.max = def.max; input.step = def.step;
     const val = document.createElement("span");
     val.className = "sval";
-    const dec = ctl.decimals ?? 1;
-    const fmtv = (v) => Number(v).toFixed(dec) + (ctl.unit || "");
+    const dec = def.decimals ?? 1;
+    const fmtv = (v) => Number(v).toFixed(dec) + (def.unit || "");
     input.oninput = () => { val.textContent = fmtv(input.value); };
-    input.onchange = () => patchKey(ctl.key, String(input.value));
+    input.onchange = () => patchKey(key, String(input.value));
     wrap.appendChild(input); wrap.appendChild(val);
     row.appendChild(wrap);
-    row._sync = (v) => { input.value = v; val.textContent = fmtv(v); };
-  } else if (ctl.kind === "select") {
+    row._sync = (v) => { if (v != null && v !== "") { input.value = v; val.textContent = fmtv(v); } };
+  } else if (def.kind === "select") {
     const sel = document.createElement("select");
-    for (const o of ctl.options) {
-      const opt = document.createElement("option");
-      opt.value = o; opt.textContent = o + (ctl.unit || "");
-      sel.appendChild(opt);
-    }
-    sel.onchange = () => patchKey(ctl.key, sel.value);
+    for (const o of def.options) sel.appendChild(Object.assign(document.createElement("option"), { value:o, textContent:o + (def.unit||"") }));
+    sel.onchange = () => patchKey(key, sel.value);
     row.appendChild(sel);
     row._sync = (v) => { sel.value = String(v); };
-  } else if (ctl.kind === "text") {
+  } else if (def.kind === "number") {
     const input = document.createElement("input");
-    input.type = "text";
-    if (ctl.width) input.style.width = ctl.width + "px";
-    if (ctl.wide) input.style.width = "260px";
-    input.onchange = () => patchKey(ctl.key, input.value);
+    input.type = "number"; input.min = def.min; input.max = def.max; input.style.width = "70px";
+    input.onchange = () => patchKey(key, input.value);
     row.appendChild(input);
     row._sync = (v) => { if (document.activeElement !== input) input.value = v ?? ""; };
-  } else if (ctl.kind === "number") {
+  } else {
     const input = document.createElement("input");
-    input.type = "number";
-    input.min = ctl.min; input.max = ctl.max;
-    input.style.width = "70px";
-    input.onchange = () => patchKey(ctl.key, input.value);
+    input.type = "text";
+    input.onchange = () => patchKey(key, input.value);
     row.appendChild(input);
     row._sync = (v) => { if (document.activeElement !== input) input.value = v ?? ""; };
   }
   return row;
 }
-
 function presetPicker(kind) {
   const sel = document.createElement("select");
   sel.style.fontSize = "11px";
-  const first = document.createElement("option");
-  first.value = ""; first.textContent = "preset...";
-  sel.appendChild(first);
-  for (const id of presetLists[kind] || []) {
-    const o = document.createElement("option");
-    o.value = id; o.textContent = id;
-    sel.appendChild(o);
-  }
+  sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"preset..." }));
+  for (const id of presetLists[kind] || []) sel.appendChild(Object.assign(document.createElement("option"), { value:id, textContent:id }));
   sel.onchange = async () => {
     if (!sel.value) return;
     try {
-      await api("/api/presets", { method: "POST", body: JSON.stringify({ kind, id: sel.value }) });
+      await api("/api/presets", { method:"POST", body:JSON.stringify({ kind, id:sel.value }) });
       toast(kind + " preset '" + sel.value + "' applied live");
-      await loadConfigValues();
-      refreshControlValues();
+      await loadConfigValues(); refreshControlValues();
     } catch (e) { toast("preset failed: " + e.message, true); }
     sel.value = "";
   };
   return sel;
 }
-
 function wirePresetCard() {
   const kindSel = $("presetKind");
   if (!kindSel) return;
   kindSel.innerHTML = "";
-  for (const k of Object.keys(presetLists).sort()) {
-    const o = document.createElement("option");
-    o.value = k; o.textContent = k;
-    kindSel.appendChild(o);
-  }
+  for (const k of Object.keys(presetLists).sort()) kindSel.appendChild(Object.assign(document.createElement("option"), { value:k, textContent:k }));
   const fill = () => {
     const idSel = $("presetId");
     idSel.innerHTML = "";
-    for (const id of presetLists[kindSel.value] || []) {
-      const o = document.createElement("option");
-      o.value = id; o.textContent = id;
-      idSel.appendChild(o);
-    }
+    for (const id of presetLists[kindSel.value] || []) idSel.appendChild(Object.assign(document.createElement("option"), { value:id, textContent:id }));
   };
-  kindSel.onchange = fill;
-  fill();
+  kindSel.onchange = fill; fill();
   $("presetApply").onclick = async () => {
     try {
-      await api("/api/presets", {
-        method: "POST",
-        body: JSON.stringify({
-          kind: kindSel.value, id: $("presetId").value,
-          intensity: parseFloat($("presetIntensity").value)
-        })
-      });
+      await api("/api/presets", { method:"POST", body:JSON.stringify({ kind:kindSel.value, id:$("presetId").value, intensity:parseFloat($("presetIntensity").value) }) });
       toast("preset applied live");
-      await loadConfigValues();
+      await loadConfigValues(); refreshControlValues();
     } catch (e) { toast("preset failed: " + e.message, true); }
   };
 }
-
-// ---------------- data flow ------------------------------------------------
 async function loadConfigValues() {
   const sections = await api("/api/config");
   configValues = {};
@@ -478,16 +371,31 @@ function refreshControlValues() {
 }
 async function patchKey(key, value) {
   try {
-    const r = await api("/api/config", { method: "PATCH", body: JSON.stringify({ [key]: value }) });
+    const r = await api("/api/config", { method:"PATCH", body:JSON.stringify({ [key]: value }) });
     const o = r.outcomes[0];
     if (o.effectiveValue != null) configValues[key] = o.effectiveValue;
-    const label = { live: "live", liveRDS: "live (RDS)", restartRequired: "saved - needs restart", unchanged: "unchanged" }[o.disposition];
+    const label = { live:"live", liveRDS:"live (RDS)", restartRequired:"saved - needs restart", unchanged:"unchanged" }[o.disposition];
     toast(key + ": " + label);
-    if (o.disposition === "unchanged" && o.effectiveValue != null) refreshControlValues();
+    if (o.disposition === "unchanged") refreshControlValues();
     pollStatus();
   } catch (e) { toast(key + ": " + e.message, true); }
 }
-
+async function loadDevices() {
+  try {
+    const d = await api("/api/devices");
+    const fill = (sel, list, selected) => {
+      sel.innerHTML = "";
+      sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"(system default)" }));
+      for (const dev of list) sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:dev.name }));
+      sel.value = selected || "";
+    };
+    fill($("devIn"), d.inputs, d.selectedInput);
+    fill($("devOut"), d.outputs, d.selectedOutput);
+    $("devNote").textContent = d.note || "";
+    $("devIn").onchange = () => patchKey("input_device_uid", $("devIn").value);
+    $("devOut").onchange = () => patchKey("output_device_uid", $("devOut").value);
+  } catch (e) {}
+}
 async function loadRawConfig() {
   try {
     const sections = await api("/api/config");
@@ -499,72 +407,48 @@ async function loadRawConfig() {
       if (!keys.length) continue;
       host.insertAdjacentHTML("beforeend", `<div class="section-title">[${sec}]</div>`);
       const table = document.createElement("table");
-      table.innerHTML = "<tr><th style='width:40%'>key</th><th>value</th><th style='width:80px'></th></tr>";
+      table.innerHTML = "<tr><th style='width:42%'>key</th><th>value</th><th style='width:76px'></th></tr>";
       for (const k of keys) {
         const tr = document.createElement("tr");
-        const kc = document.createElement("td");
-        kc.style.fontFamily = "var(--mono)";
-        kc.textContent = k;
+        const kc = document.createElement("td"); kc.style.fontFamily = "var(--mono)"; kc.textContent = k;
         const vc = document.createElement("td");
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = sections[sec][k];
+        const input = document.createElement("input"); input.type = "text"; input.value = sections[sec][k];
         vc.appendChild(input);
         const bc = document.createElement("td");
-        const btn = document.createElement("button");
-        btn.textContent = "Apply";
-        btn.onclick = async () => {
-          await patchKey(k, input.value);
-          if (configValues[k] != null) input.value = configValues[k];
-        };
+        const btn = document.createElement("button"); btn.textContent = "Apply";
+        btn.onclick = async () => { await patchKey(k, input.value); if (configValues[k] != null) input.value = configValues[k]; };
         bc.appendChild(btn);
         tr.appendChild(kc); tr.appendChild(vc); tr.appendChild(bc);
         table.appendChild(tr);
       }
       host.appendChild(table);
     }
-  } catch (e) { /* auth pending */ }
+  } catch (e) {}
 }
-
-// ---------------- polling ---------------------------------------------------
-function levelText(v) {
-  if (v == null) return "-";
-  if (v <= 0.00001) return "-inf";
-  return (20 * Math.log10(v)).toFixed(1);
-}
-function levelPct(v) {
-  if (v == null || v <= 0.00001) return 0;
-  return Math.max(0, Math.min(100, (20 * Math.log10(v) + 48) / 48 * 100));
-}
-const grPct = (db) => db == null ? 0 : Math.max(0, Math.min(100, db / 12 * 100));
-const fmt = (v, d = 1) => v == null ? "-" : Number(v).toFixed(d);
-
+function levelText(v) { if (v == null) return "-"; if (v <= 0.00001) return "-inf"; return (20*Math.log10(v)).toFixed(1); }
+function levelPct(v) { if (v == null || v <= 0.00001) return 0; return Math.max(0, Math.min(100, (20*Math.log10(v)+48)/48*100)); }
+const grPct = (db) => db == null ? 0 : Math.max(0, Math.min(100, db/12*100));
+const fmt = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
 async function pollStatus() {
   try {
     const s = await api("/api/status");
     $("dot").classList.toggle("on", s.running);
-    $("meta").textContent = `${s.platform} v${s.version} | ${(s.sampleRateHz / 1000).toFixed(0)} kHz | ${s.sourceMode}`;
+    $("meta").textContent = `${s.platform} v${s.version} | ${(s.sampleRateHz/1000).toFixed(0)} kHz | ${s.sourceMode}`;
     $("restartBadge").hidden = !s.restartPending;
-  } catch (e) {
-    $("meta").textContent = "unreachable";
-    $("dot").classList.remove("on");
-  }
+  } catch (e) { $("meta").textContent = "unreachable"; $("dot").classList.remove("on"); }
 }
 async function pollMeters() {
   let m = null;
-  try { m = await api("/api/meters"); } catch (e) { /* stopped */ }
-  const set = (bar, val, pct) => { $(bar).style.height = pct + "%"; };
-  set("mInL", 0, levelPct(m?.inputLeftPeak)); $("vInL").textContent = levelText(m?.inputLeftPeak);
-  set("mInR", 0, levelPct(m?.inputRightPeak)); $("vInR").textContent = levelText(m?.inputRightPeak);
-  set("mOut", 0, levelPct(m?.outputPeak)); $("vOut").textContent = levelText(m?.outputPeak);
-  const agcGR = m?.agcGainDB != null ? Math.max(0, -m.agcGainDB) : null;
+  try { m = await api("/api/meters"); } catch (e) {}
+  $("mInL").style.height = levelPct(m?.inputLeftPeak) + "%"; $("vInL").textContent = levelText(m?.inputLeftPeak);
+  $("mInR").style.height = levelPct(m?.inputRightPeak) + "%"; $("vInR").textContent = levelText(m?.inputRightPeak);
+  $("mOut").style.height = levelPct(m?.outputPeak) + "%"; $("vOut").textContent = levelText(m?.outputPeak);
+  const agcGR = m?.agcGainDB != null ? Math.max(0,-m.agcGainDB) : null;
   $("mAGC").style.height = grPct(agcGR) + "%"; $("vAGC").textContent = fmt(m?.agcGainDB);
-  $("mLim").style.height = grPct(m?.preEncodeLimiterGainReductionDB) + "%";
-  $("vLim").textContent = fmt(m?.preEncodeLimiterGainReductionDB);
-  $("mClip").style.height = grPct(m?.compositeClipperGainReductionDB) + "%";
-  $("vClip").textContent = fmt(m?.compositeClipperGainReductionDB);
+  $("mLim").style.height = grPct(m?.preEncodeLimiterGainReductionDB) + "%"; $("vLim").textContent = fmt(m?.preEncodeLimiterGainReductionDB);
+  $("mClip").style.height = grPct(m?.compositeClipperGainReductionDB) + "%"; $("vClip").textContent = fmt(m?.compositeClipperGainReductionDB);
   $("vDev").textContent = fmt(m?.deviationKHzPeak);
-  $("devRead").classList.toggle("alert", (m?.deviationKHzPeak || 0) > 75);
+  $("devRead").classList.toggle("alert", (m?.deviationKHzPeak||0) > 75);
   $("vPilot").textContent = fmt(m?.pilotInjectionPercent);
   $("vRDSInj").textContent = fmt(m?.rdsInjectionPercent);
   $("vMargin").textContent = fmt(m?.compositeBudgetMarginDB);
@@ -576,36 +460,21 @@ async function pollRDS() {
     if ($("rdsPS")) {
       $("rdsPS").textContent = r.livePS || (r.enabled ? "........" : "RDS OFF");
       $("rdsRT").textContent = r.liveRT || "";
-      $("rdsIds").textContent = `PI ${r.pi}  PTY ${r.pty}  TP ${r.tp ? "on" : "off"}  TA ${r.ta ? "ON" : "off"}`;
+      $("rdsIds").textContent = `PI ${r.pi}  PTY ${r.pty}  TP ${r.tp?"on":"off"}  TA ${r.ta?"ON":"off"}`;
     }
-    taState = r.ta;
-  } catch (e) { /* keep */ }
+  } catch (e) {}
 }
 async function transport(action) {
-  try {
-    await api("/api/transport/" + action, { method: "POST" });
-    toast("transport: " + action);
-    pollStatus();
-  } catch (e) { toast("transport failed: " + e.message, true); }
+  try { await api("/api/transport/" + action, { method:"POST" }); toast("transport: " + action); pollStatus(); }
+  catch (e) { toast("transport failed: " + e.message, true); }
 }
-
 $("btnStart").onclick = () => transport("start");
 $("btnStop").onclick = () => transport("stop");
 $("btnRestart").onclick = () => transport("restart");
-$("keySave").onclick = () => {
-  apiKey = $("keyInput").value.trim();
-  localStorage.setItem("mpxprime_api_key", apiKey);
-  boot();
-};
-
+$("keySave").onclick = () => { apiKey = $("keyInput").value.trim(); localStorage.setItem("mpxprime_api_key", apiKey); boot(); };
 async function boot() {
-  renderSidebar();
-  pollStatus();
-  pollMeters();
-  try {
-    presetLists = await api("/api/presets");
-    await loadConfigValues();
-  } catch (e) { /* auth pending; key prompt shown */ }
+  renderSidebar(); pollStatus(); pollMeters();
+  try { presetLists = await api("/api/presets"); await loadConfigValues(); } catch (e) {}
   showPage(currentPage);
 }
 boot();

@@ -84,6 +84,29 @@ struct ConfigApplyResult: Codable, Sendable {
     var restartPending: Bool
 }
 
+/// One selectable audio device. `id` is what goes into the INI's
+/// `*_device_uid` key -- a CoreAudio UID on macOS, an ALSA PCM name on
+/// Linux (`hw:0,0`, `plughw:...`, `default`).
+struct ControlDevice: Codable, Sendable {
+    var id: String
+    var name: String
+    var canInput: Bool
+    var canOutput: Bool
+}
+
+/// GET /api/devices payload: the pickable input/output lists plus which id
+/// each `*_device_uid` currently names (empty = system default). Selecting a
+/// device is a restart-class change (PATCH the uid key, then restart).
+struct ControlDevices: Codable, Sendable {
+    var inputs: [ControlDevice]
+    var outputs: [ControlDevice]
+    var selectedInput: String
+    var selectedOutput: String
+    /// Platform note the UI shows next to the pickers (e.g. Linux PCM-name
+    /// convention). Empty on macOS.
+    var note: String
+}
+
 /// The engine surface the headless backend drives. AudioOutputEngine (macOS)
 /// and ALSAAudioEngine (Linux) both conform; both `apply*` entry points are
 /// thread-safe producers consumed by the render thread.
@@ -101,6 +124,7 @@ protocol ControlBackend: Sendable {
     func status() async -> ControlStatus
     func meters() async -> ControlMeters?
     func rds() async -> ControlRDS
+    func devices() async -> ControlDevices
     func configSections() async throws -> [String: [String: String]]
     /// Apply an INI-key patch: classify, hot-apply live planes, persist,
     /// flag restart-required leftovers.

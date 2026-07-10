@@ -502,8 +502,11 @@ control_port = 8737
 control_api_key =          ; required for any non-127.0.0.1 bind
 ```
 
-For one-off headless runs, `--control` (or `--control-port 9000`) enables it
-without editing the INI.
+For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
+enables it without editing the INI; these flags imply `--nogui` (run
+headless, serve the dashboard). In the GUI app, use the Settings tab.
+From a source checkout, `./run-build-web.sh` builds the release binary and
+starts it headless with the dashboard, on macOS and Linux alike.
 
 **Security:** binding 127.0.0.1 needs no key. Binding any other interface
 REQUIRES `control_api_key` -- the server refuses to start remote-exposed

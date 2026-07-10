@@ -142,12 +142,16 @@ func parseCLI() -> CLIOptions {
         case "--bench":
             options.bench = true
             options.gui = false
-        case "--control":
+        case "--control", "--web":
+            // Control flags describe a headless run: MPXPrime --web serves
+            // the dashboard without opening the GUI window.
             options.controlEnabled = true
+            options.gui = false
         case "--control-port":
             if i + 1 < args.count, let port = Int(args[i + 1]), port > 0, port < 65536 {
                 options.controlEnabled = true
                 options.controlPort = port
+                options.gui = false
                 i += 1
             }
         default:
@@ -189,8 +193,10 @@ func printUsage() {
           --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
                      prints a markdown report to stdout. Use a release build for valid numbers.
-          --control         Enable the remote-control REST API + web dashboard for this
-                            headless run (overrides [CONTROL] control_enabled).
+          --control, --web  Run headless with the remote-control REST API + web
+                            dashboard (implies --nogui; overrides [CONTROL]
+                            control_enabled). For the GUI app, enable the server
+                            in Settings instead.
           --control-port N  Enable the control server on port N (default 8737).
                             Binding beyond 127.0.0.1 requires control_api_key.
         """

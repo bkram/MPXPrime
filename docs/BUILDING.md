@@ -145,9 +145,11 @@ The ALSA engine lives in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
 
 ## Remote control server
 
-`--control` / `--control-port N` enable the REST API + web dashboard for a
+`--control` (alias: `--web`) / `--control-port N` enable the REST API + web dashboard for a
 headless run (or set `[CONTROL] control_enabled = True`). See the user
-manual's "Remote control" section for endpoints and the security model.
+manual's "Remote control" section for endpoints and the security model. `./run-build-web.sh`
+(repo root, macOS + Linux) builds the release binary and runs it headless
+with the dashboard in one step.
 
 ## Offline verification
 

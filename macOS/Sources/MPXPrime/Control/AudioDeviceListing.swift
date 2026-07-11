@@ -55,12 +55,26 @@ enum AudioDeviceListing {
         while let hint = hints[idx] {
             idx += 1
             guard let name = hintValue(hint, "NAME") else { continue }
-            // First line of DESC is the human label; the rest is verbose.
+            // Keep only the PCMs an operator actually selects. The full hint
+            // list repeats every plugin variant per card (front/surround/
+            // iec958/dmix/dsnoop/...) with IDENTICAL descriptions -- a
+            // dropdown of dozens of "Loopback, Loopback PCM" rows. hw: is
+            // the exact-rate device, plughw: the converting one; that plus
+            // the defaults covers real use (type any other PCM by hand in
+            // Advanced if ever needed).
+            let keep = name == "default" || name.hasPrefix("sysdefault")
+                || name.hasPrefix("hw:") || name.hasPrefix("plughw:")
+            guard keep else { continue }
+            // Label by the PCM name (what aplay -L shows and what goes in
+            // the INI), qualified by the card description's first line.
             let desc = hintValue(hint, "DESC")?
-                .split(separator: "\n").first.map(String.init) ?? name
+                .split(separator: "\n").first.map(String.init)
+            let role = name.hasPrefix("hw:") ? " [exact rate]"
+                : name.hasPrefix("plughw:") ? " [converting]" : ""
+            let label = desc != nil ? "\(name)\(role) - \(desc ?? "")" : name + role
             let ioid = hintValue(hint, "IOID")   // "Input" | "Output" | nil (both)
             let device = { (input: Bool, output: Bool) in
-                ControlDevice(id: name, name: desc, canInput: input, canOutput: output)
+                ControlDevice(id: name, name: label, canInput: input, canOutput: output)
             }
             if ioid == nil || ioid == "Input", !inputs.contains(where: { $0.id == name }) {
                 inputs.append(device(true, ioid == nil))

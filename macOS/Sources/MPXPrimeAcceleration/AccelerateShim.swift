@@ -15,10 +15,13 @@
 // the golden fixture in AccelerateShimTests (captured on macOS from Accelerate
 // itself; the Linux build must reproduce it).
 //
-// Scalar implementations are intentional for milestone 1: every consumer on
-// the Linux CLI path is either offline (verifier, baseline capture, tests) or
-// per-block small (metering FIR). SIMD (e.g. sleef-class tanh) is a follow-up
-// that would move Linux numerics and require a Linux baseline recapture.
+// dotpr/conv/vvtanhf are SIMD (portable Swift SIMD8 -> SSE2 on x86-64
+// baseline; NO AVX flags -- Goldmont Plus class CPUs have none). Measured on
+// a J4105 @ 192 kHz with the full chain: scalar was 102% of a core (constant
+// xruns); SIMD is what lets FIR multiband + the 16x composite clipper fit,
+// mirroring macOS where vDSP_dotpr/vvtanhf are documented as required for
+// the real-time budget. The Linux strict baseline is captured WITH these
+// implementations; changing their numerics requires a recapture.
 #if !canImport(Accelerate)
 
 #if canImport(Glibc)
@@ -55,19 +58,64 @@ public struct DSPSplitComplex {
 // MARK: - Reductions
 
 /// Dot product: C = sum(A[n*IA] * B[n*IB]).
+///
+/// Unit-stride (the FIR-convolution hot path: multiband crossovers,
+/// encoder FIR, decimators) runs 4x-unrolled SIMD8 -- the scalar loop left
+/// the J4105-class CPU ~2% over real-time budget at 192 kHz; this is the
+/// Linux counterpart of macOS's vDSP_dotpr (SSE2 codegen; no AVX, Goldmont
+/// Plus has none). Strided calls keep the scalar path.
 public func vDSP_dotpr(
     _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,
     _ b: UnsafePointer<Float>, _ ib: vDSP_Stride,
     _ c: UnsafeMutablePointer<Float>, _ n: vDSP_Length
 ) {
+    let count = Int(n)
+    if ia == 1 && ib == 1 {
+        c.pointee = simdDot(a, b, count)
+        return
+    }
     var acc: Float = 0
     var pa = 0, pb = 0
-    for _ in 0..<Int(n) {
+    for _ in 0..<count {
         acc += a[pa] * b[pb]
         pa += ia
         pb += ib
     }
     c.pointee = acc
+}
+
+@inline(__always)
+func simdDot(_ a: UnsafePointer<Float>, _ b: UnsafePointer<Float>, _ count: Int) -> Float {
+    var acc0 = SIMD8<Float>()
+    var acc1 = SIMD8<Float>()
+    var acc2 = SIMD8<Float>()
+    var acc3 = SIMD8<Float>()
+    let ra = UnsafeRawPointer(a)
+    let rb = UnsafeRawPointer(b)
+    var i = 0
+    while i + 32 <= count {
+        let byte = i * 4
+        acc0 += ra.loadUnaligned(fromByteOffset: byte, as: SIMD8<Float>.self)
+            * rb.loadUnaligned(fromByteOffset: byte, as: SIMD8<Float>.self)
+        acc1 += ra.loadUnaligned(fromByteOffset: byte + 32, as: SIMD8<Float>.self)
+            * rb.loadUnaligned(fromByteOffset: byte + 32, as: SIMD8<Float>.self)
+        acc2 += ra.loadUnaligned(fromByteOffset: byte + 64, as: SIMD8<Float>.self)
+            * rb.loadUnaligned(fromByteOffset: byte + 64, as: SIMD8<Float>.self)
+        acc3 += ra.loadUnaligned(fromByteOffset: byte + 96, as: SIMD8<Float>.self)
+            * rb.loadUnaligned(fromByteOffset: byte + 96, as: SIMD8<Float>.self)
+        i += 32
+    }
+    while i + 8 <= count {
+        acc0 += ra.loadUnaligned(fromByteOffset: i * 4, as: SIMD8<Float>.self)
+            * rb.loadUnaligned(fromByteOffset: i * 4, as: SIMD8<Float>.self)
+        i += 8
+    }
+    var acc = ((acc0 + acc1) + (acc2 + acc3)).sum()
+    while i < count {
+        acc += a[i] * b[i]
+        i += 1
+    }
+    return acc
 }
 
 /// Sum of elements.
@@ -174,6 +222,12 @@ public func vDSP_conv(
     _ n: vDSP_Length, _ p: vDSP_Length
 ) {
     let taps = Int(p)
+    if ia == 1 && ifStride == 1 {
+        for i in 0..<Int(n) {
+            c[i * ic] = simdDot(a + i, f, taps)
+        }
+        return
+    }
     for i in 0..<Int(n) {
         var acc: Float = 0
         let base = i * ia
@@ -251,13 +305,73 @@ public func vDSP_zvmags(
 
 // MARK: - vForce
 
-/// y[i] = tanh(x[i]), n elements. Scalar libm loop (see header note on SIMD).
+/// y[i] = tanh(x[i]), n elements -- vectorized (SIMD8 lanes).
+///
+/// tanh(x) = (e^(2|x|) - 1) / (e^(2|x|) + 1) with the sign restored, using a
+/// Cephes-style SIMD expf (Cody-Waite range reduction + degree-5 polynomial,
+/// 2^k via exponent-bit assembly). |x| is clamped at 9.1 where Float tanh
+/// saturates to 1.0 exactly. Max abs error vs libm tanhf is ~1e-7 (verified
+/// by AccelerateShimTests.tanhApproximationMatchesLibm) -- far below the
+/// verifier thresholds; the Linux strict baseline is captured WITH this
+/// implementation. The remainder goes through a padded SIMD lane so every
+/// element takes the identical code path regardless of batch length.
 public func vvtanhf(
     _ y: UnsafeMutablePointer<Float>, _ x: UnsafePointer<Float>, _ n: UnsafePointer<Int32>
 ) {
-    for i in 0..<Int(n.pointee) {
-        y[i] = tanhf(x[i])
+    let count = Int(n.pointee)
+    let rx = UnsafeRawPointer(x)
+    var i = 0
+    while i + 8 <= count {
+        let v = tanh8(rx.loadUnaligned(fromByteOffset: i * 4, as: SIMD8<Float>.self))
+        UnsafeMutableRawPointer(y).storeBytes(of: v, toByteOffset: i * 4, as: SIMD8<Float>.self)
+        i += 8
     }
+    if i < count {
+        var pad = SIMD8<Float>()
+        for j in i..<count { pad[j - i] = x[j] }
+        let v = tanh8(pad)
+        for j in i..<count { y[j] = v[j - i] }
+    }
+}
+
+@inline(__always)
+func tanh8(_ v: SIMD8<Float>) -> SIMD8<Float> {
+    // |v| via mantissa/exponent mask; sign kept for reassembly.
+    let bits = unsafeBitCast(v, to: SIMD8<UInt32>.self)
+    let signBits = bits & SIMD8<UInt32>(repeating: 0x8000_0000)
+    var ax = unsafeBitCast(bits & SIMD8<UInt32>(repeating: 0x7FFF_FFFF), to: SIMD8<Float>.self)
+    // Float tanh saturates to 1.0 by ~9.01; clamp keeps exp in range.
+    ax = ax.replacing(with: SIMD8<Float>(repeating: 9.1), where: ax .> 9.1)
+    let e = exp8(ax + ax)                     // e^(2|x|), <= e^18.2, no overflow
+    let one = SIMD8<Float>(repeating: 1.0)
+    let t = (e - one) / (e + one)
+    return unsafeBitCast(unsafeBitCast(t, to: SIMD8<UInt32>.self) | signBits, to: SIMD8<Float>.self)
+}
+
+/// SIMD e^x for x in [0, ~88] (only non-negative inputs reach it here).
+@inline(__always)
+func exp8(_ x: SIMD8<Float>) -> SIMD8<Float> {
+    let log2e = SIMD8<Float>(repeating: 1.442695040888963)
+    // Round-to-nearest via the 2^23 magic constant (values here are small
+    // and positive, well inside the trick's domain).
+    let magic = SIMD8<Float>(repeating: 12_582_912.0)   // 1.5 * 2^23
+    let k = (x * log2e + magic) - magic
+    // Cody-Waite: f = x - k*ln2 in two constants to keep f accurate.
+    let ln2Hi = SIMD8<Float>(repeating: 0.693359375)
+    let ln2Lo = SIMD8<Float>(repeating: -2.12194440e-4)
+    let f = (x - k * ln2Hi) - k * ln2Lo
+    // Degree-5 minimax polynomial for e^f on [-0.347, 0.347] (Cephes expf).
+    var p = SIMD8<Float>(repeating: 1.9875691500e-4)
+    p = p * f + SIMD8<Float>(repeating: 1.3981999507e-3)
+    p = p * f + SIMD8<Float>(repeating: 8.3334519073e-3)
+    p = p * f + SIMD8<Float>(repeating: 4.1665795894e-2)
+    p = p * f + SIMD8<Float>(repeating: 1.6666665459e-1)
+    p = p * f + SIMD8<Float>(repeating: 5.0000001201e-1)
+    p = ((p * f) * f + f) + SIMD8<Float>(repeating: 1.0)
+    // 2^k assembled into the exponent field.
+    let ki = SIMD8<Int32>(k)
+    let twoK = unsafeBitCast((ki &+ SIMD8<Int32>(repeating: 127)) &<< 23, to: SIMD8<Float>.self)
+    return p * twoK
 }
 
 #endif  // !canImport(Accelerate)

@@ -180,6 +180,64 @@ private func expectClose(
 
 @Suite("Accelerate shim golden fixture")
 struct AccelerateShimTests {
+    #if !canImport(Accelerate)
+    // SIMD tanh accuracy: the shim's vectorized approximation must stay
+    // within ~1e-7 of libm across the full useful range (the clipper's
+    // distortion cancellation assumes tanh's exact shape; the Linux strict
+    // baseline is captured with THIS implementation).
+    @Test func tanhApproximationMatchesLibm() {
+        var maxErr: Float = 0
+        var worstX: Float = 0
+        var x: Float = -10.0
+        while x <= 10.0 {
+            var input = [Float](repeating: x, count: 8)
+            var output = [Float](repeating: 0, count: 8)
+            var n: Int32 = 8
+            vvtanhf(&output, &input, &n)
+            let err = abs(output[0] - tanhf(x))
+            if err > maxErr {
+                maxErr = err
+                worstX = x
+            }
+            x += 0.001
+        }
+        #expect(maxErr < 3e-7, "max |shim - libm| = \(maxErr) at x = \(worstX)")
+    }
+
+    // Batch-size independence: the padded tail lane must produce the same
+    // values as the full-lane path (results must not depend on n % 8).
+    @Test func tanhBatchSizeIndependent() {
+        let values: [Float] = [-3.2, -1.1, -0.02, 0.0, 0.4, 0.9, 2.5, 7.7, 9.6, -12.0, 0.13]
+        var full = [Float](repeating: 0, count: values.count)
+        var n = Int32(values.count)
+        values.withUnsafeBufferPointer { vvtanhf(&full, $0.baseAddress!, &n) }
+        for (i, v) in values.enumerated() {
+            var one = [Float](repeating: 0, count: 1)
+            var single: Int32 = 1
+            withUnsafePointer(to: v) { vvtanhf(&one, $0, &single) }
+            #expect(one[0] == full[i], "element \(i) differs between batch sizes")
+        }
+    }
+
+    // SIMD dot: only summation-order rounding may differ from scalar.
+    @Test func simdDotMatchesScalarReference() {
+        var lcg = LCG()
+        for count in [1, 7, 8, 9, 31, 32, 33, 129, 511] {
+            let a = (0..<count).map { _ in lcg.nextFloat() }
+            let b = (0..<count).map { _ in lcg.nextFloat() }
+            var out: Float = 0
+            a.withUnsafeBufferPointer { pa in
+                b.withUnsafeBufferPointer { pb in
+                    vDSP_dotpr(pa.baseAddress!, 1, pb.baseAddress!, 1, &out, vDSP_Length(count))
+                }
+            }
+            let reference = zip(a, b).reduce(Double(0)) { $0 + Double($1.0) * Double($1.1) }
+            #expect(abs(Double(out) - reference) < 1e-4 * max(1.0, abs(reference)),
+                    "count \(count): \(out) vs \(reference)")
+        }
+    }
+    #endif
+
     @Test func matchesGoldenFixture() throws {
         let current = computeCurrent()
 

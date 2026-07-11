@@ -1,1 +1,3 @@
 - meter: overnight soak for final confirmation of the toolbar-leak fix (ran clean through multi-hour bench sessions 2026-07-08)
+- studio: MPX line output level settable in dBFS (calibrated absolute output for the exciter feed; today output_gain_db is relative)
+- linux: SIMD shim (SSE/AVX dotpr + vectorized tanh) so the full chain (FIR multiband + 16x clipper) fits the J4105 class; measured 102% scalar vs 95%/0-xrun with IIR+8x fallbacks

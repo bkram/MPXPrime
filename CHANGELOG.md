@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Linux: SIMD shim (full processing parity now fits small x86 CPUs).**
+  The MPXPrimeAcceleration fallbacks for `vDSP_dotpr` / `vDSP_conv` (FIR
+  crossovers, encoder FIR, decimators) and `vvtanhf` (oversampled clippers)
+  are vectorized with portable Swift SIMD8 (SSE2 codegen -- no AVX flags,
+  Goldmont-class CPUs have none): 4x-unrolled dot products and a
+  Cephes-style vectorized tanh (Cody-Waite expf, max error vs libm ~1e-7,
+  batch-size-independent via a padded tail lane; both properties are
+  test-enforced). Measured on a Celeron J4105 at 192 kHz with a
+  fully-loaded chain: scalar ran 102% of a core with constant xruns;
+  SIMD runs the SAME chain with FIR multiband and the 16x composite
+  clipper at ~92% with zero xruns. The Linux strict baseline is
+  recaptured with the SIMD numerics; macOS remains bit-identical (the
+  shim still compiles empty there).
+- **Dashboard: usable ALSA device picker.** The Linux device list is
+  filtered to the PCMs an operator selects (default / sysdefault / hw: /
+  plughw:) instead of every plugin variant, and entries are labelled by
+  PCM name with an [exact rate] / [converting] role tag -- previously the
+  dropdown was dozens of identical "Loopback, Loopback PCM" rows.
+
 - **Remote control: REST API + embedded web dashboard** (both platforms,
   default off; `[CONTROL]` INI section / GUI Settings card / `--control`).
   Endpoints: status, meters, RDS live snapshot + curated live updates

@@ -1,4 +1,8 @@
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 import Foundation
 
 /// Patent-style clipping candidate for 0.27 research.

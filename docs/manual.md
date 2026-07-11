@@ -76,6 +76,13 @@ If you cannot hear anything, check `Settings` → output device routing, that th
 
 ## Configuration
 
+> **Linux (experimental CLI port):** the encoder also runs headless on Linux
+> (`--nogui`; no GUI, no Meter). The same INI works, with two differences:
+> the default config path is `~/.local/share/MPX Prime Studio/MPX Prime
+> Studio.ini`, and the `input_device_uid` / `output_device_uid` keys hold
+> ALSA PCM names (`default`, `hw:0,0`, `plughw:...`) instead of CoreAudio
+> UIDs. See docs/BUILDING.md "Linux (CLI-only)" for setup and device notes.
+
 Default config location:
 
 ```text
@@ -477,6 +484,111 @@ triggers a layout pass:
   before composite assembly (the audio the encoder is about to modulate).
 - **Scopes** -- composite / decoded-monitor waveforms.
 - **Levels** -- the vertical deviation / level meters as a standalone window.
+
+## Remote control (REST API + web dashboard)
+
+The encoder embeds an HTTP control server for remote and automation use --
+on macOS (GUI or `--nogui`) and on the Linux CLI build. It is **disabled by
+default**.
+
+Enable it in the INI (`[CONTROL]` section, also editable in the GUI's
+Settings tab; GUI changes take effect at the next app launch):
+
+```ini
+[CONTROL]
+control_enabled = True
+control_bind = 127.0.0.1   ; 0.0.0.0 = all interfaces (requires API key)
+control_port = 8737
+control_api_key =          ; required for any non-127.0.0.1 bind
+```
+
+The web session reads and writes the SAME configuration file as the
+Studio GUI (the default `~/Library/Application Support/MPX Prime
+Studio/MPX Prime Studio.ini`, or whatever `--config` names) -- so it
+starts from your existing station setup, and its changes persist for
+the next GUI launch. The resolved path is printed at startup.
+
+For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
+enables it without editing the INI; these flags imply `--nogui` (run
+headless, serve the dashboard). In the GUI app, use the Settings tab.
+From a source checkout, `./run-build-web.sh` builds the release binary and
+starts it headless with the dashboard, on macOS and Linux alike.
+
+**Security:** binding 127.0.0.1 needs no key. Binding any other interface
+REQUIRES `control_api_key` -- the server refuses to start remote-exposed
+without one. Clients send the key as `Authorization: Bearer <key>` or
+`X-API-Key: <key>`. The server speaks plain HTTP; for access beyond a
+trusted network, front it with a TLS reverse proxy (nginx/caddy).
+
+Open `http://<host>:8737/` in a browser for the dashboard. It mirrors the
+Studio GUI: a pinned broadcast status bar (transport, IN/MPX level bars,
+AGC/limiter/clipper gain-reduction meters, deviation / pilot / RDS
+injection / budget-margin readouts, restart-pending badge) above sidebar
+sections -- Sound (Input, AGC, PrimeBass, Stereo Image, Multiband, Audio
+Clipper, Composite Clipper, Output -- real switches and sliders with the
+GUI's control vocabulary, applied live on release), RDS (on-air PS/RT
+display, identity, PS banks, RadioText, TP/TA/MS/CT flags), Test Tone,
+Presets (with per-stage preset pickers on the Sound cards too), and an
+Advanced page holding the raw all-settings editor. Every change reports
+back live / live-RDS / needs-restart. The Interfaces page lists the
+machine's audio devices (CoreAudio on macOS, ALSA PCM names on Linux) as
+input/output dropdowns -- selecting one is a restart-class change. It is a single self-contained page
+(no internet access needed) and prompts for the API key when one is
+configured.
+
+### Endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending |
+| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation, budget margin (subset on Linux) |
+| GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |
+| PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
+| GET | `/api/config` | every INI setting, grouped by section |
+| PATCH | `/api/config` | `{"<ini_key>": "<value>", ...}` -- any key from this manual's tables |
+| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband; + format_profile in GUI mode) |
+| POST | `/api/presets` | `{"kind": "multiband", "id": "3_chr", "intensity": 1.0}` (intensity <0.75 light / >1.25 heavy) |
+| POST | `/api/transport/start\|stop\|restart` | engine lifecycle |
+
+`PATCH /api/config` responds with a per-key **disposition**: `live` /
+`liveRDS` (hot-applied to the running engine, no restart), `restartRequired`
+(saved; takes effect at the next start -- e.g. `rds_level`, `pilot_level`,
+`sample_rate`, devices), or `unchanged` (value identical after
+clamping/parsing, or unknown key). The classification is derived from the
+same runtime structures the engine hot-applies, so it always matches what
+the engine actually does. Every change is saved to the INI immediately.
+Values follow INI text conventions (booleans `True`/`False`; no `;` in
+values).
+
+The now-playing script integration (see RDS) keeps working alongside the
+API; automation systems that only need RT/PS updates can use `PUT /api/rds`
+instead of a polling script.
+
+### MPX line output calibration (dBFS)
+
+`mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..0, live-apply; GUI:
+Processing > Core > "Line Output"; also on the web dashboard) sets the
+ABSOLUTE converter level of 100% modulation: at `-12.0`, a 75 kHz-deviation
+composite peaks at -12 dBFS on the output interface. It is applied at the
+DAC write, after every processing stage and meter tap -- deviation readouts,
+the composite budget, and all internal levels keep the classic
+0 dBFS = 100% convention. Use it to match an exciter's input sensitivity
+once, in software: keep the operating system / interface output volume at
+0 dB (a mixer attenuation scales pilot and RDS injection along with the
+audio, and an accidental 0% mixer silences the transmitter -- calibrate
+here instead). `output_gain_db` remains the in-chain MPX level trim that
+participates in the composite budget; the line output is pure output-stage
+calibration -- attenuation only. Positive line gain is deliberately not
+offered because it is unphysical at a DAC: full scale is the hardware
+ceiling, so "+3 dBFS" cannot raise the peak voltage your exciter sees.
+All it can do is lift everything below the clamp (pilot 8% becomes 11.3%,
+RDS likewise) and clip the summed composite during audio peaks --
+momentarily clipping pilot and RDS, which must stay constant-amplitude.
+The field symptom is characteristic: deviation looks right (peaks still
+stop at full scale) while pilot and RDS read ~3 dB high. If your exciter
+under-deviates with the line output at 0.0 dBFS, correct it on the analog
+side: trim the exciter's input sensitivity so full scale equals 75 kHz,
+and pilot/RDS return to their configured injection automatically.
 
 ## Offline verification
 

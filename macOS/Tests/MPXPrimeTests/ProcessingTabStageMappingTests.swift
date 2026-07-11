@@ -1,3 +1,6 @@
+// macOS-only: exercises the SwiftUI view model, which the Linux CLI build excludes.
+#if os(macOS)
+
 import Testing
 import Foundation
 @testable import MPXPrime
@@ -54,3 +57,5 @@ struct ProcessingTabStageMappingTests {
         #expect(model.selectedProcessingTab == .agc)
     }
 }
+
+#endif  // os(macOS)

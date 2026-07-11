@@ -1,0 +1,1 @@
+- meter: overnight soak for final confirmation of the toolbar-leak fix (ran clean through multi-hour bench sessions 2026-07-08)

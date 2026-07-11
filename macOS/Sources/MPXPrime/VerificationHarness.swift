@@ -1,4 +1,8 @@
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 import Foundation
 import MPXPrimeCore
 

@@ -38,3 +38,62 @@ jobs:
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            label: ubuntu-24.04
+          - runner: ubuntu-26.04
+            label: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq build-essential curl pkg-config binutils             libcurl4-openssl-dev libedit2 libpython3-dev libsqlite3-0             libxml2-dev libz3-dev tzdata unzip zlib1g-dev libasound2-dev
+
+      - name: Install Swift (swiftly)
+        run: |
+          curl -sO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf "swiftly-$(uname -m).tar.gz"
+          ./swiftly init --assume-yes --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --assume-yes latest
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          swift --version
+
+      - name: Build (release, static Swift stdlib)
+        run: |
+          swift build --package-path macOS -c release --product MPXPrime             --static-swift-stdlib
+          macOS/.build/release/MPXPrime --verify --seconds 5
+
+      - name: Build .deb package
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          ./build-deb.sh "$VERSION" "${{ matrix.label }}"
+          sha256sum mpxprime_*_amd64.deb > "mpxprime_${VERSION}-${{ matrix.label }}.sha256"
+
+      - name: Smoke-install the package
+        run: |
+          sudo dpkg -i mpxprime_*_amd64.deb
+          mpxprime --verify --seconds 5
+          systemctl cat mpxprime >/dev/null
+
+      - name: Attach to Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            mpxprime_*_amd64.deb
+            mpxprime_*.sha256
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

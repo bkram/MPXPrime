@@ -1,3 +1,6 @@
+// macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import SwiftUI
 
 /// Stage-aware right-pane Inspector content. Modeled on Pages / Keynote /
@@ -127,3 +130,5 @@ private struct CompositeClipperInspector: View {
         }
     }
 }
+
+#endif  // os(macOS)

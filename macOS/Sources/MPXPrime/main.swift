@@ -1,9 +1,27 @@
+#if os(macOS)
 import AppKit
 import CoreAudio
+#endif
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import MPXPrimeCore
 
+#if !canImport(Darwin)
+// Glibc imports C's `stderr` as a mutable global, which Swift 6 strict
+// concurrency rejects at use sites. Rebind file-locally to a fresh
+// unbuffered FILE* on fd 2 (identical behavior: stderr is unbuffered).
+nonisolated(unsafe) private let stderr: UnsafeMutablePointer<FILE> = {
+    guard let f = fdopen(2, "w") else { fatalError("fdopen(2) failed") }
+    setvbuf(f, nil, _IONBF, 0)
+    return f
+}()
+#endif
+
+#if os(macOS)
 @discardableResult
 func applyRealtimePriorityHints() -> Bool {
     var qosApplied = false
@@ -14,12 +32,19 @@ func applyRealtimePriorityHints() -> Bool {
     }
     return qosApplied
 }
+#endif
 
 struct CLIOptions {
     var configPath: String = AppConfig.defaultINIPath
     var configPathExplicit: Bool = false
     var runSeconds: Double?
+    // The GUI is macOS-only; Linux defaults to headless (a bare `MPXPrime`
+    // there behaves like `--nogui`, and an explicit `--gui` is rejected).
+    #if os(macOS)
     var gui: Bool = true
+    #else
+    var gui: Bool = false
+    #endif
     var verify: Bool = false
     var verifyPresets: Bool = false
     var verifyLong: Bool = false
@@ -29,6 +54,11 @@ struct CLIOptions {
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
+    // Remote-control server overrides (headless runs). nil = use the INI's
+    // [CONTROL] settings; --control enables with INI/default bind+port;
+    // --control-port N enables on that port.
+    var controlEnabled: Bool?
+    var controlPort: Int?
 }
 
 func defaultVerificationConfigPath() -> String {
@@ -112,6 +142,18 @@ func parseCLI() -> CLIOptions {
         case "--bench":
             options.bench = true
             options.gui = false
+        case "--control", "--web":
+            // Control flags describe a headless run: MPXPrime --web serves
+            // the dashboard without opening the GUI window.
+            options.controlEnabled = true
+            options.gui = false
+        case "--control-port":
+            if i + 1 < args.count, let port = Int(args[i + 1]), port > 0, port < 65536 {
+                options.controlEnabled = true
+                options.controlPort = port
+                options.gui = false
+                i += 1
+            }
         default:
             break
         }
@@ -151,10 +193,17 @@ func printUsage() {
           --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
                      prints a markdown report to stdout. Use a release build for valid numbers.
+          --control, --web  Run headless with the remote-control REST API + web
+                            dashboard (implies --nogui; overrides [CONTROL]
+                            control_enabled). For the GUI app, enable the server
+                            in Settings instead.
+          --control-port N  Enable the control server on port N (default 8737).
+                            Binding beyond 127.0.0.1 requires control_api_key.
         """
     print(text)
 }
 
+#if os(macOS)
 func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevices: [AudioDevice])
     -> String {
     var parts: [String] = []
@@ -173,6 +222,54 @@ func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevic
         }
     }
     return parts.isEmpty ? "" : "devices: \(parts.joined(separator: ", "))"
+}
+#endif
+
+/// Launch the control server as a detached task when enabled via the INI's
+/// [CONTROL] section or the --control/--control-port flags. A startup
+/// failure (port in use, remote bind without key) must be LOUD but must not
+/// take the encoder down.
+func startControlServerIfEnabled(
+    config: AppConfig, options: CLIOptions, backend: HeadlessControlBackend
+) {
+    let enabled = options.controlEnabled ?? config.controlEnabled
+    guard enabled else { return }
+    var settings = ControlServerSettings(config: config)
+    if let port = options.controlPort {
+        settings.port = port
+    }
+    print("Control server: http://\(settings.host):\(settings.port)/")
+    Task {
+        do {
+            try await ControlServer.run(backend: backend, settings: settings)
+        } catch {
+            fputs("[Control] server failed: \(error)\n", stderr)
+        }
+    }
+}
+
+/// Load the headless run's config. A missing file at the DEFAULT path is
+/// first-run, not an error: create it with defaults (like the GUI does) so
+/// `MPXPrime --web` works out of the box. An explicit --config path that
+/// does not exist stays a hard error (probably a typo).
+func loadOrCreateHeadlessConfig(path: String, explicit: Bool) throws -> AppConfig {
+    if FileManager.default.fileExists(atPath: path) {
+        return try AppConfig.load(fromINI: path)
+    }
+    if explicit {
+        throw INIParserError.unreadableFile(path)
+    }
+    let config = AppConfig()
+    let directory = (path as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(
+        atPath: directory, withIntermediateDirectories: true)
+    do {
+        try config.save(toINI: path)
+        fputs("MPX Prime: created default config at \(path)\n", stderr)
+    } catch {
+        fputs("MPX Prime: running on defaults (could not write \(path): \(error))\n", stderr)
+    }
+    return config
 }
 
 let options = parseCLI()
@@ -208,6 +305,7 @@ do {
         )
     }
 
+    #if os(macOS)
     let qosApplied = applyRealtimePriorityHints()
     if !qosApplied {
         fputs("MPX Prime: unable to apply QoS hint\n", stderr)
@@ -220,54 +318,60 @@ do {
         app.setActivationPolicy(.regular)
         app.run()
     }
-    let config = try AppConfig.load(fromINI: configPath)
+    let config = try loadOrCreateHeadlessConfig(
+        path: configPath, explicit: options.configPathExplicit)
+    fputs("MPX Prime: config \(configPath)\n", stderr)
     let nowPlayingState = NowPlayingState()
     let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
         fputs("[NowPlaying] \(status)\n", stderr)
     }
     nowPlayingRunner.updateConfig(config)
-    let generator = MPXGenerator(
-        config: config,
-        sampleRate: config.sampleRate,
-        nowPlayingState: nowPlayingState
-    )
 
-    // Minimize blocking before audio engine start: do device lookup with minimal I/O and NO logging
-    var allDevices: [AudioDevice] = []
-    var inputID: AudioDeviceID?
-    var outputID: AudioDeviceID?
-
-    do {
-        allDevices = try AudioDevices.list()
-
-        // Resolve device UIDs to IDs quickly and silently - NO PRINT STATEMENTS
-        if config.sourceMode.lowercased() == "input", let uid = config.inputDeviceUID {
-            inputID = allDevices.first(where: { $0.uid == uid })?.id
+    // Engine factory: device resolution + construction, used for the initial
+    // start here and for API-triggered restarts in the control backend.
+    let makeMacEngine: ControlEngineFactory = { cfg in
+        let generator = MPXGenerator(
+            config: cfg,
+            sampleRate: cfg.sampleRate,
+            nowPlayingState: nowPlayingState
+        )
+        // Minimal-I/O device lookup, silent on failure (system defaults).
+        var inputID: AudioDeviceID?
+        var outputID: AudioDeviceID?
+        if let allDevices = try? AudioDevices.list() {
+            if cfg.sourceMode.lowercased() == "input", let uid = cfg.inputDeviceUID {
+                inputID = allDevices.first(where: { $0.uid == uid })?.id
+            }
+            if let uid = cfg.outputDeviceUID {
+                outputID = allDevices.first(where: { $0.uid == uid })?.id
+            }
         }
-        if let uid = config.outputDeviceUID {
-            outputID = allDevices.first(where: { $0.uid == uid })?.id
-        }
-    } catch {
-        // Silent failure - will use system defaults
+        return AudioOutputEngine(
+            generator: generator,
+            config: cfg,
+            inputDeviceID: inputID,
+            outputDeviceID: outputID,
+            outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
+        )
     }
 
-    let audioEngine = AudioOutputEngine(
-        generator: generator,
-        config: config,
-        inputDeviceID: inputID,
-        outputDeviceID: outputID,
-        outputMode: config.processedAudioOutput ? .processedAudio : .mpxComposite
-    )
+    guard let audioEngine = try makeMacEngine(config) as? AudioOutputEngine else {
+        fatalError("engine factory returned unexpected type")
+    }
     try audioEngine.start()
 
-    // Brief debug output about input setup
-    fputs(
-        "[Input] Device ID: \(inputID ?? 0), Sample rate requested: \(config.sampleRate)\n", stderr)
-    if let inputRate = audioEngine.inputSampleRate {
-        fputs("[Input] Actual input sample rate: \(inputRate)\n", stderr)
-    }
+    // Brief debug output about output setup
     fputs("[Render] Actual render sample rate: \(audioEngine.renderSampleRate) Hz\n", stderr)
     fputs("[Render] Hardware sample rate: \(audioEngine.hardwareSampleRate) Hz\n", stderr)
+
+    let backend = HeadlessControlBackend(
+        config: config,
+        configPath: configPath,
+        engine: audioEngine,
+        engineFactory: makeMacEngine,
+        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
+    )
+    startControlServerIfEnabled(config: config, options: options, backend: backend)
 
     // Use NSApplication event loop with proper setup just like GUI mode does
     let app = NSApplication.shared
@@ -276,28 +380,93 @@ do {
 
     signal(SIGINT, SIG_IGN)
     let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-    signalSource.setEventHandler(
-        handler: DispatchWorkItem {
-            nowPlayingRunner.stop()
-            audioEngine.stop()
+    let shutdown: @Sendable () -> Void = {
+        nowPlayingRunner.stop()
+        Task {
+            await backend.shutdown()
             exit(0)
-        })
+        }
+    }
+    signalSource.setEventHandler(handler: DispatchWorkItem { shutdown() })
     signalSource.resume()
 
     if let secs = options.runSeconds {
         DispatchQueue.main.asyncAfter(
             deadline: .now() + secs,
-            execute: DispatchWorkItem {
-                nowPlayingRunner.stop()
-                audioEngine.stop()
-                exit(0)
-            })
+            execute: DispatchWorkItem { shutdown() })
     }
 
     print("MPX Prime running. Press Ctrl-C to stop.")
 
     // Run the application event loop - same as GUI does
     app.run()
+    #else
+    // Linux CLI runtime: headless encoder into an ALSA device. The GUI does
+    // not exist here; --verify/--bench were dispatched above.
+    if options.gui {
+        fputs("MPX Prime: the GUI is macOS-only; this Linux build is CLI-only (--nogui).\n", stderr)
+        exit(1)
+    }
+    let config = try loadOrCreateHeadlessConfig(
+        path: configPath, explicit: options.configPathExplicit)
+    fputs("MPX Prime: config \(configPath)\n", stderr)
+    let nowPlayingState = NowPlayingState()
+    let nowPlayingRunner = NowPlayingScriptRunner(state: nowPlayingState) { status in
+        fputs("[NowPlaying] \(status)\n", stderr)
+    }
+    nowPlayingRunner.updateConfig(config)
+
+    // Device names are ALSA PCM names ("default", "hw:0,0", "plughw:...")
+    // carried in the same INI keys that hold CoreAudio UIDs on macOS.
+    let makeLinuxEngine: ControlEngineFactory = { cfg in
+        let generator = MPXGenerator(
+            config: cfg,
+            sampleRate: cfg.sampleRate,
+            nowPlayingState: nowPlayingState
+        )
+        return ALSAAudioEngine(
+            generator: generator,
+            config: cfg,
+            outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
+        )
+    }
+    let audioEngine = try makeLinuxEngine(config)
+    try audioEngine.start()
+
+    let backend = HeadlessControlBackend(
+        config: config,
+        configPath: configPath,
+        engine: audioEngine,
+        engineFactory: makeLinuxEngine,
+        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
+    )
+    startControlServerIfEnabled(config: config, options: options, backend: backend)
+
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+    let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    let shutdown: @Sendable () -> Void = {
+        nowPlayingRunner.stop()
+        Task {
+            await backend.shutdown()
+            exit(0)
+        }
+    }
+    sigintSource.setEventHandler(handler: DispatchWorkItem { shutdown() })
+    sigtermSource.setEventHandler(handler: DispatchWorkItem { shutdown() })
+    sigintSource.resume()
+    sigtermSource.resume()
+
+    if let secs = options.runSeconds {
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + secs,
+            execute: DispatchWorkItem { shutdown() })
+    }
+
+    print("MPX Prime running. Press Ctrl-C to stop.")
+    dispatchMain()
+    #endif
 } catch {
     fputs("Error: \(error)\n", stderr)
     exit(1)

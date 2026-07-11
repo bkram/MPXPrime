@@ -11,6 +11,121 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.42 — 2026-07-11
+
+- **Linux: Debian/Ubuntu packages + systemd service.** `./build-deb.sh`
+  produces `mpxprime_<ver>_amd64.deb` (static Swift stdlib; system
+  dependencies computed by dpkg-shlibdeps): `/usr/bin/mpxprime` with the
+  web-dashboard resource bundle, a systemd unit running as a dedicated
+  `mpxprime` user (audio group, `/var/lib/mpxprime/MPXPrime.ini`,
+  LimitRTPRIO for real-time audio threads, auto-restart), sample config
+  and docs. Release tags now also build and attach Ubuntu 24.04 and
+  26.04 debs via the GitHub workflow (with a dpkg smoke-install +
+  `--verify` gate). The dashboard loader no longer fatals when the
+  resource bundle is missing next to the binary (bare-binary installs
+  serve a stub page instead of crashing the encoder).
+
+- **Linux: full meter parity on the dashboard.** The ALSA engine now reads
+  the generator's meter surface (AGC gain, pre-encode/composite/safety
+  gain reduction, pilot/RDS injection %, composite budget margin,
+  over-budget flag) every ~43 ms on the render thread -- the same
+  accessors the macOS engine uses -- plus a deviation readout derived from
+  the composite peak. The web Monitoring page previously showed dashes for
+  everything except peaks and xruns on Linux.
+
+- **MPX line output calibratable in dBFS** (`mpx_line_output_dbfs`, [MPX],
+  default 0.0 = the classic full-scale convention; GUI Processing > Core
+  "Line Output", web dashboard, live-apply). Sets the absolute converter
+  level of 100% modulation (75 kHz) so exciter drive is calibrated in
+  software with the OS/interface mixer at 0 dB. Range -40..0 dBFS:
+  attenuation only -- positive line gain is unphysical at a DAC (full
+  scale is the hardware ceiling, so it can only clip the composite and
+  lift pilot/RDS proportionally; field-verified as "deviation good,
+  pilot/RDS 3 dB high"). An under-driven exciter needs its
+  input-sensitivity trim instead. The DAC conversion paths
+  scale-then-clamp (also fixing an integer-overflow hazard). Applied at
+  the DAC write on both platforms AFTER all processing and metering --
+  deviation readouts and the composite budget are unaffected; the
+  default is bit-identical to the previous behavior.
+
+- **Linux: deep ALSA buffers (fixes chopped output on raw hw: devices).**
+  The engine now requests 2048-frame periods x 8 (~85 ms at 192 kHz)
+  instead of 512 x 4 (~10.7 ms). Plug-layer devices always granted larger
+  buffers, but a raw hw: device grants the request exactly -- 10.7 ms of
+  slack on a heavily loaded small CPU without RT scheduling produced a
+  constant xrun storm (audible as chopped/garbled MPX). A transmitter has
+  no latency requirement; measured on the J4105 driving a 192 kHz USB
+  interface (hw:) the storm went from ~28k xruns to zero.
+
+- **Linux: SIMD shim (full processing parity now fits small x86 CPUs).**
+  The MPXPrimeAcceleration fallbacks for `vDSP_dotpr` / `vDSP_conv` (FIR
+  crossovers, encoder FIR, decimators) and `vvtanhf` (oversampled clippers)
+  are vectorized with portable Swift SIMD8 (SSE2 codegen -- no AVX flags,
+  Goldmont-class CPUs have none): 4x-unrolled dot products and a
+  Cephes-style vectorized tanh (Cody-Waite expf, max error vs libm ~1e-7,
+  batch-size-independent via a padded tail lane; both properties are
+  test-enforced). Measured on a Celeron J4105 at 192 kHz with a
+  fully-loaded chain: scalar ran 102% of a core with constant xruns;
+  SIMD runs the SAME chain with FIR multiband and the 16x composite
+  clipper at ~92% with zero xruns. The Linux strict baseline is
+  recaptured with the SIMD numerics; macOS remains bit-identical (the
+  shim still compiles empty there).
+- **Dashboard: usable ALSA device picker.** The Linux device list is
+  filtered to the PCMs an operator selects (default / sysdefault / hw: /
+  plughw:) instead of every plugin variant, and entries are labelled by
+  PCM name with an [exact rate] / [converting] role tag -- previously the
+  dropdown was dozens of identical "Loopback, Loopback PCM" rows.
+
+- **Remote control: REST API + embedded web dashboard** (both platforms,
+  default off; `[CONTROL]` INI section / GUI Settings card / `--control`).
+  Endpoints: status, meters, RDS live snapshot + curated live updates
+  (PS/RT/TA/PI/PTY), full config GET/PATCH by INI key, sound presets,
+  transport start/stop/restart. PATCH classifies every key as
+  live / liveRDS / restartRequired by DERIVING the disposition from the
+  engine's own RuntimeConfig/RDSRuntimeConfig structs (no per-key table to
+  drift); changes hot-apply through the existing render-thread hand-off and
+  persist to the INI. Localhost binds are open; any remote bind requires an
+  API key (Bearer / X-API-Key, constant-time compare) and refuses to start
+  without one; TLS is delegated to a reverse proxy. The dashboard at `/`
+  mirrors the Studio GUI: pinned broadcast status bar (transport, level +
+  gain-reduction meters, deviation/pilot/RDS/margin readouts) over sidebar
+  sections -- Sound stage cards with real switches/sliders in the GUI's
+  control vocabulary (per-stage preset pickers included), RDS (on-air
+  PS/RT, identity, text, flags), Test Tone, Presets, and an Advanced raw
+  all-settings editor -- one self-contained page, no build step. All ~150 stage controls carry the GUI's exact ranges/labels (extracted from the GUI source), an Interfaces page offers audio-device dropdowns (CoreAudio / ALSA PCM enumeration via GET /api/devices), and the headless session shares the GUI's config file (loaded/created at the standard path; printed at startup). Built on
+  Hummingbird 2 (new dependency, with SwiftNIO transitively). Internals:
+  preset tables extracted to a shared `PresetCatalog` (GUI behavior
+  unchanged); `ALSAAudioEngine` gained the live-apply hand-off, RDS
+  snapshot, and peak/xrun meters; the headless runtimes now run through a
+  `HeadlessControlBackend` actor (API restarts rebuild the engine); GUI
+  mode routes remote changes through the view model on the MainActor so
+  the window and web UI stay consistent. Also fixed: `sample_rate` was
+  read from the INI but never written back, so a non-default rate vanished
+  on the first autosave.
+
+- **Linux command-line port of the encoder (milestone 1, experimental).** The
+  `MPXPrime` executable now builds and runs on Linux (dev-tested: Ubuntu 24.04
+  x86_64, Swift 6.3): headless `--nogui` encoding into an ALSA device (capture
+  and playback, FLOAT/S32/S16 negotiation, xrun recovery, SCHED_FIFO
+  best-effort), all `--verify*` modes, `--capture-baseline`, and `--bench`.
+  The GUI, MPX Prime Meter, and SDR tuner remain macOS-only. Key pieces:
+  - New `MPXPrimeAcceleration` target: same-name implementations of the vDSP /
+    vvtanhf surface the encoder uses plus an `OSAllocatedUnfairLock` polyfill
+    (pthread PI mutex). On macOS it compiles empty and the real Accelerate/os
+    are used -- macOS composite output is bit-identical (verified: the
+    pre-port `--verify --baseline-strict` passes unchanged). A golden fixture
+    captured from real Accelerate pins the shim's FFT packing/scaling and
+    window constants (`AccelerateShimTests`).
+  - New `ALSAAudioEngine` (Linux counterpart of `AudioOutputEngine`) and a
+    `CAlsa` system-library target; `input_device_uid` / `output_device_uid`
+    carry ALSA PCM names on Linux.
+  - Per-platform strict baselines: Linux pins
+    `verifier_baselines/default-linux-x86_64.json` (Glibc libm and the scalar
+    tanh shim differ from Apple's at rounding level); physical verify
+    thresholds are identical and pass on both platforms.
+  - Test suite runs on Linux (425 tests; GUI/view-model suites and the
+    absolute wall-clock budget test are macOS-gated).
+
 ## 0.41 — 2026-07-10
 
 - **Meter: vectorscope auto-zoom.** The goniometer's display gain rides the

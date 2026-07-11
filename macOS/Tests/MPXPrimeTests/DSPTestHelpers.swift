@@ -1,4 +1,8 @@
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 import Foundation
 
 // MARK: - Sine generation
@@ -63,7 +67,10 @@ struct SpectralReport {
 final class FFTAnalyzer {
     let fftSize: Int
     private let log2N: vDSP_Length
-    private let setup: vDSP.FFT<DSPSplitComplex>
+    // C-style vDSP FFT (not the generic vDSP.FFT wrapper) so the analyzer
+    // compiles against the Linux MPXPrimeAcceleration shim as well; the
+    // self-calibration below absorbs the API's constant scale factor.
+    private let setup: FFTSetup
     private let window: [Float]
     private let dbfsOffset: Float  // adjustment so unit-amplitude sine reads 0 dBFS
 
@@ -71,7 +78,10 @@ final class FFTAnalyzer {
         precondition(fftSize >= 16 && (fftSize & (fftSize - 1)) == 0, "fftSize must be power of 2 and >= 16")
         self.fftSize = fftSize
         self.log2N = vDSP_Length(log2(Double(fftSize)))
-        self.setup = vDSP.FFT<DSPSplitComplex>(log2n: log2N, radix: .radix2, ofType: DSPSplitComplex.self)!
+        guard let setup = vDSP_create_fftsetup(log2N, FFTRadix(kFFTRadix2)) else {
+            preconditionFailure("vDSP_create_fftsetup failed")
+        }
+        self.setup = setup
 
         var win = [Float](repeating: 0.0, count: fftSize)
         vDSP_hann_window(&win, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
@@ -100,6 +110,10 @@ final class FFTAnalyzer {
         self.dbfsOffset = -measuredPeakDBFS
     }
 
+    deinit {
+        vDSP_destroy_fftsetup(setup)
+    }
+
     func analyze(_ samples: [Float], sampleRate: Float) -> SpectralReport {
         precondition(samples.count >= fftSize, "samples.count (\(samples.count)) must be >= fftSize (\(fftSize))")
         let signal = Array(samples.prefix(fftSize))
@@ -122,7 +136,7 @@ final class FFTAnalyzer {
         samples: [Float],
         window: [Float],
         log2N: vDSP_Length,
-        setup: vDSP.FFT<DSPSplitComplex>,
+        setup: FFTSetup,
         offsetDBFS: Float
     ) -> [Float] {
         let fftSize = samples.count
@@ -143,7 +157,7 @@ final class FFTAnalyzer {
                         vDSP_ctoz(complexPtr, 2, &split, 1, vDSP_Length(halfSize))
                     }
                 }
-                setup.forward(input: split, output: &split)
+                vDSP_fft_zrip(setup, &split, 1, log2N, FFTDirection(FFT_FORWARD))
                 mags.withUnsafeMutableBufferPointer { magsPtr in
                     vDSP_zvmags(&split, 1, magsPtr.baseAddress!, 1, vDSP_Length(halfSize))
                 }

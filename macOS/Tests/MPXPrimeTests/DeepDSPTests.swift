@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 @testable import MPXPrime
 
 // Optional deep DSP coverage suite. Gated behind the `MPXPRIME_DEEP=1`

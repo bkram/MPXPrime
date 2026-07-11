@@ -1,3 +1,6 @@
+// macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import MPXPrimeUI
 import SwiftUI
 
@@ -219,3 +222,5 @@ struct BroadcastStatusBar: View {
             .frame(width: 0.5, height: 22)
     }
 }
+
+#endif  // os(macOS)

@@ -1,6 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 @testable import MPXPrime
 
 // Stereo-image regression tests for `CompositeClipper`.

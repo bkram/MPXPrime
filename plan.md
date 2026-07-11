@@ -4,11 +4,9 @@ Active work list + anti-rework guardrails. **Not** a readme: positioning, archit
 
 ## Status
 
-Released **0.35** (2026-06-09). **0.36 staged on `develop/v.036`** (version-bumped + CHANGELOG written, awaiting the maintainer's hardware/RDS/VoiceOver smoke + `v0.36` tag — see CLAUDE.md "release prep vs tagging"). **Active branch: `develop/v.037`.**
+Released through **0.41** (2026-07-10). **Active branch: `develop/v.042`**; 0.42 is the Unreleased target (see `CHANGELOG.md` for its accumulated content). Shipped-feature history lives in CHANGELOG — this file tracks only pending work; cross-check CHANGELOG before planning anything here as pending.
 
-0.36 content (on develop/v.036): RDS pilot-lock fix (`3s−4s³`), MPXDecoder NaN guard, ring-buffer torn-read telemetry, BS.412/expander denormal cleanups, verifier coverage (encoder-sideband baseline, guard-band depth + pilot/RDS phase-lock gate in `--verify-receiver`, 4x true-peak metric, BS.412 + multiband-idle tests), and GUI HIG batch 1 (`BroadcastStyle` tokens, dropout WCAG fix, test-tone preset highlight, signal-flow bypass dimming).
-
-Landed since on `develop/v.037` (future 0.37): rest of the GUI HIG/professional/usability pass — per-control restart badges + clickable pending-restart chip, RDS character counters, overview-grid live status + per-card status dots, status-bar + meter VoiceOver (incl. the Levels group summary), reworked About panel — and the MPXDecoder HF stereo-separation fix (Next-up #6, below).
+Major work landed since the roadmap was last pruned: MPX Prime Meter (0.37, receive/analyze companion + measurement-grade metering); the **Linux CLI port** of the encoder (headless + ALSA, SIMD acceleration shim, Debian/Ubuntu packages); and the **REST API + embedded web dashboard** (remote control, both platforms). All three were previously listed here as future work and have been removed from the sections below.
 
 ---
 
@@ -94,13 +92,30 @@ The GUI HIG/professional/usability/accessibility pass landed on develop/v.037 (s
 4. **Ops: SNMP MIB + watchdog + time-of-day scheduler + on-air loopback verify.** ~2–3 wk.
 - Deferred standards item: Group 15A UTF-8 Long PS toggle bit (IEC 62106-2:2018 §6.8; ASCII Long PS is correct for amateur use today).
 
-## Companion app — MPX Prime Meter (future)
+## Shipped (was future here) — see CHANGELOG for detail
 
-Standalone macOS MPX analyzer consuming external composite (192 kHz pref / 96 kHz with RDS warning): input picker, 0–100 kHz FFT, pilot detector, peak-deviation meter, L/R/M/S meters + correlation, tone-based separation reading, basic RDS readout (PI/PS/PTY/TP/TA), composite scope. Out of scope v1: group stats, file analysis, multipath/RF, recording, signal gen, SCA, full RT/AF/scheduler decode. Depends on the P1 `MPXPrimeCore` extraction (RDS front-end + analysis tap). ~1–2 wk for v1. Detailed v1 spec removed from the roadmap — recover from git history if needed.
+- **MPX Prime Meter** (0.37+): the receive/analyze companion — SDR / audio
+  input, standards-grade metering, RDS decode, WAV recording. No longer
+  future work.
+- **Linux CLI port** of the encoder: headless `--nogui` into ALSA, all
+  `--verify*` / `--bench`, SIMD acceleration shim (SSE2; full FIR + 16x
+  clipper chain fits a Celeron J4105 at ~92% CPU), Debian/Ubuntu packages
+  + systemd service, per-platform strict baseline. Delivered ALSA-only
+  (no JACK / no `AudioBackend` protocol abstraction — the render-callback
+  contract is shared via the existing engine entry points).
+- **REST API + embedded web dashboard** (remote control, both platforms):
+  built on **Hummingbird 2** (not the Vapor originally sketched here);
+  `[CONTROL]` INI section, `--web`/`--control-port`, config/RDS/preset/
+  transport endpoints, GUI-parity dashboard.
 
-## Deferred — Linux port (first-tier future target)
+## Linux port — remaining / possible follow-ups
 
-Stay in Swift (DSP is framework-free; `swift-atomics` is cross-platform). Replace: audio I/O behind an `AudioBackend` protocol (JACK default, ALSA fallback, identical render-callback contract); lock primitive (`PriorityInheritingLock` → `OSAllocatedUnfairLock` on macOS, `pthread_mutex` `PTHREAD_PRIO_INHERIT` on Linux); device enumeration behind `AudioDeviceDirectory`; headless-first (`--nogui` already works), optional Vapor web dashboard later; vDSP audit (only metering/FFT depend on it); SPM conditional compilation + Linux CI. ~2–3 months for tier-1 JACK + headless. Pi 4/5 real-time budget unmeasured. Revisit after macOS preset/smoke-test/README work lands.
+- JACK backend behind an `AudioBackend` protocol (today ALSA-only); Pi 4/5
+  real-time budget still unmeasured.
+- Meter CLI on Linux (the tuner C++ is already portable; SDRplay dlopen
+  needs `.so` names).
+- ALSA output device enumeration is in the dashboard picker; a headless
+  `--list-devices` equivalent could mirror it.
 
 ---
 

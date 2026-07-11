@@ -1,3 +1,6 @@
+// macOS-only: exercises the SwiftUI view model, which the Linux CLI build excludes.
+#if os(macOS)
+
 import Testing
 import Foundation
 @testable import MPXPrime
@@ -217,3 +220,5 @@ struct SnapshotTests {
         try? FileManager.default.removeItem(atPath: configPath)
     }
 }
+
+#endif  // os(macOS)

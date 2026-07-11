@@ -1,6 +1,6 @@
 # MPX Prime Studio
 
-Version: 0.41
+Version: 0.42
 
 MPX Prime Studio is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 
@@ -60,7 +60,8 @@ See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
 
 ## Features
 
-- Native macOS app built with Swift + SwiftUI + AppKit windowing
+- Native macOS app built with Swift + SwiftUI + AppKit windowing, plus an experimental **Linux command-line build** of the encoder (headless, ALSA output, SIMD-accelerated; same DSP, no GUI) shipped as Debian/Ubuntu packages
+- **Remote control**: an embedded, default-off REST API + web dashboard for local or remote operation (see below)
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
 - **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
@@ -75,6 +76,15 @@ See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
 - **Processed-audio output mode** (Settings - Output Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
 - Scopes, spectrum, levels, sticky peaks, and live monitoring views
 - Config persisted to `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
+
+## Remote control
+
+An embedded, default-off **REST API + web dashboard** (`[CONTROL]` in the
+INI, or the GUI Settings tab) controls the encoder locally or remotely:
+transport, live meters, RDS text/TA, sound presets, and every INI setting
+with live-apply where the engine supports it. Localhost needs no
+authentication; any wider bind requires an API key. See the
+[user manual](docs/manual.md#remote-control-rest-api--web-dashboard).
 
 ## Output modes
 
@@ -101,7 +111,10 @@ listening aid, not the on-air signal.
 
 ## Requirements
 
-- macOS 15+
+- macOS 15+ (primary platform). An experimental **Linux command-line port**
+  of the encoder (headless `--nogui` into an ALSA device, verifier, benchmark;
+  no GUI, no Meter) builds from the same source tree -- see
+  [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only).
 - **Platform support tiers:** **Apple Silicon (arm64) is Tier 1** — the primary, fully-supported target. **Intel (x86_64) is Tier 2, best-effort** — the universal binary runs and the audio chain is identical, but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first; Intel gets lighter-weight fallbacks where they help but is not the optimization priority.
 - Xcode command line tools / Swift 6 toolchain (only needed for building from source — download the DMG below if you just want to run it)
 - **Audio output device — depends on the output mode (see above):**
@@ -121,6 +134,13 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 **[github.com/bkram/MPXPrime/releases](https://github.com/bkram/MPXPrime/releases)**
 
 Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) — install whichever you need.
+
+**Linux (encoder only):** the same releases attach Debian/Ubuntu packages
+`mpxprime_<version>-ubuntu24.04_amd64.deb` and `...-ubuntu26.04_amd64.deb`.
+Install with `sudo dpkg -i mpxprime_*.deb` (or `sudo apt install ./mpxprime_*.deb`
+to pull dependencies); it provides the headless encoder as a `mpxprime`
+systemd service with the web dashboard. This is the CLI encoder only — no GUI,
+no Meter. See [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
 
 ### First-launch security note
 

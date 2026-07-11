@@ -11,9 +11,10 @@ the [Download](../README.md#download) section of the README.
 - For running the **test suite**: a full Xcode install (the Command Line Tools
   do not ship `Testing.framework`)
 
-The package is a Swift Package Manager project rooted at `macOS/`. The only
-SwiftPM dependency is `swift-atomics`. Building the **`MPXPrime`** encoder needs
-nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
+The package is a Swift Package Manager project rooted at `macOS/`. Its SwiftPM
+dependencies are `swift-atomics` and `hummingbird` (2.x, pulling in SwiftNIO --
+the embedded remote-control REST server, compiled into `MPXPrime` on both
+platforms). Building the **`MPXPrime`** encoder needs nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
 Homebrew SDR libraries its in-process tuner links — `brew install librtlsdr
 liquid-dsp` — and, optionally, the SDRplay API SDK (installed under
 `/Library/SDRplayAPI/`) to compile the SDRplay RSP backend; without the SDK the
@@ -76,6 +77,100 @@ Meter and launches it:
 The in-process SDR (RTL-SDR / SDRplay) is GUI-only; the headless dashboard takes
 an audio device (`--device`) or a composite on stdin (`--stdin`). See the
 [Meter manual](manual-meter.md) for the full control surface.
+
+## Linux (CLI-only)
+
+The encoder also builds and runs on Linux as a **command-line-only** port
+(experimental; dev-tested on Ubuntu 24.04 x86_64). The GUI, the MPX Prime
+Meter, and the SDR tuner remain macOS-only. Everything the headless encoder
+offers works: `--nogui` live encoding into an ALSA device, all `--verify*`
+modes, `--capture-baseline`, and `--bench`.
+
+Install the toolchain and dependencies:
+
+```bash
+sudo apt install -y build-essential curl pkg-config binutils libc6-dev \
+  libcurl4-openssl-dev libedit2 libgcc-13-dev libpython3-dev libsqlite3-0 \
+  libstdc++-13-dev libxml2-dev libz3-dev tzdata unzip zlib1g-dev \
+  libasound2-dev alsa-utils
+# Swift 6 via swiftly (the official toolchain manager):
+curl -O "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+tar zxf "swiftly-$(uname -m).tar.gz" && ./swiftly init
+swiftly install latest
+```
+
+Build, verify, and test exactly as on macOS, except no `DEVELOPER_DIR`
+override is needed (the Linux toolchain ships Testing.framework):
+
+```bash
+swift build --package-path macOS -c release
+swift test --package-path macOS
+macOS/.build/release/MPXPrime --verify --seconds 5
+macOS/.build/release/MPXPrime --nogui --config /path/to/config.ini
+```
+
+Linux specifics:
+
+- **Devices are ALSA PCM names.** The `input_device_uid` / `output_device_uid`
+  INI keys hold ALSA device strings (`default`, `hw:0,0`,
+  `plughw:CARD=Loopback,DEV=0`) instead of CoreAudio UIDs; empty means
+  `default`. List devices with `aplay -l` / `arecord -l`. A `hw:` device must
+  support the configured `sample_rate` natively or start-up fails with a clear
+  error; `plughw:`/`default` let alsa-lib convert (with an SRC warning printed).
+  Your user must be in the `audio` group.
+- **Default config path** is `~/.local/share/MPX Prime Studio/MPX Prime
+  Studio.ini` (the XDG mapping of Application Support).
+- **Real-time scheduling** is best-effort: the audio threads request
+  SCHED_FIFO and silently fall back if the rtprio rlimit forbids it
+  (`ulimit -r`; configure `/etc/security/limits.d/` for production use).
+  Xrun counts are printed at stop.
+- **Per-platform strict baseline.** Apple and Glibc libm (and vvtanhf vs the
+  scalar tanh shim) differ at rounding level, so Linux pins its own
+  `--baseline-strict` file, `macOS/verifier_baselines/default-linux-x86_64.json`
+  (`default.json` stays macOS-only). The physical `--verify` thresholds are
+  identical on both platforms.
+- **Loopback smoke test** without audio hardware: `sudo modprobe snd-aloop`,
+  point `output_device_uid` at `hw:Loopback,0,0`, run the encoder with
+  `source_mode = tone`, and capture the composite from the other end:
+  `arecord -D hw:Loopback,1,0 -f FLOAT_LE -r 192000 -c 2 -d 8 capture.wav`.
+  The pilot (19 kHz, 8 percent) and RDS sidebands (around a suppressed 57 kHz
+  carrier) should be visible in any spectrum tool.
+
+### Debian/Ubuntu package
+
+`./build-deb.sh <version> [distro-label]` builds `mpxprime_<ver>_amd64.deb`
+from a release build (`swift build --package-path macOS -c release
+--product MPXPrime --static-swift-stdlib` first -- the Swift runtime is
+linked statically; remaining system deps are computed by dpkg-shlibdeps).
+The package installs `/usr/bin/mpxprime` (+ the web-dashboard resource
+bundle), a `mpxprime.service` systemd unit (dedicated `mpxprime` system
+user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`,
+created with defaults on first run; `LimitRTPRIO` grants the audio threads
+real-time scheduling), the sample INI, and the docs. Enable with
+`systemctl enable --now mpxprime`. Release tags build and attach debs for
+Ubuntu 24.04 and 26.04 automatically (`.github/workflows/release.yml`).
+
+Internals: the `MPXPrimeAcceleration` target supplies same-name implementations
+of the small vDSP/vForce surface the encoder uses (plus an
+`OSAllocatedUnfairLock` polyfill) on platforms without Accelerate -- on macOS it
+compiles to an empty module and the real Accelerate is used, so macOS numerics
+are untouched. The hot paths (`vDSP_dotpr`/`vDSP_conv`/`vvtanhf`) are
+vectorized with portable Swift SIMD (SSE2 on x86-64 baseline; no AVX
+required) -- this is what lets the full chain (FIR multiband crossovers +
+16x composite clipper) run in real time on small CPUs like the Celeron
+J4105 (~92% of a core at 192 kHz, zero xruns; the scalar versions were
+~102% and starved). The shim is pinned against real Accelerate by a golden
+fixture plus SIMD accuracy tests (`AccelerateShimTests`; regenerate the
+fixture on macOS with `MPXPRIME_CAPTURE_GOLDEN=1`). The ALSA engine lives
+in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
+
+## Remote control server
+
+`--control` (alias: `--web`) / `--control-port N` enable the REST API + web dashboard for a
+headless run (or set `[CONTROL] control_enabled = True`). See the user
+manual's "Remote control" section for endpoints and the security model. `./run-build-web.sh`
+(repo root, macOS + Linux) builds the release binary and runs it headless
+with the dashboard in one step.
 
 ## Offline verification
 
@@ -141,7 +236,7 @@ The project ships a `.swiftlint.yml` that runs only
 Build a universal release app bundle and DMG:
 
 ```bash
-./build-release.sh 0.40
+./build-release.sh 0.41
 ```
 
 Artifacts are written to `macOS/dist/`.

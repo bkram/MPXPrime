@@ -1,3 +1,6 @@
+// macOS-only (CoreAudio device enumeration): the Linux CLI build excludes this file.
+#if os(macOS)
+
 import CoreAudio
 import Foundation
 
@@ -285,3 +288,5 @@ public enum AudioDevices {
         return currentNominalSampleRate(deviceID: deviceID)
     }
 }
+
+#endif  // os(macOS)

@@ -1,4 +1,8 @@
+#if canImport(Accelerate)
 import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 import Foundation
 
 // Measurement-grade DSP building blocks for the MPX Prime Meter analysis

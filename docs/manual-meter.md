@@ -12,6 +12,10 @@ validate a chain.
 > Meter.** The MPX Prime Studio *encoder* runs on macOS and Linux; the Meter
 > does not. To analyze a signal from a Linux box, capture it on a Mac running
 > the Meter.
+>
+> The Meter also has **no REST API or web interface** — the remote-control
+> REST API + web dashboard is an encoder (MPX Prime Studio) feature. The
+> Meter is driven from its own window, or the headless terminal modes below.
 
 For the encoder, see the [MPX Prime Studio manual](manual.md). For a project
 overview see the [README](../README.md); to build from source see

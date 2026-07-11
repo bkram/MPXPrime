@@ -233,19 +233,20 @@ extension ALSAAudioEngine: ControlledEngine {
     var controlMeters: ControlMeters? {
         let peaks = peakMeters
         let xruns = xrunCounts
+        let state = fullMeterState
         return ControlMeters(
             inputLeftPeak: peaks.inputL,
             inputRightPeak: peaks.inputR,
             outputPeak: peaks.output,
-            deviationKHzPeak: nil,
-            agcGainDB: nil,
-            compositeClipperGainReductionDB: nil,
-            preEncodeLimiterGainReductionDB: nil,
-            safetyLimiterGainReductionDB: nil,
-            pilotInjectionPercent: nil,
-            rdsInjectionPercent: nil,
-            compositeBudgetMarginDB: nil,
-            compositeOverBudget: nil,
+            deviationKHzPeak: state.deviationKHzPeak,
+            agcGainDB: state.agcGainDB,
+            compositeClipperGainReductionDB: state.clipperGRDB,
+            preEncodeLimiterGainReductionDB: state.preEncodeGRDB,
+            safetyLimiterGainReductionDB: state.safetyGRDB,
+            pilotInjectionPercent: state.pilotPercent,
+            rdsInjectionPercent: state.rdsPercent,
+            compositeBudgetMarginDB: state.budgetMarginDB,
+            compositeOverBudget: state.overBudget,
             stereoCorrelation: nil,
             renderXruns: xruns.render,
             captureXruns: xruns.capture

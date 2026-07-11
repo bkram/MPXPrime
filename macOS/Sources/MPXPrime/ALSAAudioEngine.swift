@@ -197,6 +197,19 @@ private func applyRealtimeThreadPriority(_ priority: Int32) {
     _ = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param)
 }
 
+/// Snapshot of the Linux engine's meters for the control API.
+struct ALSAMeterState {
+    var agcGainDB: Float = 0
+    var preEncodeGRDB: Float = 0
+    var clipperGRDB: Float = 0
+    var safetyGRDB: Float = 0
+    var pilotPercent: Float = 0
+    var rdsPercent: Float = 0
+    var budgetMarginDB: Float = 0
+    var overBudget = false
+    var deviationKHzPeak: Float = 0
+}
+
 final class ALSAAudioEngine: @unchecked Sendable {
     private let generator: MPXGenerator
     private let outputMode: AudioOutputMode
@@ -233,6 +246,12 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private var meterInputLeftPeak: Float = 0
     private var meterInputRightPeak: Float = 0
     private var meterOutputPeak: Float = 0
+    // Full meter set, read from the generator's thread-safe status
+    // accessors on the render thread (same pattern as the macOS engine's
+    // updateOutputMeters) every few periods.
+    private var meterState = ALSAMeterState()
+    private var meterPeriodCounter = 0
+    private var targetDeviationKHz: Float = 75.0
 
     /// Line output calibration (dBFS at 100% modulation -> linear), applied
     /// during the interleave/convert step after peak metering. Render-thread
@@ -262,6 +281,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
         self.sampleRate = config.sampleRate
         self.useInputSource = config.sourceMode.lowercased() == "input"
         self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
+        self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
         let inputUID = config.inputDeviceUID ?? ""
         let outputUID = config.outputDeviceUID ?? ""
         self.inputDeviceName = inputUID.isEmpty ? "default" : inputUID
@@ -418,6 +438,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
                 if outputMode == .mpxComposite {
                     lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
                 }
+                targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
                 // Source flip is honoured only when the capture path exists
                 // (capture PCM is opened at start; adding one mid-run is a
                 // restart-class change on Linux).
@@ -458,6 +479,40 @@ final class ALSAAudioEngine: @unchecked Sendable {
             meterOutputPeak = outPeak
             meterLock.unlock()
         }
+    }
+
+    /// Read the generator's meter surface (the exact accessors the macOS
+    /// engine uses) every 4th period (~43 ms) and publish under the meter
+    /// lock. Runs on the render thread; the accessors are render-thread
+    /// state reads by design.
+    private func publishGeneratorMetersIfDue() {
+        meterPeriodCounter += 1
+        if meterPeriodCounter < 4 { return }
+        meterPeriodCounter = 0
+        let agc = generator.agcStatus
+        let limiter = generator.finalLimiterStatus
+        let cal = generator.compositeCalibrationStatus
+        var state = ALSAMeterState()
+        state.agcGainDB = agc.gainDB
+        state.preEncodeGRDB = limiter.preEncodeGainReductionDB
+        state.clipperGRDB = limiter.gainReductionDB
+        state.safetyGRDB = limiter.safetyGainReductionDB
+        state.pilotPercent = cal.pilotPercent
+        state.rdsPercent = cal.rdsPercent
+        state.budgetMarginDB = cal.budgetMarginDB
+        state.overBudget = cal.overBudget
+        if meterLock.lockIfAvailable() {
+            state.deviationKHzPeak = meterOutputPeak * targetDeviationKHz
+            meterState = state
+            meterLock.unlock()
+        }
+    }
+
+    /// Full meter snapshot for the control API.
+    var fullMeterState: ALSAMeterState {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return meterState
     }
 
     @inline(__always)
@@ -538,6 +593,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
                 }
             }
             publishPeaks(frames: frames)
+            publishGeneratorMetersIfDue()
             if !writePeriod(out) { break }
         }
     }

@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Linux: full meter parity on the dashboard.** The ALSA engine now reads
+  the generator's meter surface (AGC gain, pre-encode/composite/safety
+  gain reduction, pilot/RDS injection %, composite budget margin,
+  over-budget flag) every ~43 ms on the render thread -- the same
+  accessors the macOS engine uses -- plus a deviation readout derived from
+  the composite peak. The web Monitoring page previously showed dashes for
+  everything except peaks and xruns on Linux.
+
 - **MPX line output calibratable in dBFS** (`mpx_line_output_dbfs`, [MPX],
   default 0.0 = the classic full-scale convention; GUI Processing > Core
   "Line Output", web dashboard, live-apply). Sets the absolute converter

@@ -264,9 +264,14 @@ final class ALSAAudioEngine: @unchecked Sendable {
 
     func start() throws {
         let rate = Int(sampleRate)
+        // Deep buffers by design: this is a transmitter, not an interactive
+        // path -- latency is irrelevant, underruns are on-air dropouts. Raw
+        // hw: devices grant the request exactly (a 512x4 request = 10.7 ms
+        // at 192k, which xrun-stormed on a 92%-loaded small CPU without RT
+        // scheduling); 2048x8 = ~85 ms of scheduling slack.
         let out = try ALSAPCM(
             device: outputDeviceName, stream: SND_PCM_STREAM_PLAYBACK,
-            rate: rate, wantChannels: 2, wantPeriod: 512, wantPeriods: 4)
+            rate: rate, wantChannels: 2, wantPeriod: 2048, wantPeriods: 8)
         output = out
         fputs(
             "[ALSA] output '\(out.device)': \(out.formatName) \(out.channels)ch "
@@ -284,7 +289,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
         if useInputSource {
             let inp = try ALSAPCM(
                 device: inputDeviceName, stream: SND_PCM_STREAM_CAPTURE,
-                rate: rate, wantChannels: 2, wantPeriod: 512, wantPeriods: 4)
+                rate: rate, wantChannels: 2, wantPeriod: 2048, wantPeriods: 8)
             input = inp
             fputs(
                 "[ALSA] input '\(inp.device)': \(inp.formatName) \(inp.channels)ch "

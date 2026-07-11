@@ -11,6 +11,15 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Linux: deep ALSA buffers (fixes chopped output on raw hw: devices).**
+  The engine now requests 2048-frame periods x 8 (~85 ms at 192 kHz)
+  instead of 512 x 4 (~10.7 ms). Plug-layer devices always granted larger
+  buffers, but a raw hw: device grants the request exactly -- 10.7 ms of
+  slack on a heavily loaded small CPU without RT scheduling produced a
+  constant xrun storm (audible as chopped/garbled MPX). A transmitter has
+  no latency requirement; measured on the J4105 driving a 192 kHz USB
+  interface (hw:) the storm went from ~28k xruns to zero.
+
 - **Linux: SIMD shim (full processing parity now fits small x86 CPUs).**
   The MPXPrimeAcceleration fallbacks for `vDSP_dotpr` / `vDSP_conv` (FIR
   crossovers, encoder FIR, decimators) and `vvtanhf` (oversampled clippers)

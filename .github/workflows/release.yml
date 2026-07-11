@@ -49,6 +49,12 @@ jobs:
           - runner: ubuntu-26.04
             label: ubuntu-26.04
     runs-on: ${{ matrix.runner }}
+    # Ubuntu 26.04 is allowed to fail until Swift.org ships a 26.04 toolchain
+    # (swiftly currently reports "Unsupported Linux platform" there). The leg
+    # auto-activates once support lands; until then the release still ships
+    # the 24.04 deb (static Swift stdlib -- installs and runs on 26.04 too)
+    # and the macOS DMG. fail-fast:false keeps 24.04 independent.
+    continue-on-error: ${{ matrix.label == 'ubuntu-26.04' }}
     permissions:
       contents: write
     steps:

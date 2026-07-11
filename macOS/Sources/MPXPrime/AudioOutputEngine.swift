@@ -115,6 +115,10 @@ final class AudioOutputEngine {
     private var forcedOutputRate: (deviceID: AudioDeviceID, priorRate: Double)?
     private let outputMode: AudioOutputMode
     private var targetDeviationKHz: Float
+    /// Line output calibration: linear scale applied to the composite at the
+    /// DAC write, after every meter/scope capture (those stay in the
+    /// 0 dBFS = 100% modulation domain). Render-thread only after start.
+    private var lineOutputScale: Float
     private var configuredRenderSampleRate: Double = 0.0
     private var inputRing: StereoInputRingBuffer?
     private var configuredInputSampleRate: Double?
@@ -237,6 +241,7 @@ final class AudioOutputEngine {
         self.requestedOutputDeviceID = outputDeviceID
         self.outputMode = outputMode
         self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
+        self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
         self.encoderFIREnabled = config.encoderFIREnabled
         self.multibandFIREnabled = config.multibandFIREnabled
     }
@@ -564,6 +569,15 @@ final class AudioOutputEngine {
                     if captureInputScope, !self.useInputSource {
                         self.updateInputScopeSnapshot(
                             left: leftData, right: rightData, frameCount: frames)
+                    }
+                    // Line output calibration: the LAST operation before the
+                    // DAC, after meters/scopes captured the composite-domain
+                    // signal. Exact 1.0 (the 0 dBFS default) is skipped, so
+                    // the historical path stays bit-identical.
+                    if self.outputMode == .mpxComposite, self.lineOutputScale != 1.0 {
+                        var scale = self.lineOutputScale
+                        vDSP_vsmul(leftData, 1, &scale, leftData, 1, vDSP_Length(frames))
+                        vDSP_vsmul(rightData, 1, &scale, rightData, 1, vDSP_Length(frames))
                     }
                 }
                 return noErr
@@ -1512,6 +1526,7 @@ final class AudioOutputEngine {
         if let runtime {
             generator.applyRuntimeConfig(runtime)
             targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
+            lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
             // Flip the source-mode branch live. The render callback
             // reads `useInputSource` at the start of each block; this
             // write lands within ~one block of the toggle on the GUI.

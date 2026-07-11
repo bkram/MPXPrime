@@ -7103,6 +7103,15 @@ private struct ProcessingCoreTab: View {
                     ? "Output level trim for the processed stereo L/R feed. The pre-encode limiter ceiling is normalized to ~0 dBFS at 0 dB; lower it to match your external coder's input reference, raise it for a hotter feed."
                     : "Final post-chain gain trim on the composite output before the audio device. Use for calibration into the exciter's MPX input — set so the exciter's deviation meter reads the licensed peak. Doesn't add loudness; the chain already drives the composite to 100% modulation."
             )
+            if !model.processedAudioOutputActive {
+                DoubleSliderRow(
+                    title: "Line Output",
+                    value: model.configBinding(\.mpxLineOutputDBFS, runtimeDisposition: .live),
+                    range: -40...0,
+                    format: "%.1f dBFS",
+                    tooltip: "Absolute DAC level of 100% modulation (75 kHz deviation) -- calibrate to the exciter's input sensitivity. Applied at the converter AFTER all processing and metering: deviation readouts and the composite budget are unaffected. Keep the OS/interface volume at 0 dB and set the level here. 0.0 dBFS is the classic full-scale convention."
+                )
+            }
             Text(model.processedAudioOutputActive
                 ? "Output Level sets the processed stereo line level into your external coder."
                 : "Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")

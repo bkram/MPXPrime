@@ -11,6 +11,15 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **MPX line output calibratable in dBFS** (`mpx_line_output_dbfs`, [MPX],
+  default 0.0 = the classic full-scale convention; GUI Processing > Core
+  "Line Output", web dashboard, live-apply). Sets the absolute converter
+  level of 100% modulation (75 kHz) so exciter drive is calibrated in
+  software with the OS/interface mixer at 0 dB. Applied at the DAC write on
+  both platforms AFTER all processing and metering -- deviation readouts and
+  the composite budget are unaffected; the default is bit-identical to the
+  previous behavior.
+
 - **Linux: deep ALSA buffers (fixes chopped output on raw hw: devices).**
   The engine now requests 2048-frame periods x 8 (~85 ms at 192 kHz)
   instead of 512 x 4 (~10.7 ms). Plug-layer devices always granted larger

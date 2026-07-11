@@ -234,6 +234,11 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private var meterInputRightPeak: Float = 0
     private var meterOutputPeak: Float = 0
 
+    /// Line output calibration (dBFS at 100% modulation -> linear), applied
+    /// during the interleave/convert step after peak metering. Render-thread
+    /// only after start; updated via the pending-config hand-off.
+    private var lineOutputScale: Float
+
     // Ring prime/regulate depths (same policy as the macOS engine, derived
     // from the period size at start()).
     private var inputPrefillFrames = 0
@@ -256,6 +261,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
         self.outputMode = outputMode
         self.sampleRate = config.sampleRate
         self.useInputSource = config.sourceMode.lowercased() == "input"
+        self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
         let inputUID = config.inputDeviceUID ?? ""
         let outputUID = config.outputDeviceUID ?? ""
         self.inputDeviceName = inputUID.isEmpty ? "default" : inputUID
@@ -409,6 +415,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
             runtimeConfigLock.unlock()
             if let runtime {
                 generator.applyRuntimeConfig(runtime)
+                if outputMode == .mpxComposite {
+                    lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
+                }
                 // Source flip is honoured only when the capture path exists
                 // (capture PCM is opened at start; adding one mid-run is a
                 // restart-class change on Linux).
@@ -551,22 +560,26 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private func writePeriod(_ out: ALSAPCM) -> Bool {
         let frames = out.periodFrames
         let ch = out.channels
+        // Line output calibration folds into the DAC conversion (peaks were
+        // already published in the composite domain).
+        let line = outputMode == .mpxComposite ? lineOutputScale : 1.0
         switch out.format {
         case SND_PCM_FORMAT_FLOAT_LE:
             for i in 0..<frames {
                 if ch == 2 {
-                    out.floatBuf[2 * i] = renderLeft[i]
-                    out.floatBuf[2 * i + 1] = renderRight[i]
+                    out.floatBuf[2 * i] = renderLeft[i] * line
+                    out.floatBuf[2 * i + 1] = renderRight[i] * line
                 } else {
-                    out.floatBuf[i] = renderLeft[i]
+                    out.floatBuf[i] = renderLeft[i] * line
                 }
             }
             return writeInterleaved(out, out.floatBuf, frames)
         case SND_PCM_FORMAT_S32_LE:
+            let scale = 2_147_483_520.0 * Double(line)
             for i in 0..<frames {
-                let l = Int32(max(-1.0, min(1.0, renderLeft[i])) * 2_147_483_520.0)
+                let l = Int32(Double(max(-1.0, min(1.0, renderLeft[i]))) * scale)
                 if ch == 2 {
-                    let r = Int32(max(-1.0, min(1.0, renderRight[i])) * 2_147_483_520.0)
+                    let r = Int32(Double(max(-1.0, min(1.0, renderRight[i]))) * scale)
                     out.int32Buf[2 * i] = l
                     out.int32Buf[2 * i + 1] = r
                 } else {
@@ -575,10 +588,11 @@ final class ALSAAudioEngine: @unchecked Sendable {
             }
             return writeInterleaved(out, out.int32Buf, frames)
         default:
+            let scale = 32_767.0 * Double(line)
             for i in 0..<frames {
-                let l = Int16(max(-1.0, min(1.0, renderLeft[i])) * 32_767.0)
+                let l = Int16(Double(max(-1.0, min(1.0, renderLeft[i]))) * scale)
                 if ch == 2 {
-                    let r = Int16(max(-1.0, min(1.0, renderRight[i])) * 32_767.0)
+                    let r = Int16(Double(max(-1.0, min(1.0, renderRight[i]))) * scale)
                     out.int16Buf[2 * i] = l
                     out.int16Buf[2 * i + 1] = r
                 } else {

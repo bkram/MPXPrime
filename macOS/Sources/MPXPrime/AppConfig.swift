@@ -143,6 +143,12 @@ struct AppConfig: Equatable {
     var monoMode: Bool = false
     var inputGainDB: Double = 0.0
     var outputGainDB: Double = 0.0
+    /// Absolute DAC level of 100% modulation (75 kHz deviation), in dBFS.
+    /// 0.0 keeps the historical convention (full scale = 100% mod); negative
+    /// values calibrate the line output to an exciter's input sensitivity.
+    /// Applied at the DAC write, AFTER all composite math -- deviation
+    /// metering and the composite budget stay in the 0 dBFS = 100% domain.
+    var mpxLineOutputDBFS: Double = 0.0
     var finalDriveDB: Double = 6.0
     var finalStagePresetID: String = "balanced"
     // Top-level "Station Format" profile that atomically applies a coherent
@@ -503,6 +509,9 @@ struct AppConfig: Equatable {
         cfg.monoMode = mpx.bool("mono_mode", defaultValue: cfg.monoMode)
         cfg.inputGainDB = mpx.double("input_gain_db", defaultValue: cfg.inputGainDB)
         cfg.outputGainDB = mpx.double("output_gain_db", defaultValue: cfg.outputGainDB)
+        cfg.mpxLineOutputDBFS = max(
+            -60.0,
+            min(0.0, mpx.double("mpx_line_output_dbfs", defaultValue: cfg.mpxLineOutputDBFS)))
         cfg.finalDriveDB = mpx.double("final_drive_db", defaultValue: cfg.finalDriveDB)
         cfg.finalStagePresetID = mpx.string("final_stage_preset_id", defaultValue: cfg.finalStagePresetID)
         cfg.formatProfileID = mpx.string("format_profile_id", defaultValue: cfg.formatProfileID)
@@ -1101,6 +1110,7 @@ struct AppConfig: Equatable {
             "program_lowpass_hz = \(Self.formatFloat(programLowpassHz))",
             "input_gain_db = \(Self.formatFloat(inputGainDB))",
             "output_gain_db = \(Self.formatFloat(outputGainDB))",
+            "mpx_line_output_dbfs = \(Self.formatFloat(mpxLineOutputDBFS))",
             "final_drive_db = \(Self.formatFloat(finalDriveDB))",
             "final_stage_preset_id = \(finalStagePresetID)",
             "format_profile_id = \(formatProfileID)",

@@ -61,6 +61,20 @@ struct ConfigPatchTests {
         #expect(planes.restartRequired)
     }
 
+    @Test func lineOutputClassifiesLiveAndClamps() throws {
+        // The dBFS line output must hot-apply (it rides RuntimeConfig to the
+        // engines' DAC write) and clamp to the -60..0 validation range.
+        let cfg = baseConfig()
+        let (patched, outcomes, planes) = try ConfigPatch.apply(
+            ["mpx_line_output_dbfs": "-12.0"], to: cfg)
+        #expect(abs(patched.mpxLineOutputDBFS - (-12.0)) < 1e-9)
+        #expect(outcomes[0].disposition == .live)
+        #expect(planes.dspLive)
+        let (clamped, _, _) = try ConfigPatch.apply(
+            ["mpx_line_output_dbfs": "6.0"], to: cfg)
+        #expect(clamped.mpxLineOutputDBFS == 0.0)
+    }
+
     @Test func sampleRateClassifiesRestart() throws {
         let cfg = baseConfig()
         let (patched, outcomes, planes) = try ConfigPatch.apply(

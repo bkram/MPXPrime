@@ -564,6 +564,22 @@ The now-playing script integration (see RDS) keeps working alongside the
 API; automation systems that only need RT/PS updates can use `PUT /api/rds`
 instead of a polling script.
 
+### MPX line output calibration (dBFS)
+
+`mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..0, live-apply; GUI:
+Processing > Core > "Line Output"; also on the web dashboard) sets the
+ABSOLUTE converter level of 100% modulation: at `-12.0`, a 75 kHz-deviation
+composite peaks at -12 dBFS on the output interface. It is applied at the
+DAC write, after every processing stage and meter tap -- deviation readouts,
+the composite budget, and all internal levels keep the classic
+0 dBFS = 100% convention. Use it to match an exciter's input sensitivity
+once, in software: keep the operating system / interface output volume at
+0 dB (a mixer attenuation scales pilot and RDS injection along with the
+audio, and an accidental 0% mixer silences the transmitter -- calibrate
+here instead). `output_gain_db` remains the in-chain MPX level trim that
+participates in the composite budget; the line output is pure output-stage
+calibration.
+
 ## Offline verification
 
 MPX Prime Studio includes an offline MPX verification mode that renders deterministic test scenarios without opening audio devices.

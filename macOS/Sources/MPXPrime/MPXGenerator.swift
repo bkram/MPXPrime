@@ -5916,6 +5916,9 @@ final class MPXGenerator {
     struct RuntimeConfig: Equatable {
         let inputGainDB: Float
         let outputGainDB: Float
+        /// Line output calibration (dBFS at 100% modulation); consumed by
+        /// the audio engines at the DAC write, not by the generator.
+        let mpxLineOutputDBFS: Float
         let finalDriveDB: Float
         let widebandAGCEnabled: Bool
         let widebandAGCTargetDB: Float
@@ -6038,6 +6041,7 @@ final class MPXGenerator {
         RuntimeConfig(
             inputGainDB: Float(config.inputGainDB),
             outputGainDB: Float(config.outputGainDB),
+            mpxLineOutputDBFS: Float(config.mpxLineOutputDBFS),
             finalDriveDB: Float(config.finalDriveDB),
             widebandAGCEnabled: config.widebandAGCEnabled,
             widebandAGCTargetDB: Float(config.widebandAGCTargetDB),

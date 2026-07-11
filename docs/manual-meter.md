@@ -6,6 +6,13 @@ composite, decodes stereo + full RDS, and shows everything on one dashboard
 window. Use it to check your own air signal, compare against other stations, or
 validate a chain.
 
+> **Platform: macOS only.** The Meter is a native macOS app and is
+> **Apple-Silicon-only** (it statically links the arm64 RTL-SDR / SDRplay
+> tuner for in-process SDR). **There is no Linux or Intel build of the
+> Meter.** The MPX Prime Studio *encoder* runs on macOS and Linux; the Meter
+> does not. To analyze a signal from a Linux box, capture it on a Mac running
+> the Meter.
+
 For the encoder, see the [MPX Prime Studio manual](manual.md). For a project
 overview see the [README](../README.md); to build from source see
 [BUILDING.md](BUILDING.md); for the measurement-engine internals see

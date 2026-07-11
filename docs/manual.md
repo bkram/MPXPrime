@@ -1,10 +1,19 @@
 # MPX Prime Studio — User Manual
 
-Operation, configuration, and reference for running MPX Prime Studio. For a project overview see the [README](../README.md); to build from source see [BUILDING.md](BUILDING.md); for the DSP chain internals see [ARCHITECTURE.md](ARCHITECTURE.md).
+Operation, configuration, and reference for running MPX Prime Studio (the encoder). For a project overview see the [README](../README.md); to build from source see [BUILDING.md](BUILDING.md); for the DSP chain internals see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Platforms
+
+The encoder runs on two platforms with the **same DSP**; only the front end and audio backend differ:
+
+- **macOS** — the full **GUI application** (`MPX Prime Studio.app`), Core Audio, plus a headless `--nogui` mode. The companion **MPX Prime Meter** analyzer ships in the same DMG (macOS only — see its [manual](manual-meter.md)).
+- **Linux** — the **encoder only, headless** (`--nogui`, ALSA output, no GUI). Its interface is the built-in [web dashboard / REST API](#remote-control-rest-api--web-dashboard). Installed from the Debian/Ubuntu package as the `mpxprime` systemd service (config at `/var/lib/mpxprime/MPXPrime.ini`). **There is no GUI and no Meter on Linux.** Setup: [BUILDING.md → Linux (CLI-only)](BUILDING.md#linux-cli-only).
+
+Most of this manual (controls, RDS, config keys, presets) applies to both; where a control is GUI-only, Linux operators reach the equivalent through the web dashboard, which mirrors the GUI layout. Platform-specific differences (device names, config path) are flagged inline.
 
 ## Usage
 
-Launch MPX Prime Studio from `/Applications` (or wherever you copied it). On first run,
+**macOS.** Launch MPX Prime Studio from `/Applications` (or wherever you copied it). On first run,
 grant input access when macOS prompts — this is required to capture audio. Then
 pick your input and MPX output devices in the app and start the engine.
 
@@ -14,7 +23,16 @@ Command-line flags (run the binary inside the app bundle):
 "/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --nogui       # headless, no UI
 "/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --seconds 10  # run for a fixed time then exit
 "/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --config "/path/to/MPX Prime Studio.ini"
+"/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --web         # headless + web dashboard
 ```
+
+**Linux.** The package installs `/usr/bin/mpxprime` and runs it as a service:
+`sudo systemctl enable --now mpxprime`, then open `http://<host>:8737/` for the
+dashboard (see [Remote control](#remote-control-rest-api--web-dashboard) for
+the [CONTROL] settings and the API key needed for non-local access). To run it
+by hand: `mpxprime --nogui --config /var/lib/mpxprime/MPXPrime.ini`, or
+`mpxprime --web` for a headless run that also serves the dashboard. Devices are
+ALSA PCM names, not Core Audio devices.
 
 To build, run, verify, test, or package from source, see
 [docs/BUILDING.md](docs/BUILDING.md).

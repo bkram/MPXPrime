@@ -60,7 +60,8 @@ See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
 
 ## Features
 
-- Native macOS app built with Swift + SwiftUI + AppKit windowing
+- Native macOS app built with Swift + SwiftUI + AppKit windowing, plus an experimental **Linux command-line build** of the encoder (headless, ALSA output, SIMD-accelerated; same DSP, no GUI) shipped as Debian/Ubuntu packages
+- **Remote control**: an embedded, default-off REST API + web dashboard for local or remote operation (see below)
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
 - **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
@@ -133,6 +134,13 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 **[github.com/bkram/MPXPrime/releases](https://github.com/bkram/MPXPrime/releases)**
 
 Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) — install whichever you need.
+
+**Linux (encoder only):** the same releases attach Debian/Ubuntu packages
+`mpxprime_<version>-ubuntu24.04_amd64.deb` and `...-ubuntu26.04_amd64.deb`.
+Install with `sudo dpkg -i mpxprime_*.deb` (or `sudo apt install ./mpxprime_*.deb`
+to pull dependencies); it provides the headless encoder as a `mpxprime`
+systemd service with the web dashboard. This is the CLI encoder only — no GUI,
+no Meter. See [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
 
 ### First-launch security note
 

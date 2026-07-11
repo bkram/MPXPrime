@@ -11,9 +11,10 @@ the [Download](../README.md#download) section of the README.
 - For running the **test suite**: a full Xcode install (the Command Line Tools
   do not ship `Testing.framework`)
 
-The package is a Swift Package Manager project rooted at `macOS/`. The only
-SwiftPM dependency is `swift-atomics`. Building the **`MPXPrime`** encoder needs
-nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
+The package is a Swift Package Manager project rooted at `macOS/`. Its SwiftPM
+dependencies are `swift-atomics` and `hummingbird` (2.x, pulling in SwiftNIO --
+the embedded remote-control REST server, compiled into `MPXPrime` on both
+platforms). Building the **`MPXPrime`** encoder needs nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
 Homebrew SDR libraries its in-process tuner links — `brew install librtlsdr
 liquid-dsp` — and, optionally, the SDRplay API SDK (installed under
 `/Library/SDRplayAPI/`) to compile the SDRplay RSP backend; without the SDK the
@@ -235,7 +236,7 @@ The project ships a `.swiftlint.yml` that runs only
 Build a universal release app bundle and DMG:
 
 ```bash
-./build-release.sh 0.40
+./build-release.sh 0.41
 ```
 
 Artifacts are written to `macOS/dist/`.

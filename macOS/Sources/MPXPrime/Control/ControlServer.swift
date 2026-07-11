@@ -247,12 +247,33 @@ enum ControlServer {
 
     /// The embedded dashboard (SPM resource; falls back to a stub if the
     /// bundle is missing so the API never goes down with the UI).
+    ///
+    /// Deliberately avoids `Bundle.module` as the first resort: its
+    /// generated accessor calls fatalError when the resource bundle is
+    /// absent (e.g. a package that ships the bare binary), which would
+    /// take the ENCODER down over a missing web page. Resolve the bundle
+    /// manually relative to the executable first.
     static func dashboardHTML() -> String {
-        if let url = Bundle.module.url(
-            forResource: "WebUI/index", withExtension: "html"),
-            let html = try? String(contentsOf: url, encoding: .utf8) {
-            return html
+        let stub = "<!doctype html><title>MPX Prime</title><p>Dashboard resource missing; the REST API is available under /api/."
+        var candidates: [String] = []
+        if let exe = Bundle.main.executablePath {
+            let dir = (exe as NSString).deletingLastPathComponent
+            candidates.append(dir + "/MPXPrime_MPXPrime.resources/WebUI/index.html")
+            candidates.append(dir + "/MPXPrime_MPXPrime.bundle/WebUI/index.html")
         }
-        return "<!doctype html><title>MPX Prime</title><p>Dashboard resource missing; the REST API is available under /api/."
+        for path in candidates where FileManager.default.fileExists(atPath: path) {
+            if let html = try? String(contentsOfFile: path, encoding: .utf8) {
+                return html
+            }
+        }
+        // Fall back to Bundle.module only when a bundle is plausibly present
+        // (macOS app/SwiftPM layouts) -- guarded by the same existence check.
+        if candidates.isEmpty || candidates.contains(where: { FileManager.default.fileExists(atPath: ($0 as NSString).deletingLastPathComponent.replacingOccurrences(of: "/WebUI", with: "")) }) {
+            if let url = Bundle.module.url(forResource: "WebUI/index", withExtension: "html"),
+                let html = try? String(contentsOf: url, encoding: .utf8) {
+                return html
+            }
+        }
+        return stub
     }
 }

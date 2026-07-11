@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Linux: Debian/Ubuntu packages + systemd service.** `./build-deb.sh`
+  produces `mpxprime_<ver>_amd64.deb` (static Swift stdlib; system
+  dependencies computed by dpkg-shlibdeps): `/usr/bin/mpxprime` with the
+  web-dashboard resource bundle, a systemd unit running as a dedicated
+  `mpxprime` user (audio group, `/var/lib/mpxprime/MPXPrime.ini`,
+  LimitRTPRIO for real-time audio threads, auto-restart), sample config
+  and docs. Release tags now also build and attach Ubuntu 24.04 and
+  26.04 debs via the GitHub workflow (with a dpkg smoke-install +
+  `--verify` gate). The dashboard loader no longer fatals when the
+  resource bundle is missing next to the binary (bare-binary installs
+  serve a stub page instead of crashing the encoder).
+
 - **Linux: full meter parity on the dashboard.** The ALSA engine now reads
   the generator's meter surface (AGC gain, pre-encode/composite/safety
   gain reduction, pilot/RDS injection %, composite budget margin,

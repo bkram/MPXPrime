@@ -135,6 +135,20 @@ Linux specifics:
   The pilot (19 kHz, 8 percent) and RDS sidebands (around a suppressed 57 kHz
   carrier) should be visible in any spectrum tool.
 
+### Debian/Ubuntu package
+
+`./build-deb.sh <version> [distro-label]` builds `mpxprime_<ver>_amd64.deb`
+from a release build (`swift build --package-path macOS -c release
+--product MPXPrime --static-swift-stdlib` first -- the Swift runtime is
+linked statically; remaining system deps are computed by dpkg-shlibdeps).
+The package installs `/usr/bin/mpxprime` (+ the web-dashboard resource
+bundle), a `mpxprime.service` systemd unit (dedicated `mpxprime` system
+user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`,
+created with defaults on first run; `LimitRTPRIO` grants the audio threads
+real-time scheduling), the sample INI, and the docs. Enable with
+`systemctl enable --now mpxprime`. Release tags build and attach debs for
+Ubuntu 24.04 and 26.04 automatically (`.github/workflows/release.yml`).
+
 Internals: the `MPXPrimeAcceleration` target supplies same-name implementations
 of the small vDSP/vForce surface the encoder uses (plus an
 `OSAllocatedUnfairLock` polyfill) on platforms without Accelerate -- on macOS it

@@ -4,7 +4,7 @@ import Foundation
 // change detector (see Control/ConfigPatch.swift); must live on the
 // declaration for synthesis.
 struct AppConfig: Equatable {
-    static let appVersion: String = "0.41"
+    static let appVersion: String = "0.42"
 
     // Remote-control server ([CONTROL] section; server ships disabled).
     // control_bind other than 127.0.0.1 REQUIRES control_api_key

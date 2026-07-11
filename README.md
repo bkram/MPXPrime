@@ -1,6 +1,6 @@
 # MPX Prime Studio
 
-Version: 0.41
+Version: 0.42
 
 MPX Prime Studio is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
 

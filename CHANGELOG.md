@@ -11,6 +11,8 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+## 0.42 — 2026-07-11
+
 - **Linux: Debian/Ubuntu packages + systemd service.** `./build-deb.sh`
   produces `mpxprime_<ver>_amd64.deb` (static Swift stdlib; system
   dependencies computed by dpkg-shlibdeps): `/usr/bin/mpxprime` with the

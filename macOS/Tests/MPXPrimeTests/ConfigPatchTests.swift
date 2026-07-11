@@ -70,12 +70,15 @@ struct ConfigPatchTests {
         #expect(abs(patched.mpxLineOutputDBFS - (-12.0)) < 1e-9)
         #expect(outcomes[0].disposition == .live)
         #expect(planes.dspLive)
+        // Positive values are unphysical at a DAC (they only clip the
+        // composite and skew pilot/RDS upward -- observed in the field as
+        // "deviation good, pilot/RDS 3 dB high"); the load clamp caps at 0.
         let (plusSix, _, _) = try ConfigPatch.apply(
             ["mpx_line_output_dbfs": "6.0"], to: cfg)
-        #expect(plusSix.mpxLineOutputDBFS == 6.0)
-        let (clamped, _, _) = try ConfigPatch.apply(
-            ["mpx_line_output_dbfs": "7.5"], to: cfg)
-        #expect(clamped.mpxLineOutputDBFS == 6.0)
+        #expect(plusSix.mpxLineOutputDBFS == 0.0)
+        let (plusThree, _, _) = try ConfigPatch.apply(
+            ["mpx_line_output_dbfs": "3.0"], to: cfg)
+        #expect(plusThree.mpxLineOutputDBFS == 0.0)
     }
 
     @Test func sampleRateClassifiesRestart() throws {

@@ -15,12 +15,16 @@ combination test suite. Newest first.
   default 0.0 = the classic full-scale convention; GUI Processing > Core
   "Line Output", web dashboard, live-apply). Sets the absolute converter
   level of 100% modulation (75 kHz) so exciter drive is calibrated in
-  software with the OS/interface mixer at 0 dB. Range -40..+6 dBFS
-  (positive gain hard-clamps at full scale for exciters needing extra
-  drive). Applied at the DAC write on
-  both platforms AFTER all processing and metering -- deviation readouts and
-  the composite budget are unaffected; the default is bit-identical to the
-  previous behavior.
+  software with the OS/interface mixer at 0 dB. Range -40..0 dBFS:
+  attenuation only -- positive line gain is unphysical at a DAC (full
+  scale is the hardware ceiling, so it can only clip the composite and
+  lift pilot/RDS proportionally; field-verified as "deviation good,
+  pilot/RDS 3 dB high"). An under-driven exciter needs its
+  input-sensitivity trim instead. The DAC conversion paths
+  scale-then-clamp (also fixing an integer-overflow hazard). Applied at
+  the DAC write on both platforms AFTER all processing and metering --
+  deviation readouts and the composite budget are unaffected; the
+  default is bit-identical to the previous behavior.
 
 - **Linux: deep ALSA buffers (fixes chopped output on raw hw: devices).**
   The engine now requests 2048-frame periods x 8 (~85 ms at 192 kHz)

@@ -566,7 +566,7 @@ instead of a polling script.
 
 ### MPX line output calibration (dBFS)
 
-`mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..+6, live-apply; GUI:
+`mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..0, live-apply; GUI:
 Processing > Core > "Line Output"; also on the web dashboard) sets the
 ABSOLUTE converter level of 100% modulation: at `-12.0`, a 75 kHz-deviation
 composite peaks at -12 dBFS on the output interface. It is applied at the
@@ -578,10 +578,17 @@ once, in software: keep the operating system / interface output volume at
 audio, and an accidental 0% mixer silences the transmitter -- calibrate
 here instead). `output_gain_db` remains the in-chain MPX level trim that
 participates in the composite budget; the line output is pure output-stage
-calibration. Positive values (up to +6 dBFS) are allowed for exciters that
-need more drive, but the converter then clips any modulation peak within
-that margin of 100% -- the output is hard-clamped at full scale, so only go
-positive when your processing keeps peaks safely below the ceiling.
+calibration -- attenuation only. Positive line gain is deliberately not
+offered because it is unphysical at a DAC: full scale is the hardware
+ceiling, so "+3 dBFS" cannot raise the peak voltage your exciter sees.
+All it can do is lift everything below the clamp (pilot 8% becomes 11.3%,
+RDS likewise) and clip the summed composite during audio peaks --
+momentarily clipping pilot and RDS, which must stay constant-amplitude.
+The field symptom is characteristic: deviation looks right (peaks still
+stop at full scale) while pilot and RDS read ~3 dB high. If your exciter
+under-deviates with the line output at 0.0 dBFS, correct it on the analog
+side: trim the exciter's input sensitivity so full scale equals 75 kHz,
+and pilot/RDS return to their configured injection automatically.
 
 ## Offline verification
 

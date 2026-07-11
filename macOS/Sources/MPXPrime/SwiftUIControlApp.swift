@@ -7107,9 +7107,9 @@ private struct ProcessingCoreTab: View {
                 DoubleSliderRow(
                     title: "Line Output",
                     value: model.configBinding(\.mpxLineOutputDBFS, runtimeDisposition: .live),
-                    range: -40...6,
+                    range: -40...0,
                     format: "%.1f dBFS",
-                    tooltip: "Absolute DAC level of 100% modulation (75 kHz deviation) -- calibrate to the exciter's input sensitivity. Applied at the converter AFTER all processing and metering: deviation readouts and the composite budget are unaffected. Keep the OS/interface volume at 0 dB and set the level here. 0.0 dBFS is the classic full-scale convention. Above 0 dBFS the converter clips modulation peaks within that margin of 100% -- only use positive gain if your exciter needs the drive and your processing keeps peaks below the ceiling."
+                    tooltip: "Absolute DAC level of 100% modulation (75 kHz deviation) -- calibrate to the exciter's input sensitivity. Applied at the converter AFTER all processing and metering: deviation readouts and the composite budget are unaffected. Keep the OS/interface volume at 0 dB and set the level here. 0.0 dBFS is the classic full-scale convention. Values above 0 are impossible at a DAC -- they would only clip the composite and skew pilot/RDS upward; an under-driven exciter needs its input sensitivity trimmed instead."
                 )
             }
             Text(model.processedAudioOutputActive

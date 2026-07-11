@@ -578,6 +578,16 @@ final class AudioOutputEngine {
                         var scale = self.lineOutputScale
                         vDSP_vsmul(leftData, 1, &scale, leftData, 1, vDSP_Length(frames))
                         vDSP_vsmul(rightData, 1, &scale, rightData, 1, vDSP_Length(frames))
+                        if scale > 1.0 {
+                            // Positive line gain: anything within +X dB of
+                            // 100% modulation hits the converter ceiling --
+                            // clamp deterministically rather than leave it
+                            // to the DAC.
+                            var lo: Float = -1.0
+                            var hi: Float = 1.0
+                            vDSP_vclip(leftData, 1, &lo, &hi, leftData, 1, vDSP_Length(frames))
+                            vDSP_vclip(rightData, 1, &lo, &hi, rightData, 1, vDSP_Length(frames))
+                        }
                     }
                 }
                 return noErr

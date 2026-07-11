@@ -563,23 +563,29 @@ final class ALSAAudioEngine: @unchecked Sendable {
         // Line output calibration folds into the DAC conversion (peaks were
         // already published in the composite domain).
         let line = outputMode == .mpxComposite ? lineOutputScale : 1.0
+        // Scale FIRST, clamp to full scale AFTER: with positive line gain the
+        // pre-clamped value times the scale would overflow the integer
+        // formats (and send >FS floats to the DAC).
+        @inline(__always) func lined(_ v: Float) -> Float {
+            max(-1.0, min(1.0, v * line))
+        }
         switch out.format {
         case SND_PCM_FORMAT_FLOAT_LE:
             for i in 0..<frames {
                 if ch == 2 {
-                    out.floatBuf[2 * i] = renderLeft[i] * line
-                    out.floatBuf[2 * i + 1] = renderRight[i] * line
+                    out.floatBuf[2 * i] = lined(renderLeft[i])
+                    out.floatBuf[2 * i + 1] = lined(renderRight[i])
                 } else {
-                    out.floatBuf[i] = renderLeft[i] * line
+                    out.floatBuf[i] = lined(renderLeft[i])
                 }
             }
             return writeInterleaved(out, out.floatBuf, frames)
         case SND_PCM_FORMAT_S32_LE:
-            let scale = 2_147_483_520.0 * Double(line)
+            let scale: Double = 2_147_483_520.0
             for i in 0..<frames {
-                let l = Int32(Double(max(-1.0, min(1.0, renderLeft[i]))) * scale)
+                let l = Int32(Double(lined(renderLeft[i])) * scale)
                 if ch == 2 {
-                    let r = Int32(Double(max(-1.0, min(1.0, renderRight[i]))) * scale)
+                    let r = Int32(Double(lined(renderRight[i])) * scale)
                     out.int32Buf[2 * i] = l
                     out.int32Buf[2 * i + 1] = r
                 } else {
@@ -588,11 +594,11 @@ final class ALSAAudioEngine: @unchecked Sendable {
             }
             return writeInterleaved(out, out.int32Buf, frames)
         default:
-            let scale = 32_767.0 * Double(line)
+            let scale: Double = 32_767.0
             for i in 0..<frames {
-                let l = Int16(Double(max(-1.0, min(1.0, renderLeft[i]))) * scale)
+                let l = Int16(Double(lined(renderLeft[i])) * scale)
                 if ch == 2 {
-                    let r = Int16(Double(max(-1.0, min(1.0, renderRight[i]))) * scale)
+                    let r = Int16(Double(lined(renderRight[i])) * scale)
                     out.int16Buf[2 * i] = l
                     out.int16Buf[2 * i + 1] = r
                 } else {

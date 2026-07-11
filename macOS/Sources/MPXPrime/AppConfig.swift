@@ -511,7 +511,7 @@ struct AppConfig: Equatable {
         cfg.outputGainDB = mpx.double("output_gain_db", defaultValue: cfg.outputGainDB)
         cfg.mpxLineOutputDBFS = max(
             -60.0,
-            min(0.0, mpx.double("mpx_line_output_dbfs", defaultValue: cfg.mpxLineOutputDBFS)))
+            min(6.0, mpx.double("mpx_line_output_dbfs", defaultValue: cfg.mpxLineOutputDBFS)))
         cfg.finalDriveDB = mpx.double("final_drive_db", defaultValue: cfg.finalDriveDB)
         cfg.finalStagePresetID = mpx.string("final_stage_preset_id", defaultValue: cfg.finalStagePresetID)
         cfg.formatProfileID = mpx.string("format_profile_id", defaultValue: cfg.formatProfileID)

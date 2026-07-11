@@ -70,9 +70,12 @@ struct ConfigPatchTests {
         #expect(abs(patched.mpxLineOutputDBFS - (-12.0)) < 1e-9)
         #expect(outcomes[0].disposition == .live)
         #expect(planes.dspLive)
-        let (clamped, _, _) = try ConfigPatch.apply(
+        let (plusSix, _, _) = try ConfigPatch.apply(
             ["mpx_line_output_dbfs": "6.0"], to: cfg)
-        #expect(clamped.mpxLineOutputDBFS == 0.0)
+        #expect(plusSix.mpxLineOutputDBFS == 6.0)
+        let (clamped, _, _) = try ConfigPatch.apply(
+            ["mpx_line_output_dbfs": "7.5"], to: cfg)
+        #expect(clamped.mpxLineOutputDBFS == 6.0)
     }
 
     @Test func sampleRateClassifiesRestart() throws {

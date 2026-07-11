@@ -15,7 +15,9 @@ combination test suite. Newest first.
   default 0.0 = the classic full-scale convention; GUI Processing > Core
   "Line Output", web dashboard, live-apply). Sets the absolute converter
   level of 100% modulation (75 kHz) so exciter drive is calibrated in
-  software with the OS/interface mixer at 0 dB. Applied at the DAC write on
+  software with the OS/interface mixer at 0 dB. Range -40..+6 dBFS
+  (positive gain hard-clamps at full scale for exciters needing extra
+  drive). Applied at the DAC write on
   both platforms AFTER all processing and metering -- deviation readouts and
   the composite budget are unaffected; the default is bit-identical to the
   previous behavior.

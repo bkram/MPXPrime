@@ -2,13 +2,20 @@
 
 Version: 0.42
 
-MPX Prime Studio is a native macOS FM composite (MPX) generator written in Swift and SwiftUI. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends MPX plus optional decoded monitor audio to Core Audio devices.
+MPX Prime Studio is an FM composite (MPX) generator written in Swift. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends the MPX (plus optional decoded monitor audio) to the sound hardware.
 
-It runs a full broadcast-style processing chain — phase rotator, wideband AGC, 4-band parametric EQ, 3-/5-band multiband compressor, stereo widener, PrimeBass, bass and audio-band clippers, L/R pre-emphasis, pre-encode true-peak limiter, BS.412 power limiting, and an oversampled composite clipper — ahead of a pilot-locked stereo encoder, and keeps the pilot and RDS subcarriers out of all peak control (post-clipper injection).
+**It runs on two platforms:**
+
+- **macOS** — a native SwiftUI application: the **MPX Prime Studio** encoder plus its companion **MPX Prime Meter** analyzer, both shipped in one DMG (Core Audio, full GUI).
+- **Linux** — the **encoder** runs headless from the command line (ALSA output, no GUI), with the embedded REST API + **web dashboard** as its interface. SIMD-accelerated so the full chain runs in real time on low-power hardware (a fanless Celeron J4105 handles it); shipped as a Debian/Ubuntu package with a systemd service.
+
+The same DSP core drives both: a full broadcast-style processing chain — phase rotator, wideband AGC, 4-band parametric EQ, 3-/5-band multiband compressor, stereo widener, PrimeBass, bass and audio-band clippers, L/R pre-emphasis, pre-encode true-peak limiter, BS.412 power limiting, and an oversampled composite clipper — ahead of a pilot-locked stereo encoder, keeping the pilot and RDS subcarriers out of all peak control (post-clipper injection). The Linux build is bit-for-bit the same processing; only the audio backend and the front end differ.
 
 > **Intended use and status.** MPX Prime Studio is for **experimental, hobby, and small-budget broadcast** — community / LPFM stations, pirate and SDR-fed exciters, prosumer encoding, and study of FM signal processing. It implements core behavior from EN 50067 / IEC 62106 and common FM-stereo practice, but it is **experimental and not certified — no conformity or compliance is promised.** Do not rely on it for regulated production broadcast.
 
 ## App structure
+
+The macOS GUI is organised into these sections. The Linux build has no GUI — the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing, RDS, Interfaces, Test Tone), so the two front ends feel the same.
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
 - `Processing`: Overview, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), Expander, MB Limiter, Stereo Widener, PrimeBass, Bass Clipper, DC Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control and experimental multiband composite clipping on top of the soft-clipper), BS.412, Final Stage

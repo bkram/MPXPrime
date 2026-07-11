@@ -32,16 +32,38 @@ enable, all RT/PS/Long PS text. Only physical-layer settings
 (`rds_level`, Gaussian shaping FIR taps/BW) require a
 transport restart since they reconfigure the modulator.
 
-## Companion: MPX Prime Meter
+## MPX Prime Studio — the encoder (macOS + Linux)
 
-**MPX Prime Meter** is the receive/analyze counterpart that ships alongside
-the encoder in the same DMG (`MPX Prime Meter.app`). Where Studio *makes* the
-composite, the Meter *measures* it: feed it an MPX composite (a Core Audio
-input device, or a live station via an in-process RTL-SDR / SDRplay tuner) and
-it decodes stereo + full RDS and shows it on a single dashboard window. Its
-deviation, MPX-power, and SM.1268 readings were cross-validated against a
-Profline SFP-X measuring receiver (pilot / RDS matched exactly, peak deviation
-within the SM.1268 +/-2 kHz tolerance).
+Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
+
+- Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
+- **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
+- Optional RDS generation with pilot-locked 57 kHz subcarrier
+- Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
+- Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing (including 0.28 opt-in transient-aware attack + inter-band gain coupling)
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter with default-on look-ahead and Dolby HF-subband-aware detector — `US 5,579,404`, expired 2013 — for audibly cleaner HF transients and preserved LF punch), feeding the 16× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control and experimental default-off multiband composite clipping) with live clipper telemetry
+- Calibrated **MPX line output** in dBFS for repeatable exciter drive
+- TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
+- Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
+- Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
+- Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
+- Decoded MPX monitor output on a selectable monitor device
+- **Processed-audio output mode** (Settings - Output Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
+- Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; mirrored by the web dashboard)
+- **Remote control** — an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build
+- **Linux command-line build** (experimental): the encoder runs headless with ALSA output, SIMD-accelerated so the full chain fits low-power hardware; shipped as Debian/Ubuntu packages with a systemd service. No GUI, no Meter.
+- Config persisted to the INI (`~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` on macOS; `~/.local/share/...` or `/var/lib/mpxprime/` on Linux)
+
+## MPX Prime Meter — the analyzer (macOS only)
+
+The receive/analyze counterpart, shipped as `MPX Prime Meter.app` in the same
+DMG. Where Studio *makes* the composite, the Meter *measures* it: feed it an
+MPX composite (a Core Audio input device, or a live station via an in-process
+RTL-SDR / SDRplay tuner) and it decodes stereo + full RDS on one dashboard
+window. Its deviation, MPX-power, and SM.1268 readings were cross-validated
+against a Profline SFP-X measuring receiver (pilot / RDS matched exactly, peak
+deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
+(the SDR tuner is arm64) — there is no Linux or Intel Meter.**
 
 - Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope
 - MPX spectrum (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot,
@@ -59,30 +81,11 @@ within the SM.1268 +/-2 kHz tolerance).
 - Input: an audio device, or **in-process SDR** tuning (`Source -> SDR`) --
   **RTL-SDR** and **SDRplay RSP** (auto-preferred when present) are decoded by a
   linked-in tuner library (no helper process, no Homebrew for end users), just a
-  connected dongle (Apple Silicon). Frequency, IF bandwidth, gain / auto gain,
+  connected dongle. Frequency, IF bandwidth, gain / auto gain,
   LNA, antenna, Bias-T, PPM, and RTL AGC all retune **live** (no restart).
   Headless terminal modes also exist (`./run-meter.sh --device <n>` / `--stdin`)
 
 See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
-
-## Features
-
-- Native macOS app built with Swift + SwiftUI + AppKit windowing, plus an experimental **Linux command-line build** of the encoder (headless, ALSA output, SIMD-accelerated; same DSP, no GUI) shipped as Debian/Ubuntu packages
-- **Remote control**: an embedded, default-off REST API + web dashboard for local or remote operation (see below)
-- Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
-- **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
-- Optional RDS generation with pilot-locked 57 kHz subcarrier
-- Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
-- Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, stereo widener, and multiband processing (including 0.28 opt-in transient-aware attack + inter-band gain coupling)
-- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter with default-on look-ahead and Dolby HF-subband-aware detector — `US 5,579,404`, expired 2013 — for audibly cleaner HF transients and preserved LF punch), feeding the 16× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control and experimental default-off multiband composite clipping) with live clipper telemetry
-- TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
-- Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
-- Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
-- Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
-- Decoded MPX monitor output on a selectable monitor device
-- **Processed-audio output mode** (Settings - Output Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
-- Scopes, spectrum, levels, sticky peaks, and live monitoring views
-- Config persisted to `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 
 ## Remote control
 

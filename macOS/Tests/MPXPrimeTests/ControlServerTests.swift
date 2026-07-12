@@ -102,6 +102,12 @@ private actor MockBackend: ControlBackend {
         return ConfigApplyResult(outcomes: [], appliedLive: true, restartPending: false)
     }
 
+    func setNowPlaying(artist: String, title: String, display: String) -> Bool {
+        lastNowPlaying = (artist, title, display)
+        return config.enRDS
+    }
+    var lastNowPlaying: (artist: String, title: String, display: String)?
+
     func currentConfig() -> AppConfig { config }
 }
 
@@ -275,6 +281,29 @@ struct ControlServerTests {
             ) { response in
                 #expect(response.status == .badRequest)
             }
+        }
+    }
+
+    @Test func nowPlayingRouteReachesBackend() async throws {
+        let backend = MockBackend()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            let body = try JSONEncoder().encode(
+                NowPlayingRequest(artist: "Joe Bataan", title: "Rap-O Clap-O", display: nil))
+            try await client.execute(
+                uri: "/api/nowplaying", method: .post, body: ByteBuffer(bytes: Array(body))
+            ) { response in
+                #expect(response.status == .ok)
+                let r = try JSONDecoder().decode(
+                    NowPlayingResponse.self, from: Data(response.body.readableBytesView))
+                #expect(r.ok)
+            }
+            let np = await backend.lastNowPlaying
+            #expect(np?.artist == "Joe Bataan")
+            #expect(np?.title == "Rap-O Clap-O")
+            // display omitted -> server composes "Artist - Title"
+            #expect(np?.display == "Joe Bataan - Rap-O Clap-O")
         }
     }
 

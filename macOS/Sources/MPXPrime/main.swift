@@ -369,7 +369,10 @@ do {
         configPath: configPath,
         engine: audioEngine,
         engineFactory: makeMacEngine,
-        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
+        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) },
+        onNowPlaying: { display, artist, title in
+            nowPlayingState.update(display: display, artist: artist, title: title)
+        }
     )
     startControlServerIfEnabled(config: config, options: options, backend: backend)
 
@@ -442,7 +445,10 @@ do {
         configPath: configPath,
         engine: nil,
         engineFactory: makeLinuxEngine,
-        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
+        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) },
+        onNowPlaying: { display, artist, title in
+            nowPlayingState.update(display: display, artist: artist, title: title)
+        }
     )
     let controlEnabled = options.controlEnabled ?? config.controlEnabled
     startControlServerIfEnabled(config: config, options: options, backend: backend)

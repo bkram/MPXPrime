@@ -28,19 +28,24 @@ actor HeadlessControlBackend: ControlBackend {
     private var retries = 0
     /// Side effects on config change (now-playing runner reconfigure).
     private let onConfigChange: (@Sendable (AppConfig) -> Void)?
+    /// Sink for API now-playing pushes (display, artist, title) -> the shared
+    /// NowPlayingState owned by main.swift.
+    private let onNowPlaying: (@Sendable (String, String, String) -> Void)?
 
     init(
         config: AppConfig,
         configPath: String,
         engine: (any ControlledEngine)?,
         engineFactory: @escaping ControlEngineFactory,
-        onConfigChange: (@Sendable (AppConfig) -> Void)? = nil
+        onConfigChange: (@Sendable (AppConfig) -> Void)? = nil,
+        onNowPlaying: (@Sendable (String, String, String) -> Void)? = nil
     ) {
         self.config = config
         self.configPath = configPath
         self.engine = engine
         self.makeEngine = engineFactory
         self.onConfigChange = onConfigChange
+        self.onNowPlaying = onNowPlaying
         self.startedAt = engine != nil ? Date() : nil
     }
 
@@ -174,6 +179,11 @@ actor HeadlessControlBackend: ControlBackend {
         onConfigChange?(newConfig)
         return ConfigApplyResult(
             outcomes: [], appliedLive: engine != nil, restartPending: restartPending)
+    }
+
+    func setNowPlaying(artist: String, title: String, display: String) -> Bool {
+        onNowPlaying?(display, artist, title)
+        return config.rdsNowPlayingEnabled
     }
 
     // MARK: - Lifecycle

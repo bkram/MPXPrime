@@ -3043,6 +3043,14 @@ final class MPXPrimeViewModel: ObservableObject {
         )
     }
 
+    /// API now-playing push -> the shared NowPlayingState (same sink as the
+    /// local script poller). Returns whether now-playing rendering is on so
+    /// the client can warn. The generator picks up the new snapshot live.
+    func applyRemoteNowPlaying(artist: String, title: String, display: String) -> Bool {
+        nowPlayingState.update(display: display, artist: artist, title: title)
+        return config.rdsNowPlayingEnabled
+    }
+
     func remoteTransport(_ action: TransportAction) -> ControlStatus {
         switch action {
         case .start: startOrStopTransport(forceStart: true)

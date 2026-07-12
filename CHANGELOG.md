@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Now-playing push over the API** (`POST /api/nowplaying {artist,title,display?}`).
+  Feed the current track from a player on one machine to a (possibly remote)
+  encoder -- e.g. VLC/Cog on your Mac -> headless encoder on a Linux box. It
+  writes the same `NowPlayingState` the local script poller uses, so the
+  existing RT / PS / RT+ templates fill in (RT+ artist/title tagging works).
+  New `scripts/push-nowplaying.sh` (macOS) reuses `scripts/nowplaying.sh` for
+  VLC/Cog extraction and pushes on change (flags/env `--url` / `--api-key`,
+  `--interval`, `--once`); it warns if now-playing rendering is disabled on
+  the target. To use: on the encoder set `now_playing_enabled = True` + an
+  `rt_text` template with `{artist}`/`{title}` (or `{display}`), and leave
+  `now_playing_script` empty (the push is the source).
+- **Now-playing never airs a half-filled line.** A template segment that
+  references `{artist}`/`{title}`/`{display}` whose value is empty is now
+  dropped per-macro (previously only when metadata was entirely absent), so
+  a partial tag (title but no artist) skips the track line instead of airing
+  " - Title". A `/`-segmented template like `10s:{artist} - {title}/10s:My
+  Station` gracefully falls back to the static segment. Applies to the API
+  push, the local script, and the GUI alike.
+
 - **Linux: a missing audio device no longer crashes the encoder.** If the
   configured ALSA device can't be opened at start (e.g. a USB card whose
   `hw:CARD=` name changed across reboots -- ALSA renames colliding cards

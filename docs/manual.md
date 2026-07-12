@@ -590,6 +590,35 @@ The now-playing script integration (see RDS) keeps working alongside the
 API; automation systems that only need RT/PS updates can use `PUT /api/rds`
 instead of a polling script.
 
+### Now-playing push (remote RadioText)
+
+Feed the current track to the encoder over the API instead of a local script --
+useful when the player and the encoder are on different machines (players on
+your Mac, encoder headless on a Linux box).
+
+`POST /api/nowplaying` with `{"artist": "...", "title": "...", "display": "..."}`
+(display optional; defaults to "Artist - Title") writes the same now-playing
+state the local script feeds, so your RT / PS / RT+ templates fill in and RT+
+artist/title tagging works. The response `{"ok":true,"nowPlayingEnabled":bool}`
+reports whether rendering is on.
+
+Setup on the encoder (once): set `now_playing_enabled = True`, an `rt_text`
+template using the macros -- e.g. `10s:{artist} - {title}/10s:My Station` --
+and leave `now_playing_script` empty (the push is the source). A `/`-segmented
+template shows the static segment when nothing is playing; a line whose
+`{artist}`/`{title}` is missing is skipped rather than aired half-filled.
+
+From a source checkout on macOS, `scripts/push-nowplaying.sh` does this for
+VLC and Cog:
+
+```bash
+./scripts/push-nowplaying.sh --url http://mpxbox:8737 --api-key <key>
+# or: MPXPRIME_URL=... MPXPRIME_API_KEY=... ./scripts/push-nowplaying.sh --interval 5
+```
+
+It reuses `scripts/nowplaying.sh` for extraction and pushes only on track
+change (no RadioText thrash), clearing the track when playback stops.
+
 ### MPX line output calibration (dBFS)
 
 `mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..0, live-apply; GUI:

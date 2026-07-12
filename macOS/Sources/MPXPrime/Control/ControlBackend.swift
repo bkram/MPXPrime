@@ -134,4 +134,9 @@ protocol ControlBackend: Sendable {
     /// format_profile) -- and application thereof.
     func presets() async -> [String: [String]]
     func applyPreset(kind: String, id: String, intensity: Double?) async throws -> ConfigApplyResult
+    /// Push now-playing metadata into the shared NowPlayingState (the same
+    /// sink the local script poller feeds). Returns whether now-playing
+    /// rendering is currently enabled, so the client can warn if pushes will
+    /// not appear. artist/title drive the RT / PS / RT+ templates.
+    func setNowPlaying(artist: String, title: String, display: String) async -> Bool
 }

@@ -87,9 +87,9 @@ enum NowPlayingFormatter {
         _ template: String,
         snapshot: NowPlayingSnapshot
     ) -> String {
-        guard !snapshot.hasContent else { return template }
-
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Nothing to filter if the template references no now-playing macro
+        // ({time}/{date}-only or static text passes through untouched).
         guard containsNowPlayingMacro(trimmed) else { return template }
 
         if trimmed.contains("/") {
@@ -97,7 +97,7 @@ enum NowPlayingFormatter {
                 .split(separator: "/", omittingEmptySubsequences: false)
                 .map(String.init)
             let filtered = segments.filter { segment in
-                !containsNowPlayingMacro(segment)
+                !hasUnresolvedNowPlayingMacro(segment, snapshot: snapshot)
             }
             return filtered.joined(separator: "/")
         }
@@ -119,14 +119,17 @@ enum NowPlayingFormatter {
                     let text = ns.substring(with: match.range(at: 2)).trimmingCharacters(
                         in: .whitespacesAndNewlines
                     )
-                    guard !containsNowPlayingMacro(text) else { return nil }
+                    guard !hasUnresolvedNowPlayingMacro(text, snapshot: snapshot) else { return nil }
                     return "\(duration)s:\(text)"
                 }
                 return kept.joined(separator: "/")
             }
         }
 
-        return ""
+        // Plain single template: keep it only if every macro it references
+        // resolves to a non-empty value; otherwise drop it entirely so we
+        // never air a half-filled "Now playing:  - Title".
+        return hasUnresolvedNowPlayingMacro(trimmed, snapshot: snapshot) ? "" : template
     }
 
     private static func containsNowPlayingMacro(_ text: String) -> Bool {
@@ -134,6 +137,25 @@ enum NowPlayingFormatter {
             || text.contains("{display}")
             || text.contains("{artist}")
             || text.contains("{title}")
+    }
+
+    /// True when `text` references a now-playing macro whose value is empty in
+    /// the snapshot -- i.e. this segment can't be rendered fully, so the
+    /// caller drops it (per-macro emptiness, not all-or-nothing). This is why
+    /// a template like `10s:{artist} - {title}/10s:My Station` gracefully
+    /// falls back to the static segment when there is no track metadata, and
+    /// skips the track segment when only a partial tag (e.g. title, no artist)
+    /// is available.
+    private static func hasUnresolvedNowPlayingMacro(
+        _ text: String, snapshot: NowPlayingSnapshot
+    ) -> Bool {
+        if text.contains("{artist}") && snapshot.artist.isEmpty { return true }
+        if text.contains("{title}") && snapshot.title.isEmpty { return true }
+        if (text.contains("{display}") || text.contains("{now_playing}"))
+            && snapshot.display.isEmpty {
+            return true
+        }
+        return false
     }
 }
 

@@ -2181,7 +2181,7 @@ final class MPXPrimeViewModel: ObservableObject {
             get: { self.config.pilotLevel * 100.0 },
             set: { newPercent in
                 let fraction = max(0.0, min(0.12, newPercent / 100.0))
-                self.setConfigValue(\.pilotLevel, fraction, runtimeDisposition: .restart)
+                self.setConfigValue(\.pilotLevel, fraction, runtimeDisposition: .live)
             }
         )
     }

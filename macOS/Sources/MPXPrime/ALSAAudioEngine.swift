@@ -174,10 +174,19 @@ private final class ALSAPCM {
         snd_pcm_prepare(opened)
     }
 
+    private var closed = false
     func close() {
+        if closed { return }
+        closed = true
         snd_pcm_drop(pcm)
         snd_pcm_close(pcm)
     }
+
+    // Idempotent close on deinit so a partially-configured engine (e.g. output
+    // opened but input device missing -> start() throws) never leaks the PCM
+    // handle. Start failures are now recoverable via the web UI, so failed
+    // attempts must not accumulate open descriptors.
+    deinit { close() }
 
     var formatName: String {
         switch format {

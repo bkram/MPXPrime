@@ -277,4 +277,26 @@ struct ControlServerTests {
             }
         }
     }
+
+    // A missing/unopenable audio device must NOT take the process down: the
+    // headless backend's tolerant start stays up (server keeps serving) and
+    // surfaces the reason in status.notes so the dashboard can prompt the
+    // operator to pick a device and Start. Regression guard for the Linux
+    // systemd crash-loop on a renamed hw: device.
+    @Test func headlessBackendToleratesEngineStartFailure() async throws {
+        struct DeviceMissing: Error {}
+        let backend = HeadlessControlBackend(
+            config: AppConfig(),
+            configPath: NSTemporaryDirectory() + "mpxprime-test-\(UUID().uuidString).ini",
+            engine: nil,
+            engineFactory: { _ in throw DeviceMissing() }
+        )
+        let started = await backend.startEngineTolerant()
+        #expect(started == false)
+        let status = await backend.status()
+        #expect(status.running == false)
+        #expect(status.notes.contains { $0.contains("audio engine not started") })
+        let meters = await backend.meters()
+        #expect(meters == nil)
+    }
 }

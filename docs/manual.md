@@ -100,6 +100,14 @@ If you cannot hear anything, check `Settings` → output device routing, that th
 > Studio.ini`, and the `input_device_uid` / `output_device_uid` keys hold
 > ALSA PCM names (`default`, `hw:0,0`, `plughw:...`) instead of CoreAudio
 > UIDs. See docs/BUILDING.md "Linux (CLI-only)" for setup and device notes.
+>
+> **A missing audio device does not crash the encoder.** If the configured
+> ALSA device can't be opened at start, the control server still comes up;
+> open the dashboard, pick a present device on the **Interfaces** page, and
+> press **Start**. Note that USB cards can change their `hw:CARD=<name>`
+> across reboots when two audio cards are present (ALSA assigns Device /
+> Device_1 by probe order) -- if the service comes up stopped after a
+> reboot, reselect the device in the dashboard.
 
 Default config location:
 

@@ -166,7 +166,25 @@ actor HeadlessControlBackend: ControlBackend {
             restartPending = false
             notes = []
         } catch {
-            throw ControlError.engineFailure(String(describing: error))
+            // Record the reason so GET /api/status (and the dashboard) explain
+            // why the engine is stopped -- typically a missing/renamed audio
+            // device the operator can fix from the Interfaces page, then Start.
+            let msg = String(describing: error)
+            notes = ["audio engine not started: \(msg)"]
+            throw ControlError.engineFailure(msg)
+        }
+    }
+
+    /// Best-effort initial start used at boot: attempts to start the engine
+    /// but never throws, so a missing device leaves the process (and the
+    /// control server) alive for remote recovery. Returns whether it started.
+    @discardableResult
+    func startEngineTolerant() -> Bool {
+        do {
+            try startEngine()
+            return true
+        } catch {
+            return false
         }
     }
 

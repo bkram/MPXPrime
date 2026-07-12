@@ -11,6 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Linux: a missing audio device no longer crashes the encoder.** If the
+  configured ALSA device can't be opened at start (e.g. a USB card whose
+  `hw:CARD=` name changed across reboots -- ALSA renames colliding cards
+  Device / Device_1 by probe order), the process no longer exits (which
+  under systemd meant a restart crash-loop). Instead the control server
+  comes up first and the engine start is attempted tolerantly: the
+  dashboard shows the engine stopped with the reason (`audio engine not
+  started: ... No such device`), the operator picks a present device on the
+  Interfaces page and presses Start. Only when no control server is enabled
+  is a failed start still fatal. Also: `ALSAPCM` now closes idempotently on
+  deinit so repeated failed starts don't leak PCM handles, and the dashboard
+  status strip surfaces the stopped-engine reason.
+
 ## 0.42 — 2026-07-11
 
 - **Linux: Debian/Ubuntu packages + systemd service.** `./build-deb.sh`

@@ -430,17 +430,39 @@ do {
             outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
         )
     }
-    let audioEngine = try makeLinuxEngine(config)
-    try audioEngine.start()
-
+    // Build the backend WITHOUT a pre-started engine, bring the control
+    // server up first, then attempt the engine start tolerantly. A missing
+    // or renamed ALSA device must NOT take the process down (it used to
+    // exit(1) -> systemd crash-loop): the server stays reachable so the
+    // operator can pick a device on the dashboard's Interfaces page and
+    // press Start. Only when the control server is disabled is a failed
+    // start fatal (there is nothing to stay alive for).
     let backend = HeadlessControlBackend(
         config: config,
         configPath: configPath,
-        engine: audioEngine,
+        engine: nil,
         engineFactory: makeLinuxEngine,
         onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
     )
+    let controlEnabled = options.controlEnabled ?? config.controlEnabled
     startControlServerIfEnabled(config: config, options: options, backend: backend)
+
+    Task {
+        if await backend.startEngineTolerant() {
+            print("MPX Prime running. Press Ctrl-C to stop.")
+        } else if controlEnabled {
+            let settings = ControlServerSettings(config: config)
+            fputs(
+                "MPX Prime: audio engine did not start (see status). Control server is up at "
+                    + "http://\(settings.host):\(settings.port)/ -- set the audio device there, "
+                    + "then press Start.\n", stderr)
+        } else {
+            fputs(
+                "MPX Prime: audio engine did not start and no control server is enabled; "
+                    + "exiting.\n", stderr)
+            exit(1)
+        }
+    }
 
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
@@ -464,7 +486,6 @@ do {
             execute: DispatchWorkItem { shutdown() })
     }
 
-    print("MPX Prime running. Press Ctrl-C to stop.")
     dispatchMain()
     #endif
 } catch {

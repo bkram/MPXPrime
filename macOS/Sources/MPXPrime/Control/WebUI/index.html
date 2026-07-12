@@ -676,9 +676,21 @@ async function pollStatus() {
     $("cSource").textContent = s.sourceMode === "tone" ? "Test Tone" : deviceName(deviceInfo?.selectedInput, "inputs");
     $("cRate").textContent = (s.sampleRateHz/1000).toFixed(0) + " kHz";
     $("cMode").textContent = s.outputMode === "processedAudio" ? "AUDIO" : "COMPOSITE";
-    const warn = isTrue(cfg.en_rds) && s.sampleRateHz < 192000 && s.outputMode !== "processedAudio";
-    $("cWarnCell").hidden = !warn;
-    if (warn) $("cWarn").textContent = "RATE < 192 kHz";
+    // A stopped engine with a note (e.g. missing audio device) takes
+    // priority in the warning cell -- it is why the operator is here.
+    const note = (!s.running && s.notes && s.notes.length) ? s.notes[0] : null;
+    const rateWarn = isTrue(cfg.en_rds) && s.sampleRateHz < 192000 && s.outputMode !== "processedAudio";
+    if (note) {
+      $("cWarnCell").hidden = false;
+      $("cWarnCell").querySelector(".k").textContent = "Engine";
+      $("cWarn").textContent = note;
+    } else if (rateWarn) {
+      $("cWarnCell").hidden = false;
+      $("cWarnCell").querySelector(".k").textContent = "RDS Warning";
+      $("cWarn").textContent = "RATE < 192 kHz";
+    } else {
+      $("cWarnCell").hidden = true;
+    }
     $("restartBadge").hidden = !s.restartPending;
     const b = $("btnStartStop");
     b.textContent = s.running ? "Stop" : "Start";

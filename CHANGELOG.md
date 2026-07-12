@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Now-playing fixes found via the API push:** (1) an empty
+  `now_playing_script` no longer resolves to the working directory --
+  `normalizeScriptPath("")` returned the CWD, so the local poller launched
+  it, failed, and cleared any API-pushed track every poll; (2) an idle
+  poller (no script) no longer clears now-playing state on config changes,
+  so API-fed RadioText survives PATCHes. The push script also re-sends the
+  current track on a 30 s heartbeat so the encoder recovers after a restart.
 - **Now-playing push over the API** (`POST /api/nowplaying {artist,title,display?}`).
   Feed the current track from a player on one machine to a (possibly remote)
   encoder -- e.g. VLC/Cog on your Mac -> headless encoder on a Linux box. It

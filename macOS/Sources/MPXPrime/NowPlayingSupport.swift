@@ -168,7 +168,16 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
 
         init(config: AppConfig) {
             enabled = config.rdsNowPlayingEnabled
-            scriptPath = NowPlayingFormatter.normalizeScriptPath(config.rdsNowPlayingScript)
+            // An empty/whitespace script means "no local script" -- keep it
+            // empty. normalizeScriptPath("") would otherwise resolve to the
+            // working directory (a non-empty path), which made the poller try
+            // to launch the CWD, fail, and clear API-pushed now-playing state
+            // every poll.
+            let rawScript = config.rdsNowPlayingScript.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            scriptPath = rawScript.isEmpty
+                ? ""
+                : NowPlayingFormatter.normalizeScriptPath(config.rdsNowPlayingScript)
             pollSeconds = max(1.0, min(300.0, config.rdsNowPlayingPollSeconds))
             timeoutSeconds = max(0.2, min(30.0, config.rdsNowPlayingTimeoutSeconds))
         }
@@ -224,8 +233,12 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         }
 
         guard !settings.scriptPath.isEmpty else {
-            state.clear()
-            statusHandler("Now Playing: no script configured")
+            // No local script: the poller idles, but do NOT clear the state --
+            // it may be fed over the API (POST /api/nowplaying). Clearing here
+            // wiped API-pushed tracks on every config change (onConfigChange ->
+            // updateConfig -> here). Only the disabled case (above) and a real
+            // script failure wipe the state.
+            statusHandler("Now Playing: no local script (API push may feed it)")
             return
         }
 

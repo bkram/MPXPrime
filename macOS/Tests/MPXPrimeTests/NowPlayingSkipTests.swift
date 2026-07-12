@@ -50,4 +50,17 @@ struct NowPlayingSkipTests {
         let out = NowPlayingFormatter.expandTemplate("My Station", snapshot: snap())
         #expect(out == "My Station")
     }
+
+    // Regression: an empty script path must resolve to empty, not the working
+    // directory. normalizeScriptPath("") used to return the CWD, so the poller
+    // launched it, failed, and cleared API-pushed now-playing every poll.
+    @Test func emptyScriptPathStaysEmpty() {
+        var cfg = AppConfig()
+        cfg.rdsNowPlayingEnabled = true
+        cfg.rdsNowPlayingScript = ""
+        let settings = NowPlayingScriptRunner.Settings(config: cfg)
+        #expect(settings.scriptPath.isEmpty)
+        cfg.rdsNowPlayingScript = "   "
+        #expect(NowPlayingScriptRunner.Settings(config: cfg).scriptPath.isEmpty)
+    }
 }

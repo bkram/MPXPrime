@@ -72,6 +72,11 @@ json_escape() {
 
 warned_disabled=0
 last_payload="__init__"
+last_push_epoch=0
+# Re-send the current track at least this often even when unchanged, so the
+# encoder recovers the RadioText after a restart without waiting for a track
+# change.
+HEARTBEAT=30
 
 push_once() {
   local out artist title display payload code body
@@ -87,11 +92,17 @@ push_once() {
 
   payload="{\"artist\":\"$(json_escape "$artist")\",\"title\":\"$(json_escape "$title")\",\"display\":\"$(json_escape "$display")\"}"
 
-  # Only send when something changed (also pushes the empty state once, which
-  # clears the track and lets a "/"-segmented template fall back to its static
-  # segment).
-  [[ "$payload" == "$last_payload" ]] && return 0
+  # Send when something changed, or on the heartbeat interval (so an encoder
+  # restart recovers even if the track has not changed). An empty state is
+  # pushed once too, letting a "/"-segmented template fall back to its static
+  # segment.
+  local now_epoch
+  now_epoch=$(date +%s)
+  if [[ "$payload" == "$last_payload" && $((now_epoch - last_push_epoch)) -lt $HEARTBEAT ]]; then
+    return 0
+  fi
   last_payload="$payload"
+  last_push_epoch=$now_epoch
 
   local -a hdr
   hdr=(-H 'Content-Type: application/json')

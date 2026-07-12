@@ -447,22 +447,28 @@ do {
     let controlEnabled = options.controlEnabled ?? config.controlEnabled
     startControlServerIfEnabled(config: config, options: options, backend: backend)
 
+    // Initial start attempt + reconciliation timer. A missing audio device is
+    // NEVER fatal: the engine start is retried every few seconds, so the
+    // encoder comes up the moment the device is available (boot ordering, USB
+    // hot-plug) with no intervention -- and the dashboard (when enabled) lets
+    // the operator point at a different device meanwhile.
     Task {
         if await backend.startEngineTolerant() {
             print("MPX Prime running. Press Ctrl-C to stop.")
-        } else if controlEnabled {
-            let settings = ControlServerSettings(config: config)
-            fputs(
-                "MPX Prime: audio engine did not start (see status). Control server is up at "
-                    + "http://\(settings.host):\(settings.port)/ -- set the audio device there, "
-                    + "then press Start.\n", stderr)
         } else {
+            let settings = ControlServerSettings(config: config)
+            let where_ = controlEnabled
+                ? "Open http://\(settings.host):\(settings.port)/ to pick a device, or wait"
+                : "Will keep retrying"
             fputs(
-                "MPX Prime: audio engine did not start and no control server is enabled; "
-                    + "exiting.\n", stderr)
-            exit(1)
+                "MPX Prime: audio device not available yet. \(where_) -- the engine "
+                    + "starts automatically as soon as the device appears.\n", stderr)
         }
     }
+    let reconcileTimer = DispatchSource.makeTimerSource(queue: .global())
+    reconcileTimer.schedule(deadline: .now() + 5, repeating: 5.0)
+    reconcileTimer.setEventHandler { Task { await backend.reconcile() } }
+    reconcileTimer.resume()
 
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)

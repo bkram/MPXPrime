@@ -19,6 +19,13 @@ actor HeadlessControlBackend: ControlBackend {
     private var startedAt: Date?
     private var restartPending = false
     private var notes: [String] = []
+    /// Desired transport state (reconciliation target). True from boot so the
+    /// encoder auto-starts and keeps RETRYING when the device is missing --
+    /// the box comes up the moment the device appears (boot ordering / USB
+    /// hot-plug) without any intervention. A user Stop sets this false so the
+    /// retry loop leaves it alone; a user Start/Restart sets it true again.
+    private var desiredRunning = true
+    private var retries = 0
     /// Side effects on config change (now-playing runner reconfigure).
     private let onConfigChange: (@Sendable (AppConfig) -> Void)?
 
@@ -107,14 +114,28 @@ actor HeadlessControlBackend: ControlBackend {
     func transport(_ action: TransportAction) throws -> ControlStatus {
         switch action {
         case .start:
+            desiredRunning = true
             if engine == nil { try startEngine() }
         case .stop:
+            desiredRunning = false
             stopEngine()
         case .restart:
+            desiredRunning = true
             stopEngine()
             try startEngine()
         }
         return status()
+    }
+
+    /// Reconcile toward the desired state: if the operator wants it running
+    /// and it isn't, (re)try the start. Called on a timer from the headless
+    /// runtime so a missing device is never fatal -- the engine comes up as
+    /// soon as the device is available. A user Stop clears `desiredRunning`,
+    /// so this never fights a deliberate stop.
+    func reconcile() {
+        guard desiredRunning, engine == nil else { return }
+        retries += 1
+        startEngineTolerant()
     }
 
     func presets() -> [String: [String]] {
@@ -170,7 +191,8 @@ actor HeadlessControlBackend: ControlBackend {
             // why the engine is stopped -- typically a missing/renamed audio
             // device the operator can fix from the Interfaces page, then Start.
             let msg = String(describing: error)
-            notes = ["audio engine not started: \(msg)"]
+            notes = ["audio engine not started: \(msg) "
+                + "(retrying automatically; pick a present device on the Interfaces page to change it)"]
             throw ControlError.engineFailure(msg)
         }
     }

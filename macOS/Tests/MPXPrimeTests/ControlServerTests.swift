@@ -299,4 +299,45 @@ struct ControlServerTests {
         let meters = await backend.meters()
         #expect(meters == nil)
     }
+
+    // Desired-state reconciliation: a missing device is never permanently
+    // fatal -- reconcile() keeps retrying and brings the engine up the moment
+    // the device is available; but a deliberate Stop must not be undone by the
+    // retry loop.
+    @Test func reconcileRecoversButRespectsStop() async throws {
+        final class FakeEngine: ControlledEngine, @unchecked Sendable {
+            func start() throws {}
+            func stop() {}
+            func applyRuntimeConfig(_ config: AppConfig) {}
+            func applyRDSRuntimeConfig(_ config: AppConfig) {}
+            var controlMeters: ControlMeters? { nil }
+            var rdsLiveSnapshotForControl: BasicRDSCoder.LiveSnapshot? { nil }
+        }
+        // A factory that fails until `deviceAvailable` flips true.
+        final class Gate: @unchecked Sendable { var open = false }
+        let gate = Gate()
+        struct NoDevice: Error {}
+        let backend = HeadlessControlBackend(
+            config: AppConfig(),
+            configPath: NSTemporaryDirectory() + "mpxprime-test-\(UUID().uuidString).ini",
+            engine: nil,
+            engineFactory: { _ in
+                guard gate.open else { throw NoDevice() }
+                return FakeEngine()
+            }
+        )
+        // Device missing: initial start + a reconcile both leave it stopped.
+        #expect(await backend.startEngineTolerant() == false)
+        await backend.reconcile()
+        #expect(await backend.status().running == false)
+        // Device appears: the next reconcile brings it up.
+        gate.open = true
+        await backend.reconcile()
+        #expect(await backend.status().running == true)
+        // Operator stops it: reconcile must NOT restart it.
+        _ = try await backend.transport(.stop)
+        #expect(await backend.status().running == false)
+        await backend.reconcile()
+        #expect(await backend.status().running == false)
+    }
 }

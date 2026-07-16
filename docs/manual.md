@@ -567,7 +567,7 @@ configured.
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending |
-| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation, budget margin (subset on Linux) |
+| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation, budget margin, and (macOS input source) input-ring health (subset on Linux) |
 | GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |
 | PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
 | GET | `/api/config` | every INI setting, grouped by section |
@@ -585,6 +585,15 @@ same runtime structures the engine hot-applies, so it always matches what
 the engine actually does. Every change is saved to the INI immediately.
 Values follow INI text conventions (booleans `True`/`False`; no `;` in
 values).
+
+When the macOS input source is running, `/api/meters` also reports
+capture->render ring health: `inputRingBufferedFrames` (fill level, hovers
+near the engine target), `inputRingOverflows` / `inputRingUnderflows`
+(input clock faster / slower than render), `inputRingTornReads`,
+`inputResampleMode`, and `inputRatioTrim` (the drift corrector's current
+adjustment). These are diagnostics for clock-drift between the input and
+output devices; steady buffer with zero over/underflows means the bridge is
+healthy. They are null in headless/ALSA and when no input source is active.
 
 The now-playing script integration (see RDS) keeps working alongside the
 API; automation systems that only need RT/PS updates can use `PUT /api/rds`

@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Input-ring health in `/api/meters`:** the macOS input source now reports
+  capture->render ring diagnostics -- `inputRingBufferedFrames`,
+  `inputRingOverflows`, `inputRingUnderflows`, `inputRingTornReads`,
+  `inputResampleMode`, and `inputRatioTrim` (drift-corrector adjustment).
+  The level meters cannot distinguish loud static from loud program, so
+  these counters are the definitive readout for diagnosing clock-drift
+  between the input and output devices. Null in headless/ALSA and when no
+  input source is running.
 - **Now-playing fixes found via the API push:** (1) an empty
   `now_playing_script` no longer resolves to the working directory --
   `normalizeScriptPath("")` returned the CWD, so the local poller launched

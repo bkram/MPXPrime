@@ -255,6 +255,11 @@ actor HeadlessControlBackend: ControlBackend {
 extension AudioOutputEngine: ControlledEngine {
     var controlMeters: ControlMeters? {
         let m = meters
+        // Ring-transport diagnostics: the level meters cannot distinguish
+        // loud static from loud program (both peg the peak/deviation reads),
+        // so clock-drift dropout is invisible there. These counters are the
+        // definitive signal. captureXruns rolls up the ring over/underflows.
+        let t = transportSnapshot
         return ControlMeters(
             inputLeftPeak: m.inputLeftPeak,
             inputRightPeak: m.inputRightPeak,
@@ -270,7 +275,13 @@ extension AudioOutputEngine: ControlledEngine {
             compositeOverBudget: m.compositeOverBudget,
             stereoCorrelation: m.outputStereoCorrelation,
             renderXruns: nil,
-            captureXruns: nil
+            captureXruns: t.map { Int(clamping: $0.overflows &+ $0.underflows) },
+            inputRingBufferedFrames: t?.bufferedFrames,
+            inputRingOverflows: t.map { Int(clamping: $0.overflows) },
+            inputRingUnderflows: t.map { Int(clamping: $0.underflows) },
+            inputRingTornReads: t.map { Int(clamping: $0.tornReads) },
+            inputResampleMode: t?.resampleMode,
+            inputRatioTrim: t?.ratioTrim
         )
     }
 

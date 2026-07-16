@@ -56,6 +56,20 @@ struct ControlMeters: Codable, Sendable {
     var stereoCorrelation: Float?
     var renderXruns: Int?
     var captureXruns: Int?
+    // Input capture->render ring transport diagnostics (macOS input source).
+    // The definitive signal for clock-drift faults between a virtual input
+    // (e.g. BlackHole) and a hardware output: `overflows` climbs when the
+    // input clock runs faster than render (ring fills), `underflows` when
+    // slower (ring drains), `tornReads` on lock-free read collisions.
+    // `bufferedFrames` should hover near the engine's target; a monotonic
+    // drift toward 0 or capacity is what precedes audible dropout/static.
+    // All nil in headless/ALSA and when no input source is running.
+    var inputRingBufferedFrames: Int? = nil
+    var inputRingOverflows: Int? = nil
+    var inputRingUnderflows: Int? = nil
+    var inputRingTornReads: Int? = nil
+    var inputResampleMode: String? = nil
+    var inputRatioTrim: Double? = nil
 }
 
 /// GET /api/rds payload: the live on-air snapshot plus the operational

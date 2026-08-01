@@ -50,6 +50,7 @@ extension ControlRDS: ResponseEncodable {}
 extension ControlDevices: ResponseEncodable {}
 extension ConfigApplyResult: ResponseEncodable {}
 extension ControlSnapshots: ResponseEncodable {}
+extension ControlTelemetry: ResponseEncodable {}
 extension ConfigKeyOutcome: ResponseEncodable {}
 extension NowPlayingResponse: ResponseEncodable {}
 
@@ -266,6 +267,18 @@ enum ControlServer {
             } catch let error as ControlError {
                 throw HTTPError(.badRequest, message: String(describing: error))
             }
+        }
+
+        // Live scopes + MPX spectrum for the dashboard's canvas views.
+        // 503 when the engine is stopped or the platform has no scope tap
+        // (ALSA today) -- same contract as /api/meters.
+        router.get("/api/telemetry") { request, _ -> ControlTelemetry in
+            let windowMS = request.uri.queryParameters.get("window_ms")
+                .flatMap(Double.init) ?? 20.0
+            guard let t = await backend.telemetry(windowMS: windowMS) else {
+                throw HTTPError(.serviceUnavailable, message: "engine not running or no scope tap")
+            }
+            return t
         }
 
         // Operator preset slots. Load applies the slot as a full config

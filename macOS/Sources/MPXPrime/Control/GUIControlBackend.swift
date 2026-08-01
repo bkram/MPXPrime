@@ -72,6 +72,10 @@ struct GUIControlBackend: ControlBackend {
         }
     }
 
+    func telemetry(windowMS: Double) async -> ControlTelemetry? {
+        try? await withVM { $0.remoteTelemetry(windowMS: windowMS) }
+    }
+
     func snapshots() async -> ControlSnapshots {
         (try? await withVM { $0.remoteSnapshots() })
             ?? ControlSnapshots(slots: [])

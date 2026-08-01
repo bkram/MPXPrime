@@ -50,7 +50,7 @@ Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
 - Decoded MPX monitor output on a selectable monitor device
 - **Processed-audio output mode** (Settings - Output Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
 - Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; mirrored by the web dashboard)
-- **Remote control** — an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build
+- **Remote control** — an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build. Since 0.44 the dashboard has **full parity with the native GUI**: every setting, station formats + final-stage presets, the 8 operator preset slots (shared with the GUI), and live scopes + MPX spectrum in the browser
 - **Linux command-line build** (experimental): the encoder runs headless with ALSA output, SIMD-accelerated so the full chain fits low-power hardware; shipped as Debian/Ubuntu packages with a systemd service. No GUI, no Meter.
 - Config persisted to the INI (`~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` on macOS; `~/.local/share/...` or `/var/lib/mpxprime/` on Linux)
 

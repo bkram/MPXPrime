@@ -575,6 +575,11 @@ configured.
 | GET | `/api/schema` | the dashboard's control schema: widget definitions (label/range/unit) + page model for every exposed INI key -- the single source the web UI renders from |
 | GET | `/api/config/defaults` | factory defaults, grouped like `/api/config` -- diff against it for "reset to defaults" |
 | GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44) |
+| GET | `/api/telemetry` | live scope waveforms + MPX spectrum (display-decimated, ~6 KB; `?window_ms=` picks the scope timebase); 503 while stopped or on a platform without a scope tap |
+| GET | `/api/snapshots` | the 8 operator preset slots (name, saved-at, active/modified) -- shared with the native GUI's Presets sidebar |
+| POST | `/api/snapshots/N/save`, `/load` | capture the current config into slot N (body `{"name": ...}` optional) / apply slot N as one full config patch |
+| PATCH / DELETE | `/api/snapshots/N` | rename / clear slot N |
+| GET / PUT | `/api/snapshots/N/export`, import | the slot's full INI text (doubles as a `--config` file) / import INI (body `{"name": ..., "ini": "..."}`) |
 | POST | `/api/presets` | `{"kind": "multiband", "id": "3_chr", "intensity": 1.0}` (intensity <0.75 light / >1.25 heavy) |
 | POST | `/api/transport/start\|stop\|restart` | engine lifecycle |
 

@@ -1,4 +1,5 @@
 import Foundation
+import MPXPrimeCore
 
 // ControlBackend for the headless runtimes (--nogui on macOS and the Linux
 // CLI). Owns the AppConfig and the engine lifecycle; main.swift hands it a
@@ -67,6 +68,10 @@ actor HeadlessControlBackend: ControlBackend {
 
     func meters() -> ControlMeters? {
         engine?.controlMeters
+    }
+
+    func telemetry(windowMS: Double) -> ControlTelemetry? {
+        engine?.controlTelemetry(windowMS: windowMS)
     }
 
     func rds() -> ControlRDS {
@@ -394,6 +399,39 @@ actor HeadlessControlBackend: ControlBackend {
 
 #if os(macOS)
 extension AudioOutputEngine: ControlledEngine {
+    /// Scope waveforms straight from the engine's meter histories + an MPX
+    /// spectrum computed here with the shared MPXSpectrumAnalyzer. Called at
+    /// the dashboard's poll rate (4-7 Hz), not per tick: a fresh 4096-point
+    /// vDSP FFT per request is sub-millisecond and keeps this reentrant
+    /// (no shared analyzer state to lock).
+    func controlTelemetry(windowMS: Double) -> ControlTelemetry? {
+        let clampedWindow = max(1.0, min(100.0, windowMS))
+        let scopes = scopeSnapshot(windowMS: clampedWindow)
+        guard !scopes.output.isEmpty else { return nil }
+        var scratch = [Float](repeating: 0.0, count: 4096)
+        let raw = outputSignalWindow(into: &scratch, frameCount: 4096)
+        let spectrum = MPXSpectrumAnalyzer().compute(
+            samples: scratch,
+            validCount: raw.count,
+            sampleRate: raw.sampleRate,
+            displayBins: 256,
+            maxDisplayHz: 96_000.0
+        )
+        func decimate(_ src: [Float], to n: Int = 160) -> [Float] {
+            guard src.count > n else { return src }
+            return (0..<n).map { src[($0 * src.count) / n] }
+        }
+        return ControlTelemetry(
+            windowMS: clampedWindow,
+            inputLeft: decimate(scopes.inputLeft),
+            inputRight: decimate(scopes.inputRight),
+            output: decimate(scopes.output),
+            spectrumDB: spectrum.dbBins,
+            spectrumMaxHz: spectrum.maxHz,
+            spectrumNyquistHz: spectrum.nyquistHz
+        )
+    }
+
     var controlMeters: ControlMeters? {
         let m = meters
         // Ring-transport diagnostics: the level meters cannot distinguish

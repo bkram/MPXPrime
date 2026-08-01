@@ -134,6 +134,20 @@ struct ControlDevices: Codable, Sendable {
     var note: String
 }
 
+/// GET /api/telemetry payload: scope waveforms + MPX spectrum for the
+/// dashboard's live views. Arrays are display-decimated server-side (scopes
+/// <= 160 points, spectrum <= 256 bins) so a 4-7 Hz browser poll stays a few
+/// kilobytes. Nil from a backend/engine that has no scope tap (ALSA today).
+struct ControlTelemetry: Codable, Sendable {
+    var windowMS: Double
+    var inputLeft: [Float]
+    var inputRight: [Float]
+    var output: [Float]
+    var spectrumDB: [Float]
+    var spectrumMaxHz: Double
+    var spectrumNyquistHz: Double
+}
+
 /// One row of GET /api/snapshots: the operator preset slots.
 struct ControlSnapshotSlot: Codable, Sendable {
     var slot: Int              // 0-based
@@ -157,6 +171,14 @@ protocol ControlledEngine: AnyObject {
     func applyRDSRuntimeConfig(_ config: AppConfig)
     var controlMeters: ControlMeters? { get }
     var rdsLiveSnapshotForControl: BasicRDSCoder.LiveSnapshot? { get }
+    /// Live scope/spectrum snapshot for /api/telemetry. Default nil: an
+    /// engine without a scope tap (ALSA today) simply reports no telemetry
+    /// and the route answers 503, same as /api/meters.
+    func controlTelemetry(windowMS: Double) -> ControlTelemetry?
+}
+
+extension ControlledEngine {
+    func controlTelemetry(windowMS: Double) -> ControlTelemetry? { nil }
 }
 
 /// What the REST routes need from the run mode that owns the engine.
@@ -170,6 +192,8 @@ protocol ControlBackend: Sendable {
     /// flag restart-required leftovers.
     func applyConfigPatch(_ patch: [String: String]) async throws -> ConfigApplyResult
     func transport(_ action: TransportAction) async throws -> ControlStatus
+    /// Live scopes + spectrum (nil = engine stopped or no tap on platform).
+    func telemetry(windowMS: Double) async -> ControlTelemetry?
     // Operator preset slots (shared SnapshotStore; <config>.snapshots.json).
     func snapshots() async -> ControlSnapshots
     func snapshotSave(slot: Int, name: String) async throws -> ControlSnapshots

@@ -117,6 +117,8 @@ private actor MockBackend: ControlBackend {
         })
     }
 
+    func telemetry(windowMS: Double) -> ControlTelemetry? { nil }
+
     func snapshots() -> ControlSnapshots { snapshotDTO() }
 
     func snapshotSave(slot: Int, name: String) throws -> ControlSnapshots {

@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Web dashboard parity, phase 4 of 4: live scopes + MPX spectrum in the
+  browser.** New `GET /api/telemetry`: display-decimated input L/R + MPX
+  scope waveforms and a server-computed 256-bin MPX spectrum (0-96 kHz,
+  4096-point vDSP FFT per request) -- ~6 KB and ~5 ms per poll, measured.
+  The dashboard grows a "Scopes & Spectrum" page (canvas rendering, FM band
+  captions, 5-100 ms timebase, ~4 Hz poll only while the page is open). The
+  engine hook is a default-nil `ControlledEngine` extension point, so the
+  Linux/ALSA engine cleanly reports 503 until it grows a scope tap.
 - **Web dashboard parity, phase 3 of 4: operator preset slots over the API.**
   The GUI's 8 snapshot slots are now a REST surface: `GET /api/snapshots`,
   save/load/rename/clear per slot, `GET .../export` (the slot's full INI --

@@ -2899,6 +2899,10 @@ final class MPXPrimeViewModel: ObservableObject {
         )
     }
 
+    func remoteTelemetry(windowMS: Double) -> ControlTelemetry? {
+        runningEngine?.controlTelemetry(windowMS: windowMS)
+    }
+
     func remoteSnapshots() -> ControlSnapshots {
         ControlSnapshots(slots: snapshots.enumerated().map { i, snap in
             ControlSnapshotSlot(

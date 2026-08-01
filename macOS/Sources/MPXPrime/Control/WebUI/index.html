@@ -133,6 +133,7 @@
   <div id="stripSpacer"></div>
   <div id="stripBtns">
     <span class="badge" id="restartBadge" hidden>restart pending</span>
+    <button id="btnBypass">Bypass</button>
     <button class="blue" id="btnStartStop">Start</button>
     <button id="btnRestart">Restart</button>
   </div>
@@ -369,6 +370,7 @@ function syncAll() {
     if (el._sync && el.dataset.key in cfg) el._sync(cfg[el.dataset.key]);
   });
   refreshSidebarDots();
+  updateBypassButton();
 }
 function helpBox(text) {
   const el = document.createElement("div");
@@ -1005,6 +1007,30 @@ async function transport(action) {
   try { await api("/api/transport/" + action, { method:"POST" }); toast("transport: " + action); pollStatus(); }
   catch (e) { toast("transport failed: " + e.message, true); }
 }
+// Bypass mirrors the GUI's transport-level button exactly: flip
+// processing_bypass (restart-class) and restart the engine when running so
+// it takes effect immediately. The button goes red while the chain is
+// bypassed -- unprocessed audio on air is worth a loud indicator.
+function updateBypassButton() {
+  const b = $("btnBypass");
+  if (!b) return;
+  const on = isTrue(cfg.processing_bypass);
+  b.textContent = on ? "BYPASSED" : "Bypass";
+  b.className = on ? "red" : "";
+}
+$("btnBypass").onclick = async () => {
+  const on = isTrue(cfg.processing_bypass);
+  if (!on && statusInfo?.running &&
+      !confirm("Bypass ALL processing? Unprocessed audio goes to air after the engine restarts.")) return;
+  await patchKey("processing_bypass", on ? "False" : "True", true);
+  updateBypassButton();
+  if (statusInfo?.running) {
+    await transport("restart");
+    toast(on ? "Bypass off - engine restarted" : "BYPASS ON - engine restarted");
+  } else {
+    toast(on ? "Bypass off (takes effect at start)" : "Bypass on (takes effect at start)");
+  }
+};
 $("btnStartStop").onclick = () => transport(statusInfo?.running ? "stop" : "start");
 $("btnRestart").onclick = () => transport("restart");
 $("keySave").onclick = () => { apiKey = $("keyInput").value.trim(); localStorage.setItem("mpxprime_api_key", apiKey); boot(); };

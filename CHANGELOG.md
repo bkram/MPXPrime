@@ -11,6 +11,11 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Web dashboard: transport-level Bypass button.** The status strip gains
+  the GUI's Bypass next to Start/Stop: flips `processing_bypass` and
+  restarts the engine when running (mirroring the GUI's Cmd-B exactly --
+  the flag is restart-class), turns red "BYPASSED" while active, and asks
+  for confirmation before putting unprocessed audio on air.
 - **Web dashboard parity, phase 4 of 4: live scopes + MPX spectrum in the
   browser.** New `GET /api/telemetry`: display-decimated input L/R + MPX
   scope waveforms and a server-computed 256-bin MPX spectrum (0-96 kHz,

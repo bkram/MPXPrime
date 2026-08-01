@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Web dashboard parity, phase 3 of 4: operator preset slots over the API.**
+  The GUI's 8 snapshot slots are now a REST surface: `GET /api/snapshots`,
+  save/load/rename/clear per slot, `GET .../export` (the slot's full INI --
+  loadable via `--config`), and `PUT` import with validation through the
+  canonical parser. Loading a slot applies it as ONE full config patch, so
+  every changed key rides the same live/liveRDS/restart classification as a
+  normal PATCH. Storage is the same `<config>.snapshots.json` the GUI always
+  wrote (logic extracted into a shared `SnapshotStore`; the GUI delegates to
+  it, so web and native operate on the same slots, including the
+  "loaded/edited-since" marker -- the headless backend now flips it on any
+  config change, matching the GUI). The web Presets page grows the slot
+  grid: name, Save/Load/Export/Clear, Import into empty slots.
 - **Web dashboard parity, phase 2 of 4: full settings coverage.** Every
   INI-backed control the native GUI has now appears in the dashboard, in the
   same structure: a new **Profile** page (station-format picker, works on

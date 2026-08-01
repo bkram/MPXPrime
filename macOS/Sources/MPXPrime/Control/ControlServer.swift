@@ -49,6 +49,7 @@ extension ControlMeters: ResponseEncodable {}
 extension ControlRDS: ResponseEncodable {}
 extension ControlDevices: ResponseEncodable {}
 extension ConfigApplyResult: ResponseEncodable {}
+extension ControlSnapshots: ResponseEncodable {}
 extension ConfigKeyOutcome: ResponseEncodable {}
 extension NowPlayingResponse: ResponseEncodable {}
 
@@ -74,6 +75,16 @@ struct RDSUpdateRequest: Codable, Sendable {
         if let rt { patch["rt_text"] = rt }
         return patch
     }
+}
+
+struct SnapshotNameRequest: Codable {
+    var name: String?
+}
+
+struct SnapshotImportRequest: Codable {
+    var name: String?
+    /// Full MPX Prime INI text (what /api/snapshots/:slot/export returns).
+    var ini: String
 }
 
 struct PresetApplyRequest: Codable, Sendable {
@@ -257,6 +268,70 @@ enum ControlServer {
             }
         }
 
+        // Operator preset slots. Load applies the slot as a full config
+        // patch (canonical live/restart classification); export returns the
+        // slot's INI text, which doubles as a shareable --config file.
+        router.get("/api/snapshots") { _, _ -> ControlSnapshots in
+            await backend.snapshots()
+        }
+        router.post("/api/snapshots/:slot/save") { request, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            let body = try? await request.decode(as: SnapshotNameRequest.self, context: context)
+            do {
+                return try await backend.snapshotSave(slot: slot, name: body?.name ?? "")
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.post("/api/snapshots/:slot/load") { _, context -> ConfigApplyResult in
+            let slot = try Self.slotParam(context)
+            do {
+                return try await backend.snapshotLoad(slot: slot)
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.patch("/api/snapshots/:slot") { request, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            let body = try await request.decode(as: SnapshotNameRequest.self, context: context)
+            do {
+                return try await backend.snapshotRename(slot: slot, name: body.name ?? "")
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.delete("/api/snapshots/:slot") { _, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            do {
+                return try await backend.snapshotClear(slot: slot)
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.get("/api/snapshots/:slot/export") { _, context -> Response in
+            let slot = try Self.slotParam(context)
+            guard let ini = await backend.snapshotExport(slot: slot) else {
+                throw HTTPError(.notFound, message: "empty slot")
+            }
+            return Response(
+                status: .ok,
+                headers: [.contentType: "text/plain; charset=utf-8"],
+                body: .init(byteBuffer: ByteBuffer(string: ini))
+            )
+        }
+        router.put("/api/snapshots/:slot") { request, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            let body = try await request.decode(as: SnapshotImportRequest.self, context: context)
+            do {
+                return try await backend.snapshotImport(
+                    slot: slot, name: body.name, iniText: body.ini)
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            } catch {
+                throw HTTPError(.badRequest, message: "INI did not parse: \(error)")
+            }
+        }
+
         router.post("/api/transport/:action") { _, context -> ControlStatus in
             guard let raw = context.parameters.get("action"),
                 let action = TransportAction(rawValue: raw)
@@ -317,6 +392,14 @@ enum ControlServer {
     /// absent (e.g. a package that ships the bare binary), which would
     /// take the ENCODER down over a missing web page. Resolve the bundle
     /// manually relative to the executable first.
+    static func slotParam(_ context: some RequestContext) throws -> Int {
+        guard let raw = context.parameters.get("slot"), let slot = Int(raw),
+              (0..<SnapshotStore.slotCount).contains(slot) else {
+            throw HTTPError(.badRequest, message: "slot must be 0..\(SnapshotStore.slotCount - 1)")
+        }
+        return slot
+    }
+
     static func dashboardHTML() -> String {
         let stub = "<!doctype html><title>MPX Prime</title><p>Dashboard resource missing; the REST API is available under /api/."
         return webUIResource(name: "index", ext: "html") ?? stub

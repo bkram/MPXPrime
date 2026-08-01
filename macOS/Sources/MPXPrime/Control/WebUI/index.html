@@ -636,6 +636,91 @@ function renderPresets(c) {
       await loadConfig(); syncAll();
     } catch (e) { toast("preset failed: " + e.message, true); }
   };
+  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Preset Slots (operator snapshots)" }));
+  const slotsCard = document.createElement("div");
+  slotsCard.className = "card cardpad";
+  c.appendChild(slotsCard);
+  renderSnapshotSlots(slotsCard);
+}
+/* Operator preset slots (Tools -> Presets, below the factory presets). */
+async function renderSnapshotSlots(host) {
+  host.innerHTML = "";
+  let snaps = null;
+  try { snaps = await api("/api/snapshots"); } catch (e) { return; }
+  const table = document.createElement("table");
+  table.innerHTML = "<tr><th style='width:34px'>#</th><th>name</th><th style='width:110px'>saved</th><th style='width:290px'></th></tr>";
+  for (const s of snaps.slots) {
+    const tr = document.createElement("tr");
+    const num = document.createElement("td");
+    num.textContent = String(s.slot + 1) + (s.active ? (s.modified ? " *" : " >") : "");
+    num.title = s.active ? (s.modified ? "loaded - edited since" : "loaded") : "";
+    const nameTd = document.createElement("td");
+    const nameIn = document.createElement("input");
+    nameIn.type = "text"; nameIn.value = s.name || ""; nameIn.placeholder = "(empty)";
+    nameIn.onchange = async () => {
+      if (s.name == null) return;  // renaming an empty slot is meaningless
+      try { await api("/api/snapshots/" + s.slot, { method:"PATCH", body:JSON.stringify({ name: nameIn.value }) }); toast("renamed"); }
+      catch (e) { toast("rename failed: " + e.message, true); }
+    };
+    nameTd.appendChild(nameIn);
+    const dateTd = document.createElement("td");
+    dateTd.style.fontSize = "11px";
+    dateTd.textContent = s.savedAt ? new Date(s.savedAt).toLocaleDateString() : "-";
+    const btnTd = document.createElement("td");
+    const mk = (label, fn, danger) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      if (danger) b.className = "red";
+      b.style.marginRight = "4px";
+      b.onclick = fn;
+      btnTd.appendChild(b);
+    };
+    mk("Save", async () => {
+      if (s.name != null && !confirm("Overwrite slot " + (s.slot+1) + " ('" + s.name + "') with the CURRENT config?")) return;
+      try { await api("/api/snapshots/" + s.slot + "/save", { method:"POST", body:JSON.stringify({ name: nameIn.value }) }); toast("saved to slot " + (s.slot+1)); renderSnapshotSlots(host); }
+      catch (e) { toast("save failed: " + e.message, true); }
+    });
+    if (s.name != null) {
+      mk("Load", async () => {
+        if (!confirm("Load '" + s.name + "'? This replaces the current configuration.")) return;
+        try {
+          const r = await api("/api/snapshots/" + s.slot + "/load", { method:"POST" });
+          toast("loaded '" + s.name + "'" + (r.restartPending ? " - restart to apply some settings" : ""));
+          await loadConfig(); syncAll(); refreshSidebarDots(); pollStatus(); renderSnapshotSlots(host);
+        } catch (e) { toast("load failed: " + e.message, true); }
+      });
+      mk("Export", () => {
+        const a = document.createElement("a");
+        a.href = "/api/snapshots/" + s.slot + "/export";
+        a.download = (s.name || "preset") + ".ini";
+        a.click();
+      });
+      mk("Clear", async () => {
+        if (!confirm("Clear slot " + (s.slot+1) + " ('" + s.name + "')?")) return;
+        try { await api("/api/snapshots/" + s.slot, { method:"DELETE" }); toast("cleared"); renderSnapshotSlots(host); }
+        catch (e) { toast("clear failed: " + e.message, true); }
+      }, true);
+    } else {
+      mk("Import...", () => {
+        const f = document.createElement("input");
+        f.type = "file"; f.accept = ".ini,text/plain";
+        f.onchange = async () => {
+          const file = f.files[0];
+          if (!file) return;
+          const ini = await file.text();
+          const name = file.name.replace(/\.[^.]*$/, "");
+          try { await api("/api/snapshots/" + s.slot, { method:"PUT", body:JSON.stringify({ name, ini }) }); toast("imported '" + name + "'"); renderSnapshotSlots(host); }
+          catch (e) { toast("import failed: " + e.message, true); }
+        };
+        f.click();
+      });
+    }
+    tr.appendChild(num); tr.appendChild(nameTd); tr.appendChild(dateTd); tr.appendChild(btnTd);
+    table.appendChild(tr);
+  }
+  host.appendChild(table);
+  host.insertAdjacentHTML("beforeend",
+    '<div class="subtitle" style="margin-top:6px">Slots are shared with the native GUI (same file next to the config). An exported slot is a complete MPX Prime INI, loadable via --config.</div>');
 }
 function renderInterfaces(c, p) {
   const dev = document.createElement("div");

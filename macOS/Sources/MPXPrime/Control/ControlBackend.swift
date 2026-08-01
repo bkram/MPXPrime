@@ -134,6 +134,19 @@ struct ControlDevices: Codable, Sendable {
     var note: String
 }
 
+/// One row of GET /api/snapshots: the operator preset slots.
+struct ControlSnapshotSlot: Codable, Sendable {
+    var slot: Int              // 0-based
+    var name: String?          // nil = empty slot
+    var savedAt: Date?
+    var active: Bool           // this slot's config is the live one
+    var modified: Bool         // ...but the operator changed things since
+}
+
+struct ControlSnapshots: Codable, Sendable {
+    var slots: [ControlSnapshotSlot]
+}
+
 /// The engine surface the headless backend drives. AudioOutputEngine (macOS)
 /// and ALSAAudioEngine (Linux) both conform; both `apply*` entry points are
 /// thread-safe producers consumed by the render thread.
@@ -157,6 +170,16 @@ protocol ControlBackend: Sendable {
     /// flag restart-required leftovers.
     func applyConfigPatch(_ patch: [String: String]) async throws -> ConfigApplyResult
     func transport(_ action: TransportAction) async throws -> ControlStatus
+    // Operator preset slots (shared SnapshotStore; <config>.snapshots.json).
+    func snapshots() async -> ControlSnapshots
+    func snapshotSave(slot: Int, name: String) async throws -> ControlSnapshots
+    func snapshotLoad(slot: Int) async throws -> ConfigApplyResult
+    func snapshotRename(slot: Int, name: String) async throws -> ControlSnapshots
+    func snapshotClear(slot: Int) async throws -> ControlSnapshots
+    /// The slot's full INI text (nil = empty slot).
+    func snapshotExport(slot: Int) async -> String?
+    /// Validate + normalize + store INI text into the slot (does not load it).
+    func snapshotImport(slot: Int, name: String?, iniText: String) async throws -> ControlSnapshots
     /// Available preset ids by kind (primebass / widener / multiband /
     /// format_profile) -- and application thereof.
     func presets() async -> [String: [String]]

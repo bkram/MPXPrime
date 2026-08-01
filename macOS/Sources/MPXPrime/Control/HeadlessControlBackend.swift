@@ -110,6 +110,7 @@ actor HeadlessControlBackend: ControlBackend {
             if planes.restartRequired { restartPending = true }
         }
         persist()
+        markActiveSnapshotModified()
         onConfigChange?(newConfig)
         return ConfigApplyResult(
             outcomes: outcomes,
@@ -184,9 +185,119 @@ actor HeadlessControlBackend: ControlBackend {
         config = newConfig
         engine?.applyRuntimeConfig(newConfig)
         persist()
+        markActiveSnapshotModified()
         onConfigChange?(newConfig)
         return ConfigApplyResult(
             outcomes: [], appliedLive: engine != nil, restartPending: restartPending)
+    }
+
+    // MARK: - Snapshot slots (shared SnapshotStore)
+
+    private func snapshotDTO(_ file: SnapshotFile) -> ControlSnapshots {
+        ControlSnapshots(slots: file.slots.enumerated().map { i, snap in
+            ControlSnapshotSlot(
+                slot: i,
+                name: snap?.name,
+                savedAt: snap?.savedAt,
+                active: snap != nil && snap?.id == file.activeID,
+                modified: snap != nil && snap?.id == file.activeID
+                    && (file.activeModified ?? false))
+        })
+    }
+
+    func snapshots() -> ControlSnapshots {
+        snapshotDTO(SnapshotStore.load(configPath: configPath))
+    }
+
+    func snapshotSave(slot: Int, name: String) throws -> ControlSnapshots {
+        var file = SnapshotStore.load(configPath: configPath)
+        guard file.slots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snap = ConfigSnapshot(
+            id: UUID(),
+            name: trimmed.isEmpty ? SnapshotStore.defaultName(slot: slot) : trimmed,
+            savedAt: Date(),
+            configINIText: try config.captureAsINIString())
+        file.slots[slot] = snap
+        file.activeID = snap.id
+        file.activeModified = false
+        try SnapshotStore.write(file, configPath: configPath)
+        return snapshotDTO(file)
+    }
+
+    func snapshotLoad(slot: Int) throws -> ConfigApplyResult {
+        var file = SnapshotStore.load(configPath: configPath)
+        guard file.slots.indices.contains(slot), let snap = file.slots[slot] else {
+            throw ControlError.invalidRequest("empty or invalid slot")
+        }
+        // Apply as a FULL config patch so every changed key goes through the
+        // canonical live/liveRDS/restart classification -- a snapshot load is
+        // just a big PATCH, and behaves exactly like one.
+        let loaded = try AppConfig.loadFromINIString(snap.configINIText)
+        let patch = try ConfigPatch.sectionedValues(of: loaded)
+            .values.reduce(into: [String: String]()) { $0.merge($1) { a, _ in a } }
+        let result = try applyConfigPatch(patch)
+        file.activeID = snap.id
+        file.activeModified = false
+        try SnapshotStore.write(file, configPath: configPath)
+        return result
+    }
+
+    func snapshotRename(slot: Int, name: String) throws -> ControlSnapshots {
+        var file = SnapshotStore.load(configPath: configPath)
+        guard file.slots.indices.contains(slot), var snap = file.slots[slot] else {
+            throw ControlError.invalidRequest("empty or invalid slot")
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        snap.name = trimmed.isEmpty ? SnapshotStore.defaultName(slot: slot) : trimmed
+        file.slots[slot] = snap
+        try SnapshotStore.write(file, configPath: configPath)
+        return snapshotDTO(file)
+    }
+
+    func snapshotClear(slot: Int) throws -> ControlSnapshots {
+        var file = SnapshotStore.load(configPath: configPath)
+        guard file.slots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        if file.slots[slot]?.id == file.activeID {
+            file.activeID = nil
+            file.activeModified = false
+        }
+        file.slots[slot] = nil
+        try SnapshotStore.write(file, configPath: configPath)
+        return snapshotDTO(file)
+    }
+
+    func snapshotExport(slot: Int) -> String? {
+        let file = SnapshotStore.load(configPath: configPath)
+        guard file.slots.indices.contains(slot) else { return nil }
+        return file.slots[slot]?.configINIText
+    }
+
+    func snapshotImport(slot: Int, name: String?, iniText: String) throws -> ControlSnapshots {
+        var file = SnapshotStore.load(configPath: configPath)
+        guard file.slots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        // Validate + normalize through the canonical writer, like the GUI.
+        let parsed = try AppConfig.loadFromINIString(iniText)
+        let canonical = try parsed.captureAsINIString()
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let snap = ConfigSnapshot(
+            id: UUID(),
+            name: trimmed.isEmpty ? SnapshotStore.defaultName(slot: slot) : trimmed,
+            savedAt: Date(),
+            configINIText: canonical)
+        if file.slots[slot]?.id == file.activeID {
+            file.activeID = nil
+            file.activeModified = false
+        }
+        file.slots[slot] = snap
+        try SnapshotStore.write(file, configPath: configPath)
+        return snapshotDTO(file)
     }
 
     func setNowPlaying(artist: String, title: String, display: String) -> Bool {
@@ -251,6 +362,15 @@ actor HeadlessControlBackend: ControlBackend {
     /// covered by init; used for shutdown from signal handlers.
     func shutdown() {
         stopEngine()
+    }
+
+    /// The GUI flips its "Loaded - edited" marker on any config change;
+    /// mirror that here so the API's `modified` flag means the same thing.
+    private func markActiveSnapshotModified() {
+        var file = SnapshotStore.load(configPath: configPath)
+        guard file.activeID != nil, file.activeModified != true else { return }
+        file.activeModified = true
+        try? SnapshotStore.write(file, configPath: configPath)
     }
 
     private func persist() {

@@ -72,6 +72,52 @@ struct GUIControlBackend: ControlBackend {
         }
     }
 
+    func snapshots() async -> ControlSnapshots {
+        (try? await withVM { $0.remoteSnapshots() })
+            ?? ControlSnapshots(slots: [])
+    }
+
+    func snapshotSave(slot: Int, name: String) async throws -> ControlSnapshots {
+        try await withVM { vm in
+            vm.saveSnapshot(slot: slot, name: name)
+            return vm.remoteSnapshots()
+        }
+    }
+
+    func snapshotLoad(slot: Int) async throws -> ConfigApplyResult {
+        try await withVM { vm in
+            vm.loadSnapshot(slot: slot)
+            return ConfigApplyResult(
+                outcomes: [], appliedLive: vm.isRunning,
+                restartPending: vm.runtimeApplyPending)
+        }
+    }
+
+    func snapshotRename(slot: Int, name: String) async throws -> ControlSnapshots {
+        try await withVM { vm in
+            vm.renameSnapshot(slot: slot, name: name)
+            return vm.remoteSnapshots()
+        }
+    }
+
+    func snapshotClear(slot: Int) async throws -> ControlSnapshots {
+        try await withVM { vm in
+            vm.clearSnapshot(slot: slot)
+            return vm.remoteSnapshots()
+        }
+    }
+
+    func snapshotExport(slot: Int) async -> String? {
+        try? await withVM { $0.remoteSnapshotExport(slot: slot) }
+    }
+
+    func snapshotImport(slot: Int, name: String?, iniText: String) async throws -> ControlSnapshots {
+        try await withVM { vm in
+            try vm.remoteSnapshotImport(slot: slot, name: name, iniText: iniText)
+            return vm.remoteSnapshots()
+        }
+    }
+
     func setNowPlaying(artist: String, title: String, display: String) async -> Bool {
         (try? await withVM { $0.applyRemoteNowPlaying(artist: artist, title: title, display: display) })
             ?? false

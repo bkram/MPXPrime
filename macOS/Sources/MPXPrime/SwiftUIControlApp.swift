@@ -662,30 +662,6 @@ enum MonitoringBufferHealth: String {
     case bad = "Dropouts"
 }
 
-/// One saved snapshot slot — name, save timestamp, and the configuration
-/// captured at save time. The config is stored as the same INI text the
-/// app already round-trips through `AppConfig.save(toINI:)` /
-/// `load(fromINI:)`, embedded in JSON. INI keeps schema migrations
-/// handled by the existing parser's defaults (missing keys fall back),
-/// so future AppConfig additions don't break older snapshot files.
-struct ConfigSnapshot: Identifiable, Codable {
-    let id: UUID
-    var name: String
-    var savedAt: Date
-    var configINIText: String
-}
-
-/// On-disk JSON envelope for `snapshots.json`. Wraps the slot array so
-/// future top-level fields (schema version, app version recorded at
-/// save, etc.) can be added without breaking old files.
-struct SnapshotFile: Codable {
-    var slots: [ConfigSnapshot?]
-    /// The preset whose config is currently live (persisted so the "Loaded"
-    /// marker survives relaunch). Optional with defaults so older files decode.
-    var activeID: UUID?
-    var activeModified: Bool?
-}
-
 struct MonitoringStreamHealth {
     var isRunning: Bool = false
     var inputName: String = "None"
@@ -1693,7 +1669,7 @@ final class MPXPrimeViewModel: ObservableObject {
     // window after a programmatic load so only genuine user edits set it.
     private var suppressModifiedFlipUntil: TimeInterval = 0
 
-    static let snapshotSlotCount: Int = 8
+    static let snapshotSlotCount: Int = SnapshotStore.slotCount
 
     /// Snapshot file path derived from the config file path. Sibling
     /// file with `.snapshots.json` suffix so each distinct config gets
@@ -2310,32 +2286,12 @@ final class MPXPrimeViewModel: ObservableObject {
     /// array. Called from init. Missing or corrupt file → silent reset
     /// to empty slots (operator can still save new ones).
     func loadSnapshotsFromDisk() {
-        let path = snapshotsFilePath
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let file = try decoder.decode(SnapshotFile.self, from: data)
-            // Defensive: pad/truncate to our slot count so future schema
-            // changes don't break existing on-disk files.
-            var slots: [ConfigSnapshot?] = Array(
-                repeating: nil, count: Self.snapshotSlotCount)
-            let count = min(file.slots.count, slots.count)
-            for i in 0..<count { slots[i] = file.slots[i] }
-            self.snapshots = slots
-            // Restore which preset is active so the "Loaded" marker survives
-            // relaunch. Drop it if the slot it pointed at is gone.
-            if let id = file.activeID, slots.contains(where: { $0?.id == id }) {
-                self.activeSnapshotID = id
-                self.activeSnapshotModified = file.activeModified ?? false
-            } else {
-                self.activeSnapshotID = nil
-                self.activeSnapshotModified = false
-            }
-        } catch {
-            statusText = "Failed to load presets: \(error.localizedDescription)"
-        }
+        // Delegates to the shared SnapshotStore (also used by the headless
+        // backend's /api/snapshots) so the two stay one implementation.
+        let file = SnapshotStore.load(configPath: configPath)
+        self.snapshots = file.slots
+        self.activeSnapshotID = file.activeID
+        self.activeSnapshotModified = file.activeModified ?? false
     }
 
     /// Persist all slots to disk. JSON envelope wraps the per-slot
@@ -2346,12 +2302,7 @@ final class MPXPrimeViewModel: ObservableObject {
         let file = SnapshotFile(
             slots: snapshots, activeID: activeSnapshotID, activeModified: activeSnapshotModified)
         do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(file)
-            try data.write(
-                to: URL(fileURLWithPath: snapshotsFilePath), options: [.atomic])
+            try SnapshotStore.write(file, configPath: configPath)
         } catch {
             statusText = "Failed to write presets: \(error.localizedDescription)"
         }
@@ -2946,6 +2897,43 @@ final class MPXPrimeViewModel: ObservableObject {
             appliedLive: (planes.dspLive || planes.rdsLive) && isRunning,
             restartPending: runtimeApplyPending
         )
+    }
+
+    func remoteSnapshots() -> ControlSnapshots {
+        ControlSnapshots(slots: snapshots.enumerated().map { i, snap in
+            ControlSnapshotSlot(
+                slot: i,
+                name: snap?.name,
+                savedAt: snap?.savedAt,
+                active: snap != nil && snap?.id == activeSnapshotID,
+                modified: snap != nil && snap?.id == activeSnapshotID && activeSnapshotModified)
+        })
+    }
+
+    func remoteSnapshotExport(slot: Int) -> String? {
+        guard snapshots.indices.contains(slot) else { return nil }
+        return snapshots[slot]?.configINIText
+    }
+
+    func remoteSnapshotImport(slot: Int, name: String?, iniText: String) throws {
+        guard snapshots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        let parsed = try AppConfig.loadFromINIString(iniText)  // validate
+        let canonical = try parsed.captureAsINIString()        // normalize
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let imported = ConfigSnapshot(
+            id: UUID(),
+            name: trimmed.isEmpty ? SnapshotStore.defaultName(slot: slot) : trimmed,
+            savedAt: Date(),
+            configINIText: canonical)
+        if snapshots[slot]?.id == activeSnapshotID {
+            activeSnapshotID = nil
+            activeSnapshotModified = false
+        }
+        snapshots[slot] = imported
+        writeSnapshotsToDisk()
+        statusText = "Imported preset \"\(imported.name)\" into slot \(slot + 1) (remote)."
     }
 
     func remoteStatus() -> ControlStatus {

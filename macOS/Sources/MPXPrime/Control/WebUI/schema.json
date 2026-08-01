@@ -77,10 +77,12 @@
        "en_rds",
        "pi",
        "pty",
+       "pty_rbds",
        "ecc",
        "lic",
        "ptyn",
-       "en_ptyn"
+       "en_ptyn",
+       "ptyn_centered"
       ],
       "t": "Identity"
      },
@@ -91,7 +93,9 @@
        "ps_b",
        "ps_c",
        "ps_d",
-       "ps_centered"
+       "ps_centered",
+       "ps_dynamic",
+       "ps_frame_seconds"
       ],
       "t": "Program Service"
      },
@@ -119,9 +123,50 @@
        "rt_text",
        "rt_centered",
        "rt_cr",
-       "en_rt_plus"
+       "rt_mode"
       ],
       "t": "RadioText"
+     },
+     {
+      "keys": [
+       "rt_cycle",
+       "rt_cycle_time",
+       "rt_cycle_ab",
+       "rt_ab_cycle_count"
+      ],
+      "t": "Rotation"
+     },
+     {
+      "keys": [
+       "rt_manual_buffers",
+       "rt_active_buffer",
+       "rt_a",
+       "rt_a_enabled",
+       "rt_b",
+       "rt_b_enabled",
+       "rt_c",
+       "rt_c_enabled",
+       "rt_d",
+       "rt_d_enabled"
+      ],
+      "t": "Manual Buffers (override the template while enabled)"
+     },
+     {
+      "keys": [
+       "en_rt_plus",
+       "rt_plus_format_a",
+       "rt_plus_format_b"
+      ],
+      "t": "RT+ (artist/title tags)"
+     },
+     {
+      "keys": [
+       "now_playing_enabled",
+       "now_playing_script",
+       "now_playing_poll_seconds",
+       "now_playing_timeout_seconds"
+      ],
+      "t": "Now Playing"
      }
     ],
     "id": "rdsRadiotext",
@@ -149,6 +194,7 @@
      {
       "keys": [
        "en_af",
+       "af_method",
        "af_list"
       ],
       "t": "Alternative Frequencies"
@@ -162,14 +208,18 @@
     "cards": [
      {
       "keys": [
-       "group_sequence"
+       "group_sequence",
+       "scheduler_auto",
+       "scheduler_standard",
+       "scheduler_standard_lps"
       ],
       "t": "Group Sequence"
      },
      {
       "keys": [
        "en_ct",
-       "en_id"
+       "en_id",
+       "tz_offset"
       ],
       "t": "Clock"
      },
@@ -202,6 +252,15 @@
    }
   ],
   "stages": [
+   {
+    "help": "One picker that atomically wires multiband, final stage, PrimeBass, widener and composite-clipper settings to a coherent target for a programming format. Per-stage knobs stay editable afterwards; 'Custom' records that your settings are bespoke.",
+    "id": "profile",
+    "keys": [],
+    "pill": null,
+    "presetKind": "format_profile",
+    "sub": "Station format bundle",
+    "title": "Profile"
+   },
    {
     "help": "Global engine controls: bypass, mono mode, input/output gains, pre-emphasis, audio HPF, program lowpass, HF trim. Most settings here are restart-required.",
     "id": "core",
@@ -324,6 +383,17 @@
      "multiband_transient_aware_attack_enabled",
      "multiband_inter_band_coupling_enabled"
     ],
+    "keys2": {
+     "keys": [
+      "multiband_x1_hz",
+      "multiband_x2_hz",
+      "multiband_x3_hz",
+      "multiband_x4_hz",
+      "multiband_low_hz",
+      "multiband_high_hz"
+     ],
+     "title": "Crossovers (advanced, restart)"
+    },
     "pill": "MB",
     "presetKind": "multiband",
     "sub": "3/5-band compressor",
@@ -497,6 +567,13 @@
      "pre_encode_lookahead_hf_cutoff_hz",
      "pre_encode_bandlimited_residual_enabled"
     ],
+    "keys2": {
+     "keys": [
+      "pre_encode_bandlimited_residual_taps",
+      "pre_encode_bandlimited_residual_cutoff_fraction"
+     ],
+     "title": "Distortion-Cancelling Kernel (advanced, restart)"
+    },
     "pill": "Lim",
     "sub": "Pre-encode true-peak limiter",
     "summary": [
@@ -514,12 +591,19 @@
      "mpx_clipper_enabled",
      "mpx_clipper_threshold_db",
      "mpx_clipper_ceiling_db",
+     "mpx_clipper_lookahead_ms",
      "mpx_clipper_cancel_pilot",
      "mpx_clipper_cancel_rds",
      "mpx_clipper_cancel_stereo",
      "mpx_clipper_cancel_audio",
      "mpx_multiband_clipper_enabled"
     ],
+    "keys2": {
+     "keys": [
+      "mpx_clipper_oversampling"
+     ],
+     "title": "Engine (restart)"
+    },
     "pill": "MPX-Clip",
     "sub": "Differential MPX clipper with guard bands",
     "summary": [
@@ -561,6 +645,16 @@
      "pilot_level",
      "rds_level"
     ],
+    "keys2": {
+     "keys": [
+      "sum_level",
+      "diff_level",
+      "audio_composite_softclip_enabled",
+      "audio_composite_smoother_enabled",
+      "final_mpx_softclip_enabled"
+     ],
+     "title": "Composite Internals (advanced)"
+    },
     "pill": "Final",
     "sub": "Output level, deviation, safety limiter",
     "title": "Final Stage"
@@ -588,10 +682,22 @@
     "id": "interfaces",
     "keys": [
      "sample_rate",
-     "processed_audio_output"
+     "blocksize",
+     "processed_audio_output",
+     "processed_audio_coder_has_clipper",
+     "processed_audio_final_clip_drive_db"
     ],
+    "keys2": {
+     "keys": [
+      "auto_start",
+      "pilot_level",
+      "fft_window_92khz",
+      "monitor_enabled"
+     ],
+     "title": "Engine"
+    },
     "special": "interfaces",
-    "sub": "Devices and format",
+    "sub": "Devices, format, engine",
     "title": "Interfaces"
    },
    {

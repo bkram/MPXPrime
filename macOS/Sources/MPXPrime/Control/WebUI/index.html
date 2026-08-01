@@ -201,6 +201,39 @@ async function patchKey(key, value, silent) {
     pollStatus();
   } catch (e) { toast(key + ": " + e.message, true); }
 }
+let defaultsCache = null;
+async function configDefaults() {
+  if (!defaultsCache) {
+    const sections = await api("/api/config/defaults");
+    defaultsCache = {};
+    for (const sec of Object.values(sections)) Object.assign(defaultsCache, sec);
+  }
+  return defaultsCache;
+}
+/* Reset every key on a page to factory defaults, in one PATCH. */
+function resetTabButton(keys, title) {
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "text-align:right;padding:10px 0";
+  const b = document.createElement("button");
+  b.textContent = "Reset This Tab";
+  b.onclick = async () => {
+    try {
+      const defs = await configDefaults();
+      const patch = {};
+      for (const k of keys) {
+        if (k in defs && String(cfg[k]) !== String(defs[k])) patch[k] = defs[k];
+      }
+      if (!Object.keys(patch).length) { toast("already at defaults"); return; }
+      if (!confirm("Reset " + Object.keys(patch).length + " setting(s) on '" + title + "' to factory defaults?")) return;
+      const r = await api("/api/config", { method:"PATCH", body:JSON.stringify(patch) });
+      const pending = r.outcomes.some(o => o.disposition === "restartRequired");
+      await loadConfig(); syncAll(); refreshSidebarDots(); pollStatus();
+      toast(title + " reset to defaults" + (pending ? " - restart to apply some" : ""));
+    } catch (e) { toast("reset failed: " + e.message, true); }
+  };
+  wrap.appendChild(b);
+  return wrap;
+}
 async function loadConfig() {
   const sections = await api("/api/config");
   cfg = {};
@@ -423,6 +456,8 @@ function renderStage(c, s) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.keys2.title }));
     c.appendChild(card(s.keys2.keys));
   }
+  const stageKeys = [...(s.keys||[]), ...((s.keys2 && s.keys2.keys) || [])];
+  if (stageKeys.length) c.appendChild(resetTabButton(stageKeys, s.title));
   if (s.help) c.appendChild(helpBox(s.help));
   syncAll();
 }
@@ -443,6 +478,8 @@ function renderGeneric(c, p, isRDS) {
       grid.appendChild(cell);
     }
     c.appendChild(grid);
+    const cardKeys = p.cards.flatMap(fc => fc.keys);
+    if (isRDS && cardKeys.length) c.appendChild(resetTabButton(cardKeys, p.title));
   } else {
     c.appendChild(card(p.keys || []));
     if (p.keys2) {
@@ -502,7 +539,9 @@ function renderMonitoring(c) {
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
       kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("AGC Gain", "monAGC") + `</div>` +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
-      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>`;
+      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>` +
+    `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stream Health</div>` +
+      kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + `</div>`;
   c.appendChild(grid);
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Signal Chain" }));
   const chain = document.createElement("div");
@@ -527,7 +566,7 @@ function renderRDSStatus(c) {
   onAir.innerHTML = '<h2>On Air</h2>';
   const oc = document.createElement("div");
   oc.className = "card cardpad";
-  oc.innerHTML = '<div class="rds-live"><div class="ps" id="rdsPS">--------</div><div class="rt" id="rdsRT"></div></div><div class="subtitle" id="rdsIds" style="margin:4px 0 2px"></div>';
+  oc.innerHTML = '<div class="rds-live"><div class="ps" id="rdsPS">--------</div><div class="rt" id="rdsRT"></div></div><div class="subtitle" id="rdsIds" style="margin:4px 0 2px"></div><div class="subtitle" id="rdsLPS"></div>';
   onAir.appendChild(oc);
   grid.appendChild(onAir);
   const quick = document.createElement("div");
@@ -608,8 +647,33 @@ function renderInterfaces(c, p) {
     '<div class="subtitle" id="devNote" style="margin-top:8px"></div>' +
     '<div class="subtitle">Devices and sample rate are restart-class: choose, then press Restart.</div>';
   c.appendChild(dev);
+  // Monitor output: its own picker + enable (the decoded-audio path).
+  const mon = document.createElement("div");
+  mon.className = "card cardpad";
+  mon.style.maxWidth = "640px";
+  mon.innerHTML =
+    '<div class="row"><div class="rlabel">Monitor Device</div><select id="devMon" style="max-width:340px"></select></div>';
+  mon.appendChild(card(["monitor_enabled"]));
+  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
+  c.appendChild(mon);
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Format" }));
   c.appendChild(card(p.keys));
+  if (p.keys2 && p.keys2.keys.length) {
+    c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:p.keys2.title }));
+    c.appendChild(card(p.keys2.keys));
+  }
+  // Remote control: READ-ONLY. Editing the server's own bind/port/key from
+  // the page it serves is a lockout footgun; change them in the INI or GUI.
+  const rc = document.createElement("div");
+  rc.className = "card cardpad";
+  rc.style.maxWidth = "640px";
+  rc.innerHTML =
+    `<div class="kvrow"><span class="k">Address</span><span class="v">${cfg.control_bind || "127.0.0.1"}</span></div>` +
+    `<div class="kvrow"><span class="k">Port</span><span class="v">${cfg.control_port || "8737"}</span></div>` +
+    `<div class="kvrow"><span class="k">API Key</span><span class="v">${isTrue(cfg.control_enabled) ? (cfg.control_api_key ? "set" : "none (loopback only)") : "-"}</span></div>` +
+    '<div class="subtitle" style="margin-top:6px">Read-only here: changing the server you are talking through risks locking yourself out. Edit in the INI or the native GUI; applies at next launch.</div>';
+  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (read-only)" }));
+  c.appendChild(rc);
   loadDevices();
   syncAll();
 }
@@ -664,6 +728,7 @@ async function loadDevices() {
     };
     fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid");
     fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid");
+    fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid");
     if ($("devNote")) $("devNote").textContent = deviceInfo.note || "";
   } catch (e) {}
 }
@@ -720,8 +785,22 @@ async function pollMeters() {
   set("monAGC", m?.agcGainDB != null ? m.agcGainDB.toFixed(1) + " dB" : "-");
   set("monPilot", m?.pilotInjectionPercent != null ? m.pilotInjectionPercent.toFixed(1) + " %" : "-");
   set("monRDS", m?.rdsInjectionPercent != null ? m.rdsInjectionPercent.toFixed(1) + " %" : "-");
-  set("monMargin", m?.compositeBudgetMarginDB != null ? "+" + m.compositeBudgetMarginDB.toFixed(1) + " dB" : "-");
+  const marginEl = $("monMargin");
+  if (marginEl) {
+    marginEl.textContent = m?.compositeBudgetMarginDB != null ? "+" + m.compositeBudgetMarginDB.toFixed(1) + " dB" : "-";
+    // Over-budget = the operator's config physically cannot fit 75 kHz.
+    marginEl.style.color = m?.compositeOverBudget ? "var(--red)" : "";
+    if (m?.compositeOverBudget) marginEl.textContent += "  OVER BUDGET";
+  }
   set("monImg", m?.stereoCorrelation != null ? "Corr " + (m.stereoCorrelation >= 0 ? "+" : "") + m.stereoCorrelation.toFixed(2) : "-");
+  // Stream health (macOS input source; fields null elsewhere).
+  const up = statusInfo?.uptimeSeconds;
+  set("monUp", up != null ? (up >= 3600 ? (up/3600).toFixed(1) + " h" : Math.round(up/60) + " min") : "-");
+  set("monRing", m?.inputRingBufferedFrames != null ? m.inputRingBufferedFrames + " frames" : "-");
+  set("monDrops", m?.inputRingOverflows != null ? (m.inputRingOverflows + " / " + (m.inputRingUnderflows ?? 0)) : "-");
+  set("monResample", m?.inputResampleMode != null
+    ? m.inputResampleMode + (m.inputRatioTrim != null ? " (" + ((m.inputRatioTrim - 1) * 1e6).toFixed(0) + " ppm)" : "")
+    : "-");
 }
 async function pollRDS(force) {
   if (!force && currentPage !== "rdsStatus") return;
@@ -730,7 +809,11 @@ async function pollRDS(force) {
     if ($("rdsPS")) {
       $("rdsPS").textContent = r.livePS || (r.enabled ? "........" : "RDS OFF");
       $("rdsRT").textContent = r.liveRT || "";
-      $("rdsIds").textContent = `PI ${r.pi}   PTY ${r.pty}   TP ${r.tp?"on":"off"}   TA ${r.ta?"ON":"off"}`;
+      let ids = `PI ${r.pi}   PTY ${r.pty}   TP ${r.tp?"on":"off"}   TA ${r.ta?"ON":"off"}`;
+      if (r.livePTYN) ids += `   PTYN ${r.livePTYN}`;
+      $("rdsIds").textContent = ids;
+      const lps = $("rdsLPS");
+      if (lps) lps.textContent = r.liveLongPS ? "Long PS: " + r.liveLongPS : "";
     }
   } catch (e) {}
 }

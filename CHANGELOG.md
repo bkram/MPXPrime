@@ -11,6 +11,23 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Web dashboard parity, phase 2 of 4: full settings coverage.** Every
+  INI-backed control the native GUI has now appears in the dashboard, in the
+  same structure: a new **Profile** page (station-format picker, works on
+  headless via phase 1); the full **Radiotext** editor (mode, rotation, the
+  four manual buffers + enables, RT+ formats, and the complete Now Playing
+  configuration); multiband **crossovers** X1-X4 + the 3-band pair;
+  composite-clipper **look-ahead + oversampling**; Final Stage composite
+  internals (sum/diff levels, soft-clip/smoother toggles); Identity gains
+  RBDS PTY table, PTYN centering, dynamic PS + frame time; Schedule gains
+  the scheduler toggles + timezone offset; AF gains the method picker. The
+  Interfaces page grows a **Monitor device** picker + enable, an Engine card
+  (auto-start, pilot level, spectrum window), and a **read-only Remote
+  Control card** (editing the server you are talking through is a lockout
+  footgun -- INI/GUI only). Every Processing/RDS tab gets a **Reset This
+  Tab** button driven by `GET /api/config/defaults`. Monitoring shows
+  uptime, ring-buffer health, drop counters, resample trim, an OVER BUDGET
+  flag, and the RDS status page shows live PTYN + Long PS.
 - **Web dashboard parity, phase 1 of 4: served schema + drift-proofing.**
   The dashboard now renders itself from `GET /api/schema` (a new
   `WebUI/schema.json` -- widget definitions + page model); `index.html`

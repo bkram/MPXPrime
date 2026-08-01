@@ -39,7 +39,14 @@ public:
 
   /// Connect; when `serial` is non-null/non-empty, select the RSP with that
   /// serial number (fails if absent). Null/empty selects the first device.
-  bool connect(uint32_t freqHz, const char *serial = nullptr);
+  ///
+  /// `captureRateHz` is the IQ rate delivered to `readIQ` -- the RSP always
+  /// samples at 2 MHz and the driver decimates, so this must be 2 MHz divided
+  /// by an integer (2000/1000/500/250 kHz). It sets the RF spectrum's span;
+  /// the demod chain downsamples to its own rate independently. 0 keeps the
+  /// historical 250 kHz.
+  bool connect(uint32_t freqHz, const char *serial = nullptr,
+               int captureRateHz = 0);
   void disconnect();
 
   bool setFrequency(uint32_t freqHz);
@@ -49,6 +56,13 @@ public:
   bool setAntenna(int index);      // RSP antenna input (model-specific)
   bool setBiasTee(bool enable);    // RSP bias tee (model-specific)
   bool setLnaState(int state);     // front-end LNA gain-reduction step (0 = most gain)
+
+  /// Total system gain in dB as the SDRplay API reports it (`currGain`) --
+  /// the same figure SDRuno shows as "System Gain". Tracks AGC and LNA
+  /// changes, which is what makes an absolute power reading possible.
+  /// Negative sentinel (-1000) until the API has reported one.
+  double systemGainDb() const { return m_systemGainDb.load(std::memory_order_relaxed); }
+  void setSystemGainDb(double db) { m_systemGainDb.store(db, std::memory_order_relaxed); }
 
   /// Number of selectable antenna inputs for the connected model (1 if none).
   int antennaCount() const;
@@ -63,6 +77,7 @@ public:
   int inputRate() const { return m_inputRate; }
   /// True after a fatal streaming error / device loss.
   bool failed() const { return m_failed.load(std::memory_order_relaxed); }
+  std::atomic<double> m_systemGainDb{-1000.0};
 
   /// Drain up to maxSamples complex IQ samples. Returns the count copied.
   size_t readIQ(std::complex<float> *out, size_t maxSamples);

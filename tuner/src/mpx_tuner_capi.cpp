@@ -16,6 +16,7 @@
 #include <rtl-sdr.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -29,7 +30,15 @@
 #include <vector>
 
 namespace {
-constexpr int kRtlInputRate = 256000;  // RTL-SDR IQ + demod rate
+constexpr int kRtlDemodRate = 256000;   // rate the RTL FM demod chain runs at
+constexpr int kSDRplayDemodRate = 250000;  // ditto for the SDRplay backend
+
+// RF spectrum: FFT size and how often a frame is produced. The capture thread
+// is not the audio render thread (it already allocates), but there is no point
+// transforming faster than a 25 Hz display consumes -- one frame per 50 ms is
+// plenty and keeps the cost invisible next to the demod.
+constexpr int kSpectrumFFT = 1024;
+constexpr double kSpectrumFramesPerSecond = 20.0;
 
 enum Backend { BackendRTL, BackendSDRplay };
 
@@ -45,8 +54,29 @@ struct MpxTuner {
   RTLSDRDevice rtl;
   SDRplayDevice sdrplay;
   std::unique_ptr<FMDemod> demod;
-  fm_tuner::dsp::liquid::Resampler resampler;  // inputRate -> mpx_rate
-  int inputRate = kRtlInputRate;
+  fm_tuner::dsp::liquid::Resampler resampler;  // demodRate -> mpx_rate
+  // Two rates, deliberately decoupled. `captureRate` is what the device
+  // delivers and it sets ONLY the RF spectrum's span; `demodRate` is what the
+  // FM demod chain runs at and stays at the historical 250/256 kHz whatever
+  // the capture rate is, so widening the span cannot perturb the MPX
+  // measurements. `iqDecim` bridges them.
+  int captureRate = kRtlDemodRate;
+  int inputRate = kRtlDemodRate;  // == demod rate (name kept: used widely below)
+  fm_tuner::dsp::liquid::ComplexDecimator iqDecim;
+  std::vector<std::complex<float>> iqWide;      // captureRate IQ for the FFT
+  std::vector<std::complex<float>> iqNarrow;    // decimated to demod rate
+
+  // RF spectrum (complex FFT of the wide IQ), published as a snapshot.
+  fftplan specPlan = nullptr;
+  std::vector<std::complex<float>> specIn;
+  std::vector<std::complex<float>> specOut;
+  std::vector<float> specWindow;
+  std::vector<float> specAccum;    // smoothed, fftshifted dB bins
+  std::vector<float> specPublish;  // guarded copy handed to the reader
+  int specFill = 0;
+  int specSkip = 0;               // samples still to drop before the next frame
+  bool specPrimed = false;
+  std::mutex specMutex;
 
   MpxTunerSampleCallback cb = nullptr;
   void *ctx = nullptr;
@@ -62,6 +92,12 @@ struct MpxTuner {
   std::vector<Cmd> cmds;
 
   explicit MpxTuner(uint32_t devIndex, uint32_t rate) : rtl(devIndex), mpxRate(rate) {}
+
+  ~MpxTuner() {
+    // The capture thread is already joined by both close paths before the
+    // object is deleted, so nothing can be mid-transform here.
+    if (specPlan) { fft_destroy_plan(specPlan); specPlan = nullptr; }
+  }
 
   void enqueue(const Cmd &c) {
     std::lock_guard<std::mutex> lk(cmdMutex);
@@ -128,6 +164,72 @@ struct MpxTuner {
     for (auto it = coalesced.rbegin(); it != coalesced.rend(); ++it) apply(*it);
   }
 
+  /// Build the FFT plan, window and buffers for the RF spectrum. Called once
+  /// at open, after the capture rate is known.
+  void initSpectrum() {
+    specIn.assign(kSpectrumFFT, std::complex<float>(0.0f, 0.0f));
+    specOut.assign(kSpectrumFFT, std::complex<float>(0.0f, 0.0f));
+    specAccum.assign(kSpectrumFFT, -140.0f);
+    specPublish.assign(kSpectrumFFT, -140.0f);
+    specWindow.assign(kSpectrumFFT, 0.0f);
+    for (int i = 0; i < kSpectrumFFT; i++) {
+      // Hann: adequate sidelobes for a display, and cheap.
+      specWindow[i] = 0.5f - 0.5f * std::cos(2.0f * static_cast<float>(M_PI) *
+                                             static_cast<float>(i) /
+                                             static_cast<float>(kSpectrumFFT - 1));
+    }
+    specPlan = fft_create_plan(kSpectrumFFT,
+                               reinterpret_cast<liquid_float_complex *>(specIn.data()),
+                               reinterpret_cast<liquid_float_complex *>(specOut.data()),
+                               LIQUID_FFT_FORWARD, 0);
+    specFill = 0;
+    specSkip = 0;
+    specPrimed = false;
+  }
+
+  /// Feed wide IQ to the spectrum. Fills one FFT frame, transforms it, then
+  /// skips ahead so frames arrive at ~kSpectrumFramesPerSecond rather than as
+  /// fast as the buffer refills.
+  void feedSpectrum(const std::complex<float> *iq, size_t n) {
+    if (!specPlan) return;
+    size_t i = 0;
+    while (i < n) {
+      if (specSkip > 0) {
+        const size_t drop = std::min(static_cast<size_t>(specSkip), n - i);
+        specSkip -= static_cast<int>(drop);
+        i += drop;
+        continue;
+      }
+      const size_t take = std::min(static_cast<size_t>(kSpectrumFFT - specFill), n - i);
+      for (size_t k = 0; k < take; k++) specIn[specFill + k] = iq[i + k];
+      specFill += static_cast<int>(take);
+      i += take;
+      if (specFill < kSpectrumFFT) break;
+
+      for (int k = 0; k < kSpectrumFFT; k++) specIn[k] *= specWindow[k];
+      fft_execute(specPlan);
+      // Magnitude in dB, fftshifted so bin 0 is the low edge of the span and
+      // the centre bin is the tuned frequency.
+      const float norm = 1.0f / static_cast<float>(kSpectrumFFT);
+      const int half = kSpectrumFFT / 2;
+      for (int k = 0; k < kSpectrumFFT; k++) {
+        const int src = (k < half) ? (k + half) : (k - half);
+        const std::complex<float> v = specOut[src] * norm;
+        const float mag2 = v.real() * v.real() + v.imag() * v.imag();
+        const float db = 10.0f * std::log10(mag2 + 1e-20f);
+        specAccum[k] = specPrimed ? (specAccum[k] + 0.45f * (db - specAccum[k])) : db;
+      }
+      specPrimed = true;
+      {
+        std::lock_guard<std::mutex> lk(specMutex);
+        specPublish = specAccum;
+      }
+      specFill = 0;
+      specSkip = std::max(0, static_cast<int>(static_cast<double>(captureRate) /
+                                              kSpectrumFramesPerSecond) - kSpectrumFFT);
+    }
+  }
+
   void loop() {
     const size_t kBlock = 8192;
     std::vector<uint8_t> iq(kBlock * 2);
@@ -136,6 +238,8 @@ struct MpxTuner {
     std::vector<float> out;
     out.reserve(kBlock);
     std::array<float, fm_tuner::dsp::liquid::Resampler::kMaxOutput> tmp{};
+    iqWide.assign(kBlock, std::complex<float>(0.0f, 0.0f));
+    iqNarrow.assign(kBlock, std::complex<float>(0.0f, 0.0f));
 
     while (running.load(std::memory_order_relaxed)) {
       drain();
@@ -144,15 +248,44 @@ struct MpxTuner {
         alive.store(false, std::memory_order_relaxed);
         break;
       }
-      size_t n = 0;
+      size_t n = 0;       // demod-rate sample count
       if (sp) {
-        n = sdrplay.readIQ(iqc.data(), kBlock);
-        if (n == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue; }
-        demod->processSplitComplex(iqc.data(), mpx.data(), nullptr, n);
+        const size_t got = sdrplay.readIQ(iqWide.data(), kBlock);
+        if (got == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue; }
+        feedSpectrum(iqWide.data(), got);
+        n = iqDecim.executeComplexIn(iqWide.data(), got, iqNarrow.data(), iqNarrow.size());
+        if (n == 0) continue;
+        demod->processSplitComplex(iqNarrow.data(), mpx.data(), nullptr, n);
       } else {
-        n = rtl.readIQ(iq.data(), kBlock);
-        if (n == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue; }
-        demod->processSplit(iq.data(), mpx.data(), nullptr, n);
+        const size_t got = rtl.readIQ(iq.data(), kBlock);
+        if (got == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue; }
+        if (iqDecim.factor() == 1) {
+          // Not capturing wide: keep the ORIGINAL packed-byte demod path
+          // byte-for-byte. It normalizes through its own LUT and detects
+          // saturation on the raw bytes, neither of which the complex path
+          // reproduces exactly -- and this is the default configuration, so it
+          // must stay untouched. The spectrum still gets its own unpack.
+          for (size_t k = 0; k < got; k++) {
+            iqWide[k] = std::complex<float>(
+                (static_cast<float>(iq[k * 2]) - 127.5f) / 127.5f,
+                (static_cast<float>(iq[k * 2 + 1]) - 127.5f) / 127.5f);
+          }
+          feedSpectrum(iqWide.data(), got);
+          n = got;
+          demod->processSplit(iq.data(), mpx.data(), nullptr, n);
+        } else {
+          // Wide capture: unpack once and reuse for both the spectrum and the
+          // decimation (the packed-uint8 decimator would unpack a second time).
+          for (size_t k = 0; k < got; k++) {
+            iqWide[k] = std::complex<float>(
+                (static_cast<float>(iq[k * 2]) - 127.5f) / 127.5f,
+                (static_cast<float>(iq[k * 2 + 1]) - 127.5f) / 127.5f);
+          }
+          feedSpectrum(iqWide.data(), got);
+          n = iqDecim.executeComplexIn(iqWide.data(), got, iqNarrow.data(), iqNarrow.size());
+          if (n == 0) continue;
+          demod->processSplitComplex(iqNarrow.data(), mpx.data(), nullptr, n);
+        }
       }
       signalDbfs.store(demod->getFilteredChannelPowerDbfs(), std::memory_order_relaxed);
       out.clear();
@@ -250,17 +383,31 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
   if (useSDRplay) {
     t->backend = BackendSDRplay;
     const char *serial = cfg->device_serial[0] ? cfg->device_serial : nullptr;
-    if (!t->sdrplay.connect(cfg->freq_khz * 1000, serial)) {
+    if (!t->sdrplay.connect(cfg->freq_khz * 1000, serial,
+                            static_cast<int>(cfg->iq_rate_khz) * 1000)) {
       setErr(serial ? "requested SDRplay serial not attached (or open failed)"
                     : "SDRplay device open failed");
       delete t; return nullptr;
     }
-    t->inputRate = t->sdrplay.inputRate();
+    t->captureRate = t->sdrplay.inputRate();
+    t->inputRate = kSDRplayDemodRate;
   } else {
     t->backend = BackendRTL;
     if (!t->rtl.connect()) { setErr("no SDR device found"); delete t; return nullptr; }
-    t->inputRate = kRtlInputRate;
-    t->rtl.setSampleRate(kRtlInputRate);
+    t->inputRate = kRtlDemodRate;
+    // Capture wider than the demod needs only to widen the RF spectrum; must
+    // be an integer multiple of the demod rate so one decimator bridges them.
+    t->captureRate = kRtlDemodRate;
+    if (cfg->iq_rate_khz > 0) {
+      const int mult = std::max(1, static_cast<int>(std::lround(
+          static_cast<double>(cfg->iq_rate_khz) * 1000.0 / kRtlDemodRate)));
+      t->captureRate = kRtlDemodRate * mult;
+    }
+    if (!t->rtl.setSampleRate(static_cast<uint32_t>(t->captureRate))) {
+      // Dongle refused the wide rate -- fall back rather than fail the open.
+      t->captureRate = kRtlDemodRate;
+      t->rtl.setSampleRate(kRtlDemodRate);
+    }
     t->rtl.setFrequency(cfg->freq_khz * 1000);
     if (cfg->ppm != 0) t->rtl.setFrequencyCorrection(cfg->ppm);
     if (cfg->auto_gain) {
@@ -273,8 +420,21 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
     t->rtl.setBiasTee(cfg->bias_tee != 0);
   }
 
+  // The demod ALWAYS runs at inputRate (250/256 kHz). When the device is
+  // capturing wider, a polyphase decimator brings the IQ down first, so the
+  // MPX measurements see the same rate and the same channel filtering they
+  // always have -- widening the spectrum span cannot move them.
+  if (t->captureRate < t->inputRate) t->captureRate = t->inputRate;
+  const int decim = std::max(1, t->captureRate / t->inputRate);
+  t->captureRate = t->inputRate * decim;
+  try {
+    t->iqDecim.init(static_cast<std::uint32_t>(decim));
+  } catch (...) {
+    setErr("failed to build the IQ decimator"); delete t; return nullptr;
+  }
   t->demod = std::make_unique<FMDemod>(t->inputRate, static_cast<int>(rate));
   t->resampler.init(static_cast<float>(rate) / static_cast<float>(t->inputRate));
+  t->initSpectrum();
   t->mpxGain = static_cast<float>(std::pow(10.0, cfg->mpx_gain_db / 20.0));
 
   if (cfg->bandwidth_khz > 0) {
@@ -321,6 +481,24 @@ int mpxtuner_is_alive(const MpxTuner *t) {
 
 double mpxtuner_signal_dbfs(const MpxTuner *t) {
   return t ? t->signalDbfs.load(std::memory_order_relaxed) : -120.0;
+}
+
+int mpxtuner_rf_spectrum(MpxTuner *t, float *out, int max_bins, double *span_hz) {
+  if (!t || !out || max_bins <= 0) return 0;
+  if (span_hz) *span_hz = static_cast<double>(t->captureRate);
+  std::lock_guard<std::mutex> lk(t->specMutex);
+  if (!t->specPrimed || t->specPublish.empty()) return 0;
+  const int n = std::min(max_bins, static_cast<int>(t->specPublish.size()));
+  for (int i = 0; i < n; i++) out[i] = t->specPublish[i];
+  return n;
+}
+
+int mpxtuner_capture_rate(const MpxTuner *t) { return t ? t->captureRate : 0; }
+
+double mpxtuner_system_gain_db(const MpxTuner *t) {
+  if (!t) return -1000.0;
+  if (t->backend == BackendSDRplay) return t->sdrplay.systemGainDb();
+  return t->rtl.currentGainDb();
 }
 
 int mpxtuner_backend(const MpxTuner *t) {

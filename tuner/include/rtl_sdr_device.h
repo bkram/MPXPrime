@@ -23,6 +23,11 @@ public:
 
   bool setFrequency(uint32_t freqHz);
   bool setSampleRate(uint32_t rate);
+  /// Tuner gain actually in effect, in dB (librtlsdr reports tenths). This is
+  /// the TUNER stage only -- an RTL dongle has no calibrated total-gain model,
+  /// so an absolute power reading from it needs a user calibration offset.
+  /// -1000 when unknown / not connected.
+  double currentGainDb() const;
   bool setFrequencyCorrection(int ppm);
   bool setGainMode(bool manual);
   bool setGain(uint32_t gainTenthsDb);

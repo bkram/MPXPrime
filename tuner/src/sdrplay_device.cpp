@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -73,9 +74,19 @@ void streamA(short *xi, short *xq, sdrplay_api_StreamCbParamsT *p,
 
 void eventCb(sdrplay_api_EventT id, sdrplay_api_TunerSelectT t,
              sdrplay_api_EventParamsT *p, void *ctx) {
-  (void)t; (void)p;
-  if (ctx && (id == sdrplay_api_DeviceRemoved || id == sdrplay_api_DeviceFailure)) {
-    static_cast<SDRplayDevice *>(ctx)->markFailed();
+  (void)t;
+  if (!ctx) return;
+  auto *self = static_cast<SDRplayDevice *>(ctx);
+  if (id == sdrplay_api_DeviceRemoved || id == sdrplay_api_DeviceFailure) {
+    self->markFailed();
+    return;
+  }
+  // The API reports the total system gain here on every change -- including
+  // the ones its own AGC makes. Reading it back (rather than inferring it from
+  // the values we set) is what keeps an absolute power reading correct with
+  // AGC running.
+  if (id == sdrplay_api_GainChange && p) {
+    self->setSystemGainDb(static_cast<double>(p->gainParams.currGain));
   }
 }
 
@@ -149,7 +160,8 @@ int SDRplayDevice::listDevices(Info *out, int max) {
   return count;
 }
 
-bool SDRplayDevice::connect(uint32_t freqHz, const char *serial) {
+bool SDRplayDevice::connect(uint32_t freqHz, const char *serial,
+                            int captureRateHz) {
   auto &a = api();
   if (!a.ok()) return false;
   if (a.Open() != sdrplay_api_Success) return false;
@@ -186,8 +198,17 @@ bool SDRplayDevice::connect(uint32_t freqHz, const char *serial) {
 
   m_hwVer = static_cast<int>(g_device.hwVer);
 
-  // 2 MHz IQ, decimate by 8 -> 250 kHz effective (ample for the 0-100 kHz MPX).
-  const int decim = 8;
+  // The RSP samples at 2 MHz; the driver decimates to the requested capture
+  // rate. 250 kHz (decimate by 8) is ample for the 0-100 kHz MPX and is the
+  // historical default; a wider capture exists only to widen the RF spectrum
+  // span, and the demod chain downsamples back to its own rate regardless.
+  int decim = 8;
+  if (captureRateHz > 0) {
+    const int wanted = std::max(1, static_cast<int>(std::lround(2000000.0 / captureRateHz)));
+    // Driver decimation must be a power of two.
+    decim = 1;
+    while (decim * 2 <= wanted && decim < 8) decim *= 2;
+  }
   g_params->devParams->fsFreq.fsHz = 2000000.0;
   auto *rx = g_params->rxChannelA;
   rx->tunerParams.rfFreq.rfHz = static_cast<double>(freqHz);
@@ -364,7 +385,7 @@ bool SDRplayDevice::apiAvailable() { return false; }
 int SDRplayDevice::deviceCount() { return 0; }
 int SDRplayDevice::listDevices(Info *, int) { return 0; }
 const char *SDRplayDevice::serialNumber() const { return ""; }
-bool SDRplayDevice::connect(uint32_t, const char *) { return false; }
+bool SDRplayDevice::connect(uint32_t, const char *, int) { return false; }
 void SDRplayDevice::disconnect() {}
 bool SDRplayDevice::setFrequency(uint32_t) { return false; }
 bool SDRplayDevice::setGain(double) { return false; }

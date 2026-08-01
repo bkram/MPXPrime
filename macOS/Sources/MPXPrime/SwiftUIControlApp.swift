@@ -2970,7 +2970,7 @@ final class MPXPrimeViewModel: ObservableObject {
             },
             selectedInput: config.inputDeviceUID ?? "",
             selectedOutput: config.outputDeviceUID ?? "",
-            selectedMonitor: selectedMonitorUID ?? "",
+            selectedMonitor: selectedMonitorUID,
             monitorEnabled: monitorEnabled,
             note: "")
     }

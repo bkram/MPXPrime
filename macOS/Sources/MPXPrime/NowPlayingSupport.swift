@@ -56,7 +56,14 @@ enum NowPlayingFormatter {
     }
 
     static func normalizeScriptPath(_ rawPath: String) -> String {
-        let expanded = (rawPath as NSString).expandingTildeInPath
+        // Empty means "no script" and must never resolve to a directory: the
+        // relative-path branch below would turn "" into the launch directory
+        // itself, which the 0.43 poller bug then tried to EXECUTE every poll
+        // (failing, and clearing any API-pushed track). The call site guards
+        // this too; keep the helper safe for the next caller.
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        let expanded = (trimmed as NSString).expandingTildeInPath
         let pathNSString = expanded as NSString
         if pathNSString.isAbsolutePath {
             return pathNSString.standardizingPath
@@ -87,9 +94,9 @@ enum NowPlayingFormatter {
         _ template: String,
         snapshot: NowPlayingSnapshot
     ) -> String {
-        guard !snapshot.hasContent else { return template }
-
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Nothing to filter if the template references no now-playing macro
+        // ({time}/{date}-only or static text passes through untouched).
         guard containsNowPlayingMacro(trimmed) else { return template }
 
         if trimmed.contains("/") {
@@ -97,7 +104,7 @@ enum NowPlayingFormatter {
                 .split(separator: "/", omittingEmptySubsequences: false)
                 .map(String.init)
             let filtered = segments.filter { segment in
-                !containsNowPlayingMacro(segment)
+                !hasUnresolvedNowPlayingMacro(segment, snapshot: snapshot)
             }
             return filtered.joined(separator: "/")
         }
@@ -119,14 +126,17 @@ enum NowPlayingFormatter {
                     let text = ns.substring(with: match.range(at: 2)).trimmingCharacters(
                         in: .whitespacesAndNewlines
                     )
-                    guard !containsNowPlayingMacro(text) else { return nil }
+                    guard !hasUnresolvedNowPlayingMacro(text, snapshot: snapshot) else { return nil }
                     return "\(duration)s:\(text)"
                 }
                 return kept.joined(separator: "/")
             }
         }
 
-        return ""
+        // Plain single template: keep it only if every macro it references
+        // resolves to a non-empty value; otherwise drop it entirely so we
+        // never air a half-filled "Now playing:  - Title".
+        return hasUnresolvedNowPlayingMacro(trimmed, snapshot: snapshot) ? "" : template
     }
 
     private static func containsNowPlayingMacro(_ text: String) -> Bool {
@@ -134,6 +144,25 @@ enum NowPlayingFormatter {
             || text.contains("{display}")
             || text.contains("{artist}")
             || text.contains("{title}")
+    }
+
+    /// True when `text` references a now-playing macro whose value is empty in
+    /// the snapshot -- i.e. this segment can't be rendered fully, so the
+    /// caller drops it (per-macro emptiness, not all-or-nothing). This is why
+    /// a template like `10s:{artist} - {title}/10s:My Station` gracefully
+    /// falls back to the static segment when there is no track metadata, and
+    /// skips the track segment when only a partial tag (e.g. title, no artist)
+    /// is available.
+    private static func hasUnresolvedNowPlayingMacro(
+        _ text: String, snapshot: NowPlayingSnapshot
+    ) -> Bool {
+        if text.contains("{artist}") && snapshot.artist.isEmpty { return true }
+        if text.contains("{title}") && snapshot.title.isEmpty { return true }
+        if (text.contains("{display}") || text.contains("{now_playing}"))
+            && snapshot.display.isEmpty {
+            return true
+        }
+        return false
     }
 }
 
@@ -146,7 +175,16 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
 
         init(config: AppConfig) {
             enabled = config.rdsNowPlayingEnabled
-            scriptPath = NowPlayingFormatter.normalizeScriptPath(config.rdsNowPlayingScript)
+            // An empty/whitespace script means "no local script" -- keep it
+            // empty. normalizeScriptPath("") would otherwise resolve to the
+            // working directory (a non-empty path), which made the poller try
+            // to launch the CWD, fail, and clear API-pushed now-playing state
+            // every poll.
+            let rawScript = config.rdsNowPlayingScript.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            scriptPath = rawScript.isEmpty
+                ? ""
+                : NowPlayingFormatter.normalizeScriptPath(config.rdsNowPlayingScript)
             pollSeconds = max(1.0, min(300.0, config.rdsNowPlayingPollSeconds))
             timeoutSeconds = max(0.2, min(30.0, config.rdsNowPlayingTimeoutSeconds))
         }
@@ -202,8 +240,12 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         }
 
         guard !settings.scriptPath.isEmpty else {
-            state.clear()
-            statusHandler("Now Playing: no script configured")
+            // No local script: the poller idles, but do NOT clear the state --
+            // it may be fed over the API (POST /api/nowplaying). Clearing here
+            // wiped API-pushed tracks on every config change (onConfigChange ->
+            // updateConfig -> here). Only the disabled case (above) and a real
+            // script failure wipe the state.
+            statusHandler("Now Playing: no local script (API push may feed it)")
             return
         }
 

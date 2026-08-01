@@ -160,6 +160,25 @@ remembered by device UID):
   shaped data waveform by its peak, and EN 50067's +/-1.0 to +/-7.5 kHz
   deviation range is a peak range). It is a solid reading that data
   modulation does not move; set 2.0 kHz on the encoder and this reads 2.0.
+  Under the bars, **AVE / MIN** are the mean and lowest of the same last
+  second of 50 ms slots MAX is drawn from. MAX far above AVE is a peaky,
+  lightly-processed signal; MAX close to AVE is a dense one running near its
+  ceiling continuously.
+- **Quality** (second row, beside the vectorscope): **SIGNAL QUALITY** rates
+  reception on a 5-step scale from Unusable to Excellent, with the figure it
+  is derived from -- how much energy sits *above* the modulated baseband
+  (over 60 kHz), where nothing is legitimately transmitted, so it is demod
+  noise and interference. That band degrades first, which is why it decides
+  whether the rest of the numbers can be trusted: deviation and RDS level
+  lose accuracy before pilot and MPX power do. Reposition the antenna to
+  improve it. **CARRIER OFFSET** is the transmitter's frequency error -- an
+  FM demod turns an offset carrier into composite DC, so this reads it
+  directly (on an audio input it is whatever DC the interface presents
+  instead); deviation measurements are DC-corrected either way. **L / R
+  BALANCE** is the standing level difference between the decoded channels,
+  heavily smoothed, + meaning left is louder; real programme averages to
+  about 0 dB, and a persistent offset means the stereo encoder or its feed is
+  lopsided.
 - **Modulation**: **MPX POWER** (ITU-R BS.412: uniform sliding 60 s window,
   in dBr vs a +/-19 kHz sine) with the worst 60 s window since reset shown
   inline as "max" -- the number BS.412 compliance is judged on; it needs a
@@ -170,10 +189,12 @@ remembered by device UID):
   statistic: the share of deviation samples above 77 kHz (75 kHz + the
   2 kHz measurement tolerance) since reset. Regulators treat more than
   0.0001 % as over-deviation; rare single peaks are not a violation. Plus
-  best stereo separation, and Reset to clear the held values. MPX power and
+  best stereo separation, the **RDS PHASE** compliance readout (see "RDS
+  subcarrier phase" below), and
+  Reset to clear the held values. MPX power and
   the peaks turn amber near and red at/over the limit (0 dBr, 75 kHz). On
-  SDR it also shows **SIGNAL** -- a relative received-level (dBFS) RSSI
-  indicator (green strong / red weak); most meaningful with Auto Gain off.
+  SDR it also shows **SIGNAL** -- the received level (green strong / red
+  weak). See "Signal level and dBm" below for the units.
   The same figures are printed by the headless CLI dashboard as a `MOD`
   line (`MPX ... dBr (max ...)   PK +/- kHz   >77k ...%`).
 - **Vectorscope**: stereo goniometer (vertical = mono, tilt = single channel,
@@ -181,17 +202,48 @@ remembered by device UID):
   beside the trends. The display gain automatically rides the program level
   so the figure fills the scope, hardware-goniometer style -- fast shrink
   when the program gets hot, slow grow as it quiets.
-- **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit lines.
+- **Trends**: deviation (kHz) and MPX power (dBr) over ~60 s, with limit
+  lines, plus the **Deviation Distribution**. The distribution is the
+  accumulated histogram of the same 50 ms peak-hold slots MAX uses, in 1 kHz
+  bins since the last Reset: for every deviation on the x-axis it plots what
+  share of the programme reached that value *or more*. Read it at the dashed
+  75 kHz line and you have the number that matters -- how much of the signal
+  is at or over the limit. The header shows the highest bin ever filled, the
+  share at or above 75 kHz, and the sample count. Give it 15-60 minutes of
+  programme before drawing conclusions: it needs representative material, and
+  it is the one view that describes modulation in a way a single MAX number
+  cannot.
 - **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
   it between waveform and its audio spectrum (0-20 kHz).
 - **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz
   RDS, 67.65 kHz Direct Band, 92 kHz SCA). A **60 / 100 kHz** span toggle in the
   header picks the display range; 60 kHz (the default) focuses on the modulated
   bands, 100 kHz shows the full baseband including SCA.
+
+  On the SDR input the header also carries an **MPX | RF** switch. **MPX** is
+  the demodulated baseband described above. **RF** is the band around the tuned
+  carrier, straight from the tuner's IQ -- the view an SDR application shows:
+  the station's own RF footprint, its neighbours on the 100/200 kHz raster, and
+  any splatter between them. Use it to spot an adjacent channel that is
+  degrading reception, or to check a carrier is where it should be. The centre
+  line marks the tuned frequency and the grid follows the 100 kHz FM raster.
+
+  The RF span is the **Sample Rate** in the input bar: *1 MSPS* (the default)
+  shows about +/-0.5 MHz, *2 MSPS* about +/-1 MHz, and *Narrow* is the minimum
+  the demodulator needs and shows only the tuned carrier. Changing it restarts
+  the capture. It cannot affect any measurement -- the FM demodulator always
+  runs at its own fixed rate behind a decimator whatever the capture rate is,
+  so widening the view only costs USB bandwidth and CPU. Drop to *Narrow* if a
+  dongle struggles at the higher rate.
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
-  AF / group histogram and live block-error rate. The **RDS** row (top of the RDS
+  AF / group histogram and live block-error rate. **Groups** shows each type's
+  count *and its share* of the stream; **Order** shows the last 18 groups in
+  the order they were transmitted. The counts say what an encoder sends, the
+  order shows how it interleaves them -- a repeating scheduler pattern, a
+  starved group type, or one type bursting and crowding out the rest. The **RDS** row (top of the RDS
   panel) shows sync, PI, the TP/TA/MS flags, and **BER** at the end (BER under
-  ~5% is a clean link). The readout is **gated by reception quality**: an RDS
+  ~5% is a clean link). The subcarrier's **phase angle** is measured too, but
+  it is shown in the Modulation card as **RDS PHASE** -- see the next section. The readout is **gated by reception quality**: an RDS
   block decoder syncs on noise easily and would hallucinate random PI/PTY, so
   the panel shows `no usable RDS -- BER ..% . .. kHz` until the link is
   plausible (BER at or under ~15% to open, over ~25% to close again, a
@@ -200,6 +252,80 @@ remembered by device UID):
   Tick **Force** in the panel header to bypass the gate and watch the raw
   decoder output (diagnostics -- expect garbage on noise). PI and PTY are decoded against the reference tables in
   the [Studio manual's appendices](manual.md#appendix-rds-pi-and-ecc-country-table).
+
+### Signal level and dBm
+
+The **SIGNAL** readout can show three units, picked by **Signal** in the SDR
+input bar:
+
+- **dBFS** (default) -- the raw channel power relative to the ADC's full
+  scale. Always available, always correct, but *relative*: it moves when the
+  gain moves, so it only tracks field strength with Auto Gain off.
+- **dBm** -- absolute power at the antenna.
+- **dBuV** -- the same thing in the unit measuring receivers use (in 50 ohm,
+  dBuV = dBm + 107).
+
+The absolute units are computed as **channel power - system gain +
+calibration**. The middle term is read back from the tuner rather than
+assumed, so the reading stays correct while AGC and the LNA move it around --
+the **SYSTEM GAIN** readout in the Quality card shows the value being used.
+
+The last term is the honest part. Neither an SDRplay RSP nor an RTL dongle
+carries a factory power calibration, so nothing can supply the absolute
+reference for you: set the **cal** offset once, against a signal generator or
+a calibrated receiver, and it holds for that antenna and cable. (Tune both
+instruments to the same strong station, read the difference, type it in.)
+Until you do, dBm and dBuV are correctly gain-compensated and correct
+relative to each other, but their zero point is arbitrary.
+
+SDRplay reports a true system gain, so the RSP path is the accurate one. On
+RTL-SDR only the tuner stage is knowable and its gain table is approximate and
+varies unit to unit -- treat an RTL dBm reading as indicative.
+
+### RDS subcarrier phase
+
+**RDS PHASE** in the Modulation card is the angle between the 57 kHz RDS
+subcarrier and the third harmonic of the 19 kHz pilot -- the "RDS phase"
+reading of a Belar RDS-1 or a DEVA analyzer. EN 50067 sec 1.2 allows **two**
+answers, each within 10 degrees:
+
+| Reading | Meaning |
+| --- | --- |
+| `0 deg (in phase)` .. `10 deg` | Locked in phase with the pilot's third harmonic -- the common convention, and what MPX Prime Studio transmits. |
+| `80 deg` .. `90 deg (quadrature)` | Locked in quadrature -- also fully legal (historic BBC practice). |
+| anything between | `out of spec`, shown amber: the encoder is not truly pilot-locked. |
+
+An out-of-spec angle is worth a trim on the encoder, but it is not an
+emergency: most receivers recover the 57 kHz carrier from the subcarrier
+itself and decode either convention. It matters for receivers that
+regenerate 57 kHz by tripling the pilot -- for those, ~45 degrees (equally
+far from both conventions) is the worst case. A reading that will not settle
+usually means the RDS generator is free-running rather than locked to the
+pilot at all.
+
+Two caveats when judging a transmitter by this number. The standard specifies
+the tolerance **at the transmitter's MPX input**, whereas the Meter measures
+off-air (or off the audio input), so exciter and receive-path group delay add
+a few degrees you cannot attribute to the encoder. And the reading is known
+modulo 180 degrees, because RDS is suppressed-carrier DSB -- an anti-phase
+subcarrier is the in-phase case with inverted data, which no receiver can
+distinguish either. The readout shows `--` when there is no pilot, or less
+than 0.8 kHz of RDS, or the subcarrier is too noisy to measure; it is taken
+from the subcarrier itself, so it still reads while the decode readout is
+gated.
+The headless CLI dashboard prints it on the `DEV` line as `PHASE nn deg ...`.
+
+The readout follows the same conventions as a Pira P175/P275 FM Broadcast
+Analyzer, so the two can be compared number for number: both fold the angle
+to an unsigned 0-90 (the Pira manual puts it as "we can equate 90 degrees =
+-90 degrees"), both apply the +/- 10 degree tolerance, and both show no value
+when the pilot and subcarrier are not in a stable phase relation. Pira
+specifies its error as +/- 4 degrees; the Meter's DSP error measured on
+synthetic composites is under 0.15 degrees across the whole range and under
+0.01 degrees for a pilot frequency offset, so off-air accuracy is set by
+reception and transmitter path, not by the measurement. Pira's manual also
+notes the angle drifts a little with transmission-equipment temperature, so
+judge an encoder after it has warmed up.
 
 Deviation is referenced to a 75 kHz total. The deviation/MPX-power
 measurement path is DC-tracked (an SDR tuning offset otherwise skews the

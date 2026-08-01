@@ -63,10 +63,13 @@ Group=audio
 ExecStart=/usr/bin/mpxprime --nogui --config /var/lib/mpxprime/MPXPrime.ini
 Restart=on-failure
 RestartSec=3
-# Real-time-friendly scheduling for the audio threads (best-effort in the
-# engine; this grants the headroom).
+# Real-time-friendly scheduling for the audio threads. LimitRTPRIO lets the
+# ALSA render/capture threads run SCHED_FIFO; CAP_SYS_NICE additionally lets
+# the Swift runtime's worker threads apply their QoS without EACCES (removes
+# the harmless "Failed to set thread priority" startup warnings).
 LimitRTPRIO=70
 LimitMEMLOCK=64M
+AmbientCapabilities=CAP_SYS_NICE
 
 [Install]
 WantedBy=multi-user.target

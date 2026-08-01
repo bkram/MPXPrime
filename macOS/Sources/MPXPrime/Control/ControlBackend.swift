@@ -56,6 +56,20 @@ struct ControlMeters: Codable, Sendable {
     var stereoCorrelation: Float?
     var renderXruns: Int?
     var captureXruns: Int?
+    // Input capture->render ring transport diagnostics (macOS input source).
+    // The definitive signal for clock-drift faults between a virtual input
+    // (e.g. BlackHole) and a hardware output: `overflows` climbs when the
+    // input clock runs faster than render (ring fills), `underflows` when
+    // slower (ring drains), `tornReads` on lock-free read collisions.
+    // `bufferedFrames` should hover near the engine's target; a monotonic
+    // drift toward 0 or capacity is what precedes audible dropout/static.
+    // All nil in headless/ALSA and when no input source is running.
+    var inputRingBufferedFrames: Int?
+    var inputRingOverflows: Int?
+    var inputRingUnderflows: Int?
+    var inputRingTornReads: Int?
+    var inputResampleMode: String?
+    var inputRatioTrim: Double?
 }
 
 /// GET /api/rds payload: the live on-air snapshot plus the operational
@@ -134,4 +148,9 @@ protocol ControlBackend: Sendable {
     /// format_profile) -- and application thereof.
     func presets() async -> [String: [String]]
     func applyPreset(kind: String, id: String, intensity: Double?) async throws -> ConfigApplyResult
+    /// Push now-playing metadata into the shared NowPlayingState (the same
+    /// sink the local script poller feeds). Returns whether now-playing
+    /// rendering is currently enabled, so the client can warn if pushes will
+    /// not appear. artist/title drive the RT / PS / RT+ templates.
+    func setNowPlaying(artist: String, title: String, display: String) async -> Bool
 }

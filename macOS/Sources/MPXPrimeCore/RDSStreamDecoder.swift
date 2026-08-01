@@ -99,6 +99,14 @@ public struct RDSReceiverState: Equatable {
     public var rtPlusTags: [RDSRTPlusTag] = []
     /// Count of decoded groups by type, indexed `groupType * 2 + (versionB ? 1 : 0)`.
     public var groupCounts: [Int] = Array(repeating: 0, count: 32)
+    /// The most recently received group buckets in transmission ORDER (oldest
+    /// first), same index base as `groupCounts`. Counts say what the encoder
+    /// sends; the order says how it interleaves -- which is what reveals a
+    /// scheduler's repeating pattern, a starved group type, or a burst of one
+    /// type crowding out the rest. Capped at `groupOrderCapacity`.
+    public var groupOrder: [Int] = []
+    /// How many recent groups `groupOrder` keeps.
+    public static let groupOrderCapacity = 18
 
     public var groupsDecoded: Int = 0
     public var blocksReceived: Int = 0
@@ -268,6 +276,11 @@ public final class RDSStreamDecoder {
             let bucket = (group.groupType * 2) + (group.versionB ? 1 : 0)
             if bucket >= 0, bucket < receiver.groupCounts.count {
                 receiver.groupCounts[bucket] += 1
+                receiver.groupOrder.append(bucket)
+                if receiver.groupOrder.count > RDSReceiverState.groupOrderCapacity {
+                    receiver.groupOrder.removeFirst(
+                        receiver.groupOrder.count - RDSReceiverState.groupOrderCapacity)
+                }
             }
         }
 

@@ -59,6 +59,13 @@ typedef struct {
   int lna;                // SDRplay LNA state (front-end gain reduction step)
   int backend;            // 0 = auto (SDRplay preferred), 1 = RTL-SDR, 2 = SDRplay
   char device_serial[64]; // non-empty: select the device with this serial
+  uint32_t iq_rate_khz;   // device IQ capture rate; 0 = narrow default.
+                          // Sets the RF SPECTRUM SPAN only -- the FM demod
+                          // chain always runs at its own 250/256 kHz, fed by a
+                          // decimator, so a wider capture cannot move the MPX
+                          // measurements. Rounded to an integer multiple of
+                          // the demod rate (RTL) / a power-of-two driver
+                          // decimation of 2 MHz (SDRplay).
 } MpxTunerConfig;
 
 /// Serial of the ACTIVE device ("" if unknown). Lets the UI list the unit it
@@ -92,6 +99,25 @@ int mpxtuner_is_alive(const MpxTuner *t);
 /// indicator. Most meaningful with manual gain (Auto Gain off); with auto gain
 /// the tuner normalizes the level. -120 before the first block.
 double mpxtuner_signal_dbfs(const MpxTuner *t);
+
+/// Latest RF spectrum frame: `max_bins` dB magnitudes, fftshifted so index 0
+/// is the low edge of the span and the centre index is the tuned frequency.
+/// Writes at most `max_bins` and returns how many were written (0 before the
+/// first frame). `span_hz`, when non-NULL, receives the total width the bins
+/// cover -- the IQ capture rate. Safe to call from any thread.
+int mpxtuner_rf_spectrum(MpxTuner *t, float *out, int max_bins, double *span_hz);
+
+/// The IQ capture rate actually in use (Hz), which may differ from the
+/// requested one if the device refused it. 0 if unknown.
+int mpxtuner_capture_rate(const MpxTuner *t);
+
+/// Total gain currently in effect, in dB. On SDRplay this is the API's own
+/// "system gain" (`currGain`), reported back on every change INCLUDING the
+/// ones its AGC makes -- which is what lets an absolute power reading stay
+/// correct with auto gain running. On RTL-SDR it is the tuner stage only, and
+/// that chip has no calibrated gain model, so treat it as indicative.
+/// -1000 when unknown (not connected, or nothing reported yet).
+double mpxtuner_system_gain_db(const MpxTuner *t);
 
 /// Active backend: 0 = RTL-SDR, 1 = SDRplay.
 int mpxtuner_backend(const MpxTuner *t);

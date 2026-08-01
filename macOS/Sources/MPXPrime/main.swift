@@ -73,7 +73,19 @@ func defaultVerificationConfigPath() -> String {
     for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
         return candidate
     }
-    return AppConfig.defaultINIPath
+    // No silent fallback to the LIVE user config: a verifier that quietly
+    // measures the operator's station INI produces official-looking TIGHT/
+    // WARN verdicts about the wrong thing (pilot/RDS levels, clipper
+    // enables, AGC -- all operator-set). Verification runs are only
+    // meaningful against the pinned macOS/Verification.ini, so demand it.
+    fputs(
+        """
+        MPX Prime: macOS/Verification.ini not found from the current directory.
+        Verification must run against the pinned config -- run from the repo
+        root, or pass --config <path> explicitly to verify a specific INI.
+        """ + "\n",
+        stderr)
+    exit(64)  // EX_USAGE: distinct from the verifier's 0/1/2 verdicts
 }
 
 func normalizeConfigPath(_ rawPath: String) -> String {
@@ -369,7 +381,10 @@ do {
         configPath: configPath,
         engine: audioEngine,
         engineFactory: makeMacEngine,
-        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
+        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) },
+        onNowPlaying: { display, artist, title in
+            nowPlayingState.update(display: display, artist: artist, title: title)
+        }
     )
     startControlServerIfEnabled(config: config, options: options, backend: backend)
 
@@ -430,17 +445,48 @@ do {
             outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
         )
     }
-    let audioEngine = try makeLinuxEngine(config)
-    try audioEngine.start()
-
+    // Build the backend WITHOUT a pre-started engine, bring the control
+    // server up first, then attempt the engine start tolerantly. A missing
+    // or renamed ALSA device must NOT take the process down (it used to
+    // exit(1) -> systemd crash-loop): the server stays reachable so the
+    // operator can pick a device on the dashboard's Interfaces page and
+    // press Start. Only when the control server is disabled is a failed
+    // start fatal (there is nothing to stay alive for).
     let backend = HeadlessControlBackend(
         config: config,
         configPath: configPath,
-        engine: audioEngine,
+        engine: nil,
         engineFactory: makeLinuxEngine,
-        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) }
+        onConfigChange: { newConfig in nowPlayingRunner.updateConfig(newConfig) },
+        onNowPlaying: { display, artist, title in
+            nowPlayingState.update(display: display, artist: artist, title: title)
+        }
     )
+    let controlEnabled = options.controlEnabled ?? config.controlEnabled
     startControlServerIfEnabled(config: config, options: options, backend: backend)
+
+    // Initial start attempt + reconciliation timer. A missing audio device is
+    // NEVER fatal: the engine start is retried every few seconds, so the
+    // encoder comes up the moment the device is available (boot ordering, USB
+    // hot-plug) with no intervention -- and the dashboard (when enabled) lets
+    // the operator point at a different device meanwhile.
+    Task {
+        if await backend.startEngineTolerant() {
+            print("MPX Prime running. Press Ctrl-C to stop.")
+        } else {
+            let settings = ControlServerSettings(config: config)
+            let where_ = controlEnabled
+                ? "Open http://\(settings.host):\(settings.port)/ to pick a device, or wait"
+                : "Will keep retrying"
+            fputs(
+                "MPX Prime: audio device not available yet. \(where_) -- the engine "
+                    + "starts automatically as soon as the device appears.\n", stderr)
+        }
+    }
+    let reconcileTimer = DispatchSource.makeTimerSource(queue: .global())
+    reconcileTimer.schedule(deadline: .now() + 5, repeating: 5.0)
+    reconcileTimer.setEventHandler { Task { await backend.reconcile() } }
+    reconcileTimer.resume()
 
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
@@ -464,7 +510,6 @@ do {
             execute: DispatchWorkItem { shutdown() })
     }
 
-    print("MPX Prime running. Press Ctrl-C to stop.")
     dispatchMain()
     #endif
 } catch {

@@ -1,6 +1,6 @@
 # MPX Prime Studio
 
-Version: 0.42
+Version: 0.43
 
 MPX Prime Studio is an FM composite (MPX) generator written in Swift. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends the MPX (plus optional decoded monitor audio) to the sound hardware.
 
@@ -67,15 +67,24 @@ deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
 
 - Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope
 - MPX spectrum (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot,
-  Stereo L-R, 57 kHz RDS, 67.65 kHz Direct Band, 92 kHz SCA)
+  Stereo L-R, 57 kHz RDS, 67.65 kHz Direct Band, 92 kHz SCA), and on SDR an
+  **RF spectrum** of the band around the tuned carrier (span up to ~+/-1 MHz)
+  for spotting adjacent channels and splatter
 - Measurement-grade deviation + modulation metering to ITU-R SM.1268-5 /
-  BS.412-9: IN / L / R / M / S levels + correlation; pilot / RDS / total (MAX)
-  deviation; **MPX power (ITU-R BS.412** uniform sliding 60 s window) with the
-  worst-window **MPX MAX**; trailing-60 s **peak +/- deviation**; the
-  **OVER 77 kHz** SM.1268 exceedance statistic; best stereo separation;
-  **SIGNAL** (SDR RSSI); and deviation / MPX-power trend graphs
+  BS.412-9: IN / L / R / M / S levels + correlation; pilot / RDS / total
+  **MAX / AVE / MIN** deviation; **MPX power (ITU-R BS.412** uniform sliding
+  60 s window) with the worst-window **MPX MAX**; trailing-60 s **peak +/-
+  deviation**; the **OVER 77 kHz** SM.1268 exceedance statistic; the
+  accumulated **deviation distribution** (1 kHz bins -- what share of the
+  programme reaches each deviation, the reading a single MAX number cannot
+  give); best stereo separation; **L/R balance**; **carrier frequency
+  offset**; a **signal-quality** rating from the noise above the modulated
+  baseband; **SIGNAL** (SDR RSSI); and deviation / MPX-power trend graphs
 - Full RDS decode: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group
-  histogram + live BER
+  histogram (counts + shares) and the last 18 groups **in transmission
+  order** + live BER, plus the **RDS subcarrier phase** (EN 50067 sec 1.2:
+  the angle to the pilot's third harmonic, which must be 0 or 90 deg within
+  10 deg -- flagged when an encoder sits between the two)
 - **WAV recording**: the decoded stereo audio, or the raw MPX composite
   (24-bit, capture rate), for later re-analysis
 - Input: an audio device, or **in-process SDR** tuning (`Source -> SDR`) --
@@ -150,7 +159,7 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) — install whichever you need.
 
 **Linux (encoder only):** the same releases attach Debian/Ubuntu packages
-`mpxprime_<version>-ubuntu24.04_amd64.deb` and `...-ubuntu26.04_amd64.deb`.
+`mpxprime_<version>-ubuntu24.04_amd64.deb` (static Swift stdlib; installs and runs on later Ubuntu releases too).
 Install with `sudo dpkg -i mpxprime_*.deb` (or `sudo apt install ./mpxprime_*.deb`
 to pull dependencies); it provides the headless encoder as a `mpxprime`
 systemd service with the web dashboard. This is the CLI encoder only — no GUI,

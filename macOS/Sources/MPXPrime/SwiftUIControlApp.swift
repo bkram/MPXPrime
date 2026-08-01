@@ -2181,7 +2181,7 @@ final class MPXPrimeViewModel: ObservableObject {
             get: { self.config.pilotLevel * 100.0 },
             set: { newPercent in
                 let fraction = max(0.0, min(0.12, newPercent / 100.0))
-                self.setConfigValue(\.pilotLevel, fraction, runtimeDisposition: .restart)
+                self.setConfigValue(\.pilotLevel, fraction, runtimeDisposition: .live)
             }
         )
     }
@@ -3043,6 +3043,14 @@ final class MPXPrimeViewModel: ObservableObject {
         )
     }
 
+    /// API now-playing push -> the shared NowPlayingState (same sink as the
+    /// local script poller). Returns whether now-playing rendering is on so
+    /// the client can warn. The generator picks up the new snapshot live.
+    func applyRemoteNowPlaying(artist: String, title: String, display: String) -> Bool {
+        nowPlayingState.update(display: display, artist: artist, title: title)
+        return config.rdsNowPlayingEnabled
+    }
+
     func remoteTransport(_ action: TransportAction) -> ControlStatus {
         switch action {
         case .start: startOrStopTransport(forceStart: true)
@@ -3261,6 +3269,15 @@ final class MPXPrimeViewModel: ObservableObject {
 
         do {
             try engine.start()
+            // Restart-equals-live, same guarantee as
+            // HeadlessControlBackend.startEngine(): the generator/coder inits
+            // are hand-written duplicates of the canonical RuntimeConfig /
+            // RDSRuntimeConfig mappings, and nothing else pins them together.
+            // Applying both planes to the fresh engine makes a rebuilt engine
+            // equal to a live-applied one by construction (idempotent: the
+            // engine was built from this same runConfig).
+            engine.applyRuntimeConfig(runConfig)
+            engine.applyRDSRuntimeConfig(runConfig)
             runningEngine = engine
             isRunning = true
             pendingRuntimeApply = false

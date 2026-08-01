@@ -185,6 +185,12 @@ public:
   std::size_t executeComplex(const uint8_t *iqIn, std::size_t inSamples,
                              std::complex<float> *iqOut,
                              std::size_t outCapacity) const;
+  /// Same decimation for a source that already delivers complex float IQ
+  /// (the SDRplay backend), rather than packed uint8 pairs.
+  std::size_t executeComplexIn(const std::complex<float> *iqIn,
+                               std::size_t inSamples,
+                               std::complex<float> *iqOut,
+                               std::size_t outCapacity) const;
   bool ready() const { return m_object != nullptr || m_factor == 1; }
   std::uint32_t factor() const { return m_factor; }
 

@@ -23,6 +23,9 @@ import Foundation
 //   per EN 50067 sec 1.3 (the R&S "RMS x sqrt(2)" detector convention). The
 //   previous single Q=10 biquad bandpass (~5.7 kHz BW, gentle skirts) leaked
 //   53 kHz stereo energy and wideband noise into the reading.
+// - `PilotRDSPhaseMeter`: the EN 50067 sec 1.2 subcarrier-phase angle between
+//   the 57 kHz RDS subcarrier and the third harmonic of the 19 kHz pilot --
+//   the "RDS phase" reading of a Belar RDS-1 / DEVA analyzer.
 
 /// Linear-phase FIR design helpers (Kaiser-windowed sinc).
 public enum FIRDesign {
@@ -308,5 +311,323 @@ public final class RDSSubcarrierLevelMeter {
         lpQ.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
         firI.reset()
         firQ.reset()
+    }
+}
+
+/// One complex lock-in chain: per-sample mixer products (against a sine and a
+/// cosine reference) in, decimated low-pass baseband out. Anti-alias
+/// `BiquadCascade6` at 3 kHz, decimate to ~12 kHz, then a linear-phase Kaiser
+/// FIR at 2.6 kHz -- the selectivity `RDSSubcarrierLevelMeter` documents.
+///
+/// Exists as its own type so `PilotRDSPhaseMeter` can run TWO of them with
+/// byte-identical parameters. That is not tidiness: identical chains have
+/// identical group delay, which is precisely what cancels the phase error a
+/// pilot frequency offset would otherwise inject (see the note there).
+private final class QuadratureLockInChain {
+    private var lpI = BiquadCascade6()
+    private var lpQ = BiquadCascade6()
+    private let firI: BlockFIRFilter
+    private let firQ: BlockFIRFilter
+    private let sampleRate: Float
+    private let decim: Int
+    private var decimPhase = 0
+    private var decI: [Float]
+    private var decQ: [Float]
+    private var decCount = 0
+    /// Decimated, filtered baseband, valid for `[0..<outCount]` after
+    /// `finishBlock()`.
+    private(set) var outI: [Float]
+    private(set) var outQ: [Float]
+    private(set) var outCount = 0
+    /// Decimated sample rate -- the rate `outI`/`outQ` advance at.
+    let decimatedRate: Float
+
+    init(sampleRate: Float, maxBlock: Int) {
+        self.sampleRate = sampleRate
+        lpI.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
+        lpQ.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
+        decim = max(1, Int(sampleRate / 12_000.0))
+        decimatedRate = sampleRate / Float(decim)
+        let taps = FIRDesign.kaiserLowpass(
+            cutoffHz: 2_600.0, sampleRate: decimatedRate,
+            transitionHz: min(1_000.0, 0.45 * decimatedRate - 2_600.0), stopbandDB: 70.0)
+        let maxDec = maxBlock / decim + 2
+        firI = BlockFIRFilter(taps: taps, maxBlock: maxDec)
+        firQ = BlockFIRFilter(taps: taps, maxBlock: maxDec)
+        decI = [Float](repeating: 0.0, count: maxDec)
+        decQ = [Float](repeating: 0.0, count: maxDec)
+        outI = [Float](repeating: 0.0, count: maxDec)
+        outQ = [Float](repeating: 0.0, count: maxDec)
+    }
+
+    /// Feed one sample's mixer products. Call `startBlock()` before the first
+    /// sample of a block and `finishBlock()` after the last.
+    @inline(__always)
+    func push(i: Float, q: Float) {
+        let bi = lpI.process(i)
+        let bq = lpQ.process(q)
+        decimPhase += 1
+        if decimPhase >= decim {
+            decimPhase = 0
+            if decCount < decI.count {
+                decI[decCount] = bi
+                decQ[decCount] = bq
+                decCount += 1
+            }
+        }
+    }
+
+    func startBlock() { decCount = 0 }
+
+    func finishBlock() {
+        outCount = decCount
+        guard decCount > 0 else { return }
+        decI.withUnsafeBufferPointer { firI.process(input: $0, output: &outI, count: decCount) }
+        decQ.withUnsafeBufferPointer { firQ.process(input: $0, output: &outQ, count: decCount) }
+    }
+
+    func reset() {
+        decimPhase = 0
+        decCount = 0
+        outCount = 0
+        // Reconfigure = zero the recursive state with the same coefficients.
+        lpI.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
+        lpQ.configureLowpass(cutoffHz: 3_000.0, sampleRate: sampleRate)
+        firI.reset()
+        firQ.reset()
+    }
+}
+
+/// EN 50067 sec 1.2 compliance verdict for a measured pilot-to-RDS subcarrier
+/// phase angle. The standard allows TWO conventions -- in phase with, or in
+/// quadrature to, the third harmonic of the pilot -- each with a +/- 10 deg
+/// tolerance, so both 0 and 90 deg are correct answers and everything between
+/// is a mis-set (or absent) phase lock.
+public enum RDSPhaseCompliance: Sendable, Equatable {
+    /// Locked in phase with the pilot's third harmonic (0 deg +/- 10).
+    case inPhase
+    /// Locked in quadrature to the pilot's third harmonic (90 deg +/- 10).
+    case quadrature
+    /// Neither convention: outside both +/- 10 deg windows.
+    case outOfSpec
+
+    /// Tolerance on the phase angle, EN 50067 sec 1.2.
+    public static let toleranceDeg: Float = 10.0
+
+    /// Classify a folded 0..90 deg reading (`PilotRDSPhaseMeter.phaseDegrees`).
+    public init(degrees: Float) {
+        if degrees <= Self.toleranceDeg {
+            self = .inPhase
+        } else if degrees >= 90.0 - Self.toleranceDeg {
+            self = .quadrature
+        } else {
+            self = .outOfSpec
+        }
+    }
+
+    /// Short operator-facing label.
+    public var label: String {
+        switch self {
+        case .inPhase: return "in phase"
+        case .quadrature: return "quadrature"
+        case .outOfSpec: return "out of spec"
+        }
+    }
+
+    public var isCompliant: Bool { self != .outOfSpec }
+}
+
+/// Coherent measurement of the phase angle between the 57 kHz RDS subcarrier
+/// and the third harmonic of the 19 kHz pilot -- EN 50067 sec 1.2, the "RDS
+/// phase" reading of a Belar RDS-1 / DEVA modulation analyzer. The standard
+/// requires the subcarrier to be locked either IN PHASE or IN QUADRATURE to
+/// that third harmonic, +/- 10 deg; a reading stuck between the two means the
+/// encoder is not genuinely pilot-locked.
+///
+/// Method. A single free-running 19 kHz NCO provides both references: the
+/// pilot reference is its `(sin, cos)` pair, and the 57 kHz reference is that
+/// same pair put through the triple-angle identities -- so the two references
+/// are phase-coherent by construction, not merely nominally 3x apart. Each
+/// drives an identical `QuadratureLockInChain`, giving
+/// `zp = (Ap/2) e^{j phi_p}` and `zr = (a/2) e^{j phi_r}`, both measured
+/// against the same NCO. The answer is `phi_r - 3 phi_p`: the NCO's own phase
+/// (and any error in it) cancels exactly.
+///
+/// Why identical chains, and why a free-running NCO is enough. The NCO never
+/// sits exactly on the pilot -- the transmitter's pilot is 19 kHz +/- 2 Hz and
+/// the capture clock (dongle crystal / sound card) adds tens of ppm, so the
+/// baseband phasors rotate slowly: `phi_p` at `w`, `phi_r` at `3w`. Each
+/// filter chain lags its input by its group delay `tau`, so the estimates are
+/// `phi_p - w*tau_p` and `phi_r - 3w*tau_r`, and the answer picks up an error
+/// of `3w(tau_p - tau_r)`. With mismatched delays that is real: 2 Hz of offset
+/// through a 2.5 ms mismatch is 5.4 deg, half the spec window. Running the two
+/// paths through the SAME chain design makes `tau_p == tau_r` and the error
+/// vanish identically, for any offset -- no frequency estimator, no loop, no
+/// tuning constants. (Using `PilotPLL` here instead would NOT work: its 20 ms
+/// lock-in is unmatched, and 0.5 Hz of offset alone would bias the reading
+/// ~11 deg.)
+///
+/// Resolving the BPSK ambiguity. RDS is suppressed-carrier DSB: the modulating
+/// biphase symbol is bipolar, so `zr` sits at `phi_r` or `phi_r + 180` from
+/// symbol to symbol. Squaring removes it (the classic Viterbi & Viterbi m=2
+/// carrier-phase estimator): `zr^2 * conj(e^{j 3 phi_p})^2` is a static
+/// phasor at `2(phi_r - 3 phi_p)`, averaged over ~2 s and halved. The result
+/// is therefore known modulo 180 deg, which loses nothing -- an anti-phase
+/// subcarrier is the in-phase case with inverted data, and the receiver's
+/// differential decoding cannot tell them apart either.
+///
+/// Reading convention: `phaseDegrees` is folded to 0..90, matching instrument
+/// practice (0 = in phase, 90 = quadrature). Folding to the magnitude is not
+/// just cosmetic -- a signed reading of a quadrature station would flicker
+/// between +90 and -90 as noise pushed the estimate across the wrap, whereas
+/// the folded value is continuous everywhere on the modulo-180 circle.
+///
+/// Thread-confined; allocation-free after init.
+public final class PilotRDSPhaseMeter {
+    private var oscC: Float = 1.0
+    private var oscS: Float = 0.0
+    private let rotC: Float
+    private let rotS: Float
+    private let pilotChain: QuadratureLockInChain
+    private let rdsChain: QuadratureLockInChain
+    // Averaged squared-phase phasor (numerator) and in-band power
+    // (denominator). Their ratio is the coherence, which is exactly the
+    // in-band SNR: additive noise contributes to |zr|^2 but averages out of
+    // E[zr^2].
+    private var accWReal: Float = 0.0
+    private var accWImag: Float = 0.0
+    private var accPower: Float = 0.0
+    private var primed = false
+    private let emaAlphaPerSample: Float
+    /// Below this coherence the reading is noise, not a measurement. ~0.3
+    /// corresponds to a 57 kHz in-band SNR of about -3.7 dB, well under what
+    /// RDS needs to decode, so a station whose data is readable at all reads
+    /// a trustworthy phase.
+    public static let minCoherence: Float = 0.3
+
+    /// Whether the sample rate can carry a 57 kHz subcarrier at all.
+    public let usable: Bool
+
+    public init(sampleRate: Float, maxBlock: Int) {
+        usable = sampleRate > 120_000.0
+        let w = 2.0 * Float.pi * 19_000.0 / max(1.0, sampleRate)
+        rotC = cosf(w)
+        rotS = sinf(w)
+        pilotChain = QuadratureLockInChain(sampleRate: sampleRate, maxBlock: maxBlock)
+        rdsChain = QuadratureLockInChain(sampleRate: sampleRate, maxBlock: maxBlock)
+        // ~2 s smoothing: the angle is a static property of the transmitter,
+        // so trade settling time for a rock-steady readout.
+        emaAlphaPerSample = 1.0 - expf(-1.0 / (2.0 * pilotChain.decimatedRate))
+    }
+
+    /// Feed a block of composite samples; updates the smoothed phase estimate.
+    public func process(_ samples: UnsafeBufferPointer<Float>) {
+        guard usable, !samples.isEmpty else { return }
+        pilotChain.startBlock()
+        rdsChain.startBlock()
+        for x in samples {
+            let c = oscC
+            let s = oscS
+            // 57 kHz reference = the exact third harmonic of the SAME NCO
+            // (sin 3t = 3s - 4s^3, cos 3t = 4c^3 - 3c) -- not a second
+            // oscillator that would drift against this one.
+            let s3 = (3.0 - 4.0 * s * s) * s
+            let c3 = (4.0 * c * c - 3.0) * c
+            // Lock-in convention (matching PilotPLL): correlate against sin
+            // for I and cos for Q, so a component A*sin(ref + phi) yields
+            // (A/2)*e^{j phi}.
+            pilotChain.push(i: x * s, q: x * c)
+            rdsChain.push(i: x * s3, q: x * c3)
+            let nc = c * rotC - s * rotS
+            let ns = c * rotS + s * rotC
+            oscC = nc
+            oscS = ns
+        }
+        // Renormalize the oscillator once per block (drift is ~1e-7/sample).
+        let mag = sqrtf(oscC * oscC + oscS * oscS)
+        if mag > 0.0 {
+            oscC /= mag
+            oscS /= mag
+        }
+        pilotChain.finishBlock()
+        rdsChain.finishBlock()
+
+        let n = min(pilotChain.outCount, rdsChain.outCount)
+        guard n > 0 else { return }
+        for i in 0..<n {
+            let pI = pilotChain.outI[i]
+            let pQ = pilotChain.outQ[i]
+            let magP2 = pI * pI + pQ * pQ
+            // No pilot -> no reference to measure against; skip rather than
+            // feed the accumulator a random angle.
+            guard magP2 > 1e-16 else { continue }
+            let invP = 1.0 / sqrtf(magP2)
+            let uc = pI * invP  // cos(phi_p)
+            let us = pQ * invP  // sin(phi_p)
+            // e^{j 3 phi_p}, again by triple angle.
+            let c3 = (4.0 * uc * uc - 3.0) * uc
+            let s3 = (3.0 - 4.0 * us * us) * us
+            // e^{j 6 phi_p} = (e^{j 3 phi_p})^2 -- the squared domain the
+            // BPSK ambiguity is removed in.
+            let c6 = c3 * c3 - s3 * s3
+            let s6 = 2.0 * c3 * s3
+
+            let rI = rdsChain.outI[i]
+            let rQ = rdsChain.outQ[i]
+            let power = rI * rI + rQ * rQ
+            // zr^2
+            let zr2R = rI * rI - rQ * rQ
+            let zr2I = 2.0 * rI * rQ
+            // w = zr^2 * conj(e^{j 6 phi_p}) = |zr|^2 * e^{j 2 (phi_r - 3 phi_p)}
+            let wR = zr2R * c6 + zr2I * s6
+            let wI = zr2I * c6 - zr2R * s6
+
+            if primed {
+                accWReal += emaAlphaPerSample * (wR - accWReal)
+                accWImag += emaAlphaPerSample * (wI - accWImag)
+                accPower += emaAlphaPerSample * (power - accPower)
+            } else {
+                accWReal = wR
+                accWImag = wI
+                accPower = power
+                primed = true
+            }
+        }
+    }
+
+    /// Phase angle between the RDS subcarrier and the pilot's third harmonic,
+    /// folded to 0..90 deg (0 = in phase, 90 = quadrature; see the type note
+    /// on why the reading is unsigned). Meaningless unless `valid`.
+    public var phaseDegrees: Float {
+        guard primed else { return 0.0 }
+        let doubled = atan2f(accWImag, accWReal)  // 2 * (phi_r - 3 phi_p)
+        return fabsf(doubled * 0.5 * 180.0 / Float.pi)
+    }
+
+    /// Estimate quality, 0..1: `|E[zr^2]| / E[|zr|^2]`, i.e. the coherent
+    /// fraction of the in-band power -- 1 for a clean subcarrier at a fixed
+    /// phase, ~0 for noise or an absent subcarrier.
+    public var coherence: Float {
+        guard primed, accPower > 1e-16 else { return 0.0 }
+        let m = sqrtf(accWReal * accWReal + accWImag * accWImag)
+        return min(1.0, m / accPower)
+    }
+
+    /// True when a subcarrier and a pilot are both present and coherent enough
+    /// for the angle to be a measurement rather than noise.
+    public var valid: Bool { usable && primed && coherence >= Self.minCoherence }
+
+    /// EN 50067 sec 1.2 verdict for the current reading.
+    public var compliance: RDSPhaseCompliance { RDSPhaseCompliance(degrees: phaseDegrees) }
+
+    public func reset() {
+        accWReal = 0.0
+        accWImag = 0.0
+        accPower = 0.0
+        primed = false
+        oscC = 1.0
+        oscS = 0.0
+        pilotChain.reset()
+        rdsChain.reset()
     }
 }

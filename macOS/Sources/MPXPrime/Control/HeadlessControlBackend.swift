@@ -19,21 +19,33 @@ actor HeadlessControlBackend: ControlBackend {
     private var startedAt: Date?
     private var restartPending = false
     private var notes: [String] = []
+    /// Desired transport state (reconciliation target). True from boot so the
+    /// encoder auto-starts and keeps RETRYING when the device is missing --
+    /// the box comes up the moment the device appears (boot ordering / USB
+    /// hot-plug) without any intervention. A user Stop sets this false so the
+    /// retry loop leaves it alone; a user Start/Restart sets it true again.
+    private var desiredRunning = true
+    private var retries = 0
     /// Side effects on config change (now-playing runner reconfigure).
     private let onConfigChange: (@Sendable (AppConfig) -> Void)?
+    /// Sink for API now-playing pushes (display, artist, title) -> the shared
+    /// NowPlayingState owned by main.swift.
+    private let onNowPlaying: (@Sendable (String, String, String) -> Void)?
 
     init(
         config: AppConfig,
         configPath: String,
         engine: (any ControlledEngine)?,
         engineFactory: @escaping ControlEngineFactory,
-        onConfigChange: (@Sendable (AppConfig) -> Void)? = nil
+        onConfigChange: (@Sendable (AppConfig) -> Void)? = nil,
+        onNowPlaying: (@Sendable (String, String, String) -> Void)? = nil
     ) {
         self.config = config
         self.configPath = configPath
         self.engine = engine
         self.makeEngine = engineFactory
         self.onConfigChange = onConfigChange
+        self.onNowPlaying = onNowPlaying
         self.startedAt = engine != nil ? Date() : nil
     }
 
@@ -107,14 +119,28 @@ actor HeadlessControlBackend: ControlBackend {
     func transport(_ action: TransportAction) throws -> ControlStatus {
         switch action {
         case .start:
+            desiredRunning = true
             if engine == nil { try startEngine() }
         case .stop:
+            desiredRunning = false
             stopEngine()
         case .restart:
+            desiredRunning = true
             stopEngine()
             try startEngine()
         }
         return status()
+    }
+
+    /// Reconcile toward the desired state: if the operator wants it running
+    /// and it isn't, (re)try the start. Called on a timer from the headless
+    /// runtime so a missing device is never fatal -- the engine comes up as
+    /// soon as the device is available. A user Stop clears `desiredRunning`,
+    /// so this never fights a deliberate stop.
+    func reconcile() {
+        guard desiredRunning, engine == nil else { return }
+        retries += 1
+        startEngineTolerant()
     }
 
     func presets() -> [String: [String]] {
@@ -155,18 +181,55 @@ actor HeadlessControlBackend: ControlBackend {
             outcomes: [], appliedLive: engine != nil, restartPending: restartPending)
     }
 
+    func setNowPlaying(artist: String, title: String, display: String) -> Bool {
+        onNowPlaying?(display, artist, title)
+        return config.rdsNowPlayingEnabled
+    }
+
     // MARK: - Lifecycle
 
     private func startEngine() throws {
         do {
             let fresh = try makeEngine(config)
             try fresh.start()
+            // Re-apply both runtime planes to the freshly built engine. The
+            // engine factory already constructed it FROM `config`, so this is
+            // idempotent today -- but the coder/generator inits are separate
+            // hand-written AppConfig mappings from the canonical
+            // RuntimeConfig/RDSRuntimeConfig factories the live-apply path
+            // uses, and nothing pins them together. Applying the canonical
+            // planes here makes restart-equals-live true BY CONSTRUCTION for
+            // every current and future key (the issues.txt report of
+            // now-playing off after an API restart is exactly this failure
+            // class). Both calls are thread-safe producers; on a just-started
+            // engine they are the ordinary live-apply path.
+            fresh.applyRuntimeConfig(config)
+            fresh.applyRDSRuntimeConfig(config)
             engine = fresh
             startedAt = Date()
             restartPending = false
             notes = []
         } catch {
-            throw ControlError.engineFailure(String(describing: error))
+            // Record the reason so GET /api/status (and the dashboard) explain
+            // why the engine is stopped -- typically a missing/renamed audio
+            // device the operator can fix from the Interfaces page, then Start.
+            let msg = String(describing: error)
+            notes = ["audio engine not started: \(msg) "
+                + "(retrying automatically; pick a present device on the Interfaces page to change it)"]
+            throw ControlError.engineFailure(msg)
+        }
+    }
+
+    /// Best-effort initial start used at boot: attempts to start the engine
+    /// but never throws, so a missing device leaves the process (and the
+    /// control server) alive for remote recovery. Returns whether it started.
+    @discardableResult
+    func startEngineTolerant() -> Bool {
+        do {
+            try startEngine()
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -205,6 +268,11 @@ actor HeadlessControlBackend: ControlBackend {
 extension AudioOutputEngine: ControlledEngine {
     var controlMeters: ControlMeters? {
         let m = meters
+        // Ring-transport diagnostics: the level meters cannot distinguish
+        // loud static from loud program (both peg the peak/deviation reads),
+        // so clock-drift dropout is invisible there. These counters are the
+        // definitive signal. captureXruns rolls up the ring over/underflows.
+        let t = transportSnapshot
         return ControlMeters(
             inputLeftPeak: m.inputLeftPeak,
             inputRightPeak: m.inputRightPeak,
@@ -220,7 +288,13 @@ extension AudioOutputEngine: ControlledEngine {
             compositeOverBudget: m.compositeOverBudget,
             stereoCorrelation: m.outputStereoCorrelation,
             renderXruns: nil,
-            captureXruns: nil
+            captureXruns: t.map { Int(clamping: $0.overflows &+ $0.underflows) },
+            inputRingBufferedFrames: t?.bufferedFrames,
+            inputRingOverflows: t.map { Int(clamping: $0.overflows) },
+            inputRingUnderflows: t.map { Int(clamping: $0.underflows) },
+            inputRingTornReads: t.map { Int(clamping: $0.tornReads) },
+            inputResampleMode: t?.resampleMode,
+            inputRatioTrim: t?.ratioTrim
         )
     }
 

@@ -1,0 +1,90 @@
+# Push/PR CI: build + tests + the fast offline verify gates on both platforms.
+# Deliberately leaner than the release checklist (no --verify-long /
+# --verify-presets / deep suite / DMG packaging -- those run at release prep);
+# this exists so a PR cannot merge with a broken build, failing tests, or
+# composite drift against the pinned baselines.
+name: CI
+
+on:
+  push:
+    branches:
+      - 'develop/**'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      # librtlsdr + liquid-dsp so the Meter/CMPXTuner targets build; swiftlint
+      # for the accessibility lint the release checklist demands at zero.
+      - name: Install deps
+        run: brew install librtlsdr liquid-dsp swiftlint
+
+      - name: SwiftLint (accessibility rules)
+        run: swiftlint --strict
+
+      - name: Tests
+        run: swift test --package-path macOS
+
+      - name: Build (release)
+        run: swift build --package-path macOS -c release
+
+      # Fast offline verify gates. baseline-strict pins the composite to the
+      # captured macOS baseline (schema 3) -- any DSP drift fails the PR here
+      # instead of at release prep. Runners are arm64 like the capture machine.
+      - name: Verify gates
+        run: |
+          macOS/.build/release/MPXPrime --verify --seconds 5
+          macOS/.build/release/MPXPrime --verify-receiver --seconds 5
+          macOS/.build/release/MPXPrime --verify --baseline-strict
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq build-essential curl pkg-config binutils \
+            libcurl4-openssl-dev libedit2 libpython3-dev libsqlite3-0 \
+            libxml2-dev libz3-dev tzdata unzip zlib1g-dev libasound2-dev
+
+      - name: Install Swift (swiftly)
+        run: |
+          curl -sO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf "swiftly-$(uname -m).tar.gz"
+          ./swiftly init --assume-yes --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --assume-yes latest
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          swift --version
+
+      # The Linux toolchain ships Testing, so plain swift test works here.
+      - name: Tests
+        run: swift test --package-path macOS
+
+      - name: Build (release)
+        run: swift build --package-path macOS -c release --product MPXPrime
+
+      # Linux pins its own strict baseline (SIMD-shim numerics,
+      # default-linux-x86_64.json).
+      - name: Verify gates
+        run: |
+          macOS/.build/release/MPXPrime --verify --seconds 5
+          macOS/.build/release/MPXPrime --verify --baseline-strict

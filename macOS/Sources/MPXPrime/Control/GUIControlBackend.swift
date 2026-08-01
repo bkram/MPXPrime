@@ -71,6 +71,11 @@ struct GUIControlBackend: ControlBackend {
                 restartPending: vm.runtimeApplyPending)
         }
     }
+
+    func setNowPlaying(artist: String, title: String, display: String) async -> Bool {
+        (try? await withVM { $0.applyRemoteNowPlaying(artist: artist, title: title, display: display) })
+            ?? false
+    }
 }
 
 #endif  // os(macOS)

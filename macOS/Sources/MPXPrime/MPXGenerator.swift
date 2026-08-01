@@ -5919,6 +5919,9 @@ final class MPXGenerator {
         /// Line output calibration (dBFS at 100% modulation); consumed by
         /// the audio engines at the DAC write, not by the generator.
         let mpxLineOutputDBFS: Float
+        /// 19 kHz pilot injection as a fraction of full deviation (0.08 = 8%).
+        /// Live-applied as a gain on the pilot oscillator; no restart needed.
+        let pilotLevel: Float
         let finalDriveDB: Float
         let widebandAGCEnabled: Bool
         let widebandAGCTargetDB: Float
@@ -6042,6 +6045,7 @@ final class MPXGenerator {
             inputGainDB: Float(config.inputGainDB),
             outputGainDB: Float(config.outputGainDB),
             mpxLineOutputDBFS: Float(config.mpxLineOutputDBFS),
+            pilotLevel: Float(config.pilotLevel),
             finalDriveDB: Float(config.finalDriveDB),
             widebandAGCEnabled: config.widebandAGCEnabled,
             widebandAGCTargetDB: Float(config.widebandAGCTargetDB),
@@ -6297,8 +6301,8 @@ final class MPXGenerator {
     private var toneLevel: Float = 0.1   // 10^(-20/20) — −20 dBFS default
     private let monoMode: Bool
     private let processingBypass: Bool
-    private let pilotLevel: Float
-    private let pilotInjectionPercent: Float
+    private var pilotLevel: Float
+    private var pilotInjectionPercent: Float
     private let rdsInjectionPercent: Float
     private let sumLevel: Float
     private let diffLevel: Float
@@ -7439,6 +7443,8 @@ final class MPXGenerator {
         outputGain = powf(10.0, config.outputGainDB / 20.0)
         finalDrive = powf(10.0, config.finalDriveDB / 20.0)
         deviationScale = config.mpxDeviationKHz / 75.0
+        pilotLevel = config.pilotLevel
+        pilotInjectionPercent = config.pilotLevel * 100.0
         let preEncodeLimiterChanged =
             preEncodeAudioLimiterEnabled != config.preEncodeAudioLimiterEnabled
             || fabsf(preEncodeThreshold - config.preEncodeThreshold) > 0.0001

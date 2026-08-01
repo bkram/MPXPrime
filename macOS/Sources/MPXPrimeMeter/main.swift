@@ -114,15 +114,37 @@ private func clockString(_ ct: RDSClockTime) -> String {
                   ct.year, ct.month, ct.day, ct.hour, ct.minute, offHours)
 }
 
+/// Bucket index (`groupType * 2 + versionB`) as "0A" / "11B".
+private func groupLabel(_ bucket: Int) -> String {
+    "\(bucket / 2)\(bucket % 2 == 0 ? "A" : "B")"
+}
+
+/// Counts AND shares: the share is what says whether the mix is sane.
 private func groupSummary(_ counts: [Int]) -> String {
+    let total = counts.reduce(0, +)
+    guard total > 0 else { return "--" }
     var parts: [String] = []
-    for type in 0..<16 {
-        let a = counts[type * 2]
-        let b = counts[type * 2 + 1]
-        if a > 0 { parts.append("\(type)A:\(a)") }
-        if b > 0 { parts.append("\(type)B:\(b)") }
+    for bucket in 0..<min(32, counts.count) where counts[bucket] > 0 {
+        let pct = Double(counts[bucket]) / Double(total) * 100.0
+        parts.append(String(format: "%@:%d(%.0f%%)", groupLabel(bucket), counts[bucket], pct))
     }
     return parts.isEmpty ? "--" : parts.joined(separator: " ")
+}
+
+/// The last groups in transmission order -- the scheduler's interleave.
+private func groupOrderSummary(_ order: [Int]) -> String {
+    order.isEmpty ? "--" : order.map(groupLabel).joined(separator: " ")
+}
+
+/// Word for the 0..4 signal-quality scale.
+private func qualityWord(_ level: Int) -> String {
+    switch level {
+    case 4: return "Excellent"
+    case 3: return "Good"
+    case 2: return "Usable"
+    case 1: return "Poor"
+    default: return "Unusable"
+    }
 }
 
 // RT+ content-type class names (ETSI TS 101 499 / IEC 62106-2). Index = code.
@@ -146,7 +168,7 @@ private func rtPlusSummary(_ tags: [RDSRTPlusTag]) -> String {
         .joined(separator: "  ")
 }
 
-/// Fixed 11-line SFP-style panel. Always the same line count so the live TTY
+/// Fixed-height SFP-style panel. Always the same line count so the live TTY
 /// refresh can move the cursor up a constant amount.
 private func dashboard(
     _ s: MeterSnapshot, sampleRate: Double, channel: String, calLabel: String = "pilot=ref"
@@ -167,8 +189,16 @@ private func dashboard(
     return [
         String(format: "INPUT  %6.1f dBFS   %.0f kHz   ch:%@",
                s.inputPeakDBFS, sampleRate / 1000.0, channel),
-        String(format: "DEV    PILOT %.2f   RDS %.2f   MAX %5.1f kHz   (%@)",
-               s.pilotDevKHz, s.rdsDevKHz, s.maxDevKHz, calLabel),
+        // RDS phase (EN 50067 sec 1.2) rides the deviation line: it belongs
+        // with the subcarrier's injection level, and the panel's line count
+        // must stay constant for the in-place ANSI refresh.
+        String(format: "DEV    PILOT %.2f   RDS %.2f   MAX %5.1f kHz   PHASE %@   (%@)",
+               s.pilotDevKHz, s.rdsDevKHz, s.maxDevKHz,
+               s.pilotRDSPhaseValid
+                   ? String(format: "%2.0f deg %@", s.pilotRDSPhaseDeg,
+                            s.pilotRDSPhase.label)
+                   : "--",
+               calLabel),
         // Modulation compliance: BS.412 sliding-60s MPX power (+ worst window
         // since start), 60 s +/- deviation peaks, SM.1268-5 >77 kHz share.
         String(format: "MOD    MPX %@ dBr (max %@)   PK %+.1f/%+.1f kHz   >77k %@",
@@ -179,6 +209,23 @@ private func dashboard(
                    ? (s.exceedancePct <= 0.0
                        ? "0%" : String(format: "%.5f%%", s.exceedancePct))
                    : "--"),
+        // Deviation statistics + the accumulated distribution's headline
+        // figures: the highest bin ever filled and the share at/over 75 kHz.
+        String(format: "DIST   AVE %5.1f  MIN %5.1f kHz   hist peak %3.0f kHz  >=75k %@  n=%@",
+               s.aveDevKHz, s.minDevKHz, s.devHistogramMaxKHz,
+               s.devHistogramSamples > 0
+                   ? String(format: "%.2f%%", Double(s.devDistributionAtOrAbove(75.0)) * 100.0)
+                   : "--",
+               s.devHistogramSamples > 0 ? "\(s.devHistogramSamples)" : "--"),
+        // Reception / chain quality.
+        String(format: "QUAL   %@   noise %@   offset %@   L/R %@",
+               s.basebandNoiseValid ? qualityWord(s.signalQuality) : "--",
+               s.basebandNoiseValid
+                   ? String(format: "%.2f kHz", s.basebandNoiseKHz) : "--",
+               s.carrierOffsetValid
+                   ? String(format: "%+.1f kHz", s.carrierOffsetKHz) : "--",
+               s.stereoBalanceValid
+                   ? String(format: "%+.1f dB", s.stereoBalanceDB) : "--"),
         String(format: "STEREO L %6.1f  R %6.1f dBFS   corr %+.2f",
                s.leftRMSDBFS, s.rightRMSDBFS, s.stereoCorrelation),
         String(format: "RDS    %@  PI %@  PTY %@ (%@)  TP%@ TA%@ MS%@  BER %.1f%%",
@@ -191,7 +238,8 @@ private func dashboard(
         "RT+    \(rtPlusSummary(s.rds.rtPlusTags))",
         "CT     \(ct)",
         "AF     \(af)",
-        "GRP    \(groupSummary(s.rds.groupCounts))"
+        "GRP    \(groupSummary(s.rds.groupCounts))",
+        "ORDER  \(groupOrderSummary(s.rds.groupOrder))"
     ]
 }
 

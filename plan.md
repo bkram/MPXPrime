@@ -31,6 +31,14 @@ Highest-leverage audible-gap closer vs the enterprise tier: these stages are imp
 4. **Anti-aliased residual clipping** (`pre_encode_bandlimited_residual_enabled`) — see Next up #1.
 5. **Composite multiband clipping** (`mpx_multiband_clipper_enabled`) — see Broadcast-tier follow-ups.
 
+## Experimental candidates -- RuleBreaker-inspired (parked 2026-08-01, user decision)
+
+Analysis of Thimeo's RuleBreaker press release (loudness/cleanliness claims) mapped onto our chain; all would ship off-by-default and verifier-gated. We cannot know Thimeo's actual method -- these are our own defensible readings backed by the interleaving math.
+
+1. **`pre_encode_stereo_link` blend (small).** The audio composite is bounded by `max(|L|,|R|)` at every instant (convex-combination identity), but `StereoLinkedOversampledPeakLimiter` rides ONE shared gain from `max(|L|,|R|)` -- needlessly attenuating the quiet channel whenever the loud one limits. A link factor 0..1 (1 = current linked behavior) recovers ~2-3 dB integrated loudness on wide program at IDENTICAL composite peak, distortion-free (gain riding, not clipping); cost is momentary image shift toward the limited side. The shared-envelope code already exists; the experiment is the blend + an image-stability verifier scenario.
+2. **`mpx_clipper_iterations` (moderate).** POCS-style iterative clip -> re-project (bandlimit + protected bands) composite peak control; our differential clipper + guard-band cancellation is one iteration of exactly this. 2-4 iterations at OS rate, CPU-gated by `DSPThroughputTests`, measured by guard-band depth / >60k leakage / receiver separation.
+3. **Studio<->Meter closed-loop RF trim (large).** Their "analyzes RF bandwidth after the exciter" loop; the Meter's RF spectrum (0.43) is the sensor. Auto-trim clipper drive against occupied-bandwidth targets. Needs the control API on the Studio side + a Meter export path first.
+
 ## Broadcast-tier follow-ups
 
 - **Multiband Phase 3 — per-band look-ahead.** Reuse `LookaheadLimiter` ring-buffer per band. Largely redundant with Phase 2; skip unless dense percussive listening shows Phase 2 isn't enough. ~3–5 d.

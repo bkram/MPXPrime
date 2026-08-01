@@ -536,4 +536,33 @@ std::size_t ComplexDecimator::executeComplex(const uint8_t* iqIn,
     return blocks;
 }
 
+std::size_t ComplexDecimator::executeComplexIn(const std::complex<float>* iqIn,
+                                               std::size_t inSamples,
+                                               std::complex<float>* iqOut,
+                                               std::size_t outCapacity) const {
+    if (!iqIn || !iqOut || inSamples == 0 || outCapacity == 0) {
+        return 0;
+    }
+    if (m_factor == 1) {
+        const std::size_t copySamples = std::min(inSamples, outCapacity);
+        std::copy_n(iqIn, copySamples, iqOut);
+        return copySamples;
+    }
+    if (m_object == nullptr || m_block.size() != m_factor) {
+        return 0;
+    }
+
+    const std::size_t blocks = std::min(inSamples / m_factor, outCapacity);
+    for (std::size_t b = 0; b < blocks; b++) {
+        const std::size_t inBase = b * m_factor;
+        for (std::size_t k = 0; k < m_factor; k++) {
+            m_block[k] = iqIn[inBase + k];
+        }
+        std::complex<float> y(0.0f, 0.0f);
+        firdecim_crcf_execute(m_object, m_block.data(), &y);
+        iqOut[b] = y;
+    }
+    return blocks;
+}
+
 }  // namespace fm_tuner::dsp::liquid

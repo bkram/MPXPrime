@@ -169,6 +169,17 @@ bool RTLSDRDevice::setFrequency(uint32_t freqHz) {
 #endif
 }
 
+double RTLSDRDevice::currentGainDb() const {
+#if defined(FM_TUNER_HAS_RTLSDR)
+  if (!m_connected || !m_deviceHandle) return -1000.0;
+  const int tenths =
+      rtlsdr_get_tuner_gain(reinterpret_cast<rtlsdr_dev_t *>(m_deviceHandle));
+  return static_cast<double>(tenths) / 10.0;
+#else
+  return -1000.0;
+#endif
+}
+
 bool RTLSDRDevice::setSampleRate(uint32_t rate) {
 #if defined(FM_TUNER_HAS_RTLSDR)
   if (!m_connected || !m_deviceHandle) {

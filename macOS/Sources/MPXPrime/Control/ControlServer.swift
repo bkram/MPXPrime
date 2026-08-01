@@ -1,6 +1,7 @@
 import Foundation
 import HTTPTypes
 import Hummingbird
+import Logging
 import NIOCore
 
 // The remote-control HTTP server: REST API under /api/* plus the embedded
@@ -49,6 +50,7 @@ extension ControlRDS: ResponseEncodable {}
 extension ControlDevices: ResponseEncodable {}
 extension ConfigApplyResult: ResponseEncodable {}
 extension ConfigKeyOutcome: ResponseEncodable {}
+extension NowPlayingResponse: ResponseEncodable {}
 
 /// Curated RDS update payload (PUT /api/rds). All fields optional; only the
 /// supplied ones change. `ps` writes bank A (the primary PS text).
@@ -78,6 +80,21 @@ struct PresetApplyRequest: Codable, Sendable {
     var kind: String
     var id: String
     var intensity: Double?
+}
+
+/// POST /api/nowplaying: push the current track. artist/title drive the RT /
+/// PS / RT+ templates; display is optional (defaults to "Artist - Title").
+struct NowPlayingRequest: Codable, Sendable {
+    var artist: String?
+    var title: String?
+    var display: String?
+}
+
+struct NowPlayingResponse: Codable, Sendable {
+    var ok: Bool
+    /// False when now-playing rendering is off on the target -- the push was
+    /// accepted but will not appear until now_playing_enabled = True.
+    var nowPlayingEnabled: Bool
 }
 
 /// Constant-time equality so the key check does not leak length/prefix
@@ -161,6 +178,22 @@ enum ControlServer {
             return try await backend.applyConfigPatch(patch)
         }
 
+        router.post("/api/nowplaying") { request, context -> NowPlayingResponse in
+            let np = try await request.decode(as: NowPlayingRequest.self, context: context)
+            let artist = (np.artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = (np.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // Default display to "Artist - Title" (or whichever part exists)
+            // when the client omits it, so bare {artist}/{title} callers still
+            // populate the {display}/{now_playing} macros.
+            var display = (np.display ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if display.isEmpty {
+                display = [artist, title].filter { !$0.isEmpty }.joined(separator: " - ")
+            }
+            let enabled = await backend.setNowPlaying(
+                artist: artist, title: title, display: display)
+            return NowPlayingResponse(ok: true, nowPlayingEnabled: enabled)
+        }
+
         router.get("/api/config") { _, _ -> Response in
             let sections = try await backend.configSections()
             let data = try JSONEncoder().encode(sections)
@@ -235,12 +268,19 @@ enum ControlServer {
             backend: backend,
             apiKey: settings.apiKey.isEmpty ? nil : settings.apiKey
         )
+        // Quiet Hummingbird's own "listening on 127.0.0.1:8737" info line:
+        // both launch paths already print/display the clickable form
+        // ("http://host:port/"), and the raw host:port duplicate is the one
+        // terminals don't linkify.
+        var logger = Logger(label: "MPXPrimeControl")
+        logger.logLevel = .notice
         let app = Application(
             router: router,
             configuration: .init(
                 address: .hostname(settings.host, port: settings.port),
                 serverName: "MPXPrimeControl"
-            )
+            ),
+            logger: logger
         )
         try await app.runService()
     }

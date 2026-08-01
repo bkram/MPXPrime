@@ -11,6 +11,173 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+(nothing yet)
+
+## 0.43 — 2026-08-01
+
+- **CI on every push and PR.** New `.github/workflows/ci.yml`: build, full
+  test suite, swiftlint, and the fast offline verify gates (`--verify`,
+  `--verify-receiver`, `--verify --baseline-strict` -- per-platform pinned
+  baselines) on macOS and Ubuntu 24.04, for `develop/**` pushes and PRs to
+  `main`. Previously nothing ran before the release tag. The release
+  workflow's ubuntu-26.04 leg is removed until Swift.org ships a 26.04
+  toolchain (it failed the v0.42 run in 15 s; the static-stdlib 24.04 deb
+  installs and runs on 26.04 anyway).
+- **Control server logs a clickable URL.** Hummingbird's raw
+  "listening on 127.0.0.1:8737" info line is silenced; the startup line is
+  the linkified `Control server: http://127.0.0.1:8737/` form.
+
+- **Restart now equals live-apply, by construction.** Both engine-start paths
+  (headless `HeadlessControlBackend.startEngine` -- API `transport/restart`,
+  boot, reconcile -- and the GUI's `startEngine`) now apply the canonical
+  DSP + RDS runtime planes to the freshly built engine after start. The
+  generator/coder inits are hand-written duplicates of the canonical
+  `RuntimeConfig` / `RDSRuntimeConfig` mappings and nothing pinned them
+  together, so any init/make drift silently made a REBUILT engine differ
+  from a live-PATCHed one (the issues.txt "now-playing off after an API
+  restart" class; the single observed case was most likely the already-fixed
+  empty-script poller bug, but the hole was real). New
+  `RDSRestartParityTests` pins the two mappings: a coder built from a
+  maximally non-default config must emit a BIT-IDENTICAL group stream to a
+  coder live-applied to the same config, and a rebuilt coder must air the
+  full configured state including the pushed now-playing track. Extend its
+  `richConfig()` when adding an RDSRuntimeConfig field. Backend tests cover
+  restart re-applying both planes and patch-while-stopped reaching the next
+  build; `normalizeScriptPath("")` itself now returns "" instead of the
+  launch directory (the helper-level version of the 0.43 call-site fix).
+
+- **Verifier: `--verify-long` is green again and part of the release
+  checklist.** Its per-scenario signature reference table had never been
+  recaptured since 0.11 while the chain moved deliberately through 0.20/0.35/
+  0.36 (each step gated by `--verify --baseline-strict`), so the long-run
+  gate sat at TIGHT on pure staleness -- and nobody saw it, because it was
+  not on the release checklist. Table recaptured from a canonical run
+  against the current chain; checklist updated. A full attribution pass
+  confirmed NO DSP error behind any of the warnings.
+- **Verifier: no more silent fallback to the live station config.** Running
+  any `--verify*` mode from a directory where `macOS/Verification.ini` is
+  not findable used to fall back to the operator's own INI -- producing
+  official-looking TIGHT/WARN verdicts about whatever pilot/RDS/clipper/AGC
+  state the station happened to be in (this cost a real debugging detour).
+  It now exits 64 with instructions; pass `--config` explicitly to verify a
+  specific INI on purpose.
+
+- **Meter: RF spectrum in SDR mode.** The spectrum card gains an **MPX | RF**
+  switch: MPX is the demodulated baseband as before, RF is the band around the
+  tuned carrier straight from the tuner's IQ -- the view an SDR application
+  shows, for spotting adjacent channels and splatter. Span is set by a new
+  **Sample Rate** control (Narrow / 1 MSPS / 2 MSPS, restart-required),
+  defaulting to 1 MSPS for roughly +/-0.5 MHz.
+  The tuner now keeps the **capture rate separate from the demod rate**: the FM
+  demod chain always runs at its own 250/256 kHz behind a polyphase decimator,
+  so widening the span cannot move any MPX measurement. At the Narrow setting
+  the decimation factor is 1 and both backends are byte-identical to before --
+  the RTL branch deliberately keeps its original packed-uint8 demod call there,
+  since the complex path reproduces neither its normalization LUT nor its
+  raw-byte saturation detection. The spectrum itself is a 1024-point
+  Hann-windowed complex FFT on the capture thread at ~20 frames/s, published
+  over a new `mpxtuner_rf_spectrum()` ABI. NOTE: the wide-capture path could
+  not be exercised against real hardware during development -- if a dongle
+  misbehaves at 1/2 MSPS, switch Sample Rate to Narrow.
+- **Meter: closes the measurement gap against a Pira P175/P275 analyzer.**
+  An audit of that instrument's manual against the Meter's readouts turned up
+  eight missing quantities; six are new here (the remaining two need IQ-domain
+  taps in the vendored tuner and are not done):
+  - **AVE / MIN deviation** under the deviation bars, from the same trailing
+    second of 50 ms peak-hold slots MAX is drawn from (the in-progress slot is
+    excluded -- part-filled, it would drag both down). MAX far above AVE is a
+    peaky signal; MAX close to AVE is a dense one riding its ceiling.
+  - **Deviation distribution** -- the accumulated histogram, 1 kHz bins over
+    0..120 kHz since the last Reset, plotted in the Trends card with the
+    75 kHz limit line, plus the highest bin filled and the share at/over
+    75 kHz. This is the metric Pira's manual argues no single MAX number can
+    substitute for; it wants 15-60 minutes of programme to be representative.
+  - **Signal quality**, a 5-step Unusable..Excellent rating derived from the
+    energy ABOVE the modulated baseband, recovered as the exact complement of
+    the 60 kHz measurement FIR (`delayed - filtered` through a delay line of
+    the FIR's own group delay -- phase-exact and cheaper than a second FIR).
+    Nothing is legitimately modulated up there, so it is demod noise and
+    interference, and it is what says whether the other readings are worth
+    believing.
+  - **Carrier frequency offset** in kHz -- an FM demod turns a transmitter
+    carrier offset into composite DC, which the measurement path already
+    tracked but never published.
+  - **L / R balance** in dB, heavily smoothed and level-gated.
+  - **RDS group shares** alongside the counts, and a new **Order** row: the
+    last 18 groups in transmission order. Counts say what an encoder sends;
+    the order shows how it interleaves them.
+  New `Quality` card in the second row; CLI dashboard gains `DIST`, `QUAL` and
+  `ORDER` lines. 14 new deterministic tests. All six together cost ~0.15 % of
+  one core.
+- **Meter: RDS subcarrier phase (EN 50067 sec 1.2).** A new **RDS PHASE**
+  readout in the Modulation card, beside the other standards-compliance
+  figures (and `PHASE` on the headless `DEV` line), reads the angle between
+  the 57 kHz RDS subcarrier and the third harmonic of the 19 kHz pilot -- the
+  "RDS phase" figure a Belar RDS-1 / DEVA analyzer shows. The
+  standard allows two answers, `0 deg (in phase)` or `90 deg (quadrature)`,
+  each within 10 deg; anything between reads `out of spec` in amber and means
+  the encoder is not truly pilot-locked. Measured coherently by
+  `PilotRDSPhaseMeter`: one 19 kHz NCO feeds two IDENTICAL lock-in chains (the
+  57 kHz reference is its exact third harmonic via the triple-angle identity),
+  so the filter group delays match and the reading is immune to the
+  pilot-frequency offset every real capture clock has -- with mismatched
+  delays, 2 Hz of offset alone would bias the angle 5.4 deg, half the spec
+  window. The suppressed-carrier 180 deg ambiguity is removed by squaring
+  (Viterbi & Viterbi), so the reading is folded to an unsigned 0..90 that
+  cannot flicker at the quadrature end. Gated on pilot presence, coherence,
+  and at least 0.8 kHz of RDS; read off the subcarrier itself, so it still
+  shows while the decode readout is reception-gated. Ten new deterministic
+  tests (`MeterRDSPhaseTests`) pin the conventions, the offset immunity, the
+  53 kHz rejection, and an encoder round-trip -- MPX Prime Studio derives its
+  57 kHz carrier from the emitted pilot's recurrence, so it must read in
+  phase. Conventions and readout deliberately match the Pira P175/P275 FM Broadcast Analyzer (unsigned 0..90 fold, +/- 10 deg window, blank when unstable) so the two can be compared number for number; Pira specifies +/- 4 deg for this measurement, ours measures 0.12 deg worst case across the range and 0.00 deg under a 10 Hz pilot offset. Costs ~0.6% of one core.
+- **Input-ring health in `/api/meters`:** the macOS input source now reports
+  capture->render ring diagnostics -- `inputRingBufferedFrames`,
+  `inputRingOverflows`, `inputRingUnderflows`, `inputRingTornReads`,
+  `inputResampleMode`, and `inputRatioTrim` (drift-corrector adjustment).
+  The level meters cannot distinguish loud static from loud program, so
+  these counters are the definitive readout for diagnosing clock-drift
+  between the input and output devices. Null in headless/ALSA and when no
+  input source is running.
+- **Now-playing fixes found via the API push:** (1) an empty
+  `now_playing_script` no longer resolves to the working directory --
+  `normalizeScriptPath("")` returned the CWD, so the local poller launched
+  it, failed, and cleared any API-pushed track every poll; (2) an idle
+  poller (no script) no longer clears now-playing state on config changes,
+  so API-fed RadioText survives PATCHes. The push script also re-sends the
+  current track on a 30 s heartbeat so the encoder recovers after a restart.
+- **Now-playing push over the API** (`POST /api/nowplaying {artist,title,display?}`).
+  Feed the current track from a player on one machine to a (possibly remote)
+  encoder -- e.g. VLC/Cog on your Mac -> headless encoder on a Linux box. It
+  writes the same `NowPlayingState` the local script poller uses, so the
+  existing RT / PS / RT+ templates fill in (RT+ artist/title tagging works).
+  New `scripts/push-nowplaying.sh` (macOS) reuses `scripts/nowplaying.sh` for
+  VLC/Cog extraction and pushes on change (flags/env `--url` / `--api-key`,
+  `--interval`, `--once`); it warns if now-playing rendering is disabled on
+  the target. To use: on the encoder set `now_playing_enabled = True` + an
+  `rt_text` template with `{artist}`/`{title}` (or `{display}`), and leave
+  `now_playing_script` empty (the push is the source).
+- **Now-playing never airs a half-filled line.** A template segment that
+  references `{artist}`/`{title}`/`{display}` whose value is empty is now
+  dropped per-macro (previously only when metadata was entirely absent), so
+  a partial tag (title but no artist) skips the track line instead of airing
+  " - Title". A `/`-segmented template like `10s:{artist} - {title}/10s:My
+  Station` gracefully falls back to the static segment. Applies to the API
+  push, the local script, and the GUI alike.
+
+- **Linux: a missing audio device no longer crashes the encoder.** If the
+  configured ALSA device can't be opened at start (e.g. a USB card whose
+  `hw:CARD=` name changed across reboots -- ALSA renames colliding cards
+  Device / Device_1 by probe order), the process no longer exits (which
+  under systemd meant a restart crash-loop). Instead the control server
+  comes up first and the engine start is attempted tolerantly: the
+  dashboard shows the engine stopped with the reason (`audio engine not
+  started: ... No such device`), the operator picks a present device on the
+  Interfaces page and presses Start. Only when no control server is enabled
+  is a failed start still fatal. Also: `ALSAPCM` now closes idempotently on
+  deinit so repeated failed starts don't leak PCM handles, and the dashboard
+  status strip surfaces the stopped-engine reason.
+
 ## 0.42 — 2026-07-11
 
 - **Linux: Debian/Ubuntu packages + systemd service.** `./build-deb.sh`

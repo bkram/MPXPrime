@@ -105,11 +105,6 @@ with live-apply where the engine supports it. Localhost needs no
 authentication; any wider bind requires an API key. See the
 [user manual](docs/manual.md#remote-control-rest-api--web-dashboard).
 
-**Now-playing push:** a player on one machine can push the current track to a
-remote encoder -- `scripts/push-nowplaying.sh` reads VLC/Cog on macOS and
-POSTs to `/api/nowplaying`, feeding RadioText / PS / RT+ on the (possibly
-headless, remote) encoder.
-
 This is a **MPX Prime Studio (encoder)** feature only — on both macOS and
 Linux. The **MPX Prime Meter has no REST API or web interface** for now;
 it is operated from its own window (or its headless terminal modes).

@@ -46,15 +46,12 @@ jobs:
         include:
           - runner: ubuntu-24.04
             label: ubuntu-24.04
-          - runner: ubuntu-26.04
-            label: ubuntu-26.04
+          # ubuntu-26.04 removed 2026-08: swiftly has no 26.04 toolchain
+          # ("Unsupported Linux platform"; failed the v0.42 run in 15 s even
+          # with continue-on-error, leaving a red X on the release). Re-add
+          # the leg here when Swift.org ships a 26.04 toolchain. The 24.04
+          # deb has a static Swift stdlib and installs/runs on 26.04 anyway.
     runs-on: ${{ matrix.runner }}
-    # Ubuntu 26.04 is allowed to fail until Swift.org ships a 26.04 toolchain
-    # (swiftly currently reports "Unsupported Linux platform" there). The leg
-    # auto-activates once support lands; until then the release still ships
-    # the 24.04 deb (static Swift stdlib -- installs and runs on 26.04 too)
-    # and the macOS DMG. fail-fast:false keeps 24.04 independent.
-    continue-on-error: ${{ matrix.label == 'ubuntu-26.04' }}
     permissions:
       contents: write
     steps:

@@ -1,6 +1,7 @@
 import Foundation
 import HTTPTypes
 import Hummingbird
+import Logging
 import NIOCore
 
 // The remote-control HTTP server: REST API under /api/* plus the embedded
@@ -267,12 +268,19 @@ enum ControlServer {
             backend: backend,
             apiKey: settings.apiKey.isEmpty ? nil : settings.apiKey
         )
+        // Quiet Hummingbird's own "listening on 127.0.0.1:8737" info line:
+        // both launch paths already print/display the clickable form
+        // ("http://host:port/"), and the raw host:port duplicate is the one
+        // terminals don't linkify.
+        var logger = Logger(label: "MPXPrimeControl")
+        logger.logLevel = .notice
         let app = Application(
             router: router,
             configuration: .init(
                 address: .hostname(settings.host, port: settings.port),
                 serverName: "MPXPrimeControl"
-            )
+            ),
+            logger: logger
         )
         try await app.runService()
     }

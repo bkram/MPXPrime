@@ -159,7 +159,7 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) — install whichever you need.
 
 **Linux (encoder only):** the same releases attach Debian/Ubuntu packages
-`mpxprime_<version>-ubuntu24.04_amd64.deb` and `...-ubuntu26.04_amd64.deb`.
+`mpxprime_<version>-ubuntu24.04_amd64.deb` (static Swift stdlib; installs and runs on later Ubuntu releases too).
 Install with `sudo dpkg -i mpxprime_*.deb` (or `sudo apt install ./mpxprime_*.deb`
 to pull dependencies); it provides the headless encoder as a `mpxprime`
 systemd service with the web dashboard. This is the CLI encoder only — no GUI,

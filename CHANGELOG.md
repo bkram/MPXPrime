@@ -15,6 +15,18 @@ combination test suite. Newest first.
 
 ## 0.43 — 2026-08-01
 
+- **CI on every push and PR.** New `.github/workflows/ci.yml`: build, full
+  test suite, swiftlint, and the fast offline verify gates (`--verify`,
+  `--verify-receiver`, `--verify --baseline-strict` -- per-platform pinned
+  baselines) on macOS and Ubuntu 24.04, for `develop/**` pushes and PRs to
+  `main`. Previously nothing ran before the release tag. The release
+  workflow's ubuntu-26.04 leg is removed until Swift.org ships a 26.04
+  toolchain (it failed the v0.42 run in 15 s; the static-stdlib 24.04 deb
+  installs and runs on 26.04 anyway).
+- **Control server logs a clickable URL.** Hummingbird's raw
+  "listening on 127.0.0.1:8737" info line is silenced; the startup line is
+  the linkified `Control server: http://127.0.0.1:8737/` form.
+
 - **Restart now equals live-apply, by construction.** Both engine-start paths
   (headless `HeadlessControlBackend.startEngine` -- API `transport/restart`,
   boot, reconcile -- and the GUI's `startEngine`) now apply the canonical

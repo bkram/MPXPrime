@@ -148,9 +148,11 @@ user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`,
 created with defaults on first run; `LimitRTPRIO` grants the audio threads
 real-time scheduling), the sample INI, and the docs. Enable with
 `systemctl enable --now mpxprime`. Release tags build and attach the Ubuntu 24.04 deb automatically
-(`.github/workflows/release.yml`); the 26.04 leg is wired in but stays
-non-blocking until Swift.org ships a 26.04 toolchain (the 24.04 deb uses a
-static Swift stdlib and installs/runs on 26.04 in the meantime).
+(`.github/workflows/release.yml`); the 26.04 leg was removed until Swift.org
+ships a 26.04 toolchain -- the 24.04 deb uses a static Swift stdlib and
+installs/runs on 26.04 in the meantime. Pushes to `develop/**` and PRs to
+`main` run CI (`.github/workflows/ci.yml`): build + tests + the fast verify
+gates (incl. `--verify --baseline-strict`) on macOS and Ubuntu 24.04.
 
 Internals: the `MPXPrimeAcceleration` target supplies same-name implementations
 of the small vDSP/vForce surface the encoder uses (plus an

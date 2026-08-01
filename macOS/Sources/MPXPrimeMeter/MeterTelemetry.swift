@@ -41,6 +41,9 @@ final class MeterTelemetry {
     var rdsText = "0.00"
     var maxDevNorm: Double = 0
     var maxDevText = "0.0"
+    /// "58.2 / 41.0" -- the AVE and MIN of the same trailing-second slot array
+    /// MAX comes from. Shown under the deviation strips.
+    var aveMinDevText = "--"
 
     // Modulation analysis: MPX power (BS.412), +/- peak-hold deviation, best
     // stereo separation. Text "--" when not yet valid.
@@ -63,11 +66,29 @@ final class MeterTelemetry {
     var mpxPowerMaxValid = false
     var separationText = "--"
 
+    // Reception / chain quality. `qualityText` is the 0..4 word scale derived
+    // from the baseband noise above the modulated bands; the others are the
+    // per-quantity readouts that go with it.
+    var qualityText = "--"
+    var qualityLevel = 0             // 0..4, for tinting
+    var carrierOffsetText = "--"
+    var carrierOffsetKHz: Double = 0  // raw, for over-limit tinting
+    var carrierOffsetValid = false
+    var balanceText = "--"
+
+    // Deviation distribution (accumulated histogram) + its headline figures.
+    var devHistogram: [UInt32] = []
+    var devHistogramSamples: UInt64 = 0
+    var distributionSummaryText = "--"
+
     // SDR signal level (relative RSSI, dBFS). rssiValid is false for the
     // audio-device input (no RF level there).
     var rssiText = "--"
     var rssiNorm: Double = 0          // 0..1 over a -80..0 dBFS range
     var rssiValid = false
+    /// Total gain the tuner reports (dB) -- the term that turns the relative
+    /// dBFS channel power into an absolute one. "--" when unavailable.
+    var systemGainText = "--"
 
     // RDS display strings (decoded text + group histogram). On telemetry, not
     // the view model: the group counters advance with every received group
@@ -75,6 +96,11 @@ final class MeterTelemetry {
     // (rdsStatusText = the decoder status line; rdsText above is the
     // deviation strip's kHz reading.)
     var rdsStatusText = "--"
+    // EN 50067 sec 1.2 subcarrier phase: "8 deg (in phase)" / "--".
+    // `rdsPhaseOutOfSpec` tints the readout when it is in neither the
+    // in-phase nor the quadrature window.
+    var rdsPhaseText = "--"
+    var rdsPhaseOutOfSpec = false
     var ptyText = "--"
     var ptynText = "--"
     var eccText = "--"
@@ -85,6 +111,9 @@ final class MeterTelemetry {
     var ctText = "--"
     var afText = "--"
     var groupText = "--"
+    /// The last 18 groups in transmission order -- the scheduler's interleave,
+    /// which the counts alone cannot show.
+    var groupOrderText = "--"
 
     /// Vectorscope display gain (auto-ridden or the manual zoom).
     var vectorZoom: Double = 1
@@ -102,6 +131,10 @@ final class MeterTelemetry {
     var spectrumNyquistHz: Double = 0
     var decodedLSpectrumDB: [Float] = []
     var decodedRSpectrumDB: [Float] = []
+    // RF spectrum around the tuned carrier (SDR only): dB bins, already
+    // fftshifted by the tuner, plus the span they cover.
+    var rfSpectrumDB: [Float] = []
+    var rfSpanHz: Double = 0
     var audioSpectrumMaxHz: Double = 20_000
     var audioSpectrumNyquistHz: Double = 0
 }

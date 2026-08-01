@@ -49,6 +49,10 @@ struct RootMeterView: View {
                         .frame(height: 220)
                         HStack(alignment: .top, spacing: 12) {
                             vectorscopeSection
+                            // Reception/chain quality: three scalars, fixed
+                            // width so the trends keep the flexible space.
+                            qualitySection
+                                .frame(width: 210)
                             trendsSection
                                 .frame(maxWidth: .infinity)
                         }
@@ -278,6 +282,44 @@ struct RootMeterView: View {
                     .help("Frequency-error correction in ppm. Scroll to step. Applied live.")
                 }
 
+                // Signal-level units + the calibration that makes the
+                // absolute ones absolute. Sits with the other SDR front-end
+                // controls, mirroring the audio path's Calibrate picker.
+                HStack(spacing: 4) {
+                    Text("Signal").foregroundStyle(.secondary).fixedSize()
+                    Picker("Signal unit", selection: $vm.signalUnit) {
+                        ForEach(SignalUnit.allCases) { u in
+                            Text(u.label).tag(u)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    if vm.signalUnit.isAbsolute {
+                        ScrollableNumericField(value: $vm.signalCalibrationDB,
+                                               range: -60.0...60.0, step: 0.5, decimals: 1)
+                            .frame(width: 52)
+                        Text("cal").foregroundStyle(.secondary).fixedSize()
+                    }
+                }
+                .help(Self.signalUnitHelp)
+
+                // IQ capture rate = the RF spectrum's span. RESTART-required
+                // (the device is reconfigured at open), like the device picker.
+                // It cannot move the MPX measurements: the demod chain runs at
+                // its own fixed rate behind a decimator.
+                HStack(spacing: 4) {
+                    Text("Sample Rate").foregroundStyle(.secondary).fixedSize()
+                    Picker("Sample Rate", selection: $vm.sdrIQRateKHz) {
+                        Text("Narrow").tag(0)
+                        Text("1 MSPS").tag(1000)
+                        Text("2 MSPS").tag(2000)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .help(Self.sampleRateHelp)
+                .onChange(of: vm.sdrIQRateKHz) { _, _ in vm.restartIfRunning() }
+
                 Toggle("Bias-T", isOn: $vm.sdrBiasTee)
                     .fixedSize()
                     .toggleStyle(.switch)
@@ -465,6 +507,7 @@ struct RootMeterView: View {
     private var deviationSection: some View {
         GroupBox("Deviation (kHz)") {
             LiveObservationView(telemetry: vm.telemetry) { t in
+                VStack(spacing: 4) {
                 HStack(spacing: 10) {
                     strip("PILOT", t.pilotText, t.pilotNorm,
                           .modulationKHz(fullScale: MeterScale.pilotFullKHz, limit: MeterScale.pilotLimitKHz),
@@ -482,8 +525,81 @@ struct RootMeterView: View {
                             + "are over-modulation.")
                 }
                 .frame(maxHeight: .infinity)
+                // AVE / MIN of the same trailing-second slot array MAX comes
+                // from. A caption rather than two more bars: they are context
+                // for MAX, not independently-scanned levels, and the strips
+                // must keep the height.
+                Text("AVE / MIN  \(t.aveMinDevText)")
+                    .font(BroadcastStyle.chipLabel)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .help("Mean and lowest of the last second's 50 ms peak-hold "
+                        + "slots, alongside MAX above. MAX far above AVE means a "
+                        + "peaky, lightly-processed signal; MAX close to AVE means "
+                        + "a densely-processed one running near its ceiling "
+                        + "continuously.")
+                }
                 .padding(6)
             }
+        }
+    }
+
+    // MARK: - Reception / chain quality
+
+    private var qualitySection: some View {
+        GroupBox("Quality") {
+            LiveObservationView(telemetry: vm.telemetry) { t in
+                VStack(alignment: .leading, spacing: 12) {
+                    readout("SIGNAL QUALITY", t.qualityText,
+                            valueTint: Self.qualityTint(t.qualityLevel),
+                            help: "How much energy sits ABOVE the modulated baseband "
+                                + "(over 60 kHz), where nothing is legitimately "
+                                + "transmitted -- so it is demod noise and "
+                                + "interference, and it is what decides whether the "
+                                + "other readings can be trusted. An FM demod's noise "
+                                + "rises steeply with frequency, so this band goes bad "
+                                + "first: deviation and RDS level lose accuracy before "
+                                + "pilot and MPX power do. Reposition the antenna to "
+                                + "improve it.")
+                    readout("CARRIER OFFSET", t.carrierOffsetText,
+                            valueTint: t.carrierOffsetValid
+                                ? limitTint(abs(t.carrierOffsetKHz), limit: 2.0, warn: 1.0)
+                                : BroadcastStyle.readoutPrimary,
+                            help: "Transmitter carrier frequency error: an FM demod "
+                                + "turns an offset carrier into composite DC, so this "
+                                + "reads it directly. On an audio input it is whatever "
+                                + "DC the interface presents instead. Deviation "
+                                + "measurements are DC-corrected either way.")
+                    if vm.inputKind == .sdr {
+                        readout("SYSTEM GAIN", t.systemGainText,
+                                help: "Total gain the tuner reports right now -- the term "
+                                    + "that converts the channel power into an absolute "
+                                    + "dBm / dBuV reading. It moves as AGC and LNA move, "
+                                    + "which is why the absolute reading stays valid. "
+                                    + "SDRplay reports a true system gain; RTL reports its "
+                                    + "tuner stage only.")
+                    }
+                    readout("L / R BALANCE", t.balanceText,
+                            help: "Standing level difference between the decoded "
+                                + "channels, heavily smoothed (+ = left louder). Real "
+                                + "programme averages to about 0 dB; a persistent "
+                                + "offset means the stereo encoder or the audio "
+                                + "feeding it is lopsided.")
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(6)
+            }
+        }
+    }
+
+    /// Tint for the 0..4 signal-quality scale (higher is better).
+    private static func qualityTint(_ level: Int) -> Color {
+        switch level {
+        case 4, 3: return BroadcastStyle.safeGreen
+        case 2: return BroadcastStyle.tightAmber
+        default: return BroadcastStyle.overRed
         }
     }
 
@@ -610,6 +726,21 @@ struct RootMeterView: View {
         .padding(14)
     }
 
+    // Lives in the Modulation card only, with the other standards-compliance
+    // readouts -- it was briefly duplicated into the RDS panel too, which just
+    // showed the same number twice.
+    private static let rdsPhaseHelp = "Angle between the 57 kHz RDS subcarrier "
+        + "and the third harmonic of the 19 kHz pilot (EN 50067 sec 1.2). Two "
+        + "answers are correct: 0 deg (in phase, the common convention) or "
+        + "90 deg (quadrature, BBC practice), each within 10 deg. Anything in "
+        + "between means the encoder is not truly pilot-locked -- worth a trim, "
+        + "though most receivers recover the subcarrier themselves and decode "
+        + "fine either way. Measured off the subcarrier itself, so it reads "
+        + "even when the RDS decode is gated; needs a pilot and at least "
+        + "0.8 kHz of RDS. Judge a transmitter by it only allowing for the "
+        + "path: the standard's tolerance applies at the transmitter's MPX "
+        + "input, not off-air."
+
     // MARK: - Modulation metrics (BS.412 power, peak-hold, separation)
 
     private var metricsSection: some View {
@@ -666,6 +797,15 @@ struct RootMeterView: View {
                                         + "program reads low.")
                         }
                         GridRow {
+                            // An RDS parameter, but it belongs with the other
+                            // standards-compliance readouts rather than in the
+                            // RDS decode panel -- and it is where an operator
+                            // coming from a Belar / DEVA looks for it.
+                            readout("RDS PHASE", t.rdsPhaseText,
+                                    valueTint: t.rdsPhaseOutOfSpec
+                                        ? BroadcastStyle.tightAmber
+                                        : BroadcastStyle.readoutPrimary,
+                                    help: Self.rdsPhaseHelp)
                             if vm.inputKind == .sdr {
                                 readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
                                         valueTint: t.rssiValid ? signalTint(t.rssiNorm)
@@ -678,6 +818,8 @@ struct RootMeterView: View {
                             } else {
                                 Color.clear.frame(width: 1, height: 1)
                             }
+                        }
+                        GridRow {
                             Button("Reset Peaks") { vm.resetPeaks() }
                                 .buttonStyle(.bordered)
                                 .disabled(!vm.running)
@@ -697,7 +839,7 @@ struct RootMeterView: View {
     private var trendsSection: some View {
         GroupBox("Trends") {
             LiveObservationView(telemetry: vm.telemetry) { t in
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     labeled("Deviation (kHz, ~60 s)") {
                         TrendView(samples: t.devHistoryKHz, minValue: 0, maxValue: 90,
                                   limit: 75, accessibilityName: "Deviation over time")
@@ -706,11 +848,34 @@ struct RootMeterView: View {
                         TrendView(samples: t.mpxPowerHistoryDBr, minValue: -12, maxValue: 3,
                                   limit: 0, accessibilityName: "MPX power over time")
                     }
+                    // Accumulated deviation distribution since the last reset:
+                    // the one view that answers "how much of the programme
+                    // gets near the limit", which no single MAX number can.
+                    distributionRow(t)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(6)
             }
         }
+    }
+
+    private static let distributionHelp = "Share of the programme reaching "
+        + "each deviation or more, accumulated since the last Reset from the "
+        + "same 50 ms peak-hold slots MAX uses. Read it at the 75 kHz line: "
+        + "that is how much of the signal is at or over the limit. Needs "
+        + "15-60 minutes of programme to be representative -- a single MAX "
+        + "number cannot describe modulation the way this can."
+
+    /// Split out of `trendsSection`: inlined, the interpolated label plus the
+    /// long help string pushed the body past the type-checker's budget.
+    private func distributionRow(_ t: MeterTelemetry) -> some View {
+        labeled("Deviation Distribution   " + t.distributionSummaryText) {
+            DeviationDistributionView(
+                counts: t.devHistogram, totalSamples: t.devHistogramSamples,
+                maxKHz: 90, limit: 75,
+                accessibilityName: "Accumulated deviation distribution")
+        }
+        .help(Self.distributionHelp)
     }
 
     private func readout(
@@ -805,36 +970,98 @@ struct RootMeterView: View {
 
     // MARK: - Spectrum
 
+    private static let signalUnitHelp = "Unit for the SIGNAL readout. dBFS is "
+        + "the raw relative level and always works. dBm / dBuV are absolute: "
+        + "the reading is the channel power minus the gain the tuner reports, "
+        + "so it stays correct as AGC and LNA move -- but neither an RSP nor an "
+        + "RTL dongle carries a factory power calibration, so the absolute "
+        + "reference is the 'cal' offset. Set it once against a known signal "
+        + "or a calibrated receiver (dBuV in 50 ohm is dBm + 107) and it holds. "
+        + "SDRplay reports a true system gain; on RTL only the tuner stage is "
+        + "known, so treat that as indicative."
+
+    private static let sampleRateHelp = "IQ capture rate -- it sets the RF "
+        + "spectrum's span (1 MSPS shows about +/-0.5 MHz, enough for the "
+        + "adjacent channels; Narrow is the minimum the demodulator needs and "
+        + "shows only the tuned carrier). The FM demod always runs at its own "
+        + "rate behind a decimator, so this cannot change any MPX measurement "
+        + "-- it only costs USB bandwidth and CPU. Restarts the capture."
+
+    private static let rfSpectrumHelp = "RF spectrum around the tuned carrier, "
+        + "from the tuner's IQ -- the band view an SDR application shows. Unlike "
+        + "MPX (the demodulated baseband), this is what is on the air: the "
+        + "station's own RF footprint, its neighbours on the 100/200 kHz raster, "
+        + "and any splatter between them. Use it to spot an adjacent channel "
+        + "that is degrading reception. The span is the IQ capture rate, set by "
+        + "Sample Rate in the input bar."
+
     private var spectrumSection: some View {
         GroupBox {
             LiveObservationView(telemetry: vm.telemetry) { t in
-                // Clip the 0..spectrumMaxHz bins to the selected display span
-                // (the view maps the bins it is given linearly across maxHz).
-                let span = Double(vm.spectrumSpanKHz) * 1000.0
-                let full = max(1.0, t.spectrumMaxHz)
-                let frac = min(1.0, span / full)
-                let count = max(2, Int((Double(t.spectrumDB.count) * frac).rounded()))
-                MPXSpectrumView(
-                    dbBins: Array(t.spectrumDB.prefix(count)), maxHz: min(span, full),
-                    nyquistHz: t.spectrumNyquistHz, showBandLabels: true
-                )
+                Group {
+                    if showRFSpectrum {
+                        RFSpectrumView(
+                            bins: t.rfSpectrumDB, spanHz: t.rfSpanHz,
+                            centerMHz: vm.frequencyMHz)
+                    } else {
+                        // Clip the 0..spectrumMaxHz bins to the selected display
+                        // span (the view maps the bins it is given linearly
+                        // across maxHz).
+                        let span = Double(vm.spectrumSpanKHz) * 1000.0
+                        let full = max(1.0, t.spectrumMaxHz)
+                        let frac = min(1.0, span / full)
+                        let count = max(2, Int((Double(t.spectrumDB.count) * frac).rounded()))
+                        MPXSpectrumView(
+                            dbBins: Array(t.spectrumDB.prefix(count)), maxHz: min(span, full),
+                            nyquistHz: t.spectrumNyquistHz, showBandLabels: true)
+                    }
+                }
                 .padding(6)
             }
         } label: {
             HStack {
                 Text("Spectrum")
                 Spacer()
-                Picker("Span", selection: $vm.spectrumSpanKHz) {
-                    Text("60 kHz").tag(60)
-                    Text("100 kHz").tag(100)
+                // RF is an SDR-only view (there is no IQ on an audio input), so
+                // the source switch only appears there.
+                if vm.inputKind == .sdr {
+                    Picker("Source", selection: $vm.spectrumShowsRF) {
+                        Text("MPX").tag(false)
+                        Text("RF").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("MPX: the demodulated baseband (L+R / pilot / L-R / RDS). "
+                        + "RF: the band around the tuned carrier, from the IQ.")
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Spectrum display span. 60 kHz focuses on the modulated bands "
-                    + "(L+R / pilot / L-R / RDS); 100 kHz shows the full baseband incl. SCA.")
+                if showRFSpectrum {
+                    Text("span \(rfSpanLabel)")
+                        .font(BroadcastStyle.chipLabel)
+                        .foregroundStyle(.secondary)
+                        .help(Self.rfSpectrumHelp)
+                } else {
+                    Picker("Span", selection: $vm.spectrumSpanKHz) {
+                        Text("60 kHz").tag(60)
+                        Text("100 kHz").tag(100)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Spectrum display span. 60 kHz focuses on the modulated bands "
+                        + "(L+R / pilot / L-R / RDS); 100 kHz shows the full baseband incl. SCA.")
+                }
             }
         }
+    }
+
+    private var showRFSpectrum: Bool { vm.inputKind == .sdr && vm.spectrumShowsRF }
+
+    private var rfSpanLabel: String {
+        let hz = vm.telemetry.rfSpanHz
+        guard hz > 0 else { return "--" }
+        return hz >= 1e6 ? String(format: "%.2f MHz", hz / 1e6)
+                         : String(format: "%.0f kHz", hz / 1e3)
     }
 
     // MARK: - RDS
@@ -863,7 +1090,14 @@ struct RootMeterView: View {
                     rdsRow("CT", t.ctText, "Clock Time + date sent by the station (UTC plus local offset).")
                     rdsRow("AF", t.afText, "Alternative Frequencies carrying the same program for retuning.")
                     rdsRow("Groups", t.groupText,
-                           "RDS group types received and their counts (0A = PS/AF, 2A = RadioText, 4A = CT...).")
+                           "RDS group types received, with counts and their share of the "
+                            + "stream (0A = PS/AF, 2A = RadioText, 4A = CT...).")
+                    rdsRow("Order", t.groupOrderText,
+                           "The last 18 groups in the order they were transmitted. The "
+                            + "counts say what the encoder sends; the order shows how it "
+                            + "interleaves them -- a repeating scheduler pattern, a "
+                            + "starved group type, or one type bursting and crowding "
+                            + "out the rest.")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(6)

@@ -14,6 +14,28 @@ import UniformTypeIdentifiers
 /// view model (to normalize the reading) and RootMeterView (to label the
 /// strip), so the divisor and the scale always match. Pilot/RDS use small
 /// ranges so they read mid-scale instead of as a stub on a 0..100 scale.
+/// Unit for the SDR signal-level readout. dBFS is the raw, always-available
+/// relative figure; dBm and dBuV are absolute and derived as
+/// `channel power dBFS - system gain + calibration offset`. The gain term is
+/// read back from the tuner, so the reading tracks AGC and LNA changes; the
+/// offset is the one thing no SDR can supply, because neither an RSP nor an
+/// RTL dongle carries a factory power calibration. Null it once against a
+/// known reference and it holds.
+enum SignalUnit: Int, CaseIterable, Identifiable {
+    case dBFS = 0, dBm = 1, dBuV = 2
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .dBFS: return "dBFS"
+        case .dBm: return "dBm"
+        case .dBuV: return "dBuV"
+        }
+    }
+    var isAbsolute: Bool { self != .dBFS }
+    /// dBuV in 50 ohm is dBm + 107.
+    var offsetFromDBm: Double { self == .dBuV ? 107.0 : 0.0 }
+}
+
 enum MeterScale {
     static let pilotFullKHz = 12.0
     static let pilotLimitKHz = 7.5    // ~10% pilot injection ceiling
@@ -98,6 +120,18 @@ final class MeterViewModel: ObservableObject {
     /// Spectrum display span in kHz (60 = focus on the modulated bands, 100 =
     /// full incl. SCA). Display-only; changes only on toggle, never per tick.
     @Published var spectrumSpanKHz: Int = 60
+    /// Which spectrum the big card shows: the demodulated MPX baseband, or the
+    /// RF band around the tuned carrier (SDR only).
+    @Published var spectrumShowsRF = false
+    /// SDR IQ capture rate in kHz -- the RF spectrum's span. 0 = the narrow
+    /// default. RESTART-REQUIRED: the device is reconfigured at open. The demod
+    /// chain runs at its own rate behind a decimator, so this cannot move the
+    /// MPX measurements.
+    @Published var sdrIQRateKHz: Int = 1000
+    /// Unit for the SIGNAL readout, and the calibration offset that makes the
+    /// absolute units absolute (see `SignalUnit`). Both persist.
+    @Published var signalUnit: SignalUnit = .dBFS
+    @Published var signalCalibrationDB: Double = 0
     /// Decode-path DC blocker: removes demod carrier-offset DC from the
     /// decoded audio (vectorscope centering, clean monitor/recordings).
     @Published var dcBlockEnabled = true
@@ -128,6 +162,10 @@ final class MeterViewModel: ObservableObject {
     // Smoothed vectorscope auto-gain (display-only): fast attack when the
     // figure would clip the field, slow release as program quiets.
     private var vectorAutoGain: Double = 1.0
+    // Reused destination for the tuner's RF spectrum frame (matches the
+    // tuner's FFT size; a short read is fine and just yields fewer bins).
+    private static let rfSpectrumBins = 1024
+    private var rfSpectrumScratch: [Float] = []
 
     init() {
         refreshDevices()
@@ -216,6 +254,10 @@ final class MeterViewModel: ObservableObject {
         static let fullScale = "meter.audioFullScaleKHz"
         static let recordMPX = "meter.recordMPX"
         static let spectrumSpan = "meter.spectrumSpanKHz"
+        static let spectrumRF = "meter.spectrumShowsRF"
+        static let iqRate = "meter.sdrIQRateKHz"
+        static let signalUnit = "meter.signalUnit"
+        static let signalCal = "meter.signalCalibrationDB"
         static let inputUID = "meter.selectedInputUID"
         static let outputUID = "meter.selectedOutputUID"
         static let sdrDeviceID = "meter.selectedSDRDeviceID"
@@ -253,6 +295,13 @@ final class MeterViewModel: ObservableObject {
         if d.object(forKey: Keys.fullScale) != nil { audioFullScaleKHz = d.double(forKey: Keys.fullScale) }
         if d.object(forKey: Keys.recordMPX) != nil { recordMPX = d.bool(forKey: Keys.recordMPX) }
         if d.object(forKey: Keys.spectrumSpan) != nil { spectrumSpanKHz = d.integer(forKey: Keys.spectrumSpan) }
+        if d.object(forKey: Keys.spectrumRF) != nil { spectrumShowsRF = d.bool(forKey: Keys.spectrumRF) }
+        if d.object(forKey: Keys.iqRate) != nil { sdrIQRateKHz = d.integer(forKey: Keys.iqRate) }
+        if d.object(forKey: Keys.signalUnit) != nil,
+           let u = SignalUnit(rawValue: d.integer(forKey: Keys.signalUnit)) { signalUnit = u }
+        if d.object(forKey: Keys.signalCal) != nil {
+            signalCalibrationDB = d.double(forKey: Keys.signalCal)
+        }
         if let uid = d.string(forKey: Keys.inputUID),
            let dev = inputDevices.first(where: { $0.uid == uid }) {
             selectedInputID = dev.id
@@ -293,6 +342,10 @@ final class MeterViewModel: ObservableObject {
         d.set(audioFullScaleKHz, forKey: Keys.fullScale)
         d.set(recordMPX, forKey: Keys.recordMPX)
         d.set(spectrumSpanKHz, forKey: Keys.spectrumSpan)
+        d.set(spectrumShowsRF, forKey: Keys.spectrumRF)
+        d.set(sdrIQRateKHz, forKey: Keys.iqRate)
+        d.set(signalUnit.rawValue, forKey: Keys.signalUnit)
+        d.set(signalCalibrationDB, forKey: Keys.signalCal)
         if let id = selectedInputID, let dev = inputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.inputUID)
         }
@@ -389,7 +442,7 @@ final class MeterViewModel: ObservableObject {
             autoGain: sdrAutoGain, gainDB: sdrGainDB,
             bandwidthKHz: sdrBandwidthKHz, biasTee: sdrBiasTee,
             ppm: sdrPPM, rtlAGC: sdrRTLAGC, antenna: sdrAntenna, lna: sdrLnaState,
-            deviceBackend: backend, deviceSerial: serial)
+            deviceBackend: backend, deviceSerial: serial, iqRateKHz: sdrIQRateKHz)
         let source = SDRLibraryInputSource(config: cfg)
         deviceID = nil
         priorDeviceRate = nil
@@ -590,14 +643,46 @@ final class MeterViewModel: ObservableObject {
     private func pushSignal() {
         if inputKind == .sdr, let source = sdrSource {
             let dbfs = source.signalDBFS
+            let gain = source.systemGainDB
             telemetry.rssiValid = true
-            telemetry.rssiText = String(format: "%.0f dBFS", dbfs)
+            // Absolute units need the gain term; without it fall back to the
+            // relative reading rather than publish a wrong absolute number.
+            if signalUnit.isAbsolute, let gain {
+                let dbm = dbfs - gain + signalCalibrationDB
+                telemetry.rssiText = String(format: "%.0f %@",
+                                            dbm + signalUnit.offsetFromDBm,
+                                            signalUnit.label)
+            } else {
+                telemetry.rssiText = String(format: "%.0f dBFS", dbfs)
+            }
+            telemetry.systemGainText = gain.map { String(format: "%.1f dB", $0) } ?? "--"
             telemetry.rssiNorm = max(0.0, min(1.0, (dbfs + 80.0) / 80.0))
         } else if telemetry.rssiValid {
             telemetry.rssiValid = false
             telemetry.rssiText = "--"
+            telemetry.systemGainText = "--"
             telemetry.rssiNorm = 0
         }
+        pushRFSpectrum()
+    }
+
+    /// Copy the tuner's latest RF spectrum frame into telemetry -- only while
+    /// the card is actually showing it, so the copy costs nothing otherwise.
+    private func pushRFSpectrum() {
+        guard inputKind == .sdr, spectrumShowsRF, let source = sdrSource else {
+            if !telemetry.rfSpectrumDB.isEmpty {
+                telemetry.rfSpectrumDB = []
+                telemetry.rfSpanHz = 0
+            }
+            return
+        }
+        if rfSpectrumScratch.count != Self.rfSpectrumBins {
+            rfSpectrumScratch = [Float](repeating: -140, count: Self.rfSpectrumBins)
+        }
+        let (count, span) = source.rfSpectrum(into: &rfSpectrumScratch)
+        guard count > 0 else { return }
+        telemetry.rfSpectrumDB = Array(rfSpectrumScratch[0..<count])
+        telemetry.rfSpanHz = span
     }
 
     // Change-guarded telemetry writes: with @Observable, every write fires the
@@ -617,6 +702,25 @@ final class MeterViewModel: ObservableObject {
     /// Quantize a 0..1 bar level to ~1/500 (sub-pixel at meter sizes).
     @inline(__always)
     private static func qNorm(_ v: Double) -> Double { (v * 500).rounded() / 500 }
+
+    /// Word for the 0..4 signal-quality scale (same rungs a Pira analyzer
+    /// shows, in words rather than a bar-graph glyph).
+    private static func qualityWord(_ level: Int) -> String {
+        switch level {
+        case 4: return "Excellent"
+        case 3: return "Good"
+        case 2: return "Usable"
+        case 1: return "Poor"
+        default: return "Unusable"
+        }
+    }
+
+    /// Compact sample count for the distribution readout (12.3k, 1.2M).
+    private static func compactCount(_ n: UInt64) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1e6) }
+        if n >= 1_000 { return String(format: "%.1fk", Double(n) / 1e3) }
+        return "\(n)"
+    }
 
     private func pushTelemetry(_ s: MeterSnapshot) {
         put(\.inputNorm, Self.qNorm(Self.dbNorm(s.inputPeakDBFS)))
@@ -640,6 +744,22 @@ final class MeterViewModel: ObservableObject {
         put(\.rdsText, String(format: "%.2f", s.rdsDevKHz))
         put(\.maxDevNorm, Self.qNorm(Double(s.maxDevKHz) / MeterScale.maxFullKHz))
         put(\.maxDevText, String(format: "%.1f", s.maxDevKHz))
+        put(\.aveMinDevText,
+            String(format: "%.1f / %.1f", s.aveDevKHz, s.minDevKHz))
+
+        // EN 50067 sec 1.2 subcarrier phase. Whole degrees: that is the
+        // resolution the +/- 10 deg tolerance is judged at, and a decimal
+        // digit would only jitter. Lives on telemetry (not the RDS-panel
+        // strings pushed at 2/s) because it updates with every tick.
+        if s.pilotRDSPhaseValid {
+            let verdict = s.pilotRDSPhase
+            put(\.rdsPhaseText,
+                String(format: "%.0f deg (%@)", s.pilotRDSPhaseDeg, verdict.label))
+            put(\.rdsPhaseOutOfSpec, !verdict.isCompliant)
+        } else {
+            put(\.rdsPhaseText, "--")
+            put(\.rdsPhaseOutOfSpec, false)
+        }
 
         if s.mpxPowerValid {
             put(\.mpxPowerText, String(format: "%+.1f dBr", s.mpxPowerDBr))
@@ -672,6 +792,38 @@ final class MeterViewModel: ObservableObject {
         put(\.mpxPowerMaxValid, s.mpxPowerMaxValid)
         put(\.separationText, s.separationValid
             ? String(format: "%.0f dB", s.bestSeparationDB) : "--")
+
+        // Reception / chain quality.
+        if s.basebandNoiseValid, s.hasSignal {
+            put(\.qualityLevel, s.signalQuality)
+            put(\.qualityText, String(format: "%@  %.2f kHz",
+                                      Self.qualityWord(s.signalQuality), s.basebandNoiseKHz))
+        } else {
+            put(\.qualityLevel, 0)
+            put(\.qualityText, "--")
+        }
+        put(\.carrierOffsetValid, s.carrierOffsetValid)
+        put(\.carrierOffsetKHz, Double((s.carrierOffsetKHz * 10).rounded() / 10))
+        put(\.carrierOffsetText, s.carrierOffsetValid
+            ? String(format: "%+.1f kHz", s.carrierOffsetKHz) : "--")
+        put(\.balanceText, s.stereoBalanceValid
+            ? String(format: "%+.1f dB", s.stereoBalanceDB) : "--")
+
+        // Deviation distribution: the curve plus the two figures that read off
+        // it -- the highest bin ever filled, and the share of the programme at
+        // or above the 75 kHz limit.
+        put(\.devHistogram, s.devHistogram)
+        put(\.devHistogramSamples, s.devHistogramSamples)
+        if s.devHistogramSamples > 0 {
+            let over = Double(s.devDistributionAtOrAbove(75.0)) * 100.0
+            put(\.distributionSummaryText,
+                String(format: "peak %.0f kHz   >=75 kHz %@   n=%@",
+                       s.devHistogramMaxKHz,
+                       over <= 0.0 ? "0 %" : String(format: "%.2f %%", over),
+                       Self.compactCount(s.devHistogramSamples)))
+        } else {
+            put(\.distributionSummaryText, "--")
+        }
 
         put(\.devHistoryKHz, s.devHistoryKHz)
         put(\.mpxPowerHistoryDBr, s.mpxPowerHistoryDBr)
@@ -786,8 +938,9 @@ final class MeterViewModel: ObservableObject {
             : r.alternativeFrequenciesMHz.prefix(12).map { String(format: "%.1f", $0) }
                 .joined(separator: " ") + " MHz"
         let groups = Self.groupSummary(r.groupCounts)
+        let order = Self.groupOrderSummary(r.groupOrder)
 
-        let signature = [rds, pty, ptynOut, ecc, ps, rt, rtPlus, lps, ct, af, groups]
+        let signature = [rds, pty, ptynOut, ecc, ps, rt, rtPlus, lps, ct, af, groups, order]
             .joined(separator: "|")
         guard signature != lastRDSSignature else { return }
         lastRDSSignature = signature
@@ -797,6 +950,7 @@ final class MeterViewModel: ObservableObject {
         telemetry.psText = ps; telemetry.rtText = rt; telemetry.rtPlusText = rtPlus
         telemetry.longPSText = lps; telemetry.ctText = ct; telemetry.afText = af
         telemetry.groupText = groups
+        telemetry.groupOrderText = order
     }
 
     /// EN 50067 Programme Type names (RDS / EU set, 0-31).
@@ -827,12 +981,31 @@ final class MeterViewModel: ObservableObject {
         db <= -120 ? "-inf" : String(format: "%.1f", db)
     }
 
+    /// Group histogram as counts AND shares. The share is what tells an
+    /// operator whether the mix is sane -- "0A 57%" is meaningful where
+    /// "0A:119" only becomes meaningful after dividing by a total the panel
+    /// never showed.
     private static func groupSummary(_ counts: [Int]) -> String {
+        let total = counts.reduce(0, +)
+        guard total > 0 else { return "--" }
         var parts: [String] = []
-        for type in 0..<16 {
-            if counts.count > type * 2, counts[type * 2] > 0 { parts.append("\(type)A:\(counts[type * 2])") }
-            if counts.count > type * 2 + 1, counts[type * 2 + 1] > 0 { parts.append("\(type)B:\(counts[type * 2 + 1])") }
+        for bucket in 0..<min(32, counts.count) where counts[bucket] > 0 {
+            let pct = Double(counts[bucket]) / Double(total) * 100.0
+            parts.append(String(format: "%@:%d (%.0f%%)",
+                                groupLabel(bucket), counts[bucket], pct))
         }
         return parts.isEmpty ? "--" : parts.joined(separator: " ")
+    }
+
+    /// Groups in transmission order, oldest first -- the scheduler's actual
+    /// interleave, which the counts cannot show.
+    private static func groupOrderSummary(_ order: [Int]) -> String {
+        guard !order.isEmpty else { return "--" }
+        return order.map(groupLabel).joined(separator: " ")
+    }
+
+    /// Bucket index (`groupType * 2 + versionB`) as "0A" / "11B".
+    private static func groupLabel(_ bucket: Int) -> String {
+        "\(bucket / 2)\(bucket % 2 == 0 ? "A" : "B")"
     }
 }

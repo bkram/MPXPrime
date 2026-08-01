@@ -42,6 +42,11 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         /// benches -- selection persists by serial across replug/reorder).
         var deviceBackend: Int = 0
         var deviceSerial: String = ""
+        /// IQ capture rate in kHz; 0 = the narrow default. This widens the RF
+        /// SPECTRUM SPAN only -- the FM demod chain always runs at its own
+        /// 250/256 kHz behind a decimator, so it cannot move the MPX
+        /// measurements. Restart-required (the device is reconfigured at open).
+        var iqRateKHz: Int = 0
     }
 
     /// One attached SDR (either backend), for the device picker.
@@ -103,6 +108,38 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
     var signalDBFS: Double {
         guard let handle else { return -120 }
         return mpxtuner_signal_dbfs(handle)
+    }
+
+    /// Total gain currently in effect (dB). SDRplay reports its own "system
+    /// gain", updated on every change including the AGC's own -- so a power
+    /// reading derived from it stays correct with auto gain running. RTL
+    /// reports its tuner stage only. nil when unknown.
+    var systemGainDB: Double? {
+        guard let handle else { return nil }
+        let g = mpxtuner_system_gain_db(handle)
+        return g <= -999.0 ? nil : g
+    }
+
+    /// IQ capture rate actually in use (Hz) -- may differ from the requested
+    /// one if the device refused it. This is the RF spectrum's total span.
+    var captureRateHz: Int {
+        guard let handle else { return 0 }
+        return Int(mpxtuner_capture_rate(handle))
+    }
+
+    /// Copy the latest RF spectrum frame (dB bins, fftshifted: index 0 is the
+    /// low edge of the span, the centre index is the tuned frequency) into
+    /// `bins`. Returns the number written and the span in Hz; 0 before the
+    /// first frame. Safe to call from the display thread.
+    @discardableResult
+    func rfSpectrum(into bins: inout [Float]) -> (count: Int, spanHz: Double) {
+        guard let handle, !bins.isEmpty else { return (0, 0) }
+        var span: Double = 0
+        let n = bins.withUnsafeMutableBufferPointer { buf -> Int32 in
+            guard let base = buf.baseAddress else { return 0 }
+            return mpxtuner_rf_spectrum(handle, base, Int32(buf.count), &span)
+        }
+        return (Int(n), span)
     }
 
     /// True when the active backend is an SDRplay RSP (vs RTL-SDR).
@@ -170,6 +207,7 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         cfg.antenna = Int32(config.antenna)
         cfg.lna = Int32(config.lna)
         cfg.backend = Int32(config.deviceBackend)
+        cfg.iq_rate_khz = UInt32(max(0, config.iqRateKHz))
         withUnsafeMutableBytes(of: &cfg.device_serial) { ptr in
             let bytes = Array(config.deviceSerial.utf8.prefix(63))
             ptr.copyBytes(from: bytes)

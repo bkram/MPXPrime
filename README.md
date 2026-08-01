@@ -67,15 +67,24 @@ deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
 
 - Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope
 - MPX spectrum (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot,
-  Stereo L-R, 57 kHz RDS, 67.65 kHz Direct Band, 92 kHz SCA)
+  Stereo L-R, 57 kHz RDS, 67.65 kHz Direct Band, 92 kHz SCA), and on SDR an
+  **RF spectrum** of the band around the tuned carrier (span up to ~+/-1 MHz)
+  for spotting adjacent channels and splatter
 - Measurement-grade deviation + modulation metering to ITU-R SM.1268-5 /
-  BS.412-9: IN / L / R / M / S levels + correlation; pilot / RDS / total (MAX)
-  deviation; **MPX power (ITU-R BS.412** uniform sliding 60 s window) with the
-  worst-window **MPX MAX**; trailing-60 s **peak +/- deviation**; the
-  **OVER 77 kHz** SM.1268 exceedance statistic; best stereo separation;
-  **SIGNAL** (SDR RSSI); and deviation / MPX-power trend graphs
+  BS.412-9: IN / L / R / M / S levels + correlation; pilot / RDS / total
+  **MAX / AVE / MIN** deviation; **MPX power (ITU-R BS.412** uniform sliding
+  60 s window) with the worst-window **MPX MAX**; trailing-60 s **peak +/-
+  deviation**; the **OVER 77 kHz** SM.1268 exceedance statistic; the
+  accumulated **deviation distribution** (1 kHz bins -- what share of the
+  programme reaches each deviation, the reading a single MAX number cannot
+  give); best stereo separation; **L/R balance**; **carrier frequency
+  offset**; a **signal-quality** rating from the noise above the modulated
+  baseband; **SIGNAL** (SDR RSSI); and deviation / MPX-power trend graphs
 - Full RDS decode: PI / PS / PTY / RT / RT+ / Long PS / CT / AF / group
-  histogram + live BER
+  histogram (counts + shares) and the last 18 groups **in transmission
+  order** + live BER, plus the **RDS subcarrier phase** (EN 50067 sec 1.2:
+  the angle to the pilot's third harmonic, which must be 0 or 90 deg within
+  10 deg -- flagged when an encoder sits between the two)
 - **WAV recording**: the decoded stereo audio, or the raw MPX composite
   (24-bit, capture rate), for later re-analysis
 - Input: an audio device, or **in-process SDR** tuning (`Source -> SDR`) --

@@ -1,1 +1,2 @@
 - meter: overnight soak for final confirmation of the toolbar-leak fix (ran clean through multi-hour bench sessions 2026-07-08)
+- studio(api): confirm the /api/transport/restart path re-applies now_playing_enabled (and full RDS runtime) to the rebuilt coder; one test showed now-playing off after an API restart, clean after systemctl restart

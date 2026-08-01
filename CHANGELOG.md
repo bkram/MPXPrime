@@ -11,6 +11,75 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: RF spectrum in SDR mode.** The spectrum card gains an **MPX | RF**
+  switch: MPX is the demodulated baseband as before, RF is the band around the
+  tuned carrier straight from the tuner's IQ -- the view an SDR application
+  shows, for spotting adjacent channels and splatter. Span is set by a new
+  **Sample Rate** control (Narrow / 1 MSPS / 2 MSPS, restart-required),
+  defaulting to 1 MSPS for roughly +/-0.5 MHz.
+  The tuner now keeps the **capture rate separate from the demod rate**: the FM
+  demod chain always runs at its own 250/256 kHz behind a polyphase decimator,
+  so widening the span cannot move any MPX measurement. At the Narrow setting
+  the decimation factor is 1 and both backends are byte-identical to before --
+  the RTL branch deliberately keeps its original packed-uint8 demod call there,
+  since the complex path reproduces neither its normalization LUT nor its
+  raw-byte saturation detection. The spectrum itself is a 1024-point
+  Hann-windowed complex FFT on the capture thread at ~20 frames/s, published
+  over a new `mpxtuner_rf_spectrum()` ABI. NOTE: the wide-capture path could
+  not be exercised against real hardware during development -- if a dongle
+  misbehaves at 1/2 MSPS, switch Sample Rate to Narrow.
+- **Meter: closes the measurement gap against a Pira P175/P275 analyzer.**
+  An audit of that instrument's manual against the Meter's readouts turned up
+  eight missing quantities; six are new here (the remaining two need IQ-domain
+  taps in the vendored tuner and are not done):
+  - **AVE / MIN deviation** under the deviation bars, from the same trailing
+    second of 50 ms peak-hold slots MAX is drawn from (the in-progress slot is
+    excluded -- part-filled, it would drag both down). MAX far above AVE is a
+    peaky signal; MAX close to AVE is a dense one riding its ceiling.
+  - **Deviation distribution** -- the accumulated histogram, 1 kHz bins over
+    0..120 kHz since the last Reset, plotted in the Trends card with the
+    75 kHz limit line, plus the highest bin filled and the share at/over
+    75 kHz. This is the metric Pira's manual argues no single MAX number can
+    substitute for; it wants 15-60 minutes of programme to be representative.
+  - **Signal quality**, a 5-step Unusable..Excellent rating derived from the
+    energy ABOVE the modulated baseband, recovered as the exact complement of
+    the 60 kHz measurement FIR (`delayed - filtered` through a delay line of
+    the FIR's own group delay -- phase-exact and cheaper than a second FIR).
+    Nothing is legitimately modulated up there, so it is demod noise and
+    interference, and it is what says whether the other readings are worth
+    believing.
+  - **Carrier frequency offset** in kHz -- an FM demod turns a transmitter
+    carrier offset into composite DC, which the measurement path already
+    tracked but never published.
+  - **L / R balance** in dB, heavily smoothed and level-gated.
+  - **RDS group shares** alongside the counts, and a new **Order** row: the
+    last 18 groups in transmission order. Counts say what an encoder sends;
+    the order shows how it interleaves them.
+  New `Quality` card in the second row; CLI dashboard gains `DIST`, `QUAL` and
+  `ORDER` lines. 14 new deterministic tests. All six together cost ~0.15 % of
+  one core.
+- **Meter: RDS subcarrier phase (EN 50067 sec 1.2).** A new **RDS PHASE**
+  readout in the Modulation card, beside the other standards-compliance
+  figures (and `PHASE` on the headless `DEV` line), reads the angle between
+  the 57 kHz RDS subcarrier and the third harmonic of the 19 kHz pilot -- the
+  "RDS phase" figure a Belar RDS-1 / DEVA analyzer shows. The
+  standard allows two answers, `0 deg (in phase)` or `90 deg (quadrature)`,
+  each within 10 deg; anything between reads `out of spec` in amber and means
+  the encoder is not truly pilot-locked. Measured coherently by
+  `PilotRDSPhaseMeter`: one 19 kHz NCO feeds two IDENTICAL lock-in chains (the
+  57 kHz reference is its exact third harmonic via the triple-angle identity),
+  so the filter group delays match and the reading is immune to the
+  pilot-frequency offset every real capture clock has -- with mismatched
+  delays, 2 Hz of offset alone would bias the angle 5.4 deg, half the spec
+  window. The suppressed-carrier 180 deg ambiguity is removed by squaring
+  (Viterbi & Viterbi), so the reading is folded to an unsigned 0..90 that
+  cannot flicker at the quadrature end. Gated on pilot presence, coherence,
+  and at least 0.8 kHz of RDS; read off the subcarrier itself, so it still
+  shows while the decode readout is reception-gated. Ten new deterministic
+  tests (`MeterRDSPhaseTests`) pin the conventions, the offset immunity, the
+  53 kHz rejection, and an encoder round-trip -- MPX Prime Studio derives its
+  57 kHz carrier from the emitted pilot's recurrence, so it must read in
+  phase. Conventions and readout deliberately match the Pira P175/P275 FM Broadcast Analyzer (unsigned 0..90 fold, +/- 10 deg window, blank when unstable) so the two can be compared number for number; Pira specifies +/- 4 deg for this measurement, ours measures 0.12 deg worst case across the range and 0.00 deg under a 10 Hz pilot offset. Costs ~0.6% of one core.
 - **Input-ring health in `/api/meters`:** the macOS input source now reports
   capture->render ring diagnostics -- `inputRingBufferedFrames`,
   `inputRingOverflows`, `inputRingUnderflows`, `inputRingTornReads`,

@@ -278,6 +278,407 @@ struct MeterRDSDeviationTests {
     }
 }
 
+@Suite("Meter deviation statistics (MAX / AVE / MIN, histogram)")
+struct MeterDeviationStatisticsTests {
+    @Test func steadyToneReadsTheSameMaxAveAndMin() {
+        // A constant-amplitude tone fills every 50 ms slot identically, so
+        // the three statistics must collapse onto the same value.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let tone = amp(50.0)
+        feed(a, seconds: 3.0) { t in tone * cosf(twoPi(1_000, t)) }
+        let s = a.snapshot()
+        #expect(abs(s.maxDevKHz - 50.0) < 0.5)
+        #expect(abs(s.aveDevKHz - 50.0) < 0.5)
+        #expect(abs(s.minDevKHz - 50.0) < 0.5)
+    }
+
+    @Test func aveSitsBetweenMinAndMaxOnADynamicSignal() {
+        // 2 Hz amplitude sweep between 20 and 70 kHz: successive 50 ms slots
+        // see different peaks, so MIN < AVE < MAX -- the spread a single MAX
+        // number hides.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(a, seconds: 4.0) { t in
+            let env = 0.5 + 0.5 * cosf(twoPi(2, t))       // 0..1
+            return amp(20.0 + 50.0 * env) * cosf(twoPi(1_000, t))
+        }
+        let s = a.snapshot()
+        #expect(s.maxDevKHz > s.aveDevKHz)
+        #expect(s.aveDevKHz > s.minDevKHz)
+        #expect(s.maxDevKHz <= 71.0)
+        #expect(s.minDevKHz >= 19.0)
+    }
+
+    @Test func histogramBinsTheDeviationAndAccumulates() {
+        // Steady 60 kHz: every slot lands in the 60 kHz bin, so the
+        // accumulated distribution is 100% at or above 60 and 0% above 61.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let tone = amp(60.0)
+        feed(a, seconds: 4.0) { t in tone * cosf(twoPi(1_000, t)) }
+        let s = a.snapshot()
+        #expect(s.devHistogramSamples > 40)  // ~20 slots/s for ~3 s past warm-up
+        #expect(s.devHistogram.count == MeterAnalysis.histogramBins)
+        // All samples in one bin (59 or 60 -- the 1 kHz bin edge).
+        let inBand = UInt64(s.devHistogram[59]) + UInt64(s.devHistogram[60])
+        #expect(inBand == s.devHistogramSamples)
+        #expect(s.devDistributionAtOrAbove(59.0) > 0.99)
+        #expect(s.devDistributionAtOrAbove(62.0) == 0.0)
+        #expect(abs(s.devHistogramMaxKHz - 59.5) <= 0.5)
+    }
+
+    @Test func histogramSplitsAMixedSignalByProportion() {
+        // 3 s at 40 kHz then 1 s at 70 kHz: the distribution must report
+        // ~25% of the programme at or above 70 kHz.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        a.requestPeakReset()
+        feed(a, seconds: 1.2) { t in amp(40.0) * cosf(twoPi(1_000, t)) }  // warm-up
+        a.requestPeakReset()
+        feed(a, seconds: 3.0) { t in amp(40.0) * cosf(twoPi(1_000, t)) }
+        feed(a, seconds: 1.0) { t in amp(70.0) * cosf(twoPi(1_000, t)) }
+        let s = a.snapshot()
+        let hot = s.devDistributionAtOrAbove(69.0)
+        #expect(hot > 0.18 && hot < 0.32)
+        #expect(s.devDistributionAtOrAbove(39.0) > 0.99)
+        // The 40 -> 70 kHz amplitude step is a discontinuity, so a slot or
+        // two straddling it legitimately reads a few kHz high; the histogram
+        // must reach the 70 kHz content but need not stop exactly there.
+        #expect(s.devHistogramMaxKHz >= 69.0)
+        #expect(s.devHistogramMaxKHz <= 76.0)
+    }
+
+    @Test func histogramClearsOnPeakReset() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(a, seconds: 3.0) { t in amp(50.0) * cosf(twoPi(1_000, t)) }
+        #expect(a.snapshot().devHistogramSamples > 0)
+        a.requestPeakReset()
+        feed(a, seconds: 0.5) { _ in 0.0 }
+        let s = a.snapshot()
+        #expect(s.devHistogramSamples < 15)
+        // Only the first slot after the tone stops can still hold the
+        // measurement filter's decay; the rest are silence.
+        #expect(s.devDistributionAtOrAbove(5.0) < 0.25)
+    }
+}
+
+@Suite("Meter carrier offset, baseband noise, stereo balance")
+struct MeterQualityMetricsTests {
+    @Test func carrierOffsetReadsTheDCAsDeviation() {
+        // An FM demod turns a transmitter carrier offset into composite DC.
+        // 5 kHz of DC must read as +5 kHz of carrier offset -- and must NOT
+        // leak into the deviation peaks (the DC tracker removes it).
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let dc = amp(5.0)
+        let tone = amp(40.0)
+        feed(a, seconds: 4.0) { t in dc + tone * cosf(twoPi(1_000, t)) }
+        let s = a.snapshot()
+        #expect(s.carrierOffsetValid)
+        #expect(abs(s.carrierOffsetKHz - 5.0) < 0.3)
+        #expect(abs(s.posPeakDevKHz - 40.0) < 1.0)
+    }
+
+    @Test func carrierOffsetIsSignedAndZeroOnACenteredSignal() {
+        let neg = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(neg, seconds: 4.0) { t in -amp(3.0) + amp(30.0) * cosf(twoPi(1_000, t)) }
+        #expect(abs(neg.snapshot().carrierOffsetKHz + 3.0) < 0.3)
+
+        let centered = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(centered, seconds: 4.0) { t in amp(30.0) * cosf(twoPi(1_000, t)) }
+        #expect(abs(centered.snapshot().carrierOffsetKHz) < 0.2)
+    }
+
+    @Test func basebandNoiseSeesOnlyWhatIsAboveTheModulatedBands() {
+        // A clean composite has nothing above 60 kHz: the noise readout must
+        // be near zero and the quality scale at its top.
+        let clean = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(clean, seconds: 3.0) { t in
+            amp(60.0) * cosf(twoPi(1_000, t)) + amp(6.75) * cosf(twoPi(19_000, t))
+        }
+        let c = clean.snapshot()
+        #expect(c.basebandNoiseValid)
+        #expect(c.basebandNoiseKHz < 0.1)
+        #expect(c.signalQuality == 4)
+
+        // Add 4 kHz of out-of-band energy at 80 kHz (demod noise lives here;
+        // nothing is legitimately modulated above 60 kHz).
+        let noisy = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(noisy, seconds: 3.0) { t in
+            amp(60.0) * cosf(twoPi(1_000, t)) + amp(6.75) * cosf(twoPi(19_000, t))
+                + amp(4.0) * cosf(twoPi(80_000, t))
+        }
+        let n = noisy.snapshot()
+        // A sine of 4 kHz peak deviation is 4/sqrt(2) = 2.83 kHz RMS.
+        #expect(abs(n.basebandNoiseKHz - 2.83) < 0.4)
+        #expect(n.signalQuality == 0)  // past the 3.0 kHz bottom threshold
+        // ... and it must not have disturbed the in-band measurements. The
+        // in-band peak is 60 + 6.75 kHz: the tone and the pilot are both
+        // cosines on harmonics of 1 kHz, so their crests coincide.
+        #expect(abs(n.maxDevKHz - 66.75) < 1.0)
+    }
+
+    @Test func qualityScaleStepsWithTheNoiseFloor() {
+        // Each threshold crossing costs exactly one step of the 4..0 scale.
+        for (noiseKHz, expected) in [(Float(0.05), 4), (0.2, 3), (0.6, 2), (2.0, 1), (6.0, 0)] {
+            let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+            // Amplitude for the requested RMS: a sine's RMS is peak/sqrt(2).
+            let peakKHz = noiseKHz * Float(2.0).squareRoot()
+            feed(a, seconds: 3.0) { t in
+                amp(40.0) * cosf(twoPi(1_000, t)) + amp(peakKHz) * cosf(twoPi(80_000, t))
+            }
+            #expect(a.snapshot().signalQuality == expected)
+        }
+    }
+
+    @Test func stereoBalanceReadsTheChannelOffset() {
+        // Left 6 dB hotter than right, encoded as a real composite.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let l: Float = 0.20
+        let r: Float = 0.20 * powf(10.0, -6.0 / 20.0)
+        // MPXGenerator convention: M = (L+R)/2, S = (R-L)/2, composite =
+        // M + S*sin(2pi*38k*t), with the pilot as sin(2pi*19k*t) so the
+        // subcarrier is its true second harmonic -- a cosine pilot against a
+        // cosine subcarrier is 90 deg out and decodes as no side at all.
+        feed(a, seconds: 8.0) { t in
+            let audioL = l * cosf(twoPi(1_000, t))
+            let audioR = r * cosf(twoPi(1_000, t))
+            let mid = (audioL + audioR) * 0.5
+            let side = (audioR - audioL) * 0.5
+            return mid + side * sinf(twoPi(38_000, t))
+                + amp(6.75) * sinf(twoPi(19_000, t))
+        }
+        let s = a.snapshot()
+        #expect(s.stereoBalanceValid)
+        #expect(abs(s.stereoBalanceDB - 6.0) < 1.5)
+    }
+
+    @Test func stereoBalanceIsZeroOnAMonoSignal() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        feed(a, seconds: 8.0) { t in
+            amp(40.0) * cosf(twoPi(1_000, t)) + amp(6.75) * cosf(twoPi(19_000, t))
+        }
+        let s = a.snapshot()
+        #expect(s.stereoBalanceValid)
+        #expect(abs(s.stereoBalanceDB) < 1.0)
+    }
+}
+
+@Suite("Meter RDS subcarrier phase (EN 50067 sec 1.2)")
+struct MeterRDSPhaseTests {
+    /// Composite of a pilot and a 57 kHz subcarrier whose phase relative to
+    /// the pilot's third harmonic is EXACTLY `phaseDeg`. Both components are
+    /// written as sines of the same phase argument, so the third harmonic of
+    /// the pilot is `sin(3*theta)` by construction and the subcarrier's offset
+    /// from it is the only phase in the signal.
+    private func phaseComposite(
+        _ analysis: MeterAnalysis, seconds: Float, phaseDeg: Float,
+        pilotHz: Float = 19_000.0, rdsKHz: Float = 2.0
+    ) {
+        let pilotAmp = amp(6.75)
+        let rdsAmp = amp(rdsKHz)
+        let phi = phaseDeg * Float.pi / 180.0
+        feed(analysis, seconds: seconds) { t in
+            let theta = twoPi(pilotHz, t)
+            // sin(3*theta) computed from the phase argument directly (not the
+            // triple-angle identity) so the test is independent of the
+            // meter's own derivation.
+            let third = twoPi(3.0 * pilotHz, t)
+            return pilotAmp * sinf(theta) + rdsAmp * sinf(third + phi)
+        }
+    }
+
+    @Test func inPhaseSubcarrierReadsZeroDegrees() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(a, seconds: 4.0, phaseDeg: 0.0)
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseValid)
+        #expect(s.pilotRDSPhaseDeg < 1.0)
+        #expect(s.pilotRDSPhase == .inPhase)
+        // A clean synthetic subcarrier is fully coherent.
+        #expect(s.pilotRDSPhaseCoherence > 0.95)
+    }
+
+    @Test func quadratureSubcarrierReadsNinetyDegrees() {
+        // The other EN 50067-legal convention (BBC practice).
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(a, seconds: 4.0, phaseDeg: 90.0)
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseValid)
+        #expect(s.pilotRDSPhaseDeg > 89.0)
+        #expect(s.pilotRDSPhase == .quadrature)
+    }
+
+    @Test func antiPhaseIsIndistinguishableFromInPhase() {
+        // The subcarrier is suppressed-carrier DSB, so 180 deg is the
+        // in-phase case with inverted data -- the squaring estimator folds
+        // them together, as a receiver's differential decoding does.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(a, seconds: 4.0, phaseDeg: 180.0)
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseValid)
+        #expect(s.pilotRDSPhaseDeg < 1.0)
+    }
+
+    @Test func misalignedSubcarrierReadsItsAngleAndFailsSpec() {
+        // 45 deg: the worst case -- equidistant from both legal conventions.
+        // This is the reading that says an encoder is not truly pilot-locked.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(a, seconds: 4.0, phaseDeg: 45.0)
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseValid)
+        #expect(abs(s.pilotRDSPhaseDeg - 45.0) < 1.5)
+        #expect(s.pilotRDSPhase == .outOfSpec)
+    }
+
+    @Test func readingIsImmuneToPilotFrequencyOffset() {
+        // THE design contract for the matched lock-in chains. The measurement
+        // NCO never sits exactly on the pilot (transmitter tolerance +/- 2 Hz
+        // plus capture-clock ppm), so both baseband phasors rotate -- the
+        // 57 kHz one three times faster. Unmatched filter group delays turn
+        // that into a phase error of 3*w*(tau_p - tau_r): at the 5 Hz offset
+        // used here, a 2.5 ms mismatch would read ~13 deg on a subcarrier
+        // that is exactly in phase. Identical chains cancel it.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(a, seconds: 4.0, phaseDeg: 0.0, pilotHz: 19_005.0)
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseValid)
+        #expect(s.pilotRDSPhaseDeg < 2.0)
+
+        // ... and the same offset must not drag a quadrature station off 90.
+        let q = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(q, seconds: 4.0, phaseDeg: 90.0, pilotHz: 19_005.0)
+        #expect(q.snapshot().pilotRDSPhaseDeg > 88.0)
+    }
+
+    @Test func strongStereoDifferenceContentDoesNotBiasThePhase() {
+        // 53 kHz is 4 kHz from the subcarrier: 30 kHz of L-R edge energy must
+        // not move the angle (the same selectivity contract the RDS LEVEL
+        // meter carries).
+        let clean = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let leaky = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(clean, seconds: 4.0, phaseDeg: 30.0)
+        let pilotAmp = amp(6.75)
+        let rdsAmp = amp(2.0)
+        let edge = amp(30.0)
+        let phi = 30.0 * Float.pi / 180.0
+        feed(leaky, seconds: 4.0) { t in
+            pilotAmp * sinf(twoPi(19_000, t))
+                + rdsAmp * sinf(twoPi(57_000, t) + phi)
+                + edge * cosf(twoPi(53_000, t))
+        }
+        let c = clean.snapshot()
+        let l = leaky.snapshot()
+        #expect(abs(c.pilotRDSPhaseDeg - 30.0) < 1.5)
+        #expect(abs(l.pilotRDSPhaseDeg - c.pilotRDSPhaseDeg) < 2.0)
+    }
+
+    @Test func absentSubcarrierIsNotReportedAsAPhase() {
+        // Pilot only, no RDS: the meter must say "no reading". Note this is
+        // NOT caught by coherence -- the tiny pilot leakage that survives the
+        // 57 kHz chain is perfectly coherent (it is the pilot), so it reads a
+        // confident ~0 deg on ~0.01 kHz. The RDS level gate is what rejects
+        // it; keep both gates.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let pilotAmp = amp(6.75)
+        feed(a, seconds: 3.0) { t in pilotAmp * sinf(twoPi(19_000, t)) }
+        let s = a.snapshot()
+        #expect(!s.pilotRDSPhaseValid)
+        #expect(s.rdsDevKHz < 0.05)
+    }
+
+    @Test func subcarrierBelowTheInjectionFloorIsNotReported() {
+        // A 0.3 kHz "subcarrier" is below EN 50067's 1.0 kHz minimum
+        // injection and below the meter's 0.8 kHz gate: no phase reading,
+        // even though the angle itself would be perfectly measurable.
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(a, seconds: 3.0, phaseDeg: 0.0, rdsKHz: 0.3)
+        #expect(!a.snapshot().pilotRDSPhaseValid)
+    }
+
+    @Test func encoderRoundTripReadsInPhase() {
+        // THE phase contract: our own encoder derives the 57 kHz carrier from
+        // the emitted pilot's recurrence via the triple-angle identity, so a
+        // measuring receiver must read it as in phase (EN 50067 sec 1.2, the
+        // 0 deg convention). Real shaped biphase, not a bare carrier: this
+        // also proves the squaring estimator handles the BPSK sign flips.
+        let sr192: Float = 192_000.0
+        var cfg = AppConfig()
+        cfg.enRDS = true
+        cfg.rdsLevel = 2.0
+        cfg.rdsPI = "83E1"
+        cfg.rdsPSA = "PHASETST"
+        cfg.rdsRTText = "Pilot-to-RDS subcarrier phase round-trip"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: sr192)
+
+        let a = MeterAnalysis(sampleRate: sr192, fullScaleKHz: 75.0)
+        let total = Int(6.0 * sr192)
+        var block = [Float](repeating: 0.0, count: blockLen)
+        let pilotAmp: Float = 6.75 / 75.0
+        var idx = 0
+        while idx < total {
+            let n = min(blockLen, total - idx)
+            for i in 0..<n {
+                let pilotSin = sinf(twoPi(19_000, Float(idx + i) / sr192))
+                coder.updateRDSPilotSin(pilotSin)
+                block[i] = coder.nextSampleWithPilotLock() + pilotAmp * pilotSin
+            }
+            block.withUnsafeBufferPointer {
+                a.process(UnsafeBufferPointer(rebasing: $0[0..<n]))
+            }
+            idx += n
+        }
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseValid)
+        #expect(s.pilotRDSPhaseDeg < 5.0)
+        #expect(s.pilotRDSPhase == .inPhase)
+    }
+
+    @Test func accuracyAcrossTheRangeBeatsTheReferenceInstrument() {
+        // Accuracy contract, stated against the instrument this readout is
+        // modelled on: the Pira P175/P275 FM Broadcast Analyzer specifies
+        // "Pilot-to-RDS phase difference error +/- 4 deg". Sweep the whole
+        // 0..90 range and require an order of magnitude better on a clean
+        // synthetic composite (measured worst case is ~0.12 deg; the 1 deg
+        // bound leaves room for float noise across platforms). Real off-air
+        // accuracy is set by noise and in-band IM, not by this, but a DSP
+        // error budget above ~1 deg would eat into the +/- 10 deg window the
+        // verdict is drawn on.
+        var worst: Float = 0.0
+        for trueDeg in stride(from: Float(0.0), through: 90.0, by: 15.0) {
+            let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+            phaseComposite(a, seconds: 3.0, phaseDeg: trueDeg)
+            let s = a.snapshot()
+            #expect(s.pilotRDSPhaseValid)
+            worst = max(worst, abs(s.pilotRDSPhaseDeg - trueDeg))
+        }
+        #expect(worst < 1.0)
+    }
+
+    @Test func accuracyHoldsAcrossTheLegalInjectionRange() {
+        // EN 50067 sec 1.3 allows 1.0..7.5 kHz of RDS. The angle must not
+        // depend on level -- the residual coherent pilot leakage in the
+        // 57 kHz chain pulls the reading toward 0 deg, and that pull grows as
+        // the subcarrier shrinks (measured -0.14 deg at the 0.8 kHz gate
+        // floor, -0.01 deg at 7.5 kHz).
+        for level in [Float(0.8), 1.0, 3.0, 7.5] {
+            let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+            phaseComposite(a, seconds: 3.0, phaseDeg: 30.0, rdsKHz: level)
+            let s = a.snapshot()
+            #expect(s.pilotRDSPhaseValid)
+            #expect(abs(s.pilotRDSPhaseDeg - 30.0) < 1.0)
+        }
+    }
+
+    @Test func complianceWindowsMatchTheStandard() {
+        // EN 50067 sec 1.2: either convention, +/- 10 deg.
+        #expect(RDSPhaseCompliance(degrees: 0.0) == .inPhase)
+        #expect(RDSPhaseCompliance(degrees: 10.0) == .inPhase)
+        #expect(RDSPhaseCompliance(degrees: 10.5) == .outOfSpec)
+        #expect(RDSPhaseCompliance(degrees: 45.0) == .outOfSpec)
+        #expect(RDSPhaseCompliance(degrees: 79.5) == .outOfSpec)
+        #expect(RDSPhaseCompliance(degrees: 80.0) == .quadrature)
+        #expect(RDSPhaseCompliance(degrees: 90.0) == .quadrature)
+        #expect(RDSPhaseCompliance(degrees: 45.0).isCompliant == false)
+    }
+}
+
 @Suite("Meter MPX power (ITU-R BS.412 uniform sliding window)")
 struct MeterMPXPowerTests {
     @Test func sineAt19kHzDeviationReadsZeroDBr() {

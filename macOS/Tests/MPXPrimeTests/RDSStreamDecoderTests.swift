@@ -110,6 +110,42 @@ struct RDSStreamDecoderTests {
         }
     }
 
+    @Test func groupOrderTracksTransmissionSequenceAndIsCapped() {
+        // The counts say WHAT an encoder sends; the order says how it
+        // interleaves -- the thing that exposes a scheduler pattern or a
+        // starved group type. A 0A/2A alternation must show up as one.
+        var cfg = makeConfig(piHex: "83E1")
+        cfg.rdsRTText = "Group order under test"
+        // Explicit alternation: the auto/standard scheduler layers would
+        // otherwise inject their own groups and blur the pattern.
+        cfg.rdsSchedulerAuto = false
+        cfg.rdsSchedulerStandard = false
+        cfg.rdsSchedulerStandardLPS = false
+        cfg.rdsGroupSequence = "0A 2A"
+        let coder = BasicRDSCoder(config: cfg, sampleRate: 192_000.0)
+        // nextGroupBits() follows the scheduler; emitStream() is hard-wired
+        // to 0A and would show no interleaving at all.
+        var stream: [UInt8] = []
+        for _ in 0..<30 { stream.append(contentsOf: coder.nextGroupBits()) }
+
+        let decoder = RDSStreamDecoder()
+        for bit in stream { decoder.feed(bit: bit) }
+        let order = decoder.state.groupOrder
+        #expect(!order.isEmpty)
+        // Never grows past the ring capacity, however long the stream runs.
+        #expect(order.count <= RDSReceiverState.groupOrderCapacity)
+        // Buckets are groupType*2 + (B ? 1 : 0): 0A = 0, 2A = 4.
+        #expect(order.allSatisfy { $0 == 0 || $0 == 4 })
+        #expect(order.contains(0))
+        #expect(order.contains(4))
+        // Alternating, so no three consecutive entries are the same type.
+        for i in 2..<order.count {
+            #expect(!(order[i] == order[i - 1] && order[i] == order[i - 2]))
+        }
+        decoder.reset()
+        #expect(decoder.state.groupOrder.isEmpty)
+    }
+
     @Test func resetClearsAccumulatedState() {
         let coder = BasicRDSCoder(config: makeConfig(), sampleRate: 192_000.0)
         let stream = emitStream(coder, groups: 8, junk: 0)

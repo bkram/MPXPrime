@@ -24,9 +24,28 @@ public struct MeterSnapshot {
     // reference, confirming the calibration.
     public var pilotDevKHz: Float = 0.0
     public var rdsDevKHz: Float = 0.0
+
+    // EN 50067 sec 1.2 subcarrier phase: the angle between the 57 kHz RDS
+    // subcarrier and the third harmonic of the 19 kHz pilot, folded to
+    // 0..90 deg (0 = in phase, 90 = quadrature -- the standard allows either,
+    // +/- 10 deg). `pilotRDSPhaseValid` is false without a coherent
+    // subcarrier and pilot; `pilotRDSPhaseCoherence` (0..1) is the estimate
+    // quality behind that gate.
+    public var pilotRDSPhaseDeg: Float = 0.0
+    public var pilotRDSPhaseValid = false
+    public var pilotRDSPhaseCoherence: Float = 0.0
+    /// EN 50067 sec 1.2 verdict for `pilotRDSPhaseDeg` (meaningless unless
+    /// `pilotRDSPhaseValid`).
+    public var pilotRDSPhase: RDSPhaseCompliance { RDSPhaseCompliance(degrees: pilotRDSPhaseDeg) }
     /// Highest deviation in the trailing 1 s window (max of 50 ms peak-hold
     /// slots, the SM.1268-5 sec 5 display convention / Pira "MAX" reading).
     public var maxDevKHz: Float = 0.0
+    /// Mean and lowest of the same trailing-1 s array of 50 ms peak-hold
+    /// slots (the Pira "AVE" / "MIN" readings). AVE next to MAX says how hard
+    /// the transmitter is driven on average, not just at its loudest instant;
+    /// a MAX far above AVE is a peaky, under-processed signal.
+    public var aveDevKHz: Float = 0.0
+    public var minDevKHz: Float = 0.0
 
     // Total-deviation +/- peaks over the trailing peak window (default 60 s;
     // ring of 50 ms peak-hold slots). Self-recovering -- one impulse ages out
@@ -41,6 +60,37 @@ public struct MeterSnapshot {
     /// transmitter as violating the deviation limit above 10^-4 % (1e-6).
     public var exceedancePct: Float = 0.0
     public var exceedanceValid = false
+
+    /// Deviation histogram since the last peak reset: counts of 50 ms
+    /// peak-hold slots per 1 kHz bin. Index i counts slots whose peak
+    /// deviation is in [i, i+1) kHz; the last bin
+    /// (`MeterAnalysis.histogramOverflowBin`) collects everything above the
+    /// covered range. Accumulated left-to-right and normalized it gives the
+    /// distribution plot -- what share of the programme reaches a given
+    /// deviation. A single MAX number cannot describe modulation the way this
+    /// does; it wants 15-60 minutes of programme to be representative.
+    public var devHistogram: [UInt32] = []
+    public var devHistogramSamples: UInt64 = 0
+
+    /// Composite DC expressed as kHz of FM deviation. On the SDR path this is
+    /// the transmitter's carrier frequency offset from the tuned frequency
+    /// (an FM demod turns a carrier offset into DC); on an audio input it is
+    /// whatever DC the interface presents. Signed.
+    public var carrierOffsetKHz: Float = 0.0
+    public var carrierOffsetValid = false
+
+    /// RMS of everything ABOVE the modulated baseband (the complement of the
+    /// 60 kHz measurement filter), in kHz of deviation. Nothing is legitimately
+    /// modulated there, so it is demod noise + interference and is the primary
+    /// indicator of whether the other measurements can be trusted -- an FM
+    /// demod's noise density rises as f^2, so this band goes bad first.
+    public var basebandNoiseKHz: Float = 0.0
+    public var basebandNoiseValid = false
+
+    /// Signal quality derived from `basebandNoiseKHz`, 0 (unusable) to 4
+    /// (excellent) -- the same 5-step scale a Pira analyzer shows, so the
+    /// operator knows when a reading is worth believing.
+    public var signalQuality: Int = 0
 
     // MPX power per ITU-R BS.412: multiplex power integrated over a uniform
     // sliding 60 s window (ring of 1 s mean-squares -- the standard's "any
@@ -67,6 +117,12 @@ public struct MeterSnapshot {
     public var sideRMSDBFS: Float = -120.0
     /// Decoded L/R correlation: ~+1 mono, lower for wide stereo.
     public var stereoCorrelation: Float = 0.0
+    /// Decoded L/R level balance in dB (positive = left louder), smoothed and
+    /// only valid while both channels carry signal. 0 dB is the target; a
+    /// standing offset means the stereo encoder or the audio chain feeding it
+    /// is lopsided. Programme with real stereo content still averages to ~0.
+    public var stereoBalanceDB: Float = 0.0
+    public var stereoBalanceValid = false
 
     public var rdsLocked = false
     public var rds = RDSReceiverState()
@@ -101,6 +157,30 @@ public struct MeterSnapshot {
     public var devHistoryKHz: [Float] = []
     public var mpxPowerHistoryDBr: [Float] = []
 
+    /// Share (0..1) of histogram samples at or above `kHz` of deviation --
+    /// the accumulated distribution, read from the right. "20 % of the
+    /// programme reaches 45 kHz or more" is `devDistributionAtOrAbove(45)`.
+    /// Zero when nothing has been collected yet.
+    public func devDistributionAtOrAbove(_ kHz: Float) -> Float {
+        guard devHistogramSamples > 0, !devHistogram.isEmpty else { return 0.0 }
+        let first = max(0, min(devHistogram.count - 1, Int(kHz.rounded(.down))))
+        var above: UInt64 = 0
+        for i in first..<devHistogram.count { above &+= UInt64(devHistogram[i]) }
+        return Float(Double(above) / Double(devHistogramSamples))
+    }
+
+    /// Highest deviation bin (kHz) with any samples in it since the last
+    /// reset -- the histogram's own "MAX at" figure, immune to the trailing
+    /// window that MAX DEV and PEAK +/- age out of.
+    public var devHistogramMaxKHz: Float {
+        guard devHistogramSamples > 0 else { return 0.0 }
+        for i in stride(from: devHistogram.count - 1, through: 0, by: -1)
+        where devHistogram[i] > 0 {
+            return Float(i)
+        }
+        return 0.0
+    }
+
     public init() {}
 }
 
@@ -118,9 +198,24 @@ public struct MeterSnapshot {
 ///   max-over-placements since reset
 /// - RDS deviation = coherent 57 kHz quadrature level (EN 50067 equivalent
 ///   unmodulated subcarrier, RMS-derived; envelope-invariant)
+/// - RDS phase = angle to the pilot's third harmonic, EN 50067 sec 1.2
+///   (0 or 90 deg, +/- 10)
 public final class MeterAnalysis {
     /// SM.1268-5 deviation exceedance threshold (75 kHz + 2 kHz tolerance).
     public static let exceedanceThresholdKHz: Float = 77.0
+
+    /// Deviation histogram geometry: 1 kHz bins covering 0..120 kHz, plus one
+    /// overflow bin. 120 kHz is well past any legitimate transmission, so the
+    /// overflow bin only fills on interference or a broken chain.
+    public static let histogramBins = 122
+    public static let histogramOverflowBin = 121
+
+    /// Baseband-noise thresholds (kHz RMS above the 60 kHz measurement
+    /// filter) for the 0..4 `signalQuality` scale. A clean strong signal sits
+    /// far below 0.1 kHz; deviation and RDS-level accuracy degrade first, MPX
+    /// power and pilot survive longer -- which is why the scale is advisory
+    /// rather than a hard gate on the readings.
+    public static let qualityNoiseThresholdsKHz: [Float] = [0.10, 0.35, 1.0, 3.0]
 
     private let sampleRate: Float
     // Pilot reference (kHz) for the pilot-referenced (audio-input) scaling. Live-
@@ -188,6 +283,8 @@ public final class MeterAnalysis {
 
     // Coherent RDS subcarrier level meter (see MeteringPrimitives.swift).
     private let rdsMeter: RDSSubcarrierLevelMeter
+    // EN 50067 sec 1.2 pilot-to-RDS subcarrier phase (see MeteringPrimitives).
+    private let phaseMeter: PilotRDSPhaseMeter
 
     // Warm-up gate: skip the peak / power / separation accumulators for the
     // first second after start so a tuner's pre-lock transient does not poison
@@ -222,6 +319,29 @@ public final class MeterAnalysis {
     private var exceedanceTotal: UInt64 = 0
     private var exceedanceOver: UInt64 = 0
     private var exceedanceThreshAmp: Float = 0.0
+
+    // Deviation histogram (since peak reset), one sample per completed 50 ms
+    // slot. Binned with the previous block's kHz scale, same one-block lag
+    // rationale as the exceedance threshold above.
+    private var histogram = [UInt32](repeating: 0, count: MeterAnalysis.histogramBins)
+    private var histogramSamples: UInt64 = 0
+    private var histogramScaleKHz: Float = 0.0
+
+    // Baseband noise: the exact complement of the measurement FIR. The FIR
+    // output lags its input by the filter's group delay, so a matching delay
+    // line on the DC-tracked input lets `delayed - filtered` recover the
+    // >60 kHz residual sample-for-sample (an allpass minus a lowpass IS the
+    // complementary highpass). Cheaper and phase-exact compared with running
+    // a second FIR.
+    private var noiseDelay: [Float]
+    private var noiseDelayWrite = 0
+    private var noiseMeanSquare: Float = 0.0
+    private var noisePrimed = false
+    private let noiseAlphaPerBlockSample: Float
+
+    // Stereo balance: EMA of the per-block L/R RMS ratio, gated on level.
+    private var balanceDB: Float = 0.0
+    private var balancePrimed = false
 
     // Best observed stereo separation (dB) since reset.
     private var bestSepDB: Float = 0.0
@@ -281,6 +401,7 @@ public final class MeterAnalysis {
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
         rdsMeter = RDSSubcarrierLevelMeter(sampleRate: sampleRate, maxBlock: maxBlock)
+        phaseMeter = PilotRDSPhaseMeter(sampleRate: sampleRate, maxBlock: maxBlock)
         // Fast DC acquisition during the warm-up second (5 Hz corner), then
         // drop to 0.2 Hz for tracking -- otherwise the acquisition residual
         // of an SDR carrier offset lands in the peak windows.
@@ -289,13 +410,19 @@ public final class MeterAnalysis {
         // Clamp below Nyquist for low-rate captures (no RDS there anyway).
         let cutoff = min(60_000.0, 0.45 * sampleRate)
         let transition = min(8_000.0, 0.5 * sampleRate - cutoff - 1.0)
-        measurementFIR = BlockFIRFilter(
-            taps: FIRDesign.kaiserLowpass(
-                cutoffHz: cutoff, sampleRate: sampleRate,
-                transitionHz: max(500.0, transition), stopbandDB: 80.0),
-            maxBlock: maxBlock)
+        let measTaps = FIRDesign.kaiserLowpass(
+            cutoffHz: cutoff, sampleRate: sampleRate,
+            transitionHz: max(500.0, transition), stopbandDB: 80.0)
+        measurementFIR = BlockFIRFilter(taps: measTaps, maxBlock: maxBlock)
         dcBlock = [Float](repeating: 0.0, count: maxBlock)
         measBlock = [Float](repeating: 0.0, count: maxBlock)
+        // Ring of exactly D = (taps-1)/2 samples: reading then writing the
+        // same index yields a delay of one full lap, i.e. the FIR's group
+        // delay. (Sized from the local taps -- `self` is not fully
+        // initialized here.)
+        noiseDelay = [Float](repeating: 0.0, count: max(1, (measTaps.count - 1) / 2))
+        // ~1 s smoothing of the noise power, applied per sample.
+        noiseAlphaPerBlockSample = 1.0 - expf(-1.0 / max(1.0, sampleRate))
         warmupRemaining = Int(sampleRate)  // ~1 s
         slotLen = max(1, Int(sampleRate) / slotsPerSecond)  // 50 ms
         self.mpxWindowSeconds = max(1, mpxPowerWindowSeconds)
@@ -348,6 +475,10 @@ public final class MeterAnalysis {
         mpxPowerMaxMS = -1.0
         bestSepDB = 0.0
         sepValid = false
+        // The histogram is a distribution accumulated since reset, exactly
+        // like the exceedance counters -- it clears with them.
+        for i in histogram.indices { histogram[i] = 0 }
+        histogramSamples = 0
     }
 
     private func resetMPXWindow() {
@@ -371,6 +502,13 @@ public final class MeterAnalysis {
             prevBlocksReceived = 0
             prevBlocksValid = 0
             rdsMeter.reset()
+            phaseMeter.reset()
+            noiseMeanSquare = 0.0
+            noisePrimed = false
+            for i in noiseDelay.indices { noiseDelay[i] = 0.0 }
+            noiseDelayWrite = 0
+            balanceDB = 0.0
+            balancePrimed = false
             dcTracker.reset()
             dcTracker.setCutoff(5.0, sampleRate: sampleRate)  // re-acquire
             measurementFIR.reset()
@@ -394,8 +532,39 @@ public final class MeterAnalysis {
         dcBlock.withUnsafeBufferPointer {
             measurementFIR.process(input: $0, output: &measBlock, count: count)
         }
+        // Baseband noise: the complementary highpass, delayed-input minus
+        // filtered. Done here, in the pre-pass, where `dcBlock` still means
+        // the array (the per-sample loop below shadows the name with the
+        // DC-block flag).
+        if warmupRemaining <= 0 {
+            let ring = noiseDelay.count
+            for i in 0..<count {
+                let delayed = noiseDelay[noiseDelayWrite]
+                noiseDelay[noiseDelayWrite] = dcBlock[i]
+                noiseDelayWrite = (noiseDelayWrite + 1) % ring
+                let hp = delayed - measBlock[i]
+                let p = hp * hp
+                if noisePrimed {
+                    noiseMeanSquare += noiseAlphaPerBlockSample * (p - noiseMeanSquare)
+                } else {
+                    noiseMeanSquare = p
+                    noisePrimed = true
+                }
+            }
+        } else {
+            // Keep the delay line running so it is primed when warm-up ends.
+            let ring = noiseDelay.count
+            for i in 0..<count {
+                noiseDelay[noiseDelayWrite] = dcBlock[i]
+                noiseDelayWrite = (noiseDelayWrite + 1) % ring
+            }
+        }
         // Coherent RDS subcarrier level (57 kHz; DC-irrelevant, feed raw).
         rdsMeter.process(samples)
+        // Pilot-to-RDS subcarrier phase. Also fed raw: it needs the pilot and
+        // the subcarrier in their original phase relationship, and the
+        // measurement FIR / DC path would only add delay to one of them.
+        phaseMeter.process(samples)
 
         var peak: Float = 0.0
         var sumSq: Float = 0.0
@@ -427,6 +596,17 @@ public final class MeterAnalysis {
                     negSlots[slotWrite] = curNeg
                     slotWrite = (slotWrite + 1) % posSlots.count
                     if slotsFilled < posSlots.count { slotsFilled += 1 }
+                    // Deviation histogram: one sample per completed slot,
+                    // binned at 1 kHz. Needs an established kHz scale --
+                    // without one the bin index would be meaningless.
+                    if histogramScaleKHz > 0.0 {
+                        let devKHz = max(curPos, -curNeg) * histogramScaleKHz
+                        let bin = devKHz >= Float(Self.histogramOverflowBin)
+                            ? Self.histogramOverflowBin
+                            : max(0, Int(devKHz))
+                        histogram[bin] &+= 1
+                        histogramSamples &+= 1
+                    }
                     curPos = 0.0
                     curNeg = 0.0
                     slotSampleCount = 0
@@ -494,6 +674,12 @@ public final class MeterAnalysis {
         var max1s: Float = max(curPos, -curNeg)
         var posMax: Float = curPos
         var negMin: Float = curNeg
+        // AVE / MIN over the same trailing-1 s slot array as MAX. The
+        // in-progress slot is deliberately excluded from these two: it has
+        // seen only part of its 50 ms and would drag AVE and MIN down.
+        var sum1s: Float = 0.0
+        var min1s: Float = .greatestFiniteMagnitude
+        var counted1s = 0
         if slotsFilled > 0 {
             let recent = min(slotsPerSecond, slotsFilled)
             for k in 0..<slotsFilled {
@@ -505,9 +691,14 @@ public final class MeterAnalysis {
                 if k < recent {
                     let m = max(p, -q)
                     if m > max1s { max1s = m }
+                    sum1s += m
+                    if m < min1s { min1s = m }
+                    counted1s += 1
                 }
             }
         }
+        let ave1s = counted1s > 0 ? sum1s / Float(counted1s) : 0.0
+        let low1s = counted1s > 0 ? min1s : 0.0
 
         // Pilot-referenced deviation: scale = pilotRef / pilotAmp. devScaleKHz
         // is the unified "kHz per unit composite amplitude" used by the
@@ -521,6 +712,8 @@ public final class MeterAnalysis {
             snap.pilotDevKHz = pilotAmp * fullScale
             snap.rdsDevKHz = rdsEquivAmp * fullScale
             snap.maxDevKHz = max1s * fullScale
+            snap.aveDevKHz = ave1s * fullScale
+            snap.minDevKHz = low1s * fullScale
             devScaleKHz = fullScale
         } else if pilotAmp > 1e-5 {
             let scale = pilotRefKHz / pilotAmp
@@ -530,13 +723,57 @@ public final class MeterAnalysis {
             // an SFP-style RDS readout.
             snap.rdsDevKHz = rdsEquivAmp * scale
             snap.maxDevKHz = max1s * scale
+            snap.aveDevKHz = ave1s * scale
+            snap.minDevKHz = low1s * scale
             devScaleKHz = scale
         } else {
             snap.pilotDevKHz = 0.0
             snap.rdsDevKHz = 0.0
             snap.maxDevKHz = 0.0
+            snap.aveDevKHz = 0.0
+            snap.minDevKHz = 0.0
             devScaleKHz = nil
         }
+
+        // Carrier / DC offset and baseband noise, both in kHz of deviation.
+        if let devScaleKHz {
+            snap.carrierOffsetKHz = dcTracker.estimate * devScaleKHz
+            snap.carrierOffsetValid = !inWarmup
+            snap.basebandNoiseKHz = sqrtf(max(0.0, noiseMeanSquare)) * devScaleKHz
+            snap.basebandNoiseValid = noisePrimed
+        } else {
+            snap.carrierOffsetValid = false
+            snap.basebandNoiseValid = false
+        }
+        // Signal quality 0..4 from the noise floor above the modulated bands.
+        if snap.basebandNoiseValid, snap.hasSignal {
+            // One step down the 4..0 scale per threshold the noise exceeds.
+            var exceeded = 0
+            for limit in Self.qualityNoiseThresholdsKHz
+            where snap.basebandNoiseKHz > limit {
+                exceeded += 1
+            }
+            snap.signalQuality = Self.qualityNoiseThresholdsKHz.count - exceeded
+        } else {
+            snap.signalQuality = 0
+        }
+        // The histogram bins the NEXT block's slots with this block's scale
+        // (same one-block lag as the exceedance threshold).
+        histogramScaleKHz = inWarmup ? 0.0 : (devScaleKHz ?? 0.0)
+        snap.devHistogram = histogram
+        snap.devHistogramSamples = histogramSamples
+
+        // EN 50067 sec 1.2 subcarrier phase. Three gates, all needed:
+        // pilot presence (no pilot -> no third harmonic to reference), the
+        // phase meter's own coherence, and an RDS LEVEL floor. The level gate
+        // is not redundant: coherence is scale-free, and the residual pilot
+        // leakage into the 57 kHz chain is perfectly coherent (it IS the
+        // pilot), so a station with no RDS at all reads a confident angle on
+        // ~0.01 kHz of leakage unless a real subcarrier is required.
+        snap.pilotRDSPhaseDeg = phaseMeter.phaseDegrees
+        snap.pilotRDSPhaseCoherence = phaseMeter.coherence
+        snap.pilotRDSPhaseValid = phaseMeter.valid && snap.pilotPresent
+            && devScaleKHz != nil && snap.rdsDevKHz >= Self.rdsGateMinLevelKHz
 
         // Total-deviation +/- windowed peaks (kHz) + exceedance statistic.
         if let devScaleKHz {
@@ -618,6 +855,22 @@ public final class MeterAnalysis {
         }
         snap.bestSeparationDB = bestSepDB
         snap.separationValid = sepValid
+
+        // Stereo balance (dB, + = left louder). Smoothed hard (~3 s at 23
+        // blocks/s) because real programme pans constantly -- the useful
+        // reading is the standing offset, not the instantaneous one. Gated on
+        // both channels carrying signal so silence cannot pin it.
+        if !inWarmup, lRMS > 1e-3, rRMS > 1e-3 {
+            let instant = 20.0 * log10f(lRMS / rRMS)
+            if balancePrimed {
+                balanceDB += 0.015 * (instant - balanceDB)
+            } else {
+                balanceDB = instant
+                balancePrimed = true
+            }
+        }
+        snap.stereoBalanceDB = balanceDB
+        snap.stereoBalanceValid = balancePrimed
         if warmupRemaining > 0 {
             warmupRemaining = max(0, warmupRemaining - count)
             if warmupRemaining == 0 {
@@ -763,6 +1016,7 @@ public final class MeterAnalysis {
     public func isolatedSnapshot() -> MeterSnapshot {
         var c = snap
         c.rds.groupCounts = snap.rds.groupCounts.map { $0 }
+        c.rds.groupOrder = snap.rds.groupOrder.map { $0 }
         c.rds.alternativeFrequenciesMHz = snap.rds.alternativeFrequenciesMHz.map { $0 }
         c.rds.rtPlusTags = snap.rds.rtPlusTags.map {
             RDSRTPlusTag(contentType: $0.contentType, text: String(Array($0.text)))
@@ -782,6 +1036,7 @@ public final class MeterAnalysis {
         c.decodedRSpectrumDB = snap.decodedRSpectrumDB.map { $0 }
         c.devHistoryKHz = snap.devHistoryKHz.map { $0 }
         c.mpxPowerHistoryDBr = snap.mpxPowerHistoryDBr.map { $0 }
+        c.devHistogram = snap.devHistogram.map { $0 }
         return c
     }
 

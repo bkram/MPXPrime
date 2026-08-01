@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Restart now equals live-apply, by construction.** Both engine-start paths
+  (headless `HeadlessControlBackend.startEngine` -- API `transport/restart`,
+  boot, reconcile -- and the GUI's `startEngine`) now apply the canonical
+  DSP + RDS runtime planes to the freshly built engine after start. The
+  generator/coder inits are hand-written duplicates of the canonical
+  `RuntimeConfig` / `RDSRuntimeConfig` mappings and nothing pinned them
+  together, so any init/make drift silently made a REBUILT engine differ
+  from a live-PATCHed one (the issues.txt "now-playing off after an API
+  restart" class; the single observed case was most likely the already-fixed
+  empty-script poller bug, but the hole was real). New
+  `RDSRestartParityTests` pins the two mappings: a coder built from a
+  maximally non-default config must emit a BIT-IDENTICAL group stream to a
+  coder live-applied to the same config, and a rebuilt coder must air the
+  full configured state including the pushed now-playing track. Extend its
+  `richConfig()` when adding an RDSRuntimeConfig field. Backend tests cover
+  restart re-applying both planes and patch-while-stopped reaching the next
+  build; `normalizeScriptPath("")` itself now returns "" instead of the
+  launch directory (the helper-level version of the 0.43 call-site fix).
+
 - **Verifier: `--verify-long` is green again and part of the release
   checklist.** Its per-scenario signature reference table had never been
   recaptured since 0.11 while the chain moved deliberately through 0.20/0.35/

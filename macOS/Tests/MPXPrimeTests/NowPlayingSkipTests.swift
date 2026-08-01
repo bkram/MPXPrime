@@ -44,6 +44,20 @@ struct NowPlayingSkipTests {
         #expect(out == "10s:My Station")
     }
 
+    @Test func emptyScriptPathNeverResolvesToADirectory() {
+        // The 0.43 poller bug: normalizeScriptPath("") resolved to the launch
+        // directory, which the poller then tried to execute every poll --
+        // failing, and clearing any API-pushed track. Empty (or whitespace)
+        // input must stay empty; real paths must still normalize.
+        #expect(NowPlayingFormatter.normalizeScriptPath("") == "")
+        #expect(NowPlayingFormatter.normalizeScriptPath("   ") == "")
+        #expect(NowPlayingFormatter.normalizeScriptPath("\n\t") == "")
+        #expect(NowPlayingFormatter.normalizeScriptPath("/usr/local/bin/np.sh")
+            == "/usr/local/bin/np.sh")
+        #expect(NowPlayingFormatter.normalizeScriptPath("~/np.sh").hasSuffix("/np.sh"))
+        #expect(!NowPlayingFormatter.normalizeScriptPath("~/np.sh").contains("~"))
+    }
+
     @Test func nonNowPlayingMacrosPassThrough() {
         // A template with no now-playing macro is never filtered (it may carry
         // {time}/{date} or static text).

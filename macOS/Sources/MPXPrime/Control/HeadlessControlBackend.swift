@@ -192,6 +192,19 @@ actor HeadlessControlBackend: ControlBackend {
         do {
             let fresh = try makeEngine(config)
             try fresh.start()
+            // Re-apply both runtime planes to the freshly built engine. The
+            // engine factory already constructed it FROM `config`, so this is
+            // idempotent today -- but the coder/generator inits are separate
+            // hand-written AppConfig mappings from the canonical
+            // RuntimeConfig/RDSRuntimeConfig factories the live-apply path
+            // uses, and nothing pins them together. Applying the canonical
+            // planes here makes restart-equals-live true BY CONSTRUCTION for
+            // every current and future key (the issues.txt report of
+            // now-playing off after an API restart is exactly this failure
+            // class). Both calls are thread-safe producers; on a just-started
+            // engine they are the ordinary live-apply path.
+            fresh.applyRuntimeConfig(config)
+            fresh.applyRDSRuntimeConfig(config)
             engine = fresh
             startedAt = Date()
             restartPending = false

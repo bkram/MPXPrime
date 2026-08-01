@@ -369,4 +369,95 @@ struct ControlServerTests {
         await backend.reconcile()
         #expect(await backend.status().running == false)
     }
+
+    // Restart-equals-live: transport(.restart) must hand the FRESH engine both
+    // runtime planes after start. The engine factory already builds from the
+    // same config, but the coder/generator inits are hand-written duplicates
+    // of the canonical RuntimeConfig/RDSRuntimeConfig mappings -- applying the
+    // planes on every (re)start is what makes a rebuilt engine equal to a
+    // live-applied one BY CONSTRUCTION (issues.txt: now-playing off after an
+    // API restart). RDSRestartParityTests pins the two mappings bit-for-bit;
+    // this pins the backend actually exercising the canonical path.
+    @Test func restartAppliesBothRuntimePlanesToTheFreshEngine() async throws {
+        final class RecordingEngine: ControlledEngine, @unchecked Sendable {
+            var events: [String] = []
+            let piAtBuild: String
+            init(piAtBuild: String) { self.piAtBuild = piAtBuild }
+            func start() throws { events.append("start") }
+            func stop() { events.append("stop") }
+            func applyRuntimeConfig(_ config: AppConfig) { events.append("dsp") }
+            func applyRDSRuntimeConfig(_ config: AppConfig) { events.append("rds") }
+            var controlMeters: ControlMeters? { nil }
+            var rdsLiveSnapshotForControl: BasicRDSCoder.LiveSnapshot? { nil }
+        }
+        final class Box: @unchecked Sendable { var engines: [RecordingEngine] = [] }
+        let box = Box()
+        var cfg = AppConfig()
+        cfg.rdsNowPlayingEnabled = true
+        final class Sink: @unchecked Sendable { var pushes: [String] = [] }
+        let sink = Sink()
+        let backend = HeadlessControlBackend(
+            config: cfg,
+            configPath: NSTemporaryDirectory() + "mpxprime-test-\(UUID().uuidString).ini",
+            engine: nil,
+            engineFactory: { built in
+                let e = RecordingEngine(piAtBuild: built.rdsPI)
+                box.engines.append(e)
+                return e
+            },
+            onNowPlaying: { display, _, _ in sink.pushes.append(display) }
+        )
+        _ = try await backend.transport(.start)
+
+        // A pushed track reaches the sink, and setNowPlaying reports the
+        // enabled state from config.
+        #expect(await backend.setNowPlaying(
+            artist: "UB40", title: "Sing Our Own Song",
+            display: "UB40 - Sing Our Own Song") == true)
+        #expect(sink.pushes == ["UB40 - Sing Our Own Song"])
+
+        _ = try await backend.transport(.restart)
+        #expect(box.engines.count == 2)
+        // Old engine stopped; fresh engine started THEN given both planes.
+        #expect(box.engines[0].events == ["start", "dsp", "rds", "stop"])
+        #expect(box.engines[1].events == ["start", "dsp", "rds"])
+        // The restart itself never touches the now-playing sink.
+        #expect(sink.pushes.count == 1)
+    }
+
+    // Stop -> PATCH a restart-required key -> Start: the fresh engine must be
+    // built from the PATCHED config and the restartPending flag must clear.
+    @Test func patchWhileStoppedIsHonoredByTheNextStart() async throws {
+        final class RecordingEngine: ControlledEngine, @unchecked Sendable {
+            let piAtBuild: String
+            init(piAtBuild: String) { self.piAtBuild = piAtBuild }
+            func start() throws {}
+            func stop() {}
+            func applyRuntimeConfig(_ config: AppConfig) {}
+            func applyRDSRuntimeConfig(_ config: AppConfig) {}
+            var controlMeters: ControlMeters? { nil }
+            var rdsLiveSnapshotForControl: BasicRDSCoder.LiveSnapshot? { nil }
+        }
+        final class Box: @unchecked Sendable { var engines: [RecordingEngine] = [] }
+        let box = Box()
+        let backend = HeadlessControlBackend(
+            config: AppConfig(),
+            configPath: NSTemporaryDirectory() + "mpxprime-test-\(UUID().uuidString).ini",
+            engine: nil,
+            engineFactory: { built in
+                let e = RecordingEngine(piAtBuild: built.rdsPI)
+                box.engines.append(e)
+                return e
+            }
+        )
+        _ = try await backend.transport(.stop)
+        // With no engine there is nothing to live-apply the patch to; the
+        // changed config must still reach the next engine build.
+        let result = try await backend.applyConfigPatch(["pi": "ABCD"])
+        #expect(result.appliedLive == false)  // no engine running
+        _ = try await backend.transport(.start)
+        #expect(box.engines.count == 1)
+        #expect(box.engines[0].piAtBuild == "ABCD")
+        #expect(await backend.status().restartPending == false)
+    }
 }

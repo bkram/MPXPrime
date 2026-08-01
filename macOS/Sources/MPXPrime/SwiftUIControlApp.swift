@@ -3269,6 +3269,15 @@ final class MPXPrimeViewModel: ObservableObject {
 
         do {
             try engine.start()
+            // Restart-equals-live, same guarantee as
+            // HeadlessControlBackend.startEngine(): the generator/coder inits
+            // are hand-written duplicates of the canonical RuntimeConfig /
+            // RDSRuntimeConfig mappings, and nothing else pins them together.
+            // Applying both planes to the fresh engine makes a rebuilt engine
+            // equal to a live-applied one by construction (idempotent: the
+            // engine was built from this same runConfig).
+            engine.applyRuntimeConfig(runConfig)
+            engine.applyRDSRuntimeConfig(runConfig)
             runningEngine = engine
             isRunning = true
             pendingRuntimeApply = false

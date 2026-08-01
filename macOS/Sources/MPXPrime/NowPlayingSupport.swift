@@ -56,7 +56,14 @@ enum NowPlayingFormatter {
     }
 
     static func normalizeScriptPath(_ rawPath: String) -> String {
-        let expanded = (rawPath as NSString).expandingTildeInPath
+        // Empty means "no script" and must never resolve to a directory: the
+        // relative-path branch below would turn "" into the launch directory
+        // itself, which the 0.43 poller bug then tried to EXECUTE every poll
+        // (failing, and clearing any API-pushed track). The call site guards
+        // this too; keep the helper safe for the next caller.
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        let expanded = (trimmed as NSString).expandingTildeInPath
         let pathNSString = expanded as NSString
         if pathNSString.isAbsolutePath {
             return pathNSString.standardizingPath

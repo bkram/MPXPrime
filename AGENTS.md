@@ -130,7 +130,7 @@ RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. The 57
 Three live-apply dispositions:
 
 - `.live` — DSP-domain setting. Routes through `applyLiveRuntimeConfigIfRunning` → `RuntimeConfig` → audio thread.
-- `.liveRDS` — RDS-domain setting. Routes through `applyLiveRDSConfigIfRunning` → `RDSRuntimeConfig` → `BasicRDSCoder.applyRDSRuntimeConfig`. The `RDSRuntimeConfig.make(from: AppConfig)` factory is the single canonical AppConfig→runtime mapping; both the engine builder and the test suite call it.
+- `.liveRDS` — RDS-domain setting. Routes through `applyLiveRDSConfigIfRunning` → `RDSRuntimeConfig` → `BasicRDSCoder.applyRDSRuntimeConfig`. The `RDSRuntimeConfig.make(from: AppConfig)` factory is the canonical AppConfig->runtime mapping (engine builder + test suite both call it) -- but `BasicRDSCoder.init(config:)` is a separate hand-written duplicate of it, so two things keep them honest: every engine start (headless backend AND GUI) re-applies both runtime planes to the fresh engine right after `start()` (restart-equals-live by construction -- do not remove those calls), and `RDSRestartParityTests` pins init vs make()+apply bit-for-bit. When adding an RDS runtime field, add it to BOTH mappings and to the parity test's `richConfig()`.
 - `.restart` — requires transport stop/start. Use this for physical-layer settings that reconfigure the modulator FIR / oversampler / sample-rate plumbing.
 - `.none` — handled via a side channel (e.g. now-playing script reload), no runtime apply needed.
 

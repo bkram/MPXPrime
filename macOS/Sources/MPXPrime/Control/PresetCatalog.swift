@@ -420,4 +420,179 @@ enum PresetCatalog {
         config.multibandReleaseProgramDependent = preset.releaseProgramDependent
         return preset.title
     }
+
+    // MARK: - Final-stage presets (Broadcast Preset picker)
+
+    /// AGC + drive + pre-encode-limiter bundle. Moved here from the view
+    /// model so the headless backend can apply it (preset kind "finalstage")
+    /// -- the GUI's picker wraps this the same way the other kinds do.
+    struct FinalStagePreset: Identifiable {
+        let id: String
+        let title: String
+        let agcEnabled: Bool
+        let agcTargetDB: Double
+        let agcAttackMS: Double
+        let agcReleaseMS: Double
+        let agcMaxGainDB: Double
+        let agcMinGainDB: Double
+        let finalDriveDB: Double
+        let preEncodeAudioLimiterEnabled: Bool
+    }
+
+    static let finalStagePresets: [FinalStagePreset] = [
+        .init(id: "balanced", title: "Balanced Music",
+              agcEnabled: true, agcTargetDB: -16.0, agcAttackMS: 80.0,
+              agcReleaseMS: 1200.0, agcMaxGainDB: 12.0, agcMinGainDB: -12.0,
+              finalDriveDB: 6.0, preEncodeAudioLimiterEnabled: true),
+        .init(id: "chr", title: "CHR / Dance",
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 55.0,
+              agcReleaseMS: 900.0, agcMaxGainDB: 10.0, agcMinGainDB: -9.0,
+              finalDriveDB: 8.0, preEncodeAudioLimiterEnabled: true),
+        .init(id: "punchy", title: "Punchy Music",
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 60.0,
+              agcReleaseMS: 1000.0, agcMaxGainDB: 11.0, agcMinGainDB: -10.0,
+              finalDriveDB: 7.5, preEncodeAudioLimiterEnabled: true),
+        .init(id: "speech", title: "Speech / Talk",
+              agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 45.0,
+              agcReleaseMS: 750.0, agcMaxGainDB: 10.0, agcMinGainDB: -8.0,
+              finalDriveDB: 4.5, preEncodeAudioLimiterEnabled: true)
+    ]
+
+    static func applyFinalStage(id: String, to config: inout AppConfig) -> String? {
+        guard let preset = finalStagePresets.first(where: { $0.id == id }) else { return nil }
+        config.finalStagePresetID = id
+        config.widebandAGCEnabled = preset.agcEnabled
+        config.widebandAGCTargetDB = preset.agcTargetDB
+        config.widebandAGCAttackMS = preset.agcAttackMS
+        config.widebandAGCReleaseMS = preset.agcReleaseMS
+        config.widebandAGCMaxGainDB = preset.agcMaxGainDB
+        config.widebandAGCMinGainDB = preset.agcMinGainDB
+        config.finalDriveDB = preset.finalDriveDB
+        config.preEncodeAudioLimiterEnabled = preset.preEncodeAudioLimiterEnabled
+        return preset.title
+    }
+
+    // MARK: - Format profiles (top-level "Station Format" bundle)
+
+    /// Atomically wires multiband / final-stage / PrimeBass / widener /
+    /// composite-clipper settings to one programming format, as a wrapper
+    /// over the per-stage preset tables above. Moved here from the view
+    /// model so BOTH backends serve preset kind "format_profile" -- before
+    /// this a headless (Linux) box could not apply a station format at all.
+    struct FormatProfile: Identifiable {
+        let id: String
+        let title: String
+        let summary: String
+        let multibandPresetID: String
+        let multibandIntensity: MultibandPresetIntensity
+        let finalStagePresetID: String
+        let primeBassEnabled: Bool
+        let primeBassPresetID: String      // recorded even when disabled
+        let widenerPresetID: String
+        let compositeClipperThresholdDB: Double
+        let compositeClipperCeilingDB: Double
+        let finalDriveDB: Double
+    }
+
+    static let formatProfiles: [FormatProfile] = [
+        // "Custom" sentinel: records the label, changes nothing (operators
+        // flag bespoke setups; the apply short-circuits on it).
+        .init(id: "custom", title: "Custom",
+              summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
+              multibandPresetID: "5_ac", multibandIntensity: .normal,
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              finalDriveDB: 6.0),
+        .init(id: "community_radio", title: "Community Radio",
+              summary: "Conservative LPFM / community-radio default — clean output, low loudness, broad source compatibility.",
+              multibandPresetID: "5_ac", multibandIntensity: .light,
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              finalDriveDB: 4.0),
+        .init(id: "pop_ac", title: "Pop / Adult Contemporary",
+              summary: "Mainstream music — balanced multiband, gentle PrimeBass, open widener, moderate drive.",
+              multibandPresetID: "5_ac", multibandIntensity: .normal,
+              finalStagePresetID: "balanced", primeBassEnabled: true,
+              primeBassPresetID: "ac", widenerPresetID: "open_music",
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              finalDriveDB: 6.0),
+        .init(id: "chr_top40", title: "CHR / Top 40",
+              summary: "Modern hits — bright multiband, hot drive, wide stereo image, competitive loudness.",
+              multibandPresetID: "5_chr", multibandIntensity: .normal,
+              finalStagePresetID: "chr", primeBassEnabled: true,
+              primeBassPresetID: "chr", widenerPresetID: "wide_chr",
+              compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
+              finalDriveDB: 8.0),
+        .init(id: "rock", title: "Rock",
+              summary: "Punchy multiband, rock-tuned PrimeBass, open widener — preserves transient impact.",
+              multibandPresetID: "5_rock", multibandIntensity: .normal,
+              finalStagePresetID: "punchy", primeBassEnabled: true,
+              primeBassPresetID: "rock", widenerPresetID: "open_music",
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              finalDriveDB: 7.0),
+        .init(id: "edm_dance", title: "EDM / Dance",
+              summary: "Heavy multiband, hot drive, deep bass, wide image — peak loudness for dance formats.",
+              multibandPresetID: "5_dance", multibandIntensity: .heavy,
+              finalStagePresetID: "chr", primeBassEnabled: true,
+              primeBassPresetID: "chr", widenerPresetID: "wide_chr",
+              compositeClipperThresholdDB: -0.7, compositeClipperCeilingDB: -0.2,
+              finalDriveDB: 9.0),
+        .init(id: "urban_hiphop", title: "Urban / Hip-Hop",
+              summary: "Deep low end, urban-tuned PrimeBass, hot drive — bass-forward urban contemporary.",
+              multibandPresetID: "5_urban", multibandIntensity: .normal,
+              finalStagePresetID: "chr", primeBassEnabled: true,
+              primeBassPresetID: "urban", widenerPresetID: "open_music",
+              compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
+              finalDriveDB: 8.0),
+        .init(id: "jazz_classical", title: "Jazz / Classical",
+              summary: "Dynamic-preserving — light multiband, no PrimeBass, safe widener, conservative drive.",
+              multibandPresetID: "5_classic", multibandIntensity: .light,
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
+              finalDriveDB: 3.0),
+        .init(id: "news_talk", title: "News / Talk",
+              summary: "Speech-optimized multiband + final-stage, no PrimeBass, safe widener, low drive.",
+              multibandPresetID: "5_talk", multibandIntensity: .light,
+              finalStagePresetID: "speech", primeBassEnabled: false,
+              primeBassPresetID: "talk", widenerPresetID: "safe_fm",
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              finalDriveDB: 4.5)
+    ]
+
+    static func formatProfile(forID id: String) -> FormatProfile? {
+        formatProfiles.first(where: { $0.id == id })
+    }
+
+    /// Apply a format profile's full fan-out to `config`. ORDER MATTERS and
+    /// mirrors the GUI's historical sequence: the final-stage preset sets
+    /// `finalDriveDB`, then the profile's own drive overrides it.
+    static func applyFormatProfile(id: String, to config: inout AppConfig) -> String? {
+        guard let profile = formatProfile(forID: id) else { return nil }
+        config.formatProfileID = id
+        if id == "custom" { return profile.title }  // sentinel: label only
+
+        _ = applyMultiband(
+            id: profile.multibandPresetID,
+            intensity: profile.multibandIntensity, to: &config)
+        _ = applyFinalStage(id: profile.finalStagePresetID, to: &config)
+
+        config.primeBassEnabled = profile.primeBassEnabled
+        if profile.primeBassEnabled {
+            _ = applyPrimeBass(id: profile.primeBassPresetID, to: &config)
+        } else {
+            // Record the flavour so toggling PrimeBass back on uses the
+            // format-appropriate preset.
+            config.primeBassPresetID = profile.primeBassPresetID
+        }
+
+        _ = applyWidener(id: profile.widenerPresetID, to: &config)
+
+        config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
+        config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
+        config.finalDriveDB = profile.finalDriveDB
+        return profile.title
+    }
 }

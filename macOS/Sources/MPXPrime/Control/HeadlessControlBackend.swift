@@ -92,6 +92,8 @@ actor HeadlessControlBackend: ControlBackend {
             inputs: inputs, outputs: outputs,
             selectedInput: config.inputDeviceUID ?? "",
             selectedOutput: config.outputDeviceUID ?? "",
+            selectedMonitor: config.monitorDeviceUID ?? "",
+            monitorEnabled: config.monitorEnabled,
             note: note)
     }
 
@@ -147,7 +149,9 @@ actor HeadlessControlBackend: ControlBackend {
         [
             "primebass": PresetCatalog.primeBassPresets.map(\.id),
             "widener": PresetCatalog.widenerPresets.map(\.id),
-            "multiband": PresetCatalog.multibandPresets.map(\.id)
+            "multiband": PresetCatalog.multibandPresets.map(\.id),
+            "finalstage": PresetCatalog.finalStagePresets.map(\.id),
+            "format_profile": PresetCatalog.formatProfiles.map(\.id)
         ]
     }
 
@@ -159,6 +163,10 @@ actor HeadlessControlBackend: ControlBackend {
             title = PresetCatalog.applyPrimeBass(id: id, to: &newConfig)
         case "widener":
             title = PresetCatalog.applyWidener(id: id, to: &newConfig)
+        case "finalstage":
+            title = PresetCatalog.applyFinalStage(id: id, to: &newConfig)
+        case "format_profile":
+            title = PresetCatalog.applyFormatProfile(id: id, to: &newConfig)
         case "multiband":
             let level: MultibandPresetIntensity
             switch intensity {

@@ -11,7 +11,30 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-(nothing yet)
+- **Web dashboard parity, phase 1 of 4: served schema + drift-proofing.**
+  The dashboard now renders itself from `GET /api/schema` (a new
+  `WebUI/schema.json` -- widget definitions + page model); `index.html`
+  carries no hardcoded control tables anymore. `ControlSchemaTests` pins the
+  schema against the INI vocabulary BOTH ways: every key needs a widget or a
+  reasoned exemption, every widget must name a real key, every page key must
+  have a widget. The old hand-maintained tables had silently dropped ten
+  controls (the web Test Tone had no frequency or level slider; the MB
+  Limiter page was a single checkbox) -- all restored -- and the web Audio
+  Limiter card patched the FINAL-MPX safety look-ahead keys instead of the
+  pre-encode ones (misfiled; three keys were unreachable, now fixed, with the
+  safety keys moved to Final Stage where the GUI has them). The schema now
+  covers the FULL vocabulary (209 widgets + 26 reasoned exemptions), so
+  phase 2 is page placement, not authoring.
+  `GET /api/config/defaults` serves factory defaults for client-side reset.
+- **Station formats + final-stage presets work headless.** The
+  `format_profile` and new `finalstage` preset kinds are served by BOTH
+  control backends -- the tables moved from the GUI view model into
+  `PresetCatalog`, so a Linux box can now apply a station format over the
+  API (previously GUI-only; `POST /api/presets kind=format_profile` returned
+  400 on headless). GUI pickers unchanged (thin wrappers over the catalog).
+- **Control API symmetry**: `/api/devices` gains the monitor-output slot
+  (`selectedMonitor`, `monitorEnabled`); the GUI backend reports real
+  `uptimeSeconds`; `restartPending`/`notes` semantics documented on the DTO.
 
 ## 0.43 — 2026-08-01
 

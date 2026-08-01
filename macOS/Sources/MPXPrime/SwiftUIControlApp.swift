@@ -768,19 +768,6 @@ private struct AudioPeakHoldState {
     var holdRemaining: Double = 0.0
 }
 
-private struct FinalStagePreset {
-    let id: String
-    let title: String
-    let agcEnabled: Bool
-    let agcTargetDB: Double
-    let agcAttackMS: Double
-    let agcReleaseMS: Double
-    let agcMaxGainDB: Double
-    let agcMinGainDB: Double
-    let finalDriveDB: Double
-    let preEncodeAudioLimiterEnabled: Bool
-}
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
     private let configPath: String
@@ -2287,50 +2274,25 @@ final class MPXPrimeViewModel: ObservableObject {
     /// indicator in v1 — the operator can re-pick the profile to restore
     /// its defaults).
     func applyFormatProfile(_ id: String) {
-        guard let profile = Self.formatProfile(forID: id) else {
+        publishConfigChange()
+        guard let title = PresetCatalog.applyFormatProfile(id: id, to: &config) else {
             statusText = "Unknown format profile: \(id)"
             return
         }
-        publishConfigChange()
-        config.formatProfileID = id
-
-        // "Custom" sentinel: just record the label, leave per-stage
-        // settings alone. Lets operators flag bespoke setups so the
-        // picker stops showing whichever profile was last applied even
-        // though knobs have drifted.
+        saveConfig(restartRequired: false)
         if id == "custom" {
-            saveConfig(restartRequired: false)
+            // Sentinel: label recorded, nothing else changed.
             statusText =
                 isRunning
                 ? "Format profile set to Custom (no settings changed)."
                 : "Format profile set to Custom."
             return
         }
-
-        applyMultibandPreset(id: profile.multibandPresetID, intensity: profile.multibandIntensity)
-        applyFinalStagePreset(id: profile.finalStagePresetID)
-
-        config.primeBassEnabled = profile.primeBassEnabled
-        if profile.primeBassEnabled {
-            applyPrimeBassPreset(id: profile.primeBassPresetID)
-        } else {
-            // Still record the per-stage preset ID so toggling PrimeBass
-            // back on uses the format-appropriate flavour.
-            config.primeBassPresetID = profile.primeBassPresetID
-        }
-
-        applyWidenerPreset(id: profile.widenerPresetID)
-
-        config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
-        config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
-        config.finalDriveDB = profile.finalDriveDB
-
-        saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded format profile \(profile.title) live."
-            : "Loaded format profile \(profile.title)."
+            ? "Loaded format profile \(title) live."
+            : "Loaded format profile \(title)."
     }
 
     func formatProfileBinding() -> Binding<String> {
@@ -2572,23 +2534,14 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func applyFinalStagePreset(id: String) {
-        guard let preset = Self.finalStagePresets.first(where: { $0.id == id }) else { return }
         publishConfigChange()
-        config.finalStagePresetID = id
-        config.widebandAGCEnabled = preset.agcEnabled
-        config.widebandAGCTargetDB = preset.agcTargetDB
-        config.widebandAGCAttackMS = preset.agcAttackMS
-        config.widebandAGCReleaseMS = preset.agcReleaseMS
-        config.widebandAGCMaxGainDB = preset.agcMaxGainDB
-        config.widebandAGCMinGainDB = preset.agcMinGainDB
-        config.finalDriveDB = preset.finalDriveDB
-        config.preEncodeAudioLimiterEnabled = preset.preEncodeAudioLimiterEnabled
+        guard let title = PresetCatalog.applyFinalStage(id: id, to: &config) else { return }
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded final-stage preset \(preset.title) live."
-            : "Loaded final-stage preset \(preset.title)."
+            ? "Loaded final-stage preset \(title) live."
+            : "Loaded final-stage preset \(title)."
     }
 
     func revealConfigInFinder() {
@@ -3001,7 +2954,9 @@ final class MPXPrimeViewModel: ObservableObject {
             platform: "macOS (GUI)",
             version: AppConfig.appVersion,
             sampleRateHz: config.sampleRate,
-            uptimeSeconds: nil,
+            uptimeSeconds: engineStartReference.map {
+                Date().timeIntervalSinceReferenceDate - $0
+            },
             restartPending: runtimeApplyPending,
             sourceMode: config.sourceMode,
             outputMode: config.processedAudioOutput ? "processedAudio" : "mpxComposite",
@@ -3023,6 +2978,8 @@ final class MPXPrimeViewModel: ObservableObject {
             },
             selectedInput: config.inputDeviceUID ?? "",
             selectedOutput: config.outputDeviceUID ?? "",
+            selectedMonitor: selectedMonitorUID ?? "",
+            monitorEnabled: monitorEnabled,
             note: "")
     }
 
@@ -3065,7 +3022,8 @@ final class MPXPrimeViewModel: ObservableObject {
             "primebass": PresetCatalog.primeBassPresets.map(\.id),
             "widener": PresetCatalog.widenerPresets.map(\.id),
             "multiband": PresetCatalog.multibandPresets.map(\.id),
-            "format_profile": Self.formatProfiles.map(\.id)
+            "finalstage": PresetCatalog.finalStagePresets.map(\.id),
+            "format_profile": PresetCatalog.formatProfiles.map(\.id)
         ]
     }
 
@@ -3092,6 +3050,11 @@ final class MPXPrimeViewModel: ObservableObject {
             default: level = .normal
             }
             applyMultibandPreset(id: id, intensity: level)
+        case "finalstage":
+            guard PresetCatalog.finalStagePresets.contains(where: { $0.id == id }) else {
+                throw ControlError.invalidRequest("unknown finalstage preset '\(id)'")
+            }
+            applyFinalStagePreset(id: id)
         case "format_profile":
             guard Self.formatProfile(forID: id) != nil else {
                 throw ControlError.invalidRequest("unknown format profile '\(id)'")
@@ -4163,222 +4126,21 @@ final class MPXPrimeViewModel: ObservableObject {
 
     static func ptyNames(rbds: Bool) -> [String] { rbds ? ptyNamesRBDS : ptyNamesRDS }
 
-    private static let finalStagePresets: [FinalStagePreset] = [
-        .init(
-            id: "balanced",
-            title: "Balanced Music",
-            agcEnabled: true,
-            agcTargetDB: -16.0,
-            agcAttackMS: 80.0,
-            agcReleaseMS: 1200.0,
-            agcMaxGainDB: 12.0,
-            agcMinGainDB: -12.0,
-            finalDriveDB: 6.0,
-            preEncodeAudioLimiterEnabled: true
-        ),
-        .init(
-            id: "chr",
-            title: "CHR / Dance",
-            agcEnabled: true,
-            agcTargetDB: -15.0,
-            agcAttackMS: 55.0,
-            agcReleaseMS: 900.0,
-            agcMaxGainDB: 10.0,
-            agcMinGainDB: -9.0,
-            finalDriveDB: 8.0,
-            preEncodeAudioLimiterEnabled: true
-        ),
-        .init(
-            id: "punchy",
-            title: "Punchy Music",
-            agcEnabled: true,
-            agcTargetDB: -15.0,
-            agcAttackMS: 60.0,
-            agcReleaseMS: 1000.0,
-            agcMaxGainDB: 11.0,
-            agcMinGainDB: -10.0,
-            finalDriveDB: 7.5,
-            preEncodeAudioLimiterEnabled: true
-        ),
-        .init(
-            id: "speech",
-            title: "Speech / Talk",
-            agcEnabled: true,
-            agcTargetDB: -14.0,
-            agcAttackMS: 45.0,
-            agcReleaseMS: 750.0,
-            agcMaxGainDB: 10.0,
-            agcMinGainDB: -8.0,
-            finalDriveDB: 4.5,
-            preEncodeAudioLimiterEnabled: true
-        )
-    ]
+    // Final-stage presets live in PresetCatalog (shared with the headless
+    // backend's "finalstage" preset kind); forwarded for the picker.
+    static var finalStagePresets: [PresetCatalog.FinalStagePreset] { PresetCatalog.finalStagePresets }
 
     // MARK: - Format Profiles (top-level "Station Format" selector)
 
-    /// A `FormatProfile` is a top-level "Station Format" bundle that
-    /// atomically wires multiband / final-stage / PrimeBass / stereo
-    /// widener / composite-clipper settings to a coherent target for one
-    /// programming format. The operator picks once; downstream stages all
-    /// receive matching settings. Per-stage knobs remain editable; the
-    /// profile selection stays as a cosmetic label until the operator
-    /// picks a different one.
-    ///
-    /// All `*PresetID` fields reference existing per-stage preset IDs —
-    /// the profile system is a wrapper over the existing per-stage
-    /// preset infrastructure, not a parallel one.
-    struct FormatProfile: Identifiable {
-        let id: String
-        let title: String
-        let summary: String
-        let multibandPresetID: String
-        let multibandIntensity: MultibandPresetIntensity
-        let finalStagePresetID: String
-        let primeBassEnabled: Bool
-        let primeBassPresetID: String      // ignored when primeBassEnabled == false
-        let widenerPresetID: String
-        let compositeClipperThresholdDB: Double
-        let compositeClipperCeilingDB: Double
-        let finalDriveDB: Double
-    }
+    /// Format profiles live in PresetCatalog (shared with the headless
+    /// backend's "format_profile" preset kind); forwarded for the picker
+    /// and the tests.
+    typealias FormatProfile = PresetCatalog.FormatProfile
 
-    static let formatProfiles: [FormatProfile] = [
-        // "Custom" is a sentinel — selecting it just records the label
-        // and leaves every per-stage setting alone. Use this after
-        // hand-tuning to flag "my settings are bespoke, don't auto-apply
-        // a format default if I re-pick this entry from the menu." The
-        // sentinel preset IDs below are placeholders; the apply path
-        // short-circuits on `id == "custom"` and never reads them.
-        FormatProfile(
-            id: "custom",
-            title: "Custom",
-            summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
-            multibandPresetID: "5_ac",
-            multibandIntensity: .normal,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: false,
-            primeBassPresetID: "ac",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 6.0
-        ),
-        FormatProfile(
-            id: "community_radio",
-            title: "Community Radio",
-            summary: "Conservative LPFM / community-radio default — clean output, low loudness, broad source compatibility.",
-            multibandPresetID: "5_ac",
-            multibandIntensity: .light,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: false,
-            primeBassPresetID: "ac",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 4.0
-        ),
-        FormatProfile(
-            id: "pop_ac",
-            title: "Pop / Adult Contemporary",
-            summary: "Mainstream music — balanced multiband, gentle PrimeBass, open widener, moderate drive.",
-            multibandPresetID: "5_ac",
-            multibandIntensity: .normal,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: true,
-            primeBassPresetID: "ac",
-            widenerPresetID: "open_music",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 6.0
-        ),
-        FormatProfile(
-            id: "chr_top40",
-            title: "CHR / Top 40",
-            summary: "Modern hits — bright multiband, hot drive, wide stereo image, competitive loudness.",
-            multibandPresetID: "5_chr",
-            multibandIntensity: .normal,
-            finalStagePresetID: "chr",
-            primeBassEnabled: true,
-            primeBassPresetID: "chr",
-            widenerPresetID: "wide_chr",
-            compositeClipperThresholdDB: -0.8,
-            compositeClipperCeilingDB: -0.2,
-            finalDriveDB: 8.0
-        ),
-        FormatProfile(
-            id: "rock",
-            title: "Rock",
-            summary: "Punchy multiband, rock-tuned PrimeBass, open widener — preserves transient impact.",
-            multibandPresetID: "5_rock",
-            multibandIntensity: .normal,
-            finalStagePresetID: "punchy",
-            primeBassEnabled: true,
-            primeBassPresetID: "rock",
-            widenerPresetID: "open_music",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 7.0
-        ),
-        FormatProfile(
-            id: "edm_dance",
-            title: "EDM / Dance",
-            summary: "Heavy multiband, hot drive, deep bass, wide image — peak loudness for dance formats.",
-            multibandPresetID: "5_dance",
-            multibandIntensity: .heavy,
-            finalStagePresetID: "chr",
-            primeBassEnabled: true,
-            primeBassPresetID: "chr",
-            widenerPresetID: "wide_chr",
-            compositeClipperThresholdDB: -0.7,
-            compositeClipperCeilingDB: -0.2,
-            finalDriveDB: 9.0
-        ),
-        FormatProfile(
-            id: "urban_hiphop",
-            title: "Urban / Hip-Hop",
-            summary: "Deep low end, urban-tuned PrimeBass, hot drive — bass-forward urban contemporary.",
-            multibandPresetID: "5_urban",
-            multibandIntensity: .normal,
-            finalStagePresetID: "chr",
-            primeBassEnabled: true,
-            primeBassPresetID: "urban",
-            widenerPresetID: "open_music",
-            compositeClipperThresholdDB: -0.8,
-            compositeClipperCeilingDB: -0.2,
-            finalDriveDB: 8.0
-        ),
-        FormatProfile(
-            id: "jazz_classical",
-            title: "Jazz / Classical",
-            summary: "Dynamic-preserving — light multiband, no PrimeBass, safe widener, conservative drive.",
-            multibandPresetID: "5_classic",
-            multibandIntensity: .light,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: false,
-            primeBassPresetID: "ac",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.2,
-            compositeClipperCeilingDB: -0.4,
-            finalDriveDB: 3.0
-        ),
-        FormatProfile(
-            id: "news_talk",
-            title: "News / Talk",
-            summary: "Speech-optimized multiband + final-stage, no PrimeBass, safe widener, low drive.",
-            multibandPresetID: "5_talk",
-            multibandIntensity: .light,
-            finalStagePresetID: "speech",
-            primeBassEnabled: false,
-            primeBassPresetID: "talk",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 4.5
-        )
-    ]
+    static var formatProfiles: [FormatProfile] { PresetCatalog.formatProfiles }
 
     static func formatProfile(forID id: String) -> FormatProfile? {
-        formatProfiles.first(where: { $0.id == id })
+        PresetCatalog.formatProfile(forID: id)
     }
 
     private static func ptyName(for pty: Int, rbds: Bool) -> String {

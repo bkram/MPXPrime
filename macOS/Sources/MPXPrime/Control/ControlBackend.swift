@@ -31,9 +31,17 @@ struct ControlStatus: Codable, Sendable {
     var version: String
     var sampleRateHz: Double
     var uptimeSeconds: Double?
+    /// True when live-applied changes are queued behind a restart. Only
+    /// meaningful while `running` -- a stopped engine always starts from the
+    /// current config, so nothing is ever "pending" while stopped (both
+    /// backends agree on this).
     var restartPending: Bool
     var sourceMode: String
     var outputMode: String
+    /// Operator-facing lines. Semantics differ by backend BY DESIGN: the
+    /// headless backend reports engine-fault reasons (start failures, retry
+    /// state); the GUI backend mirrors its human status line. Treat as
+    /// display text, never parse.
     var notes: [String]
 }
 
@@ -116,6 +124,11 @@ struct ControlDevices: Codable, Sendable {
     var outputs: [ControlDevice]
     var selectedInput: String
     var selectedOutput: String
+    /// Decoded-audio monitor output (monitor_device_uid) + its enable --
+    /// previously the one device slot the API could not see. Defaults keep
+    /// old payloads decodable.
+    var selectedMonitor: String = ""
+    var monitorEnabled: Bool = false
     /// Platform note the UI shows next to the pickers (e.g. Linux PCM-name
     /// convention). Empty on macOS.
     var note: String

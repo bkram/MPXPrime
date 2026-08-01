@@ -572,7 +572,9 @@ configured.
 | PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
 | GET | `/api/config` | every INI setting, grouped by section |
 | PATCH | `/api/config` | `{"<ini_key>": "<value>", ...}` -- any key from this manual's tables |
-| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband; + format_profile in GUI mode) |
+| GET | `/api/schema` | the dashboard's control schema: widget definitions (label/range/unit) + page model for every exposed INI key -- the single source the web UI renders from |
+| GET | `/api/config/defaults` | factory defaults, grouped like `/api/config` -- diff against it for "reset to defaults" |
+| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44) |
 | POST | `/api/presets` | `{"kind": "multiband", "id": "3_chr", "intensity": 1.0}` (intensity <0.75 light / >1.25 heavy) |
 | POST | `/api/transport/start\|stop\|restart` | engine lifecycle |
 

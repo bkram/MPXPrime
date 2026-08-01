@@ -236,6 +236,8 @@ ALSAAudioEngine on Linux, consumed at the top of each render period).
 Security: loopback binds are open; any other bind refuses to start without
 `control_api_key`, checked constant-time as Bearer/X-API-Key on /api routes.
 
+The dashboard renders itself from **`GET /api/schema`** (backed by `Control/WebUI/schema.json` -- widget definitions + page model for the whole exposed INI vocabulary); `index.html` carries no hardcoded control tables. `ControlSchemaTests` pins the schema against the INI vocabulary in both directions: every config key needs a widget or a reasoned exemption, every widget must name a real key, and every page key must have a widget (the pre-0.44 dashboard silently dropped ten controls exactly this way). `GET /api/config/defaults` serves factory defaults for client-side reset. Preset kinds `finalstage` and `format_profile` are served by BOTH backends -- the tables live in `PresetCatalog` (moved out of the GUI view model, which previously made station formats unreachable on a headless box).
+
 ## Threading Model
 
 - Main thread: SwiftUI UI, user interaction

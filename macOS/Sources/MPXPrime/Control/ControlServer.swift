@@ -213,6 +213,30 @@ enum ControlServer {
             return try await backend.applyConfigPatch(patch)
         }
 
+        router.get("/api/schema") { _, _ -> Response in
+            guard let json = Self.schemaJSON() else {
+                throw HTTPError(.internalServerError, message: "schema resource missing")
+            }
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: ByteBuffer(string: json))
+            )
+        }
+
+        // Factory defaults (a pristine AppConfig serialized the same sectioned
+        // way as /api/config) so the dashboard can offer per-tab Reset without
+        // hardcoding a single default value client-side.
+        router.get("/api/config/defaults") { _, _ -> Response in
+            let sections = try ConfigPatch.sectionedValues(of: AppConfig())
+            let data = try JSONEncoder().encode(sections)
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: ByteBuffer(data: data))
+            )
+        }
+
         router.get("/api/presets") { _, _ -> Response in
             let presets = await backend.presets()
             let data = try JSONEncoder().encode(presets)
@@ -295,25 +319,42 @@ enum ControlServer {
     /// manually relative to the executable first.
     static func dashboardHTML() -> String {
         let stub = "<!doctype html><title>MPX Prime</title><p>Dashboard resource missing; the REST API is available under /api/."
+        return webUIResource(name: "index", ext: "html") ?? stub
+    }
+
+    /// The control schema the dashboard builds its pages from (widget
+    /// definitions + page model), served at /api/schema. Single source of
+    /// truth: `WebUI/schema.json` -- the dashboard carries NO hardcoded
+    /// schema, and `ControlSchemaTests` pins the file against the INI
+    /// vocabulary so a new config key cannot ship without a schema decision.
+    static func schemaJSON() -> String? {
+        webUIResource(name: "schema", ext: "json")
+    }
+
+    /// Load a WebUI resource. Resolves relative to the executable first --
+    /// Bundle.module's generated accessor calls fatalError when the resource
+    /// bundle is absent (e.g. a package shipping the bare binary), which must
+    /// not take the ENCODER down over a missing web asset.
+    private static func webUIResource(name: String, ext: String) -> String? {
         var candidates: [String] = []
         if let exe = Bundle.main.executablePath {
             let dir = (exe as NSString).deletingLastPathComponent
-            candidates.append(dir + "/MPXPrime_MPXPrime.resources/WebUI/index.html")
-            candidates.append(dir + "/MPXPrime_MPXPrime.bundle/WebUI/index.html")
+            candidates.append(dir + "/MPXPrime_MPXPrime.resources/WebUI/\(name).\(ext)")
+            candidates.append(dir + "/MPXPrime_MPXPrime.bundle/WebUI/\(name).\(ext)")
         }
         for path in candidates where FileManager.default.fileExists(atPath: path) {
-            if let html = try? String(contentsOfFile: path, encoding: .utf8) {
-                return html
+            if let text = try? String(contentsOfFile: path, encoding: .utf8) {
+                return text
             }
         }
         // Fall back to Bundle.module only when a bundle is plausibly present
         // (macOS app/SwiftPM layouts) -- guarded by the same existence check.
         if candidates.isEmpty || candidates.contains(where: { FileManager.default.fileExists(atPath: ($0 as NSString).deletingLastPathComponent.replacingOccurrences(of: "/WebUI", with: "")) }) {
-            if let url = Bundle.module.url(forResource: "WebUI/index", withExtension: "html"),
-                let html = try? String(contentsOf: url, encoding: .utf8) {
-                return html
+            if let url = Bundle.module.url(forResource: "WebUI/\(name)", withExtension: ext),
+                let text = try? String(contentsOf: url, encoding: .utf8) {
+                return text
             }
         }
-        return stub
+        return nil
     }
 }

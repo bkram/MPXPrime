@@ -11,6 +11,10 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+(nothing yet)
+
+## 0.43 — 2026-08-01
+
 - **Restart now equals live-apply, by construction.** Both engine-start paths
   (headless `HeadlessControlBackend.startEngine` -- API `transport/restart`,
   boot, reconcile -- and the GUI's `startEngine`) now apply the canonical

@@ -64,12 +64,12 @@ struct ControlMeters: Codable, Sendable {
     // `bufferedFrames` should hover near the engine's target; a monotonic
     // drift toward 0 or capacity is what precedes audible dropout/static.
     // All nil in headless/ALSA and when no input source is running.
-    var inputRingBufferedFrames: Int? = nil
-    var inputRingOverflows: Int? = nil
-    var inputRingUnderflows: Int? = nil
-    var inputRingTornReads: Int? = nil
-    var inputResampleMode: String? = nil
-    var inputRatioTrim: Double? = nil
+    var inputRingBufferedFrames: Int?
+    var inputRingOverflows: Int?
+    var inputRingUnderflows: Int?
+    var inputRingTornReads: Int?
+    var inputResampleMode: String?
+    var inputRatioTrim: Double?
 }
 
 /// GET /api/rds payload: the live on-air snapshot plus the operational

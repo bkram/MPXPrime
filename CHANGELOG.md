@@ -11,6 +11,22 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Verifier: `--verify-long` is green again and part of the release
+  checklist.** Its per-scenario signature reference table had never been
+  recaptured since 0.11 while the chain moved deliberately through 0.20/0.35/
+  0.36 (each step gated by `--verify --baseline-strict`), so the long-run
+  gate sat at TIGHT on pure staleness -- and nobody saw it, because it was
+  not on the release checklist. Table recaptured from a canonical run
+  against the current chain; checklist updated. A full attribution pass
+  confirmed NO DSP error behind any of the warnings.
+- **Verifier: no more silent fallback to the live station config.** Running
+  any `--verify*` mode from a directory where `macOS/Verification.ini` is
+  not findable used to fall back to the operator's own INI -- producing
+  official-looking TIGHT/WARN verdicts about whatever pilot/RDS/clipper/AGC
+  state the station happened to be in (this cost a real debugging detour).
+  It now exits 64 with instructions; pass `--config` explicitly to verify a
+  specific INI on purpose.
+
 - **Meter: RF spectrum in SDR mode.** The spectrum card gains an **MPX | RF**
   switch: MPX is the demodulated baseband as before, RF is the band around the
   tuned carrier straight from the tuner's IQ -- the view an SDR application

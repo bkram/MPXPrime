@@ -196,7 +196,7 @@ The structural pattern in both cases is the same: extract the parallelisable tra
 
 Run before tagging. None of these should be skipped on a release commit; partial coverage is how regressions ship.
 
-**Run the offline `--verify*` gates on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime Studio GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
+**Run the offline `--verify*` gates from the REPO ROOT** — they hard-fail (exit 64) if `macOS/Verification.ini` is not findable from the current directory, rather than silently verifying the operator's live station INI (which produces official-looking verdicts about the wrong config). **And run them on an otherwise-idle machine — quit the GUI app, and ideally browsers / media players too.** They are single-threaded CPU-bound renderers (no GUI, no audio devices — already headless). A running MPX Prime Studio GUI or other heavy apps starve them to ~20-37% of one core, so an 8-16 s gate can crawl to 20+ minutes and look hung when it is only contended. On an idle machine: `--verify` ~16 s, `--verify-presets` ~8 s. The slowness is contention, not a regression — don't chase it as one, and don't run the verify sweep next to a soak/listening instance.
 
 - [ ] `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS` — full default suite passes
 - [ ] `swift build --package-path macOS -c release` — release build clean
@@ -204,6 +204,7 @@ Run before tagging. None of these should be skipped on a release commit; partial
 - [ ] `swift run --package-path macOS MPXPrime --verify --seconds 5` — exit 0 (PASS)
 - [ ] `swift run --package-path macOS MPXPrime --verify-presets --seconds 5` — exit 0
 - [ ] `swift run --package-path macOS MPXPrime --verify-receiver --seconds 5` — exit 0 (separation @ 1/10/14 kHz, pilot, RDS)
+- [ ] `swift run --package-path macOS MPXPrime --verify-long --seconds 30` — exit 0 (long-run signature vs the hand-maintained reference table in `VerificationHarness.swift`; a DELIBERATE chain change that moves the report means recapturing that table in the same commit — it sat stale from 0.11 to 0.43 and masked nothing but cried TIGHT)
 - [ ] `swift run --package-path macOS MPXPrime --verify --baseline-strict` — composite shape matches the captured baseline
 - [ ] **Release build live smoke**: run `macOS/.build/release/MPXPrime --gui` against a real 192 kHz output device (NOT debug, NOT 96 kHz) — RDS reads cleanly on a real receiver, no clicks/dropouts over 30+ seconds of dense program
 - [ ] **Device-rate match**: Audio MIDI Setup output format matches `sample_rate` in INI (see CLAUDE.md "buffer issues" diagnostic)

@@ -530,42 +530,56 @@ private func longRunVerificationScenarios() -> [VerificationScenario] {
     }
 }
 
+// Long-run signature references: the expected 30 s per-scenario fingerprint
+// of the CURRENT chain against macOS/Verification.ini. Unlike the schema-3
+// composite baseline (default.json, recaptured via --capture-baseline), this
+// table is maintained by hand -- and it had NOT been recaptured since 0.11
+// while the chain moved deliberately through 0.20 (differential clipper
+// topology), 0.35 (host-rate guard cancellation), 0.36 (pilot/RDS phase
+// lock)... so --verify-long sat at TIGHT on pure staleness. Recaptured
+// 2026-08-01 (0.43) from a canonical repo-root run; every intervening chain
+// change was gated by --verify --baseline-strict, so these values describe
+// the accepted chain, not an unreviewed drift. RECAPTURE THIS TABLE whenever
+// a deliberate chain change moves the long-run report: run
+// `swift run --package-path macOS MPXPrime --verify-long --seconds 30` from
+// the repo root and copy the per-scenario Peak/Margin/OutCorr/Occ999/>60k
+// values.
 private func longRunSignatureReferences() -> [String: LongRunSignatureReference] {
     [
         "program_mix": LongRunSignatureReference(
-            peakDBFS: -1.63,
-            minMarginDB: 1.2,
-            outCorrelation: 0.88,
-            occ999Hz: 57_921.0,
-            above60kRatioDB: -84.3
+            peakDBFS: -0.85,
+            minMarginDB: 0.8,
+            outCorrelation: 0.83,
+            occ999Hz: 57_625.0,
+            above60kRatioDB: -90.1
         ),
         "bright_dense": LongRunSignatureReference(
-            peakDBFS: -0.33,
-            minMarginDB: 0.2,
-            outCorrelation: 0.27,
-            occ999Hz: 56_191.0,
-            above60kRatioDB: -42.9
+            peakDBFS: -0.38,
+            minMarginDB: 0.3,
+            outCorrelation: 0.05,
+            occ999Hz: 57_558.0,
+            above60kRatioDB: -60.6
         ),
         "vocal_sibilant": LongRunSignatureReference(
-            peakDBFS: -0.46,
+            peakDBFS: -0.42,
             minMarginDB: 0.3,
-            outCorrelation: 0.75,
-            occ999Hz: 57_810.0,
-            above60kRatioDB: -67.8
+            outCorrelation: 0.64,
+            occ999Hz: 57_876.0,
+            above60kRatioDB: -69.6
         ),
         "transient_push": LongRunSignatureReference(
-            peakDBFS: -0.27,
-            minMarginDB: 0.3,
-            outCorrelation: 0.83,
-            occ999Hz: 58_062.0,
-            above60kRatioDB: -62.3
+            peakDBFS: -0.15,
+            minMarginDB: 0.4,
+            outCorrelation: 0.76,
+            occ999Hz: 58_121.0,
+            above60kRatioDB: -61.7
         ),
         "wide_bass": LongRunSignatureReference(
-            peakDBFS: -3.58,
-            minMarginDB: 3.3,
-            outCorrelation: -0.22,
-            occ999Hz: 58_112.0,
-            above60kRatioDB: -83.6
+            peakDBFS: -2.21,
+            minMarginDB: 1.7,
+            outCorrelation: -0.41,
+            occ999Hz: 57_964.0,
+            above60kRatioDB: -88.1
         )
     ]
 }

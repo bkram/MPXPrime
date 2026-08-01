@@ -73,7 +73,19 @@ func defaultVerificationConfigPath() -> String {
     for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
         return candidate
     }
-    return AppConfig.defaultINIPath
+    // No silent fallback to the LIVE user config: a verifier that quietly
+    // measures the operator's station INI produces official-looking TIGHT/
+    // WARN verdicts about the wrong thing (pilot/RDS levels, clipper
+    // enables, AGC -- all operator-set). Verification runs are only
+    // meaningful against the pinned macOS/Verification.ini, so demand it.
+    fputs(
+        """
+        MPX Prime: macOS/Verification.ini not found from the current directory.
+        Verification must run against the pinned config -- run from the repo
+        root, or pass --config <path> explicitly to verify a specific INI.
+        """ + "\n",
+        stderr)
+    exit(64)  // EX_USAGE: distinct from the verifier's 0/1/2 verdicts
 }
 
 func normalizeConfigPath(_ rawPath: String) -> String {

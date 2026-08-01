@@ -16,14 +16,23 @@ combination test suite. Newest first.
   restarts the engine when running (mirroring the GUI's Cmd-B exactly --
   the flag is restart-class), turns red "BYPASSED" while active, and asks
   for confirmation before putting unprocessed audio on air.
-- **Web dashboard parity, phase 4 of 4: live scopes + MPX spectrum in the
-  browser.** New `GET /api/telemetry`: display-decimated input L/R + MPX
-  scope waveforms and a server-computed 256-bin MPX spectrum (0-96 kHz,
-  4096-point vDSP FFT per request) -- ~6 KB and ~5 ms per poll, measured.
-  The dashboard grows a "Scopes & Spectrum" page (canvas rendering, FM band
-  captions, 5-100 ms timebase, ~4 Hz poll only while the page is open). The
-  engine hook is a default-nil `ControlledEngine` extension point, so the
-  Linux/ALSA engine cleanly reports 503 until it grows a scope tap.
+- **Web parity phase 4 became API-only: `GET /api/telemetry`.** Display-
+  decimated input L/R + MPX scope waveforms and a server-computed 256-bin
+  MPX spectrum (~6 KB, ~5 ms per request, measured); 503 while stopped or
+  on a platform without a scope tap (Linux/ALSA today). An in-dashboard
+  "Scopes & Spectrum" canvas page was built on a 4 Hz poll and REMOVED the
+  same day -- at polling cadence it cannot look like an instrument next to
+  the native windows, and the operator judged it too slow. The endpoint
+  stays for external tooling; if browser visuals return, they need a push
+  transport (SSE/WebSocket), not a faster poll.
+- **Web dashboard: processed-audio mode awareness.** With
+  `processed_audio_output` on, the dashboard now mirrors the GUI's
+  `hiddenInProcessedAudio`: the RDS group, Composite Clipper, BS.412 and
+  Final Stage pages hide (with live sidebar re-render and redirect if you
+  are on one), the signal-flow pills drop the composite stages, and
+  Monitoring swaps the MPX/Subcarriers cards for an honest "Output
+  (processed audio)" card -- previously it showed deviation/pilot/RDS
+  readouts for a composite that does not exist in that mode.
 - **Web dashboard parity, phase 3 of 4: operator preset slots over the API.**
   The GUI's 8 snapshot slots are now a REST surface: `GET /api/snapshots`,
   save/load/rename/clear per slot, `GET .../export` (the slot's full INI --

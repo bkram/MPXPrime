@@ -241,6 +241,18 @@ async function loadConfig() {
   for (const sec of Object.values(sections)) Object.assign(cfg, sec);
 }
 
+/* Processed-audio output mode: no composite is generated, so composite-only
+   pages (RDS, Composite Clipper, BS.412, Final Stage) hide -- mirroring the
+   GUI's hiddenInProcessedAudio. Driven by the CONFIG flag (intent), matching
+   the GUI's sidebar behavior. */
+const isProcessedAudio = () => isTrue(cfg.processed_audio_output);
+const pageHiddenInMode = (id) => {
+  if (!isProcessedAudio()) return false;
+  if (MODEL.rds.some(p => p.id === id)) return true;
+  const st = MODEL.stages.find(x => x.id === id);
+  return !!(st && st.hiddenInProcessedAudio);
+};
+
 /* ---------------- sidebar ---------------- */
 function navItem(id, title, enableKey) {
   const el = document.createElement("div");
@@ -260,12 +272,16 @@ function renderSidebar() {
   const add = (html) => nav.insertAdjacentHTML("beforeend", html);
   add('<div class="shead">Monitoring</div>');
   nav.appendChild(navItem("monitoring", "Monitoring"));
-  nav.appendChild(navItem("telemetry", "Scopes & Spectrum"));
   add('<div class="shead">Processing</div>');
   nav.appendChild(navItem("overview", "Overview"));
-  for (const s of MODEL.stages) nav.appendChild(navItem(s.id, s.title, s.enable));
-  add('<div class="shead">RDS</div>');
-  for (const p of MODEL.rds) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
+  for (const s of MODEL.stages) {
+    if (isProcessedAudio() && s.hiddenInProcessedAudio) continue;
+    nav.appendChild(navItem(s.id, s.title, s.enable));
+  }
+  if (!isProcessedAudio()) {
+    add('<div class="shead">RDS</div>');
+    for (const p of MODEL.rds) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
+  }
   add('<div class="shead">Tools</div>');
   for (const p of MODEL.tools) nav.appendChild(navItem(p.id, p.title));
 }
@@ -365,10 +381,17 @@ function card(keys, extraEl) {
   if (extraEl) el.appendChild(extraEl);
   return el;
 }
+let lastProcessedAudioMode = null;
 function syncAll() {
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el._sync && el.dataset.key in cfg) el._sync(cfg[el.dataset.key]);
   });
+  const mode = isProcessedAudio();
+  if (lastProcessedAudioMode !== null && mode !== lastProcessedAudioMode) {
+    renderSidebar();
+    if (pageHiddenInMode(currentPage)) showPage("monitoring");
+  }
+  lastProcessedAudioMode = mode;
   refreshSidebarDots();
   updateBypassButton();
 }
@@ -382,7 +405,8 @@ function helpBox(text) {
 function pillStrip(currentId) {
   const wrap = document.createElement("div");
   wrap.id = "pills";
-  MODEL.pills.forEach(([label, id], i) => {
+  const pills = MODEL.pills.filter(([, id]) => !id || !pageHiddenInMode(id));
+  pills.forEach(([label, id], i) => {
     if (i > 0) wrap.insertAdjacentHTML("beforeend", '<span class="pillsep">-</span>');
     const p = document.createElement("span");
     p.className = "pill" + (id ? "" : " fixed");
@@ -429,12 +453,12 @@ function pageHeader(c, title, sub) {
   c.appendChild(Object.assign(document.createElement("div"), { className:"subtitle", textContent: sub }));
 }
 function showPage(id) {
+  if (pageHiddenInMode(id)) id = "monitoring";
   currentPage = id;
   document.querySelectorAll("#sidebar .nav").forEach(n => n.classList.toggle("active", n.dataset.page === id));
   const c = $("content");
   c.innerHTML = "";
   if (id === "monitoring") return renderMonitoring(c);
-  if (id === "telemetry") return renderTelemetry(c);
   if (id === "overview") return renderOverview(c);
   const stage = MODEL.stages.find(s => s.id === id);
   if (stage) return renderStage(c, stage);
@@ -538,12 +562,16 @@ function renderMonitoring(c) {
       `<div class="kvrow"><span class="k">Output</span><span class="v">${outName()}</span></div>` +
       `<div class="hmeter"><div class="lab"><span>INPUT L</span><span id="monInLv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInL"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div>` +
       `<div class="hmeter"><div class="lab"><span>INPUT R</span><span id="monInRv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInR"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div></div>` +
-    `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
-      kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>` +
+    (isProcessedAudio()
+      ? `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Output (processed audio)</div>` +
+          kv("Output", "monOut") + `</div>`
+      : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
+          kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`) +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
       kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("AGC Gain", "monAGC") + `</div>` +
-    `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
-      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>` +
+    (isProcessedAudio() ? "" :
+      `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
+      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>`) +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stream Health</div>` +
       kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + `</div>`;
   c.appendChild(grid);
@@ -797,102 +825,11 @@ function renderAdvanced(c) {
   })();
 }
 
-/* ---------------- live scopes + spectrum ---------------- */
-let telemetryWindowMS = 20;
-function renderTelemetry(c) {
-  pageHeader(c, "Scopes & Spectrum", "Live waveforms and MPX spectrum");
-  const bar = document.createElement("div");
-  bar.className = "card cardpad";
-  bar.innerHTML = '<div class="row"><div class="rlabel">Timebase</div><div class="seg" id="tbSeg">' +
-    [5,10,20,50,100].map(v => `<button data-v="${v}"${v===telemetryWindowMS?' class="sel"':''}>${v} ms</button>`).join("") +
-    '</div></div>';
-  c.appendChild(bar);
-  bar.querySelectorAll("#tbSeg button").forEach(b => b.onclick = () => {
-    bar.querySelectorAll("#tbSeg button").forEach(x => x.classList.remove("sel"));
-    b.classList.add("sel");
-    telemetryWindowMS = Number(b.dataset.v);
-  });
-  const mk = (title, id, h) => {
-    c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:title }));
-    const card = document.createElement("div");
-    card.className = "card cardpad";
-    card.innerHTML = `<canvas id="${id}" style="width:100%;height:${h}px;display:block"></canvas>`;
-    c.appendChild(card);
-  };
-  mk("Input L", "scopeL", 90);
-  mk("Input R", "scopeR", 90);
-  mk("MPX Composite", "scopeOut", 110);
-  mk("MPX Spectrum (0-96 kHz)", "specCanvas", 170);
-  c.appendChild(helpBox("Server-decimated snapshots polled ~4x/s -- an oscilloscope-style view, not sample-accurate audio. 503/blank means the engine is stopped (or a platform without a scope tap)."));
-  pollTelemetry();
-}
-function drawScope(id, samples) {
-  const cv = $(id);
-  if (!cv) return;
-  const dpr = window.devicePixelRatio || 1;
-  const w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
-  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-  const g = cv.getContext("2d");
-  g.clearRect(0, 0, w, h);
-  g.strokeStyle = "rgba(255,255,255,0.08)";
-  g.beginPath(); g.moveTo(0, h/2); g.lineTo(w, h/2); g.stroke();
-  if (!samples || samples.length < 2) return;
-  g.strokeStyle = "#39d353";
-  g.lineWidth = Math.max(1, dpr);
-  g.beginPath();
-  samples.forEach((v, i) => {
-    const x = (i / (samples.length - 1)) * w;
-    const y = h/2 - Math.max(-1, Math.min(1, v)) * (h/2 - 2*dpr);
-    i ? g.lineTo(x, y) : g.moveTo(x, y);
-  });
-  g.stroke();
-}
-const SPEC_BANDS = [["L+R", 7500], ["Pilot", 19000], ["L-R", 38000], ["RDS", 57000], ["SCA", 78000]];
-function drawSpectrum(bins, maxHz) {
-  const cv = $("specCanvas");
-  if (!cv) return;
-  const dpr = window.devicePixelRatio || 1;
-  const w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
-  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-  const g = cv.getContext("2d");
-  g.clearRect(0, 0, w, h);
-  const lo = -100, hi = 0;
-  if (bins && bins.length > 1) {
-    g.fillStyle = "rgba(57,211,83,0.25)";
-    g.strokeStyle = "#39d353";
-    g.lineWidth = Math.max(1, dpr);
-    g.beginPath();
-    bins.forEach((db, i) => {
-      const x = (i / (bins.length - 1)) * w;
-      const y = h - ((Math.max(lo, Math.min(hi, db)) - lo) / (hi - lo)) * h;
-      i ? g.lineTo(x, y) : g.moveTo(x, y);
-    });
-    g.stroke();
-    g.lineTo(w, h); g.lineTo(0, h); g.closePath(); g.fill();
-  }
-  g.fillStyle = "rgba(255,255,255,0.45)";
-  g.font = `${10*dpr}px sans-serif`;
-  g.textAlign = "center";
-  for (const [label, hz] of SPEC_BANDS) {
-    if (hz > maxHz) continue;
-    const x = (hz / maxHz) * w;
-    g.fillRect(x, 0, dpr, h);
-    g.fillText(label, x, 12*dpr);
-  }
-}
-async function pollTelemetry() {
-  if (currentPage !== "telemetry") return;
-  try {
-    const t = await api("/api/telemetry?window_ms=" + telemetryWindowMS);
-    drawScope("scopeL", t.inputLeft);
-    drawScope("scopeR", t.inputRight);
-    drawScope("scopeOut", t.output);
-    drawSpectrum(t.spectrumDB, t.spectrumMaxHz || 96000);
-  } catch (e) {
-    drawScope("scopeL", []); drawScope("scopeR", []); drawScope("scopeOut", []);
-    drawSpectrum([], 96000);
-  }
-}
+/* Live scopes/spectrum graphs were tried here and removed: a 4 Hz HTTP
+   poll cannot look like an instrument next to the native windows, and the
+   operator judged it too slow. GET /api/telemetry REMAINS available for
+   external tooling; if in-browser visuals ever return, they need a push
+   transport (SSE/WebSocket), not a faster poll. */
 
 /* ---------------- devices + polling ---------------- */
 function deviceName(id, list) {
@@ -1063,7 +1000,6 @@ boot();
 setInterval(pollStatus, 2000);
 setInterval(pollMeters, 300);
 setInterval(() => pollRDS(false), 1000);
-setInterval(pollTelemetry, 250);
 </script>
 </body>
 </html>

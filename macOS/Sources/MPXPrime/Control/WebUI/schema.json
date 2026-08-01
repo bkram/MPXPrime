@@ -586,6 +586,7 @@
    {
     "enable": "mpx_clipper_enabled",
     "help": "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever.",
+    "hiddenInProcessedAudio": true,
     "id": "compositeClipper",
     "keys": [
      "mpx_clipper_enabled",
@@ -616,6 +617,7 @@
    {
     "enable": "bs412_enabled",
     "help": "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries.",
+    "hiddenInProcessedAudio": true,
     "id": "bs412",
     "keys": [
      "bs412_enabled",
@@ -633,6 +635,7 @@
    },
    {
     "help": "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry.",
+    "hiddenInProcessedAudio": true,
     "id": "finalStage",
     "keys": [
      "final_drive_db",

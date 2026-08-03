@@ -24,7 +24,13 @@ Major work landed since the roadmap was last pruned: MPX Prime Meter (0.37, rece
    PrimeBass presets at the new gain structure. Process: per profile, verifier
    A/B (--verify-presets baseline + budget margins) THEN owner listening pass
    on real program. Candidate default: Community Radio profile gains the
-   pre-encode limiter enabled.
+   pre-encode limiter enabled. ALSO part of this rework: the input gain
+   structure question (user, 2026-08-03) -- input_gain_db defaults to 0 with
+   no defined nominal input level, so 0 dBFS masters enter with zero headroom
+   and the AGC target does all the pulldown. Decide: document a nominal input
+   reference (-12/-18 dBFS, pro-chain style) that the profiles assume, and/or
+   a saner input_gain default / input headroom control, so "everything
+   disabled" degrades gracefully instead of slamming the safety soft-clips.
 
 1. **Anti-aliased clipping kernel (US 6,937,912).** Phase A/B landed opt-in (`pre_encode_bandlimited_residual_enabled`). Remaining: A/B real program with it on, decide whether any loud preset enables it; optional Phase C applies the primitive to `softClipSafety` in `processFinalComposite` only if B proves benefit (keep pilot/RDS injection post-processing + budget-governor invariant); refresh baselines on real program.
 2. **Tune/validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped; dense real-program A/B at 0.5 / 1 / 2 ms, verify pilot/RDS guard cleanliness, decide loud-preset default. Capture via `MPXPRIME_AUDIT_CAPTURE=1` → `macOS/.audit-out/lookahead/`.

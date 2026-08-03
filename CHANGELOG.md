@@ -11,6 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Advanced Dynamics: decay guard + safer Max Boost default.** Field
+  report: a solo bell synth "rang" on air -- the leveler read the bell's
+  natural fade as quiet program and rode gain up through the decay,
+  flattening/extending it (the classic AGC-on-solo-content failure,
+  amplified by the stage's wide lift range). Fix: a per-band decay guard
+  (slow-release envelope peak tracker; env more than 3 dB below it means
+  an active fade) HOLDS the lift while program decays naturally and
+  resumes when the level stabilizes or new material arrives. Pinned by a
+  synthetic-bell regression test (decaying solo tones were a blind spot
+  in the test program). Max Boost default lowered 18 -> 12 dB: high
+  boost chases fades harder AND lowers the derived silence gate,
+  pumping tails on sparse material.
+
 - **Preset slots: no more false "changed" states.** Loading a preset
   while the engine ran always claimed "Restart-required changes are
   pending" -- even when the preset differed only in live settings or not

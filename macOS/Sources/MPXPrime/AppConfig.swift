@@ -290,7 +290,7 @@ struct AppConfig: Equatable {
     var advancedDynamicsLowOffsetDB: Double = 0.0
     var advancedDynamicsMidOffsetDB: Double = -3.0
     var advancedDynamicsHighOffsetDB: Double = -9.0
-    var advancedDynamicsMaxGainDB: Double = 18.0
+    var advancedDynamicsMaxGainDB: Double = 12.0
     var advancedDynamicsDensity: Double = 0.5
     var advancedDynamicsSpeed: Double = 1.0
     var phaseRotationEnabled: Bool = false

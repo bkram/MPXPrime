@@ -3467,6 +3467,9 @@ struct AdvancedDynamicsLeveler {
         var gainDB: Float = 0.0
         var heldDrive: Float = 0.0
         var transientHoldCounter: Int = 0
+        /// Slow-release peak of `env` for the decay guard: while `env` sits
+        /// well below this (program actively fading), lifting holds.
+        var fallEnv: Float = 0.0
     }
     private var bands = [BandState](repeating: BandState(), count: 5)
     /// Per-band level targets in dB (amplitude, 20*log10), band 1..5.
@@ -3499,6 +3502,10 @@ struct AdvancedDynamicsLeveler {
     private var couplingGRDB: Float = 0.0
     private var couplingAttackCoeff: Float = 0.0
     private var couplingReleaseCoeff: Float = 0.0
+    /// Decay-guard tracker release (~8.7 dB/s at 1 s tau): slower than any
+    /// musical decay, so a fading note keeps `env` pinned below `fallEnv`
+    /// and the guard holds; steady program keeps env ~= fallEnv (no hold).
+    private var fallEnvCoeff: Float = 0.0
 
     private var maxLiftDB: Float = 18.0
     private var maxCutDB: Float = 24.0
@@ -3530,6 +3537,7 @@ struct AdvancedDynamicsLeveler {
         densityCoeff = expf(-1.0 / (0.500 * sr))
         couplingAttackCoeff = expf(-1.0 / (0.020 * sr))
         couplingReleaseCoeff = expf(-1.0 / (0.300 * sr))
+        fallEnvCoeff = expf(-1.0 / (1.0 * sr))
         gateDriftCoeff = expf(-1.0 / (1.6 * sr))
         storedSampleRate = sr
         setParameters(
@@ -3546,7 +3554,7 @@ struct AdvancedDynamicsLeveler {
     private var storedLowOffsetDB: Float = 0.0
     private var storedMidOffsetDB: Float = -3.0
     private var storedHighOffsetDB: Float = -9.0
-    private var storedMaxGainDB: Float = 18.0
+    private var storedMaxGainDB: Float = 12.0
     private var storedDensity: Float = 0.5
     private var storedSpeed: Float = 1.0
 
@@ -3667,6 +3675,13 @@ struct AdvancedDynamicsLeveler {
         let hybrid = (rms * (1.0 - peakWeight)) + (linked * peakWeight)
         let envCoeff = hybrid > st.env ? envAttackCoeff : envReleaseCoeff
         st.env = zapDenorm((envCoeff * st.env) + ((1.0 - envCoeff) * hybrid))
+        st.fallEnv = zapDenorm(max(st.env, st.fallEnv * fallEnvCoeff))
+        // Decay guard: env more than 3 dB below its slow-release recent
+        // peak means the program is actively fading (a note decaying, a
+        // song ending) -- NOT "quiet program that needs lifting". Chasing
+        // a natural decay with gain flattens/extends it, which the ear
+        // reads as added ringing/sustain (found on a solo bell synth).
+        let decaying = st.env < st.fallEnv * 0.71
 
         let levelDB = 20.0 * log10f(max(1e-6, st.env))
         // Coupling: heavy low-band reduction biases upper-band targets
@@ -3697,6 +3712,10 @@ struct AdvancedDynamicsLeveler {
             let accel = max(st.heldDrive, distanceAccel)
             let coeff = lerpf(attackBaseCoeff, attackFastCoeff, accel * accel)
             st.gainDB = (coeff * st.gainDB) + ((1.0 - coeff) * desiredDB)
+        } else if decaying {
+            // Hold: let the fade decay naturally at whatever gain the
+            // material was riding; lifting resumes when the envelope
+            // stabilizes or new material arrives.
         } else {
             // Lift: base release, slowed by program density, accelerated
             // when the band sits far below target.
@@ -6994,7 +7013,7 @@ final class MPXGenerator {
     private var advancedDynamicsLowOffsetDB: Float = 0.0
     private var advancedDynamicsMidOffsetDB: Float = -3.0
     private var advancedDynamicsHighOffsetDB: Float = -9.0
-    private var advancedDynamicsMaxGainDB: Float = 18.0
+    private var advancedDynamicsMaxGainDB: Float = 12.0
     private var advancedDynamicsDensity: Float = 0.5
     private var advancedDynamicsSpeed: Float = 1.0
     private var advancedDynamicsStructureConfigured = false

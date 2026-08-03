@@ -328,9 +328,11 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 - `advanced_dynamics_target_db` (default `-16.0`) — the level every band is brought toward.
 - `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) — tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
-- `advanced_dynamics_max_gain_db` (default `18.0`) — maximum lift for quiet program (the reduction side is fixed at 24 dB, giving the wide total range that absorbs 20 dB jumps inside one song).
+- `advanced_dynamics_max_gain_db` (default `12.0`) — maximum lift for quiet program (the reduction side is fixed at 24 dB). The default was lowered from 18 after field testing: high boost both chases natural fades harder and lowers the silence gate (`target - max_gain - 10 dB`), pumping tails on sparse material. Raise it deliberately for wide-dynamics formats.
 - `advanced_dynamics_density` (`0..1`, default `0.5`) — denser = tighter hold window and faster leveling.
 - `advanced_dynamics_speed` (`0.25..4`, default `1.0`) — overall time-constant scale.
+
+A built-in **decay guard** distinguishes "program actively fading" from "program is quiet": while a band's envelope sits well below its recent peak (a note or song decaying naturally), the leveler holds instead of lifting, resuming when the level stabilizes or new material arrives. Without it a solo decaying sound (a bell, a fade-out) gets its fade flattened and extended -- heard as added ringing/sustain.
 
 Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics` and must pass program-material A/B plus listening before any preset enables it.
 

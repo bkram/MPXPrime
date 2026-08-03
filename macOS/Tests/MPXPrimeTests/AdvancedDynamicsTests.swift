@@ -167,6 +167,44 @@ struct AdvancedDynamicsTests {
             "transient not caught: peak \(latePeak) vs step \(stepAmp)")
     }
 
+    @Test func naturalDecayIsNotChasedByLift() {
+        // Regression: a solo bell synth "rang" on air -- the leveler saw the
+        // bell's natural fade fall below target and rode gain UP through the
+        // decay (up to max boost), flattening/extending the fade, which the
+        // ear reads as added ringing/sustain. The decay guard must HOLD the
+        // lift while a band's envelope is actively falling.
+        var leveler = makeLeveler()
+        // Settle on a moderate program bed first so gains are realistic.
+        for i in 0..<Int(sampleRate * 4.0) {
+            let t = Float(i) / sampleRate
+            let x = 0.2 * sinf(2.0 * Float.pi * 1_000.0 * t)
+                + 0.1 * sinf(2.0 * Float.pi * 4_000.0 * t)
+            _ = leveler.process(left: x, right: x)
+        }
+        // Strike: inharmonic bell partials with a 0.4 s decay constant.
+        var gainsAtStrike: [Float] = []
+        var maxRise: Float = 0.0
+        let bellFrames = Int(sampleRate * 2.2)
+        for i in 0..<bellFrames {
+            let t = Float(i) / sampleRate
+            let envl = expf(-t / 0.4)
+            let x = envl * (0.5 * sinf(2.0 * Float.pi * 2_100.0 * t)
+                + 0.35 * sinf(2.0 * Float.pi * 5_600.0 * t)
+                + 0.2 * sinf(2.0 * Float.pi * 9_200.0 * t))
+            _ = leveler.process(left: x, right: x)
+            if i == Int(sampleRate * 0.15) {
+                gainsAtStrike = leveler.bandGainsDB
+            }
+            if i > Int(sampleRate * 0.15), i % 480 == 0 {
+                for (g, g0) in zip(leveler.bandGainsDB, gainsAtStrike) {
+                    maxRise = max(maxRise, g - g0)
+                }
+            }
+        }
+        #expect(maxRise < 3.0,
+            "leveler lifted \(maxRise) dB into a naturally decaying bell -- the decay guard must hold the fade")
+    }
+
     @Test func silenceIsNotLiftedByTheGate() {
         var leveler = makeLeveler()
         // Settle on program so gains ride up...

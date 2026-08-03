@@ -7561,16 +7561,16 @@ private struct ProcessingStereoCoderTab: View {
 
     var body: some View {
         Card(title: "Stereo Encoder") {
-            Text("Always active in composite output: L+R plus L-R on the pilot-locked 38 kHz subcarrier; pilot and RDS are injected after all peak control. The option below changes HOW the subcarrier is assembled.")
+            Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
+                .help("Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom before the clipper works. Independent of the Composite Clipper's enable.")
+            // Disclaimer caption (the Advanced Dynamics pattern) instead of
+            // folding the controls away: the tab exists for this option.
+            Text("Experimental. Standard receivers decode SSB stereo fine (measured 81+ dB separation), but phase-imperfect radios may lose a little separation -- A/B on a real receiver and verify with --verify-ssb-stereo before regular use. Stereo encoding itself is always active; this only changes how the subcarrier is assembled.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DisclosureGroup("Experimental") {
-                Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
-                    .help("Experimental, off by default. Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom before the clipper works. Independent of the Composite Clipper's enable. Trades a little stereo separation on phase-imperfect receivers; verify with --verify-ssb-stereo and a real radio before regular use.")
-                DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                    tooltip: "How far the stereo subcarrier leans toward single-sideband. 0 = classic double-sideband (no effect), 1 = full SSB (maximum headroom reclaim, maximum receiver sensitivity). Start around 0.5-0.7.")
-                    .disabled(!model.config.ssbStereoEnabled)
-            }
+            DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                tooltip: "How far the stereo subcarrier leans toward single-sideband. 0 = classic double-sideband (no effect), 1 = full SSB (maximum headroom reclaim, maximum receiver sensitivity). Start around 0.5-0.7.")
+                .disabled(!model.config.ssbStereoEnabled)
         }
     }
 }

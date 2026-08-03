@@ -36,6 +36,9 @@ combination test suite. Newest first.
   (second pass moves RMS < 0.3 dB) and cost ratio (~1.0x the two stages
   it replaces). Inspired by the single-stage design popularised by
   Stereo Tool's "Advanced Dynamics"; implemented from first principles.
+  Default target level is -16 dB (field-tuned on air: -14 packed the
+  bands against the ceiling and read as audible compression; -16 keeps
+  the leveling transparent).
 - **Web dashboard: transport-level Bypass button.** The status strip gains
   the GUI's Bypass next to Start/Stop: flips `processing_bypass` and
   restarts the engine when running (mirroring the GUI's Cmd-B exactly --

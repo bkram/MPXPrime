@@ -285,7 +285,7 @@ struct AppConfig: Equatable {
     // (default off). Target-based configuration: set the sound you want,
     // not attack/release times. Band layout follows multiband_x1..x4_hz.
     var advancedDynamicsEnabled: Bool = false
-    var advancedDynamicsTargetDB: Double = -14.0
+    var advancedDynamicsTargetDB: Double = -16.0
     var advancedDynamicsLowOffsetDB: Double = 0.0
     var advancedDynamicsMidOffsetDB: Double = -3.0
     var advancedDynamicsHighOffsetDB: Double = -9.0

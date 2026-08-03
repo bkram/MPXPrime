@@ -3293,7 +3293,7 @@ struct AdvancedDynamicsLeveler {
     }
     private var bands = [BandState](repeating: BandState(), count: 5)
     /// Per-band level targets in dB (amplitude, 20*log10), band 1..5.
-    private var bandTargetsDB = [Float](repeating: -14.0, count: 5)
+    private var bandTargetsDB = [Float](repeating: -16.0, count: 5)
 
     // Detector coefficients (fixed; the adaptivity lives in the gain smoother).
     private var rmsAttackCoeff: Float = 0.0
@@ -3365,7 +3365,7 @@ struct AdvancedDynamicsLeveler {
 
     // Parameter mirrors so structure changes can re-derive coefficients.
     private var storedSampleRate: Float = 192_000.0
-    private var storedTargetDB: Float = -14.0
+    private var storedTargetDB: Float = -16.0
     private var storedLowOffsetDB: Float = 0.0
     private var storedMidOffsetDB: Float = -3.0
     private var storedHighOffsetDB: Float = -9.0
@@ -6808,7 +6808,7 @@ final class MPXGenerator {
     // (default off). Owns its own FIR splitter; structure is configured
     // lazily (only when enabled) so a disabled stage costs nothing.
     private var advancedDynamicsEnabled = false
-    private var advancedDynamicsTargetDB: Float = -14.0
+    private var advancedDynamicsTargetDB: Float = -16.0
     private var advancedDynamicsLowOffsetDB: Float = 0.0
     private var advancedDynamicsMidOffsetDB: Float = -3.0
     private var advancedDynamicsHighOffsetDB: Float = -9.0

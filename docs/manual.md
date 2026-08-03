@@ -321,7 +321,7 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 `advanced_dynamics_enabled` (default `False`) replaces the wideband AGC **and** the multiband compressor with one fused 5-band leveling stage. The point of the fusion is that slow leveling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with program-adaptive speed — near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
 
-- `advanced_dynamics_target_db` (default `-14.0`) — the level every band is brought toward.
+- `advanced_dynamics_target_db` (default `-16.0`) — the level every band is brought toward.
 - `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) — tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
 - `advanced_dynamics_max_gain_db` (default `18.0`) — maximum lift for quiet program (the reduction side is fixed at 24 dB, giving the wide total range that absorbs 20 dB jumps inside one song).
 - `advanced_dynamics_density` (`0..1`, default `0.5`) — denser = tighter hold window and faster leveling.

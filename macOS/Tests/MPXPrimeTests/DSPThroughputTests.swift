@@ -300,24 +300,33 @@ struct DSPThroughputTests {
 
     @Test func advancedDynamicsCostStaysBounded() {
         // Advanced Dynamics REPLACES the AGC + multiband compressor when
-        // enabled, so its net cost on the heavy config should be in the
-        // same ballpark as the two stages it substitutes (its own 4-LP FIR
-        // split vs the multiband FIR split + AGC). Bound it hard before a
-        // preset can enable it.
+        // enabled, so its net cost should be in the same ballpark as the
+        // two stages it substitutes. The fair baseline is the PRODUCTION
+        // TX path -- multiband with linear-phase FIR crossovers -- because
+        // the leveler always runs its own FIR split. Comparing against the
+        // IIR monitor path instead made this gate fail on Linux only
+        // (ratio 3.9x): the SIMD-shim FIR tax that vDSP hides on macOS
+        // dominated an unfair FIR-vs-IIR comparison.
         var disabled = makeHeavyConfig()
         disabled.advancedDynamicsEnabled = false
+        disabled.multibandFIREnabled = true
+        let disabledGen = MPXGenerator(config: disabled, sampleRate: Double(sampleRate))
+        disabledGen.setMultibandFIREnabled(true)
 
         var enabled = makeHeavyConfig()
         enabled.advancedDynamicsEnabled = true
+        enabled.multibandFIREnabled = true
+        let enabledGen = MPXGenerator(config: enabled, sampleRate: Double(sampleRate))
+        enabledGen.setMultibandFIREnabled(true)
 
-        let disabledWall = measureThroughput(config: disabled).wallSeconds
-        let enabledWall = measureThroughput(config: enabled).wallSeconds
+        let disabledWall = measureRender(generator: disabledGen)
+        let enabledWall = measureRender(generator: enabledGen)
         let ratio = enabledWall / max(1e-6, disabledWall)
-        print(String(format: "Advanced Dynamics cost ratio: %.2fx (enabled %.3f s, disabled %.3f s)",
+        print(String(format: "Advanced Dynamics cost ratio (vs FIR multiband): %.2fx (enabled %.3f s, disabled %.3f s)",
                      ratio, enabledWall, disabledWall))
 
         #expect(ratio < 2.0,
-            "Advanced Dynamics cost \(enabledWall) s vs AGC+multiband \(disabledWall) s = \(ratio)x; it replaces those stages, so >2x means the leveler needs optimization before preset use")
+            "Advanced Dynamics cost \(enabledWall) s vs AGC+FIR-multiband \(disabledWall) s = \(ratio)x; it replaces those stages, so >2x means the leveler needs optimization before preset use")
     }
 
     /// Helper to render 1 s of audio through `generator` and return wall

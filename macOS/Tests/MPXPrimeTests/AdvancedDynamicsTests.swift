@@ -247,6 +247,45 @@ struct AdvancedDynamicsTests {
         }
     }
 
+    @Test func enabledStageBypassesAGCAndMultibandCompletely() {
+        // With Advanced Dynamics ON, the AGC / multiband / expander /
+        // MB-limiter settings must have ZERO effect on the output -- the
+        // stages are bypassed, not blended. Render the same program with
+        // (a) those stages on at extreme settings and (b) fully off; the
+        // MPX must be bit-identical.
+        var loud = AppConfig()
+        loud.sampleRate = 192_000.0
+        loud.sourceMode = "input"
+        loud.advancedDynamicsEnabled = true
+        loud.widebandAGCEnabled = true
+        loud.widebandAGCTargetDB = -30.0        // extreme: would crush audio
+        loud.multibandEnabled = true
+        loud.multibandLowThresholdDB = -40.0    // extreme: would crush audio
+        loud.multibandMidThresholdDB = -40.0
+        loud.multibandHighThresholdDB = -40.0
+        loud.downwardExpanderEnabled = true
+        loud.multibandLimiterEnabled = true
+        loud.multibandLimiterThresholdDB = -20.0
+
+        var off = loud
+        off.widebandAGCEnabled = false
+        off.multibandEnabled = false
+        off.downwardExpanderEnabled = false
+        off.multibandLimiterEnabled = false
+
+        let genA = MPXGenerator(config: loud, sampleRate: 192_000.0)
+        let genB = MPXGenerator(config: off, sampleRate: 192_000.0)
+        for i in 0..<24_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.5 * sinf(2.0 * Float.pi * 900.0 * t)
+            let r = 0.45 * sinf(2.0 * Float.pi * 2_200.0 * t)
+            let a = genA.renderSingleSample(leftIn: l, rightIn: r)
+            let b = genB.renderSingleSample(leftIn: l, rightIn: r)
+            #expect(a == b)
+            if a != b { break }
+        }
+    }
+
     @Test func enabledChainRendersFiniteBoundedComposite() {
         var config = AppConfig()
         config.sampleRate = 192_000.0

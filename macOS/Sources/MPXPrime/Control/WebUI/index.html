@@ -254,11 +254,17 @@ const pageHiddenInMode = (id) => {
 };
 
 /* ---------------- sidebar ---------------- */
-function navItem(id, title, enableKey) {
+/* A stage whose schema entry carries `bypassedWhen: <key>` is out of the
+   chain while that key is truthy (Advanced Dynamics replacing AGC +
+   Multiband + the per-band Expander / MB Limiter). Everywhere the UI
+   shows enabled-state it shows the EFFECTIVE state. */
+function stageBypassed(s) { return !!(s && s.bypassedWhen && isTrue(cfg[s.bypassedWhen])); }
+function navItem(id, title, enableKey, bypassKey) {
   const el = document.createElement("div");
   el.className = "nav";
   el.dataset.page = id;
   if (enableKey) el.dataset.enable = enableKey;
+  if (bypassKey) el.dataset.bypasswhen = bypassKey;
   el.textContent = title;
   const dot = document.createElement("span");
   dot.className = "edot";
@@ -276,7 +282,7 @@ function renderSidebar() {
   nav.appendChild(navItem("overview", "Overview"));
   for (const s of MODEL.stages) {
     if (isProcessedAudio() && s.hiddenInProcessedAudio) continue;
-    nav.appendChild(navItem(s.id, s.title, s.enable));
+    nav.appendChild(navItem(s.id, s.title, s.enable, s.bypassedWhen));
   }
   if (!isProcessedAudio()) {
     add('<div class="shead">RDS</div>');
@@ -287,7 +293,10 @@ function renderSidebar() {
 }
 function refreshSidebarDots() {
   document.querySelectorAll("#sidebar .nav").forEach(n => {
-    if (n.dataset.enable) n.classList.toggle("on", isTrue(cfg[n.dataset.enable]));
+    if (n.dataset.enable) {
+      const bypassed = n.dataset.bypasswhen && isTrue(cfg[n.dataset.bypasswhen]);
+      n.classList.toggle("on", isTrue(cfg[n.dataset.enable]) && !bypassed);
+    }
   });
 }
 
@@ -413,7 +422,7 @@ function pillStrip(currentId) {
     p.textContent = label;
     if (id) {
       const st = MODEL.stages.find(s => s.id === id);
-      if (st && st.enable && !isTrue(cfg[st.enable])) p.classList.add("dim");
+      if (st && ((st.enable && !isTrue(cfg[st.enable])) || stageBypassed(st))) p.classList.add("dim");
       if (id === currentId) p.classList.add("cur");
       p.onclick = () => showPage(id);
     }
@@ -470,6 +479,16 @@ function showPage(id) {
 function renderStage(c, s) {
   pageHeader(c, s.title, s.sub);
   c.appendChild(pillStrip(s.id));
+  const bypassed = stageBypassed(s);
+  if (bypassed) {
+    const note = document.createElement("div");
+    note.className = "card cardpad";
+    note.style.cssText = "border-color:#8a6d1a;background:rgba(180,140,30,.10);margin-bottom:10px";
+    note.innerHTML = `<b>${s.title} is bypassed</b> - Advanced Dynamics is enabled and does this stage's work. ` +
+      '<a href="#" id="goAdvDyn">Open Advanced Dynamics</a>';
+    c.appendChild(note);
+    note.querySelector("#goAdvDyn").onclick = (e) => { e.preventDefault(); showPage("advanced_dynamics"); };
+  }
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.title + " Settings" }));
   const head = s.presetKind ? presetPicker(s.presetKind) : null;
   const el = card(s.keys);
@@ -479,10 +498,13 @@ function renderStage(c, s) {
     bar.appendChild(head);
     el.prepend(bar);
   }
+  if (bypassed) { el.style.opacity = "0.55"; el.style.pointerEvents = "none"; }
   c.appendChild(el);
   if (s.keys2 && s.keys2.keys.length) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.keys2.title }));
-    c.appendChild(card(s.keys2.keys));
+    const el2 = card(s.keys2.keys);
+    if (bypassed) { el2.style.opacity = "0.55"; el2.style.pointerEvents = "none"; }
+    c.appendChild(el2);
   }
   const stageKeys = [...(s.keys||[]), ...((s.keys2 && s.keys2.keys) || [])];
   if (stageKeys.length) c.appendChild(resetTabButton(stageKeys, s.title));
@@ -525,9 +547,11 @@ function renderOverview(c) {
     if (!s.enable) continue;
     const el = document.createElement("div");
     el.className = "ovcard";
-    const on = isTrue(cfg[s.enable]);
+    const bypassed = stageBypassed(s);
+    const on = isTrue(cfg[s.enable]) && !bypassed;
+    if (bypassed) el.style.opacity = "0.55";
     el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div>` +
-      `<div class="ovsum">${summaryText(s.summary) || ""}</div>`;
+      `<div class="ovsum">${bypassed ? "Bypassed - Advanced Dynamics is on" : (summaryText(s.summary) || "")}</div>`;
     const foot = document.createElement("div");
     foot.className = "ovfoot";
     const sw = document.createElement("label");
@@ -535,7 +559,8 @@ function renderOverview(c) {
     sw.dataset.key = s.enable;
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.checked = on;
+    input.checked = isTrue(cfg[s.enable]);
+    input.disabled = bypassed;
     input.onchange = (e) => { e.stopPropagation(); patchKey(s.enable, input.checked ? "True" : "False").then(() => showPage("overview")); };
     sw.appendChild(input);
     sw.insertAdjacentHTML("beforeend", '<span class="knob"></span>');
@@ -580,10 +605,12 @@ function renderMonitoring(c) {
   chain.className = "ovgrid";
   for (const s of MODEL.stages) {
     if (!s.summary) continue;
-    const on = !s.enable || isTrue(cfg[s.enable]);
+    const bypassed = stageBypassed(s);
+    const on = (!s.enable || isTrue(cfg[s.enable])) && !bypassed;
     const el = document.createElement("div");
     el.className = "ovcard";
-    el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div><div class="ovsum">${summaryText(s.summary)}</div>`;
+    if (bypassed) el.style.opacity = "0.55";
+    el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div><div class="ovsum">${bypassed ? "Bypassed - Advanced Dynamics is on" : summaryText(s.summary)}</div>`;
     el.onclick = () => showPage(s.id);
     chain.appendChild(el);
   }

@@ -305,6 +305,7 @@
     "title": "Phase Rotator"
    },
    {
+    "bypassedWhen": "advanced_dynamics_enabled",
     "enable": "wideband_agc_enabled",
     "help": "Wideband Automatic Gain Control with optional K-weighted (BS.1770-style) detector and program-dependent release. Long-term level riding that brings quiet and loud sources to a similar perceived level before the multiband stage.",
     "id": "agc",
@@ -358,6 +359,7 @@
     "title": "Parametric EQ"
    },
    {
+    "bypassedWhen": "advanced_dynamics_enabled",
     "enable": "multiband_enabled",
     "help": "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined.",
     "id": "multiband",
@@ -423,6 +425,7 @@
     "title": "Advanced Dynamics"
    },
    {
+    "bypassedWhen": "advanced_dynamics_enabled",
     "enable": "downward_expander_enabled",
     "help": "Per-band downward expander \u2014 pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
     "id": "expander",
@@ -443,6 +446,7 @@
     "title": "Expander"
    },
    {
+    "bypassedWhen": "advanced_dynamics_enabled",
     "enable": "multiband_limiter_enabled",
     "help": "Per-band fast peak limiter sitting after the multiband compressor. Catches band-internal peaks before recombination, preserves the multiband target while controlling overshoots.",
     "id": "mbLimiter",

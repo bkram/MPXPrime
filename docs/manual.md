@@ -315,6 +315,8 @@ Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply.
 
 In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced Dynamics", between Multiband and Expander, with a card on the Processing Overview grid); in the web dashboard it is the "Advanced Dynamics" card on the same page as Multiband.
 
+While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and MB Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
+
 ### Now Playing script output
 
 The RDS Radiotext section can poll an external script for now-playing metadata.

@@ -26,7 +26,11 @@ combination test suite. Newest first.
   lazily (a disabled stage costs nothing -- zero-drift preserved, strict
   baseline unchanged). All parameters live-apply; exposed in BOTH surfaces
   in sync: native GUI tab (Processing -> Adv Dyn, plus Overview card and
-  signal-flow chip) and web dashboard card.
+  signal-flow chip) and web dashboard card. While enabled, both UIs ghost
+  the replaced stages (AGC / Multiband / Expander / MB Limiter dim with a
+  "bypassed" banner; sidebar and overview dots show the EFFECTIVE state),
+  and a test pins the bypass as total (extreme AGC/MB settings render
+  bit-identical to those stages being off).
   New `--verify-advanced-dynamics` A/B gate: RMS/band/correlation/side/
   peak deltas vs the classic chain plus re-processing idempotency
   (second pass moves RMS < 0.3 dB) and cost ratio (~1.0x the two stages

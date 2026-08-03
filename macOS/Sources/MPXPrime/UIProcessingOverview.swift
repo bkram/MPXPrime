@@ -57,7 +57,8 @@ struct ProcessingOverviewGrid: View {
                     title: "Wideband AGC",
                     subtitle: agcSubtitle,
                     enabledPath: \.widebandAGCEnabled,
-                    liveReadout: { $0.agcStateText }
+                    liveReadout: { $0.agcStateText },
+                    bypassedByAdvancedDynamics: model.config.advancedDynamicsEnabled
                 )
                 stageCard(
                     .parametricEQ,
@@ -70,7 +71,8 @@ struct ProcessingOverviewGrid: View {
                     title: "Multiband",
                     subtitle: multibandSubtitle,
                     enabledPath: \.multibandEnabled,
-                    liveReadout: { $0.multibandStateText }
+                    liveReadout: { $0.multibandStateText },
+                    bypassedByAdvancedDynamics: model.config.advancedDynamicsEnabled
                 )
                 stageCard(
                     .advancedDynamics,
@@ -82,13 +84,15 @@ struct ProcessingOverviewGrid: View {
                     .expander,
                     title: "Downward Expander",
                     subtitle: expanderSubtitle,
-                    enabledPath: \.downwardExpanderEnabled
+                    enabledPath: \.downwardExpanderEnabled,
+                    bypassedByAdvancedDynamics: model.config.advancedDynamicsEnabled
                 )
                 stageCard(
                     .mbLimiter,
                     title: "Multiband Limiter",
                     subtitle: mbLimiterSubtitle,
-                    enabledPath: \.multibandLimiterEnabled
+                    enabledPath: \.multibandLimiterEnabled,
+                    bypassedByAdvancedDynamics: model.config.advancedDynamicsEnabled
                 )
                 stageCard(
                     .widener,
@@ -153,12 +157,18 @@ struct ProcessingOverviewGrid: View {
         subtitle: String,
         enabledPath: WritableKeyPath<AppConfig, Bool>,
         heroValue: String? = nil,
-        liveReadout: ((LiveTelemetry) -> String)? = nil
+        liveReadout: ((LiveTelemetry) -> String)? = nil,
+        bypassedByAdvancedDynamics: Bool = false
     ) -> some View {
         // Use configBinding so the toggle follows the same runtime-apply /
         // live-apply semantics as the detail tabs — no ad-hoc mutation.
         let binding = model.configBinding(enabledPath, runtimeDisposition: .live)
-        let enabled = model.config[keyPath: enabledPath]
+        // A stage bypassed by Advanced Dynamics renders as off (ghosted)
+        // even when its own flag is on — the card shows the EFFECTIVE state.
+        let enabled = model.config[keyPath: enabledPath] && !bypassedByAdvancedDynamics
+        let subtitle = bypassedByAdvancedDynamics
+            ? "Bypassed — Advanced Dynamics is on"
+            : subtitle
         VStack(alignment: .leading, spacing: 6) {
             // Whole title+hero+subtitle region is one Button so clicking
             // anywhere on the card (except the Enabled toggle) drills
@@ -232,10 +242,12 @@ struct ProcessingOverviewGrid: View {
                     .controlSize(.mini)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .disabled(bypassedByAdvancedDynamics)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(bypassedByAdvancedDynamics ? 0.55 : 1.0)
         .background(BroadcastStyle.meterSurface.opacity(0.70))
         .overlay(
             RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)

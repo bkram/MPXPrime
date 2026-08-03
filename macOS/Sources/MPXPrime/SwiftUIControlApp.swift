@@ -1613,12 +1613,20 @@ final class MPXPrimeViewModel: ObservableObject {
              .rdsSchedule, .rdsCarrier:
             return nil
         case .processingPhaseRotator: return config.phaseRotationEnabled
-        case .processingAGC: return config.widebandAGCEnabled
+        // AGC / Multiband (and the per-band Expander + MB Limiter that run
+        // inside the multiband stage) are bypassed while Advanced Dynamics
+        // is enabled -- the dot shows the EFFECTIVE state, not the stored
+        // flag, so a bypassed stage reads as off in the sidebar.
+        case .processingAGC:
+            return config.widebandAGCEnabled && !config.advancedDynamicsEnabled
         case .processingParametricEQ: return config.parametricEQEnabled
-        case .processingMultiband: return config.multibandEnabled
+        case .processingMultiband:
+            return config.multibandEnabled && !config.advancedDynamicsEnabled
         case .processingAdvancedDynamics: return config.advancedDynamicsEnabled
-        case .processingExpander: return config.downwardExpanderEnabled
-        case .processingMBLimiter: return config.multibandLimiterEnabled
+        case .processingExpander:
+            return config.downwardExpanderEnabled && !config.advancedDynamicsEnabled
+        case .processingMBLimiter:
+            return config.multibandLimiterEnabled && !config.advancedDynamicsEnabled
         case .processingWidener: return config.stereoWidenEnabled
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
@@ -6939,10 +6947,44 @@ private struct ProcessingCoreTab: View {
     }
 }
 
+/// Banner + ghosting for the stages Advanced Dynamics replaces (AGC,
+/// Multiband, and the per-band Expander / MB Limiter that run inside the
+/// multiband stage). Their tabs stay reachable so the operator can inspect
+/// the stored settings, but the controls are dimmed + disabled to make
+/// unmistakable that the stage is not in the chain right now.
+private struct BypassedByAdvancedDynamicsNotice: View {
+    @ObservedObject var model: MPXPrimeViewModel
+    let stageName: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "moon.zzz.fill")
+                .accessibilityHidden(true)
+            Text("\(stageName) is bypassed: Advanced Dynamics is enabled and does this stage's work.")
+            Spacer()
+            Button("Open Advanced Dynamics") {
+                model.selectedStage = .processingAdvancedDynamics
+            }
+            .buttonStyle(.bordered)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+    }
+}
+
 private struct ProcessingAGCTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Wideband AGC")
+        }
         Card(title: "Wideband AGC") {
             Toggle("Enable Wideband AGC", isOn: model.configBinding(\.widebandAGCEnabled, runtimeDisposition: .live))
             DoubleSliderRow(title: "Platform Target", value: model.configBinding(\.widebandAGCTargetDB, runtimeDisposition: .live), range: -36 ... -6, format: "%.1f dB",
@@ -6965,6 +7007,8 @@ private struct ProcessingAGCTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7008,6 +7052,10 @@ private struct ProcessingMultibandTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Multiband")
+        }
         Card(title: "Multiband Dynamics") {
             // Preset / intensity / enable / mode — common to all bands.
             Picker("Preset", selection: Binding(
@@ -7115,6 +7163,8 @@ private struct ProcessingMultibandTab: View {
                     tooltip: "High-Mid / High crossover frequency. Separates sibilance region from air / top-end.")
             }
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7330,6 +7380,10 @@ private struct ProcessingMultibandLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Multiband Limiter")
+        }
         Card(title: "Multiband Limiter") {
             Toggle("Enable Multiband Limiter", isOn: model.configBinding(\.multibandLimiterEnabled, runtimeDisposition: .live))
             DoubleSliderRow(
@@ -7357,6 +7411,8 @@ private struct ProcessingMultibandLimiterTab: View {
             )
             .disabled(!model.config.multibandLimiterEnabled)
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7364,6 +7420,10 @@ private struct ProcessingExpanderTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Downward Expander")
+        }
         Card(title: "Downward Expander") {
             Toggle("Enable Expander", isOn: model.configBinding(\.downwardExpanderEnabled, runtimeDisposition: .live))
             let disabled = !model.config.downwardExpanderEnabled
@@ -7376,6 +7436,8 @@ private struct ProcessingExpanderTab: View {
             DoubleSliderRow(title: "Release", value: model.configBinding(\.expanderReleaseMS, runtimeDisposition: .live), range: 10...2000, format: "%.0f ms",
                 tooltip: "Time to close the gate once program falls below the threshold. Longer release avoids chattering on sustained-but-quiet sources.").disabled(disabled)
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7423,7 +7485,7 @@ private struct ProcessingAdvancedDynamicsTab: View {
             let disabled = !model.config.advancedDynamicsEnabled
             // Usage tip (the shared help box below already explains WHAT the
             // stage is; this is the how-to-drive-it line).
-            Text("While enabled, AGC and Multiband are bypassed. Start with the defaults, then raise Density for a more competitive sound.")
+            Text("While enabled, AGC and Multiband are bypassed. Start with the defaults, then raise Density for a more competitive sound. Band layout follows the Multiband tab's crossovers (toggle this stage off briefly to edit them).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             DoubleSliderRow(title: "Target Level", value: model.configBinding(\.advancedDynamicsTargetDB, runtimeDisposition: .live), range: -30...(-6), format: "%.1f dB",

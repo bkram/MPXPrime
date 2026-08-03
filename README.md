@@ -15,7 +15,7 @@ The same DSP core drives both: a full broadcast-style processing chain — phase
 
 ## App structure
 
-The macOS GUI is organised into these sections. The Linux build has no GUI — the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing, RDS, Interfaces, Test Tone), so the two front ends feel the same.
+The macOS GUI is organised into these sections. The Linux build has no GUI — the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing incl. the Format Profile picker, RDS, Interfaces, Test Tone, Presets with the shared 8 operator preset slots), so the two front ends feel the same.
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
 - `Processing`: Overview, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), experimental single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, Stereo Widener, PrimeBass, Bass Clipper, DC Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control and experimental multiband composite clipping on top of the soft-clipper), BS.412, Final Stage
@@ -49,7 +49,7 @@ Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
 - Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
 - Decoded MPX monitor output on a selectable monitor device
 - **Processed-audio output mode** (Settings - Output Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
-- Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; mirrored by the web dashboard)
+- Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; the dashboard shows live meters/readouts and exposes the scope/spectrum data via `GET /api/telemetry` for external tooling — no in-browser graphs)
 - **Remote control** — an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build. Since 0.44 the dashboard has **full parity with the native GUI**: every setting, station formats + final-stage presets, the 8 operator preset slots (shared with the GUI), and a scope/spectrum telemetry endpoint for external tooling
 - **Linux command-line build** (experimental): the encoder runs headless with ALSA output, SIMD-accelerated so the full chain fits low-power hardware; shipped as Debian/Ubuntu packages with a systemd service. No GUI, no Meter.
 - Config persisted to the INI (`~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` on macOS; `~/.local/share/...` or `/var/lib/mpxprime/` on Linux)

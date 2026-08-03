@@ -388,6 +388,25 @@ func defaultVerifierBaselinePath() -> URL {
         .appendingPathComponent(verifierBaselineFileName())
 }
 
+/// Preset-sweep strict baseline (same `VerifierBaselineFile` schema, records
+/// keyed "<presetID>/<scenario>"). Platform-suffixed like `default.json`:
+/// `presets.json` on macOS, `presets-linux-<arch>.json` on Linux.
+func defaultPresetBaselinePath() -> URL {
+    defaultVerifierBaselinePath()
+        .deletingLastPathComponent()
+        .appendingPathComponent(
+            verifierBaselineFileName().replacingOccurrences(of: "default", with: "presets"))
+}
+
+/// Long-run strict baseline (`--verify-long` scenario set at its documented
+/// 30 s duration). Platform-suffixed like `default.json`.
+func defaultLongRunBaselinePath() -> URL {
+    defaultVerifierBaselinePath()
+        .deletingLastPathComponent()
+        .appendingPathComponent(
+            verifierBaselineFileName().replacingOccurrences(of: "default", with: "long"))
+}
+
 /// ISO-8601 timestamp for capture metadata. Truncated to whole seconds so
 /// round-trips don't introduce sub-second jitter in `git diff`.
 func verifierBaselineTimestampNow() -> String {

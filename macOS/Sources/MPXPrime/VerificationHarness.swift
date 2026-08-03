@@ -2284,7 +2284,9 @@ private func presetQualityOverride(
 
 private func runPresetSweepVerification(
     baseConfig: AppConfig,
-    durationSeconds: Double
+    durationSeconds: Double,
+    captureBaseline: Bool = false,
+    strictBaseline: Bool = false
 ) -> Int32 {
     let sweepDuration = min(durationSeconds, 1.0)
     let scenarios = verificationScenarios().filter {
@@ -2292,6 +2294,25 @@ private func runPresetSweepVerification(
     }
     let sweeps = keyMultibandPresetSweeps()
     var worstExit: Int32 = 0
+    // Per-(preset, scenario) records for the strict baseline, keyed
+    // "<presetID>/<scenario>" in the same VerifierBaselineFile schema.
+    var measured: [String: VerifierBaselineRecord] = [:]
+
+    let baselineURL = defaultPresetBaselinePath()
+    var loadedBaseline: VerifierBaselineFile?
+    if !captureBaseline {
+        if FileManager.default.fileExists(atPath: baselineURL.path) {
+            do {
+                let loaded = try loadVerifierBaseline(from: baselineURL)
+                loadedBaseline = loaded
+                print("Baseline: \(baselineURL.lastPathComponent) (captured \(loaded.capturedAt))")
+            } catch {
+                print("Baseline: failed to load (\(error))")
+            }
+        } else {
+            print("Baseline: none — run --verify-presets --capture-baseline to create.")
+        }
+    }
 
     print("Preset Sweep")
     print("Count: \(sweeps.count)")
@@ -2315,6 +2336,10 @@ private func runPresetSweepVerification(
                 scenario: scenario
             )
             let expectationsOverride = presetQualityOverride(for: sweep, scenario: scenario)
+            measured["\(sweep.id)/\(scenario.name)"] = buildBaselineRecord(
+                metrics: metrics,
+                targetDeviationKHz: config.mpxDeviationKHz
+            )
             presetWorstPeak = max(presetWorstPeak, metrics.peakAbs)
             presetWorstMargin = min(presetWorstMargin, metrics.minBudgetMarginDB)
             presetWorstOvershoot = max(presetWorstOvershoot, metrics.maxPostInjectionOvershoot)
@@ -2332,7 +2357,12 @@ private func runPresetSweepVerification(
 
         let resultText: String
         let exitCode: Int32
-        if presetOverBudget || presetWorstOvershoot > 1e-4 || presetWorstMargin < -0.25 {
+        // Post-injection overshoot is a hard FAIL (exit 3) for presets:
+        // a shipped preset must never violate the subcarrier budget.
+        if presetWorstOvershoot > 1e-4 {
+            resultText = "FAIL"
+            exitCode = 3
+        } else if presetOverBudget || presetWorstMargin < -0.25 {
             resultText = "WARN"
             exitCode = 2
         } else if !presetWarnings.isEmpty || presetWorstMargin < 0.0 {
@@ -2359,6 +2389,32 @@ private func runPresetSweepVerification(
     }
 
     print("")
+    if captureBaseline {
+        let file = VerifierBaselineFile(
+            schemaVersion: VerifierBaselineFile.currentSchemaVersion,
+            capturedAt: verifierBaselineTimestampNow(),
+            configPath: "presets",
+            renderSampleRateHz: Int(baseConfig.sampleRate),
+            blockSize: baseConfig.blockSize,
+            durationSeconds: sweepDuration,
+            scenarios: measured,
+            encoderSidebands: nil
+        )
+        do {
+            try saveVerifierBaseline(file, to: baselineURL)
+            print("Baseline captured: \(baselineURL.path)")
+            print("  \(measured.count) preset/scenario records written.")
+        } catch {
+            print("Baseline capture FAILED: \(error)")
+        }
+    } else if let baseline = loadedBaseline {
+        let drift = compareBaseline(measured: measured, baseline: baseline)
+        if !drift.isEmpty {
+            print("Baseline drift:")
+            for finding in drift { print("- \(finding.formattedLine)") }
+            worstExit = max(worstExit, strictBaseline ? 2 : 1)
+        }
+    }
     return worstExit
 }
 
@@ -3566,7 +3622,9 @@ func runVerificationHarness(
         print("")
         return runPresetSweepVerification(
             baseConfig: config,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            captureBaseline: captureBaseline,
+            strictBaseline: strictBaseline
         )
     }
     let scenarios = longRun ? longRunVerificationScenarios() : verificationScenarios()
@@ -3590,9 +3648,11 @@ func runVerificationHarness(
         print("Scope: focused program-material compliance/regression scenarios")
     }
 
-    let baselineURL = defaultVerifierBaselinePath()
+    // Long-run pins its own baseline file (different scenario set + 30 s
+    // duration); the default sweep keeps default.json. Both platform-suffixed.
+    let baselineURL = longRun ? defaultLongRunBaselinePath() : defaultVerifierBaselinePath()
     var loadedBaseline: VerifierBaselineFile?
-    if !longRun && !captureBaseline {
+    if !captureBaseline {
         if FileManager.default.fileExists(atPath: baselineURL.path) {
             do {
                 let loaded = try loadVerifierBaseline(from: baselineURL)
@@ -3708,7 +3768,7 @@ func runVerificationHarness(
     }
 
     var baselineDrift: [BaselineDriftFinding] = []
-    if !longRun {
+    do {
         let measured: [String: VerifierBaselineRecord] = Dictionary(
             uniqueKeysWithValues: scenarioMetrics.map { scenario, metrics in
                 (scenario.name, buildBaselineRecord(
@@ -3720,7 +3780,10 @@ func runVerificationHarness(
         // Encoder-side sideband fingerprint: computed only when capturing
         // or when there is a stored fingerprint to compare against, so a
         // plain `--verify` with no baseline doesn't pay the extra renders.
-        let needSidebands = captureBaseline || (loadedBaseline?.encoderSidebands != nil)
+        // Long-run skips it: the fingerprint is a default-sweep concept and
+        // long.json pins scenario metrics only.
+        let needSidebands = !longRun
+            && (captureBaseline || (loadedBaseline?.encoderSidebands != nil))
         let sidebandDuration = max(0.75, min(durationSeconds, 1.0))
         let measuredSidebands: EncoderSidebandBaselineRecord? = needSidebands
             ? buildEncoderSidebandBaseline(config: config, durationSeconds: sidebandDuration)
@@ -3780,25 +3843,34 @@ func runVerificationHarness(
         }
     }
 
+    // Post-injection overshoot is checked FIRST and is a HARD failure
+    // (exit 3): the subcarrier budget being violated after injection means
+    // the composite is out of spec regardless of any softer finding. It
+    // used to sit behind the quality/signature branches, where a
+    // coinciding TIGHT finding masked it down to exit 1.
     let naturalResult: Int32
     if !qualityWarnings.isEmpty {
         print("Quality warnings:")
         for warning in qualityWarnings { print("- \(warning)") }
-        naturalResult = 1
-    } else if !signatureWarnings.isEmpty {
+    }
+    if !signatureWarnings.isEmpty {
         print("Signature drift warnings:")
         for warning in signatureWarnings { print("- \(warning)") }
-        naturalResult = 1
-    } else if anyOverBudget || worstPostInjectionOvershoot > 1e-4 { naturalResult = 2
+    }
+    if worstPostInjectionOvershoot > 1e-4 { naturalResult = 3
+    } else if !qualityWarnings.isEmpty || !signatureWarnings.isEmpty { naturalResult = 1
+    } else if anyOverBudget { naturalResult = 2
     } else if worstSafety > 1.0 { naturalResult = 2
     } else if worstMargin < -0.25 { naturalResult = 2
     } else if worstMargin < 0.0 || worstSafety > 0.25 { naturalResult = 1
     } else { naturalResult = 0 }
 
     let result: Int32
-    if baselineDrift.isEmpty { result = naturalResult } else if strictBaseline { result = 2 } else { result = max(naturalResult, 1) }
+    if baselineDrift.isEmpty { result = naturalResult } else if strictBaseline { result = max(naturalResult, 2) } else { result = max(naturalResult, 1) }
 
     switch result {
+    case 3:
+        print("Result: FAIL - post-injection composite overshoot (subcarrier budget violated after pilot/RDS injection).")
     case 2:
         if strictBaseline && !baselineDrift.isEmpty {
             print("Result: WARN - stored-baseline drift in --baseline-strict mode.")

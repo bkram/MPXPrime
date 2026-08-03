@@ -17,8 +17,8 @@ Major work landed since the roadmap was last pruned: MPX Prime Meter (0.37, rece
 1. **Anti-aliased clipping kernel (US 6,937,912).** Phase A/B landed opt-in (`pre_encode_bandlimited_residual_enabled`). Remaining: A/B real program with it on, decide whether any loud preset enables it; optional Phase C applies the primitive to `softClipSafety` in `processFinalComposite` only if B proves benefit (keep pilot/RDS injection post-processing + budget-governor invariant); refresh baselines on real program.
 2. **Tune/validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped; dense real-program A/B at 0.5 / 1 / 2 ms, verify pilot/RDS guard cleanliness, decide loud-preset default. Capture via `MPXPRIME_AUDIT_CAPTURE=1` → `macOS/.audit-out/lookahead/`.
 3. **Smoke-test pass.** Live-apply vs restart-required on difficult real material; catch transients/clicks/dropouts on toggle. New RDS live-apply paths (PI/PTY/flags/AF/scheduler) need real-receiver checks beyond the bit-stream tests.
-4. **Extend baselines to `--verify-presets` and `--verify-long`.** Same `VerifierBaselineFile` schema, different scenario sets.
-5. **Receiver-model verifier hardening.** v.036 added the pilot/RDS phase-lock gate + guard-band-depth measurement to `--verify-receiver` and the encoder-sideband baseline. Remaining: promote unexpected `postInjectionOvershoot > 0` from TIGHT/WARN to a hard failure for normal presets; add stored receiver-side baselines (separation @ 1/10/14 kHz — now ~98/86/97 dB, pilot error, RDS-band RMS, correlation, mono/no-pilot, sideband balance) so the decoder gains are pinned against regression.
+4. **Extend baselines to `--verify-presets` and `--verify-long`. DONE (develop/v.045).** Platform-suffixed `presets.json` / `long.json`, same schema; capture via `--capture-baseline` combined with the mode flag.
+5. **Receiver-model verifier hardening. DONE (develop/v.045).** `postInjectionOvershoot > 1e-4` is now a hard failure (exit 3) in the main and preset sweeps, checked before the softer branches that used to mask it; receiver-side baselines (`receiver.json`) already existed since 0.36-0.43.
 6. **HF stereo separation — `MPXDecoder` audit. DONE (develop/v.037).** Root cause was the pre-demod pilot/RDS notches clipping the S-channel sidebands; removed them — separation 65/51.6/44.2 → 98.3/86.1/97.2 dB at 1/10/14 kHz, composite untouched. See "Settled findings".
 
 ## Opt-in advanced stages — validate + decide default
@@ -56,7 +56,7 @@ Analysis of a third-party processor's press release (loudness/cleanliness claims
 ## Verifier coverage follow-ups
 
 1. **Tighten bandwidth baseline tolerance** (±1.0 → ±0.5 dB) with a multi-frame averaged FFT to cut spectral leakage in the `>60k/>67k` ratios.
-2. **AppConfig-vs-sample-INI default lint** — flag drift between code defaults and shipped sample INIs (Verification.ini intentionally differs; whitelist it).
+2. **AppConfig-vs-sample-INI default lint. DONE (develop/v.045).** `SampleINIDefaultDriftTests` with a reviewed whitelist; first run caught the pre-0.37 product name in the sample's RT texts + a stale `fft_window_92khz`.
 3. **BS.412 full-chain long-run scenario** — component limiter is unit-tested (`BS412PowerLimiterTests`); a `--verify-long`-style full-chain check over 30+ s is still uncovered (deferred for render cost).
 
 ## Tactical backlog

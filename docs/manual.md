@@ -806,6 +806,7 @@ Exit status:
 - `0` means no obvious composite-budget or safety-limiter issue was found
 - `1` means the configuration is close to the limit and should be reviewed
 - `2` means at least one verification warning was triggered
+- `3` means the composite violated the subcarrier budget after pilot/RDS injection (hard failure -- never acceptable, checked before every softer finding)
 
 ### Reference-receiver validation (Profline SFP-X)
 

@@ -11,6 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Verifier hardening (the parked 0.44-plan items):** (1) strict
+  baselines extended to the preset sweep and the long-run sweep --
+  platform-suffixed `presets.json` (records keyed `<presetID>/<scenario>`,
+  21 records) and `long.json`, same schema as `default.json`; capture with
+  `--verify-presets|--verify-long --capture-baseline`, compared on every
+  run (drift = TIGHT, WARN under `--baseline-strict`). (2) Post-injection
+  composite overshoot is now a HARD FAILURE, exit code 3, in both the
+  main sweep and the preset sweep -- and it is checked before the
+  quality/signature branches, which previously masked a coinciding
+  overshoot down to exit 1. (3) `SampleINIDefaultDriftTests` lints the
+  shipped `MPXPrime.ini` against code defaults with a reviewed whitelist;
+  it immediately caught real drift -- the sample's RT texts still carried
+  the pre-0.37 product name and `fft_window_92khz` contradicted the
+  current default (both fixed).
+
 - **SSB Stereo: experimental SSB-leaning stereo encoder**
   (`mpx_ssb_stereo_enabled`, default off; `mpx_ssb_stereo_amount`
   0..1, default 0.7). Leans the 38 kHz L-R subcarrier toward

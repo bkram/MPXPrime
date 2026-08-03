@@ -14,6 +14,18 @@ Major work landed since the roadmap was last pruned: MPX Prime Meter (0.37, rece
 
 ## Next up
 
+0. **Rework the shipped Format Profiles + PrimeBass presets (field finding 2026-08-03).**
+   The demo profiles drive too hot for real masters: with modest chains the
+   always-on soft-clips do the peak control (audible distortion on loud/bright
+   material), and PrimeBass preset levels are tuned against the old
+   AGC+multiband assumptions. Rework each profile against the current chain
+   (Audio Limiter on by default in loud profiles, drive set so the composite
+   clipper -- not the safety soft-clips -- does the loudness work), and re-tune
+   PrimeBass presets at the new gain structure. Process: per profile, verifier
+   A/B (--verify-presets baseline + budget margins) THEN owner listening pass
+   on real program. Candidate default: Community Radio profile gains the
+   pre-encode limiter enabled.
+
 1. **Anti-aliased clipping kernel (US 6,937,912).** Phase A/B landed opt-in (`pre_encode_bandlimited_residual_enabled`). Remaining: A/B real program with it on, decide whether any loud preset enables it; optional Phase C applies the primitive to `softClipSafety` in `processFinalComposite` only if B proves benefit (keep pilot/RDS injection post-processing + budget-governor invariant); refresh baselines on real program.
 2. **Tune/validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped; dense real-program A/B at 0.5 / 1 / 2 ms, verify pilot/RDS guard cleanliness, decide loud-preset default. Capture via `MPXPRIME_AUDIT_CAPTURE=1` → `macOS/.audit-out/lookahead/`.
 3. **Smoke-test pass.** Live-apply vs restart-required on difficult real material; catch transients/clicks/dropouts on toggle. New RDS live-apply paths (PI/PTY/flags/AF/scheduler) need real-receiver checks beyond the bit-stream tests.

@@ -42,8 +42,10 @@ combination test suite. Newest first.
   reports no measurable composite-headroom reclaim on the synthetic
   program scenarios yet (the gate says TIGHT by design) -- the loudness
   benefit needs dense real-program A/B, and the follow-up direction is
-  moving the sideband choice inside the composite clipper loop. Exposed
-  in BOTH UIs (Composite Clipper -> Experimental).
+  moving the sideband choice inside the composite clipper loop. Exposed in BOTH UIs on a NEW 'Stereo Coder' tab/page at the stereo
+  encoder's actual chain position (it is an encoder mode, independent of
+  the Composite Clipper's enable) -- the previously invisible stereo
+  encoding stage now has a home in the UI.
 
 ## 0.44 — 2026-08-03
 

@@ -38,6 +38,7 @@ struct SignalFlowStrip: View {
         .processingBassClipper,
         .processingDCClipper,
         .processingLimiter,
+        .processingStereoCoder,
         .processingCompositeClipper,
         .processingBS412,
         .processingFinalStage
@@ -57,6 +58,7 @@ struct SignalFlowStrip: View {
         .processingBassClipper: "BassClip",
         .processingDCClipper: "DC-Clip",
         .processingLimiter: "Lim",
+        .processingStereoCoder: "Coder",
         .processingCompositeClipper: "MPX-Clip",
         .processingBS412: "BS.412",
         .processingFinalStage: "Final"

@@ -187,6 +187,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case dcClipper = "Audio Clip"
     case hfClipper = "HF Clip"
     case limiter = "Audio Limiter"
+    case stereoCoder = "Stereo Coder"
     case compositeClipper = "Comp Clip"
     case bs412 = "BS.412"
     case finalStage = "Final Stage"
@@ -213,6 +214,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .dcClipper: return .processingDCClipper
         case .hfClipper: return .processingHFClipper
         case .limiter: return .processingLimiter
+        case .stereoCoder: return .processingStereoCoder
         case .compositeClipper: return .processingCompositeClipper
         case .bs412: return .processingBS412
         case .finalStage: return .processingFinalStage
@@ -259,6 +261,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
         case .bs412:
             return "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries."
+        case .stereoCoder:
+            return "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. Hosts the experimental SSB Stereo option, which leans the subcarrier toward single-sideband to reclaim composite headroom ahead of the clipper."
         case .compositeClipper:
             return "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever."
         case .finalStage:
@@ -304,6 +308,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset Audio Limiter Tab"
         case .bs412:
             return "Reset BS.412 Tab"
+        case .stereoCoder:
+            return "Reset Stereo Coder Tab"
         case .compositeClipper:
             return "Reset Composite Clipper Tab"
         case .finalStage:
@@ -347,6 +353,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset audio limiter tab to defaults"
         case .bs412:
             return "Reset BS.412 tab to defaults"
+        case .stereoCoder:
+            return "Reset stereo coder tab to defaults"
         case .compositeClipper:
             return "Reset composite clipper tab to defaults"
         case .finalStage:
@@ -441,6 +449,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingDCClipper
     case processingHFClipper
     case processingLimiter
+    case processingStereoCoder
     case processingCompositeClipper
     case processingBS412
     case processingFinalStage
@@ -490,7 +499,8 @@ enum Stage: String, CaseIterable, Identifiable {
     /// stays (input gain, mono, pre-emphasis, output level all still apply).
     var hiddenInProcessedAudio: Bool {
         switch self {
-        case .processingCompositeClipper, .processingBS412, .processingFinalStage:
+        case .processingStereoCoder, .processingCompositeClipper, .processingBS412,
+             .processingFinalStage:
             return true
         default:
             return group == .rds
@@ -518,6 +528,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingHFClipper: return "HF Clipper"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
+        case .processingStereoCoder: return "Stereo Coder"
         case .processingCompositeClipper: return "Composite Clipper"
         case .processingFinalStage: return "Final Stage"
         case .rdsControl: return "Status"
@@ -553,6 +564,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingHFClipper: return "speaker.wave.3"
         case .processingLimiter: return "rectangle.compress.vertical"
         case .processingBS412: return "doc.badge.gearshape"
+        case .processingStereoCoder: return "dot.radiowaves.left.and.right"
         case .processingCompositeClipper: return "rectangle.stack"
         case .processingFinalStage: return "flag.checkered"
         case .rdsControl: return "switch.2"
@@ -591,6 +603,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
+        case .processingStereoCoder: return "Pilot-locked stereo encoder (SSB option)"
         case .processingCompositeClipper: return "16x oversampled composite clipper"
         case .processingFinalStage: return "Final drive, MPX safety, budget, deviation"
         case .rdsControl: return "Master enable + live snapshot of what's on air"
@@ -643,6 +656,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingHFClipper: return .hfClipper
         case .processingLimiter: return .limiter
         case .processingBS412: return .bs412
+        case .processingStereoCoder: return .stereoCoder
         case .processingCompositeClipper: return .compositeClipper
         case .processingFinalStage: return .finalStage
         default: return nil
@@ -1633,6 +1647,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .processingDCClipper: return config.dcClipperEnabled
         case .processingHFClipper: return config.hfClipperEnabled
         case .processingLimiter: return config.preEncodeAudioLimiterEnabled
+        case .processingStereoCoder: return config.ssbStereoEnabled
         case .processingCompositeClipper: return config.compositeClipperEnabled
         case .processingBS412: return config.bs412Enabled
         case .rdsControl: return config.enRDS
@@ -2649,6 +2664,9 @@ final class MPXPrimeViewModel: ObservableObject {
             config.finalStagePresetID = defaults.finalStagePresetID
             config.finalDriveDB = defaults.finalDriveDB
             config.mpxDeviationKHz = defaults.mpxDeviationKHz
+        case .stereoCoder:
+            config.ssbStereoEnabled = defaults.ssbStereoEnabled
+            config.ssbStereoAmount = defaults.ssbStereoAmount
         case .phaseRotator:
             config.phaseRotationEnabled = defaults.phaseRotationEnabled
             config.phaseRotationFreqHz = defaults.phaseRotationFreqHz
@@ -2698,8 +2716,6 @@ final class MPXPrimeViewModel: ObservableObject {
             config.compositeClipperThresholdDB = defaults.compositeClipperThresholdDB
             config.compositeClipperCeilingDB = defaults.compositeClipperCeilingDB
             config.compositeMultibandClipperEnabled = defaults.compositeMultibandClipperEnabled
-            config.ssbStereoEnabled = defaults.ssbStereoEnabled
-            config.ssbStereoAmount = defaults.ssbStereoAmount
         }
 
         let runtimeDisposition: RuntimeChangeDisposition
@@ -2711,7 +2727,7 @@ final class MPXPrimeViewModel: ObservableObject {
              .multiband, .advancedDynamics, .mbLimiter, .expander,
              .widener, .primeBass,
              .bassClipper, .dcClipper, .hfClipper, .limiter,
-             .compositeClipper, .bs412,
+             .stereoCoder, .compositeClipper, .bs412,
              .finalStage:
             runtimeDisposition = .live
         }
@@ -4859,6 +4875,8 @@ private struct StageProcessingContent: View {
                         ProcessingLimiterTab(model: model)
                     case .bs412:
                         ProcessingBS412Tab(model: model)
+                    case .stereoCoder:
+                        ProcessingStereoCoderTab(model: model)
                     case .compositeClipper:
                         ProcessingCompositeClipperTab(model: model)
                     case .finalStage:
@@ -7538,6 +7556,25 @@ private struct ProcessingBS412Tab: View {
     }
 }
 
+private struct ProcessingStereoCoderTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Stereo Encoder") {
+            Text("Always active in composite output: L+R plus L-R on the pilot-locked 38 kHz subcarrier; pilot and RDS are injected after all peak control. The option below changes HOW the subcarrier is assembled.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            DisclosureGroup("Experimental") {
+                Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
+                    .help("Experimental, off by default. Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom before the clipper works. Independent of the Composite Clipper's enable. Trades a little stereo separation on phase-imperfect receivers; verify with --verify-ssb-stereo and a real radio before regular use.")
+                DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                    tooltip: "How far the stereo subcarrier leans toward single-sideband. 0 = classic double-sideband (no effect), 1 = full SSB (maximum headroom reclaim, maximum receiver sensitivity). Start around 0.5-0.7.")
+                    .disabled(!model.config.ssbStereoEnabled)
+            }
+        }
+    }
+}
+
 private struct ProcessingCompositeClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
@@ -7580,11 +7617,6 @@ private struct ProcessingCompositeClipperTab: View {
             DisclosureGroup("Experimental") {
                 Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
                     .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
-                Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
-                    .help("Experimental, off by default. Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom (up to ~1 dB) before the clipper works. Trades a little stereo separation on phase-imperfect receivers; verify with --verify-ssb-stereo and a real radio before regular use.")
-                DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                    tooltip: "How far the stereo subcarrier leans toward single-sideband. 0 = classic double-sideband (no effect), 1 = full SSB (maximum headroom reclaim, maximum receiver sensitivity). Start around 0.5-0.7.")
-                    .disabled(!model.config.ssbStereoEnabled)
             }
         }
     }

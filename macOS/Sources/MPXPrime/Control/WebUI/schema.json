@@ -606,6 +606,19 @@
     "title": "Audio Limiter"
    },
    {
+    "enable": "mpx_ssb_stereo_enabled",
+    "help": "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. The experimental SSB Stereo option leans the 38 kHz subcarrier toward single-sideband, keeping whichever sideband currently peaks lower to reclaim composite headroom ahead of the clipper. Independent of the Composite Clipper's enable; verify with --verify-ssb-stereo and a real receiver before regular use.",
+    "hiddenInProcessedAudio": true,
+    "id": "stereoCoder",
+    "keys": [
+     "mpx_ssb_stereo_enabled",
+     "mpx_ssb_stereo_amount"
+    ],
+    "pill": "Coder",
+    "sub": "pilot-locked stereo encoder",
+    "title": "Stereo Coder"
+   },
+   {
     "enable": "mpx_clipper_enabled",
     "help": "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever.",
     "hiddenInProcessedAudio": true,
@@ -619,9 +632,7 @@
      "mpx_clipper_cancel_rds",
      "mpx_clipper_cancel_stereo",
      "mpx_clipper_cancel_audio",
-     "mpx_multiband_clipper_enabled",
-     "mpx_ssb_stereo_enabled",
-     "mpx_ssb_stereo_amount"
+     "mpx_multiband_clipper_enabled"
     ],
     "keys2": {
      "keys": [
@@ -1275,10 +1286,6 @@
    "kind": "toggle",
    "label": "Multiband Composite Clipping"
   },
-  "mpx_ssb_stereo_enabled": {
-   "kind": "toggle",
-   "label": "SSB Stereo Encoder"
-  },
   "mpx_ssb_stereo_amount": {
    "decimals": 2,
    "kind": "slider",
@@ -1287,6 +1294,10 @@
    "min": 0.0,
    "step": 0.05,
    "unit": ""
+  },
+  "mpx_ssb_stereo_enabled": {
+   "kind": "toggle",
+   "label": "SSB Stereo Encoder"
   },
   "ms": {
    "kind": "toggle",

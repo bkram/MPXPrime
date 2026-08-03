@@ -178,6 +178,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case agc = "AGC"
     case parametricEQ = "PEQ"
     case multiband = "Multiband"
+    case advancedDynamics = "Adv Dyn"
     case expander = "Expander"
     case mbLimiter = "MB Limiter"
     case widener = "Widener"
@@ -203,6 +204,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .agc: return .processingAGC
         case .parametricEQ: return .processingParametricEQ
         case .multiband: return .processingMultiband
+        case .advancedDynamics: return .processingAdvancedDynamics
         case .expander: return .processingExpander
         case .mbLimiter: return .processingMBLimiter
         case .widener: return .processingWidener
@@ -237,6 +239,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "4-band parametric EQ (low shelf + 2 peaks + high shelf) applied in L/R domain before the multiband stage. Pre-multiband tonal shaping."
         case .multiband:
             return "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined."
+        case .advancedDynamics:
+            return "Experimental single-stage leveler that replaces the AGC and Multiband stages with one fused 5-band stage, so leveling and density shaping can never fight. Set the sound you want (target, balance, density) - the stage adapts its own speed to the programme."
         case .expander:
             return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
         case .mbLimiter:
@@ -282,6 +286,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset PrimeBass Tab"
         case .multiband:
             return "Reset Multiband Tab"
+        case .advancedDynamics:
+            return "Reset Advanced Dynamics Tab"
         case .mbLimiter:
             return "Reset MB Limiter Tab"
         case .expander:
@@ -323,6 +329,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset PrimeBass tab to defaults"
         case .multiband:
             return "Reset Multiband tab to defaults"
+        case .advancedDynamics:
+            return "Reset Advanced Dynamics tab to defaults"
         case .mbLimiter:
             return "Reset multiband limiter tab to defaults"
         case .expander:
@@ -424,6 +432,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingAGC
     case processingParametricEQ
     case processingMultiband
+    case processingAdvancedDynamics
     case processingExpander
     case processingMBLimiter
     case processingWidener
@@ -501,6 +510,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return "PrimeBass"
         case .processingWidener: return "Stereo Widener"
         case .processingMultiband: return "Multiband"
+        case .processingAdvancedDynamics: return "Advanced Dynamics"
         case .processingMBLimiter: return "MB Limiter"
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
@@ -535,6 +545,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return "waveform.path"
         case .processingWidener: return "rectangle.expand.vertical"
         case .processingMultiband: return "chart.bar.xaxis"
+        case .processingAdvancedDynamics: return "wand.and.stars"
         case .processingMBLimiter: return "chart.bar.fill"
         case .processingExpander: return "arrow.up.right.and.arrow.down.left"
         case .processingBassClipper: return "speaker.wave.1"
@@ -572,6 +583,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return "Post-multiband bass and harmonic enhancement"
         case .processingWidener: return "Post-multiband stereo widening plus mono bass control"
         case .processingMultiband: return "3 / 5-band multiband compressor"
+        case .processingAdvancedDynamics: return "Single-stage leveler (replaces AGC + Multiband)"
         case .processingMBLimiter: return "Per-band fast peak limiter"
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
@@ -623,6 +635,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return .primeBass
         case .processingWidener: return .widener
         case .processingMultiband: return .multiband
+        case .processingAdvancedDynamics: return .advancedDynamics
         case .processingMBLimiter: return .mbLimiter
         case .processingExpander: return .expander
         case .processingBassClipper: return .bassClipper
@@ -1603,6 +1616,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .processingAGC: return config.widebandAGCEnabled
         case .processingParametricEQ: return config.parametricEQEnabled
         case .processingMultiband: return config.multibandEnabled
+        case .processingAdvancedDynamics: return config.advancedDynamicsEnabled
         case .processingExpander: return config.downwardExpanderEnabled
         case .processingMBLimiter: return config.multibandLimiterEnabled
         case .processingWidener: return config.stereoWidenEnabled
@@ -2600,6 +2614,15 @@ final class MPXPrimeViewModel: ObservableObject {
             config.multibandLinkStrength = defaults.multibandLinkStrength
             config.multibandReleaseProgramDependent = defaults.multibandReleaseProgramDependent
             config.multibandMakeupDB = defaults.multibandMakeupDB
+        case .advancedDynamics:
+            config.advancedDynamicsEnabled = defaults.advancedDynamicsEnabled
+            config.advancedDynamicsTargetDB = defaults.advancedDynamicsTargetDB
+            config.advancedDynamicsLowOffsetDB = defaults.advancedDynamicsLowOffsetDB
+            config.advancedDynamicsMidOffsetDB = defaults.advancedDynamicsMidOffsetDB
+            config.advancedDynamicsHighOffsetDB = defaults.advancedDynamicsHighOffsetDB
+            config.advancedDynamicsMaxGainDB = defaults.advancedDynamicsMaxGainDB
+            config.advancedDynamicsDensity = defaults.advancedDynamicsDensity
+            config.advancedDynamicsSpeed = defaults.advancedDynamicsSpeed
         case .widener:
             config.stereoWidenEnabled = defaults.stereoWidenEnabled
             config.monoBassEnabled = defaults.monoBassEnabled
@@ -2675,7 +2698,7 @@ final class MPXPrimeViewModel: ObservableObject {
             runtimeDisposition = .restart
         case .overview, .formatProfile,
              .phaseRotator, .agc, .parametricEQ,
-             .multiband, .mbLimiter, .expander,
+             .multiband, .advancedDynamics, .mbLimiter, .expander,
              .widener, .primeBass,
              .bassClipper, .dcClipper, .hfClipper, .limiter,
              .compositeClipper, .bs412,
@@ -4808,6 +4831,8 @@ private struct StageProcessingContent: View {
                         ProcessingPrimeBassTab(model: model)
                     case .multiband:
                         ProcessingMultibandTab(model: model)
+                    case .advancedDynamics:
+                        ProcessingAdvancedDynamicsTab(model: model)
                     case .mbLimiter:
                         ProcessingMultibandLimiterTab(model: model)
                     case .expander:
@@ -7384,6 +7409,37 @@ private struct ProcessingHFClipperTab: View {
                 tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
                 tooltip: "Pre-clipping gain on the high band. Higher drive increases HF density but also clipping distortion.").disabled(disabled)
+        }
+    }
+}
+
+private struct ProcessingAdvancedDynamicsTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Advanced Dynamics") {
+            Toggle("Enable Advanced Dynamics", isOn: model.configBinding(\.advancedDynamicsEnabled, runtimeDisposition: .live))
+                .help("Experimental single-stage 5-band leveler. While enabled, the AGC and Multiband stages are bypassed and this stage does all the leveling and density work in one place.")
+            let disabled = !model.config.advancedDynamicsEnabled
+            // Usage tip (the shared help box below already explains WHAT the
+            // stage is; this is the how-to-drive-it line).
+            Text("While enabled, AGC and Multiband are bypassed. Start with the defaults, then raise Density for a more competitive sound.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            DoubleSliderRow(title: "Target Level", value: model.configBinding(\.advancedDynamicsTargetDB, runtimeDisposition: .live), range: -30...(-6), format: "%.1f dB",
+                tooltip: "The level every band is brought toward. Lower = more headroom and gentler sound; higher = denser and louder into the clippers.").disabled(disabled)
+            DoubleSliderRow(title: "Density", value: model.configBinding(\.advancedDynamicsDensity, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                tooltip: "How tightly the leveler holds program at target. Higher = tighter hold window and faster leveling (denser, more processed); lower = more dynamics left intact.").disabled(disabled)
+            DoubleSliderRow(title: "Speed", value: model.configBinding(\.advancedDynamicsSpeed, runtimeDisposition: .live), range: 0.25...4, format: "%.2fx",
+                tooltip: "Overall time-constant scale. The stage adapts its own attack/release to the programme; this scales that adaptive behavior faster or slower.").disabled(disabled)
+            DoubleSliderRow(title: "Max Boost", value: model.configBinding(\.advancedDynamicsMaxGainDB, runtimeDisposition: .live), range: 0...24, format: "%.1f dB",
+                tooltip: "Maximum lift applied to quiet program per band. The reduction side is fixed at 24 dB, so the total range absorbs large in-song level jumps.").disabled(disabled)
+            DoubleSliderRow(title: "Bass Balance", value: model.configBinding(\.advancedDynamicsLowOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
+                tooltip: "Low-band target offset relative to Target Level. The five bands interpolate between the Bass / Mid / Treble anchors, setting the on-air tonal balance.").disabled(disabled)
+            DoubleSliderRow(title: "Mid Balance", value: model.configBinding(\.advancedDynamicsMidOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
+                tooltip: "Mid-band target offset relative to Target Level.").disabled(disabled)
+            DoubleSliderRow(title: "Treble Balance", value: model.configBinding(\.advancedDynamicsHighOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
+                tooltip: "High-band target offset relative to Target Level. The default -9 dB approximates a natural music spectrum; raise it for a brighter on-air sound.").disabled(disabled)
         }
     }
 }

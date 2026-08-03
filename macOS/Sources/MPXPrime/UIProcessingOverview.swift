@@ -73,6 +73,12 @@ struct ProcessingOverviewGrid: View {
                     liveReadout: { $0.multibandStateText }
                 )
                 stageCard(
+                    .advancedDynamics,
+                    title: "Advanced Dynamics",
+                    subtitle: advancedDynamicsSubtitle,
+                    enabledPath: \.advancedDynamicsEnabled
+                )
+                stageCard(
                     .expander,
                     title: "Downward Expander",
                     subtitle: expanderSubtitle,
@@ -277,6 +283,12 @@ struct ProcessingOverviewGrid: View {
 
     private var multibandSubtitle: String {
         "\(model.config.multibandMode)-band · LR4 · \(model.config.multibandPresetID)"
+    }
+
+    private var advancedDynamicsSubtitle: String {
+        String(format: "Target %.1f dB · density %.2f · replaces AGC+MB",
+            model.config.advancedDynamicsTargetDB,
+            model.config.advancedDynamicsDensity)
     }
 
     private var mbLimiterSubtitle: String {

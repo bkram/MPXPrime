@@ -313,6 +313,8 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics` and must pass program-material A/B plus listening before any preset enables it.
 
+In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced Dynamics", between Multiband and Expander, with a card on the Processing Overview grid); in the web dashboard it is the "Advanced Dynamics" card on the same page as Multiband.
+
 ### Now Playing script output
 
 The RDS Radiotext section can poll an external script for now-playing metadata.

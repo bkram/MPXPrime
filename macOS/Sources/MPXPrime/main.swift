@@ -51,6 +51,7 @@ struct CLIOptions {
     var verifyReceiver: Bool = false
     var verifyCompositeMultibandClipper: Bool = false
     var verifyMultibandCoupling: Bool = false
+    var verifyAdvancedDynamics: Bool = false
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
@@ -145,6 +146,10 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyMultibandCoupling = true
             options.gui = false
+        case "--verify-advanced-dynamics":
+            options.verify = true
+            options.verifyAdvancedDynamics = true
+            options.gui = false
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -186,6 +191,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-receiver [--seconds 5]
           MPXPrime [--config <path>] --verify-composite-multiband [--seconds 5]
           MPXPrime [--config <path>] --verify-multiband-coupling [--seconds 5]
+          MPXPrime [--config <path>] --verify-advanced-dynamics [--seconds 5]
           MPXPrime --bench
 
         Options:
@@ -203,6 +209,7 @@ func printUsage() {
           --verify-receiver  Run offline receiver-model decode checks
           --verify-composite-multiband  A/B the experimental composite multiband clipper toggle
           --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
+          --verify-advanced-dynamics  A/B the experimental single-stage Advanced Dynamics leveler
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
                      prints a markdown report to stdout. Use a release build for valid numbers.
           --control, --web  Run headless with the remote-control REST API + web
@@ -311,6 +318,7 @@ do {
                 receiverModel: options.verifyReceiver,
                 compositeMultibandClipperComparison: options.verifyCompositeMultibandClipper,
                 multibandCouplingComparison: options.verifyMultibandCoupling,
+                advancedDynamicsComparison: options.verifyAdvancedDynamics,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )

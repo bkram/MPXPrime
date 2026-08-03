@@ -32,6 +32,7 @@ swift run --package-path macOS MPXPrime --verify-long --seconds 30
 swift run --package-path macOS MPXPrime --verify-receiver --seconds 5  # coherent receiver-side decode (separation @ 1/10/14 kHz, pilot, RDS); 0.36 adds guard-band cancellation depth + pilot/RDS phase-lock drift gate
 swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2  # A/B experimental composite multiband clipper toggle
 swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2  # A/B experimental multiband inter-band coupling toggle
+swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4  # A/B experimental single-stage Advanced Dynamics leveler vs AGC+multiband
 
 # Baseline capture + strict compare
 swift run --package-path macOS MPXPrime --capture-baseline      # writes macOS/verifier_baselines/default.json
@@ -120,6 +121,8 @@ The multiband compressor has two crossover backends, picked at engine start by o
 Multiband Phase 2 is implemented but opt-in: `multiband_transient_aware_attack_enabled = false` by default. When enabled, `MonoCompressor` uses an RMS/peak hybrid detector and briefly stretches attack on peak-vs-RMS transients so percussive fronts pass hotter while sustained material settles near the classic peak-detector level. Keep it verifier-backed before enabling it in presets.
 
 Multiband inter-band coupling is implemented but opt-in: `multiband_inter_band_coupling_enabled = false` by default. When enabled, low-band gain reduction is smoothed (20 ms attack / 300 ms release) and gently biases upper-band thresholds lower so bass-heavy passages keep tonal glue without wideband pumping. Keep it preset-gated until program-material A/B confirms the balance.
+
+Advanced Dynamics is implemented but opt-in: `advanced_dynamics_enabled = false` by default. When enabled it REPLACES the wideband AGC and the multiband compressor with one fused 5-band leveling stage (`AdvancedDynamicsLeveler`) -- target-based configuration (target/offsets/density/speed keys `advanced_dynamics_*`), program-adaptive time constants (transient-accelerated attack via precomputed coefficient anchors, freeze-at-target hold, density-slowed release), own lazy-allocated FIR splitter at the multiband crossovers, all live-apply. When off, the chain is bit-identical (the AGC gate is `widebandAGCEnabled && !advancedDynamicsEnabled`). `--verify-advanced-dynamics` is the A/B gate (also measures re-processing idempotency and cost vs the two replaced stages); keep it preset-gated until program-material A/B plus listening confirm it.
 
 RDS baseband uses EN 50067 biphase shaping and a pilot-locked subcarrier. The 57 kHz carrier is derived from the pilot oscillator's recurrence (`pilotOsc.s`) via the triple-angle identity (`3s - 4s^3`), passed into `BasicRDSCoder.updateRDSPilotSin` per sample — NOT a separate additive phase accumulator. The old accumulator path drifted ~9 deg / 5 s against the emitted pilot (it added `Float(w)` while the broadcast pilot / 38 kHz subcarrier ride the s/c recurrence); fixed 0.36, gated by the pilot/RDS phase-lock drift check in `--verify-receiver`. Do not regress the production path to a free-running 57 kHz oscillator. RDS carrier frequency is config-only; the UI exposes carrier level and program data.
 

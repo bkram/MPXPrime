@@ -405,6 +405,24 @@
     "title": "Multiband"
    },
    {
+    "enable": "advanced_dynamics_enabled",
+    "help": "Experimental single-stage leveler that REPLACES the AGC and the multiband compressor with one fused 5-band stage, so slow leveling and per-band density shaping can never fight (no AGC-vs-multiband pumping). Configure the sound you want (target level, tonal balance, density) instead of attack/release times; the stage adapts its own speed to the programme. Band layout follows the multiband crossovers. When enabled, the AGC and Multiband stages are bypassed.",
+    "id": "advanced_dynamics",
+    "keys": [
+     "advanced_dynamics_enabled",
+     "advanced_dynamics_target_db",
+     "advanced_dynamics_density",
+     "advanced_dynamics_speed",
+     "advanced_dynamics_max_gain_db",
+     "advanced_dynamics_low_offset_db",
+     "advanced_dynamics_mid_offset_db",
+     "advanced_dynamics_high_offset_db"
+    ],
+    "pill": "AD",
+    "sub": "single-stage leveler",
+    "title": "Advanced Dynamics"
+   },
+   {
     "enable": "downward_expander_enabled",
     "help": "Per-band downward expander \u2014 pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
     "id": "expander",
@@ -718,6 +736,73 @@
   ]
  },
  "schema": {
+  "advanced_dynamics_density": {
+   "decimals": 2,
+   "kind": "slider",
+   "label": "Density",
+   "max": 1.0,
+   "min": 0.0,
+   "step": 0.05,
+   "unit": ""
+  },
+  "advanced_dynamics_enabled": {
+   "kind": "toggle",
+   "label": "Advanced Dynamics"
+  },
+  "advanced_dynamics_high_offset_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Treble Balance",
+   "max": 6.0,
+   "min": -12.0,
+   "step": 0.5,
+   "unit": " dB"
+  },
+  "advanced_dynamics_low_offset_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Bass Balance",
+   "max": 6.0,
+   "min": -12.0,
+   "step": 0.5,
+   "unit": " dB"
+  },
+  "advanced_dynamics_max_gain_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Max Boost",
+   "max": 24.0,
+   "min": 0.0,
+   "step": 0.5,
+   "unit": " dB"
+  },
+  "advanced_dynamics_mid_offset_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Mid Balance",
+   "max": 6.0,
+   "min": -12.0,
+   "step": 0.5,
+   "unit": " dB"
+  },
+  "advanced_dynamics_speed": {
+   "decimals": 2,
+   "kind": "slider",
+   "label": "Speed",
+   "max": 4.0,
+   "min": 0.25,
+   "step": 0.05,
+   "unit": "x"
+  },
+  "advanced_dynamics_target_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Target Level",
+   "max": -6.0,
+   "min": -30.0,
+   "step": 0.5,
+   "unit": " dB"
+  },
   "af_list": {
    "kind": "text",
    "label": "AF List (MHz)"

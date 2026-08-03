@@ -52,6 +52,8 @@ struct AppConfig: Equatable {
     //   multiband Enabled/Mode/X1-X4Hz/Thresholds/Ratios/Attack/Release/
     //     KneeDB/LinkStrength/MakeupDB/ReleaseProgramDependent/
     //     TransientAwareAttack/InterBandCoupling,
+    //   advancedDynamics Enabled/TargetDB/Low-Mid-HighOffsetDB/MaxGainDB/
+    //     Density/Speed (single-stage leveler; replaces AGC+multiband when on),
     //   phaseRotationEnabled/FreqHz, parametricEQEnabled/B1-B4(Freq/Gain/Q),
     //   multibandLimiterEnabled/ThresholdDB/AttackMS/ReleaseMS,
     //   downwardExpanderEnabled/ThresholdDB/Ratio/AttackMS/ReleaseMS,
@@ -278,6 +280,18 @@ struct AppConfig: Equatable {
     var multibandTransientAwareAttackEnabled: Bool = false
     var multibandInterBandCouplingEnabled: Bool = false
     var multibandMakeupDB: Double = 0.0
+    // Advanced Dynamics: experimental single-stage 5-band leveler that
+    // replaces the wideband AGC + multiband compressor when enabled
+    // (default off). Target-based configuration: set the sound you want,
+    // not attack/release times. Band layout follows multiband_x1..x4_hz.
+    var advancedDynamicsEnabled: Bool = false
+    var advancedDynamicsTargetDB: Double = -14.0
+    var advancedDynamicsLowOffsetDB: Double = 0.0
+    var advancedDynamicsMidOffsetDB: Double = -3.0
+    var advancedDynamicsHighOffsetDB: Double = -9.0
+    var advancedDynamicsMaxGainDB: Double = 18.0
+    var advancedDynamicsDensity: Double = 0.5
+    var advancedDynamicsSpeed: Double = 1.0
     var phaseRotationEnabled: Bool = false
     var phaseRotationFreqHz: Double = 200.0
     var parametricEQEnabled: Bool = false
@@ -687,6 +701,22 @@ struct AppConfig: Equatable {
         )
         cfg.multibandMakeupDB = mpx.double(
             "multiband_makeup_db", defaultValue: cfg.multibandMakeupDB)
+        cfg.advancedDynamicsEnabled = mpx.bool(
+            "advanced_dynamics_enabled", defaultValue: cfg.advancedDynamicsEnabled)
+        cfg.advancedDynamicsTargetDB = mpx.double(
+            "advanced_dynamics_target_db", defaultValue: cfg.advancedDynamicsTargetDB)
+        cfg.advancedDynamicsLowOffsetDB = mpx.double(
+            "advanced_dynamics_low_offset_db", defaultValue: cfg.advancedDynamicsLowOffsetDB)
+        cfg.advancedDynamicsMidOffsetDB = mpx.double(
+            "advanced_dynamics_mid_offset_db", defaultValue: cfg.advancedDynamicsMidOffsetDB)
+        cfg.advancedDynamicsHighOffsetDB = mpx.double(
+            "advanced_dynamics_high_offset_db", defaultValue: cfg.advancedDynamicsHighOffsetDB)
+        cfg.advancedDynamicsMaxGainDB = mpx.double(
+            "advanced_dynamics_max_gain_db", defaultValue: cfg.advancedDynamicsMaxGainDB)
+        cfg.advancedDynamicsDensity = mpx.double(
+            "advanced_dynamics_density", defaultValue: cfg.advancedDynamicsDensity)
+        cfg.advancedDynamicsSpeed = mpx.double(
+            "advanced_dynamics_speed", defaultValue: cfg.advancedDynamicsSpeed)
         cfg.phaseRotationEnabled = mpx.bool(
             "phase_rotation_enabled", defaultValue: cfg.phaseRotationEnabled)
         cfg.phaseRotationFreqHz = mpx.double(
@@ -974,6 +1004,15 @@ struct AppConfig: Equatable {
         multibandLinkStrength = max(0.0, min(1.0, multibandLinkStrength))
         multibandMakeupDB = max(-12.0, min(12.0, multibandMakeupDB))
 
+        // Advanced Dynamics
+        advancedDynamicsTargetDB = max(-30.0, min(-6.0, advancedDynamicsTargetDB))
+        advancedDynamicsLowOffsetDB = max(-12.0, min(6.0, advancedDynamicsLowOffsetDB))
+        advancedDynamicsMidOffsetDB = max(-12.0, min(6.0, advancedDynamicsMidOffsetDB))
+        advancedDynamicsHighOffsetDB = max(-12.0, min(6.0, advancedDynamicsHighOffsetDB))
+        advancedDynamicsMaxGainDB = max(0.0, min(24.0, advancedDynamicsMaxGainDB))
+        advancedDynamicsDensity = max(0.0, min(1.0, advancedDynamicsDensity))
+        advancedDynamicsSpeed = max(0.25, min(4.0, advancedDynamicsSpeed))
+
         // Phase rotator
         phaseRotationFreqHz = max(50.0, min(500.0, phaseRotationFreqHz))
 
@@ -1189,6 +1228,14 @@ struct AppConfig: Equatable {
             "multiband_transient_aware_attack_enabled = \(Self.boolString(multibandTransientAwareAttackEnabled))",
             "multiband_inter_band_coupling_enabled = \(Self.boolString(multibandInterBandCouplingEnabled))",
             "multiband_makeup_db = \(Self.formatFloat(multibandMakeupDB))",
+            "advanced_dynamics_enabled = \(Self.boolString(advancedDynamicsEnabled))",
+            "advanced_dynamics_target_db = \(Self.formatFloat(advancedDynamicsTargetDB))",
+            "advanced_dynamics_low_offset_db = \(Self.formatFloat(advancedDynamicsLowOffsetDB))",
+            "advanced_dynamics_mid_offset_db = \(Self.formatFloat(advancedDynamicsMidOffsetDB))",
+            "advanced_dynamics_high_offset_db = \(Self.formatFloat(advancedDynamicsHighOffsetDB))",
+            "advanced_dynamics_max_gain_db = \(Self.formatFloat(advancedDynamicsMaxGainDB))",
+            "advanced_dynamics_density = \(Self.formatFloat(advancedDynamicsDensity))",
+            "advanced_dynamics_speed = \(Self.formatFloat(advancedDynamicsSpeed))",
             "phase_rotation_enabled = \(Self.boolString(phaseRotationEnabled))",
             "phase_rotation_freq_hz = \(Self.formatFloat(phaseRotationFreqHz))",
             "parametric_eq_enabled = \(Self.boolString(parametricEQEnabled))",

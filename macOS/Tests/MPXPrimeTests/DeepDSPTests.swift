@@ -302,6 +302,15 @@ private func randomDeepConfig(seed: UInt64) -> AppConfig {
     cfg.multibandMidThresholdDB = rng.nextRangeDouble(-22.0, -10.0)
     cfg.multibandHighThresholdDB = rng.nextRangeDouble(-22.0, -10.0)
 
+    // Advanced Dynamics (replaces AGC + multiband when on): exercised at
+    // a low probability so the fuzz covers both the substitution and the
+    // interaction with every downstream stage.
+    cfg.advancedDynamicsEnabled = rng.nextBool(probability: 0.25)
+    cfg.advancedDynamicsTargetDB = rng.nextRangeDouble(-22.0, -10.0)
+    cfg.advancedDynamicsMaxGainDB = rng.nextRangeDouble(6.0, 24.0)
+    cfg.advancedDynamicsDensity = rng.nextRangeDouble(0.0, 1.0)
+    cfg.advancedDynamicsSpeed = rng.nextRangeDouble(0.25, 4.0)
+
     cfg.bassClipperEnabled = rng.nextBool(probability: 0.7)
     cfg.dcClipperEnabled = rng.nextBool(probability: 0.2)
     cfg.bs412Enabled = rng.nextBool(probability: 0.3)
@@ -719,6 +728,13 @@ struct DeepPerStageTests {
         let out = deepRender(config: cfg, program: .fullScaleStep)
         DeepInvariants.assertAllFinite(out, where: "preEncodeLimiter")
         DeepInvariants.assertCompositePeakBounded(out, where: "preEncodeLimiter")
+    }
+
+    @Test func advancedDynamicsAlone() {
+        let cfg = Self.solo { $0.advancedDynamicsEnabled = true }
+        let out = deepRender(config: cfg, program: .fullScaleStep)
+        DeepInvariants.assertAllFinite(out, where: "advancedDynamics")
+        DeepInvariants.assertCompositePeakBounded(out, where: "advancedDynamics")
     }
 
     @Test func dcClipperAlone() {

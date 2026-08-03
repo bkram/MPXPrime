@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Advanced Dynamics: experimental single-stage 5-band leveler**
+  (`advanced_dynamics_enabled`, default off). Replaces the wideband AGC +
+  multiband compressor with ONE fused leveling stage so slow leveling and
+  per-band density shaping can never fight each other (the classic
+  AGC-vs-multiband pumping). Target-based configuration (target level,
+  low/mid/high tonal-balance anchors, density, speed) instead of
+  attack/release times; program-adaptive time constants -- near-instant
+  attack on transients (precomputed anchor blend, no per-sample expf),
+  full freeze inside the target window, density-slowed release on busy
+  material; -24..+24 dB per-band range for large in-song level jumps;
+  low-band coupling bias reuses the multiband curve. Band split is an
+  own-instance linear-phase FIR at the multiband crossovers, allocated
+  lazily (a disabled stage costs nothing -- zero-drift preserved, strict
+  baseline unchanged). All parameters live-apply; dashboard card included.
+  New `--verify-advanced-dynamics` A/B gate: RMS/band/correlation/side/
+  peak deltas vs the classic chain plus re-processing idempotency
+  (second pass moves RMS < 0.3 dB) and cost ratio (~1.0x the two stages
+  it replaces). Inspired by the single-stage design popularised by
+  Stereo Tool's "Advanced Dynamics"; implemented from first principles.
 - **Web dashboard: transport-level Bypass button.** The status strip gains
   the GUI's Bypass next to Start/Stop: flips `processing_bypass` and
   restarts the engine when running (mirroring the GUI's Cmd-B exactly --

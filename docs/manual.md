@@ -301,6 +301,18 @@ Recommended starting point:
 
 The current defaults are intentionally moderate and are meant to be tuned upward from a clean starting point, not downward from a hyped one.
 
+### Advanced Dynamics (experimental single-stage leveler)
+
+`advanced_dynamics_enabled` (default `False`) replaces the wideband AGC **and** the multiband compressor with one fused 5-band leveling stage. The point of the fusion is that slow leveling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with program-adaptive speed — near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
+
+- `advanced_dynamics_target_db` (default `-14.0`) — the level every band is brought toward.
+- `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) — tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
+- `advanced_dynamics_max_gain_db` (default `18.0`) — maximum lift for quiet program (the reduction side is fixed at 24 dB, giving the wide total range that absorbs 20 dB jumps inside one song).
+- `advanced_dynamics_density` (`0..1`, default `0.5`) — denser = tighter hold window and faster leveling.
+- `advanced_dynamics_speed` (`0.25..4`, default `1.0`) — overall time-constant scale.
+
+Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics` and must pass program-material A/B plus listening before any preset enables it.
+
 ### Now Playing script output
 
 The RDS Radiotext section can poll an external script for now-playing metadata.
@@ -734,6 +746,8 @@ Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled ac
 `--verify-composite-multiband` toggles `mpx_multiband_clipper_enabled` off/on across 5 dense/HF scenarios and reports peak / audio-peak / margin / overshoot / correlation / side / >60 kHz deltas. Current tuning shows ~1.4-1.6 dB peak reduction on HF-heavy program with zero post-injection overshoot.
 
 `--verify-multiband-coupling` forces multiband on, disables AGC for isolation, and toggles `multiband_inter_band_coupling_enabled` off/on across 5 program scenarios (bass-heavy, kick/vocal, dance, wide-bass, speech-bed), reporting per-band Low/Mid/High deltas + correlation / side-to-mid / peak / overshoot / render-cost ratio.
+
+`--verify-advanced-dynamics` A/Bs the classic AGC + multiband chain against the single-stage Advanced Dynamics leveler on 4 program scenarios (a 20 dB level jump, dense bass, a quiet ballad, HF transients), reporting RMS / per-band / correlation / side / peak / overshoot deltas plus two leveler-specific metrics: re-processing idempotency (feeding the leveler's output through a fresh leveler should barely change it) and the render-cost ratio against the two stages it replaces.
 
 Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, and composite-multiband + inter-band-coupling A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
 

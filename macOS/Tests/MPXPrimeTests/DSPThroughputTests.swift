@@ -298,6 +298,28 @@ struct DSPThroughputTests {
             "composite multiband clipper cost \(enabledWall) s vs disabled \(disabledWall) s = \(ratio)x; >2.5x means the FIR split/clip path needs acceleration or lighter filters before preset use")
     }
 
+    @Test func advancedDynamicsCostStaysBounded() {
+        // Advanced Dynamics REPLACES the AGC + multiband compressor when
+        // enabled, so its net cost on the heavy config should be in the
+        // same ballpark as the two stages it substitutes (its own 4-LP FIR
+        // split vs the multiband FIR split + AGC). Bound it hard before a
+        // preset can enable it.
+        var disabled = makeHeavyConfig()
+        disabled.advancedDynamicsEnabled = false
+
+        var enabled = makeHeavyConfig()
+        enabled.advancedDynamicsEnabled = true
+
+        let disabledWall = measureThroughput(config: disabled).wallSeconds
+        let enabledWall = measureThroughput(config: enabled).wallSeconds
+        let ratio = enabledWall / max(1e-6, disabledWall)
+        print(String(format: "Advanced Dynamics cost ratio: %.2fx (enabled %.3f s, disabled %.3f s)",
+                     ratio, enabledWall, disabledWall))
+
+        #expect(ratio < 2.0,
+            "Advanced Dynamics cost \(enabledWall) s vs AGC+multiband \(disabledWall) s = \(ratio)x; it replaces those stages, so >2x means the leveler needs optimization before preset use")
+    }
+
     /// Helper to render 1 s of audio through `generator` and return wall
     /// time. Hoisted out so multiple tests can share it.
     private func measureRender(generator: MPXGenerator) -> Double {

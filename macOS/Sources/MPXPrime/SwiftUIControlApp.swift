@@ -1699,12 +1699,12 @@ final class MPXPrimeViewModel: ObservableObject {
     // edit diverges from that snapshot.
     @Published var activeSnapshotID: UUID?
     @Published var activeSnapshotModified = false
-    // While applying a loaded config (preset load / disk reload), the control
-    // bindings fire onChange -> setConfigValue -> saveConfig, which would
-    // immediately flip `activeSnapshotModified` true. That made a just-loaded
-    // preset always read "edited since loaded". Suppress the flip for a brief
-    // window after a programmatic load so only genuine user edits set it.
-    private var suppressModifiedFlipUntil: TimeInterval = 0
+    // The exact config the active snapshot holds. `activeSnapshotModified`
+    // flips only when the live config actually differs from this baseline --
+    // an EXACT comparison, replacing an earlier 0.6 s timer window that raced
+    // against slow onChange settling after a programmatic load and produced
+    // false "edited since loaded" flags.
+    private var activeSnapshotBaselineConfig: AppConfig?
 
     static let snapshotSlotCount: Int = SnapshotStore.slotCount
 
@@ -2329,6 +2329,13 @@ final class MPXPrimeViewModel: ObservableObject {
         self.snapshots = file.slots
         self.activeSnapshotID = file.activeID
         self.activeSnapshotModified = file.activeModified ?? false
+        // Rebuild the exact-comparison baseline for the restored active slot.
+        if let active = file.activeID,
+           let snap = file.slots.compactMap({ $0 }).first(where: { $0.id == active }) {
+            self.activeSnapshotBaselineConfig = try? AppConfig.loadFromINIString(snap.configINIText)
+        } else {
+            self.activeSnapshotBaselineConfig = nil
+        }
     }
 
     /// Persist all slots to disk. JSON envelope wraps the per-slot
@@ -2364,6 +2371,9 @@ final class MPXPrimeViewModel: ObservableObject {
             // The just-saved slot now mirrors the live config exactly.
             activeSnapshotID = saved.id
             activeSnapshotModified = false
+            // Baseline is the ROUND-TRIPPED config (parse of what was written)
+            // so later comparisons see exactly what a reload would produce.
+            activeSnapshotBaselineConfig = try AppConfig.loadFromINIString(ini)
             writeSnapshotsToDisk()
             statusText = "Saved preset to slot \(slot + 1)."
         } catch {
@@ -2379,14 +2389,24 @@ final class MPXPrimeViewModel: ObservableObject {
               let snapshot = snapshots[slot] else { return }
         do {
             let loaded = try AppConfig.loadFromINIString(snapshot.configINIText)
-            applyLoadedConfig(loaded, origin: .manual)
+            let outcome = applyLoadedConfig(loaded, origin: .manual)
             activeSnapshotID = snapshot.id
             activeSnapshotModified = false
+            activeSnapshotBaselineConfig = loaded
             // Persist the loaded config to the main INI so disk == live, and
             // record the active preset so the "Loaded" marker survives relaunch.
             enqueueConfigSave(snapshot: config)
             writeSnapshotsToDisk()
-            statusText = "Loaded preset \"\(snapshot.name)\"."
+            switch outcome {
+            case .noChanges:
+                statusText = "Loaded preset \"\(snapshot.name)\" - no changes."
+            case .appliedLive:
+                statusText = "Loaded preset \"\(snapshot.name)\" - applied live."
+            case .restartPending:
+                statusText = "Loaded preset \"\(snapshot.name)\". Restart-required changes are pending; use Apply Restart in Monitoring."
+            case .storedWhileStopped:
+                statusText = "Loaded preset \"\(snapshot.name)\"."
+            }
         } catch {
             statusText = "Failed to load preset: \(error.localizedDescription)"
         }
@@ -2430,6 +2450,7 @@ final class MPXPrimeViewModel: ObservableObject {
             if snapshots[slot]?.id == activeSnapshotID {
                 activeSnapshotID = nil
                 activeSnapshotModified = false
+                activeSnapshotBaselineConfig = nil
             }
             snapshots[slot] = imported
             writeSnapshotsToDisk()
@@ -2455,6 +2476,7 @@ final class MPXPrimeViewModel: ObservableObject {
         if snapshots[slot]?.id == activeSnapshotID {
             activeSnapshotID = nil
             activeSnapshotModified = false
+            activeSnapshotBaselineConfig = nil
         }
         snapshots[slot] = nil
         writeSnapshotsToDisk()
@@ -4220,11 +4242,12 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private func saveConfig(restartRequired: Bool) {
-        // Any user edit diverges the live config from the loaded preset. Persist
-        // the flip once (not per keystroke) so "Loaded - edited" survives relaunch.
-        // Skip flips that are just the fallout of a programmatic load settling.
+        // A user edit diverges the live config from the loaded preset. Flip
+        // "edited since loaded" only when the config ACTUALLY differs from the
+        // snapshot baseline -- binding churn after a programmatic load rewrites
+        // identical values and must not flip it. Persist the flip once.
         if activeSnapshotID != nil, !activeSnapshotModified,
-           Date().timeIntervalSinceReferenceDate >= suppressModifiedFlipUntil {
+           let baseline = activeSnapshotBaselineConfig, config != baseline {
             activeSnapshotModified = true
             writeSnapshotsToDisk()
         }
@@ -4258,11 +4281,45 @@ final class MPXPrimeViewModel: ObservableObject {
         case none
     }
 
-    func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) {
-        // The wholesale config swap + mirror-property writes below make the
-        // control bindings fire onChange asynchronously; ignore the resulting
-        // saveConfig "modified" flips until they settle (see saveConfig).
-        suppressModifiedFlipUntil = Date().timeIntervalSinceReferenceDate + 0.6
+    /// Outcome of a programmatic config swap, so callers (preset load,
+    /// disk reload) can phrase their status line around what actually
+    /// happened instead of a blanket "changes pending".
+    enum ConfigLoadOutcome {
+        case noChanges
+        case appliedLive
+        case restartPending
+        case storedWhileStopped
+    }
+
+    @discardableResult
+    func applyLoadedConfig(_ loadedConfig: AppConfig, origin: ConfigReloadOrigin) -> ConfigLoadOutcome {
+        // Classify the ACTUAL diff with the canonical derived classifier
+        // (ConfigPatch, the same one the REST API uses) instead of blanket
+        // "restart-required": a load that changes nothing says so, a load
+        // that only moves live/live-RDS keys applies live with no restart
+        // nag, and only a genuine restart-class diff arms Apply Restart.
+        let oldConfig = config
+        var planes = ConfigChangePlanes()
+        var changedAnything = loadedConfig != oldConfig
+        if changedAnything, let old = try? ConfigPatch.sectionedValues(of: oldConfig),
+           let new = try? ConfigPatch.sectionedValues(of: loadedConfig) {
+            var patch: [String: String] = [:]
+            for (section, bucket) in new {
+                for (key, value) in bucket where old[section]?[key] != value {
+                    patch[key] = value
+                }
+            }
+            if let outcome = try? ConfigPatch.apply(patch, to: oldConfig) {
+                planes = outcome.planes
+            } else {
+                planes.restartRequired = true   // classification failed: be safe
+            }
+        } else if changedAnything {
+            planes.restartRequired = true       // serialization failed: be safe
+        } else {
+            changedAnything = false
+        }
+
         config = loadedConfig
         sourceMode = config.sourceMode
         monitorEnabled = config.monitorEnabled
@@ -4271,15 +4328,23 @@ final class MPXPrimeViewModel: ObservableObject {
         refreshDevices()
         updateNowPlayingRunner()
 
-        if isRunning {
+        let source = origin == .external ? "Config reloaded from disk" : "Config reloaded"
+        if !changedAnything {
+            statusText = "\(source) - no changes."
+            return .noChanges
+        } else if isRunning && !planes.restartRequired {
+            if planes.dspLive { applyLiveRuntimeConfigIfRunning() }
+            if planes.rdsLive { applyLiveRDSConfigIfRunning() }
+            statusText = "\(source) - applied live."
+            return .appliedLive
+        } else if isRunning {
             pendingRuntimeApply = true
-            statusText =
-                origin == .external
-                ? "Config changed on disk. Restart-required changes are pending; use Apply Restart in Monitoring."
-                : "Config reloaded. Restart-required changes are pending; use Apply Restart in Monitoring."
+            statusText = "\(source). Restart-required changes are pending; use Apply Restart in Monitoring."
+            return .restartPending
         } else {
             pendingRuntimeApply = false
-            statusText = origin == .external ? "Config reloaded from disk" : "Config reloaded"
+            statusText = source
+            return .storedWhileStopped
         }
     }
 

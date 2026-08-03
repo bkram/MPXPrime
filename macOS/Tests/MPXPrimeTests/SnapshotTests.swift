@@ -28,6 +28,82 @@ struct SnapshotTests {
         return MPXPrimeViewModel(configPath: configPath)
     }
 
+    // MARK: - Active/modified state tracking
+    //
+    // Regression coverage for the false "edited since loaded" flags: the
+    // modified flip must be an EXACT config comparison against the active
+    // snapshot's baseline, never a side effect of binding churn rewriting
+    // identical values after a load/save.
+
+    @Test func saveAndLoadLeaveModifiedFalse() {
+        let model = makeViewModel()
+        model.config.pilotLevel = 0.09
+        model.saveSnapshot(slot: 0, name: "State")
+        #expect(model.activeSnapshotID != nil)
+        #expect(model.activeSnapshotModified == false)
+
+        model.loadSnapshot(slot: 0)
+        #expect(model.activeSnapshotModified == false)
+        #expect(model.statusText.contains("Loaded"))
+    }
+
+    @Test func identicalValueChurnDoesNotFlipModified() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Churn")
+        // Simulate the post-load binding churn: rewrite an existing value
+        // with the SAME value through the canonical binding path.
+        let binding = model.configBinding(\.finalDriveDB, runtimeDisposition: .live)
+        binding.wrappedValue = model.config.finalDriveDB
+        #expect(model.activeSnapshotModified == false,
+            "identical-value write must not read as an edit")
+    }
+
+    @Test func genuineEditFlipsModifiedOnce() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Edit")
+        let binding = model.configBinding(\.finalDriveDB, runtimeDisposition: .live)
+        binding.wrappedValue = model.config.finalDriveDB + 1.5
+        #expect(model.activeSnapshotModified == true,
+            "a real config change must mark the preset edited")
+    }
+
+    @Test func reloadingSameSnapshotReportsNoChanges() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Same")
+        model.loadSnapshot(slot: 0)
+        model.loadSnapshot(slot: 0)
+        #expect(model.statusText.contains("no changes"),
+            "re-loading the active unedited preset must not claim changes; got: \(model.statusText)")
+        #expect(model.pendingRuntimeApply == false)
+    }
+
+    @Test func loadingStoppedEngineNeverArmsRestartPending() {
+        let model = makeViewModel()
+        model.config.finalDriveDB = 3.0
+        model.saveSnapshot(slot: 0, name: "A")
+        model.config.finalDriveDB = 9.0
+        model.saveSnapshot(slot: 1, name: "B")
+        model.loadSnapshot(slot: 0)
+        #expect(model.pendingRuntimeApply == false,
+            "engine is stopped; a preset load must not arm Apply Restart")
+        #expect(model.activeSnapshotModified == false)
+    }
+
+    @Test func modifiedStateSurvivesRelaunch() {
+        let path = makeTempConfigPath()
+        do {
+            let model = makeViewModel(at: path)
+            model.saveSnapshot(slot: 0, name: "Persist")
+            let binding = model.configBinding(\.finalDriveDB, runtimeDisposition: .live)
+            binding.wrappedValue = model.config.finalDriveDB + 2.0
+            #expect(model.activeSnapshotModified == true)
+        }
+        let reborn = makeViewModel(at: path)
+        #expect(reborn.activeSnapshotModified == true,
+            "the edited-since-loaded marker must survive relaunch")
+        #expect(reborn.activeSnapshotID != nil)
+    }
+
     @Test func initialStateHasEightEmptySlots() {
         let model = makeViewModel()
         #expect(model.snapshots.count == MPXPrimeViewModel.snapshotSlotCount)

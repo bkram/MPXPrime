@@ -152,7 +152,11 @@ possible and a restart flag where not), rename, and clear. Slots can be
 exported as INI text -- the export is a complete config file you can pass
 to `--config` -- and an INI file can be imported into an empty slot. The
 slot list marks which snapshot was loaded last and whether the config has
-been edited since.
+been edited since -- the edited marker is an exact comparison against the
+loaded preset, and a load reports honestly what it did: "no changes" when
+the preset matches the live config, "applied live" when only live-apply
+settings differed, and a restart prompt only when a restart-class setting
+actually changed.
 
 ### Recommended DSP enablement (current default starting point)
 

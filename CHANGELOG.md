@@ -11,6 +11,17 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Preset slots: no more false "changed" states.** Loading a preset
+  while the engine ran always claimed "Restart-required changes are
+  pending" -- even when the preset differed only in live settings or not
+  at all. Loads are now classified with the same derived dispositions the
+  REST API uses: "no changes" / "applied live" (live planes hot-applied
+  immediately) / a restart prompt only for genuine restart-class diffs.
+  The "edited since loaded" marker is now an exact config comparison
+  against the loaded preset instead of a 0.6 s timer that raced binding
+  churn and produced false flags. Seven new state-tracking tests pin the
+  behavior (the mechanics were covered; the state machine was not).
+
 - **MPX spectrum band captions: the two stereo regions are now labeled
   "Stereo L-R lower SB" / "upper SB"** instead of two identical "Stereo
   L-R" captions. Both regions really do carry the same L-R signal (DSB-SC

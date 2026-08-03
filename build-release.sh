@@ -5,7 +5,7 @@ set -e
 
 cd "$(dirname "$0")"
 
-VERSION=${1:-0.43}
+VERSION=${1:-0.44}
 OUTPUT_DIR="macOS/dist"
 APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"

@@ -9,9 +9,111 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased
+## 0.44 — 2026-08-03
 
-(nothing yet)
+- **Advanced Dynamics: experimental single-stage 5-band leveler**
+  (`advanced_dynamics_enabled`, default off). Replaces the wideband AGC +
+  multiband compressor with ONE fused leveling stage so slow leveling and
+  per-band density shaping can never fight each other (the classic
+  AGC-vs-multiband pumping). Target-based configuration (target level,
+  low/mid/high tonal-balance anchors, density, speed) instead of
+  attack/release times; program-adaptive time constants -- near-instant
+  attack on transients (precomputed anchor blend, no per-sample expf),
+  full freeze inside the target window, density-slowed release on busy
+  material; -24..+24 dB per-band range for large in-song level jumps;
+  low-band coupling bias reuses the multiband curve. Band split is an
+  own-instance linear-phase FIR at the multiband crossovers, allocated
+  lazily (a disabled stage costs nothing -- zero-drift preserved, strict
+  baseline unchanged). All parameters live-apply; exposed in BOTH surfaces
+  in sync: native GUI tab (Processing -> Adv Dyn, plus Overview card and
+  signal-flow chip) and web dashboard card. While enabled, both UIs ghost
+  the replaced stages (AGC / Multiband / Expander / MB Limiter dim with a
+  "bypassed" banner; sidebar and overview dots show the EFFECTIVE state),
+  and a test pins the bypass as total (extreme AGC/MB settings render
+  bit-identical to those stages being off).
+  New `--verify-advanced-dynamics` A/B gate: RMS/band/correlation/side/
+  peak deltas vs the classic chain plus re-processing idempotency
+  (second pass moves RMS < 0.3 dB) and cost ratio (~1.0x the two stages
+  it replaces). Inspired by the single-stage design popularised by
+  Stereo Tool's "Advanced Dynamics"; implemented from first principles.
+  Default target level is -16 dB (field-tuned on air: -14 packed the
+  bands against the ceiling and read as audible compression; -16 keeps
+  the leveling transparent).
+- **Web dashboard: transport-level Bypass button.** The status strip gains
+  the GUI's Bypass next to Start/Stop: flips `processing_bypass` and
+  restarts the engine when running (mirroring the GUI's Cmd-B exactly --
+  the flag is restart-class), turns red "BYPASSED" while active, and asks
+  for confirmation before putting unprocessed audio on air.
+- **Web parity phase 4 became API-only: `GET /api/telemetry`.** Display-
+  decimated input L/R + MPX scope waveforms and a server-computed 256-bin
+  MPX spectrum (~6 KB, ~5 ms per request, measured); 503 while stopped or
+  on a platform without a scope tap (Linux/ALSA today). An in-dashboard
+  "Scopes & Spectrum" canvas page was built on a 4 Hz poll and REMOVED the
+  same day -- at polling cadence it cannot look like an instrument next to
+  the native windows, and the operator judged it too slow. The endpoint
+  stays for external tooling; if browser visuals return, they need a push
+  transport (SSE/WebSocket), not a faster poll.
+- **Web dashboard: processed-audio mode awareness.** With
+  `processed_audio_output` on, the dashboard now mirrors the GUI's
+  `hiddenInProcessedAudio`: the RDS group, Composite Clipper, BS.412 and
+  Final Stage pages hide (with live sidebar re-render and redirect if you
+  are on one), the signal-flow pills drop the composite stages, and
+  Monitoring swaps the MPX/Subcarriers cards for an honest "Output
+  (processed audio)" card -- previously it showed deviation/pilot/RDS
+  readouts for a composite that does not exist in that mode.
+- **Web dashboard parity, phase 3 of 4: operator preset slots over the API.**
+  The GUI's 8 snapshot slots are now a REST surface: `GET /api/snapshots`,
+  save/load/rename/clear per slot, `GET .../export` (the slot's full INI --
+  loadable via `--config`), and `PUT` import with validation through the
+  canonical parser. Loading a slot applies it as ONE full config patch, so
+  every changed key rides the same live/liveRDS/restart classification as a
+  normal PATCH. Storage is the same `<config>.snapshots.json` the GUI always
+  wrote (logic extracted into a shared `SnapshotStore`; the GUI delegates to
+  it, so web and native operate on the same slots, including the
+  "loaded/edited-since" marker -- the headless backend now flips it on any
+  config change, matching the GUI). The web Presets page grows the slot
+  grid: name, Save/Load/Export/Clear, Import into empty slots.
+- **Web dashboard parity, phase 2 of 4: full settings coverage.** Every
+  INI-backed control the native GUI has now appears in the dashboard, in the
+  same structure: a new **Profile** page (station-format picker, works on
+  headless via phase 1); the full **Radiotext** editor (mode, rotation, the
+  four manual buffers + enables, RT+ formats, and the complete Now Playing
+  configuration); multiband **crossovers** X1-X4 + the 3-band pair;
+  composite-clipper **look-ahead + oversampling**; Final Stage composite
+  internals (sum/diff levels, soft-clip/smoother toggles); Identity gains
+  RBDS PTY table, PTYN centering, dynamic PS + frame time; Schedule gains
+  the scheduler toggles + timezone offset; AF gains the method picker. The
+  Interfaces page grows a **Monitor device** picker + enable, an Engine card
+  (auto-start, pilot level, spectrum window), and a **read-only Remote
+  Control card** (editing the server you are talking through is a lockout
+  footgun -- INI/GUI only). Every Processing/RDS tab gets a **Reset This
+  Tab** button driven by `GET /api/config/defaults`. Monitoring shows
+  uptime, ring-buffer health, drop counters, resample trim, an OVER BUDGET
+  flag, and the RDS status page shows live PTYN + Long PS.
+- **Web dashboard parity, phase 1 of 4: served schema + drift-proofing.**
+  The dashboard now renders itself from `GET /api/schema` (a new
+  `WebUI/schema.json` -- widget definitions + page model); `index.html`
+  carries no hardcoded control tables anymore. `ControlSchemaTests` pins the
+  schema against the INI vocabulary BOTH ways: every key needs a widget or a
+  reasoned exemption, every widget must name a real key, every page key must
+  have a widget. The old hand-maintained tables had silently dropped ten
+  controls (the web Test Tone had no frequency or level slider; the MB
+  Limiter page was a single checkbox) -- all restored -- and the web Audio
+  Limiter card patched the FINAL-MPX safety look-ahead keys instead of the
+  pre-encode ones (misfiled; three keys were unreachable, now fixed, with the
+  safety keys moved to Final Stage where the GUI has them). The schema now
+  covers the FULL vocabulary (209 widgets + 26 reasoned exemptions), so
+  phase 2 is page placement, not authoring.
+  `GET /api/config/defaults` serves factory defaults for client-side reset.
+- **Station formats + final-stage presets work headless.** The
+  `format_profile` and new `finalstage` preset kinds are served by BOTH
+  control backends -- the tables moved from the GUI view model into
+  `PresetCatalog`, so a Linux box can now apply a station format over the
+  API (previously GUI-only; `POST /api/presets kind=format_profile` returned
+  400 on headless). GUI pickers unchanged (thin wrappers over the catalog).
+- **Control API symmetry**: `/api/devices` gains the monitor-output slot
+  (`selectedMonitor`, `monitorEnabled`); the GUI backend reports real
+  `uptimeSeconds`; `restartPending`/`notes` semantics documented on the DTO.
 
 ## 0.43 — 2026-08-01
 

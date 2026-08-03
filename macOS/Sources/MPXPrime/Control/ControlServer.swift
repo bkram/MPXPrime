@@ -49,6 +49,8 @@ extension ControlMeters: ResponseEncodable {}
 extension ControlRDS: ResponseEncodable {}
 extension ControlDevices: ResponseEncodable {}
 extension ConfigApplyResult: ResponseEncodable {}
+extension ControlSnapshots: ResponseEncodable {}
+extension ControlTelemetry: ResponseEncodable {}
 extension ConfigKeyOutcome: ResponseEncodable {}
 extension NowPlayingResponse: ResponseEncodable {}
 
@@ -74,6 +76,16 @@ struct RDSUpdateRequest: Codable, Sendable {
         if let rt { patch["rt_text"] = rt }
         return patch
     }
+}
+
+struct SnapshotNameRequest: Codable {
+    var name: String?
+}
+
+struct SnapshotImportRequest: Codable {
+    var name: String?
+    /// Full MPX Prime INI text (what /api/snapshots/:slot/export returns).
+    var ini: String
 }
 
 struct PresetApplyRequest: Codable, Sendable {
@@ -213,6 +225,30 @@ enum ControlServer {
             return try await backend.applyConfigPatch(patch)
         }
 
+        router.get("/api/schema") { _, _ -> Response in
+            guard let json = Self.schemaJSON() else {
+                throw HTTPError(.internalServerError, message: "schema resource missing")
+            }
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: ByteBuffer(string: json))
+            )
+        }
+
+        // Factory defaults (a pristine AppConfig serialized the same sectioned
+        // way as /api/config) so the dashboard can offer per-tab Reset without
+        // hardcoding a single default value client-side.
+        router.get("/api/config/defaults") { _, _ -> Response in
+            let sections = try ConfigPatch.sectionedValues(of: AppConfig())
+            let data = try JSONEncoder().encode(sections)
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: ByteBuffer(data: data))
+            )
+        }
+
         router.get("/api/presets") { _, _ -> Response in
             let presets = await backend.presets()
             let data = try JSONEncoder().encode(presets)
@@ -230,6 +266,82 @@ enum ControlServer {
                     kind: body.kind, id: body.id, intensity: body.intensity)
             } catch let error as ControlError {
                 throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+
+        // Live scopes + MPX spectrum for the dashboard's canvas views.
+        // 503 when the engine is stopped or the platform has no scope tap
+        // (ALSA today) -- same contract as /api/meters.
+        router.get("/api/telemetry") { request, _ -> ControlTelemetry in
+            let windowMS = request.uri.queryParameters.get("window_ms")
+                .flatMap(Double.init) ?? 20.0
+            guard let t = await backend.telemetry(windowMS: windowMS) else {
+                throw HTTPError(.serviceUnavailable, message: "engine not running or no scope tap")
+            }
+            return t
+        }
+
+        // Operator preset slots. Load applies the slot as a full config
+        // patch (canonical live/restart classification); export returns the
+        // slot's INI text, which doubles as a shareable --config file.
+        router.get("/api/snapshots") { _, _ -> ControlSnapshots in
+            await backend.snapshots()
+        }
+        router.post("/api/snapshots/:slot/save") { request, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            let body = try? await request.decode(as: SnapshotNameRequest.self, context: context)
+            do {
+                return try await backend.snapshotSave(slot: slot, name: body?.name ?? "")
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.post("/api/snapshots/:slot/load") { _, context -> ConfigApplyResult in
+            let slot = try Self.slotParam(context)
+            do {
+                return try await backend.snapshotLoad(slot: slot)
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.patch("/api/snapshots/:slot") { request, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            let body = try await request.decode(as: SnapshotNameRequest.self, context: context)
+            do {
+                return try await backend.snapshotRename(slot: slot, name: body.name ?? "")
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.delete("/api/snapshots/:slot") { _, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            do {
+                return try await backend.snapshotClear(slot: slot)
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            }
+        }
+        router.get("/api/snapshots/:slot/export") { _, context -> Response in
+            let slot = try Self.slotParam(context)
+            guard let ini = await backend.snapshotExport(slot: slot) else {
+                throw HTTPError(.notFound, message: "empty slot")
+            }
+            return Response(
+                status: .ok,
+                headers: [.contentType: "text/plain; charset=utf-8"],
+                body: .init(byteBuffer: ByteBuffer(string: ini))
+            )
+        }
+        router.put("/api/snapshots/:slot") { request, context -> ControlSnapshots in
+            let slot = try Self.slotParam(context)
+            let body = try await request.decode(as: SnapshotImportRequest.self, context: context)
+            do {
+                return try await backend.snapshotImport(
+                    slot: slot, name: body.name, iniText: body.ini)
+            } catch let error as ControlError {
+                throw HTTPError(.badRequest, message: String(describing: error))
+            } catch {
+                throw HTTPError(.badRequest, message: "INI did not parse: \(error)")
             }
         }
 
@@ -293,27 +405,52 @@ enum ControlServer {
     /// absent (e.g. a package that ships the bare binary), which would
     /// take the ENCODER down over a missing web page. Resolve the bundle
     /// manually relative to the executable first.
+    static func slotParam(_ context: some RequestContext) throws -> Int {
+        guard let raw = context.parameters.get("slot"), let slot = Int(raw),
+              (0..<SnapshotStore.slotCount).contains(slot) else {
+            throw HTTPError(.badRequest, message: "slot must be 0..\(SnapshotStore.slotCount - 1)")
+        }
+        return slot
+    }
+
     static func dashboardHTML() -> String {
         let stub = "<!doctype html><title>MPX Prime</title><p>Dashboard resource missing; the REST API is available under /api/."
+        return webUIResource(name: "index", ext: "html") ?? stub
+    }
+
+    /// The control schema the dashboard builds its pages from (widget
+    /// definitions + page model), served at /api/schema. Single source of
+    /// truth: `WebUI/schema.json` -- the dashboard carries NO hardcoded
+    /// schema, and `ControlSchemaTests` pins the file against the INI
+    /// vocabulary so a new config key cannot ship without a schema decision.
+    static func schemaJSON() -> String? {
+        webUIResource(name: "schema", ext: "json")
+    }
+
+    /// Load a WebUI resource. Resolves relative to the executable first --
+    /// Bundle.module's generated accessor calls fatalError when the resource
+    /// bundle is absent (e.g. a package shipping the bare binary), which must
+    /// not take the ENCODER down over a missing web asset.
+    private static func webUIResource(name: String, ext: String) -> String? {
         var candidates: [String] = []
         if let exe = Bundle.main.executablePath {
             let dir = (exe as NSString).deletingLastPathComponent
-            candidates.append(dir + "/MPXPrime_MPXPrime.resources/WebUI/index.html")
-            candidates.append(dir + "/MPXPrime_MPXPrime.bundle/WebUI/index.html")
+            candidates.append(dir + "/MPXPrime_MPXPrime.resources/WebUI/\(name).\(ext)")
+            candidates.append(dir + "/MPXPrime_MPXPrime.bundle/WebUI/\(name).\(ext)")
         }
         for path in candidates where FileManager.default.fileExists(atPath: path) {
-            if let html = try? String(contentsOfFile: path, encoding: .utf8) {
-                return html
+            if let text = try? String(contentsOfFile: path, encoding: .utf8) {
+                return text
             }
         }
         // Fall back to Bundle.module only when a bundle is plausibly present
         // (macOS app/SwiftPM layouts) -- guarded by the same existence check.
         if candidates.isEmpty || candidates.contains(where: { FileManager.default.fileExists(atPath: ($0 as NSString).deletingLastPathComponent.replacingOccurrences(of: "/WebUI", with: "")) }) {
-            if let url = Bundle.module.url(forResource: "WebUI/index", withExtension: "html"),
-                let html = try? String(contentsOf: url, encoding: .utf8) {
-                return html
+            if let url = Bundle.module.url(forResource: "WebUI/\(name)", withExtension: ext),
+                let text = try? String(contentsOf: url, encoding: .utf8) {
+                return text
             }
         }
-        return stub
+        return nil
     }
 }

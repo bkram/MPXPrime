@@ -178,6 +178,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case agc = "AGC"
     case parametricEQ = "PEQ"
     case multiband = "Multiband"
+    case advancedDynamics = "Adv Dyn"
     case expander = "Expander"
     case mbLimiter = "MB Limiter"
     case widener = "Widener"
@@ -203,6 +204,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .agc: return .processingAGC
         case .parametricEQ: return .processingParametricEQ
         case .multiband: return .processingMultiband
+        case .advancedDynamics: return .processingAdvancedDynamics
         case .expander: return .processingExpander
         case .mbLimiter: return .processingMBLimiter
         case .widener: return .processingWidener
@@ -237,6 +239,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "4-band parametric EQ (low shelf + 2 peaks + high shelf) applied in L/R domain before the multiband stage. Pre-multiband tonal shaping."
         case .multiband:
             return "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined."
+        case .advancedDynamics:
+            return "Experimental single-stage leveler that replaces the AGC and Multiband stages with one fused 5-band stage, so leveling and density shaping can never fight. Set the sound you want (target, balance, density) - the stage adapts its own speed to the programme."
         case .expander:
             return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
         case .mbLimiter:
@@ -282,6 +286,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset PrimeBass Tab"
         case .multiband:
             return "Reset Multiband Tab"
+        case .advancedDynamics:
+            return "Reset Advanced Dynamics Tab"
         case .mbLimiter:
             return "Reset MB Limiter Tab"
         case .expander:
@@ -323,6 +329,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset PrimeBass tab to defaults"
         case .multiband:
             return "Reset Multiband tab to defaults"
+        case .advancedDynamics:
+            return "Reset Advanced Dynamics tab to defaults"
         case .mbLimiter:
             return "Reset multiband limiter tab to defaults"
         case .expander:
@@ -424,6 +432,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingAGC
     case processingParametricEQ
     case processingMultiband
+    case processingAdvancedDynamics
     case processingExpander
     case processingMBLimiter
     case processingWidener
@@ -501,6 +510,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return "PrimeBass"
         case .processingWidener: return "Stereo Widener"
         case .processingMultiband: return "Multiband"
+        case .processingAdvancedDynamics: return "Advanced Dynamics"
         case .processingMBLimiter: return "MB Limiter"
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
@@ -535,6 +545,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return "waveform.path"
         case .processingWidener: return "rectangle.expand.vertical"
         case .processingMultiband: return "chart.bar.xaxis"
+        case .processingAdvancedDynamics: return "wand.and.stars"
         case .processingMBLimiter: return "chart.bar.fill"
         case .processingExpander: return "arrow.up.right.and.arrow.down.left"
         case .processingBassClipper: return "speaker.wave.1"
@@ -572,6 +583,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return "Post-multiband bass and harmonic enhancement"
         case .processingWidener: return "Post-multiband stereo widening plus mono bass control"
         case .processingMultiband: return "3 / 5-band multiband compressor"
+        case .processingAdvancedDynamics: return "Single-stage leveler (replaces AGC + Multiband)"
         case .processingMBLimiter: return "Per-band fast peak limiter"
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
@@ -623,6 +635,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPrimeBass: return .primeBass
         case .processingWidener: return .widener
         case .processingMultiband: return .multiband
+        case .processingAdvancedDynamics: return .advancedDynamics
         case .processingMBLimiter: return .mbLimiter
         case .processingExpander: return .expander
         case .processingBassClipper: return .bassClipper
@@ -660,30 +673,6 @@ enum MonitoringBufferHealth: String {
     case ok = "OK"
     case warn = "Warn"
     case bad = "Dropouts"
-}
-
-/// One saved snapshot slot — name, save timestamp, and the configuration
-/// captured at save time. The config is stored as the same INI text the
-/// app already round-trips through `AppConfig.save(toINI:)` /
-/// `load(fromINI:)`, embedded in JSON. INI keeps schema migrations
-/// handled by the existing parser's defaults (missing keys fall back),
-/// so future AppConfig additions don't break older snapshot files.
-struct ConfigSnapshot: Identifiable, Codable {
-    let id: UUID
-    var name: String
-    var savedAt: Date
-    var configINIText: String
-}
-
-/// On-disk JSON envelope for `snapshots.json`. Wraps the slot array so
-/// future top-level fields (schema version, app version recorded at
-/// save, etc.) can be added without breaking old files.
-struct SnapshotFile: Codable {
-    var slots: [ConfigSnapshot?]
-    /// The preset whose config is currently live (persisted so the "Loaded"
-    /// marker survives relaunch). Optional with defaults so older files decode.
-    var activeID: UUID?
-    var activeModified: Bool?
 }
 
 struct MonitoringStreamHealth {
@@ -766,19 +755,6 @@ private struct PeakHoldState {
 private struct AudioPeakHoldState {
     var db: Float = -120.0
     var holdRemaining: Double = 0.0
-}
-
-private struct FinalStagePreset {
-    let id: String
-    let title: String
-    let agcEnabled: Bool
-    let agcTargetDB: Double
-    let agcAttackMS: Double
-    let agcReleaseMS: Double
-    let agcMaxGainDB: Double
-    let agcMinGainDB: Double
-    let finalDriveDB: Double
-    let preEncodeAudioLimiterEnabled: Bool
 }
 
 @MainActor
@@ -1637,11 +1613,20 @@ final class MPXPrimeViewModel: ObservableObject {
              .rdsSchedule, .rdsCarrier:
             return nil
         case .processingPhaseRotator: return config.phaseRotationEnabled
-        case .processingAGC: return config.widebandAGCEnabled
+        // AGC / Multiband (and the per-band Expander + MB Limiter that run
+        // inside the multiband stage) are bypassed while Advanced Dynamics
+        // is enabled -- the dot shows the EFFECTIVE state, not the stored
+        // flag, so a bypassed stage reads as off in the sidebar.
+        case .processingAGC:
+            return config.widebandAGCEnabled && !config.advancedDynamicsEnabled
         case .processingParametricEQ: return config.parametricEQEnabled
-        case .processingMultiband: return config.multibandEnabled
-        case .processingExpander: return config.downwardExpanderEnabled
-        case .processingMBLimiter: return config.multibandLimiterEnabled
+        case .processingMultiband:
+            return config.multibandEnabled && !config.advancedDynamicsEnabled
+        case .processingAdvancedDynamics: return config.advancedDynamicsEnabled
+        case .processingExpander:
+            return config.downwardExpanderEnabled && !config.advancedDynamicsEnabled
+        case .processingMBLimiter:
+            return config.multibandLimiterEnabled && !config.advancedDynamicsEnabled
         case .processingWidener: return config.stereoWidenEnabled
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
@@ -1706,7 +1691,7 @@ final class MPXPrimeViewModel: ObservableObject {
     // window after a programmatic load so only genuine user edits set it.
     private var suppressModifiedFlipUntil: TimeInterval = 0
 
-    static let snapshotSlotCount: Int = 8
+    static let snapshotSlotCount: Int = SnapshotStore.slotCount
 
     /// Snapshot file path derived from the config file path. Sibling
     /// file with `.snapshots.json` suffix so each distinct config gets
@@ -2287,50 +2272,25 @@ final class MPXPrimeViewModel: ObservableObject {
     /// indicator in v1 — the operator can re-pick the profile to restore
     /// its defaults).
     func applyFormatProfile(_ id: String) {
-        guard let profile = Self.formatProfile(forID: id) else {
+        publishConfigChange()
+        guard let title = PresetCatalog.applyFormatProfile(id: id, to: &config) else {
             statusText = "Unknown format profile: \(id)"
             return
         }
-        publishConfigChange()
-        config.formatProfileID = id
-
-        // "Custom" sentinel: just record the label, leave per-stage
-        // settings alone. Lets operators flag bespoke setups so the
-        // picker stops showing whichever profile was last applied even
-        // though knobs have drifted.
+        saveConfig(restartRequired: false)
         if id == "custom" {
-            saveConfig(restartRequired: false)
+            // Sentinel: label recorded, nothing else changed.
             statusText =
                 isRunning
                 ? "Format profile set to Custom (no settings changed)."
                 : "Format profile set to Custom."
             return
         }
-
-        applyMultibandPreset(id: profile.multibandPresetID, intensity: profile.multibandIntensity)
-        applyFinalStagePreset(id: profile.finalStagePresetID)
-
-        config.primeBassEnabled = profile.primeBassEnabled
-        if profile.primeBassEnabled {
-            applyPrimeBassPreset(id: profile.primeBassPresetID)
-        } else {
-            // Still record the per-stage preset ID so toggling PrimeBass
-            // back on uses the format-appropriate flavour.
-            config.primeBassPresetID = profile.primeBassPresetID
-        }
-
-        applyWidenerPreset(id: profile.widenerPresetID)
-
-        config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
-        config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
-        config.finalDriveDB = profile.finalDriveDB
-
-        saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded format profile \(profile.title) live."
-            : "Loaded format profile \(profile.title)."
+            ? "Loaded format profile \(title) live."
+            : "Loaded format profile \(title)."
     }
 
     func formatProfileBinding() -> Binding<String> {
@@ -2348,32 +2308,12 @@ final class MPXPrimeViewModel: ObservableObject {
     /// array. Called from init. Missing or corrupt file → silent reset
     /// to empty slots (operator can still save new ones).
     func loadSnapshotsFromDisk() {
-        let path = snapshotsFilePath
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let file = try decoder.decode(SnapshotFile.self, from: data)
-            // Defensive: pad/truncate to our slot count so future schema
-            // changes don't break existing on-disk files.
-            var slots: [ConfigSnapshot?] = Array(
-                repeating: nil, count: Self.snapshotSlotCount)
-            let count = min(file.slots.count, slots.count)
-            for i in 0..<count { slots[i] = file.slots[i] }
-            self.snapshots = slots
-            // Restore which preset is active so the "Loaded" marker survives
-            // relaunch. Drop it if the slot it pointed at is gone.
-            if let id = file.activeID, slots.contains(where: { $0?.id == id }) {
-                self.activeSnapshotID = id
-                self.activeSnapshotModified = file.activeModified ?? false
-            } else {
-                self.activeSnapshotID = nil
-                self.activeSnapshotModified = false
-            }
-        } catch {
-            statusText = "Failed to load presets: \(error.localizedDescription)"
-        }
+        // Delegates to the shared SnapshotStore (also used by the headless
+        // backend's /api/snapshots) so the two stay one implementation.
+        let file = SnapshotStore.load(configPath: configPath)
+        self.snapshots = file.slots
+        self.activeSnapshotID = file.activeID
+        self.activeSnapshotModified = file.activeModified ?? false
     }
 
     /// Persist all slots to disk. JSON envelope wraps the per-slot
@@ -2384,12 +2324,7 @@ final class MPXPrimeViewModel: ObservableObject {
         let file = SnapshotFile(
             slots: snapshots, activeID: activeSnapshotID, activeModified: activeSnapshotModified)
         do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(file)
-            try data.write(
-                to: URL(fileURLWithPath: snapshotsFilePath), options: [.atomic])
+            try SnapshotStore.write(file, configPath: configPath)
         } catch {
             statusText = "Failed to write presets: \(error.localizedDescription)"
         }
@@ -2572,23 +2507,14 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func applyFinalStagePreset(id: String) {
-        guard let preset = Self.finalStagePresets.first(where: { $0.id == id }) else { return }
         publishConfigChange()
-        config.finalStagePresetID = id
-        config.widebandAGCEnabled = preset.agcEnabled
-        config.widebandAGCTargetDB = preset.agcTargetDB
-        config.widebandAGCAttackMS = preset.agcAttackMS
-        config.widebandAGCReleaseMS = preset.agcReleaseMS
-        config.widebandAGCMaxGainDB = preset.agcMaxGainDB
-        config.widebandAGCMinGainDB = preset.agcMinGainDB
-        config.finalDriveDB = preset.finalDriveDB
-        config.preEncodeAudioLimiterEnabled = preset.preEncodeAudioLimiterEnabled
+        guard let title = PresetCatalog.applyFinalStage(id: id, to: &config) else { return }
         saveConfig(restartRequired: false)
         applyLiveRuntimeConfigIfRunning()
         statusText =
             isRunning
-            ? "Loaded final-stage preset \(preset.title) live."
-            : "Loaded final-stage preset \(preset.title)."
+            ? "Loaded final-stage preset \(title) live."
+            : "Loaded final-stage preset \(title)."
     }
 
     func revealConfigInFinder() {
@@ -2696,6 +2622,15 @@ final class MPXPrimeViewModel: ObservableObject {
             config.multibandLinkStrength = defaults.multibandLinkStrength
             config.multibandReleaseProgramDependent = defaults.multibandReleaseProgramDependent
             config.multibandMakeupDB = defaults.multibandMakeupDB
+        case .advancedDynamics:
+            config.advancedDynamicsEnabled = defaults.advancedDynamicsEnabled
+            config.advancedDynamicsTargetDB = defaults.advancedDynamicsTargetDB
+            config.advancedDynamicsLowOffsetDB = defaults.advancedDynamicsLowOffsetDB
+            config.advancedDynamicsMidOffsetDB = defaults.advancedDynamicsMidOffsetDB
+            config.advancedDynamicsHighOffsetDB = defaults.advancedDynamicsHighOffsetDB
+            config.advancedDynamicsMaxGainDB = defaults.advancedDynamicsMaxGainDB
+            config.advancedDynamicsDensity = defaults.advancedDynamicsDensity
+            config.advancedDynamicsSpeed = defaults.advancedDynamicsSpeed
         case .widener:
             config.stereoWidenEnabled = defaults.stereoWidenEnabled
             config.monoBassEnabled = defaults.monoBassEnabled
@@ -2771,7 +2706,7 @@ final class MPXPrimeViewModel: ObservableObject {
             runtimeDisposition = .restart
         case .overview, .formatProfile,
              .phaseRotator, .agc, .parametricEQ,
-             .multiband, .mbLimiter, .expander,
+             .multiband, .advancedDynamics, .mbLimiter, .expander,
              .widener, .primeBass,
              .bassClipper, .dcClipper, .hfClipper, .limiter,
              .compositeClipper, .bs412,
@@ -2995,13 +2930,56 @@ final class MPXPrimeViewModel: ObservableObject {
         )
     }
 
+    func remoteTelemetry(windowMS: Double) -> ControlTelemetry? {
+        runningEngine?.controlTelemetry(windowMS: windowMS)
+    }
+
+    func remoteSnapshots() -> ControlSnapshots {
+        ControlSnapshots(slots: snapshots.enumerated().map { i, snap in
+            ControlSnapshotSlot(
+                slot: i,
+                name: snap?.name,
+                savedAt: snap?.savedAt,
+                active: snap != nil && snap?.id == activeSnapshotID,
+                modified: snap != nil && snap?.id == activeSnapshotID && activeSnapshotModified)
+        })
+    }
+
+    func remoteSnapshotExport(slot: Int) -> String? {
+        guard snapshots.indices.contains(slot) else { return nil }
+        return snapshots[slot]?.configINIText
+    }
+
+    func remoteSnapshotImport(slot: Int, name: String?, iniText: String) throws {
+        guard snapshots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        let parsed = try AppConfig.loadFromINIString(iniText)  // validate
+        let canonical = try parsed.captureAsINIString()        // normalize
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let imported = ConfigSnapshot(
+            id: UUID(),
+            name: trimmed.isEmpty ? SnapshotStore.defaultName(slot: slot) : trimmed,
+            savedAt: Date(),
+            configINIText: canonical)
+        if snapshots[slot]?.id == activeSnapshotID {
+            activeSnapshotID = nil
+            activeSnapshotModified = false
+        }
+        snapshots[slot] = imported
+        writeSnapshotsToDisk()
+        statusText = "Imported preset \"\(imported.name)\" into slot \(slot + 1) (remote)."
+    }
+
     func remoteStatus() -> ControlStatus {
         ControlStatus(
             running: isRunning,
             platform: "macOS (GUI)",
             version: AppConfig.appVersion,
             sampleRateHz: config.sampleRate,
-            uptimeSeconds: nil,
+            uptimeSeconds: engineStartReference.map {
+                Date().timeIntervalSinceReferenceDate - $0
+            },
             restartPending: runtimeApplyPending,
             sourceMode: config.sourceMode,
             outputMode: config.processedAudioOutput ? "processedAudio" : "mpxComposite",
@@ -3023,6 +3001,8 @@ final class MPXPrimeViewModel: ObservableObject {
             },
             selectedInput: config.inputDeviceUID ?? "",
             selectedOutput: config.outputDeviceUID ?? "",
+            selectedMonitor: selectedMonitorUID,
+            monitorEnabled: monitorEnabled,
             note: "")
     }
 
@@ -3065,7 +3045,8 @@ final class MPXPrimeViewModel: ObservableObject {
             "primebass": PresetCatalog.primeBassPresets.map(\.id),
             "widener": PresetCatalog.widenerPresets.map(\.id),
             "multiband": PresetCatalog.multibandPresets.map(\.id),
-            "format_profile": Self.formatProfiles.map(\.id)
+            "finalstage": PresetCatalog.finalStagePresets.map(\.id),
+            "format_profile": PresetCatalog.formatProfiles.map(\.id)
         ]
     }
 
@@ -3092,6 +3073,11 @@ final class MPXPrimeViewModel: ObservableObject {
             default: level = .normal
             }
             applyMultibandPreset(id: id, intensity: level)
+        case "finalstage":
+            guard PresetCatalog.finalStagePresets.contains(where: { $0.id == id }) else {
+                throw ControlError.invalidRequest("unknown finalstage preset '\(id)'")
+            }
+            applyFinalStagePreset(id: id)
         case "format_profile":
             guard Self.formatProfile(forID: id) != nil else {
                 throw ControlError.invalidRequest("unknown format profile '\(id)'")
@@ -4163,222 +4149,21 @@ final class MPXPrimeViewModel: ObservableObject {
 
     static func ptyNames(rbds: Bool) -> [String] { rbds ? ptyNamesRBDS : ptyNamesRDS }
 
-    private static let finalStagePresets: [FinalStagePreset] = [
-        .init(
-            id: "balanced",
-            title: "Balanced Music",
-            agcEnabled: true,
-            agcTargetDB: -16.0,
-            agcAttackMS: 80.0,
-            agcReleaseMS: 1200.0,
-            agcMaxGainDB: 12.0,
-            agcMinGainDB: -12.0,
-            finalDriveDB: 6.0,
-            preEncodeAudioLimiterEnabled: true
-        ),
-        .init(
-            id: "chr",
-            title: "CHR / Dance",
-            agcEnabled: true,
-            agcTargetDB: -15.0,
-            agcAttackMS: 55.0,
-            agcReleaseMS: 900.0,
-            agcMaxGainDB: 10.0,
-            agcMinGainDB: -9.0,
-            finalDriveDB: 8.0,
-            preEncodeAudioLimiterEnabled: true
-        ),
-        .init(
-            id: "punchy",
-            title: "Punchy Music",
-            agcEnabled: true,
-            agcTargetDB: -15.0,
-            agcAttackMS: 60.0,
-            agcReleaseMS: 1000.0,
-            agcMaxGainDB: 11.0,
-            agcMinGainDB: -10.0,
-            finalDriveDB: 7.5,
-            preEncodeAudioLimiterEnabled: true
-        ),
-        .init(
-            id: "speech",
-            title: "Speech / Talk",
-            agcEnabled: true,
-            agcTargetDB: -14.0,
-            agcAttackMS: 45.0,
-            agcReleaseMS: 750.0,
-            agcMaxGainDB: 10.0,
-            agcMinGainDB: -8.0,
-            finalDriveDB: 4.5,
-            preEncodeAudioLimiterEnabled: true
-        )
-    ]
+    // Final-stage presets live in PresetCatalog (shared with the headless
+    // backend's "finalstage" preset kind); forwarded for the picker.
+    static var finalStagePresets: [PresetCatalog.FinalStagePreset] { PresetCatalog.finalStagePresets }
 
     // MARK: - Format Profiles (top-level "Station Format" selector)
 
-    /// A `FormatProfile` is a top-level "Station Format" bundle that
-    /// atomically wires multiband / final-stage / PrimeBass / stereo
-    /// widener / composite-clipper settings to a coherent target for one
-    /// programming format. The operator picks once; downstream stages all
-    /// receive matching settings. Per-stage knobs remain editable; the
-    /// profile selection stays as a cosmetic label until the operator
-    /// picks a different one.
-    ///
-    /// All `*PresetID` fields reference existing per-stage preset IDs —
-    /// the profile system is a wrapper over the existing per-stage
-    /// preset infrastructure, not a parallel one.
-    struct FormatProfile: Identifiable {
-        let id: String
-        let title: String
-        let summary: String
-        let multibandPresetID: String
-        let multibandIntensity: MultibandPresetIntensity
-        let finalStagePresetID: String
-        let primeBassEnabled: Bool
-        let primeBassPresetID: String      // ignored when primeBassEnabled == false
-        let widenerPresetID: String
-        let compositeClipperThresholdDB: Double
-        let compositeClipperCeilingDB: Double
-        let finalDriveDB: Double
-    }
+    /// Format profiles live in PresetCatalog (shared with the headless
+    /// backend's "format_profile" preset kind); forwarded for the picker
+    /// and the tests.
+    typealias FormatProfile = PresetCatalog.FormatProfile
 
-    static let formatProfiles: [FormatProfile] = [
-        // "Custom" is a sentinel — selecting it just records the label
-        // and leaves every per-stage setting alone. Use this after
-        // hand-tuning to flag "my settings are bespoke, don't auto-apply
-        // a format default if I re-pick this entry from the menu." The
-        // sentinel preset IDs below are placeholders; the apply path
-        // short-circuits on `id == "custom"` and never reads them.
-        FormatProfile(
-            id: "custom",
-            title: "Custom",
-            summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
-            multibandPresetID: "5_ac",
-            multibandIntensity: .normal,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: false,
-            primeBassPresetID: "ac",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 6.0
-        ),
-        FormatProfile(
-            id: "community_radio",
-            title: "Community Radio",
-            summary: "Conservative LPFM / community-radio default — clean output, low loudness, broad source compatibility.",
-            multibandPresetID: "5_ac",
-            multibandIntensity: .light,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: false,
-            primeBassPresetID: "ac",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 4.0
-        ),
-        FormatProfile(
-            id: "pop_ac",
-            title: "Pop / Adult Contemporary",
-            summary: "Mainstream music — balanced multiband, gentle PrimeBass, open widener, moderate drive.",
-            multibandPresetID: "5_ac",
-            multibandIntensity: .normal,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: true,
-            primeBassPresetID: "ac",
-            widenerPresetID: "open_music",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 6.0
-        ),
-        FormatProfile(
-            id: "chr_top40",
-            title: "CHR / Top 40",
-            summary: "Modern hits — bright multiband, hot drive, wide stereo image, competitive loudness.",
-            multibandPresetID: "5_chr",
-            multibandIntensity: .normal,
-            finalStagePresetID: "chr",
-            primeBassEnabled: true,
-            primeBassPresetID: "chr",
-            widenerPresetID: "wide_chr",
-            compositeClipperThresholdDB: -0.8,
-            compositeClipperCeilingDB: -0.2,
-            finalDriveDB: 8.0
-        ),
-        FormatProfile(
-            id: "rock",
-            title: "Rock",
-            summary: "Punchy multiband, rock-tuned PrimeBass, open widener — preserves transient impact.",
-            multibandPresetID: "5_rock",
-            multibandIntensity: .normal,
-            finalStagePresetID: "punchy",
-            primeBassEnabled: true,
-            primeBassPresetID: "rock",
-            widenerPresetID: "open_music",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 7.0
-        ),
-        FormatProfile(
-            id: "edm_dance",
-            title: "EDM / Dance",
-            summary: "Heavy multiband, hot drive, deep bass, wide image — peak loudness for dance formats.",
-            multibandPresetID: "5_dance",
-            multibandIntensity: .heavy,
-            finalStagePresetID: "chr",
-            primeBassEnabled: true,
-            primeBassPresetID: "chr",
-            widenerPresetID: "wide_chr",
-            compositeClipperThresholdDB: -0.7,
-            compositeClipperCeilingDB: -0.2,
-            finalDriveDB: 9.0
-        ),
-        FormatProfile(
-            id: "urban_hiphop",
-            title: "Urban / Hip-Hop",
-            summary: "Deep low end, urban-tuned PrimeBass, hot drive — bass-forward urban contemporary.",
-            multibandPresetID: "5_urban",
-            multibandIntensity: .normal,
-            finalStagePresetID: "chr",
-            primeBassEnabled: true,
-            primeBassPresetID: "urban",
-            widenerPresetID: "open_music",
-            compositeClipperThresholdDB: -0.8,
-            compositeClipperCeilingDB: -0.2,
-            finalDriveDB: 8.0
-        ),
-        FormatProfile(
-            id: "jazz_classical",
-            title: "Jazz / Classical",
-            summary: "Dynamic-preserving — light multiband, no PrimeBass, safe widener, conservative drive.",
-            multibandPresetID: "5_classic",
-            multibandIntensity: .light,
-            finalStagePresetID: "balanced",
-            primeBassEnabled: false,
-            primeBassPresetID: "ac",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.2,
-            compositeClipperCeilingDB: -0.4,
-            finalDriveDB: 3.0
-        ),
-        FormatProfile(
-            id: "news_talk",
-            title: "News / Talk",
-            summary: "Speech-optimized multiband + final-stage, no PrimeBass, safe widener, low drive.",
-            multibandPresetID: "5_talk",
-            multibandIntensity: .light,
-            finalStagePresetID: "speech",
-            primeBassEnabled: false,
-            primeBassPresetID: "talk",
-            widenerPresetID: "safe_fm",
-            compositeClipperThresholdDB: -1.0,
-            compositeClipperCeilingDB: -0.3,
-            finalDriveDB: 4.5
-        )
-    ]
+    static var formatProfiles: [FormatProfile] { PresetCatalog.formatProfiles }
 
     static func formatProfile(forID id: String) -> FormatProfile? {
-        formatProfiles.first(where: { $0.id == id })
+        PresetCatalog.formatProfile(forID: id)
     }
 
     private static func ptyName(for pty: Int, rbds: Bool) -> String {
@@ -5054,6 +4839,8 @@ private struct StageProcessingContent: View {
                         ProcessingPrimeBassTab(model: model)
                     case .multiband:
                         ProcessingMultibandTab(model: model)
+                    case .advancedDynamics:
+                        ProcessingAdvancedDynamicsTab(model: model)
                     case .mbLimiter:
                         ProcessingMultibandLimiterTab(model: model)
                     case .expander:
@@ -7160,10 +6947,44 @@ private struct ProcessingCoreTab: View {
     }
 }
 
+/// Banner + ghosting for the stages Advanced Dynamics replaces (AGC,
+/// Multiband, and the per-band Expander / MB Limiter that run inside the
+/// multiband stage). Their tabs stay reachable so the operator can inspect
+/// the stored settings, but the controls are dimmed + disabled to make
+/// unmistakable that the stage is not in the chain right now.
+private struct BypassedByAdvancedDynamicsNotice: View {
+    @ObservedObject var model: MPXPrimeViewModel
+    let stageName: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "moon.zzz.fill")
+                .accessibilityHidden(true)
+            Text("\(stageName) is bypassed: Advanced Dynamics is enabled and does this stage's work.")
+            Spacer()
+            Button("Open Advanced Dynamics") {
+                model.selectedStage = .processingAdvancedDynamics
+            }
+            .buttonStyle(.bordered)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+    }
+}
+
 private struct ProcessingAGCTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Wideband AGC")
+        }
         Card(title: "Wideband AGC") {
             Toggle("Enable Wideband AGC", isOn: model.configBinding(\.widebandAGCEnabled, runtimeDisposition: .live))
             DoubleSliderRow(title: "Platform Target", value: model.configBinding(\.widebandAGCTargetDB, runtimeDisposition: .live), range: -36 ... -6, format: "%.1f dB",
@@ -7186,6 +7007,8 @@ private struct ProcessingAGCTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7229,6 +7052,10 @@ private struct ProcessingMultibandTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Multiband")
+        }
         Card(title: "Multiband Dynamics") {
             // Preset / intensity / enable / mode — common to all bands.
             Picker("Preset", selection: Binding(
@@ -7336,6 +7163,8 @@ private struct ProcessingMultibandTab: View {
                     tooltip: "High-Mid / High crossover frequency. Separates sibilance region from air / top-end.")
             }
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7551,6 +7380,10 @@ private struct ProcessingMultibandLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Multiband Limiter")
+        }
         Card(title: "Multiband Limiter") {
             Toggle("Enable Multiband Limiter", isOn: model.configBinding(\.multibandLimiterEnabled, runtimeDisposition: .live))
             DoubleSliderRow(
@@ -7578,6 +7411,8 @@ private struct ProcessingMultibandLimiterTab: View {
             )
             .disabled(!model.config.multibandLimiterEnabled)
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7585,6 +7420,10 @@ private struct ProcessingExpanderTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        let bypassed = model.config.advancedDynamicsEnabled
+        if bypassed {
+            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Downward Expander")
+        }
         Card(title: "Downward Expander") {
             Toggle("Enable Expander", isOn: model.configBinding(\.downwardExpanderEnabled, runtimeDisposition: .live))
             let disabled = !model.config.downwardExpanderEnabled
@@ -7597,6 +7436,8 @@ private struct ProcessingExpanderTab: View {
             DoubleSliderRow(title: "Release", value: model.configBinding(\.expanderReleaseMS, runtimeDisposition: .live), range: 10...2000, format: "%.0f ms",
                 tooltip: "Time to close the gate once program falls below the threshold. Longer release avoids chattering on sustained-but-quiet sources.").disabled(disabled)
         }
+        .disabled(bypassed)
+        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -7630,6 +7471,37 @@ private struct ProcessingHFClipperTab: View {
                 tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
             DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
                 tooltip: "Pre-clipping gain on the high band. Higher drive increases HF density but also clipping distortion.").disabled(disabled)
+        }
+    }
+}
+
+private struct ProcessingAdvancedDynamicsTab: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Card(title: "Advanced Dynamics") {
+            Toggle("Enable Advanced Dynamics", isOn: model.configBinding(\.advancedDynamicsEnabled, runtimeDisposition: .live))
+                .help("Experimental single-stage 5-band leveler. While enabled, the AGC and Multiband stages are bypassed and this stage does all the leveling and density work in one place.")
+            let disabled = !model.config.advancedDynamicsEnabled
+            // Usage tip (the shared help box below already explains WHAT the
+            // stage is; this is the how-to-drive-it line).
+            Text("While enabled, AGC and Multiband are bypassed. Start with the defaults, then raise Density for a more competitive sound. Band layout follows the Multiband tab's crossovers (toggle this stage off briefly to edit them).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            DoubleSliderRow(title: "Target Level", value: model.configBinding(\.advancedDynamicsTargetDB, runtimeDisposition: .live), range: -30...(-6), format: "%.1f dB",
+                tooltip: "The level every band is brought toward. Lower = more headroom and gentler sound; higher = denser and louder into the clippers.").disabled(disabled)
+            DoubleSliderRow(title: "Density", value: model.configBinding(\.advancedDynamicsDensity, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                tooltip: "How tightly the leveler holds program at target. Higher = tighter hold window and faster leveling (denser, more processed); lower = more dynamics left intact.").disabled(disabled)
+            DoubleSliderRow(title: "Speed", value: model.configBinding(\.advancedDynamicsSpeed, runtimeDisposition: .live), range: 0.25...4, format: "%.2fx",
+                tooltip: "Overall time-constant scale. The stage adapts its own attack/release to the programme; this scales that adaptive behavior faster or slower.").disabled(disabled)
+            DoubleSliderRow(title: "Max Boost", value: model.configBinding(\.advancedDynamicsMaxGainDB, runtimeDisposition: .live), range: 0...24, format: "%.1f dB",
+                tooltip: "Maximum lift applied to quiet program per band. The reduction side is fixed at 24 dB, so the total range absorbs large in-song level jumps.").disabled(disabled)
+            DoubleSliderRow(title: "Bass Balance", value: model.configBinding(\.advancedDynamicsLowOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
+                tooltip: "Low-band target offset relative to Target Level. The five bands interpolate between the Bass / Mid / Treble anchors, setting the on-air tonal balance.").disabled(disabled)
+            DoubleSliderRow(title: "Mid Balance", value: model.configBinding(\.advancedDynamicsMidOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
+                tooltip: "Mid-band target offset relative to Target Level.").disabled(disabled)
+            DoubleSliderRow(title: "Treble Balance", value: model.configBinding(\.advancedDynamicsHighOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
+                tooltip: "High-band target offset relative to Target Level. The default -9 dB approximates a natural music spectrum; raise it for a brighter on-air sound.").disabled(disabled)
         }
     }
 }

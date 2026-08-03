@@ -102,6 +102,79 @@ private actor MockBackend: ControlBackend {
         return ConfigApplyResult(outcomes: [], appliedLive: true, restartPending: false)
     }
 
+    // Snapshot slots: an in-memory SnapshotFile so route tests are hermetic.
+    var snapshotFile = SnapshotFile(
+        slots: Array(repeating: nil, count: SnapshotStore.slotCount),
+        activeID: nil, activeModified: false)
+
+    private func snapshotDTO() -> ControlSnapshots {
+        ControlSnapshots(slots: snapshotFile.slots.enumerated().map { i, snap in
+            ControlSnapshotSlot(
+                slot: i, name: snap?.name, savedAt: snap?.savedAt,
+                active: snap != nil && snap?.id == snapshotFile.activeID,
+                modified: snap != nil && snap?.id == snapshotFile.activeID
+                    && (snapshotFile.activeModified ?? false))
+        })
+    }
+
+    func telemetry(windowMS: Double) -> ControlTelemetry? { nil }
+
+    func snapshots() -> ControlSnapshots { snapshotDTO() }
+
+    func snapshotSave(slot: Int, name: String) throws -> ControlSnapshots {
+        guard snapshotFile.slots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        let snap = ConfigSnapshot(
+            id: UUID(), name: name.isEmpty ? SnapshotStore.defaultName(slot: slot) : name,
+            savedAt: Date(), configINIText: (try? config.captureAsINIString()) ?? "")
+        snapshotFile.slots[slot] = snap
+        snapshotFile.activeID = snap.id
+        snapshotFile.activeModified = false
+        return snapshotDTO()
+    }
+
+    func snapshotLoad(slot: Int) throws -> ConfigApplyResult {
+        guard snapshotFile.slots.indices.contains(slot),
+              snapshotFile.slots[slot] != nil else {
+            throw ControlError.invalidRequest("empty or invalid slot")
+        }
+        return ConfigApplyResult(outcomes: [], appliedLive: true, restartPending: false)
+    }
+
+    func snapshotRename(slot: Int, name: String) throws -> ControlSnapshots {
+        guard snapshotFile.slots.indices.contains(slot),
+              var snap = snapshotFile.slots[slot] else {
+            throw ControlError.invalidRequest("empty or invalid slot")
+        }
+        snap.name = name
+        snapshotFile.slots[slot] = snap
+        return snapshotDTO()
+    }
+
+    func snapshotClear(slot: Int) throws -> ControlSnapshots {
+        guard snapshotFile.slots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        snapshotFile.slots[slot] = nil
+        return snapshotDTO()
+    }
+
+    func snapshotExport(slot: Int) -> String? {
+        snapshotFile.slots.indices.contains(slot)
+            ? snapshotFile.slots[slot]?.configINIText : nil
+    }
+
+    func snapshotImport(slot: Int, name: String?, iniText: String) throws -> ControlSnapshots {
+        guard snapshotFile.slots.indices.contains(slot) else {
+            throw ControlError.invalidRequest("slot out of range")
+        }
+        snapshotFile.slots[slot] = ConfigSnapshot(
+            id: UUID(), name: name ?? SnapshotStore.defaultName(slot: slot),
+            savedAt: Date(), configINIText: iniText)
+        return snapshotDTO()
+    }
+
     func setNowPlaying(artist: String, title: String, display: String) -> Bool {
         lastNowPlaying = (artist, title, display)
         return config.enRDS
@@ -368,6 +441,65 @@ struct ControlServerTests {
         #expect(await backend.status().running == false)
         await backend.reconcile()
         #expect(await backend.status().running == false)
+    }
+
+    @Test func snapshotRoutesRoundTrip() async throws {
+        // The server encodes dates as ISO8601 (Hummingbird's encoder);
+        // decode the same way.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let backend = MockBackend()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            // Empty list first.
+            try await client.execute(uri: "/api/snapshots", method: .get) { response in
+                #expect(response.status == .ok)
+                let snaps = try decoder.decode(
+                    ControlSnapshots.self, from: Data(response.body.readableBytesView))
+                #expect(snaps.slots.count == SnapshotStore.slotCount)
+                #expect(snaps.slots.allSatisfy { $0.name == nil })
+            }
+            // Save into slot 2 with a name.
+            let body = try JSONEncoder().encode(["name": "Evening Show"])
+            try await client.execute(
+                uri: "/api/snapshots/2/save", method: .post,
+                body: ByteBuffer(bytes: Array(body))
+            ) { response in
+                #expect(response.status == .ok)
+                let snaps = try decoder.decode(
+                    ControlSnapshots.self, from: Data(response.body.readableBytesView))
+                #expect(snaps.slots[2].name == "Evening Show")
+                #expect(snaps.slots[2].active == true)
+            }
+            // Load it back.
+            try await client.execute(uri: "/api/snapshots/2/load", method: .post) { response in
+                #expect(response.status == .ok)
+            }
+            // Export returns INI text.
+            try await client.execute(uri: "/api/snapshots/2/export", method: .get) { response in
+                #expect(response.status == .ok)
+                let text = String(buffer: response.body)
+                #expect(text.contains("[MPX]"))
+            }
+            // Bad slot -> 400; empty slot load -> 400; empty export -> 404.
+            try await client.execute(uri: "/api/snapshots/9/load", method: .post) { response in
+                #expect(response.status == .badRequest)
+            }
+            try await client.execute(uri: "/api/snapshots/5/load", method: .post) { response in
+                #expect(response.status == .badRequest)
+            }
+            try await client.execute(uri: "/api/snapshots/5/export", method: .get) { response in
+                #expect(response.status == .notFound)
+            }
+            // Clear.
+            try await client.execute(uri: "/api/snapshots/2", method: .delete) { response in
+                #expect(response.status == .ok)
+                let snaps = try decoder.decode(
+                    ControlSnapshots.self, from: Data(response.body.readableBytesView))
+                #expect(snaps.slots[2].name == nil)
+            }
+        }
     }
 
     // Restart-equals-live: transport(.restart) must hand the FRESH engine both

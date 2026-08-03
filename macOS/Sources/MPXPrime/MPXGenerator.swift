@@ -3258,6 +3258,295 @@ struct MonoCompressor {
     }
 }
 
+/// Experimental single-stage "Advanced Dynamics" leveler (default off).
+///
+/// Replaces the wideband AGC + multiband compressor pair with ONE fused
+/// 5-band leveling stage, so slow leveling and per-band density shaping can
+/// never fight each other (the classic AGC-pulls-down-while-multiband-
+/// pushes-up pumping). Each band rides its level toward a per-band target
+/// with *program-adaptive* time constants instead of fixed attack/release:
+///
+///  - transient acceleration: a rising peak-vs-RMS transient blends the
+///    gain smoother toward a near-instant attack coefficient (up to ~1000x
+///    faster than the base attack) so fast peaks are caught;
+///  - come-to-a-stop hold: inside the target window the gain freezes
+///    entirely, and busy (dense) program slows release further, so material
+///    that already sits at the desired density passes untouched;
+///  - distance acceleration: the further the band sits from target, the
+///    faster it approaches (both directions), giving a wide usable range
+///    (>20 dB jumps inside one song) that stays inaudible near target.
+///
+/// The band split reuses `LinearPhaseMultibandSplitter5` (own instance so
+/// live-toggling never shares filter state with the multiband compressor);
+/// the detector reuses the RMS/peak hybrid idea from `MonoCompressor` and
+/// the dual-envelope density estimator from `WidebandAGCRider`. Inter-band
+/// coupling reuses the graduated low-band-GR bias curve.
+struct AdvancedDynamicsLeveler {
+    private var splitter = LinearPhaseMultibandSplitter5()
+
+    private struct BandState {
+        var rmsPower: Float = 0.0
+        var env: Float = 0.0
+        var gainDB: Float = 0.0
+        var heldDrive: Float = 0.0
+        var transientHoldCounter: Int = 0
+    }
+    private var bands = [BandState](repeating: BandState(), count: 5)
+    /// Per-band level targets in dB (amplitude, 20*log10), band 1..5.
+    private var bandTargetsDB = [Float](repeating: -16.0, count: 5)
+
+    // Detector coefficients (fixed; the adaptivity lives in the gain smoother).
+    private var rmsAttackCoeff: Float = 0.0
+    private var rmsReleaseCoeff: Float = 0.0
+    private var envAttackCoeff: Float = 0.0
+    private var envReleaseCoeff: Float = 0.0
+    private var transientHoldSamples: Int = 1
+
+    // Gain-smoother coefficient anchors; per-sample the effective
+    // coefficient is a blend of these (no per-sample expf).
+    private var attackBaseCoeff: Float = 0.0
+    private var attackFastCoeff: Float = 0.0
+    private var releaseBaseCoeff: Float = 0.0
+    private var releaseFastCoeff: Float = 0.0
+    private var gateDriftCoeff: Float = 0.0
+
+    // Program-density estimator (dual-envelope, WidebandAGCRider pattern).
+    private var fastEnv: Float = 0.0
+    private var slowEnv: Float = 0.0
+    private var density: Float = 0.0
+    private var fastEnvCoeff: Float = 0.0
+    private var slowEnvCoeff: Float = 0.0
+    private var densityCoeff: Float = 0.0
+
+    // Inter-band coupling smoother (20 ms / 300 ms, multiband pattern).
+    private var couplingGRDB: Float = 0.0
+    private var couplingAttackCoeff: Float = 0.0
+    private var couplingReleaseCoeff: Float = 0.0
+
+    private var maxLiftDB: Float = 18.0
+    private var maxCutDB: Float = 24.0
+    private var holdWindowDB: Float = 2.0
+    private var gateThresholdDB: Float = -42.0
+
+    var groupDelaySamples: Int { splitter.groupDelaySamples }
+
+    /// Structure: sample rate + crossovers. Allocates FIR state — call only
+    /// when these actually changed (engine start / crossover live-change).
+    mutating func configureStructure(
+        sampleRate: Float, x1Hz: Float, x2Hz: Float, x3Hz: Float, x4Hz: Float
+    ) {
+        let sr = max(8_000.0, sampleRate)
+        let firTransition = max(1_000.0, x1Hz * 0.6)
+        splitter.configure(
+            x1Hz: x1Hz, x2Hz: x2Hz, x3Hz: x3Hz, x4Hz: x4Hz,
+            sampleRate: sr, stopBandDB: 60.0, transitionHz: firTransition
+        )
+        // Detector: 10 ms / 90 ms RMS window, 5 ms / 60 ms envelope
+        // (MonoCompressor's hybrid-detector time constants).
+        rmsAttackCoeff = expf(-1.0 / (0.010 * sr))
+        rmsReleaseCoeff = expf(-1.0 / (0.090 * sr))
+        envAttackCoeff = expf(-1.0 / (0.005 * sr))
+        envReleaseCoeff = expf(-1.0 / (0.060 * sr))
+        transientHoldSamples = max(1, Int((sr * 0.010).rounded()))
+        fastEnvCoeff = expf(-1.0 / (0.050 * sr))
+        slowEnvCoeff = expf(-1.0 / (1.000 * sr))
+        densityCoeff = expf(-1.0 / (0.500 * sr))
+        couplingAttackCoeff = expf(-1.0 / (0.020 * sr))
+        couplingReleaseCoeff = expf(-1.0 / (0.300 * sr))
+        gateDriftCoeff = expf(-1.0 / (1.6 * sr))
+        storedSampleRate = sr
+        setParameters(
+            targetDB: storedTargetDB, lowOffsetDB: storedLowOffsetDB,
+            midOffsetDB: storedMidOffsetDB, highOffsetDB: storedHighOffsetDB,
+            maxGainDB: storedMaxGainDB, density: storedDensity, speed: storedSpeed
+        )
+        reset()
+    }
+
+    // Parameter mirrors so structure changes can re-derive coefficients.
+    private var storedSampleRate: Float = 192_000.0
+    private var storedTargetDB: Float = -16.0
+    private var storedLowOffsetDB: Float = 0.0
+    private var storedMidOffsetDB: Float = -3.0
+    private var storedHighOffsetDB: Float = -9.0
+    private var storedMaxGainDB: Float = 18.0
+    private var storedDensity: Float = 0.5
+    private var storedSpeed: Float = 1.0
+
+    /// Parameters: cheap (no allocation) — safe on any live change.
+    mutating func setParameters(
+        targetDB: Float, lowOffsetDB: Float, midOffsetDB: Float,
+        highOffsetDB: Float, maxGainDB: Float, density: Float, speed: Float
+    ) {
+        storedTargetDB = targetDB
+        storedLowOffsetDB = lowOffsetDB
+        storedMidOffsetDB = midOffsetDB
+        storedHighOffsetDB = highOffsetDB
+        storedMaxGainDB = maxGainDB
+        storedDensity = clampf(density, 0.0, 1.0)
+        storedSpeed = clampf(speed, 0.25, 4.0)
+        let sr = storedSampleRate
+
+        // Low/mid/high anchors expand to 5 bands the same way the
+        // multiband compressor interpolates bands 2 and 4.
+        let o1 = lowOffsetDB
+        let o3 = midOffsetDB
+        let o5 = highOffsetDB
+        bandTargetsDB[0] = targetDB + o1
+        bandTargetsDB[1] = targetDB + lerpf(o1, o3, 0.5)
+        bandTargetsDB[2] = targetDB + o3
+        bandTargetsDB[3] = targetDB + lerpf(o3, o5, 0.5)
+        bandTargetsDB[4] = targetDB + o5
+
+        maxLiftDB = clampf(maxGainDB, 0.0, 24.0)
+        maxCutDB = 24.0
+        // Denser setting = tighter hold window (more leveling action) and
+        // faster base movement.
+        holdWindowDB = lerpf(3.0, 0.75, storedDensity)
+        gateThresholdDB = targetDB - maxLiftDB - 10.0
+
+        let speedScale = Double(1.0 / storedSpeed)
+        let attackBaseS = 0.030 * speedScale
+        let attackFastS = max(0.000_05, attackBaseS / 1_000.0)  // ~1000x
+        let releaseBaseS = lerpf(1.2, 0.4, storedDensity)
+        let releaseFastS = releaseBaseS * 0.25
+        attackBaseCoeff = expf(-1.0 / Float(attackBaseS * Double(sr)))
+        attackFastCoeff = expf(-1.0 / Float(attackFastS * Double(sr)))
+        releaseBaseCoeff = expf(-1.0 / (Float(Double(releaseBaseS) * speedScale) * sr))
+        releaseFastCoeff = expf(-1.0 / (Float(Double(releaseFastS) * speedScale) * sr))
+    }
+
+    mutating func reset() {
+        splitter.reset()
+        for i in 0..<bands.count { bands[i] = BandState() }
+        fastEnv = 0.0
+        slowEnv = 0.0
+        density = 0.0
+        couplingGRDB = 0.0
+    }
+
+    /// Current per-band gains in dB (diagnostics / tests / verify modes).
+    var bandGainsDB: [Float] { bands.map { $0.gainDB } }
+    var currentDensityDB: Float { density }
+
+    mutating func process(left: Float, right: Float) -> (Float, Float) {
+        guard splitter.enabled else { return (left, right) }
+        let split = splitter.process(left: left, right: right)
+
+        // Program-density estimate on the full-band linked input (the
+        // WidebandAGCRider dual-envelope pattern): busy program -> high
+        // density -> slower release ("stop when already dense").
+        let monoPower = max(1e-12, 0.5 * ((left * left) + (right * right)))
+        fastEnv = zapDenorm((fastEnvCoeff * fastEnv) + ((1.0 - fastEnvCoeff) * monoPower))
+        slowEnv = zapDenorm((slowEnvCoeff * slowEnv) + ((1.0 - slowEnvCoeff) * monoPower))
+        let envRatio = max(fastEnv, slowEnv) / max(1e-12, min(fastEnv, slowEnv))
+        let instantDensity = 10.0 * log10f(max(1.0, envRatio))
+        density = (densityCoeff * density) + ((1.0 - densityCoeff) * instantDensity)
+
+        // Per-band leveling; tuples throughout, no per-sample allocation
+        // (audio-thread rule). Band 1 runs first so its smoothed reduction
+        // can bias the upper bands' targets this same sample.
+        let o1 = levelBand(index: 0, bl: split.0.0, br: split.0.1)
+        let o2 = levelBand(index: 1, bl: split.1.0, br: split.1.1)
+        let o3 = levelBand(index: 2, bl: split.2.0, br: split.2.1)
+        let o4 = levelBand(index: 3, bl: split.3.0, br: split.3.1)
+        let o5 = levelBand(index: 4, bl: split.4.0, br: split.4.1)
+        return (
+            o1.0 + o2.0 + o3.0 + o4.0 + o5.0,
+            o1.1 + o2.1 + o3.1 + o4.1 + o5.1
+        )
+    }
+
+    /// Graduated coupling bias per band (the multiband 5-band curve).
+    private static let couplingWeights: (Float, Float, Float, Float, Float)
+        = (0.0, 0.10, 0.15, 0.22, 0.25)
+
+    @inline(__always)
+    private mutating func levelBand(index i: Int, bl: Float, br: Float) -> (Float, Float) {
+        // Linked-RMS sidechain: one shared gain per band keeps the stereo
+        // image exact by construction.
+        let linked = sqrtf(((bl * bl) + (br * br)) * 0.5)
+
+        var st = bands[i]
+        // RMS window + transient drive (MonoCompressor hybrid pattern).
+        let power = linked * linked
+        let rmsCoeff = power > st.rmsPower ? rmsAttackCoeff : rmsReleaseCoeff
+        st.rmsPower = zapDenorm((rmsCoeff * st.rmsPower) + ((1.0 - rmsCoeff) * power))
+        let rms = sqrtf(max(1e-12, st.rmsPower))
+        let peakToRMS = linked / max(1e-4, rms)
+        let rising = linked > st.env
+        let transientDrive = rising && linked > 1e-5
+            ? clampf((peakToRMS - 1.65) / 2.35, 0.0, 1.0)
+            : 0.0
+        if transientDrive > 0.15 {
+            st.transientHoldCounter = transientHoldSamples
+        } else if st.transientHoldCounter > 0 {
+            st.transientHoldCounter -= 1
+        }
+        st.heldDrive = st.transientHoldCounter > 0
+            ? max(st.heldDrive * 0.94, transientDrive)
+            : transientDrive
+        let peakWeight = lerpf(0.18, 0.58, st.heldDrive)
+        let hybrid = (rms * (1.0 - peakWeight)) + (linked * peakWeight)
+        let envCoeff = hybrid > st.env ? envAttackCoeff : envReleaseCoeff
+        st.env = zapDenorm((envCoeff * st.env) + ((1.0 - envCoeff) * hybrid))
+
+        let levelDB = 20.0 * log10f(max(1e-6, st.env))
+        // Coupling: heavy low-band reduction biases upper-band targets
+        // down so bass-heavy passages keep tonal glue (graduated curve).
+        let weight: Float
+        switch i {
+        case 1: weight = Self.couplingWeights.1
+        case 2: weight = Self.couplingWeights.2
+        case 3: weight = Self.couplingWeights.3
+        case 4: weight = Self.couplingWeights.4
+        default: weight = Self.couplingWeights.0
+        }
+        let couplingBias = -weight * couplingGRDB
+        let desiredDB = clampf(
+            (bandTargetsDB[i] + couplingBias) - levelDB, -maxCutDB, maxLiftDB)
+
+        let errorDB = desiredDB - st.gainDB
+        if levelDB < gateThresholdDB {
+            // Do not lift silence / room noise: drift back to unity.
+            st.gainDB *= gateDriftCoeff
+        } else if fabsf(errorDB) <= holdWindowDB {
+            // At target: come to a complete stop (gain untouched).
+        } else if errorDB < 0.0 {
+            // Reduce: transient drive + distance accelerate the base
+            // attack toward the near-instant coefficient (blend of
+            // precomputed anchors, no per-sample expf).
+            let distanceAccel = clampf((-errorDB - holdWindowDB) / 12.0, 0.0, 1.0)
+            let accel = max(st.heldDrive, distanceAccel)
+            let coeff = lerpf(attackBaseCoeff, attackFastCoeff, accel * accel)
+            st.gainDB = (coeff * st.gainDB) + ((1.0 - coeff) * desiredDB)
+        } else {
+            // Lift: base release, slowed by program density, accelerated
+            // when the band sits far below target.
+            let distanceAccel = clampf((errorDB - holdWindowDB) / 15.0, 0.0, 1.0)
+            var rel = lerpf(releaseBaseCoeff, releaseFastCoeff, distanceAccel)
+            // Density slowdown: blend toward "no movement" (coeff -> 1)
+            // as the program gets busy. densitySmoothed is 0..4 dB.
+            let slowBlend = clampf(density / 4.0, 0.0, 1.0)
+            rel = lerpf(rel, 1.0, slowBlend * 0.6)
+            st.gainDB = (rel * st.gainDB) + ((1.0 - rel) * desiredDB)
+        }
+        st.gainDB = clampf(st.gainDB, -maxCutDB, maxLiftDB)
+        if i == 0 {
+            // Smooth low-band reduction feeding the coupling bias.
+            let reduction = max(0.0, -st.gainDB)
+            let cCoeff = reduction > couplingGRDB
+                ? couplingAttackCoeff : couplingReleaseCoeff
+            couplingGRDB = zapDenorm(
+                (cCoeff * couplingGRDB) + ((1.0 - cCoeff) * reduction))
+        }
+        bands[i] = st
+
+        let gain = powf(10.0, st.gainDB / 20.0)
+        return (bl * gain, br * gain)
+    }
+}
+
 struct LookaheadLimiter {
     var enabled: Bool = false
     var threshold: Float = 0.98
@@ -5977,6 +6266,16 @@ final class MPXGenerator {
         let multibandLowReleaseMS: Float
         let multibandMidReleaseMS: Float
         let multibandHighReleaseMS: Float
+        // Advanced Dynamics single-stage leveler (replaces AGC+multiband
+        // when enabled; experimental, default off).
+        let advancedDynamicsEnabled: Bool
+        let advancedDynamicsTargetDB: Float
+        let advancedDynamicsLowOffsetDB: Float
+        let advancedDynamicsMidOffsetDB: Float
+        let advancedDynamicsHighOffsetDB: Float
+        let advancedDynamicsMaxGainDB: Float
+        let advancedDynamicsDensity: Float
+        let advancedDynamicsSpeed: Float
         let phaseRotationEnabled: Bool
         let phaseRotationFreqHz: Float
         let parametricEQEnabled: Bool
@@ -6101,6 +6400,14 @@ final class MPXGenerator {
             multibandLowReleaseMS: Float(config.multibandLowReleaseMS),
             multibandMidReleaseMS: Float(config.multibandMidReleaseMS),
             multibandHighReleaseMS: Float(config.multibandHighReleaseMS),
+            advancedDynamicsEnabled: config.advancedDynamicsEnabled,
+            advancedDynamicsTargetDB: Float(config.advancedDynamicsTargetDB),
+            advancedDynamicsLowOffsetDB: Float(config.advancedDynamicsLowOffsetDB),
+            advancedDynamicsMidOffsetDB: Float(config.advancedDynamicsMidOffsetDB),
+            advancedDynamicsHighOffsetDB: Float(config.advancedDynamicsHighOffsetDB),
+            advancedDynamicsMaxGainDB: Float(config.advancedDynamicsMaxGainDB),
+            advancedDynamicsDensity: Float(config.advancedDynamicsDensity),
+            advancedDynamicsSpeed: Float(config.advancedDynamicsSpeed),
             phaseRotationEnabled: config.phaseRotationEnabled,
             phaseRotationFreqHz: Float(config.phaseRotationFreqHz),
             parametricEQEnabled: config.parametricEQEnabled,
@@ -6496,6 +6803,21 @@ final class MPXGenerator {
     private var mb5Comp5L = MonoCompressor()
     private var mb5Comp5R = MonoCompressor()
 
+    // Advanced Dynamics: experimental single-stage 5-band leveler that
+    // REPLACES the wideband AGC + multiband compressor when enabled
+    // (default off). Owns its own FIR splitter; structure is configured
+    // lazily (only when enabled) so a disabled stage costs nothing.
+    private var advancedDynamicsEnabled = false
+    private var advancedDynamicsTargetDB: Float = -16.0
+    private var advancedDynamicsLowOffsetDB: Float = 0.0
+    private var advancedDynamicsMidOffsetDB: Float = -3.0
+    private var advancedDynamicsHighOffsetDB: Float = -9.0
+    private var advancedDynamicsMaxGainDB: Float = 18.0
+    private var advancedDynamicsDensity: Float = 0.5
+    private var advancedDynamicsSpeed: Float = 1.0
+    private var advancedDynamicsStructureConfigured = false
+    private var advancedDynamics = AdvancedDynamicsLeveler()
+
     // Multiband limiter: per-band fast peak limiters after compression
     private var multibandLimiterEnabled: Bool
     private var multibandLimiterThresholdDB: Float
@@ -6875,6 +7197,15 @@ final class MPXGenerator {
         self.multibandMidReleaseMS = Float(config.multibandMidReleaseMS)
         self.multibandHighReleaseMS = Float(config.multibandHighReleaseMS)
 
+        self.advancedDynamicsEnabled = config.advancedDynamicsEnabled
+        self.advancedDynamicsTargetDB = clampf(Float(config.advancedDynamicsTargetDB), -30.0, -6.0)
+        self.advancedDynamicsLowOffsetDB = clampf(Float(config.advancedDynamicsLowOffsetDB), -12.0, 6.0)
+        self.advancedDynamicsMidOffsetDB = clampf(Float(config.advancedDynamicsMidOffsetDB), -12.0, 6.0)
+        self.advancedDynamicsHighOffsetDB = clampf(Float(config.advancedDynamicsHighOffsetDB), -12.0, 6.0)
+        self.advancedDynamicsMaxGainDB = clampf(Float(config.advancedDynamicsMaxGainDB), 0.0, 24.0)
+        self.advancedDynamicsDensity = clampf(Float(config.advancedDynamicsDensity), 0.0, 1.0)
+        self.advancedDynamicsSpeed = clampf(Float(config.advancedDynamicsSpeed), 0.25, 4.0)
+
         self.multibandLimiterEnabled = config.multibandLimiterEnabled
         self.multibandLimiterThresholdDB = clampf(Float(config.multibandLimiterThresholdDB), -20.0, 0.0)
         self.multibandLimiterAttackMS = clampf(Float(config.multibandLimiterAttackMS), 0.01, 10.0)
@@ -6972,6 +7303,7 @@ final class MPXGenerator {
         configurePrimeBassFilters()
         configureMultibandFilters()
         configureMultibandCompressors()
+        configureAdvancedDynamics()
         configureMultibandLimiters()
         configureDownwardExpanders()
         configureStereoWidener()
@@ -7377,6 +7709,7 @@ final class MPXGenerator {
         configurePrimeBassFilters()
         configureMultibandFilters()
         configureMultibandCompressors()
+        configureAdvancedDynamics()
         configureMultibandLimiters()
         configureDownwardExpanders()
         configureStereoWidener()
@@ -7607,6 +7940,37 @@ final class MPXGenerator {
         }
         if multibandStructureChanged || multibandCompressorChanged {
             configureMultibandCompressors()
+        }
+
+        // Advanced Dynamics (single-stage leveler). Structure (FIR split)
+        // rebuilds only on enable-toggle or crossover change -- the same
+        // rare-operator-action allocation the multiband FIR reconfigure
+        // above already performs. Parameter tweaks are cheap coefficient
+        // updates.
+        let advancedDynamicsToggled =
+            advancedDynamicsEnabled != config.advancedDynamicsEnabled
+        let advancedDynamicsParamsChanged =
+            fabsf(advancedDynamicsTargetDB - config.advancedDynamicsTargetDB) > 0.0001
+            || fabsf(advancedDynamicsLowOffsetDB - config.advancedDynamicsLowOffsetDB) > 0.0001
+            || fabsf(advancedDynamicsMidOffsetDB - config.advancedDynamicsMidOffsetDB) > 0.0001
+            || fabsf(advancedDynamicsHighOffsetDB - config.advancedDynamicsHighOffsetDB) > 0.0001
+            || fabsf(advancedDynamicsMaxGainDB - config.advancedDynamicsMaxGainDB) > 0.0001
+            || fabsf(advancedDynamicsDensity - config.advancedDynamicsDensity) > 0.0001
+            || fabsf(advancedDynamicsSpeed - config.advancedDynamicsSpeed) > 0.0001
+        advancedDynamicsEnabled = config.advancedDynamicsEnabled
+        advancedDynamicsTargetDB = clampf(config.advancedDynamicsTargetDB, -30.0, -6.0)
+        advancedDynamicsLowOffsetDB = clampf(config.advancedDynamicsLowOffsetDB, -12.0, 6.0)
+        advancedDynamicsMidOffsetDB = clampf(config.advancedDynamicsMidOffsetDB, -12.0, 6.0)
+        advancedDynamicsHighOffsetDB = clampf(config.advancedDynamicsHighOffsetDB, -12.0, 6.0)
+        advancedDynamicsMaxGainDB = clampf(config.advancedDynamicsMaxGainDB, 0.0, 24.0)
+        advancedDynamicsDensity = clampf(config.advancedDynamicsDensity, 0.0, 1.0)
+        advancedDynamicsSpeed = clampf(config.advancedDynamicsSpeed, 0.25, 4.0)
+        if advancedDynamicsToggled
+            || (advancedDynamicsEnabled
+                && (multibandStructureChanged || !advancedDynamicsStructureConfigured)) {
+            configureAdvancedDynamics()
+        } else if advancedDynamicsEnabled && advancedDynamicsParamsChanged {
+            applyAdvancedDynamicsParameters()
         }
 
         // Phase rotator
@@ -8137,6 +8501,38 @@ final class MPXGenerator {
                 transitionHz: firTransition
             )
         }
+    }
+
+    /// Advanced Dynamics structure setup. Lazy: a disabled stage never
+    /// allocates its FIR splitter (default-off must cost nothing). Uses the
+    /// same crossover clamps as configureMultibandFilters so the leveler's
+    /// bands match the multiband compressor's layout exactly.
+    private func configureAdvancedDynamics() {
+        guard advancedDynamicsEnabled else {
+            advancedDynamicsStructureConfigured = false
+            return
+        }
+        let sampleRate = audioDomainSampleRate
+        let x1 = clampf(multibandX1Hz, 40.0, max(60.0, (sampleRate * 0.5) - 300.0))
+        let x2 = clampf(multibandX2Hz, x1 + 40.0, max(x1 + 60.0, (sampleRate * 0.5) - 200.0))
+        let x3 = clampf(multibandX3Hz, x2 + 80.0, max(x2 + 100.0, (sampleRate * 0.5) - 120.0))
+        let x4 = clampf(multibandX4Hz, x3 + 120.0, max(x3 + 140.0, (sampleRate * 0.5) - 60.0))
+        advancedDynamics.configureStructure(
+            sampleRate: sampleRate, x1Hz: x1, x2Hz: x2, x3Hz: x3, x4Hz: x4)
+        applyAdvancedDynamicsParameters()
+        advancedDynamicsStructureConfigured = true
+    }
+
+    private func applyAdvancedDynamicsParameters() {
+        advancedDynamics.setParameters(
+            targetDB: advancedDynamicsTargetDB,
+            lowOffsetDB: advancedDynamicsLowOffsetDB,
+            midOffsetDB: advancedDynamicsMidOffsetDB,
+            highOffsetDB: advancedDynamicsHighOffsetDB,
+            maxGainDB: advancedDynamicsMaxGainDB,
+            density: advancedDynamicsDensity,
+            speed: advancedDynamicsSpeed
+        )
     }
 
     private func configureMultibandCompressors() {
@@ -8880,7 +9276,12 @@ final class MPXGenerator {
                 right = rotated.1
             }
 
-            if widebandAGCEnabled {
+            // Advanced Dynamics replaces BOTH the wideband AGC and the
+            // multiband compressor with one fused leveling stage (its whole
+            // point is that the two can no longer fight). When it is off
+            // this condition reduces to the previous `widebandAGCEnabled`
+            // check -- bit-identical chain, zero-drift by construction.
+            if widebandAGCEnabled && !advancedDynamicsEnabled {
                 let adjusted = widebandAGC.process(left: left, right: right)
                 left = adjusted.0
                 right = adjusted.1
@@ -8917,7 +9318,15 @@ final class MPXGenerator {
             left = stereoImage.left
             right = stereoImage.right
 
-            if multibandEnabled {
+            if advancedDynamicsEnabled {
+                // Single-stage leveler in the multiband slot (AGC skipped
+                // above); the FIR split's group delay matches the multiband
+                // FIR path's treatment -- audio-domain latency, no
+                // subcarrier alignment impact.
+                let leveled = advancedDynamics.process(left: left, right: right)
+                left = leveled.0
+                right = leveled.1
+            } else if multibandEnabled {
                 let multiband = processMultibandStereo(left: left, right: right)
                 left = multiband.0
                 right = multiband.1

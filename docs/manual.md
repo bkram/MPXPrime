@@ -139,6 +139,21 @@ For one-click "make this sound right for my format", MPX Prime Studio ships with
 
 Pick once, tune as needed. The selected profile is stored as `format_profile_id` in the INI; switching profiles overwrites the per-stage settings to the new format's defaults (except `custom`, which is a no-op label).
 
+### Preset slots (snapshots)
+
+Eight operator preset slots store complete configurations -- every INI
+setting, not just one stage -- so you can capture a tuned state and A/B
+whole setups. In the GUI they live under **Presets** in the sidebar; since
+0.44 the web dashboard's Presets page exposes the same eight slots (they
+are shared storage, so a slot saved in the GUI loads from the dashboard
+and vice versa). Per slot: a name, save (capture the current config),
+load (applies the whole snapshot as one change, with live-apply where
+possible and a restart flag where not), rename, and clear. Slots can be
+exported as INI text -- the export is a complete config file you can pass
+to `--config` -- and an INI file can be imported into an empty slot. The
+slot list marks which snapshot was loaded last and whether the config has
+been edited since.
+
 ### Recommended DSP enablement (current default starting point)
 
 For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:
@@ -160,6 +175,7 @@ Recommended **off** by default (enable only when needed):
 - **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
 - **HF Clipper** — pre-emphasis-aware HF clipper (`Processing` -> `HF Clipper`; `hf_clipper_*`). Off by default. Clips only the *pre-emphasised* high band (crossover default 5 kHz, threshold -3 dB, drive 1.2) so HF transients are tamed by a dedicated stage instead of forcing the broadband limiter to pull gain across the whole signal and dull it — de-emphasis-correct, since the receiver's fixed de-emphasis restores the curve. Worth trying on dense EDM / contemporary pop where HF transients dominate; leave off for talk / classical. Controls live-apply.
 - **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
+- **Advanced Dynamics** — experimental single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Processing` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
 
 This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
 
@@ -300,6 +316,22 @@ Recommended starting point:
 - `Multiband`: `5B AC/Pop` for general music, `5B Talk` for speech, `5B CHR/EDM` for a denser contemporary result, `5B Italo` / `3B Italo` for italo / disco / dance pumping character
 
 The current defaults are intentionally moderate and are meant to be tuned upward from a clean starting point, not downward from a hyped one.
+
+### Advanced Dynamics (experimental single-stage leveler)
+
+`advanced_dynamics_enabled` (default `False`) replaces the wideband AGC **and** the multiband compressor with one fused 5-band leveling stage. The point of the fusion is that slow leveling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with program-adaptive speed — near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
+
+- `advanced_dynamics_target_db` (default `-16.0`) — the level every band is brought toward.
+- `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) — tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
+- `advanced_dynamics_max_gain_db` (default `18.0`) — maximum lift for quiet program (the reduction side is fixed at 24 dB, giving the wide total range that absorbs 20 dB jumps inside one song).
+- `advanced_dynamics_density` (`0..1`, default `0.5`) — denser = tighter hold window and faster leveling.
+- `advanced_dynamics_speed` (`0.25..4`, default `1.0`) — overall time-constant scale.
+
+Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics` and must pass program-material A/B plus listening before any preset enables it.
+
+In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced Dynamics", between Multiband and Expander, with a card on the Processing Overview grid); in the web dashboard it is the "Advanced Dynamics" card on the same page as Multiband.
+
+While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and MB Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
 
 ### Now Playing script output
 
@@ -546,20 +578,45 @@ without one. Clients send the key as `Authorization: Bearer <key>` or
 `X-API-Key: <key>`. The server speaks plain HTTP; for access beyond a
 trusted network, front it with a TLS reverse proxy (nginx/caddy).
 
-Open `http://<host>:8737/` in a browser for the dashboard. It mirrors the
-Studio GUI: a pinned broadcast status bar (transport, IN/MPX level bars,
-AGC/limiter/clipper gain-reduction meters, deviation / pilot / RDS
-injection / budget-margin readouts, restart-pending badge) above sidebar
-sections -- Sound (Input, AGC, PrimeBass, Stereo Image, Multiband, Audio
-Clipper, Composite Clipper, Output -- real switches and sliders with the
-GUI's control vocabulary, applied live on release), RDS (on-air PS/RT
-display, identity, PS banks, RadioText, TP/TA/MS/CT flags), Test Tone,
-Presets (with per-stage preset pickers on the Sound cards too), and an
-Advanced page holding the raw all-settings editor. Every change reports
-back live / live-RDS / needs-restart. The Interfaces page lists the
-machine's audio devices (CoreAudio on macOS, ALSA PCM names on Linux) as
-input/output dropdowns -- selecting one is a restart-class change. It is a single self-contained page
-(no internet access needed) and prompts for the API key when one is
+Open `http://<host>:8737/` in a browser for the dashboard. Since 0.44 it
+mirrors the Studio GUI page-for-page: a pinned broadcast status bar
+(transport Start/Stop/Restart plus the transport-level **Bypass** button,
+IN/MPX level bars, AGC/limiter/clipper gain-reduction meters, deviation /
+pilot / RDS injection / budget-margin readouts, restart-pending badge)
+above four sidebar sections:
+
+- **Monitoring** -- source/output devices, input meters, MPX deviation /
+  modulation, per-stage gain-reduction readouts, subcarrier injection +
+  budget margin, and stream health (uptime, ring-buffer fill, OVR/UND
+  drop counters, resample trim), plus a signal-chain card grid.
+- **Processing** -- the GUI's tab set one page each: Overview (stage grid
+  with enable switches), Profile (station-format picker), Core, Phase
+  Rotator, AGC, Parametric EQ, Multiband (incl. crossovers X1-X4),
+  Advanced Dynamics, Expander, MB Limiter, Stereo Widener, PrimeBass,
+  Bass Clipper, Audio Clipper, HF Clipper, Audio Limiter, Composite
+  Clipper (incl. look-ahead + oversampling), BS.412, Final Stage. Real
+  switches and sliders with the GUI's control vocabulary, applied live on
+  release; each page has the GUI's "Reset This Tab" button.
+- **RDS** -- Status (on-air PS/RT/PTYN/Long PS), Identity, Radiotext
+  (mode, rotation, the 4 manual buffers, RT+ formats, Now Playing
+  configuration), Long PS, Alt. Frequencies (list + method), Schedule
+  (group sequence, scheduler toggles, CT/TZ), Subcarrier.
+- **Tools** -- Test Tone, Interfaces (input/output/monitor device
+  pickers; selecting one is a restart-class change; the read-only Remote
+  Control card shows the server's own settings, which stay INI/GUI-only
+  by design), Presets (per-stage preset pickers plus the 8 operator
+  preset slots: name, Save/Load/Export/Clear, Import into empty slots),
+  and an Advanced page holding the raw all-settings editor.
+
+Every change reports back live / live-RDS / needs-restart. The Bypass
+button mirrors the GUI's Cmd-B exactly: it flips `processing_bypass`
+(restart-class, so it restarts the engine when running), shows a red
+BYPASSED state, and asks for confirmation before putting unprocessed
+audio on air. With `processed_audio_output` enabled the dashboard hides
+the same pages the GUI hides (RDS group, Composite Clipper, BS.412,
+Final Stage) and Monitoring swaps the MPX/subcarrier cards for a
+processed-audio output card. The dashboard is a single self-contained
+page (no internet access needed) and prompts for the API key when one is
 configured.
 
 ### Endpoints
@@ -572,7 +629,16 @@ configured.
 | PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
 | GET | `/api/config` | every INI setting, grouped by section |
 | PATCH | `/api/config` | `{"<ini_key>": "<value>", ...}` -- any key from this manual's tables |
-| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband; + format_profile in GUI mode) |
+| GET | `/api/schema` | the dashboard's control schema: widget definitions (label/range/unit) + page model for every exposed INI key -- the single source the web UI renders from |
+| GET | `/api/config/defaults` | factory defaults, grouped like `/api/config` -- diff against it for "reset to defaults" |
+| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44) |
+| GET | `/api/telemetry` | live scope waveforms + MPX spectrum (display-decimated, ~6 KB; `?window_ms=` picks the scope timebase); 503 while stopped or on a platform without a scope tap |
+| GET | `/api/devices` | the machine's audio devices (CoreAudio / ALSA) with the selected input, output, AND monitor slots (`selectedMonitor` + `monitorEnabled` since 0.44) |
+| POST | `/api/nowplaying` | push the current track: `{"artist": ..., "title": ..., "display": ...}` -- feeds the RT / PS / RT+ templates (see "Now-playing push" below) |
+| GET | `/api/snapshots` | the 8 operator preset slots (name, saved-at, active/modified) -- shared with the native GUI's Presets sidebar |
+| POST | `/api/snapshots/N/save`, `/load` | capture the current config into slot N (body `{"name": ...}` optional) / apply slot N as one full config patch |
+| PATCH / DELETE | `/api/snapshots/N` | rename / clear slot N |
+| GET / PUT | `/api/snapshots/N/export`, import | the slot's full INI text (doubles as a `--config` file) / import INI (body `{"name": ..., "ini": "..."}`) |
 | POST | `/api/presets` | `{"kind": "multiband", "id": "3_chr", "intensity": 1.0}` (intensity <0.75 light / >1.25 heavy) |
 | POST | `/api/transport/start\|stop\|restart` | engine lifecycle |
 
@@ -728,6 +794,8 @@ Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled ac
 
 `--verify-multiband-coupling` forces multiband on, disables AGC for isolation, and toggles `multiband_inter_band_coupling_enabled` off/on across 5 program scenarios (bass-heavy, kick/vocal, dance, wide-bass, speech-bed), reporting per-band Low/Mid/High deltas + correlation / side-to-mid / peak / overshoot / render-cost ratio.
 
+`--verify-advanced-dynamics` A/Bs the classic AGC + multiband chain against the single-stage Advanced Dynamics leveler on 4 program scenarios (a 20 dB level jump, dense bass, a quiet ballad, HF transients), reporting RMS / per-band / correlation / side / peak / overshoot deltas plus two leveler-specific metrics: re-processing idempotency (feeding the leveler's output through a fresh leveler should barely change it) and the render-cost ratio against the two stages it replaces.
+
 Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, and composite-multiband + inter-band-coupling A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
 
 Exit status:
@@ -776,7 +844,7 @@ reception path (multipath) inflates them.
 
 ## Processing bypass
 
-The `Bypass` control does not create a true wire bypass. It disables the creative processing blocks while keeping essential FM encode stages active.
+The `Bypass` control does not create a true wire bypass. It disables the creative processing blocks while keeping essential FM encode stages active. It is available in the GUI (Cmd-B / toolbar) and, since 0.44, on the web dashboard's status strip -- the flag is restart-class, so toggling it remotely restarts the engine (the dashboard asks for confirmation first).
 
 Always active:
 
@@ -789,12 +857,19 @@ Always active:
 
 Disabled by bypass:
 
+- Phase rotator
 - Wideband AGC
+- Audio HPF
 - HF trim
+- Parametric EQ
 - PrimeBass
 - Mono bass
-- Multiband processing
+- Multiband processing (incl. per-band expander and MB limiter)
+- Advanced Dynamics
 - Stereo widener
+- Bass / audio / HF clippers
+- Pre-encode audio limiter
+- Stereo-image protection
 
 
 ## MPX Prime Meter (companion analyzer)

@@ -188,6 +188,7 @@ swift run --package-path macOS MPXPrime --verify-long --seconds 30            # 
 swift run --package-path macOS MPXPrime --verify-receiver --seconds 5         # receiver-model decode
 swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2   # A/B multiband clipper
 swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2    # A/B inter-band coupling
+swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4     # A/B single-stage leveler
 ```
 
 Baseline capture + strict compare:

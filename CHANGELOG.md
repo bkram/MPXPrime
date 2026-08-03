@@ -9,7 +9,7 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased
+## 0.44 — 2026-08-03
 
 - **Advanced Dynamics: experimental single-stage 5-band leveler**
   (`advanced_dynamics_enabled`, default off). Replaces the wideband AGC +

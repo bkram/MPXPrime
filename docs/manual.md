@@ -536,7 +536,7 @@ triggers a layout pass:
 
 - **Spectrum** -- the composite (MPX) spectrum after stereo encoding, with the
   same FM band-region overlay the Meter draws: **Mono L+R**, **19 kHz Pilot**,
-  **Stereo L-R**, **57 kHz RDS**, and **SCA** captions mark where each component
+  **Stereo L-R** (lower and upper sideband -- the same L-R signal mirrored around 38 kHz), **57 kHz RDS**, and **SCA** captions mark where each component
   sits, so you can confirm the pilot, subcarrier, and RDS land in the right
   places at the right levels.
 - **Pre-MPX Spectrum** -- an RTA-style bar spectrum of the processed L/R audio

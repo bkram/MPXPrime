@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **MPX spectrum band captions: the two stereo regions are now labeled
+  "Stereo L-R lower SB" / "upper SB"** instead of two identical "Stereo
+  L-R" captions. Both regions really do carry the same L-R signal (DSB-SC
+  mirrored around 38 kHz) -- the identical labels read as a copy-paste
+  error, and distinct sideband labels also make SSB Stereo's
+  one-sideband suppression recognizable at a glance. Applies to the
+  Studio spectrum window and the Meter (shared view).
 - **Verifier hardening (the parked 0.44-plan items):** (1) strict
   baselines extended to the preset sweep and the long-run sweep --
   platform-suffixed `presets.json` (records keyed `<presetID>/<scenario>`,

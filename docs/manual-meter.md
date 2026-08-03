@@ -215,7 +215,7 @@ remembered by device UID):
   cannot.
 - **Scopes**: composite, decoded L, decoded R. Click a decoded scope to toggle
   it between waveform and its audio spectrum (0-20 kHz).
-- **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz
+- **Spectrum** with band captions (Mono L+R, 19 kHz Pilot, Stereo L-R lower/upper sideband, 57 kHz
   RDS, 67.65 kHz Direct Band, 92 kHz SCA). A **60 / 100 kHz** span toggle in the
   header picks the display range; 60 kHz (the default) focuses on the modulated
   bands, 100 kHz shows the full baseband including SCA.

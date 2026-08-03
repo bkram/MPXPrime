@@ -2,19 +2,19 @@ import Testing
 import Foundation
 @testable import MPXPrime
 
-// Rule Breaker: experimental SSB-leaning stereo encoder (default off).
+// SSB Stereo: experimental SSB-leaning stereo encoder (default off).
 // These tests pin (1) config plumbing, (2) the SSB action itself (one
 // 38 kHz sideband suppressed at full amount, symmetric at amount 0),
 // (3) mono transparency, and (4) chain inertness when off (zero-drift at
-// unit level). Receiver-decode separation is gated by --verify-rulebreaker.
-@Suite("Rule Breaker SSB stereo encoder")
-struct RuleBreakerTests {
+// unit level). Receiver-decode separation is gated by --verify-ssb-stereo.
+@Suite("SSB Stereo encoder")
+struct SSBStereoTests {
     private let sampleRate: Float = 192_000.0
 
     /// Clean-encode config: processing bypassed so the composite carries
     /// textbook stereo encoding (bypass keeps encode stages active), RDS
     /// off so the 38 kHz region is easy to read.
-    private func makeCleanConfig(ruleBreaker: Bool, amount: Double = 1.0) -> AppConfig {
+    private func makeCleanConfig(ssbStereo: Bool, amount: Double = 1.0) -> AppConfig {
         var config = AppConfig()
         config.sampleRate = Double(sampleRate)
         config.sourceMode = "input"
@@ -33,8 +33,8 @@ struct RuleBreakerTests {
         config.audioCompositeSoftClipEnabled = false
         config.audioCompositeSmootherEnabled = false
         config.finalMPXSoftClipEnabled = false
-        config.ruleBreakerEnabled = ruleBreaker
-        config.ruleBreakerSSBAmount = amount
+        config.ssbStereoEnabled = ssbStereo
+        config.ssbStereoAmount = amount
         return config
     }
 
@@ -63,26 +63,26 @@ struct RuleBreakerTests {
         return abs(lower - upper)
     }
 
-    @Test func runtimeConfigCarriesRuleBreakerFields() {
+    @Test func runtimeConfigCarriesSSBStereoFields() {
         var config = AppConfig()
-        #expect(config.ruleBreakerEnabled == false)
-        config.ruleBreakerEnabled = true
-        config.ruleBreakerSSBAmount = 0.42
+        #expect(config.ssbStereoEnabled == false)
+        config.ssbStereoEnabled = true
+        config.ssbStereoAmount = 0.42
 
         let runtime = MPXGenerator.makeRuntimeConfig(from: config)
-        #expect(runtime.ruleBreakerEnabled == true)
-        #expect(abs(runtime.ruleBreakerSSBAmount - 0.42) < 1e-4)
+        #expect(runtime.ssbStereoEnabled == true)
+        #expect(abs(runtime.ssbStereoAmount - 0.42) < 1e-4)
     }
 
-    @Test func iniRoundTripsRuleBreakerKeys() throws {
+    @Test func iniRoundTripsSSBStereoKeys() throws {
         var config = AppConfig()
-        config.ruleBreakerEnabled = true
-        config.ruleBreakerSSBAmount = 0.55
+        config.ssbStereoEnabled = true
+        config.ssbStereoAmount = 0.55
 
         let ini = try config.captureAsINIString()
         let reloaded = try AppConfig.loadFromINIString(ini)
-        #expect(reloaded.ruleBreakerEnabled == true)
-        #expect(abs(reloaded.ruleBreakerSSBAmount - 0.55) < 1e-4)
+        #expect(reloaded.ssbStereoEnabled == true)
+        #expect(abs(reloaded.ssbStereoAmount - 0.55) < 1e-4)
     }
 
     @Test func fullSSBSuppressesOneSideband() {
@@ -91,9 +91,9 @@ struct RuleBreakerTests {
         // the kept side (Hilbert ripple bounds perfection; require the
         // asymmetry to open up by a decisive margin).
         let dsbAsym = sidebandAsymmetryDB(
-            config: makeCleanConfig(ruleBreaker: false), toneHz: 10_000.0)
+            config: makeCleanConfig(ssbStereo: false), toneHz: 10_000.0)
         let ssbAsym = sidebandAsymmetryDB(
-            config: makeCleanConfig(ruleBreaker: true, amount: 1.0), toneHz: 10_000.0)
+            config: makeCleanConfig(ssbStereo: true, amount: 1.0), toneHz: 10_000.0)
         #expect(dsbAsym < 1.5, "DSB sidebands should be symmetric, got \(dsbAsym) dB")
         #expect(ssbAsym > 15.0,
             "full SSB should suppress one sideband; asymmetry only \(ssbAsym) dB")
@@ -102,7 +102,7 @@ struct RuleBreakerTests {
     @Test func amountZeroKeepsDSBSymmetry() {
         // amount = 0 is exactly DSB (just delayed): sidebands stay symmetric.
         let asym = sidebandAsymmetryDB(
-            config: makeCleanConfig(ruleBreaker: true, amount: 0.0), toneHz: 10_000.0)
+            config: makeCleanConfig(ssbStereo: true, amount: 0.0), toneHz: 10_000.0)
         #expect(asym < 1.5, "amount=0 should be plain DSB, got \(asym) dB asymmetry")
     }
 
@@ -111,8 +111,8 @@ struct RuleBreakerTests {
         // 38 kHz region stays empty and the mono tone level is unchanged
         // vs the classic path.
         let fftSize = 65_536
-        func spectrum(_ ruleBreaker: Bool) -> SpectralReport {
-            var config = makeCleanConfig(ruleBreaker: ruleBreaker, amount: 1.0)
+        func spectrum(_ ssbStereo: Bool) -> SpectralReport {
+            var config = makeCleanConfig(ssbStereo: ssbStereo, amount: 1.0)
             config.monoMode = false
             let generator = MPXGenerator(config: config, sampleRate: Double(sampleRate))
             var samples = [Float](repeating: 0.0, count: fftSize * 2)
@@ -141,8 +141,8 @@ struct RuleBreakerTests {
         base.sourceMode = "input"
 
         var tweaked = base
-        tweaked.ruleBreakerEnabled = false
-        tweaked.ruleBreakerSSBAmount = 1.0
+        tweaked.ssbStereoEnabled = false
+        tweaked.ssbStereoAmount = 1.0
 
         let genA = MPXGenerator(config: base, sampleRate: Double(sampleRate))
         let genB = MPXGenerator(config: tweaked, sampleRate: Double(sampleRate))
@@ -158,7 +158,7 @@ struct RuleBreakerTests {
     }
 
     @Test func hostileInputStaysFinite() {
-        var config = makeCleanConfig(ruleBreaker: true, amount: 1.0)
+        var config = makeCleanConfig(ssbStereo: true, amount: 1.0)
         config.processingBypass = false
         let generator = MPXGenerator(config: config, sampleRate: Double(sampleRate))
         var seed: UInt64 = 0x1234_5678_9ABC_DEF0

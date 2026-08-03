@@ -2698,8 +2698,8 @@ final class MPXPrimeViewModel: ObservableObject {
             config.compositeClipperThresholdDB = defaults.compositeClipperThresholdDB
             config.compositeClipperCeilingDB = defaults.compositeClipperCeilingDB
             config.compositeMultibandClipperEnabled = defaults.compositeMultibandClipperEnabled
-            config.ruleBreakerEnabled = defaults.ruleBreakerEnabled
-            config.ruleBreakerSSBAmount = defaults.ruleBreakerSSBAmount
+            config.ssbStereoEnabled = defaults.ssbStereoEnabled
+            config.ssbStereoAmount = defaults.ssbStereoAmount
         }
 
         let runtimeDisposition: RuntimeChangeDisposition
@@ -7580,11 +7580,11 @@ private struct ProcessingCompositeClipperTab: View {
             DisclosureGroup("Experimental") {
                 Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
                     .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
-                Toggle("Rule Breaker (SSB Stereo)", isOn: model.configBinding(\.ruleBreakerEnabled, runtimeDisposition: .live))
-                    .help("Experimental, off by default. Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom (up to ~1 dB) before the clipper works. Trades a little stereo separation on phase-imperfect receivers; verify with --verify-rulebreaker and a real radio before regular use.")
-                DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ruleBreakerSSBAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
+                    .help("Experimental, off by default. Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom (up to ~1 dB) before the clipper works. Trades a little stereo separation on phase-imperfect receivers; verify with --verify-ssb-stereo and a real radio before regular use.")
+                DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
                     tooltip: "How far the stereo subcarrier leans toward single-sideband. 0 = classic double-sideband (no effect), 1 = full SSB (maximum headroom reclaim, maximum receiver sensitivity). Start around 0.5-0.7.")
-                    .disabled(!model.config.ruleBreakerEnabled)
+                    .disabled(!model.config.ssbStereoEnabled)
             }
         }
     }

@@ -329,28 +329,28 @@ struct DSPThroughputTests {
             "Advanced Dynamics cost \(enabledWall) s vs AGC+FIR-multiband \(disabledWall) s = \(ratio)x; it replaces those stages, so >2x means the leveler needs optimization before preset use")
     }
 
-    @Test func ruleBreakerCostStaysBounded() {
-        // The Rule Breaker adds one 511-tap Hilbert dotpr + two short delay
+    @Test func ssbStereoCostStaysBounded() {
+        // The SSB Stereo adds one 511-tap Hilbert dotpr + two short delay
         // lines per MPX sample on top of the whole heavy chain. Bound the
         // relative cost hard before a preset can enable it. Platform-fair
         // by construction: the added FIR work is identical on both sides
         // of nothing (disabled runs no Hilbert), so the bound is on the
         // stage's absolute share of the chain, which is small everywhere.
         var disabled = makeHeavyConfig()
-        disabled.ruleBreakerEnabled = false
+        disabled.ssbStereoEnabled = false
 
         var enabled = makeHeavyConfig()
-        enabled.ruleBreakerEnabled = true
-        enabled.ruleBreakerSSBAmount = 1.0
+        enabled.ssbStereoEnabled = true
+        enabled.ssbStereoAmount = 1.0
 
         let disabledWall = measureThroughput(config: disabled).wallSeconds
         let enabledWall = measureThroughput(config: enabled).wallSeconds
         let ratio = enabledWall / max(1e-6, disabledWall)
-        print(String(format: "Rule Breaker cost ratio: %.2fx (enabled %.3f s, disabled %.3f s)",
+        print(String(format: "SSB Stereo cost ratio: %.2fx (enabled %.3f s, disabled %.3f s)",
                      ratio, enabledWall, disabledWall))
 
         #expect(ratio < 1.6,
-            "Rule Breaker cost \(enabledWall) s vs disabled \(disabledWall) s = \(ratio)x; one Hilbert FIR should not add >60% to the whole chain -- needs optimization before preset use")
+            "SSB Stereo cost \(enabledWall) s vs disabled \(disabledWall) s = \(ratio)x; one Hilbert FIR should not add >60% to the whole chain -- needs optimization before preset use")
     }
 
     /// Helper to render 1 s of audio through `generator` and return wall

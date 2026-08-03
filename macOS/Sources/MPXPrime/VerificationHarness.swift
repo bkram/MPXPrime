@@ -2976,21 +2976,21 @@ private func advancedDynamicsIdempotencyDeltaDB(config: AppConfig) -> Float {
     return Float(20.0 * log10(max(1e-9, secondRMS) / max(1e-9, firstRMS)))
 }
 
-/// A/B: classic DSB stereo encoding vs the Rule Breaker SSB-leaning
+/// A/B: classic DSB stereo encoding vs the SSB-leaning
 /// encoder, on program scenarios plus tone-based sideband and
 /// receiver-decode measurements. This is the HARD GATE for the SSB
 /// asymmetry: it reports the composite-peak headroom actually reclaimed
 /// AND fails to TIGHT when coherent decode separation degrades past
 /// tolerance, so the trick can never ship a separation regression.
-private func runRuleBreakerComparison(
+private func runSSBStereoComparison(
     baseConfig: AppConfig,
     durationSeconds: Double
 ) -> Int32 {
     let compareDuration = max(2.0, min(durationSeconds, 6.0))
     var offConfig = baseConfig
-    offConfig.ruleBreakerEnabled = false
+    offConfig.ssbStereoEnabled = false
     var onConfig = offConfig
-    onConfig.ruleBreakerEnabled = true
+    onConfig.ssbStereoEnabled = true
 
     // Headroom-reclaim measurement needs a LINEAR composite: downstream
     // peak controllers flatten both variants to the same ceiling, hiding
@@ -3004,10 +3004,10 @@ private func runRuleBreakerComparison(
     offLinear.audioCompositeSmootherEnabled = false
     offLinear.finalMPXSoftClipEnabled = false
     var onLinear = offLinear
-    onLinear.ruleBreakerEnabled = true
+    onLinear.ssbStereoEnabled = true
 
-    print("Rule Breaker A/B (classic DSB stereo vs SSB-leaning encoder)")
-    print("Toggle: mpx_rulebreaker_enabled  (ssb_amount \(String(format: "%.2f", onConfig.ruleBreakerSSBAmount)))")
+    print("SSB Stereo A/B (classic DSB stereo vs SSB-leaning encoder)")
+    print("Toggle: mpx_ssb_stereo_enabled  (ssb_amount \(String(format: "%.2f", onConfig.ssbStereoAmount)))")
     print("Scope: program scenarios (LINEAR composite -- peak controllers off, so the")
     print("encoder's raw headroom effect is visible) + tone sidebands + coherent decode")
     print("on the full chain; production default remains toggle-off")
@@ -3100,7 +3100,7 @@ private func runRuleBreakerComparison(
     for warning in warnings {
         print("- \(warning)")
     }
-    print("Result: TIGHT - Rule Breaker is implemented, but preset use needs review.")
+    print("Result: TIGHT - SSB Stereo is implemented, but preset use needs review.")
     return 1
 }
 
@@ -3489,19 +3489,19 @@ func runVerificationHarness(
     compositeMultibandClipperComparison: Bool = false,
     multibandCouplingComparison: Bool = false,
     advancedDynamicsComparison: Bool = false,
-    ruleBreakerComparison: Bool = false,
+    ssbStereoComparison: Bool = false,
     captureBaseline: Bool = false,
     strictBaseline: Bool = false
 ) throws -> Int32 {
     let config = try AppConfig.load(fromINI: configPath)
-    if ruleBreakerComparison {
-        print("MPX Prime Rule Breaker Verification")
+    if ssbStereoComparison {
+        print("MPX Prime SSB Stereo Verification")
         print("Config: \(configPath)")
         print(
             "Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(2.0, durationSeconds))) s"
         )
         print("")
-        return runRuleBreakerComparison(
+        return runSSBStereoComparison(
             baseConfig: config,
             durationSeconds: durationSeconds
         )

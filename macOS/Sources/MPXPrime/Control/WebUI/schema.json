@@ -620,8 +620,8 @@
      "mpx_clipper_cancel_stereo",
      "mpx_clipper_cancel_audio",
      "mpx_multiband_clipper_enabled",
-     "mpx_rulebreaker_enabled",
-     "mpx_rulebreaker_ssb_amount"
+     "mpx_ssb_stereo_enabled",
+     "mpx_ssb_stereo_amount"
     ],
     "keys2": {
      "keys": [
@@ -1275,11 +1275,11 @@
    "kind": "toggle",
    "label": "Multiband Composite Clipping"
   },
-  "mpx_rulebreaker_enabled": {
+  "mpx_ssb_stereo_enabled": {
    "kind": "toggle",
-   "label": "Rule Breaker (SSB Stereo)"
+   "label": "SSB Stereo Encoder"
   },
-  "mpx_rulebreaker_ssb_amount": {
+  "mpx_ssb_stereo_amount": {
    "decimals": 2,
    "kind": "slider",
    "label": "SSB Amount",

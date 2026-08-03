@@ -189,7 +189,7 @@ swift run --package-path macOS MPXPrime --verify-receiver --seconds 5         # 
 swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2   # A/B multiband clipper
 swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2    # A/B inter-band coupling
 swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4     # A/B single-stage leveler
-swift run --package-path macOS MPXPrime --verify-rulebreaker --seconds 4            # A/B SSB stereo encoder
+swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4            # A/B SSB stereo encoder
 ```
 
 Baseline capture + strict compare:

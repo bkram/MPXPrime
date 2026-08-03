@@ -54,7 +54,7 @@ struct AppConfig: Equatable {
     //     TransientAwareAttack/InterBandCoupling,
     //   advancedDynamics Enabled/TargetDB/Low-Mid-HighOffsetDB/MaxGainDB/
     //     Density/Speed (single-stage leveler; replaces AGC+multiband when on),
-    //   ruleBreaker Enabled/SSBAmount (SSB-leaning stereo encoder),
+    //   ssbStereo Enabled/SSBAmount (SSB-leaning stereo encoder),
     //   phaseRotationEnabled/FreqHz, parametricEQEnabled/B1-B4(Freq/Gain/Q),
     //   multibandLimiterEnabled/ThresholdDB/AttackMS/ReleaseMS,
     //   downwardExpanderEnabled/ThresholdDB/Ratio/AttackMS/ReleaseMS,
@@ -381,12 +381,12 @@ struct AppConfig: Equatable {
     // buffer sizes.
     var compositeClipperOversampling: Int = 16
     var compositeMultibandClipperEnabled: Bool = false
-    // Rule Breaker: experimental SSB-leaning stereo encoder (default off).
+    // SSB Stereo: experimental SSB-leaning stereo encoder (default off).
     // Opportunistically suppresses one 38 kHz sideband (toward SSB) to
-    // reclaim composite headroom; hard-gated by --verify-rulebreaker +
+    // reclaim composite headroom; hard-gated by --verify-ssb-stereo +
     // --verify-receiver before preset use.
-    var ruleBreakerEnabled: Bool = false
-    var ruleBreakerSSBAmount: Double = 0.7
+    var ssbStereoEnabled: Bool = false
+    var ssbStereoAmount: Double = 0.7
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
     var rdsPTY: Int = 8
@@ -804,10 +804,10 @@ struct AppConfig: Equatable {
             "mpx_clipper_lookahead_ms", defaultValue: cfg.compositeClipperLookaheadMS)
         cfg.compositeClipperOversampling = mpx.int(
             "mpx_clipper_oversampling", defaultValue: cfg.compositeClipperOversampling)
-        cfg.ruleBreakerEnabled = mpx.bool(
-            "mpx_rulebreaker_enabled", defaultValue: cfg.ruleBreakerEnabled)
-        cfg.ruleBreakerSSBAmount = mpx.double(
-            "mpx_rulebreaker_ssb_amount", defaultValue: cfg.ruleBreakerSSBAmount)
+        cfg.ssbStereoEnabled = mpx.bool(
+            "mpx_ssb_stereo_enabled", defaultValue: cfg.ssbStereoEnabled)
+        cfg.ssbStereoAmount = mpx.double(
+            "mpx_ssb_stereo_amount", defaultValue: cfg.ssbStereoAmount)
         cfg.compositeMultibandClipperEnabled = mpx.bool(
             "mpx_multiband_clipper_enabled",
             defaultValue: cfg.compositeMultibandClipperEnabled
@@ -1071,7 +1071,7 @@ struct AppConfig: Equatable {
         bs412WindowSeconds = max(30.0, min(90.0, bs412WindowSeconds))
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
-        ruleBreakerSSBAmount = max(0.0, min(1.0, ruleBreakerSSBAmount))
+        ssbStereoAmount = max(0.0, min(1.0, ssbStereoAmount))
         if compositeClipperCeilingDB <= compositeClipperThresholdDB + 0.2 {
             compositeClipperCeilingDB = min(0.0, compositeClipperThresholdDB + 0.5)
         }
@@ -1296,8 +1296,8 @@ struct AppConfig: Equatable {
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
             "mpx_clipper_oversampling = \(compositeClipperOversampling)",
             "mpx_multiband_clipper_enabled = \(Self.boolString(compositeMultibandClipperEnabled))",
-            "mpx_rulebreaker_enabled = \(Self.boolString(ruleBreakerEnabled))",
-            "mpx_rulebreaker_ssb_amount = \(Self.formatFloat(ruleBreakerSSBAmount))",
+            "mpx_ssb_stereo_enabled = \(Self.boolString(ssbStereoEnabled))",
+            "mpx_ssb_stereo_amount = \(Self.formatFloat(ssbStereoAmount))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
             "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",

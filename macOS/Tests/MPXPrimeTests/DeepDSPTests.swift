@@ -311,11 +311,11 @@ private func randomDeepConfig(seed: UInt64) -> AppConfig {
     cfg.advancedDynamicsDensity = rng.nextRangeDouble(0.0, 1.0)
     cfg.advancedDynamicsSpeed = rng.nextRangeDouble(0.25, 4.0)
 
-    // Rule Breaker SSB-leaning stereo encoder: low probability, full
+    // SSB Stereo encoder (SSB-leaning stereo encoding): low probability, full
     // amount range, so the fuzz covers SSB assembly against every
     // downstream composite stage.
-    cfg.ruleBreakerEnabled = rng.nextBool(probability: 0.2)
-    cfg.ruleBreakerSSBAmount = rng.nextRangeDouble(0.0, 1.0)
+    cfg.ssbStereoEnabled = rng.nextBool(probability: 0.2)
+    cfg.ssbStereoAmount = rng.nextRangeDouble(0.0, 1.0)
 
     cfg.bassClipperEnabled = rng.nextBool(probability: 0.7)
     cfg.dcClipperEnabled = rng.nextBool(probability: 0.2)
@@ -743,16 +743,16 @@ struct DeepPerStageTests {
         DeepInvariants.assertCompositePeakBounded(out, where: "advancedDynamics")
     }
 
-    @Test func ruleBreakerAlone() {
+    @Test func ssbStereoAlone() {
         // monoMode off: the SSB encoder only acts on L-R content.
         let cfg = Self.solo {
-            $0.ruleBreakerEnabled = true
-            $0.ruleBreakerSSBAmount = 1.0
+            $0.ssbStereoEnabled = true
+            $0.ssbStereoAmount = 1.0
             $0.monoMode = false
         }
         let out = deepRender(config: cfg, program: .hfRichPop)
-        DeepInvariants.assertAllFinite(out, where: "ruleBreaker")
-        DeepInvariants.assertCompositePeakBounded(out, where: "ruleBreaker")
+        DeepInvariants.assertAllFinite(out, where: "ssbStereo")
+        DeepInvariants.assertCompositePeakBounded(out, where: "ssbStereo")
     }
 
     @Test func dcClipperAlone() {

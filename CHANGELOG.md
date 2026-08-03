@@ -11,19 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-- **Rule Breaker: experimental SSB-leaning stereo encoder**
-  (`mpx_rulebreaker_enabled`, default off; `mpx_rulebreaker_ssb_amount`
+- **SSB Stereo: experimental SSB-leaning stereo encoder**
+  (`mpx_ssb_stereo_enabled`, default off; `mpx_ssb_stereo_amount`
   0..1, default 0.7). Leans the 38 kHz L-R subcarrier toward
   single-sideband (`diff*sin - amount*hilbert(diff)*cos`, linear-phase
   511-tap Hilbert with matched base/diff program delay), opportunistically
   keeping whichever sideband currently peaks lower (leaky-peak selection
   with 3% hysteresis and a 5 ms crossfade). Inspired by the composite
-  techniques popularised by Stereo Tool's "Rule Breaker"; implemented
+  techniques used by modern third-party broadcast processors; implemented
   from first principles. Measured: sideband asymmetry exactly matches
   theory (15.06 dB at amount 0.7), coherent decode separation preserved
   (worst 81 dB, -4.8 dB delta at 10 kHz vs a 20 dB floor), mono content
   bit-transparent, cost 1.03x, zero-drift (default off, strict baseline
-  unchanged). HONEST CAVEAT: the new `--verify-rulebreaker` A/B gate
+  unchanged). HONEST CAVEAT: the new `--verify-ssb-stereo` A/B gate
   reports no measurable composite-headroom reclaim on the synthetic
   program scenarios yet (the gate says TIGHT by design) -- the loudness
   benefit needs dense real-program A/B, and the follow-up direction is

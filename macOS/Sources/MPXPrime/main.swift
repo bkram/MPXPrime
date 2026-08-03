@@ -52,6 +52,7 @@ struct CLIOptions {
     var verifyCompositeMultibandClipper: Bool = false
     var verifyMultibandCoupling: Bool = false
     var verifyAdvancedDynamics: Bool = false
+    var verifyRuleBreaker: Bool = false
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
@@ -150,6 +151,10 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyAdvancedDynamics = true
             options.gui = false
+        case "--verify-rulebreaker":
+            options.verify = true
+            options.verifyRuleBreaker = true
+            options.gui = false
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -192,6 +197,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-composite-multiband [--seconds 5]
           MPXPrime [--config <path>] --verify-multiband-coupling [--seconds 5]
           MPXPrime [--config <path>] --verify-advanced-dynamics [--seconds 5]
+          MPXPrime [--config <path>] --verify-rulebreaker [--seconds 5]
           MPXPrime --bench
 
         Options:
@@ -210,6 +216,7 @@ func printUsage() {
           --verify-composite-multiband  A/B the experimental composite multiband clipper toggle
           --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
           --verify-advanced-dynamics  A/B the experimental single-stage Advanced Dynamics leveler
+          --verify-rulebreaker  A/B the experimental SSB-leaning Rule Breaker stereo encoder
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
                      prints a markdown report to stdout. Use a release build for valid numbers.
           --control, --web  Run headless with the remote-control REST API + web
@@ -319,6 +326,7 @@ do {
                 compositeMultibandClipperComparison: options.verifyCompositeMultibandClipper,
                 multibandCouplingComparison: options.verifyMultibandCoupling,
                 advancedDynamicsComparison: options.verifyAdvancedDynamics,
+                ruleBreakerComparison: options.verifyRuleBreaker,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )

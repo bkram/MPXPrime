@@ -2976,6 +2976,134 @@ private func advancedDynamicsIdempotencyDeltaDB(config: AppConfig) -> Float {
     return Float(20.0 * log10(max(1e-9, secondRMS) / max(1e-9, firstRMS)))
 }
 
+/// A/B: classic DSB stereo encoding vs the Rule Breaker SSB-leaning
+/// encoder, on program scenarios plus tone-based sideband and
+/// receiver-decode measurements. This is the HARD GATE for the SSB
+/// asymmetry: it reports the composite-peak headroom actually reclaimed
+/// AND fails to TIGHT when coherent decode separation degrades past
+/// tolerance, so the trick can never ship a separation regression.
+private func runRuleBreakerComparison(
+    baseConfig: AppConfig,
+    durationSeconds: Double
+) -> Int32 {
+    let compareDuration = max(2.0, min(durationSeconds, 6.0))
+    var offConfig = baseConfig
+    offConfig.ruleBreakerEnabled = false
+    var onConfig = offConfig
+    onConfig.ruleBreakerEnabled = true
+
+    // Headroom-reclaim measurement needs a LINEAR composite: downstream
+    // peak controllers flatten both variants to the same ceiling, hiding
+    // exactly the effect being measured. The scenario table therefore runs
+    // with clipper/limiter/soft-clip off; the tone table below runs the
+    // full production chain for the safety metrics.
+    var offLinear = offConfig
+    offLinear.compositeClipperEnabled = false
+    offLinear.limitMPX = false
+    offLinear.audioCompositeSoftClipEnabled = false
+    offLinear.audioCompositeSmootherEnabled = false
+    offLinear.finalMPXSoftClipEnabled = false
+    var onLinear = offLinear
+    onLinear.ruleBreakerEnabled = true
+
+    print("Rule Breaker A/B (classic DSB stereo vs SSB-leaning encoder)")
+    print("Toggle: mpx_rulebreaker_enabled  (ssb_amount \(String(format: "%.2f", onConfig.ruleBreakerSSBAmount)))")
+    print("Scope: program scenarios (LINEAR composite -- peak controllers off, so the")
+    print("encoder's raw headroom effect is visible) + tone sidebands + coherent decode")
+    print("on the full chain; production default remains toggle-off")
+    print("")
+    print("Scenario              PeakDelta  AudioPkDelta  CorrDelta  SideDelta  POvrOn")
+    print("--------------------  ---------  ------------  ---------  ---------  ------")
+
+    var warnings: [String] = []
+    var totalReclaimDB: Float = 0.0
+    var scenarioCount = 0
+
+    for scenario in advancedDynamicsComparisonScenarios() {
+        let off = verifyScenario(
+            config: offLinear, durationSeconds: compareDuration, scenario: scenario)
+        let on = verifyScenario(
+            config: onLinear, durationSeconds: compareDuration, scenario: scenario)
+
+        let peakDelta = dbfsValue(on.peakAbs) - dbfsValue(off.peakAbs)
+        let audioPkDelta = dbfsValue(on.maxAudioCompositePeak) - dbfsValue(off.maxAudioCompositePeak)
+        let corrDelta = on.outputSignal.correlation - off.outputSignal.correlation
+        let sideDelta = ratioDB(on.outputSignal.sideToMidRatio, off.outputSignal.sideToMidRatio)
+        totalReclaimDB += -audioPkDelta
+        scenarioCount += 1
+
+        if on.maxPostInjectionOvershoot > 1e-4 || on.overBudget {
+            warnings.append("\(scenario.name): SSB path exceeded composite budget")
+        }
+        if abs(corrDelta) > 0.2 {
+            warnings.append("\(scenario.name): output correlation changed by \(String(format: "%+.2f", corrDelta))")
+        }
+
+        print(
+            "\(padded(scenario.name, width: 20))  "
+                + "\(String(format: "%+9.2f", peakDelta))"
+                + "  \(String(format: "%+12.2f", audioPkDelta))"
+                + "  \(String(format: "%+9.2f", corrDelta))"
+                + "  \(String(format: "%+9.2f", sideDelta))"
+                + "  \(String(format: "%6.4f", on.maxPostInjectionOvershoot))"
+        )
+    }
+
+    // Tone-based sideband shape: the SSB action itself (asymmetry should
+    // GROW with the toggle) and the receiver-decode cost (coherent
+    // separation must stay within tolerance).
+    print("")
+    print("Tone      AsymOff   AsymOn   SepOff    SepOn    SepDelta")
+    print("--------  -------  -------  -------  -------  ---------")
+    let toneDuration = max(3.0, compareDuration)
+    var minSeparationOn: Float = 1_000.0
+    for toneHz in [1_000.0, 10_000.0, 14_000.0] {
+        let sbOff = encoderSidebandMetrics(
+            config: offConfig, toneHz: toneHz, drivenChannel: "L", durationSeconds: toneDuration)
+        let sbOn = encoderSidebandMetrics(
+            config: onConfig, toneHz: toneHz, drivenChannel: "L", durationSeconds: toneDuration)
+        let sepOff = receiverToneAnalysis(
+            config: offConfig, toneHz: toneHz, durationSeconds: toneDuration).coherent.separationDB
+        let sepOn = receiverToneAnalysis(
+            config: onConfig, toneHz: toneHz, durationSeconds: toneDuration).coherent.separationDB
+        minSeparationOn = min(minSeparationOn, sepOn)
+        let sepDelta = sepOn - sepOff
+        if sepDelta < -6.0 {
+            warnings.append("\(Int(toneHz)) Hz: coherent separation dropped \(String(format: "%.1f", -sepDelta)) dB (> 6 dB)")
+        }
+        print(
+            "\(padded("\(Int(toneHz)) Hz", width: 8))  "
+                + "\(String(format: "%7.2f", sbOff.asymmetryDB))"
+                + "  \(String(format: "%7.2f", sbOn.asymmetryDB))"
+                + "  \(String(format: "%7.1f", sepOff))"
+                + "  \(String(format: "%7.1f", sepOn))"
+                + "  \(String(format: "%+9.1f", sepDelta))"
+        )
+    }
+
+    let meanReclaimDB = scenarioCount > 0 ? totalReclaimDB / Float(scenarioCount) : 0.0
+    print("")
+    print("Mean audio-composite peak reclaim: \(String(format: "%.2f", meanReclaimDB)) dB")
+    print("")
+    print("Assessment")
+    if minSeparationOn < 20.0 {
+        warnings.append("coherent separation fell below 20 dB with SSB on (\(String(format: "%.1f", minSeparationOn)) dB)")
+    }
+    if meanReclaimDB < 0.05 {
+        warnings.append("SSB path reclaimed no measurable composite headroom on the comparison scenarios")
+    }
+    if warnings.isEmpty {
+        print("Result: OK - SSB leaning reclaimed headroom without a decode regression.")
+        return 0
+    }
+    print("Comparison notes:")
+    for warning in warnings {
+        print("- \(warning)")
+    }
+    print("Result: TIGHT - Rule Breaker is implemented, but preset use needs review.")
+    return 1
+}
+
 private func runReceiverModelVerification(
     baseConfig: AppConfig,
     configPath: String,
@@ -3361,10 +3489,23 @@ func runVerificationHarness(
     compositeMultibandClipperComparison: Bool = false,
     multibandCouplingComparison: Bool = false,
     advancedDynamicsComparison: Bool = false,
+    ruleBreakerComparison: Bool = false,
     captureBaseline: Bool = false,
     strictBaseline: Bool = false
 ) throws -> Int32 {
     let config = try AppConfig.load(fromINI: configPath)
+    if ruleBreakerComparison {
+        print("MPX Prime Rule Breaker Verification")
+        print("Config: \(configPath)")
+        print(
+            "Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(2.0, durationSeconds))) s"
+        )
+        print("")
+        return runRuleBreakerComparison(
+            baseConfig: config,
+            durationSeconds: durationSeconds
+        )
+    }
     if advancedDynamicsComparison {
         print("MPX Prime Advanced Dynamics Verification")
         print("Config: \(configPath)")

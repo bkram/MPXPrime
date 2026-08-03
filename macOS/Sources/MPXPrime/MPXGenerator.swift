@@ -91,6 +91,13 @@ struct SineCosOsc {
     @inline(__always) mutating func sin2x() -> Float {
         return 2.0 * s * c
     }
+
+    /// cos(2*theta) from the same recurrence (double-angle identity).
+    /// Quadrature companion to `sin2x()` -- the Rule Breaker's SSB-leaning
+    /// stereo encoder needs both phases of the 38 kHz subcarrier.
+    @inline(__always) func cos2x() -> Float {
+        return (c * c) - (s * s)
+    }
 }
 
 struct DCBlocker1p {
@@ -3258,6 +3265,178 @@ struct MonoCompressor {
     }
 }
 
+/// Experimental "Rule Breaker" SSB-leaning stereo encoder (default off).
+///
+/// Classic FM stereo transmits L-R as double-sideband suppressed-carrier
+/// around 38 kHz: `diff * sin(2t)`. Adding the quadrature term turns it
+/// toward single-sideband:
+///
+///     stereo = diff*sin(2t) -/+ amount * hilbert(diff)*cos(2t)
+///
+/// which suppresses one sideband and grows the other (full SSB at
+/// amount = 1). A coherent receiver demodulating with sin(2t) recovers
+/// L-R either way -- SSB stereo is decode-compatible (phase errors on
+/// real receivers trade a little separation, which is why this ships
+/// hard-gated by the receiver-decode metrics). The win: the composite
+/// peak of the two sideband choices differs with program, so picking
+/// whichever variant currently peaks LOWER reclaims headroom (~up to
+/// 1 dB) before the composite clipper has to work. Inspired by the
+/// composite techniques popularised by Stereo Tool's "Rule Breaker";
+/// implemented from first principles.
+///
+/// Notes:
+/// - The Hilbert FIR is linear-phase type III (anti-symmetric); base and
+///   diff ride matching delay lines so mono/stereo stay time-aligned.
+///   The double-buffered dotpr window runs oldest->newest, which
+///   time-reverses anti-symmetric taps into a global sign flip -- moot
+///   here because the sideband sign is chosen opportunistically anyway.
+/// - Below the Hilbert's usable band (~2*fs/N) the quadrature term rolls
+///   off and the encoder gracefully degrades to plain DSB -- bass stays
+///   textbook stereo encoding by construction.
+/// - amount = 0 is exactly DSB (delayed); the flag OFF is bit-identical
+///   to the classic path (zero-drift).
+struct RuleBreakerStereoEncoder {
+    private var taps: [Float] = []
+    private var hilbertDelay: [Float] = []   // double-buffered (2N)
+    private var baseDelay: [Float] = []
+    private var diffDelay: [Float] = []
+    private var writeIdx: Int = 0
+    private var alignIdx: Int = 0
+    private var lengthTaps: Int = 0
+    private var halfLength: Int = 0
+
+    // Opportunistic sideband selection: leaky per-variant composite peak
+    // trackers pick the lower-peak sideband; the selection slews so a
+    // flip is a short crossfade, never a click.
+    private var peakA: Float = 0.0
+    private var peakB: Float = 0.0
+    private var peakDecay: Float = 0.0
+    private var sel: Float = 1.0
+    private var targetSel: Float = 1.0
+    private var selCoeff: Float = 0.0
+
+    private var amount: Float = 0.7
+
+    var groupDelaySamples: Int { halfLength }
+    var enabled: Bool { lengthTaps > 0 }
+    /// Diagnostics: current smoothed sideband selection (-1..+1).
+    var currentSelection: Float { sel }
+
+    mutating func configure(sampleRate: Float, tapCount: Int = 511) {
+        let sr = max(8_000.0, sampleRate)
+        // Odd tap count, type III Hilbert: h[k] = 2/(pi*k) for odd k,
+        // 0 for even k (and k = 0), Kaiser-windowed (beta 6 ~ 60 dB).
+        let n = max(63, tapCount | 1)
+        let m = (n - 1) / 2
+        let beta: Float = 6.0
+        let i0Beta = kaiserI0(beta)
+        var h = [Float](repeating: 0.0, count: n)
+        for k in stride(from: -m, through: m, by: 1) where k % 2 != 0 {
+            let ideal = 2.0 / (Float.pi * Float(k))
+            let x = Float(k) / Float(m)
+            let w = kaiserI0(beta * sqrtf(max(0.0, 1.0 - (x * x)))) / i0Beta
+            h[k + m] = ideal * w
+        }
+        taps = h
+        lengthTaps = n
+        halfLength = m
+        hilbertDelay = [Float](repeating: 0.0, count: n * 2)
+        // Program delay must be EXACTLY the Hilbert group delay (m).
+        // Read-then-write on a ring of length m gives an m-sample delay;
+        // m+1 here cost one sample of quadrature misalignment = ~19 deg
+        // at 10 kHz = the sideband null bottoming out at ~-15 dB.
+        baseDelay = [Float](repeating: 0.0, count: max(1, m))
+        diffDelay = [Float](repeating: 0.0, count: max(1, m))
+        writeIdx = 0
+        alignIdx = 0
+        peakDecay = expf(-1.0 / (0.005 * sr))   // ~5 ms leaky peak window
+        selCoeff = expf(-1.0 / (0.005 * sr))    // ~5 ms selection crossfade
+        peakA = 0.0
+        peakB = 0.0
+        sel = 1.0
+    }
+
+    mutating func setAmount(_ newAmount: Float) {
+        amount = clampf(newAmount, 0.0, 1.0)
+    }
+
+    mutating func reset() {
+        guard lengthTaps > 0 else { return }
+        for i in 0..<hilbertDelay.count { hilbertDelay[i] = 0.0 }
+        for i in 0..<baseDelay.count { baseDelay[i] = 0.0; diffDelay[i] = 0.0 }
+        writeIdx = 0
+        alignIdx = 0
+        peakA = 0.0
+        peakB = 0.0
+        sel = 1.0
+    }
+
+    /// One sample of SSB-leaning stereo assembly. Returns the delayed
+    /// base (L+R) and the stereo (L-R on 38 kHz) term, both aligned to
+    /// the Hilbert group delay, at the same scale the classic
+    /// `base + diff*sub` assembly uses.
+    mutating func process(
+        base: Float, diff: Float, sub: Float, cos2: Float
+    ) -> (base: Float, stereo: Float) {
+        guard lengthTaps > 0 else { return (base, diff * sub) }
+
+        // Hilbert of diff (double-buffered dotpr window, FIR pattern).
+        hilbertDelay[writeIdx] = diff
+        hilbertDelay[writeIdx + lengthTaps] = diff
+        let startIdx = writeIdx + 1
+        var h: Float = 0.0
+        let n = vDSP_Length(lengthTaps)
+        // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
+        // swiftlint:disable force_unwrapping
+        taps.withUnsafeBufferPointer { coeffPtr in
+            hilbertDelay.withUnsafeBufferPointer { delayPtr in
+                vDSP_dotpr(
+                    coeffPtr.baseAddress!, 1,
+                    delayPtr.baseAddress!.advanced(by: startIdx), 1,
+                    &h,
+                    n
+                )
+            }
+        }
+        // swiftlint:enable force_unwrapping
+        writeIdx += 1
+        if writeIdx >= lengthTaps { writeIdx = 0 }
+
+        // Matching program delay for mono and stereo content.
+        let alignN = baseDelay.count
+        let delayedBase = baseDelay[alignIdx]
+        let delayedDiff = diffDelay[alignIdx]
+        baseDelay[alignIdx] = base
+        diffDelay[alignIdx] = diff
+        alignIdx += 1
+        if alignIdx >= alignN { alignIdx = 0 }
+
+        let dsb = delayedDiff * sub
+        let quad = amount * h * cos2
+
+        // Track both candidate composite peaks (leaky max) and slew the
+        // selection toward whichever sideband currently peaks lower.
+        // Hysteresis (3%) is load-bearing: when both variants peak equally
+        // (any single tone -- they are time-mirror images), a bare
+        // comparison chatters on numeric noise, sel averages to a partial
+        // value, and the sideband null bottoms out around -14 dB instead
+        // of the Hilbert's real depth. Hold the current side unless the
+        // other one is meaningfully lower.
+        let candA = delayedBase + (dsb - quad)
+        let candB = delayedBase + (dsb + quad)
+        peakA = max(fabsf(candA), peakA * peakDecay)
+        peakB = max(fabsf(candB), peakB * peakDecay)
+        if peakB < peakA * 0.97 {
+            targetSel = -1.0
+        } else if peakA < peakB * 0.97 {
+            targetSel = 1.0
+        }
+        sel = (selCoeff * sel) + ((1.0 - selCoeff) * targetSel)
+
+        return (delayedBase, dsb - (sel * quad))
+    }
+}
+
 /// Experimental single-stage "Advanced Dynamics" leveler (default off).
 ///
 /// Replaces the wideband AGC + multiband compressor pair with ONE fused
@@ -6325,6 +6504,9 @@ final class MPXGenerator {
         let compositeClipperLookaheadMS: Float
         let compositeClipperOversampling: Int
         let compositeMultibandClipperEnabled: Bool
+        // Rule Breaker SSB-leaning stereo encoder (experimental, default off).
+        let ruleBreakerEnabled: Bool
+        let ruleBreakerSSBAmount: Float
 
         // Tone-generator parameters. Live-applicable so the Test Tone
         // tab can toggle source / type / freq / mode / level without
@@ -6456,6 +6638,8 @@ final class MPXGenerator {
             compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
             compositeClipperOversampling: config.compositeClipperOversampling,
             compositeMultibandClipperEnabled: config.compositeMultibandClipperEnabled,
+            ruleBreakerEnabled: config.ruleBreakerEnabled,
+            ruleBreakerSSBAmount: Float(config.ruleBreakerSSBAmount),
             sourceMode: config.sourceMode,
             testToneType: config.testToneType,
             testToneMode: config.testToneMode,
@@ -6891,6 +7075,13 @@ final class MPXGenerator {
     private var compositeClipperLookaheadMS: Float = 0.0
     private var compositeClipperOversampling: Int = 16
     private var compositeMultibandClipperEnabled: Bool = false
+    // Rule Breaker: experimental SSB-leaning stereo encoder ahead of the
+    // composite clipper (default off; Hilbert FIR allocated lazily so a
+    // disabled stage costs nothing).
+    private var ruleBreakerEnabled: Bool = false
+    private var ruleBreakerSSBAmount: Float = 0.7
+    private var ruleBreakerConfigured = false
+    private var ruleBreaker = RuleBreakerStereoEncoder()
     private var compositeClipper = CompositeClipper()
     private var compositeMultibandClipper = CompositeMultibandClipper()
     private var audioCompositeBandwidthFIR = LinearPhaseFIRLowpass()
@@ -7247,6 +7438,8 @@ final class MPXGenerator {
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
         self.compositeClipperOversampling = config.compositeClipperOversampling
         self.compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
+        self.ruleBreakerEnabled = config.ruleBreakerEnabled
+        self.ruleBreakerSSBAmount = clampf(Float(config.ruleBreakerSSBAmount), 0.0, 1.0)
 
         // Dual-rate audio chain boundary. Only enable if the requested
         // audio rate divides the engine rate evenly (Phase 1 integer-
@@ -7304,6 +7497,7 @@ final class MPXGenerator {
         configureMultibandFilters()
         configureMultibandCompressors()
         configureAdvancedDynamics()
+        configureRuleBreaker()
         configureMultibandLimiters()
         configureDownwardExpanders()
         configureStereoWidener()
@@ -7710,6 +7904,7 @@ final class MPXGenerator {
         configureMultibandFilters()
         configureMultibandCompressors()
         configureAdvancedDynamics()
+        configureRuleBreaker()
         configureMultibandLimiters()
         configureDownwardExpanders()
         configureStereoWidener()
@@ -8168,6 +8363,24 @@ final class MPXGenerator {
             recomputeSubcarrierDelay()
         }
 
+        // Rule Breaker SSB-leaning stereo encoder. The Hilbert FIR
+        // allocates lazily on enable (same rare-operator-action pattern
+        // as the FIR reconfigures above); the SSB amount is a cheap
+        // per-sample scalar applied live. No subcarrier-delay impact:
+        // the base/diff alignment happens BEFORE composite assembly and
+        // the 38 kHz carrier is applied at the current oscillator step,
+        // so pilot / subcarrier phase coherence is untouched.
+        let ruleBreakerToggled = ruleBreakerEnabled != config.ruleBreakerEnabled
+        let ruleBreakerAmountChanged =
+            fabsf(ruleBreakerSSBAmount - config.ruleBreakerSSBAmount) > 0.0001
+        ruleBreakerEnabled = config.ruleBreakerEnabled
+        ruleBreakerSSBAmount = clampf(config.ruleBreakerSSBAmount, 0.0, 1.0)
+        if ruleBreakerToggled || (ruleBreakerEnabled && !ruleBreakerConfigured) {
+            configureRuleBreaker()
+        } else if ruleBreakerEnabled && ruleBreakerAmountChanged {
+            ruleBreaker.setAmount(ruleBreakerSSBAmount)
+        }
+
         // Tone-generator parameters. Recompute `toneStep` when freq
         // changes (preserving phase across a freq update — no zero-
         // crossing artefacts on the change), `toneLevel` from dBFS.
@@ -8533,6 +8746,19 @@ final class MPXGenerator {
             density: advancedDynamicsDensity,
             speed: advancedDynamicsSpeed
         )
+    }
+
+    /// Rule Breaker structure setup. Lazy: a disabled stage never allocates
+    /// its Hilbert FIR. Runs at the MPX (composite) rate -- the stage sits
+    /// in composite assembly, not the audio domain.
+    private func configureRuleBreaker() {
+        guard ruleBreakerEnabled else {
+            ruleBreakerConfigured = false
+            return
+        }
+        ruleBreaker.configure(sampleRate: sampleRate)
+        ruleBreaker.setAmount(ruleBreakerSSBAmount)
+        ruleBreakerConfigured = true
     }
 
     private func configureMultibandCompressors() {
@@ -9566,13 +9792,25 @@ final class MPXGenerator {
 
         // Keep the loudness work in the audio composite before the calibrated
         // pilot/RDS subcarriers are added back into the final MPX waveform.
-        let rawAudioComposite = Self.makeDrivenAudioComposite(
-            base: base,
-            diff: diff,
-            sub: sub,
-            deviationScale: deviationScale,
-            finalDrive: finalDrive
-        )
+        let rawAudioComposite: Float
+        if ruleBreakerEnabled && ruleBreakerConfigured {
+            // Rule Breaker: SSB-leaning stereo assembly. Base and diff ride
+            // the encoder's matched delay; the 38 kHz carrier (both phases)
+            // is applied at the CURRENT oscillator step, so pilot/subcarrier
+            // phase coherence -- and the guard bands the composite clipper
+            // protects -- are exactly as in the classic path.
+            let ssb = ruleBreaker.process(
+                base: base, diff: diff, sub: sub, cos2: pilotOsc.cos2x())
+            rawAudioComposite = (ssb.base + ssb.stereo) * deviationScale * finalDrive
+        } else {
+            rawAudioComposite = Self.makeDrivenAudioComposite(
+                base: base,
+                diff: diff,
+                sub: sub,
+                deviationScale: deviationScale,
+                finalDrive: finalDrive
+            )
+        }
         let audioCompositeShaperActive = audioCompositeSoftClipEnabled
         var audioComposite = rawAudioComposite
         if audioCompositeShaperActive {

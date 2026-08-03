@@ -33,6 +33,7 @@ swift run --package-path macOS MPXPrime --verify-receiver --seconds 5  # coheren
 swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2  # A/B experimental composite multiband clipper toggle
 swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2  # A/B experimental multiband inter-band coupling toggle
 swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4  # A/B experimental single-stage Advanced Dynamics leveler vs AGC+multiband
+swift run --package-path macOS MPXPrime --verify-rulebreaker --seconds 4  # A/B experimental SSB-leaning Rule Breaker stereo encoder (sidebands + decode separation)
 
 # Baseline capture + strict compare
 swift run --package-path macOS MPXPrime --capture-baseline      # writes macOS/verifier_baselines/default.json
@@ -121,6 +122,8 @@ The multiband compressor has two crossover backends, picked at engine start by o
 Multiband Phase 2 is implemented but opt-in: `multiband_transient_aware_attack_enabled = false` by default. When enabled, `MonoCompressor` uses an RMS/peak hybrid detector and briefly stretches attack on peak-vs-RMS transients so percussive fronts pass hotter while sustained material settles near the classic peak-detector level. Keep it verifier-backed before enabling it in presets.
 
 Multiband inter-band coupling is implemented but opt-in: `multiband_inter_band_coupling_enabled = false` by default. When enabled, low-band gain reduction is smoothed (20 ms attack / 300 ms release) and gently biases upper-band thresholds lower so bass-heavy passages keep tonal glue without wideband pumping. Keep it preset-gated until program-material A/B confirms the balance.
+
+Rule Breaker is implemented but opt-in: `mpx_rulebreaker_enabled = false` by default. When enabled the stereo encoder leans the 38 kHz L-R subcarrier toward single-sideband (`RuleBreakerStereoEncoder`: linear-phase Hilbert FIR + matched program delay + opportunistic lower-peak sideband selection with hysteresis; both subcarrier phases from the pilot recurrence via `sin2x`/`cos2x`). Decode-compatible and mono-transparent (test-pinned); `--verify-rulebreaker` is the hard gate (sideband asymmetry vs theory, coherent separation, budget). The measured headroom reclaim on synthetic scenarios is currently ~0 -- the gate deliberately reports TIGHT until dense real-program A/B demonstrates the benefit; the follow-up direction is sideband choice inside the composite clipper loop. Keep it preset-gated.
 
 Advanced Dynamics is implemented but opt-in: `advanced_dynamics_enabled = false` by default. When enabled it REPLACES the wideband AGC and the multiband compressor with one fused 5-band leveling stage (`AdvancedDynamicsLeveler`) -- target-based configuration (target/offsets/density/speed keys `advanced_dynamics_*`), program-adaptive time constants (transient-accelerated attack via precomputed coefficient anchors, freeze-at-target hold, density-slowed release), own lazy-allocated FIR splitter at the multiband crossovers, all live-apply. When off, the chain is bit-identical (the AGC gate is `widebandAGCEnabled && !advancedDynamicsEnabled`). `--verify-advanced-dynamics` is the A/B gate (also measures re-processing idempotency and cost vs the two replaced stages); keep it preset-gated until program-material A/B plus listening confirm it.
 

@@ -11,6 +11,20 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Format Profiles reworked: four complete profiles instead of eight
+  color-only ones.** Field finding: the old profiles set multiband/
+  PrimeBass/widener/drive but never owned the gain structure, so a
+  profile on a broken level structure still sounded broken (the safety
+  soft-clips ended up doing the peak control). The new set -- Music -
+  Clean (default), Music - Loud, Speech/Talk, Classical/Wide Dynamics --
+  owns the FULL chain state: AGC (with per-profile target), pre-encode
+  limiter, composite clipper + 2 ms look-ahead, and the final safety
+  limiter are enabled by every profile, with format color on top. A new
+  test pins the contract (no profile may leave the soft-clips as the
+  de-facto peak controller). Old profile ids are gone (pre-1.0, no
+  migration); default is music_clean. Manual documents the -12 dBFS
+  nominal input convention.
+
 - **Advanced Dynamics: decay guard + safer Max Boost default.** Field
   report: a solo bell synth "rang" on air -- the leveler read the bell's
   natural fade as quiet program and rode gain up through the decay,

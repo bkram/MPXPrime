@@ -160,7 +160,7 @@ struct AppConfig: Equatable {
     // Jazz/Classical, News/Talk, Community Radio). Cosmetic label only —
     // the actual chain state is determined by the individual per-stage IDs
     // set when the profile is applied. INI key: `format_profile_id`.
-    var formatProfileID: String = "community_radio"
+    var formatProfileID: String = "music_clean"
     var preemphasisUS: Int = 50
     var hpfHz: Double = 30.0
     var hfTrimDB: Double = 0.0

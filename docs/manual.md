@@ -123,21 +123,16 @@ Relevant config sections:
 
 ### Format Profiles (Station Format selector)
 
-For one-click "make this sound right for my format", MPX Prime Studio ships with eight atomic Format Profiles plus a `Custom` sentinel, accessible from the dedicated **Processing → Format Profile** tab. Selecting a profile applies a coherent bundle of Multiband + Final Stage + PrimeBass + Stereo Widener + Composite Clipper settings tuned for that programming format. Per-stage knobs stay editable after the profile is applied — operators can tune from the profile baseline rather than from a blank slate. Pick `Custom` to flag "my settings are bespoke — don't overwrite them" so re-visiting the picker won't reset your manual tuning.
+For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing → Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state — not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / widener / drive on top. Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
 
-| Profile | Multiband | Intensity | Final Stage | PrimeBass | Widener | Clipper drive | Use case |
-|---|---|---|---|---|---|---|---|
-| **Community Radio** (default) | `5_ac` | light | `balanced` | off | `safe_fm` | +4 dB | Conservative LPFM / community radio; broad source compatibility |
-| **Pop / Adult Contemporary** | `5_ac` | normal | `balanced` | `ac` (on) | `open_music` | +6 dB | Mainstream music — balanced, gentle bass enhancement |
-| **CHR / Top 40** | `5_chr` | normal | `chr` | `chr` (on) | `wide_chr` | +8 dB | Modern hits — bright, hot, wide stereo |
-| **Rock** | `5_rock` | normal | `punchy` | `rock` (on) | `open_music` | +7 dB | Punchy multiband preserves rock transients |
-| **EDM / Dance** | `5_dance` | heavy | `chr` | `chr` (on) | `wide_chr` | +9 dB | Peak loudness, deep bass, wide image |
-| **Urban / Hip-Hop** | `5_urban` | normal | `chr` | `urban` (on) | `open_music` | +8 dB | Deep low end, urban-tuned PrimeBass |
-| **Jazz / Classical** | `5_classic` | light | `balanced` | off | `safe_fm` | +3 dB | Dynamic-preserving, no harmonic enhancement |
-| **News / Talk** | `5_talk` | light | `speech` | off | `safe_fm` | +4.5 dB | Speech-optimized multiband + final stage |
-| **Custom** | — | — | — | — | — | — | Sentinel — leaves all per-stage settings as you tuned them |
+| Profile | Character | AGC target | Drive | Extras |
+|---|---|---|---|---|
+| **Music — Clean** (default) | Transparent leveling, honest peaks, low clipper work | -16 dB | +4 dB | — |
+| **Music — Loud** | Competitive loudness into the clipper | -15 dB | +8 dB | HF + bass clippers, PrimeBass, wide image |
+| **Speech / Talk** | Voice-optimized | -16 dB | +4.5 dB | Phase rotator on |
+| **Classical / Wide Dynamics** | Dynamic-preserving | -18 dB | +3 dB | Light multiband, gentle limiter |
 
-Pick once, tune as needed. The selected profile is stored as `format_profile_id` in the INI; switching profiles overwrites the per-stage settings to the new format's defaults (except `custom`, which is a no-op label).
+Pick once, tune as needed. The selected profile is stored as `format_profile_id`; switching profiles overwrites the per-stage settings to the new profile (except `custom`, a no-op label). Assume a nominal input level around **-12 dBFS** (pro line-up convention) — the AGC absorbs source variation from there; 0 dBFS masters work but arrive with no headroom of their own.
 
 ### Preset slots (snapshots)
 

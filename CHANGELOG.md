@@ -11,6 +11,15 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **`output_gain_db` is attenuation-only in composite mode** (clamped to
+  <= 0 dB on load; GUI slider stops at 0; processed-audio L/R output keeps
+  its full range). Field finding: +2.79 dB on the operator's station divided
+  the composite budget by 1.38, so the audio was clipped ~3 dB deeper
+  (hat SINAD 15.2 vs 18.3 dB on identical processing) while pilot went on
+  air at ~11% and RDS at ~4.1 kHz instead of 8% / 3.0 kHz -- and the
+  composite was not one dB louder, because the budget governor caps it.
+  Exciter drive belongs to `mpx_line_output_dbfs` or the exciter's input.
+
 - **Block (buffer) size: measured and pinned.** New `--bench-blocks` sweep
   (release build, ~20 s) reports per block size the worst single block's
   render time as a fraction of the block duration, the implied I/O latency,

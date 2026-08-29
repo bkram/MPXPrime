@@ -723,7 +723,7 @@ once, in software: keep the operating system / interface output volume at
 0 dB (a mixer attenuation scales pilot and RDS injection along with the
 audio, and an accidental 0% mixer silences the transmitter -- calibrate
 here instead). `output_gain_db` remains the in-chain MPX level trim that
-participates in the composite budget; the line output is pure output-stage
+participates in the composite budget -- and since 0.45 it is **attenuation-only in composite mode** (clamped to <= 0 dB on load; the slider stops at 0): a positive value divided the whole budget by the gain, so the audio composite was clipped deeper while pilot and RDS went on air above their configured injection and nothing got louder (the governor caps the composite regardless). The processed-audio output keeps the full range; the line output is pure output-stage
 calibration -- attenuation only. Positive line gain is deliberately not
 offered because it is unphysical at a DAC: full scale is the hardware
 ceiling, so "+3 dBFS" cannot raise the peak voltage your exciter sees.

@@ -29,7 +29,7 @@ import Testing
     pilot_level = 0.09
     mpx_deviation_khz = 70.0
     mpx_line_output_dbfs = -3.0
-    output_gain_db = 1.5
+    output_gain_db = -1.5
     preemphasis_us = 75
     test_tone_level_db = -12.0
 
@@ -83,7 +83,7 @@ import Testing
         #expect(abs(cfg.pilotLevel - 0.09) < 1e-6)
         #expect(abs(cfg.mpxDeviationKHz - 70.0) < 1e-6)
         #expect(abs(cfg.mpxLineOutputDBFS - (-3.0)) < 1e-6)
-        #expect(abs(cfg.outputGainDB - 1.5) < 1e-6)
+        #expect(abs(cfg.outputGainDB - (-1.5)) < 1e-6)
         #expect(cfg.preemphasisUS == 75)
         #expect(abs(cfg.testToneLevelDB - (-12.0)) < 1e-6)
     }

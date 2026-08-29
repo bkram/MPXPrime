@@ -156,4 +156,20 @@ struct AppConfigInvalidInputTests {
         let cfg = try AppConfig.load(fromINI: path)
         #expect(cfg.sampleRate == 192000)
     }
+
+    @Test func outputGainIsAttenuationOnlyInCompositeMode() {
+        var cfg = AppConfig()
+        cfg.processedAudioOutput = false
+        cfg.outputGainDB = 2.79
+        cfg.validate()
+        #expect(cfg.outputGainDB == 0.0)
+        cfg.outputGainDB = -6.0
+        cfg.validate()
+        #expect(cfg.outputGainDB == -6.0)
+        var lr = AppConfig()
+        lr.processedAudioOutput = true
+        lr.outputGainDB = 2.79
+        lr.validate()
+        #expect(abs(lr.outputGainDB - 2.79) < 1e-9)
+    }
 }

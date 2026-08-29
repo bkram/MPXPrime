@@ -1000,7 +1000,17 @@ struct AppConfig: Equatable {
         // Gain parameters — powf(10, x/20) overflows Float beyond ~±680 dB;
         // sane broadcast range is much smaller.
         inputGainDB = max(-40.0, min(40.0, inputGainDB))
-        outputGainDB = max(-40.0, min(40.0, outputGainDB))
+        // Composite (MPX) output: positive output gain can only hurt. The budget
+        // governor divides the whole composite budget by it, so +3 dB squeezes
+        // the audio budget (the same Final Drive then clips ~3 dB deeper) and
+        // puts pilot/RDS on air above their configured injection -- while the
+        // governor still caps the composite at 0.98, so nothing gets louder
+        // (field finding 2026-08-29). Exciter drive belongs to
+        // `mpx_line_output_dbfs`. The processed-audio (L/R) output keeps the
+        // full range: there the trim is a plain feed level.
+        outputGainDB = processedAudioOutput
+            ? max(-40.0, min(40.0, outputGainDB))
+            : max(-40.0, min(0.0, outputGainDB))
         finalDriveDB = max(-20.0, min(20.0, finalDriveDB))
 
         // Pilot / sum / diff levels

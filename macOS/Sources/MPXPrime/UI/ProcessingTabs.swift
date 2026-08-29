@@ -78,11 +78,11 @@ struct ProcessingCoreTab: View {
             DoubleSliderRow(
                 title: model.processedAudioOutputActive ? "Output Level" : "MPX Output Level",
                 value: model.configBinding(\.outputGainDB, runtimeDisposition: .live),
-                range: -18...18,
+                range: model.processedAudioOutputActive ? -18...18 : -18...0,
                 format: "%.1f dB",
                 tooltip: model.processedAudioOutputActive
                     ? "Output level trim for the processed stereo L/R feed. The pre-encode limiter ceiling is normalized to ~0 dBFS at 0 dB; lower it to match your external coder's input reference, raise it for a hotter feed."
-                    : "Final post-chain gain trim on the composite output before the audio device. Use for calibration into the exciter's MPX input — set so the exciter's deviation meter reads the licensed peak. Doesn't add loudness; the chain already drives the composite to 100% modulation."
+                    : "Attenuation-only trim on the composite before the audio device (0 dB = full composite budget). Positive values are not offered: they squeeze the audio budget (deeper clipping) and push pilot/RDS above their set injection without adding loudness. Calibrate the exciter with MPX Line Output or the exciter's input gain."
             )
             if !model.processedAudioOutputActive {
                 DoubleSliderRow(

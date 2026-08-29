@@ -23,7 +23,7 @@ struct ConfigPatchTests {
 
     @Test func dspKeyClassifiesLive() throws {
         let cfg = baseConfig()
-        let target = cfg.outputGainDB + 1.5
+        let target = cfg.outputGainDB - 1.5   // composite mode is attenuation-only (0.45)
         let (patched, outcomes, planes) = try ConfigPatch.apply(
             ["output_gain_db": String(target)], to: cfg)
         #expect(abs(patched.outputGainDB - target) < 1e-9)
@@ -112,7 +112,7 @@ struct ConfigPatchTests {
         let cfg = baseConfig()
         let (patched, outcomes, planes) = try ConfigPatch.apply(
             [
-                "output_gain_db": String(cfg.outputGainDB + 2.0),
+                "output_gain_db": String(cfg.outputGainDB - 2.0),
                 "ps_a": "WEBCTRL",
                 "sample_rate": "96000",
             ], to: cfg)

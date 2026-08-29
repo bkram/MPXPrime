@@ -31,8 +31,6 @@ struct SSBStereoTests {
         config.preemphasisUS = 0
         config.finalDriveDB = 0.0
         config.audioCompositeSoftClipEnabled = false
-        config.audioCompositeSmootherEnabled = false
-        config.finalMPXSoftClipEnabled = false
         config.ssbStereoEnabled = ssbStereo
         config.ssbStereoAmount = amount
         return config

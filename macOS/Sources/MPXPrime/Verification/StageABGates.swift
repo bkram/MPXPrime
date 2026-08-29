@@ -645,8 +645,6 @@ func runSSBStereoComparison(
     offLinear.compositeClipperEnabled = false
     offLinear.limitMPX = false
     offLinear.audioCompositeSoftClipEnabled = false
-    offLinear.audioCompositeSmootherEnabled = false
-    offLinear.finalMPXSoftClipEnabled = false
     var onLinear = offLinear
     onLinear.ssbStereoEnabled = true
 

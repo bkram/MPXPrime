@@ -117,15 +117,10 @@ func runVerificationHarness(
     print(
         "Render: \(Int(config.sampleRate)) Hz • Block \(config.blockSize) • Duration \(String(format: "%.1f", durationSeconds)) s"
     )
-    let audioCompositeShaperActive = config.audioCompositeSoftClipEnabled
-    let audioCompositeSmootherActive =
-        config.audioCompositeSmootherEnabled && audioCompositeShaperActive
     print(
-        "Final Stage: shaper \(audioCompositeShaperActive ? "on" : "off")"
-            + " • smoother \(audioCompositeSmootherActive ? "on" : "off")"
-            + " • composite clipper \(config.compositeClipperEnabled ? "on" : "off")"
-            + " • MPX safety \(config.limitMPX ? "on" : "off")"
-            + " • MPX soft clip \(config.finalMPXSoftClipEnabled ? "on" : "off")"
+        "Final Stage: composite clipper \(config.compositeClipperEnabled ? "on" : "off")"
+            + " • MPX safety limiter \(config.limitMPX ? "on" : "off")"
+            + " • safety soft clip \(config.audioCompositeSoftClipEnabled ? "on" : "off")"
     )
     if longRun {
         print("Scope: focused program-material compliance/regression scenarios")
@@ -165,8 +160,6 @@ func runVerificationHarness(
     var anyOverBudget = false
     var scenarioMetrics: [(VerificationScenario, VerificationMetrics)] = []
     var qualityWarnings: [String] = []
-    var signatureWarnings: [String] = []
-    let signatureReferences = longRun ? longRunSignatureReferences() : [:]
 
     for scenario in scenarios {
         let metrics = verifyScenario(
@@ -184,15 +177,6 @@ func runVerificationHarness(
         qualityWarnings.append(
             contentsOf: qualityFindings(scenario: scenario, metrics: metrics).map { "\(scenario.name): \($0)" }
         )
-        if longRun, let reference = signatureReferences[scenario.name] {
-            signatureWarnings.append(
-                contentsOf: longRunSignatureFindings(
-                    scenario: scenario,
-                    metrics: metrics,
-                    reference: reference
-                ).map { "\(scenario.name): \($0)" }
-            )
-        }
 
         let line =
             "\(padded(scenario.name, width: 20))  "
@@ -316,9 +300,6 @@ func runVerificationHarness(
     print("Worst inter-sample (4x true-peak) overshoot: \(String(format: "%.2f", worstTruePeakOvershootDB)) dB")
     print("Composite budget exceeded: \(anyOverBudget ? "yes" : "no")")
 
-    if longRun {
-        print("Signature warnings: \(signatureWarnings.isEmpty ? "none" : "\(signatureWarnings.count)")")
-    }
     if !baselineDrift.isEmpty {
         print("Baseline drift (\(baselineDrift.count) finding\(baselineDrift.count == 1 ? "" : "s")):")
         for finding in baselineDrift {
@@ -336,12 +317,8 @@ func runVerificationHarness(
         print("Quality warnings:")
         for warning in qualityWarnings { print("- \(warning)") }
     }
-    if !signatureWarnings.isEmpty {
-        print("Signature drift warnings:")
-        for warning in signatureWarnings { print("- \(warning)") }
-    }
     if worstPostInjectionOvershoot > 1e-4 { naturalResult = 3
-    } else if !qualityWarnings.isEmpty || !signatureWarnings.isEmpty { naturalResult = 1
+    } else if !qualityWarnings.isEmpty { naturalResult = 1
     } else if anyOverBudget { naturalResult = 2
     // Since 0.45 the final look-ahead limiter is the designed stage that
     // rides the composite clipper's guard-band overshoot (the protected
@@ -373,8 +350,6 @@ func runVerificationHarness(
     case 1:
         if !qualityWarnings.isEmpty {
             print("Result: TIGHT - composite safety is OK, but decoded-audio quality drift exceeded expected bounds.")
-        } else if !signatureWarnings.isEmpty {
-            print("Result: TIGHT - long-run verifier drifted beyond the current reference signature.")
         } else if !baselineDrift.isEmpty {
             print("Result: TIGHT - stored-baseline drift detected (use --baseline-strict to fail the run).")
         } else {

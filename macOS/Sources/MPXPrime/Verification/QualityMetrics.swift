@@ -280,38 +280,3 @@ func qualityFindings(
     return findings
 }
 
-func longRunSignatureFindings(
-    scenario: VerificationScenario,
-    metrics: VerificationMetrics,
-    reference: LongRunSignatureReference
-) -> [String] {
-    var findings: [String] = []
-    let peakDBFS = metrics.peakAbs > 1e-9 ? Float(20.0 * log10(Double(metrics.peakAbs))) : -160.0
-    if peakDBFS > (reference.peakDBFS + 0.6) {
-        findings.append(
-            "peak \(String(format: "%.2f", peakDBFS)) dBFS > \(String(format: "%.2f", reference.peakDBFS + 0.6)) dBFS"
-        )
-    }
-    if metrics.minBudgetMarginDB < (reference.minMarginDB - 0.35) {
-        findings.append(
-            "margin \(String(format: "%.1f", metrics.minBudgetMarginDB)) dB < \(String(format: "%.1f", reference.minMarginDB - 0.35)) dB"
-        )
-    }
-    if fabsf(metrics.outputSignal.correlation - reference.outCorrelation) > 0.08 {
-        findings.append(
-            "out corr drift \(String(format: "%.2f", metrics.outputSignal.correlation)) vs \(String(format: "%.2f", reference.outCorrelation))"
-        )
-    }
-    if metrics.bandwidth.occupied999Hz > (reference.occ999Hz + 200.0) {
-        findings.append(
-            "occ999 \(String(format: "%.0f", metrics.bandwidth.occupied999Hz)) Hz > \(String(format: "%.0f", reference.occ999Hz + 200.0)) Hz"
-        )
-    }
-    if metrics.bandwidth.above60kRatioDB > (reference.above60kRatioDB + 1.5) {
-        findings.append(
-            ">60k/in \(String(format: "%.1f", metrics.bandwidth.above60kRatioDB)) dB > \(String(format: "%.1f", reference.above60kRatioDB + 1.5)) dB"
-        )
-    }
-    _ = scenario
-    return findings
-}

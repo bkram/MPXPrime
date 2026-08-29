@@ -303,7 +303,7 @@ Within the main audio path, MPX Prime Studio runs:
 23. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
 24. Final look-ahead MPX limiter (audio composite only, threshold just under the budget; rides the in-band overshoot the clipper's guard-band restoration leaves -- the composite-domain overshoot controller, Orban's "half-cosine composite limiter" role)
 25. Experimental multiband composite clipper (`mpx_multiband_clipper_enabled`, off by default; sees the already-bounded composite)
-26. Shaper: the always-on budget safety soft-clips (1x; idle behind clipper + limiter, pinned by `CompositeShaperOrderingTests`; catches impossible configurations and the case where both peak stages are disabled)
+26. Shaper: the single always-on budget safety soft clip (`audio_composite_softclip_enabled`, 1x; idle behind clipper + limiter, pinned by `CompositeShaperOrderingTests`; catches impossible configurations and the case where both peak stages are disabled). 0.45 removed the duplicate second soft clip, the 54 kHz "smoother" one-pole between them and the idle 0.98 post-gain soft clip (`audio_composite_smoother_enabled` / `final_mpx_softclip_enabled` keys gone)
 27. Composite budget governor (smoothed gain ride on audio path so post-injection clamp is unreachable for sane configs)
 28. Pilot and RDS injection (post-clipper, constant amplitude, delay-aligned via `subcarrierDelayLine`)
 

@@ -11,6 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Dead and redundant code removed (less is more; zero drift).** The
+  audio-composite "smoother" (54 kHz one-pole that only ran between two
+  identical safety soft clips), the second soft clip, and the post-output-
+  gain soft clip at an absolute 0.98 (idle by construction since the
+  clipper + final limiter own the peaks) are gone, leaving ONE budget safety
+  clip (`audio_composite_softclip_enabled`); INI keys
+  `audio_composite_smoother_enabled` and `final_mpx_softclip_enabled` are
+  removed (ignored if present), and so are their dashboard toggles. The
+  unwired `DynamicPreemphasis` sidechain (no INI key, no chain call) and its
+  tests were deleted. The verifier's hand-maintained long-run signature
+  table was dropped -- `long.json` already pins those scenarios strictly.
+  All strict baselines are bit-identical.
+
 - **Source layout split for maintainability (no behaviour change).** The
   three monoliths -- `MPXGenerator.swift` (10.8k lines),
   `SwiftUIControlApp.swift` (9.1k) and `VerificationHarness.swift` (4.4k) --

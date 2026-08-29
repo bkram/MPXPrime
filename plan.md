@@ -160,9 +160,9 @@ table below backing each fix idea so nothing is re-invented or infringes.
    the attack at ~2-3 ms on the top band, or make `heldDrive` weight
    band-dependent) and re-check `high_offset_db = -9` semantics in the manual;
    `hf_transients` gets the new envelope-fidelity metric as a hard gate.
-6. **Dynamic pre-emphasis ("Smart HF")** -- `DynamicPreemphasis` sidechain
-   core exists (`MPXGenerator.swift` ~2808, tested in
-   `DynamicPreemphasisTests`) but is NOT wired, has no INI keys and no docs.
+6. **Dynamic pre-emphasis ("Smart HF")** -- the unwired `DynamicPreemphasis`
+   sidechain core and its tests were DELETED in 0.45 (dead code, "less is
+   more"); re-derive from the prior-art table if this is ever pursued.
    Lowest priority: it trades a bounded HF dip at the receiver for headroom
    (spec-visible), so only after 1-5 if the metric still says HF is the
    limiter's whole problem. Needs schema + both UIs if wired.

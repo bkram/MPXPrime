@@ -82,8 +82,7 @@ struct AppConfig: Equatable {
     //   monoMode, preemphasisUS, pilotLevel, sumLevel, diffLevel,
     //   programLowpassHz, limitMPX/Threshold/Lookahead*, processingBypass,
     //   hpfHz, hfTrimDB/Hz,
-    //   audioCompositeSoftClipEnabled, audioCompositeSmootherEnabled,
-    //   finalMPXSoftClipEnabled,
+    //   audioCompositeSoftClipEnabled,
     //   RDS physical-layer: rdsLevel (injection kHz),
     //                       rdsGaussianEnabled/BWHZ/Taps (modulator FIR)
 
@@ -201,8 +200,6 @@ struct AppConfig: Equatable {
     // sideband enough to limit 10/14 kHz receiver separation. Keep it
     // available as an opt-in compatibility cleanup stage, but default the
     // normal chain to the cleaner softclip-only path.
-    var audioCompositeSmootherEnabled: Bool = false
-    var finalMPXSoftClipEnabled: Bool = true
     var mpxDeviationKHz: Double = 75.0
     var enRDS: Bool = true
     // AGC defaults: research-grounded "Pop Medium" tuning. AGC ON because
@@ -625,14 +622,6 @@ struct AppConfig: Equatable {
         cfg.audioCompositeSoftClipEnabled = mpx.bool(
             "audio_composite_softclip_enabled",
             defaultValue: cfg.audioCompositeSoftClipEnabled
-        )
-        cfg.audioCompositeSmootherEnabled = mpx.bool(
-            "audio_composite_smoother_enabled",
-            defaultValue: cfg.audioCompositeSmootherEnabled
-        )
-        cfg.finalMPXSoftClipEnabled = mpx.bool(
-            "final_mpx_softclip_enabled",
-            defaultValue: cfg.finalMPXSoftClipEnabled
         )
         cfg.mpxDeviationKHz = mpx.double("mpx_deviation_khz", defaultValue: cfg.mpxDeviationKHz)
         cfg.enRDS = mpx.bool("en_rds", defaultValue: rds.bool("en_rds", defaultValue: cfg.enRDS))
@@ -1240,8 +1229,6 @@ struct AppConfig: Equatable {
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",
-            "audio_composite_smoother_enabled = \(Self.boolString(audioCompositeSmootherEnabled))",
-            "final_mpx_softclip_enabled = \(Self.boolString(finalMPXSoftClipEnabled))",
             "mpx_deviation_khz = \(Self.formatFloat(mpxDeviationKHz))",
             "en_rds = \(Self.boolString(enRDS))",
             "wideband_agc_enabled = \(Self.boolString(widebandAGCEnabled))",

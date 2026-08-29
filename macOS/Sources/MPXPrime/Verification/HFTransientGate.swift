@@ -328,8 +328,6 @@ func applyFieldChain2026_08(_ c: inout AppConfig) {
     c.limitMPX = false
     c.finalDriveDB = 8.0
     c.audioCompositeSoftClipEnabled = true
-    c.audioCompositeSmootherEnabled = true
-    c.finalMPXSoftClipEnabled = true
     c.widebandAGCEnabled = true
     c.widebandAGCTargetDB = -15.0
     c.multibandEnabled = true
@@ -385,15 +383,8 @@ func hfTransientChainVariants() -> [HFTransientChainVariant] {
                                 mutate: loudPlus { $0.compositeClipperCancelAudio = true }),
         HFTransientChainVariant(label: "music_loud + advanced dynamics", gated: false,
                                 mutate: loudPlus { $0.advancedDynamicsEnabled = true }),
-        HFTransientChainVariant(label: "music_loud - safety soft-clips", gated: false,
-                                mutate: loudPlus {
-                                    $0.audioCompositeSoftClipEnabled = false
-                                    $0.finalMPXSoftClipEnabled = false
-                                }),
-        HFTransientChainVariant(label: "music_loud - composite smoother", gated: false,
-                                mutate: loudPlus { $0.audioCompositeSmootherEnabled = false }),
-        HFTransientChainVariant(label: "music_loud - final MPX soft clip only", gated: false,
-                                mutate: loudPlus { $0.finalMPXSoftClipEnabled = false })
+        HFTransientChainVariant(label: "music_loud - safety soft clip", gated: false,
+                                mutate: loudPlus { $0.audioCompositeSoftClipEnabled = false })
     ]
 }
 

@@ -81,8 +81,8 @@ final class MPXGenerator {
 
     private struct FinalCompositeThresholds {
         let effectiveThreshold: Float
-        let preLimiterCeiling: Float
-        let postLimiterCeiling: Float
+        /// The audio-composite budget: the ceiling every audio-path peak stage is referenced to.
+        let audioCeiling: Float
         /// True when the operator's outputGain × subcarrier reservation
         /// leaves no real headroom for audio composite (audio ceiling
         /// has been forced to ≤0). The chain still produces sensible
@@ -581,8 +581,6 @@ final class MPXGenerator {
     private let limitLookaheadMS: Float
     private var lookaheadLimiter = LookaheadLimiter()
     private let audioCompositeSoftClipEnabled: Bool
-    private let audioCompositeSmootherRequested: Bool
-    private let finalMPXSoftClipEnabled: Bool
 
     private var primeBassEnabled: Bool
     private var primeBassAmount: Float
@@ -982,8 +980,6 @@ final class MPXGenerator {
     private var encoderHFGuardGain: Float = 1.0
     private var encoderHFGuardAttackCoeff: Float = 0.0
     private var encoderHFGuardReleaseCoeff: Float = 0.0
-    private var compositeAudioSmoother = OnePoleLP()
-    private var compositeAudioSmootherEnabled: Bool = false
     private var monitorDecoder = MPXDecoder()
     private var lastSubcarrierSample: Float = 0.0
     private var audioCompositePeakState: Float = 0.0
@@ -1087,8 +1083,6 @@ final class MPXGenerator {
         self.preEncodeBandlimitedResidualTapCount = max(5, min(129, config.preEncodeBandlimitedResidualTapCount | 1))
         self.preEncodeBandlimitedResidualCutoffFraction = clampf(Float(config.preEncodeBandlimitedResidualCutoffFraction), 0.05, 0.49)
         self.audioCompositeSoftClipEnabled = config.audioCompositeSoftClipEnabled
-        self.audioCompositeSmootherRequested = config.audioCompositeSmootherEnabled
-        self.finalMPXSoftClipEnabled = config.finalMPXSoftClipEnabled
 
         self.primeBassEnabled = config.primeBassEnabled
         self.primeBassAmount = clampf(Float(config.primeBassAmount), 0.0, 1.0)
@@ -2326,16 +2320,6 @@ final class MPXGenerator {
         encoderHFGuardAttackCoeff = expf(-1.0 / (0.004 * sr))
         encoderHFGuardReleaseCoeff = expf(-1.0 / (0.080 * sr))
         let nyquist = (sampleRate * 0.5) - 100.0
-        if audioCompositeSmootherRequested, nyquist > 56_000.0 {
-            compositeAudioSmoother.configure(
-                cutoffHz: min(54_000.0, nyquist - 1_500.0),
-                sampleRate: sampleRate
-            )
-            compositeAudioSmootherEnabled = true
-        } else {
-            compositeAudioSmootherEnabled = false
-            compositeAudioSmoother.state = 0.0
-        }
         pilotSupported = nyquist > (pilotFreq + 100.0)
         stereoSubcarrierSupported = nyquist > (subcarrierFreq + 100.0)
         rdsSupported = nyquist > 57_100.0
@@ -3637,7 +3621,7 @@ final class MPXGenerator {
         // operator's ceiling/threshold pair keeps its knee width while the
         // audio composite may use the whole budget, exactly as the pre-0.45
         // shaper let it -- deviation stays where operators calibrated it).
-        let compositeBudget = max(0.05, thresholds.preLimiterCeiling)
+        let compositeBudget = max(0.05, thresholds.audioCeiling)
         if compositeClipperEnabled {
             let scale = compositeBudget / compositeClipper.ceilingLinear
             audioComposite = compositeClipper.process(audioComposite / scale) * scale
@@ -3692,38 +3676,27 @@ final class MPXGenerator {
             audioComposite = compositeMultibandClipper.process(audioComposite)
         }
 
-        // Shaper: the budget safety net behind clipper + limiter. It only
+        // Shaper: the ONE budget safety net behind clipper + limiter. It only
         // catches what those cannot (limiter attack leakage, impossible
         // configurations, both stages disabled). Memoryless, so its position
-        // changes no delay accounting.
+        // changes no delay accounting. (Until 0.45 this was two identical
+        // soft clips around a 54 kHz one-pole "smoother" plus a third clip
+        // at an absolute 0.98 after output gain -- all idle or redundant
+        // once the clipper and limiter own the peaks; removed.)
         if audioCompositeShaperActive {
             audioComposite = Self.softClipSafety(
                 audioComposite,
-                threshold: thresholds.preLimiterCeiling
-            )
-        }
-        if compositeAudioSmootherEnabled && audioCompositeShaperActive {
-            audioComposite = compositeAudioSmoother.process(audioComposite)
-        }
-
-        if audioCompositeShaperActive {
-            audioComposite = Self.softClipSafety(
-                audioComposite,
-                threshold: thresholds.postLimiterCeiling
+                threshold: thresholds.audioCeiling
             )
         }
 
         var mpx = audioComposite * outputGain
 
-        if limitEnabled && finalMPXSoftClipEnabled {
-            mpx = Self.softClipSafety(mpx, threshold: threshold)
-        }
-
         // Composite budget governor. A smoothed gain ride does the
         // audible work, reducing only the audio path before pilot/RDS
         // injection. The hard ceiling remains as a last-sample guard
         // for attack-time transients and impossible configurations.
-        let audioCeilOut = thresholds.postLimiterCeiling * outputGain
+        let audioCeilOut = thresholds.audioCeiling * outputGain
         let audioAbsOut = fabsf(mpx)
         let budgetTargetGain = audioAbsOut > audioCeilOut
             ? audioCeilOut / max(1e-9, audioAbsOut)
@@ -3820,8 +3793,7 @@ final class MPXGenerator {
         let overBudget = allowedAudioAbs <= 0.0
         return FinalCompositeThresholds(
             effectiveThreshold: effectiveThreshold,
-            preLimiterCeiling: allowedAudioAbs,
-            postLimiterCeiling: allowedAudioAbs,
+            audioCeiling: allowedAudioAbs,
             overBudget: overBudget
         )
     }

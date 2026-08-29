@@ -511,8 +511,6 @@ func runEncoderStageIsolationSweep(
     rows.append(measure(label: "distortion-cancel clip OFF") { $0.dcClipperEnabled = false })
     rows.append(measure(label: "composite clipper OFF") { $0.compositeClipperEnabled = false })
     rows.append(measure(label: "audio composite softclip OFF") { $0.audioCompositeSoftClipEnabled = false })
-    rows.append(measure(label: "audio composite smoother OFF") { $0.audioCompositeSmootherEnabled = false })
-    rows.append(measure(label: "final MPX safety OFF") { $0.finalMPXSoftClipEnabled = false })
     rows.append(measure(label: "encoder FIR OFF") { $0.encoderFIREnabled = false })
     rows.append(measure(label: "pre-encode limiter OFF") { $0.preEncodeAudioLimiterEnabled = false })
     // Pre-emphasis disable also disables the 19 kHz pilot notch in
@@ -673,7 +671,6 @@ func guardBandCancellationMetrics(
         cfg.hfClipperEnabled = false
         cfg.dcClipperEnabled = false
         cfg.audioCompositeSoftClipEnabled = false
-        cfg.finalMPXSoftClipEnabled = false
         cfg.preEncodeAudioLimiterEnabled = false
         // Push the clipper hard so the guard bands carry measurable IM.
         cfg.finalDriveDB = min(20.0, baseConfig.finalDriveDB + 8.0)

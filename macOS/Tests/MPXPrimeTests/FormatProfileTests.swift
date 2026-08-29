@@ -91,6 +91,10 @@ struct FormatProfileTests {
         #expect(abs(model.config.compositeClipperThresholdDB - (-0.8)) < 1e-6)
         #expect(abs(model.config.compositeClipperCeilingDB - (-0.2)) < 1e-6)
         #expect(abs(model.config.finalDriveDB - 8.0) < 1e-6)
+        // HF control is the gain-riding HF limiter, not the HF clipper: the
+        // clipper cost 17 dB of decoded HF SINAD on hats (--verify-hf-transients).
+        #expect(model.config.hfLimiterEnabled == true)
+        #expect(model.config.hfClipperEnabled == false)
     }
 
     @Test func profilesOwnTheFullGainStructure() {

@@ -256,7 +256,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .dcClipper:
             return "8x oversampled distortion-cancelled clipper on the audio band. Cleans up audio-band peaks before pre-emphasis adds HF boost."
         case .hfClipper:
-            return "Pre-emphasis-aware HF clipper on the high band of the pre-emphasized signal. Tames HF transients with a dedicated stage so the broadband limiter doesn't pull gain across the whole signal and dull it. De-emphasis-correct; default off."
+            return "Pre-emphasis-aware HF control, two stages after pre-emphasis. HF Limiter: gain-riding, removes part of the pre-emphasis boost only while an HF transient overshoots (no clipping distortion; on in Music - Loud). HF Clipper: waveshaper on the pre-emphasised high band -- denser, but it distorts cymbals and hi-hats; last resort, default off."
         case .limiter:
             return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
         case .bs412:
@@ -525,7 +525,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "Audio Clipper"
-        case .processingHFClipper: return "HF Clipper"
+        case .processingHFClipper: return "HF Limiter / Clipper"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
         case .processingStereoCoder: return "Stereo Coder"
@@ -1645,7 +1645,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
         case .processingDCClipper: return config.dcClipperEnabled
-        case .processingHFClipper: return config.hfClipperEnabled
+        case .processingHFClipper: return config.hfLimiterEnabled || config.hfClipperEnabled
         case .processingLimiter: return config.preEncodeAudioLimiterEnabled
         case .processingStereoCoder: return config.ssbStereoEnabled
         case .processingCompositeClipper: return config.compositeClipperEnabled
@@ -1928,6 +1928,13 @@ final class MPXPrimeViewModel: ObservableObject {
         refreshDevices()
         nowPlayingRunner.updateConfig(loadedConfig)
         startConfigWatcher()
+        if loadedConfig.safetyClipsAreThePeakController {
+            // Same warning the headless runtime prints: nothing upstream of
+            // the safety soft-clips controls peaks in this config.
+            statusText =
+                "Warning: Audio Limiter and Composite Clipper are both off -- the safety "
+                + "soft-clips are the only peak controller. Re-apply a Format Profile."
+        }
         loadSnapshotsFromDisk()
         refreshMonitoringSnapshot()
         startControlServerIfEnabled()
@@ -2729,6 +2736,11 @@ final class MPXPrimeViewModel: ObservableObject {
             config.hfClipperCrossoverHz = defaults.hfClipperCrossoverHz
             config.hfClipperThresholdDB = defaults.hfClipperThresholdDB
             config.hfClipperDrive = defaults.hfClipperDrive
+            config.hfLimiterEnabled = defaults.hfLimiterEnabled
+            config.hfLimiterThresholdDB = defaults.hfLimiterThresholdDB
+            config.hfLimiterAttackMS = defaults.hfLimiterAttackMS
+            config.hfLimiterReleaseMS = defaults.hfLimiterReleaseMS
+            config.hfLimiterMaxReductionDB = defaults.hfLimiterMaxReductionDB
         case .bs412:
             config.bs412Enabled = defaults.bs412Enabled
             config.bs412ThresholdDB = defaults.bs412ThresholdDB
@@ -7547,8 +7559,22 @@ private struct ProcessingHFClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
+        Card(title: "HF Limiter") {
+            Toggle("Enable HF Limiter", isOn: model.configBinding(\.hfLimiterEnabled, runtimeDisposition: .live))
+                .help("Gain-riding HF control: rides only the pre-emphasis boost, so overshooting cymbals / hi-hats briefly lose part of their boost instead of being clipped (Optimod HF-limiter topology, Orban US 4,103,243, expired). Prefer this over the HF Clipper.")
+            let limiterDisabled = !model.config.hfLimiterEnabled
+            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfLimiterThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
+                tooltip: "Pre-emphasised L/R peak that starts the HF gain ride. Set at or a little below the Audio Limiter threshold so HF peaks are tamed before the broadband limiter has to act.").disabled(limiterDisabled)
+            DoubleSliderRow(title: "Attack", value: model.configBinding(\.hfLimiterAttackMS, runtimeDisposition: .live), range: 0.2...20, format: "%.2f ms",
+                tooltip: "How fast the boost is pulled down. 1-3 ms: the Audio Limiter's look-ahead catches what leaks during the attack.").disabled(limiterDisabled)
+            DoubleSliderRow(title: "Release", value: model.configBinding(\.hfLimiterReleaseMS, runtimeDisposition: .live), range: 5...500, format: "%.0f ms",
+                tooltip: "How fast full pre-emphasis returns. 10-50 ms keeps the HF dip brief; longer values trade sparkle for density.").disabled(limiterDisabled)
+            DoubleSliderRow(title: "Max Reduction", value: model.configBinding(\.hfLimiterMaxReductionDB, runtimeDisposition: .live), range: 1...24, format: "%.1f dB",
+                tooltip: "Cap on how much of the pre-emphasis boost may be removed. The stage can never cut HF below the flat (un-emphasised) program level.").disabled(limiterDisabled)
+        }
         Card(title: "HF Clipper") {
             Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))
+                .help("Waveshaper on the pre-emphasised high band: it distorts the band it controls. Keep off unless you need maximum HF density; the HF Limiter above is the clean alternative.")
             let disabled = !model.config.hfClipperEnabled
             DoubleSliderRow(title: "Crossover", value: model.configBinding(\.hfClipperCrossoverHz, runtimeDisposition: .live), range: 3000...8000, format: "%.0f Hz",
                 tooltip: "Crossover frequency isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)

@@ -333,6 +333,15 @@ struct AppConfig: Equatable {
     var hfClipperCrossoverHz: Double = 5_000.0
     var hfClipperThresholdDB: Double = -3.0
     var hfClipperDrive: Double = 1.2
+    // HF limiter: program-controlled pre-emphasis (rides only the boost
+    // component), the gain-riding alternative to the HF clipper. Threshold is
+    // the pre-emphasised L/R peak that triggers it; Max Reduction caps how much
+    // of the boost may be removed (the boost itself bounds the action).
+    var hfLimiterEnabled: Bool = false
+    var hfLimiterThresholdDB: Double = -2.0
+    var hfLimiterAttackMS: Double = 1.5
+    var hfLimiterReleaseMS: Double = 20.0
+    var hfLimiterMaxReductionDB: Double = 12.0
     var dcClipperEnabled: Bool = false
     var dcClipperCeilingDB: Double = -1.0
     var dcClipperCancelFreqHz: Double = 2000.0
@@ -496,6 +505,38 @@ struct AppConfig: Equatable {
     var rdsGaussianBWHZ: Double = 2400.0
     var rdsGaussianTaps: Int = 81
 
+    /// Pre-0.45 Format Profile ids mapped onto the four 0.45 profiles. The
+    /// old ids were deleted without migration in 71cdf78; a station that
+    /// upgraded kept an unknown label AND the old, unowned gain structure
+    /// (field finding 2026-08-29: no peak controller enabled, the safety
+    /// soft-clips doing the clipping). The label alone is migrated here so
+    /// the picker shows a real profile; the operator re-applies it to adopt
+    /// the 0.45 gain structure (see the startup warning in main.swift).
+    static let legacyFormatProfileIDs: [String: String] = [
+        "community_radio": "music_clean",
+        "pop_ac": "music_clean",
+        "chr_top40": "music_loud",
+        "rock": "music_loud",
+        "edm_dance": "music_loud",
+        "urban_hiphop": "music_loud",
+        "jazz_classical": "classical_wide",
+        "news_talk": "speech"
+    ]
+
+    static func migratedFormatProfileID(_ id: String) -> String {
+        legacyFormatProfileIDs[id] ?? id
+    }
+
+    /// True when nothing upstream of the always-on safety soft-clips can
+    /// control composite peaks: with neither the pre-encode limiter nor the
+    /// composite clipper enabled, `softClipSafety` (1x rate, no guard-band
+    /// cancellation, ~hard knee) is the de-facto peak controller -- the
+    /// audible-distortion configuration the 0.45 profiles were reworked to
+    /// prevent. Surfaced as a warning at startup and in the verifier.
+    var safetyClipsAreThePeakController: Bool {
+        !preEncodeAudioLimiterEnabled && !compositeClipperEnabled && !processingBypass
+    }
+
     static func load(fromINI path: String) throws -> AppConfig {
         let resolvedPath = resolveINIPath(path, forWrite: false)
         let parsed = try INIParser.parseFile(resolvedPath)
@@ -535,7 +576,8 @@ struct AppConfig: Equatable {
             min(0.0, mpx.double("mpx_line_output_dbfs", defaultValue: cfg.mpxLineOutputDBFS)))
         cfg.finalDriveDB = mpx.double("final_drive_db", defaultValue: cfg.finalDriveDB)
         cfg.finalStagePresetID = mpx.string("final_stage_preset_id", defaultValue: cfg.finalStagePresetID)
-        cfg.formatProfileID = mpx.string("format_profile_id", defaultValue: cfg.formatProfileID)
+        cfg.formatProfileID = Self.migratedFormatProfileID(
+            mpx.string("format_profile_id", defaultValue: cfg.formatProfileID))
         cfg.preemphasisUS = mpx.int("preemphasis_us", defaultValue: cfg.preemphasisUS)
         cfg.hpfHz = mpx.double("hpf_hz", defaultValue: cfg.hpfHz)
         cfg.hfTrimDB = mpx.double("hf_trim_db", defaultValue: cfg.hfTrimDB)
@@ -771,6 +813,16 @@ struct AppConfig: Equatable {
             "hf_clipper_threshold_db", defaultValue: cfg.hfClipperThresholdDB)
         cfg.hfClipperDrive = mpx.double(
             "hf_clipper_drive", defaultValue: cfg.hfClipperDrive)
+        cfg.hfLimiterEnabled = mpx.bool(
+            "hf_limiter_enabled", defaultValue: cfg.hfLimiterEnabled)
+        cfg.hfLimiterThresholdDB = mpx.double(
+            "hf_limiter_threshold_db", defaultValue: cfg.hfLimiterThresholdDB)
+        cfg.hfLimiterAttackMS = mpx.double(
+            "hf_limiter_attack_ms", defaultValue: cfg.hfLimiterAttackMS)
+        cfg.hfLimiterReleaseMS = mpx.double(
+            "hf_limiter_release_ms", defaultValue: cfg.hfLimiterReleaseMS)
+        cfg.hfLimiterMaxReductionDB = mpx.double(
+            "hf_limiter_max_reduction_db", defaultValue: cfg.hfLimiterMaxReductionDB)
         cfg.dcClipperEnabled = mpx.bool(
             "dc_clipper_enabled", defaultValue: cfg.dcClipperEnabled)
         cfg.dcClipperCeilingDB = mpx.double(
@@ -1057,6 +1109,10 @@ struct AppConfig: Equatable {
         hfClipperCrossoverHz = max(3_000.0, min(8_000.0, hfClipperCrossoverHz))
         hfClipperThresholdDB = max(-12.0, min(0.0, hfClipperThresholdDB))
         hfClipperDrive = max(0.5, min(3.0, hfClipperDrive))
+        hfLimiterThresholdDB = max(-12.0, min(0.0, hfLimiterThresholdDB))
+        hfLimiterAttackMS = max(0.2, min(20.0, hfLimiterAttackMS))
+        hfLimiterReleaseMS = max(5.0, min(500.0, hfLimiterReleaseMS))
+        hfLimiterMaxReductionDB = max(1.0, min(24.0, hfLimiterMaxReductionDB))
 
         // Distortion-cancelled clipper
         dcClipperCeilingDB = max(-6.0, min(0.0, dcClipperCeilingDB))
@@ -1278,6 +1334,11 @@ struct AppConfig: Equatable {
             "hf_clipper_crossover_hz = \(Self.formatFloat(hfClipperCrossoverHz))",
             "hf_clipper_threshold_db = \(Self.formatFloat(hfClipperThresholdDB))",
             "hf_clipper_drive = \(Self.formatFloat(hfClipperDrive))",
+            "hf_limiter_enabled = \(Self.boolString(hfLimiterEnabled))",
+            "hf_limiter_threshold_db = \(Self.formatFloat(hfLimiterThresholdDB))",
+            "hf_limiter_attack_ms = \(Self.formatFloat(hfLimiterAttackMS))",
+            "hf_limiter_release_ms = \(Self.formatFloat(hfLimiterReleaseMS))",
+            "hf_limiter_max_reduction_db = \(Self.formatFloat(hfLimiterMaxReductionDB))",
             "dc_clipper_enabled = \(Self.boolString(dcClipperEnabled))",
             "dc_clipper_ceiling_db = \(Self.formatFloat(dcClipperCeilingDB))",
             "dc_clipper_cancel_freq_hz = \(Self.formatFloat(dcClipperCancelFreqHz))",

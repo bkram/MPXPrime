@@ -1004,6 +1004,96 @@ struct HFClipper {
     }
 }
 
+// MARK: - HF Limiter (pre-emphasis-aware, gain-riding, L/R domain)
+// Program-controlled pre-emphasis after Orban US 4,103,243 (the Optimod-FM
+// 8100 HF limiter, expired 1997): the pre-emphasised signal is treated as
+// flat + boost and only the BOOST component rides a fast gain,
+//
+//     out = flat + g * (pre - flat),   g in [gMin, 1]
+//
+// so a cymbal or hi-hat that overshoots after pre-emphasis loses part of its
+// pre-emphasis boost for a few milliseconds instead of being waveshaped by
+// the HF clipper or dragging the whole mix down in the broadband limiter.
+// g = 1 is full pre-emphasis, g = 0 the flat response -- the stage can never
+// cut HF below the program's own level. The receiver's fixed de-emphasis
+// turns the action into a brief, bounded HF dip; that is the trade every
+// broadcast HF limiter makes (Orban, "Transmission Audio Processing").
+//
+// Detector, feed-forward and stereo-linked: when the pre-emphasised peak
+// exceeds the threshold AND the boost accounts for at least half the excess,
+// the target gain removes exactly the excess from the boost; whatever is left
+// goes to the pre-encode limiter that follows (Orban's clipper-after-HF-
+// limiter division of labour). Peaks driven by bass/mids with little boost
+// are ignored so they cannot flutter the HF (the Dolby US 4,498,055
+// "modulation control" idea). Attack ~1.5 ms / release ~20 ms (Orban used
+// 3 ms / 10 ms in the analog original). Default off -> bit-identical chain.
+struct HFLimiter {
+    private var enabled = false
+    private var thresholdLin: Float = 0.794
+    private var minGain: Float = 0.25
+    private var attackCoeff: Float = 0.0
+    private var releaseCoeff: Float = 0.0
+    // Peak hold before release (5 ms): without it the gain rides back up
+    // between the half-cycles of a sustained HF tone and the steady-state
+    // peak ripples ~4% above threshold.
+    private var holdSamples: Int = 1
+    private var holdCounter: Int = 0
+    private(set) var gain: Float = 1.0
+
+    /// The boost must carry at least this fraction of the pre-emphasised
+    /// peak for the stage to act: peaks driven by bass/mids with a small HF
+    /// boost are left to the broadband limiter (Dolby "modulation control").
+    private static let boostDominanceFraction: Float = 0.2
+
+    mutating func configure(enabled: Bool, sampleRate: Float, thresholdDB: Float,
+                            attackMS: Float, releaseMS: Float, maxReductionDB: Float) {
+        self.enabled = enabled
+        let sr = max(8_000.0, sampleRate)
+        thresholdLin = powf(10.0, min(0.0, thresholdDB) / 20.0)
+        minGain = powf(10.0, -clampf(maxReductionDB, 0.0, 40.0) / 20.0)
+        let attackS = max(0.05, attackMS) * 0.001
+        let releaseS = max(1.0, releaseMS) * 0.001
+        attackCoeff = expf(-1.0 / (attackS * sr))
+        releaseCoeff = expf(-1.0 / (releaseS * sr))
+        holdSamples = max(1, Int((0.005 * sr).rounded()))
+        holdCounter = 0
+        if !enabled { gain = 1.0 }
+    }
+
+    var gainReductionDB: Float { max(0.0, -20.0 * log10f(max(1e-6, gain))) }
+
+    mutating func reset() {
+        gain = 1.0
+        holdCounter = 0
+    }
+
+    @inline(__always)
+    mutating func process(flatL: Float, flatR: Float,
+                          emphasizedL: Float, emphasizedR: Float) -> (Float, Float) {
+        guard enabled else { return (emphasizedL, emphasizedR) }
+        let boostL = emphasizedL - flatL
+        let boostR = emphasizedR - flatR
+        let peak = max(fabsf(emphasizedL), fabsf(emphasizedR))
+        var target: Float = 1.0
+        let excess = peak - thresholdLin
+        if excess > 0.0 {
+            let boostAbs = max(fabsf(boostL), fabsf(boostR))
+            if boostAbs > Self.boostDominanceFraction * peak {
+                target = max(minGain, 1.0 - (excess / boostAbs))
+            }
+        }
+        if target < gain {
+            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * target)
+            holdCounter = holdSamples
+        } else if holdCounter > 0 {
+            holdCounter -= 1
+        } else {
+            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * target)
+        }
+        return (flatL + (boostL * gain), flatR + (boostR * gain))
+    }
+}
+
 // MARK: - Distortion-Cancelled Clipper (L/R domain, 8x oversampled)
 struct DistortionCancelledClipper {
     private var ceiling: Float = 0.95
@@ -1138,6 +1228,9 @@ struct CompositeClipper {
     private var thresholdLin: Float = 0.708
     private var ceilingLin: Float = 0.944
     private var knee: Float = 0.236
+    /// Configured ceiling as a linear amplitude; the final stage normalises
+    /// the audio composite so this ceiling lands exactly on the composite budget.
+    var ceilingLinear: Float { ceilingLin }
     private var lag = Lagrange4Interp()
     /// Decimation filter for the OS-rate clipping residual. Replaced
     /// the prior `BiquadCascade6` (12th-order Butterworth) with a
@@ -3772,7 +3865,14 @@ struct LookaheadLimiter {
         let releaseS = 0.095 as Float
         attackCoeff = expf(-1.0 / (attackS * sr))
         releaseCoeff = expf(-1.0 / (releaseS * sr))
-        holdSamples = max(1, Int((0.004 * sr).rounded()))
+        // Hold must outlast the look-ahead delay: the detector sees a peak
+        // `lookaheadSamples` before it leaves the delay line, so a shorter
+        // hold lets the release start lifting the gain before the peak has
+        // actually passed the gain stage (measured as ~1% overshoot at the
+        // old fixed 4 ms hold against a 5 ms look-ahead).
+        holdSamples = max(
+            Int((0.004 * sr).rounded()),
+            lookaheadSamples + Int((0.001 * sr).rounded()))
         holdCounter = 0
         if !enabled {
             gain = 1.0
@@ -6503,6 +6603,11 @@ final class MPXGenerator {
         let hfClipperCrossoverHz: Float
         let hfClipperThresholdDB: Float
         let hfClipperDrive: Float
+        let hfLimiterEnabled: Bool
+        let hfLimiterThresholdDB: Float
+        let hfLimiterAttackMS: Float
+        let hfLimiterReleaseMS: Float
+        let hfLimiterMaxReductionDB: Float
         let dcClipperEnabled: Bool
         let dcClipperCeilingDB: Float
         let dcClipperCancelFreqHz: Float
@@ -6637,6 +6742,11 @@ final class MPXGenerator {
             hfClipperCrossoverHz: Float(config.hfClipperCrossoverHz),
             hfClipperThresholdDB: Float(config.hfClipperThresholdDB),
             hfClipperDrive: Float(config.hfClipperDrive),
+            hfLimiterEnabled: config.hfLimiterEnabled,
+            hfLimiterThresholdDB: Float(config.hfLimiterThresholdDB),
+            hfLimiterAttackMS: Float(config.hfLimiterAttackMS),
+            hfLimiterReleaseMS: Float(config.hfLimiterReleaseMS),
+            hfLimiterMaxReductionDB: Float(config.hfLimiterMaxReductionDB),
             dcClipperEnabled: config.dcClipperEnabled,
             dcClipperCeilingDB: Float(config.dcClipperCeilingDB),
             dcClipperCancelFreqHz: Float(config.dcClipperCancelFreqHz),
@@ -7059,6 +7169,12 @@ final class MPXGenerator {
     private var hfClipperThresholdDB: Float
     private var hfClipperDrive: Float
     private var hfClipper = HFClipper()
+    private var hfLimiterEnabled: Bool
+    private var hfLimiterThresholdDB: Float
+    private var hfLimiterAttackMS: Float
+    private var hfLimiterReleaseMS: Float
+    private var hfLimiterMaxReductionDB: Float
+    private var hfLimiter = HFLimiter()
 
     // Distortion-cancelled clipper: L/R domain with LF distortion cancellation
     private var dcClipperEnabled: Bool
@@ -7435,6 +7551,12 @@ final class MPXGenerator {
         self.hfClipperThresholdDB = clampf(Float(config.hfClipperThresholdDB), -12.0, 0.0)
         self.hfClipperDrive = clampf(Float(config.hfClipperDrive), 0.5, 3.0)
 
+        self.hfLimiterEnabled = config.hfLimiterEnabled
+        self.hfLimiterThresholdDB = clampf(Float(config.hfLimiterThresholdDB), -12.0, 0.0)
+        self.hfLimiterAttackMS = clampf(Float(config.hfLimiterAttackMS), 0.2, 20.0)
+        self.hfLimiterReleaseMS = clampf(Float(config.hfLimiterReleaseMS), 5.0, 500.0)
+        self.hfLimiterMaxReductionDB = clampf(Float(config.hfLimiterMaxReductionDB), 1.0, 24.0)
+
         self.dcClipperEnabled = config.dcClipperEnabled
         self.dcClipperCeilingDB = clampf(Float(config.dcClipperCeilingDB), -6.0, 0.0)
         self.dcClipperCancelFreqHz = clampf(Float(config.dcClipperCancelFreqHz), 500.0, 4000.0)
@@ -7530,6 +7652,14 @@ final class MPXGenerator {
             crossoverHz: hfClipperCrossoverHz,
             thresholdDB: hfClipperThresholdDB,
             drive: hfClipperDrive
+        )
+        hfLimiter.configure(
+            enabled: hfLimiterEnabled,
+            sampleRate: audioRate,
+            thresholdDB: hfLimiterThresholdDB,
+            attackMS: hfLimiterAttackMS,
+            releaseMS: hfLimiterReleaseMS,
+            maxReductionDB: hfLimiterMaxReductionDB
         )
         configureDistortionCancelledClipper()
         configureProcessedAudioFinalClipper()
@@ -7938,6 +8068,14 @@ final class MPXGenerator {
             thresholdDB: hfClipperThresholdDB,
             drive: hfClipperDrive
         )
+        hfLimiter.configure(
+            enabled: hfLimiterEnabled,
+            sampleRate: audioRate,
+            thresholdDB: hfLimiterThresholdDB,
+            attackMS: hfLimiterAttackMS,
+            releaseMS: hfLimiterReleaseMS,
+            maxReductionDB: hfLimiterMaxReductionDB
+        )
         configureDistortionCancelledClipper()
         configureProcessedAudioFinalClipper()
         lookaheadLimiter.configure(
@@ -8283,12 +8421,37 @@ final class MPXGenerator {
         hfClipperThresholdDB = clampf(config.hfClipperThresholdDB, -12.0, 0.0)
         hfClipperDrive = clampf(config.hfClipperDrive, 0.5, 3.0)
         if hfClipChanged {
+            // The stage runs inside the dual-rate audio domain: coefficients
+            // belong to the audio-domain rate (init/setSampleRate already use it).
             hfClipper.configure(
                 enabled: hfClipperEnabled,
-                sampleRate: sampleRate,
+                sampleRate: audioDomainSampleRate,
                 crossoverHz: hfClipperCrossoverHz,
                 thresholdDB: hfClipperThresholdDB,
                 drive: hfClipperDrive
+            )
+        }
+
+        // HF limiter (pre-emphasis-aware, gain-riding)
+        let hfLimiterChanged =
+            hfLimiterEnabled != config.hfLimiterEnabled
+            || fabsf(hfLimiterThresholdDB - config.hfLimiterThresholdDB) > 0.0001
+            || fabsf(hfLimiterAttackMS - config.hfLimiterAttackMS) > 0.0001
+            || fabsf(hfLimiterReleaseMS - config.hfLimiterReleaseMS) > 0.0001
+            || fabsf(hfLimiterMaxReductionDB - config.hfLimiterMaxReductionDB) > 0.0001
+        hfLimiterEnabled = config.hfLimiterEnabled
+        hfLimiterThresholdDB = clampf(config.hfLimiterThresholdDB, -12.0, 0.0)
+        hfLimiterAttackMS = clampf(config.hfLimiterAttackMS, 0.2, 20.0)
+        hfLimiterReleaseMS = clampf(config.hfLimiterReleaseMS, 5.0, 500.0)
+        hfLimiterMaxReductionDB = clampf(config.hfLimiterMaxReductionDB, 1.0, 24.0)
+        if hfLimiterChanged {
+            hfLimiter.configure(
+                enabled: hfLimiterEnabled,
+                sampleRate: audioDomainSampleRate,
+                thresholdDB: hfLimiterThresholdDB,
+                attackMS: hfLimiterAttackMS,
+                releaseMS: hfLimiterReleaseMS,
+                maxReductionDB: hfLimiterMaxReductionDB
             )
         }
 
@@ -9453,8 +9616,23 @@ final class MPXGenerator {
 
         // Pre-emphasis on L/R immediately upstream of the pre-encode limiter,
         // so the limiter peak-controls the HF-boosted signal. See `preL`/`preR`.
+        let flatL = stereo.left
+        let flatR = stereo.right
         stereo.left = preL.process(stereo.left)
         stereo.right = preR.process(stereo.right)
+
+        // HF limiter: program-controlled pre-emphasis (Orban US 4,103,243
+        // topology). Rides only the boost component `pre - flat`, so an HF
+        // transient that overshoots loses (part of) its pre-emphasis boost
+        // for a few ms instead of being clipped or dragging the whole mix
+        // down in the broadband limiter below. Default off -> not invoked.
+        if hfLimiterEnabled && !processingBypass {
+            let limited = hfLimiter.process(
+                flatL: flatL, flatR: flatR,
+                emphasizedL: stereo.left, emphasizedR: stereo.right)
+            stereo.left = limited.0
+            stereo.right = limited.1
+        }
 
         // Pre-emphasis-aware HF clipper: tame HF transients of the pre-emphasized
         // signal with a dedicated stage so the broadband limiter below doesn't
@@ -9830,9 +10008,87 @@ final class MPXGenerator {
         }
         let audioCompositeShaperActive = audioCompositeSoftClipEnabled
         var audioComposite = rawAudioComposite
+
+        // Composite clipper FIRST, with its threshold/ceiling referenced to
+        // the audio-composite BUDGET (what is left of the composite after
+        // the pilot/RDS reservation), not to digital full scale. Until
+        // 0.45 the order was shaper -> clipper with the clipper's -1 dB
+        // threshold read against 1.0: the budget (~0.85 with pilot + RDS)
+        // sat BELOW that threshold, so the 1x, un-oversampled, guard-less
+        // `softClipSafety` shaper did every bit of the clipping and the
+        // oversampled guard-band-protected clipper never engaged (measured
+        // by --verify-hf-transients: clipper on/off was bit-identical on
+        // music_loud; the shaper cost 13 dB of decoded HF SINAD). The
+        // budget is a slowly-varying envelope (subcarrier reservation,
+        // ~ms time constants) against the clipper's ~0.1 ms internal
+        // delay, so scaling in and out by the same current value keeps
+        // the differential-topology cancellation exact in practice.
+        // Normalisation maps the clipper's CEILING onto the budget (so the
+        // operator's ceiling/threshold pair keeps its knee width while the
+        // audio composite may use the whole budget, exactly as the pre-0.45
+        // shaper let it -- deviation stays where operators calibrated it).
+        let compositeBudget = max(0.05, thresholds.preLimiterCeiling)
+        if compositeClipperEnabled {
+            let scale = compositeBudget / compositeClipper.ceilingLinear
+            audioComposite = compositeClipper.process(audioComposite / scale) * scale
+        }
+
+        // Audio-composite bandwidth cleanup. Any real program content should
+        // live below the upper stereo sideband, so remove clipper spill
+        // before pilot/RDS injection. The FIR's group delay is included in
+        // `recomputeSubcarrierDelay()` so subcarriers remain phase-aligned.
+        // It runs BEFORE the shaper: the differential clipper's output is
+        // `clipped + (residual above 53 kHz)` -- bounded only once this FIR
+        // has removed that un-cancelled HF residual. Shaping before the FIR
+        // hard-clipped that residual at 1x rate (measured on a 12 dB
+        // overdrive: ~-9 dB of shaper action relative to the composite).
+        audioComposite = audioCompositeBandwidthFIR.process(
+            left: audioComposite,
+            right: audioComposite
+        ).0
+
+        // BS.412 MPX power limiter — rolling average power limit for EU compliance.
+        if bs412Enabled {
+            audioComposite = bs412Limiter.process(audioComposite)
+        }
+
+        // Final look-ahead MPX limiter on the audio composite, budget-
+        // referenced like the clipper. The clipper's guard-band cancellation
+        // restores the protected bands (pilot / 22-53 kHz stereo / RDS) to
+        // the CLEAN input, so its output legitimately exceeds its own
+        // ceiling in-band (probe: 1.18 vs a 0.966 ceiling on a 12 dB
+        // overdrive; the 55 kHz FIR removes none of it). That excess is the
+        // price of clean guards and must be taken by a gain ride, not a
+        // waveshaper: this limiter (5 ms look-ahead, 0.35 ms attack, hold,
+        // ~95 ms release) rides it down without IM. Until 0.45 it ran AFTER
+        // the shaper against an absolute 0.98 threshold -- above the
+        // shaper's budget ceiling, so it never engaged in any profile.
+        // Pilot and RDS are injected after all of this at constant
+        // amplitude (Omnia / Orban / Stereotool practice).
+        if limitEnabled {
+            // Threshold mapped just under the budget (-0.13 dB): the limiter
+            // starts where the clipper's ceiling ends, so it rides only the
+            // guard overshoot, and its 0.35 ms attack leakage stays inside the
+            // 1.5% the shaper tolerates before it would clip at 1x rate.
+            let scale = (0.985 * compositeBudget) / lookaheadLimiter.threshold
+            audioComposite = lookaheadLimiter.process(audioComposite / scale) * scale
+        }
+
+        // Experimental multiband composite clipper: keeps its absolute band
+        // ceilings (0.90 / 0.62 / 0.38) and, as before 0.45, sees a composite
+        // already bounded by the peak stages ahead of it (its A/B gate and
+        // sideband-symmetry test were tuned on that input). Shaper follows.
+        if compositeMultibandClipperEnabled {
+            audioComposite = compositeMultibandClipper.process(audioComposite)
+        }
+
+        // Shaper: the budget safety net behind clipper + limiter. It only
+        // catches what those cannot (limiter attack leakage, impossible
+        // configurations, both stages disabled). Memoryless, so its position
+        // changes no delay accounting.
         if audioCompositeShaperActive {
             audioComposite = Self.softClipSafety(
-                rawAudioComposite,
+                audioComposite,
                 threshold: thresholds.preLimiterCeiling
             )
         }
@@ -9847,41 +10103,10 @@ final class MPXGenerator {
             )
         }
 
-        // Composite clipper: 8x oversampled soft-clip on audio composite.
-        if compositeClipperEnabled {
-            audioComposite = compositeClipper.process(audioComposite)
-        }
-
-        if compositeMultibandClipperEnabled {
-            audioComposite = compositeMultibandClipper.process(audioComposite)
-        }
-
-        // Audio-composite bandwidth cleanup. Any real program content should
-        // live below the upper stereo sideband, so remove shaper/limiter spill
-        // before pilot/RDS injection. The FIR's group delay is included in
-        // `recomputeSubcarrierDelay()` so subcarriers remain phase-aligned.
-        audioComposite = audioCompositeBandwidthFIR.process(
-            left: audioComposite,
-            right: audioComposite
-        ).0
-
-        // BS.412 MPX power limiter — rolling average power limit for EU compliance.
-        if bs412Enabled {
-            audioComposite = bs412Limiter.process(audioComposite)
-        }
-
-        // Safety limiter on audio composite only — pilot and RDS are injected
-        // after all limiting to preserve constant amplitude.  Professional
-        // broadcast standard (Omnia, Orban, Stereotool): subcarriers bypass
-        // the final limiter so the receiver's stereo decoder and RDS decoder
-        // always see stable reference signals.
         var mpx = audioComposite * outputGain
 
-        if limitEnabled {
-            mpx = lookaheadLimiter.process(mpx)
-            if finalMPXSoftClipEnabled {
-                mpx = Self.softClipSafety(mpx, threshold: threshold)
-            }
+        if limitEnabled && finalMPXSoftClipEnabled {
+            mpx = Self.softClipSafety(mpx, threshold: threshold)
         }
 
         // Composite budget governor. A smoothed gain ride does the

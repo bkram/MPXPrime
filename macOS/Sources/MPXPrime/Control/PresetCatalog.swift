@@ -503,6 +503,7 @@ enum PresetCatalog {
         let compositeClipperEnabled: Bool
         let compositeClipperLookaheadMS: Double
         let hfClipperEnabled: Bool
+        let hfLimiterEnabled: Bool
         let bassClipperEnabled: Bool
         let phaseRotationEnabled: Bool
     }
@@ -521,7 +522,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
               phaseRotationEnabled: false),
         .init(id: "music_clean", title: "Music — Clean",
               summary: "The default: transparent leveling, honest peaks, low clipper work. For stations that value fidelity over loudness.",
@@ -534,10 +535,10 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.90,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
               phaseRotationEnabled: false),
         .init(id: "music_loud", title: "Music — Loud",
-              summary: "Competitive loudness: hot drive into the composite clipper, HF + bass clippers on, PrimeBass, wide image.",
+              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, wide image.",
               multibandPresetID: "5_chr", multibandIntensity: .normal,
               finalStagePresetID: "chr", primeBassEnabled: true,
               primeBassPresetID: "chr", widenerPresetID: "wide_chr",
@@ -547,7 +548,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: true, bassClipperEnabled: true,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: true,
               phaseRotationEnabled: false),
         .init(id: "speech", title: "Speech / Talk",
               summary: "Voice-optimized: phase rotator for waveform symmetry, speech multiband + final stage, conservative drive.",
@@ -560,7 +561,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
               phaseRotationEnabled: true),
         .init(id: "classical_wide", title: "Classical / Wide Dynamics",
               summary: "Dynamic-preserving: gentle slow AGC, light multiband, minimal clipper work, no enhancement.",
@@ -573,7 +574,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.92,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
               phaseRotationEnabled: false)
     ]
 
@@ -619,6 +620,7 @@ enum PresetCatalog {
         config.compositeClipperEnabled = profile.compositeClipperEnabled
         config.compositeClipperLookaheadMS = profile.compositeClipperLookaheadMS
         config.hfClipperEnabled = profile.hfClipperEnabled
+        config.hfLimiterEnabled = profile.hfLimiterEnabled
         config.bassClipperEnabled = profile.bassClipperEnabled
         config.phaseRotationEnabled = profile.phaseRotationEnabled
         return profile.title

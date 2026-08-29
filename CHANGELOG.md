@@ -11,6 +11,47 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Hi-hats / cymbals no longer distort: the composite clipper actually
+  clips now, and a real HF limiter replaces the HF clipper.** Field
+  finding 2026-08-29, measured with the new `--verify-hf-transients`
+  gate (receiver-side, de-emphasised decode of hat / ride multitones and
+  band-limited cymbal noise; reports HF SINAD, HF crest loss, 15-23 kHz
+  composite spill per chain variant). Root causes, in order of impact:
+  (1) in EVERY shipped profile the always-on 1x "safety" shaper ran
+  BEFORE the composite clipper at a LOWER threshold (the audio-composite
+  budget, ~0.85 with pilot + RDS reserved) than the clipper's own
+  threshold (referenced to digital full scale), so the shaper did all
+  the clipping and the 16x oversampled, guard-band-protected clipper
+  never engaged -- clipper on/off was bit-identical; (2) the final
+  look-ahead MPX limiter was idle for the same reason (absolute 0.98
+  threshold above the shaper); (3) `Music - Loud` used the HF *clipper*,
+  a waveshaper on exactly the band cymbals live in (17 dB of decoded HF
+  SINAD on hats). Fixes: final stage reordered to composite clipper
+  (ceiling mapped onto the budget) -> 55 kHz bandwidth FIR -> BS.412 ->
+  final look-ahead limiter (threshold just under the budget; it rides the
+  in-band overshoot the clipper's guard-band restoration legitimately
+  leaves -- probe: 1.18 vs a 0.966 ceiling on a 12 dB overdrive) ->
+  experimental multiband clipper -> shaper as a genuinely idle safety
+  net (pinned by `CompositeShaperOrderingTests`); the limiter's hold now
+  outlasts its look-ahead. New **HF Limiter** stage (`hf_limiter_*`,
+  live-apply, both UIs, default off, ON in Music - Loud): program-
+  controlled pre-emphasis after Orban US 4,103,243 (expired) -- rides
+  only the pre-emphasis BOOST (`out = flat + g * (pre - flat)`), boost-
+  dominance guard so bass peaks cannot flutter HF, 1.5 ms / 5 ms hold /
+  20 ms. `mpx_clipper_threshold_db` / `_ceiling_db` are now referenced to
+  the composite budget (ceiling = budget), deviation unchanged.
+  Measured (hat SINAD / ride SINAD / cymbal-wash crest loss): Music -
+  Clean 13.0 / 31.8 / -1.1 -> 27.2 / 43.0 / -0.7 dB; Music - Loud 5.6 /
+  8.3 / -3.3 -> 18.3 / 38.1 / -2.2 dB; Speech 9.9 / 13.5 -> 22.8 / 47.2
+  dB; Classical 15.7 -> 27.0 dB. Also: pre-0.45 profile ids migrate on
+  load (`chr_top40` -> `music_loud`, ...), a startup warning (CLI and GUI
+  status) fires when neither Audio Limiter nor Composite Clipper is
+  enabled, the HF clipper's live-apply reconfigured at the wrong (MPX)
+  rate under the dual-rate audio domain, the verifier's safety-limiter
+  bounds moved to the limiter's new duty (TIGHT > 2 dB, WARN > 3 dB),
+  and all composite baselines were recaptured (deliberate chain change).
+  `docs/test-playlist.md` adds a sourced listening playlist per stage.
+
 - **Format Profiles reworked: four complete profiles instead of eight
   color-only ones.** Field finding: the old profiles set multiband/
   PrimeBass/widener/drive but never owned the gain structure, so a

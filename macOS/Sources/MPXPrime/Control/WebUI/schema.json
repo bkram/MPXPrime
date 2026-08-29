@@ -558,8 +558,28 @@
     "title": "Audio Clipper"
    },
    {
+    "enable": "hf_limiter_enabled",
+    "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter. Gain-riding, so no clipping distortion; on in Music - Loud.",
+    "id": "hfLimiter",
+    "keys": [
+     "hf_limiter_enabled",
+     "hf_limiter_threshold_db",
+     "hf_limiter_attack_ms",
+     "hf_limiter_release_ms",
+     "hf_limiter_max_reduction_db"
+    ],
+    "pill": null,
+    "sub": "Program-controlled pre-emphasis (gain-riding)",
+    "summary": [
+     [
+      "thr {hf_limiter_threshold_db} dB - max {hf_limiter_max_reduction_db} dB"
+     ]
+    ],
+    "title": "HF Limiter"
+   },
+   {
     "enable": "hf_clipper_enabled",
-    "help": "Pre-emphasis-aware HF clipper on the high band of the pre-emphasized signal. Tames HF transients with a dedicated stage so the broadband limiter doesn't pull gain across the whole signal and dull it. De-emphasis-correct; default off.",
+    "help": "Pre-emphasis-aware HF clipper on the high band of the pre-emphasized signal. A waveshaper: it distorts the band it controls, so prefer the HF Limiter and keep this as a last resort for maximum density. De-emphasis-correct; default off.",
     "id": "hfClipper",
     "keys": [
      "hf_clipper_enabled",
@@ -1081,6 +1101,46 @@
    "min": 3000.0,
    "step": 1,
    "unit": " Hz"
+  },
+  "hf_limiter_attack_ms": {
+   "decimals": 2,
+   "kind": "slider",
+   "label": "Attack",
+   "max": 20.0,
+   "min": 0.2,
+   "step": 0.05,
+   "unit": " ms"
+  },
+  "hf_limiter_enabled": {
+   "kind": "toggle",
+   "label": "HF Limiter"
+  },
+  "hf_limiter_max_reduction_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Max Reduction",
+   "max": 24.0,
+   "min": 1.0,
+   "step": 0.5,
+   "unit": " dB"
+  },
+  "hf_limiter_release_ms": {
+   "decimals": 0,
+   "kind": "slider",
+   "label": "Release",
+   "max": 500.0,
+   "min": 5.0,
+   "step": 1,
+   "unit": " ms"
+  },
+  "hf_limiter_threshold_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Threshold",
+   "max": 0.0,
+   "min": -12.0,
+   "step": 0.1,
+   "unit": " dB"
   },
   "hf_clipper_drive": {
    "decimals": 2,

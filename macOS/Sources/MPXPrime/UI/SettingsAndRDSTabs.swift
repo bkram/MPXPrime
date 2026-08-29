@@ -34,7 +34,7 @@ struct SystemSettingsSectionContent: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     private let sampleRates: [Double] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000]
-    private let blockSizes: [Int] = [512, 1024, 2048, 4096, 8192]
+    private let blockSizes: [Int] = [256, 512, 1024, 2048, 4096, 8192]
 
     var body: some View {
         Group {

@@ -56,6 +56,7 @@ struct CLIOptions {
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
+    var benchBlocksOnly: Bool = false
     // Remote-control server overrides (headless runs). nil = use the INI's
     // [CONTROL] settings; --control enables with INI/default bind+port;
     // --control-port N enables on that port.
@@ -164,6 +165,10 @@ func parseCLI() -> CLIOptions {
         case "--bench":
             options.bench = true
             options.gui = false
+        case "--bench-blocks":
+            options.bench = true
+            options.benchBlocksOnly = true
+            options.gui = false
         case "--control", "--web":
             // Control flags describe a headless run: MPXPrime --web serves
             // the dashboard without opening the GUI window.
@@ -199,6 +204,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-ssb-stereo [--seconds 5]
           MPXPrime [--config <path>] --verify-hf-transients [--seconds 5]
           MPXPrime --bench
+          MPXPrime --bench-blocks
 
         Options:
           --config   Path to macOS INI config (default: ~/Library/Application Support/MPX Prime/MPX Prime.ini)
@@ -219,6 +225,8 @@ func printUsage() {
           --verify-hf-transients  Hi-hat / cymbal distortion gate: receiver-side HF SINAD, HF crest,
                      15-23 kHz composite spill per chain variant (field chain, every Format Profile,
                      per-stage isolation)
+          --bench-blocks  Only the block (buffer) size sweep: worst-block cost vs block duration,
+                     I/O latency, bit-identity across sizes, device HAL buffer range (~15 s).
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
                      prints a markdown report to stdout. Use a release build for valid numbers.
           --control, --web  Run headless with the remote-control REST API + web
@@ -328,7 +336,9 @@ let configPath = options.configPathExplicit
 
 do {
     if options.bench {
-        let report = BenchmarkRunner().run()
+        var runner = BenchmarkRunner()
+        runner.blockSweepOnly = options.benchBlocksOnly
+        let report = runner.run()
         print(report)
         exit(0)
     }

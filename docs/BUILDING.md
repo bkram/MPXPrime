@@ -190,6 +190,7 @@ swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2 
 swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4     # A/B single-stage leveler
 swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4            # A/B SSB stereo encoder
 swift run --package-path macOS MPXPrime --verify-hf-transients --seconds 5         # hi-hat / cymbal distortion gate (per chain variant)
+macOS/.build/release/MPXPrime --bench-blocks                                        # block (buffer) size sweep: worst-block cost, latency, bit-identity, device HAL range
 ```
 
 Baseline capture + strict compare:

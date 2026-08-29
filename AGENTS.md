@@ -34,6 +34,7 @@ swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2 
 swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4  # A/B experimental single-stage Advanced Dynamics leveler vs AGC+multiband
 swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4  # A/B experimental SSB Stereo encoder (SSB-leaning stereo encoding) (sidebands + decode separation)
 swift run --package-path macOS MPXPrime --verify-hf-transients --seconds 5  # hi-hat / cymbal distortion gate: receiver-side HF SINAD + crest + 15-23 kHz spill per chain variant (field chain, every Format Profile, per-stage isolation)
+macOS/.build/release/MPXPrime --bench-blocks  # block (buffer) size sweep on a RELEASE build: worst-block cost vs block duration, I/O latency, bit-identity across sizes, default output device HAL buffer range (~20 s)
 
 # Baseline capture + strict compare
 swift run --package-path macOS MPXPrime --capture-baseline      # writes macOS/verifier_baselines/default.json
@@ -148,6 +149,8 @@ Three live-apply dispositions:
 RDS settings that stay restart-only: `rds_level` (injection kHz), `rds_gaussian_*` (FIR taps + BW). Everything else — master enable, PI, PTY, PTYN, ECC, LIC, TP/TA/MS/DI, AF list/method, group sequence, scheduler, CT/ID/TZ, all RT/PS/Long PS text — applies live. The 57 kHz subcarrier frequency is spec-fixed (EN 50067 Sec 2.1.4, locked to 3x pilot) and is not user-configurable.
 
 When toggling `rds_ta` live, `BasicRDSCoder.applyRDSRuntimeConfig` sets `forceNextGroupForTAEdge`. The next `nextGroupBits()` call honours it by emitting a forced 0A ahead of the schedule (UECP §2.5.1.1). CT (4A, minute-aligned) keeps higher priority than the TA-edge force flag.
+
+**Block size** (`blocksize`, `[INTERFACES]`, 256..8192, GUI picker + dashboard): the DSP is block-invariant by construction (`BlockSizeInvarianceTests`: 64 / 480 / 1024 / 4096 / 8192-frame renders are bit-identical to 512), so the size is purely a latency-vs-safety knob; `--bench-blocks` measures it (M1 Pro, 192 kHz, full chain: worst single block 17% of its duration at 512, 23% at 256, 46% at 64). The RDS text scheduler paces PS/RT by wall-clock uptime, so any bit-identity comparison of two offline renders must run with RDS off. CoreAudio devices clamp the HAL buffer to their own range (the engine logs a routing note); the built-in output tops out at 4096.
 
 `AppConfig.load` resets a pre-0.45 INI (legacy `format_profile_id`) to the migrated Format Profile: `[MPX]` rebuilt from defaults + profile except `legacyResetPreservedMPXKeys` (calibration), `[RDS]` / `[INTERFACES]` / `[CONTROL]` kept verbatim; both runtimes save the result and announce it (`loadReportingMigration`, `LegacyINIResetTests`). Adding a calibration-class key to `[MPX]` means adding it to that list.
 

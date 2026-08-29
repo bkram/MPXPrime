@@ -11,6 +11,20 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Block (buffer) size: measured and pinned.** New `--bench-blocks` sweep
+  (release build, ~20 s) reports per block size the worst single block's
+  render time as a fraction of the block duration, the implied I/O latency,
+  bit-identity of the composite against 512-frame blocks, and the default
+  output device's HAL buffer range. `BlockSizeInvarianceTests` pins that
+  64 / 480 / 1024 / 4096 / 8192-frame renders are bit-identical to 512 --
+  the size is a latency-vs-safety knob only. Measured on an M1 Pro at
+  192 kHz, full chain: worst block 17% at 512, 23% at 256, 46% at 64;
+  256 is now allowed (INI floor 512 -> 256, GUI + dashboard pickers).
+  Manual documents the guidance and the two hardware caveats (device HAL
+  clamping, USB interfaces below 256). Note for anyone comparing offline
+  renders bit-for-bit: the RDS text scheduler paces PS/RT by wall-clock
+  uptime, so such comparisons must run with RDS off.
+
 - **Pre-0.45 configs are reset on load (RDS kept).** An INI carrying a
   legacy Format Profile id now has its processing (`[MPX]`) rebuilt from
   the migrated profile instead of only relabelled -- the old gain structure

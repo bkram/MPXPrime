@@ -1,4 +1,5 @@
 import Foundation
+import MPXPrimeCore
 
 // Benchmark runner — produces the per-stage / per-rate DSP cost report.
 //
@@ -46,9 +47,15 @@ struct BenchmarkRunner {
     /// Run the full benchmark and return the markdown report as a string.
     /// Progress messages are written to stderr so the stdout return value
     /// is a clean markdown document.
+    /// `--bench-blocks`: only the block-size sweep (fast, ~15 s).
+    var blockSweepOnly: Bool = false
+
     func run() -> String {
         var out = ""
         out += header()
+        out += "\n"
+        out += blockSizeSweepSection()
+        if blockSweepOnly { return out }
         out += "\n"
         out += rateSweepSection()
         out += "\n"
@@ -230,6 +237,114 @@ struct BenchmarkRunner {
         lines.append("Build: release")
         #endif
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Block (buffer) size sweep at 192 kHz, full chain. Answers "which
+    /// buffer sizes actually work and are useful": the real-time criterion is
+    /// the WORST single block, not the average, so each size reports its
+    /// worst block render time as a fraction of that block's duration
+    /// (100% = a dropout), plus the round-trip I/O latency the size implies
+    /// (input block + output block) and whether the composite is bit-identical
+    /// to the 512-frame render (the DSP must not care about block boundaries;
+    /// CoreAudio may also deliver odd counts, hence the 480 entry). On macOS
+    /// the default output device's HAL buffer range is listed too -- sizes
+    /// outside it get clamped by the device regardless of the INI.
+    private func blockSizeSweepSection() -> String {
+        var lines = ["## Block size sweep (full chain @ 192 kHz, RDS + stereo)"]
+        lines.append("")
+        #if os(macOS)
+        if let dev = AudioDevices.defaultOutputDeviceID(),
+           let range = AudioDevices.bufferFrameSizeRange(deviceID: dev) {
+            lines.append("Default output device HAL buffer range: \(range.min)..\(range.max) frames"
+                + (AudioDevices.currentBufferFrameSize(deviceID: dev).map { " (current \($0))" } ?? ""))
+            lines.append("")
+        }
+        #endif
+        lines.append("| Block | Duration (ms) | I/O latency (ms) | Mean block cost | Worst block cost | Identical to 512 |")
+        lines.append("| ----: | ------------: | ---------------: | --------------: | ---------------: | :--------------: |")
+        let rate = 192_000.0
+        let seconds = 1.0
+        let samples = Int(rate * seconds)
+        let cfg = makeFullChain(sampleRate: rate, withRDSAndStereo: true)
+        // Bit-identity is checked with RDS OFF: the RDS text scheduler paces
+        // PS/RT frames by wall-clock uptime (correct on air), so two offline
+        // renders that run at different speeds emit different bits regardless
+        // of block size. Timing keeps RDS on.
+        var identityCfg = cfg
+        identityCfg.enRDS = false
+        let reference = renderBlocked(config: identityCfg, samples: samples, block: 512, warmUp: false).output
+        for block in [64, 128, 256, 480, 512, 1024, 2048, 4096, 8192] {
+            FileHandle.standardError.write(Data("[bench] block sweep: \(block)\n".utf8))
+            let result = renderBlocked(config: cfg, samples: samples, block: block)
+            let blockSeconds = Double(block) / rate
+            let meanPct = result.meanBlockSeconds / blockSeconds * 100.0
+            let worstPct = result.worstBlockSeconds / blockSeconds * 100.0
+            let identity = renderBlocked(config: identityCfg, samples: samples, block: block, warmUp: false).output
+            let identical = identity.count == reference.count
+                && zip(identity, reference).allSatisfy { $0 == $1 }
+            lines.append(
+                "| \(pad(String(block), to: 5, right: false)) "
+                + "| \(String(format: "%13.2f", blockSeconds * 1000.0)) "
+                + "| \(String(format: "%16.2f", 2.0 * blockSeconds * 1000.0)) "
+                + "| \(String(format: "%14.1f%%", meanPct)) "
+                + "| \(String(format: "%15.1f%%", worstPct)) "
+                + "| \(identical ? "yes" : "NO") |")
+        }
+        lines.append("")
+        lines.append("Identity is checked with RDS off (its text scheduler is wall-clock paced, so offline renders differ in RDS bits only). Useful = worst block well under 100% of its duration (keep >= 2x margin for scheduling jitter) and the lowest latency that still holds that margin; 'Identical' must be yes for every size.")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private struct BlockedRender {
+        let output: [Float]
+        let meanBlockSeconds: Double
+        let worstBlockSeconds: Double
+    }
+
+    /// Render `samples` frames in blocks of `block`, timing each block
+    /// individually (after one discarded warm-up block).
+    /// `warmUp` renders and discards one block first (timing runs: code and
+    /// cache warm-up). Identity runs must NOT warm up: a warm-up block of a
+    /// different size advances the generator's state by a different amount
+    /// and the two outputs would legitimately differ.
+    private func renderBlocked(config: AppConfig, samples: Int, block: Int, warmUp: Bool = true) -> BlockedRender {
+        let gen = MPXGenerator(config: config, sampleRate: config.sampleRate)
+        var (left, right) = generateHeavyStereo(frames: samples, sampleRate: config.sampleRate)
+        if warmUp {
+            var warmL = [Float](repeating: 0.0, count: block)
+            var warmR = [Float](repeating: 0.0, count: block)
+            warmL.withUnsafeMutableBufferPointer { lBuf in
+                warmR.withUnsafeMutableBufferPointer { rBuf in
+                    // swiftlint:disable:next force_unwrapping
+                    gen.renderFromInputInPlace(frameCount: block, left: lBuf.baseAddress!, right: rBuf.baseAddress!)
+                }
+            }
+        }
+        let clock = ContinuousClock()
+        var total = 0.0
+        var worst = 0.0
+        var blocks = 0
+        left.withUnsafeMutableBufferPointer { lBuf in
+            right.withUnsafeMutableBufferPointer { rBuf in
+                var offset = 0
+                while offset < samples {
+                    let frames = min(block, samples - offset)
+                    let start = clock.now
+                    // swiftlint:disable:next force_unwrapping
+                    gen.renderFromInputInPlace(frameCount: frames, left: lBuf.baseAddress!.advanced(by: offset), right: rBuf.baseAddress!.advanced(by: offset))
+                    let elapsed = clock.now - start
+                    let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                    if frames == block {   // partial tail block would bias the per-block stats
+                        total += seconds
+                        worst = max(worst, seconds)
+                        blocks += 1
+                    }
+                    offset += frames
+                }
+            }
+        }
+        // renderFromInputInPlace writes the composite into `left` (mono MPX).
+        return BlockedRender(output: left, meanBlockSeconds: blocks > 0 ? total / Double(blocks) : 0.0, worstBlockSeconds: worst)
     }
 
     private func rateSweepSection() -> String {

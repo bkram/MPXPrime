@@ -1182,7 +1182,7 @@ struct AppConfig: Equatable {
         // 512-sample minimum: throughput-validated by `DSPThroughputTests`.
         // Lower than 512 hits AVAudioEngine HAL limits on most macOS devices
         // and pushes per-callback overhead past the per-sample DSP work.
-        blockSize = max(512, min(8192, blockSize))
+        blockSize = max(256, min(8192, blockSize))
 
         // RDS
         rdsPI = Self.sanitizedPICode(rdsPI)

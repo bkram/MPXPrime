@@ -35,6 +35,7 @@ swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4  
 swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4  # A/B experimental SSB Stereo encoder (SSB-leaning stereo encoding) (sidebands + decode separation)
 swift run --package-path macOS MPXPrime --verify-hf-transients --seconds 5  # hi-hat / cymbal distortion gate: receiver-side HF SINAD + crest + 15-23 kHz spill per chain variant (field chain, every Format Profile, per-stage isolation)
 macOS/.build/release/MPXPrime --bench-blocks  # block (buffer) size sweep on a RELEASE build: worst-block cost vs block duration, I/O latency, bit-identity across sizes, default output device HAL buffer range (~20 s)
+./smoke-live.sh [--ini <path>] [--device-uid BlackHole2ch_UID]  # LIVE CoreAudio smoke on a virtual output (needs BlackHole 2ch at 192 kHz; NOT while Studio is on air): headless engine + REST, checks device start, tone deviation vs the Test Tone card's expected value, pilot %, Safety Clip 0, xruns, a live PATCH (deviation trace must follow within ~1 s), a restart-class PATCH + transport restart. Exit 0 = pass. ~70 s.
 
 # Baseline capture + strict compare
 swift run --package-path macOS MPXPrime --capture-baseline      # writes macOS/verifier_baselines/default.json
@@ -226,6 +227,7 @@ Run before tagging. None of these should be skipped on a release commit; partial
 - [ ] `swift run --package-path macOS MPXPrime --verify-hf-transients --seconds 5` -- exit 0 (every shipped Format Profile inside the hi-hat / cymbal gate: ride SINAD >= 30 dB, hat SINAD >= 20 dB / >= 15 dB loud, crest loss > -6 dB, 15-23 kHz spill < -36 dB)
 - [ ] `swift run --package-path macOS MPXPrime --verify-long --seconds 30` — exit 0 (long-run scenarios against the `long.json` strict baseline; the hand-maintained signature table it used to carry in parallel was removed in 0.45 as a duplicate)
 - [ ] `swift run --package-path macOS MPXPrime --verify --baseline-strict` — composite shape matches the captured baseline
+- [ ] `./smoke-live.sh` -- exit 0 (headless live-engine smoke on BlackHole 2ch: device start, tone deviation, pilot, Safety Clip idle, xruns, live-apply, restart). Run BEFORE the hardware smoke; it catches engine/API regressions without an exciter.
 - [ ] **Release build live smoke**: run `macOS/.build/release/MPXPrime --gui` against a real 192 kHz output device (NOT debug, NOT 96 kHz) — RDS reads cleanly on a real receiver, no clicks/dropouts over 30+ seconds of dense program
 - [ ] **Device-rate match**: Audio MIDI Setup output format matches `sample_rate` in INI (see CLAUDE.md "buffer issues" diagnostic)
 - [ ] **RDS receiver smoke**: at minimum one car radio + one portable RDS receiver + one SDR decoder verify live PI / PS / PTY / RT A/B / TA edge / AF / CT / Long PS

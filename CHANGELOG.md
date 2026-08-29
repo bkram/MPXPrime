@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **`smoke-live.sh`: live-engine smoke test on a virtual output.** Runs the
+  headless encoder with the REST API against BlackHole 2ch (192 kHz) using a
+  COPY of the given INI (default: the station INI) and checks what the
+  offline gates cannot: engine start on the device and HAL buffer
+  negotiation, the calibration tone's measured deviation against the value
+  the Test Tone card predicts, pilot injection, `Safety Clip` idle, xruns,
+  composite budget, a live-apply PATCH (the deviation trace must follow
+  within ~1 s) and a restart-class PATCH cleared by a transport restart.
+  Exit 0 = pass; ~70 s; refuses to run while Studio is on air. First run on
+  the operator's fixed INI: 11/11 checks passed (25.5 kHz measured vs
+  24.8 expected, pilot 8.00%, Safety Clip 0.0, no xruns).
+
 - **`output_gain_db` is attenuation-only in composite mode** (clamped to
   <= 0 dB on load; GUI slider stops at 0; processed-audio L/R output keeps
   its full range). Field finding: +2.79 dB on the operator's station divided

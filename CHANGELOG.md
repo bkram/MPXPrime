@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Pre-0.45 configs are reset on load (RDS kept).** An INI carrying a
+  legacy Format Profile id now has its processing (`[MPX]`) rebuilt from
+  the migrated profile instead of only relabelled -- the old gain structure
+  (peak controllers off, safety clips clipping) was the hi-hat distortion
+  finding, and carrying it forward would keep the station distorting.
+  `[RDS]`, `[INTERFACES]` (devices, sample rate, block size) and `[CONTROL]`
+  are kept verbatim, as are the `[MPX]` calibration keys (pilot level,
+  deviation, MPX output level, output gain, pre-emphasis, mono mode, test
+  tone). The reset is saved back and announced at startup in both apps.
+  `AppConfig.loadReportingMigration` / `iniText()`; pinned by
+  `LegacyINIResetTests`.
+
 - **Safety-clip duty is now visible.** New telemetry `Safety Clip` (GUI
   Monitoring card next to `Safety GR`; `safetyClipDB` in `/api/telemetry`
   and the dashboard): a 250 ms decaying peak of how far the audio composite

@@ -427,8 +427,16 @@ final class MPXPrimeViewModel: ObservableObject {
         self.configPath = configPath
         self.deviceLister = deviceLister
         let loadedConfig: AppConfig
+        var legacyProfileReset: String?
         do {
-            loadedConfig = try AppConfig.load(fromINI: configPath)
+            let loaded = try AppConfig.loadReportingMigration(fromINI: configPath)
+            loadedConfig = loaded.config
+            legacyProfileReset = loaded.legacyProfileID
+            if legacyProfileReset != nil {
+                // Persist the reset so the station does not re-migrate on
+                // every launch and the INI on disk matches what runs.
+                try? loadedConfig.save(toINI: configPath)
+            }
         } catch {
             loadedConfig = AppConfig()
             try? loadedConfig.save(toINI: configPath)
@@ -452,7 +460,12 @@ final class MPXPrimeViewModel: ObservableObject {
         refreshDevices()
         nowPlayingRunner.updateConfig(loadedConfig)
         startConfigWatcher()
-        if loadedConfig.safetyClipsAreThePeakController {
+        if let legacy = legacyProfileReset {
+            statusText =
+                "Pre-0.45 config (profile '\(legacy)'): processing reset to the "
+                + "'\(loadedConfig.formatProfileID)' Format Profile; RDS, interfaces and "
+                + "calibration kept."
+        } else if loadedConfig.safetyClipsAreThePeakController {
             // Same warning the headless runtime prints: nothing upstream of
             // the safety soft-clips controls peaks in this config.
             statusText =

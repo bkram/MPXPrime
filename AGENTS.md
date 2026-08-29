@@ -149,6 +149,8 @@ RDS settings that stay restart-only: `rds_level` (injection kHz), `rds_gaussian_
 
 When toggling `rds_ta` live, `BasicRDSCoder.applyRDSRuntimeConfig` sets `forceNextGroupForTAEdge`. The next `nextGroupBits()` call honours it by emitting a forced 0A ahead of the schedule (UECP §2.5.1.1). CT (4A, minute-aligned) keeps higher priority than the TA-edge force flag.
 
+`AppConfig.load` resets a pre-0.45 INI (legacy `format_profile_id`) to the migrated Format Profile: `[MPX]` rebuilt from defaults + profile except `legacyResetPreservedMPXKeys` (calibration), `[RDS]` / `[INTERFACES]` / `[CONTROL]` kept verbatim; both runtimes save the result and announce it (`loadReportingMigration`, `LegacyINIResetTests`). Adding a calibration-class key to `[MPX]` means adding it to that list.
+
 Verification.ini key name collisions are a known sharp edge — when adding a setting, grep `AppConfig.swift` for the exact config-key string before naming a new one. The composite clipper itself uses `mpx_clipper_*` keys; the legacy `composite_clipper_enabled` key (which used to control the now-removed composite limiter) was deleted in 0.11.
 
 ### Threading

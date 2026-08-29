@@ -534,9 +534,56 @@ struct AppConfig: Equatable {
     }
 
     static func load(fromINI path: String) throws -> AppConfig {
-        let resolvedPath = resolveINIPath(path, forWrite: false)
-        let parsed = try INIParser.parseFile(resolvedPath)
+        try loadReportingMigration(fromINI: path).config
+    }
 
+    /// `[MPX]` keys that describe the station's hardware calibration rather
+    /// than its processing; a legacy-profile reset keeps them.
+    static let legacyResetPreservedMPXKeys: [String] = [
+        "pilot_level", "mpx_deviation_khz", "mpx_line_output_dbfs", "output_gain_db",
+        "preemphasis_us", "mono_mode", "source_mode",
+        "test_tone_mode", "test_tone_freq", "test_tone_level_db", "test_tone_type"
+    ]
+
+    /// Load, and when the INI carries a pre-0.45 Format Profile id, RESET its
+    /// processing to the migrated profile: the `[MPX]` section is rebuilt from
+    /// defaults + that profile (only the calibration keys above survive), while
+    /// `[RDS]`, `[INTERFACES]` and `[CONTROL]` are kept verbatim. A pre-0.45
+    /// config typically had every peak controller off with the safety soft
+    /// clips doing the clipping (field finding 2026-08-29); carrying that
+    /// gain structure forward under a new label would keep the station
+    /// distorting. `legacyProfileID` is the id that triggered the reset so the
+    /// caller can log it and persist the reset config.
+    static func loadReportingMigration(fromINI path: String) throws
+        -> (config: AppConfig, legacyProfileID: String?) {
+        let resolvedPath = resolveINIPath(path, forWrite: false)
+        var parsed = try INIParser.parseFile(resolvedPath)
+        var legacyProfileID: String?
+        if let raw = parsed["MPX"]?["format_profile_id"], let migrated = legacyFormatProfileIDs[raw] {
+            legacyProfileID = raw
+            parsed = resetProcessingSections(parsed, toProfile: migrated)
+        }
+        return (make(fromParsed: parsed), legacyProfileID)
+    }
+
+    static func resetProcessingSections(
+        _ parsed: [String: [String: String]], toProfile profileID: String
+    ) -> [String: [String: String]] {
+        var fresh = AppConfig()
+        _ = PresetCatalog.applyFormatProfile(id: profileID, to: &fresh)
+        var merged = INIParser.parse(fresh.iniText())
+        for section in ["RDS", "INTERFACES", "CONTROL"] {
+            if let kept = parsed[section] { merged[section] = kept }
+        }
+        var mpx = merged["MPX"] ?? [:]
+        for key in legacyResetPreservedMPXKeys {
+            if let value = parsed["MPX"]?[key] { mpx[key] = value }
+        }
+        merged["MPX"] = mpx
+        return merged
+    }
+
+    static func make(fromParsed parsed: [String: [String: String]]) -> AppConfig {
         let mpx = parsed["MPX"] ?? [:]
         let interfaces = parsed["INTERFACES"] ?? [:]
         let rds = parsed["RDS"] ?? [:]
@@ -1189,7 +1236,8 @@ struct AppConfig: Equatable {
         return try AppConfig.load(fromINI: tempURL.path)
     }
 
-    func save(toINI path: String) throws {
+    /// The full INI rendering of this config (what `save(toINI:)` writes).
+    func iniText() -> String {
         let mpxLines: [String] = [
             "[MPX]",
             "pilot_level = \(Self.formatFloat(pilotLevel))",
@@ -1448,8 +1496,12 @@ struct AppConfig: Equatable {
             "control_port = \(controlPort)",
             "control_api_key = \(controlAPIKey)"
         ]
-        let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""] + controlLines + [""]).joined(
+        return (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""] + controlLines + [""]).joined(
             separator: "\n")
+    }
+
+    func save(toINI path: String) throws {
+        let text = iniText()
         let resolvedPath = Self.resolveINIPath(path, forWrite: true)
         let fileManager = FileManager.default
         let parentDirectory = URL(fileURLWithPath: resolvedPath).deletingLastPathComponent().path

@@ -282,7 +282,16 @@ func startControlServerIfEnabled(
 /// does not exist stays a hard error (probably a typo).
 func loadOrCreateHeadlessConfig(path: String, explicit: Bool) throws -> AppConfig {
     if FileManager.default.fileExists(atPath: path) {
-        let config = try AppConfig.load(fromINI: path)
+        let loaded = try AppConfig.loadReportingMigration(fromINI: path)
+        let config = loaded.config
+        if let legacy = loaded.legacyProfileID {
+            fputs(
+                "MPX Prime: pre-0.45 config (profile '\(legacy)') -- processing reset to the "
+                    + "'\(config.formatProfileID)' Format Profile; RDS, interfaces, control server and "
+                    + "calibration (pilot, deviation, output level, pre-emphasis) kept. Saved.\n",
+                stderr)
+            try? config.save(toINI: path)
+        }
         if config.safetyClipsAreThePeakController {
             fputs(
                 "MPX Prime: WARNING pre-encode limiter and composite clipper are both OFF -- "

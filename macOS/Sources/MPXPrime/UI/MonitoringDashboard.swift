@@ -97,6 +97,7 @@ struct MonitoringDashboardView: View {
                         ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
                         ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
                         ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
+                        ("SAFETY CLIP", grText(model.safetyClipDBValue)),
                         ("BS.412 BUDGET", budgetText)
                     ])
                 }

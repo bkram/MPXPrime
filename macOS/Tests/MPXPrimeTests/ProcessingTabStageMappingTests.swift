@@ -37,7 +37,7 @@ struct ProcessingTabStageMappingTests {
         // Simulates what the Overview-grid chevron Button does.
         let tempPath = NSTemporaryDirectory()
             + "MPXPrime-ProcessingTabStageMappingTests-\(UUID().uuidString).ini"
-        let model = MPXPrimeViewModel(configPath: tempPath)
+        let model = MPXPrimeViewModel(configPath: tempPath, deviceLister: { [] })
         model.selectedStage = .processingOverview
         #expect(model.selectedProcessingTab == .overview)
         // The Button action body:
@@ -50,7 +50,7 @@ struct ProcessingTabStageMappingTests {
     @Test func clickingAGCCardFromOverviewLandsOnAGCStage() {
         let tempPath = NSTemporaryDirectory()
             + "MPXPrime-ProcessingTabStageMappingTests-\(UUID().uuidString).ini"
-        let model = MPXPrimeViewModel(configPath: tempPath)
+        let model = MPXPrimeViewModel(configPath: tempPath, deviceLister: { [] })
         model.selectedStage = .processingOverview
         model.selectedStage = ProcessingTab.agc.stage
         #expect(model.selectedStage == .processingAGC)

@@ -25,7 +25,7 @@ struct SnapshotTests {
 
     private func makeViewModel(at path: String? = nil) -> MPXPrimeViewModel {
         let configPath = path ?? makeTempConfigPath()
-        return MPXPrimeViewModel(configPath: configPath)
+        return MPXPrimeViewModel(configPath: configPath, deviceLister: { [] })
     }
 
     // MARK: - Active/modified state tracking

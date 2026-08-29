@@ -57,6 +57,9 @@ struct ControlMeters: Codable, Sendable {
     var compositeClipperGainReductionDB: Float?
     var preEncodeLimiterGainReductionDB: Float?
     var safetyLimiterGainReductionDB: Float?
+    /// dB the safety soft clip absorbed (decaying peak). 0 = idle, as designed; > 0 means the
+    /// clipper/limiter are not controlling peaks (profile or gain structure needs attention).
+    var safetyClipDB: Float?
     var pilotInjectionPercent: Float?
     var rdsInjectionPercent: Float?
     var compositeBudgetMarginDB: Float?

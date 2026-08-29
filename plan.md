@@ -187,12 +187,14 @@ the clipper + final limiter never engaged. Fixed (clipper -> FIR -> BS.412
 budget); all four baselines recaptured. Measured: hat SINAD +13..14 dB in
 every profile, ride SINAD +11..30 dB, deviation unchanged.
 
-REMAINING from this list: #1c soft-clip / final-limiter duty telemetry in
-both UIs; #1d `cancel_audio` low-band-only (measured: no effect once the
+REMAINING from this list: #1c DONE (Safety Clip telemetry in both UIs +
+`/api/telemetry.safetyClipDB`); #1d `cancel_audio` low-band-only (measured: no effect once the
 HF clipper is out of the path, so lower priority); #3 band-limit the HF
 clipper (opt-in only now); #4 pre-encode limiter half-cosine attack + HF-
-only gain path; #5 Advanced Dynamics top-band cap (measured -3.2 dB wash
-crest and -3 dB hat SINAD vs the profile without it); #6 dynamic pre-
+only gain path; #5 Advanced Dynamics HF cost (-3 dB hat SINAD, -1 dB wash crest vs the
+profile without it) -- a 2.5 ms top-band attack floor was TRIED 2026-08-29
+and changed nothing (reverted); next suspect is the -9 dB top-band target
+offset lifting sparse HF, measure that before touching the smoother; #6 dynamic pre-
 emphasis. NEW from the industry-order research (2026-08-29, Orban 8100A /
 8500 manuals + white paper, Omnia.11, Inovonics 719N, Thimeo docs + forum):
 (a) every vendor places the stereo widener AND the bass enhancer BEFORE
@@ -219,24 +221,7 @@ limiter -- worth trying on Music - Loud as a preset tweak.
 
 ## Next up
 
-0. **Rework the shipped Format Profiles + PrimeBass presets (field finding 2026-08-03).**
-   The demo profiles drive too hot for real masters: with modest chains the
-   always-on soft-clips do the peak control (audible distortion on loud/bright
-   material), and PrimeBass preset levels are tuned against the old
-   AGC+multiband assumptions. Rework each profile against the current chain
-   (Audio Limiter on by default in loud profiles, drive set so the composite
-   clipper -- not the safety soft-clips -- does the loudness work), and re-tune
-   PrimeBass presets at the new gain structure. Process: per profile, verifier
-   A/B (--verify-presets baseline + budget margins) THEN owner listening pass
-   on real program. Candidate default: Community Radio profile gains the
-   pre-encode limiter enabled. ALSO part of this rework: the input gain
-   structure question (user, 2026-08-03) -- input_gain_db defaults to 0 with
-   no defined nominal input level, so 0 dBFS masters enter with zero headroom
-   and the AGC target does all the pulldown. Decide: document a nominal input
-   reference (-12/-18 dBFS, pro-chain style) that the profiles assume, and/or
-   a saner input_gain default / input headroom control, so "everything
-   disabled" degrades gracefully instead of slamming the safety soft-clips.
-
+0. **Rework the shipped Format Profiles + PrimeBass presets. DONE (71cdf78, 2026-08-04).** Four complete profiles own the gain structure; the PrimeBass preset re-tune at the new gain structure and the input-gain-reference question (nominal -12 dBFS documented in the manual) remain open as listening items.
 1. **Anti-aliased clipping kernel (US 6,937,912).** Phase A/B landed opt-in (`pre_encode_bandlimited_residual_enabled`). Remaining: A/B real program with it on, decide whether any loud preset enables it; optional Phase C applies the primitive to `softClipSafety` in `processFinalComposite` only if B proves benefit (keep pilot/RDS injection post-processing + budget-governor invariant); refresh baselines on real program.
 2. **Tune/validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped; dense real-program A/B at 0.5 / 1 / 2 ms, verify pilot/RDS guard cleanliness, decide loud-preset default. Capture via `MPXPRIME_AUDIT_CAPTURE=1` → `macOS/.audit-out/lookahead/`.
 3. **Smoke-test pass.** Live-apply vs restart-required on difficult real material; catch transients/clicks/dropouts on toggle. New RDS live-apply paths (PI/PTY/flags/AF/scheduler) need real-receiver checks beyond the bit-stream tests.
@@ -248,7 +233,7 @@ limiter -- worth trying on Music - Loud as a preset tweak.
 
 Highest-leverage audible-gap closer vs the enterprise tier: these stages are implemented and shipped but **default-off and not preset-validated**, so a fresh install runs below the chain's real capability. Each needs a verifier/listening A/B → a per-preset enablement decision. OFF must stay bit-identical (`--verify --baseline-strict` green); ON validated via `--verify-receiver` (separation + pilot/RDS guards unchanged).
 
-1. **Pre-emphasis-aware HF clipper** (`hf_clipper_*`, shipped 0.35, default off). Dense EDM/pop A/B; decide which loud presets enable it. One of the two real audible gaps vs an Optimod.
+1. **Pre-emphasis-aware HF clipper** (`hf_clipper_*`). SUPERSEDED 2026-08-29: the HF limiter is default-on in every profile and the clipper is an opt-in last resort (it measured 17 dB worse hat SINAD). Decide in a later release whether to delete it.
 2. **Multiband Phase 2 — transient-aware attack** (`multiband_transient_aware_attack_enabled`). Verifier + dense-percussive listening A/B; preset decision.
 3. **Multiband inter-band coupling** (`multiband_inter_band_coupling_enabled`, `--verify-multiband-coupling`). "Loud bass softens highs" — listening A/B; preset decision.
 4. **Anti-aliased residual clipping** (`pre_encode_bandlimited_residual_enabled`) — see Next up #1.
@@ -284,7 +269,7 @@ Analysis of a third-party processor's press release (loudness/cleanliness claims
 
 **Release-blocking:** ~~Test tone generator broken~~ FIXED 2026-08-29 (calibration-source semantics, see CHANGELOG). smoke-test live-apply vs restart-required; tune composite clipper defaults (drive / ceiling / `mpx_clipper_lookahead_ms`) so a fresh install audibly beats `mpxgen` / PiFmRds untweaked.
 
-**Sprint:** **Unit tests must never touch audio hardware.** The five test suites that construct `MPXPrimeViewModel` (FormatProfile / SectionNavigation / StageEnabledIndicator / ProcessingTabStageMapping / Snapshot) run its init, which calls `AudioDevices.list()` against the real CoreAudio HAL -- harmless in code, but it is the one place a headless `swift test` reaches the OS audio layer and can provoke system dialogs (user report 2026-08-29: a GUI popup about an unavailable interface during a test run). Inject the device source (protocol + a stub for tests, real `AudioDevices` in the app) and assert in the suite that no CoreAudio call happens under test. Also: validate PrimeBass / mono bass / widener / multiband on difficult real material; refine calibration workflow where real operator friction exists; per-Format-Profile clipper-drive A/B (eight 0.30 profiles).
+**Sprint:** ~~Unit tests must never touch audio hardware~~ DONE 2026-08-29 (`deviceLister` injection, `ViewModelDeviceSourceTests`). validate PrimeBass / mono bass / widener / multiband on difficult real material; refine calibration workflow where real operator friction exists; per-Format-Profile clipper-drive A/B (eight 0.30 profiles).
 
 **Medium-term:** dedupe biquad/crossover filter-config logic; name DSP magic numbers; deterministic RDS-scheduler tests; more AGC / filter-primitive unit tests.
 

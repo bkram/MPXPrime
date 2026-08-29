@@ -310,6 +310,7 @@ final class MPXPrimeViewModel: ObservableObject {
     var compositeClipperLookaheadGainReductionDBValue: Float { get { telemetry.compositeClipperLookaheadGainReductionDBValue } set { telemetry.compositeClipperLookaheadGainReductionDBValue = newValue } }
     var preEncodeLimiterGainReductionDBValue: Float { get { telemetry.preEncodeLimiterGainReductionDBValue } set { telemetry.preEncodeLimiterGainReductionDBValue = newValue } }
     var safetyLimiterGainReductionDBValue: Float { get { telemetry.safetyLimiterGainReductionDBValue } set { telemetry.safetyLimiterGainReductionDBValue = newValue } }
+    var safetyClipDBValue: Float { get { telemetry.safetyClipDBValue } set { telemetry.safetyClipDBValue = newValue } }
     var stereoImageText: String { get { telemetry.stereoImageText } set { telemetry.stereoImageText = newValue } }
     var agcStateText: String { get { telemetry.agcStateText } set { telemetry.agcStateText = newValue } }
     var agcDetailText: String { get { telemetry.agcDetailText } set { telemetry.agcDetailText = newValue } }
@@ -416,8 +417,15 @@ final class MPXPrimeViewModel: ObservableObject {
         count: AudioOutputEngine.preMPXSpectrumFrameCount
     )
 
-    init(configPath: String) {
+    /// Source of audio devices. The app passes the CoreAudio enumerator;
+    /// unit tests pass a stub so a headless `swift test` never touches the
+    /// audio HAL (and cannot provoke system dialogs about missing devices).
+    private let deviceLister: () throws -> [AudioDevice]
+
+    init(configPath: String,
+         deviceLister: @escaping () throws -> [AudioDevice] = { try AudioDevices.list() }) {
         self.configPath = configPath
+        self.deviceLister = deviceLister
         let loadedConfig: AppConfig
         do {
             loadedConfig = try AppConfig.load(fromINI: configPath)
@@ -561,7 +569,7 @@ final class MPXPrimeViewModel: ObservableObject {
 
     func refreshDevices() {
         do {
-            let devices = try AudioDevices.list()
+            let devices = try deviceLister()
             inputDevices = devices.filter { $0.hasInput }
             outputDevices = devices.filter { $0.hasOutput }
             selectedInputUID = selectUID(uid: config.inputDeviceUID, name: config.inputDeviceName, from: inputDevices)
@@ -1942,6 +1950,7 @@ final class MPXPrimeViewModel: ObservableObject {
         var compositeClipperLookaheadGainReductionDB: Float = 0.0
         var preEncodeAudioLimiterGainReductionDB: Float = 0.0
         var mpxSafetyLimiterGainReductionDB: Float = 0.0
+        var mpxSafetyClipDB: Float = 0.0
         var pilotInjectionPercent: Float = 0.0
         var rdsInjectionPercent: Float = 0.0
         var audioCompositePeak: Float = 0.0
@@ -2077,6 +2086,7 @@ final class MPXPrimeViewModel: ObservableObject {
             compositeClipperLookaheadGainReductionDB = meters.compositeClipperLookaheadGainReductionDB
             preEncodeAudioLimiterGainReductionDB = meters.preEncodeAudioLimiterGainReductionDB
             mpxSafetyLimiterGainReductionDB = meters.mpxSafetyLimiterGainReductionDB
+            mpxSafetyClipDB = meters.mpxSafetyClipDB
             pilotInjectionPercent = meters.pilotInjectionPercent
             rdsInjectionPercent = meters.rdsInjectionPercent
             audioCompositePeak = meters.audioCompositePeak
@@ -2155,6 +2165,7 @@ final class MPXPrimeViewModel: ObservableObject {
             compositeClipperLookaheadGainReductionDBValue = 0.0
             preEncodeLimiterGainReductionDBValue = 0.0
             safetyLimiterGainReductionDBValue = 0.0
+            safetyClipDBValue = 0.0
             stereoImageText = "Corr +1.00 • Side 0.00x"
             widenerStateText = "Off"
             overflowHistory.removeAll(keepingCapacity: true)
@@ -2274,6 +2285,7 @@ final class MPXPrimeViewModel: ObservableObject {
         compositeClipperLookaheadGainReductionDBValue = compositeClipperLookaheadGainReductionDB
         preEncodeLimiterGainReductionDBValue = preEncodeAudioLimiterGainReductionDB
         safetyLimiterGainReductionDBValue = mpxSafetyLimiterGainReductionDB
+        safetyClipDBValue = mpxSafetyClipDB
 
         let limiterState =
             config.preEncodeAudioLimiterEnabled

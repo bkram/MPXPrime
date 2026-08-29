@@ -69,6 +69,8 @@ final class LiveTelemetry {
     var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
     var preEncodeLimiterGainReductionDBValue: Float = 0.0
     var safetyLimiterGainReductionDBValue: Float = 0.0
+    /// dB the 1x safety soft clip had to absorb (decaying peak); 0.0 = idle, as designed.
+    var safetyClipDBValue: Float = 0.0
     var stereoImageText: String = "Corr +1.00 • Side 0.00x"
     var agcStateText: String = "Off"
     var agcDetailText: String = "Detector -inf dB • Gain 0.0 dB"

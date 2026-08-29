@@ -29,7 +29,7 @@ struct FormatProfileTests {
     private func makeViewModel() -> MPXPrimeViewModel {
         let tempPath = NSTemporaryDirectory()
             + "MPXPrime-FormatProfileTests-\(UUID().uuidString).ini"
-        return MPXPrimeViewModel(configPath: tempPath)
+        return MPXPrimeViewModel(configPath: tempPath, deviceLister: { [] })
     }
 
     // MARK: - Catalogue integrity

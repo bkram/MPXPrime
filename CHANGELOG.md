@@ -11,6 +11,24 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Safety-clip duty is now visible.** New telemetry `Safety Clip` (GUI
+  Monitoring card next to `Safety GR`; `safetyClipDB` in `/api/telemetry`
+  and the dashboard): a 250 ms decaying peak of how far the audio composite
+  exceeded the budget and had to be caught by the 1x safety soft clip. It
+  reads 0.0 when the composite clipper and final limiter own the peaks, as
+  designed; anything above zero is the distortion class fixed in 0.45
+  (safety clip doing peak control) and means the gain structure or profile
+  needs attention.
+- **Unit tests no longer touch audio hardware.** `MPXPrimeViewModel` takes
+  its device source by injection (`deviceLister`; the app passes the
+  CoreAudio enumerator); every test that builds a view model passes a stub,
+  pinned by `ViewModelDeviceSourceTests`. A headless `swift test` can no
+  longer reach the audio HAL or provoke device dialogs.
+- Measured and NOT changed: a 2.5 ms attack floor on Advanced Dynamics'
+  top band did not move the stage's hi-hat cost at all (hat SINAD 15.1 dB
+  and wash crest -3.1 dB either way), so the transient attack is not the
+  lever there; reverted, recorded in plan.md.
+
 - **Test tone is now a calibration source (fixes "tone way too loud, level
   slider does nothing").** The tone used to enter the full processing
   chain, so the AGC lifted any level to its target and Final Drive pushed

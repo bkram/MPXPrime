@@ -73,6 +73,7 @@ final class AudioOutputEngine {
         var compositeClipperLookaheadGainReductionDB: Float
         var preEncodeAudioLimiterGainReductionDB: Float
         var mpxSafetyLimiterGainReductionDB: Float
+        var mpxSafetyClipDB: Float
         var pilotInjectionPercent: Float
         var rdsInjectionPercent: Float
         var audioCompositePeak: Float
@@ -176,6 +177,7 @@ final class AudioOutputEngine {
         compositeClipperLookaheadGainReductionDB: 0.0,
         preEncodeAudioLimiterGainReductionDB: 0.0,
         mpxSafetyLimiterGainReductionDB: 0.0,
+        mpxSafetyClipDB: 0.0,
         pilotInjectionPercent: 0.0,
         rdsInjectionPercent: 0.0,
         audioCompositePeak: 0.0,
@@ -676,6 +678,7 @@ final class AudioOutputEngine {
         meterSnapshot.compositeClipperLookaheadGainReductionDB = 0.0
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = 0.0
         meterSnapshot.mpxSafetyLimiterGainReductionDB = 0.0
+        meterSnapshot.mpxSafetyClipDB = 0.0
         meterSnapshot.pilotInjectionPercent = 0.0
         meterSnapshot.rdsInjectionPercent = 0.0
         meterSnapshot.audioCompositePeak = 0.0
@@ -1508,6 +1511,7 @@ final class AudioOutputEngine {
         meterSnapshot.compositeClipperLookaheadGainReductionDB = limiter.compositeLookaheadGainReductionDB
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = limiter.preEncodeGainReductionDB
         meterSnapshot.mpxSafetyLimiterGainReductionDB = limiter.safetyGainReductionDB
+        meterSnapshot.mpxSafetyClipDB = limiter.safetyClipDB
         meterSnapshot.pilotInjectionPercent = calibration.pilotPercent
         meterSnapshot.rdsInjectionPercent = calibration.rdsPercent
         meterSnapshot.audioCompositePeak = calibration.audioPeak

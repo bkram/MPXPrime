@@ -51,6 +51,11 @@ final class MPXGenerator {
         let gainReductionDB: Float
         let preEncodeGainReductionDB: Float
         let safetyGainReductionDB: Float
+        /// How far (dB) the audio composite exceeded the budget and had to be
+        /// caught by the 1x safety soft clip, as a 250 ms decaying peak. Should
+        /// read 0.0 with the clipper + final limiter on; anything else means the
+        /// shaper is doing peak control (the distortion class fixed in 0.45).
+        let safetyClipDB: Float
         /// Composite-clipper look-ahead gain reduction in dB. Reported
         /// separately from `gainReductionDB` so operators can distinguish
         /// predictive shaving (clean) from soft-clip shaving (distortion).
@@ -988,6 +993,8 @@ final class MPXGenerator {
     private var monitorDecoder = MPXDecoder()
     private var lastSubcarrierSample: Float = 0.0
     private var audioCompositePeakState: Float = 0.0
+    /// Decaying peak of the shaper's excess over budget (dB); see `FinalLimiterStatus.safetyClipDB`.
+    private var safetyClipExcessDB: Float = 0.0
     private var audioCompositePeakDecayCoeff: Float = 0.0
     private var compositeBudgetGain: Float = 1.0
     private var compositeBudgetGainAttackCoeff: Float = 0.0
@@ -2270,6 +2277,7 @@ final class MPXGenerator {
             preEncodeGainReductionDB: preEncodeAudioLimiter.gainReductionDB,
             safetyGainReductionDB: (limitEnabled && !processingBypass)
                 ? lookaheadLimiter.gainReductionDB : 0.0,
+            safetyClipDB: safetyClipExcessDB,
             compositeLookaheadGainReductionDB: compositeClipperEnabled
                 ? compositeClipper.lookaheadGainReductionDB : 0.0
         )
@@ -3693,6 +3701,9 @@ final class MPXGenerator {
         // at an absolute 0.98 after output gain -- all idle or redundant
         // once the clipper and limiter own the peaks; removed.)
         if audioCompositeShaperActive {
+            let excess = fabsf(audioComposite) / max(1e-6, thresholds.audioCeiling)
+            let excessDB: Float = excess > 1.0 ? 20.0 * log10f(excess) : 0.0
+            safetyClipExcessDB = max(excessDB, safetyClipExcessDB * audioCompositePeakDecayCoeff)
             audioComposite = Self.softClipSafety(
                 audioComposite,
                 threshold: thresholds.audioCeiling

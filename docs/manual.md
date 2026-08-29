@@ -530,6 +530,8 @@ INI keys: `processed_audio_output`, `preemphasis_us`,
 
 ## Monitoring and output notes
 
+The DSP status card's **Safety GR** is the final look-ahead MPX limiter's gain reduction (about 1-1.5 dB on dense program is normal: it rides the composite clipper's guard-band overshoot). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/telemetry` and "Safety Clip" on the dashboard.
+
 - `MPX Output Device` is the composite/baseband output device
 - `Monitor Output Device (Decoded MPX Simulation)` is used when monitor output is enabled
 - The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input

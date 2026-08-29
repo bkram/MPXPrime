@@ -89,7 +89,6 @@ struct BenchmarkRunner {
         cfg.dcClipperEnabled = true
         cfg.bs412Enabled = true
         cfg.compositeClipperEnabled = true
-        cfg.compositeMultibandClipperEnabled = false
         cfg.enRDS = withRDSAndStereo
         cfg.rdsLevel = withRDSAndStereo ? 2.0 : 0.0
         cfg.rdsNowPlayingEnabled = false

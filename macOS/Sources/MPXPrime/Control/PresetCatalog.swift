@@ -522,7 +522,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
               phaseRotationEnabled: false),
         .init(id: "music_clean", title: "Music — Clean",
               summary: "The default: transparent leveling, honest peaks, low clipper work. For stations that value fidelity over loudness.",
@@ -535,7 +535,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.90,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
               phaseRotationEnabled: false),
         .init(id: "music_loud", title: "Music — Loud",
               summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, wide image.",
@@ -561,7 +561,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
               phaseRotationEnabled: true),
         .init(id: "classical_wide", title: "Classical / Wide Dynamics",
               summary: "Dynamic-preserving: gentle slow AGC, light multiband, minimal clipper work, no enhancement.",
@@ -574,7 +574,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.92,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: false, bassClipperEnabled: false,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
               phaseRotationEnabled: false)
     ]
 

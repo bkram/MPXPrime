@@ -11,6 +11,20 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Chain pruning, measured (less is more).** Removed: the 19 kHz audio-path
+  pilot notch after the encoder FIR (receiver gate identical to 0.01 dB with
+  and without it -- the FIR's >80 dB stopband already covers 19 kHz) and the
+  0.28 experimental multiband composite clipper (`mpx_multiband_clipper_enabled`,
+  `--verify-composite-multiband`, its tests and dashboard toggle -- it never
+  reached a preset and its own A/B gate went TIGHT in both possible positions
+  once the final stage was corrected). KEPT after measurement: the encoder
+  HF guard -- removing it cost 20-40 dB of receiver-side HF stereo separation
+  on the tone test (un-attenuated HF drives the composite clipper into
+  audio-band IM) while the HF limiter does not engage at those levels. The
+  HF Limiter is now ON by default and in every Format Profile (it was Music -
+  Loud only). Baselines recaptured (small drift: hard-panned HF side-to-mid
+  improved 35.7 -> 42.0).
+
 - **Dead and redundant code removed (less is more; zero drift).** The
   audio-composite "smoother" (54 kHz one-pole that only ran between two
   identical safety soft clips), the second soft clip, and the post-output-

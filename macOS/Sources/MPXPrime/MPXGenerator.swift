@@ -235,7 +235,6 @@ final class MPXGenerator {
         let compositeClipperCancelRDS: Bool
         let compositeClipperLookaheadMS: Float
         let compositeClipperOversampling: Int
-        let compositeMultibandClipperEnabled: Bool
         // SSB Stereo encoder (SSB-leaning stereo encoding) (experimental, default off).
         let ssbStereoEnabled: Bool
         let ssbStereoAmount: Float
@@ -374,7 +373,6 @@ final class MPXGenerator {
             compositeClipperCancelRDS: config.compositeClipperCancelRDS,
             compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
             compositeClipperOversampling: config.compositeClipperOversampling,
-            compositeMultibandClipperEnabled: config.compositeMultibandClipperEnabled,
             ssbStereoEnabled: config.ssbStereoEnabled,
             ssbStereoAmount: Float(config.ssbStereoAmount),
             sourceMode: config.sourceMode,
@@ -520,6 +518,7 @@ final class MPXGenerator {
 
     private var sampleRate: Float
     private let preemphasisUS: Int
+    private let encoderHFGuardEnabled: Bool
     // Tone-generator parameters. All `var` for live-apply through
     // `applyRuntimeConfig` — the Test Tone tab adjusts these on a
     // running engine without restart.
@@ -541,7 +540,6 @@ final class MPXGenerator {
     private let threshold: Float
     private var deviationScale: Float
     private let programLowpassHz: Float
-    private let encoderHFGuardEnabled: Bool
 
     private var widebandAGCEnabled: Bool
     private var widebandAGCTargetDB: Float
@@ -815,7 +813,6 @@ final class MPXGenerator {
     private var compositeClipperCancelRDS: Bool = true
     private var compositeClipperLookaheadMS: Float = 0.0
     private var compositeClipperOversampling: Int = 16
-    private var compositeMultibandClipperEnabled: Bool = false
     // SSB Stereo: experimental SSB-leaning stereo encoder ahead of the
     // composite clipper (default off; Hilbert FIR allocated lazily so a
     // disabled stage costs nothing).
@@ -824,7 +821,6 @@ final class MPXGenerator {
     private var ssbStereoConfigured = false
     private var ssbStereo = SSBStereoEncoder()
     private var compositeClipper = CompositeClipper()
-    private var compositeMultibandClipper = CompositeMultibandClipper()
     private var audioCompositeBandwidthFIR = LinearPhaseFIRLowpass()
 
     // === Dual-rate audio chain boundary (Phase 1, no-op infrastructure) ===
@@ -963,6 +959,11 @@ final class MPXGenerator {
     private var preR = PreemphasisFilter()
     private var programLP = ProgramLowpass()
     private var encoderProgramLP = ProgramLowpass()
+    private var encoderHFGuardSplit = StereoLinkwitzRiley4()
+    private var encoderHFGuardEnv: Float = 0.0
+    private var encoderHFGuardGain: Float = 1.0
+    private var encoderHFGuardAttackCoeff: Float = 0.0
+    private var encoderHFGuardReleaseCoeff: Float = 0.0
     private var encoderProgramFIR = LinearPhaseFIRLowpass()
     // Selects the TX-grade FIR over the low-latency Butterworth. Set by
     // AudioOutputEngine based on output mode (composite → FIR, monitor →
@@ -973,13 +974,6 @@ final class MPXGenerator {
     // Phase-flat band reconstruction prevents transient smear and
     // inter-band phase artifacts.
     private var useMultibandFIR: Bool = false
-    private var pilotNotchL = Biquad()
-    private var pilotNotchR = Biquad()
-    private var encoderHFGuardSplit = StereoLinkwitzRiley4()
-    private var encoderHFGuardEnv: Float = 0.0
-    private var encoderHFGuardGain: Float = 1.0
-    private var encoderHFGuardAttackCoeff: Float = 0.0
-    private var encoderHFGuardReleaseCoeff: Float = 0.0
     private var monitorDecoder = MPXDecoder()
     private var lastSubcarrierSample: Float = 0.0
     private var audioCompositePeakState: Float = 0.0
@@ -1027,6 +1021,7 @@ final class MPXGenerator {
     init(config: AppConfig, sampleRate: Double, nowPlayingState: NowPlayingState? = nil) {
         self.sampleRate = Float(max(8_000.0, sampleRate))
         self.preemphasisUS = config.preemphasisUS
+        self.encoderHFGuardEnabled = config.preemphasisUS > 0
         self.toneFreq = Float(config.testToneFreq)
         self.toneMode = config.testToneMode.lowercased()
         self.toneType = config.testToneType.lowercased()
@@ -1045,7 +1040,6 @@ final class MPXGenerator {
         self.threshold = clampf(Float(config.limitThreshold), 0.5, 0.999)
         self.deviationScale = Float(config.mpxDeviationKHz / 75.0)
         self.programLowpassHz = Float(config.programLowpassHz)
-        self.encoderHFGuardEnabled = config.preemphasisUS > 0
 
         self.widebandAGCEnabled = config.widebandAGCEnabled
         self.widebandAGCTargetDB = Float(config.widebandAGCTargetDB)
@@ -1180,7 +1174,6 @@ final class MPXGenerator {
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
         self.compositeClipperOversampling = config.compositeClipperOversampling
-        self.compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
         self.ssbStereoEnabled = config.ssbStereoEnabled
         self.ssbStereoAmount = clampf(Float(config.ssbStereoAmount), 0.0, 1.0)
 
@@ -1305,7 +1298,6 @@ final class MPXGenerator {
             lookaheadMS: compositeClipperLookaheadMS,
             oversamplingFactor: compositeClipperOversampling
         )
-        compositeMultibandClipper.configure(sampleRate: self.sampleRate)
         configureDualRateBoundary()
         recomputeSubcarrierDelay()
         updateDerivedRates()
@@ -1447,27 +1439,22 @@ final class MPXGenerator {
         let clipperDelayCapacity = compositeClipperEnabled
             ? compositeClipper.maxTotalDelayHostSamples : 0
         let compositeBandwidthDelay = audioCompositeBandwidthFIR.groupDelaySamples
-        let multibandClipperDelay = compositeMultibandClipperEnabled
-            ? compositeMultibandClipper.groupDelaySamples : 0
         let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
         // NB: the dual-rate boundary's decim+interp delay is NOT added
         // here. The boundary sits upstream of the stereo encoder; the
         // 38 kHz subcarrier embedded in the audio composite is generated
         // FRESH by the encoder at each OS tick, AFTER the boundary. So
         // is the pilot. Both traverse only the post-encoder stages
-        // (audio-composite bandwidth FIR, composite clipper, composite
-        // multiband clipper, final-MPX safety limiter), and the pilot
+        // (audio-composite bandwidth FIR, composite clipper, final-MPX
+        // safety limiter), and the pilot
         // needs to delay by exactly those to stay phase-locked with the
         // embedded carrier at the receiver. Adding the boundary delay
         // here over-delays the pilot and trashes stereo separation at
         // the production decoder (the encoder-side sidebands stay
         // balanced, but the pilot PLL recovers a 38 kHz reference that
         // is phase-rotated relative to the actual embedded carrier).
-        let total = compositeBandwidthDelay + clipperDelay + multibandClipperDelay + limiterDelay
-        let capacity = compositeBandwidthDelay
-            + clipperDelayCapacity
-            + compositeMultibandClipper.groupDelaySamples
-            + limiterDelay
+        let total = compositeBandwidthDelay + clipperDelay + limiterDelay
+        let capacity = compositeBandwidthDelay + clipperDelayCapacity + limiterDelay
         if total != subcarrierDelayActiveCount || capacity > subcarrierDelayLine.count {
             Self.resizeDelayPreservingContentsInPlace(
                 line: &subcarrierDelayLine,
@@ -1718,7 +1705,6 @@ final class MPXGenerator {
             lookaheadMS: compositeClipperLookaheadMS,
             oversamplingFactor: compositeClipperOversampling
         )
-        compositeMultibandClipper.configure(sampleRate: sampleRate)
         recomputeSubcarrierDelay()
         rdsCoder?.setSampleRate(sampleRate)
         updateDerivedRates()
@@ -2110,8 +2096,6 @@ final class MPXGenerator {
             || compositeClipperOversampling != config.compositeClipperOversampling
         let compClipLookaheadChanged =
             fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
-        let compositeMultibandClipperChanged =
-            compositeMultibandClipperEnabled != config.compositeMultibandClipperEnabled
         compositeClipperEnabled = config.compositeClipperEnabled
         compositeClipperThresholdDB = clampf(config.compositeClipperThresholdDB, -12.0, 0.0)
         compositeClipperCeilingDB = clampf(config.compositeClipperCeilingDB, -6.0, 0.0)
@@ -2121,7 +2105,6 @@ final class MPXGenerator {
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
         compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
         compositeClipperOversampling = config.compositeClipperOversampling
-        compositeMultibandClipperEnabled = config.compositeMultibandClipperEnabled
         if compClipStructuralChanged {
             compositeClipper.configure(
                 sampleRate: sampleRate,
@@ -2140,10 +2123,6 @@ final class MPXGenerator {
                 compositeClipperLookaheadMS,
                 sampleRate: sampleRate
             )
-            recomputeSubcarrierDelay()
-        }
-        if compositeMultibandClipperChanged {
-            compositeMultibandClipper.reset()
             recomputeSubcarrierDelay()
         }
 
@@ -2223,8 +2202,10 @@ final class MPXGenerator {
         let config = makeEncoderComplianceConfig()
         let audioRate = audioDomainSampleRate
         // Audio-domain L/R filters — programLP, encoderProgramLP,
-        // encoderProgramFIR, pilotNotchL/R, encoderHFGuardSplit — run at
-        // the audio rate when the dual-rate boundary is on.
+        // encoderProgramFIR, encoderHFGuardSplit — run at the audio rate when
+        // the dual-rate boundary is on. (0.45 removed the 19 kHz audio-path
+        // notch: the 14.9 kHz encoder FIR's >80 dB stopband already covers
+        // 19 kHz -- measured identical to 0.01 dB on the receiver gate.)
         programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: audioRate)
         encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
         encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
@@ -2237,17 +2218,6 @@ final class MPXGenerator {
             stopBandDB: 92.0,
             transitionHz: 5_000.0
         )
-        if preemphasisUS > 0 {
-            // 19 kHz pilot notch. At 48 kHz audio rate the notch sits at
-            // ~79% of Nyquist; bilinear-biquad shape is wider than at
-            // 192 kHz but still attenuates 19 kHz substantially. Receiver
-            // verification confirms cleanliness.
-            pilotNotchL.configureNotch(freqHz: 19_000.0, sampleRate: audioRate, q: 50.0)
-            pilotNotchR.configureNotch(freqHz: 19_000.0, sampleRate: audioRate, q: 50.0)
-        } else {
-            pilotNotchL.configureIdentity()
-            pilotNotchR.configureIdentity()
-        }
         encoderHFGuardSplit.configure(cutoffHz: config.hfGuardCrossoverHz, sampleRate: audioRate)
     }
 
@@ -3379,6 +3349,13 @@ final class MPXGenerator {
             }
         }
 
+        // Encoder HF guard: a small (<= 2 dB) stereo-linked HF gain ride ahead
+        // of the encoder lowpass. NOT redundant with the HF limiter (measured
+        // 2026-08-29): removing it cost 20-40 dB of receiver-side HF stereo
+        // separation on the tone test, because the un-attenuated HF drives the
+        // composite clipper into audio-band cubic IM that decodes as crosstalk,
+        // while the pre-emphasis-domain HF limiter does not engage at those
+        // levels. Keep it.
         if encoderHFGuardEnabled {
             let guarded = processEncoderHFGuard(left: left, right: right)
             left = guarded.0
@@ -3401,10 +3378,6 @@ final class MPXGenerator {
         }
         left = encoderBand.0
         right = encoderBand.1
-
-        // 19 kHz pilot-protection notch
-        left = pilotNotchL.process(left)
-        right = pilotNotchR.process(right)
 
         return ProgramStereoState(
             left: left,
@@ -3666,14 +3639,6 @@ final class MPXGenerator {
             // 1.5% the shaper tolerates before it would clip at 1x rate.
             let scale = (0.985 * compositeBudget) / lookaheadLimiter.threshold
             audioComposite = lookaheadLimiter.process(audioComposite / scale) * scale
-        }
-
-        // Experimental multiband composite clipper: keeps its absolute band
-        // ceilings (0.90 / 0.62 / 0.38) and, as before 0.45, sees a composite
-        // already bounded by the peak stages ahead of it (its A/B gate and
-        // sideband-symmetry test were tuned on that input). Shaper follows.
-        if compositeMultibandClipperEnabled {
-            audioComposite = compositeMultibandClipper.process(audioComposite)
         }
 
         // Shaper: the ONE budget safety net behind clipper + limiter. It only

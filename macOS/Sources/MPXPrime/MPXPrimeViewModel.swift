@@ -1265,7 +1265,6 @@ final class MPXPrimeViewModel: ObservableObject {
             config.compositeClipperEnabled = defaults.compositeClipperEnabled
             config.compositeClipperThresholdDB = defaults.compositeClipperThresholdDB
             config.compositeClipperCeilingDB = defaults.compositeClipperCeilingDB
-            config.compositeMultibandClipperEnabled = defaults.compositeMultibandClipperEnabled
         }
 
         let runtimeDisposition: RuntimeChangeDisposition

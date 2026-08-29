@@ -43,7 +43,6 @@ struct ProcessedAudioOutputTests {
         cfg.dcClipperEnabled = false
         cfg.bs412Enabled = false
         cfg.compositeClipperEnabled = false
-        cfg.compositeMultibandClipperEnabled = false
         cfg.enRDS = false
         cfg.encoderFIREnabled = true          // audio-domain 15 kHz FIR band-limit
         return cfg

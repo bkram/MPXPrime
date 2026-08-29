@@ -12,7 +12,6 @@ func runVerificationHarness(
     presetSweep: Bool = false,
     longRun: Bool = false,
     receiverModel: Bool = false,
-    compositeMultibandClipperComparison: Bool = false,
     multibandCouplingComparison: Bool = false,
     advancedDynamicsComparison: Bool = false,
     ssbStereoComparison: Bool = false,
@@ -65,18 +64,6 @@ func runVerificationHarness(
         )
         print("")
         return runMultibandCouplingComparison(
-            baseConfig: config,
-            durationSeconds: durationSeconds
-        )
-    }
-    if compositeMultibandClipperComparison {
-        print("MPX Prime Composite Multiband Verification")
-        print("Config: \(configPath)")
-        print(
-            "Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(1.0, durationSeconds))) s"
-        )
-        print("")
-        return runCompositeMultibandClipperComparison(
             baseConfig: config,
             durationSeconds: durationSeconds
         )

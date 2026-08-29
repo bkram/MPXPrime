@@ -186,7 +186,6 @@ swift run --package-path macOS MPXPrime --verify --seconds 5                  # 
 swift run --package-path macOS MPXPrime --verify-presets --seconds 5          # 5-band preset sweep
 swift run --package-path macOS MPXPrime --verify-long --seconds 30            # long-run regression
 swift run --package-path macOS MPXPrime --verify-receiver --seconds 5         # receiver-model decode
-swift run --package-path macOS MPXPrime --verify-composite-multiband --seconds 2   # A/B multiband clipper
 swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2    # A/B inter-band coupling
 swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4     # A/B single-stage leveler
 swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4            # A/B SSB stereo encoder

@@ -19,7 +19,6 @@ import Testing
         config.enRDS = true
         config.compositeClipperEnabled = true
         config.compositeClipperLookaheadMS = 0.0
-        config.compositeMultibandClipperEnabled = false
         config.finalDriveDB = 12.0       // hot: the clipper must work hard
         config.limitMPX = true           // clipper + final limiter own the peaks
         config.limitLookaheadEnabled = true

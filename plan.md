@@ -198,9 +198,11 @@ emphasis. NEW from the industry-order research (2026-08-29, Orban 8100A /
 (a) every vendor places the stereo widener AND the bass enhancer BEFORE
 the multiband so it controls the L-R / bass energy they add -- ours sit
 after it (mitigated by the bass clipper + stereo-image protection that
-follow); (b) `processEncoderHFGuard` (stage 14) duplicates the HF limiter's
-job -- no vendor runs two HF riders; retire it once the HF limiter is
-default-on; (c) the pre-encode limiter's tanh ceiling is the LAST L/R
+follow); (b) `processEncoderHFGuard` MEASURED 2026-08-29 and KEPT: removing it cost
+20-40 dB of receiver-side HF separation on the tone test (composite-clipper
+audio-band IM) and the default-on HF limiter did not engage at those levels;
+the 19 kHz audio-path notch and the experimental multiband composite clipper
+were removed instead (notch identical to 0.01 dB; MB clipper A/B TIGHT); (c) the pre-encode limiter's tanh ceiling is the LAST L/R
 nonlinearity and sits after the 15 kHz FIR with nothing band-limiting its
 residual (Orban band-limits the "clippings" of the last L/R stage, US
 6,337,999) -- gate: L/R 15-19 kHz energy at the encoder input on dense
@@ -250,7 +252,6 @@ Highest-leverage audible-gap closer vs the enterprise tier: these stages are imp
 2. **Multiband Phase 2 — transient-aware attack** (`multiband_transient_aware_attack_enabled`). Verifier + dense-percussive listening A/B; preset decision.
 3. **Multiband inter-band coupling** (`multiband_inter_band_coupling_enabled`, `--verify-multiband-coupling`). "Loud bass softens highs" — listening A/B; preset decision.
 4. **Anti-aliased residual clipping** (`pre_encode_bandlimited_residual_enabled`) — see Next up #1.
-5. **Composite multiband clipping** (`mpx_multiband_clipper_enabled`) — see Broadcast-tier follow-ups.
 
 ## Experimental candidates -- composite-processing ideas (parked 2026-08-01, user decision)
 
@@ -263,7 +264,6 @@ Analysis of a third-party processor's press release (loudness/cleanliness claims
 ## Broadcast-tier follow-ups
 
 - **Multiband Phase 3 — per-band look-ahead.** Reuse `LookaheadLimiter` ring-buffer per band. Largely redundant with Phase 2; skip unless dense percussive listening shows Phase 2 isn't enough. ~3–5 d.
-- **Multiband composite clipping** (`mpx_multiband_clipper_enabled`, `--verify-composite-multiband`). Phase 1 opt-in landed. Remaining: dense-program listening, oversampling refinement if HF aliasing audible, preset decision.
 - **Stereo-band cancellation depth via FIR bandpass.** Optional/depth-only. Delta substitution gets ~5–10 dB in the stereo subband (LR4 phase-bounded); linear-phase FIR bandpass would push to 20+ dB. Only if listening (Next-up #1) says residual cross-domain IM is audible at amateur drive.
 - **Audio-clipper oversampling bump.** `BassClipper` 4×→16×, `DistortionCancelledClipper` 8×→16–32×, likely swapping `BiquadCascade6` decimation for `LinearPhaseFIRDecimator`. Polish (aliasing already inaudible at amateur drive); ~1–2 d each + baseline refresh. Aliasing gate: `DistortionCancelledClipperTests.aliasingEnergy` (−38 dBFS now; pro chains push past −75).
 

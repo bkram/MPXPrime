@@ -279,4 +279,3 @@ func qualityFindings(
 
     return findings
 }
-

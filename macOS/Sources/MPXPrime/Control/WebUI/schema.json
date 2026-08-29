@@ -559,7 +559,7 @@
    },
    {
     "enable": "hf_limiter_enabled",
-    "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter. Gain-riding, so no clipping distortion; on in Music - Loud.",
+    "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter. Gain-riding, so no clipping distortion; on by default.",
     "id": "hfLimiter",
     "keys": [
      "hf_limiter_enabled",
@@ -651,8 +651,7 @@
      "mpx_clipper_cancel_pilot",
      "mpx_clipper_cancel_rds",
      "mpx_clipper_cancel_stereo",
-     "mpx_clipper_cancel_audio",
-     "mpx_multiband_clipper_enabled"
+     "mpx_clipper_cancel_audio"
     ],
     "keys2": {
      "keys": [
@@ -1331,10 +1330,6 @@
    "min": -40.0,
    "step": 0.1,
    "unit": " dBFS"
-  },
-  "mpx_multiband_clipper_enabled": {
-   "kind": "toggle",
-   "label": "Multiband Composite Clipping"
   },
   "mpx_ssb_stereo_amount": {
    "decimals": 2,

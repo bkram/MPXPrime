@@ -123,7 +123,7 @@ Relevant config sections:
 
 ### Format Profiles (Station Format selector)
 
-For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing → Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state — not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / widener / drive on top (Music - Loud additionally enables the HF Limiter and the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
+For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing → Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state — not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / widener / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
 
 **Upgrading from a pre-0.45 config.** The old profile ids (`chr_top40`, `pop_ac`, `community_radio`, `rock`, `edm_dance`, `urban_hiphop`, `jazz_classical`, `news_talk`) are migrated to the nearest new profile on load so the picker shows a real profile -- but only the LABEL migrates, not the settings. A station that upgraded keeps its old gain structure, which typically means the Audio Limiter and Composite Clipper are both off and the safety soft-clips do all the clipping (audible distortion on loud, bright program: hi-hats and cymbals in particular). Both apps warn about this on startup (a status-bar message in Studio, a `WARNING` line on stderr headless). The fix is one click: re-apply a Format Profile, or enable the Composite Clipper.
 
@@ -166,6 +166,7 @@ For typical FM broadcast use (clean / community / LPFM), the recommended set of 
 - **Downward Expander** — gates noise floor (threshold ≈ -45 dB, ratio 2.0:1)
 - **MB Limiter** — per-band peak control (threshold ≈ -3 dB, atk 0.5 ms, rel 50 ms)
 - **DC Clipper** — distortion-cancelled audio-band clipping with pilot/RDS protection
+- **HF Limiter** — pre-emphasis-aware, gain-riding HF control (`Processing` -> `HF Limiter / Clipper`; `hf_limiter_enabled`, `hf_limiter_threshold_db` -2 dB, `hf_limiter_attack_ms` 1.5, `hf_limiter_release_ms` 20, `hf_limiter_max_reduction_db` 12). On by default in every Format Profile (0.45). It rides only the pre-emphasis *boost*: a cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter, and it can never cut HF below the flat (un-emphasised) program level. Bass-driven peaks with little HF boost are ignored, so a kick cannot flutter the highs. The receiver's fixed de-emphasis turns the action into a brief, bounded HF dip -- the trade every broadcast HF limiter makes (Optimod topology). Threshold: set at or a little below the Audio Limiter threshold. All controls live-apply. Measured with `--verify-hf-transients`: on Music - Loud it keeps the decoded hi-hat SINAD at 18 dB where the HF clipper gave 12 dB. Note that a separate, fixed 2 dB "encoder HF guard" ahead of the encoder lowpass stays in the chain: measurements showed it protects receiver-side HF stereo separation (composite-clipper IM) at levels where this limiter does not engage.
 - **Audio Limiter** — pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) — see 0.30 CHANGELOG
 - **Composite Clipper** — 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB). Oversampling factor is configurable (`mpx_clipper_oversampling`, default 16): 8 for older hardware that needs the CPU back, 32 for Omnia.9-class spec-sheet parity at roughly double this stage's CPU cost. See the comment block in the sample `MPXPrime.ini` for when each value makes sense.
 
@@ -174,7 +175,6 @@ Recommended **off** by default (enable only when needed):
 - **Stereo Widener** — leave off unless the source program needs subtle width enhancement; aggressive widening risks mono-compatibility on FM (see "Stereo image control" below)
 - **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
 - **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
-- **HF Limiter** — pre-emphasis-aware, gain-riding HF control (`Processing` -> `HF Limiter / Clipper`; `hf_limiter_enabled`, `hf_limiter_threshold_db` -2 dB, `hf_limiter_attack_ms` 1.5, `hf_limiter_release_ms` 20, `hf_limiter_max_reduction_db` 12). Off by default, ON in the Music - Loud profile. It rides only the pre-emphasis *boost*: a cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter, and it can never cut HF below the flat (un-emphasised) program level. Bass-driven peaks with little HF boost are ignored, so a kick cannot flutter the highs. The receiver's fixed de-emphasis turns the action into a brief, bounded HF dip -- the trade every broadcast HF limiter makes (Optimod topology). Threshold: set at or a little below the Audio Limiter threshold. All controls live-apply. Measured with `--verify-hf-transients`: on Music - Loud it keeps the decoded hi-hat SINAD at 18 dB where the HF clipper gave 12 dB.
 - **HF Clipper** — pre-emphasis-aware HF *clipper* (same tab; `hf_clipper_*`). Off by default and no longer used by any profile: it is a waveshaper on the pre-emphasised high band, so it distorts the cymbals and hi-hats it controls (the 2026-08 field finding). Keep it as a last resort for maximum HF density on dense EDM after the HF Limiter is already on; leave off for talk / classical. Controls live-apply.
 - **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
 - **Advanced Dynamics** — experimental single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Processing` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
@@ -287,7 +287,6 @@ Both stages are loudness / regulatory tools and both visibly cost stereo image a
 - `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band protection toggles let you choose what to keep clean:
   - `Protect Stereo Pilot`, `Protect Stereo Subcarrier`, `Protect RDS` — leave on (defaults). These keep the 19 kHz pilot, 38 kHz L-R subcarrier, and 57 kHz RDS regions clean of clip IM.
   - `Protect Audio Highs` — off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
-  - `Multiband Composite Clipping` — off by default. It is an A/B loudness experiment for HF-heavy program material; current verifier numbers show useful peak/audio reduction, but it should stay out of presets until dense-program listening confirms the trade.
 
 All of these are exposed in the GUI; no INI editing is required.
 
@@ -793,11 +792,9 @@ Current post-build preset sweep status:
 Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled across stress scenarios:
 
 ```bash
-./macOS/.build/debug/MPXPrime --verify-composite-multiband --seconds 2
 ./macOS/.build/debug/MPXPrime --verify-multiband-coupling --seconds 2
 ```
 
-`--verify-composite-multiband` toggles `mpx_multiband_clipper_enabled` off/on across 5 dense/HF scenarios and reports peak / audio-peak / margin / overshoot / correlation / side / >60 kHz deltas. Current tuning shows ~1.4-1.6 dB peak reduction on HF-heavy program with zero post-injection overshoot.
 
 `--verify-multiband-coupling` forces multiband on, disables AGC for isolation, and toggles `multiband_inter_band_coupling_enabled` off/on across 5 program scenarios (bass-heavy, kick/vocal, dance, wide-bass, speech-bed), reporting per-band Low/Mid/High deltas + correlation / side-to-mid / peak / overshoot / render-cost ratio.
 
@@ -807,7 +804,7 @@ Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled ac
 
 `--verify-ssb-stereo` A/Bs classic DSB stereo encoding against the SSB Stereo encoder: program scenarios on a LINEAR composite (peak controllers off, so the encoder's raw headroom effect is visible) plus tone measurements on the full chain -- 38 kHz sideband asymmetry at 1/10/14 kHz (confirms the SSB action; matches theory exactly) and coherent decode separation off/on. This is the stage's hard gate: it goes TIGHT when separation drops more than 6 dB (or below 20 dB absolute), when the composite budget is exceeded, or when no headroom is measurably reclaimed.
 
-Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, and composite-multiband + inter-band-coupling A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
+Current verification is strongest for composite safety, budget behavior, receiver-model stereo separation, hi-hat / cymbal HF distortion, and the inter-band-coupling / Advanced Dynamics / SSB A/B measurements. It is not yet a full listening-quality oracle for multiband crossover tone, stereo-image feel, or PrimeBass character, so final tuning still requires real program listening.
 
 Exit status:
 

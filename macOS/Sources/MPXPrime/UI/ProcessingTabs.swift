@@ -785,10 +785,6 @@ struct ProcessingCompositeClipperTab: View {
             Text("Tip: leave the composite clipper off when loudness isn't critical -- it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Protect Audio Highs\" recovers HF detail at the cost of some loudness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DisclosureGroup("Experimental") {
-                Toggle("Multiband Composite Clipping", isOn: model.configBinding(\.compositeMultibandClipperEnabled, runtimeDisposition: .live))
-                    .help("Experimental, off by default. Additional loudness stage after the broadband composite clipper: splits the audio composite into low / mid / high bands, clips them independently, then recombines before pilot/RDS injection.")
-            }
         }
     }
 }

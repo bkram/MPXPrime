@@ -140,4 +140,3 @@ struct PreemphasisFilter {
 
     mutating func reset() { x1 = 0.0 }
 }
-

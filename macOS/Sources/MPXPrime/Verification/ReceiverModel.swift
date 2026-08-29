@@ -513,11 +513,7 @@ func runEncoderStageIsolationSweep(
     rows.append(measure(label: "audio composite softclip OFF") { $0.audioCompositeSoftClipEnabled = false })
     rows.append(measure(label: "encoder FIR OFF") { $0.encoderFIREnabled = false })
     rows.append(measure(label: "pre-encode limiter OFF") { $0.preEncodeAudioLimiterEnabled = false })
-    // Pre-emphasis disable also disables the 19 kHz pilot notch in
-    // the audio path (they share the `preemphasisUS > 0` gate in
-    // `configureAudioPath`). The pilot notch is only meaningful when
-    // pre-emphasis is on, so the joint toggle is the right unit.
-    rows.append(measure(label: "pre-emphasis + pilot notch OFF") { $0.preemphasisUS = 0 })
+    rows.append(measure(label: "pre-emphasis OFF") { $0.preemphasisUS = 0 })
     return rows
 }
 

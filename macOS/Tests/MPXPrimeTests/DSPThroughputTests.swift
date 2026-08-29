@@ -276,28 +276,6 @@ struct DSPThroughputTests {
             "FIR multiband path \(firWall) s vs IIR \(iirWall) s = \(ratio)x. Without vDSP this hits 30-50×. >5× means the vDSP fast-path regressed and the FIR multiband will overrun real-time budget on real hardware.")
     }
 
-    @Test func compositeMultibandClipperCostStaysBounded() {
-        // The experimental composite multiband clipper adds two host-rate
-        // linear-phase FIR lowpasses per sample. It is off by default, but
-        // before it can be used by a preset we need a hard cost bound against
-        // the same chain with the toggle off.
-        var disabled = makeHeavyConfig()
-        disabled.compositeClipperEnabled = true
-        disabled.compositeMultibandClipperEnabled = false
-
-        var enabled = disabled
-        enabled.compositeMultibandClipperEnabled = true
-
-        let disabledWall = measureThroughput(config: disabled).wallSeconds
-        let enabledWall = measureThroughput(config: enabled).wallSeconds
-        let ratio = enabledWall / max(1e-6, disabledWall)
-        print(String(format: "Composite multiband clipper cost ratio: %.2fx (enabled %.3f s, disabled %.3f s)",
-                     ratio, enabledWall, disabledWall))
-
-        #expect(ratio < 2.5,
-            "composite multiband clipper cost \(enabledWall) s vs disabled \(disabledWall) s = \(ratio)x; >2.5x means the FIR split/clip path needs acceleration or lighter filters before preset use")
-    }
-
     @Test func advancedDynamicsCostStaysBounded() {
         // Advanced Dynamics REPLACES the AGC + multiband compressor when
         // enabled, so its net cost should be in the same ballpark as the

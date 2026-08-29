@@ -69,7 +69,6 @@ struct DualRateHFResponseTests {
         cfg.dcClipperEnabled = false
         cfg.bs412Enabled = false
         cfg.compositeClipperEnabled = false   // disable clipper so it doesn't shape HF
-        cfg.compositeMultibandClipperEnabled = false
         cfg.enRDS = false                     // disable RDS so 57 kHz region is clean
         cfg.rdsLevel = 0.0
         cfg.pilotLevel = 0.0                  // disable pilot too — its notch will warp at 48 kHz

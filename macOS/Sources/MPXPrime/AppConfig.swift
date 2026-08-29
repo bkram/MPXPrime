@@ -334,7 +334,7 @@ struct AppConfig: Equatable {
     // component), the gain-riding alternative to the HF clipper. Threshold is
     // the pre-emphasised L/R peak that triggers it; Max Reduction caps how much
     // of the boost may be removed (the boost itself bounds the action).
-    var hfLimiterEnabled: Bool = false
+    var hfLimiterEnabled: Bool = true
     var hfLimiterThresholdDB: Double = -2.0
     var hfLimiterAttackMS: Double = 1.5
     var hfLimiterReleaseMS: Double = 20.0
@@ -386,7 +386,6 @@ struct AppConfig: Equatable {
     // count, the Lagrange interpolator step count, and the per-host batch
     // buffer sizes.
     var compositeClipperOversampling: Int = 16
-    var compositeMultibandClipperEnabled: Bool = false
     // SSB Stereo: experimental SSB-leaning stereo encoder (default off).
     // Opportunistically suppresses one 38 kHz sideband (toward SSB) to
     // reclaim composite headroom; hard-gated by --verify-ssb-stereo +
@@ -849,10 +848,6 @@ struct AppConfig: Equatable {
             "mpx_ssb_stereo_enabled", defaultValue: cfg.ssbStereoEnabled)
         cfg.ssbStereoAmount = mpx.double(
             "mpx_ssb_stereo_amount", defaultValue: cfg.ssbStereoAmount)
-        cfg.compositeMultibandClipperEnabled = mpx.bool(
-            "mpx_multiband_clipper_enabled",
-            defaultValue: cfg.compositeMultibandClipperEnabled
-        )
         cfg.rdsLevel = rds.double("rds_level", defaultValue: cfg.rdsLevel)
         cfg.rdsPI = rds.string("pi", defaultValue: cfg.rdsPI)
         cfg.rdsPTY = rds.int("pty", defaultValue: cfg.rdsPTY)
@@ -1343,7 +1338,6 @@ struct AppConfig: Equatable {
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
             "mpx_clipper_oversampling = \(compositeClipperOversampling)",
-            "mpx_multiband_clipper_enabled = \(Self.boolString(compositeMultibandClipperEnabled))",
             "mpx_ssb_stereo_enabled = \(Self.boolString(ssbStereoEnabled))",
             "mpx_ssb_stereo_amount = \(Self.formatFloat(ssbStereoAmount))",
             "test_tone_mode = \(testToneMode)",

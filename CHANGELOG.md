@@ -11,6 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Source layout split for maintainability (no behaviour change).** The
+  three monoliths -- `MPXGenerator.swift` (10.8k lines),
+  `SwiftUIControlApp.swift` (9.1k) and `VerificationHarness.swift` (4.4k) --
+  were split by concern as pure moves: DSP stages one-per-file in `DSP/`,
+  the RDS encoder in `RDS/`, the view model / app delegate / per-area views
+  in `MPXPrimeViewModel.swift`, `AppDelegate.swift` and `UI/`, and the
+  verifier one-file-per-mode in `Verification/`. Former file-private helpers
+  that the split made cross-file are now module-internal; nothing else
+  changed (all strict baselines bit-identical, 582 tests green). Incremental
+  debug builds after a one-file edit no longer recompile a 10k-line file.
+  AGENTS.md records the layout as a contract (one type per file, files under
+  ~1000 lines, folders by concern) so manual development stays practical.
+
 - **Hi-hats / cymbals no longer distort: the composite clipper actually
   clips now, and a real HF limiter replaces the HF clipper.** Field
   finding 2026-08-29, measured with the new `--verify-hf-transients`

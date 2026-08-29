@@ -226,4 +226,111 @@ struct TestToneGeneratorTests {
         #expect(peak < 0.3,
             "Pink noise peak at −20 dBFS should be bounded under 0.3; got \(peak)")
     }
+
+    // MARK: - Calibration semantics (0.45)
+
+    /// The shipped default chain -- AGC, multiband, HF limiter, pre-encode
+    /// limiter, composite clipper at 6 dB drive, final limiter -- all ON.
+    /// Pilot and RDS are switched off so the composite is the audio alone
+    /// and the budget is exactly 0.98 - 0.02 = 0.96.
+    private func makeFullChainToneConfig(levelDB: Double, toneFreq: Double = 1_000.0,
+                                         mode: String = "mono", type: String = "sine") -> AppConfig {
+        var cfg = AppConfig()
+        cfg.sampleRate = Double(sampleRate)
+        cfg.blockSize = 512
+        cfg.sourceMode = "tone"
+        cfg.monitorEnabled = false
+        cfg.pilotLevel = 0.0
+        cfg.enRDS = false
+        cfg.rdsNowPlayingEnabled = false
+        cfg.testToneType = type
+        cfg.testToneFreq = toneFreq
+        cfg.testToneLevelDB = levelDB
+        cfg.testToneMode = mode
+        return cfg
+    }
+
+    private func steadyStatePeakDB(_ cfg: AppConfig) -> Float {
+        let settle = 38_400   // 0.2 s: dual-rate boundary, FIR and look-ahead delays
+        let composite = renderTone(config: cfg, frames: settle + measureFrames)
+        var peak: Float = 0.0
+        for i in settle..<composite.count { peak = max(peak, abs(composite[i])) }
+        return 20.0 * log10f(max(peak, 1e-9))
+    }
+
+    /// 0 dBFS = the audio-composite budget (0.96 here, -0.35 dBFS), and the
+    /// scale is linear in dB: -20 dBFS lands at -20.35 dBFS on the composite.
+    @Test func fullChainToneLevelIsCalibratedToTheBudget() {
+        let budgetDB = 20.0 * log10f(0.96)
+        for levelDB in [0.0, -6.0, -20.0, -40.0] {
+            let peakDB = steadyStatePeakDB(makeFullChainToneConfig(levelDB: levelDB))
+            let expected = budgetDB + Float(levelDB)
+            #expect(abs(peakDB - expected) < 0.25,
+                    "tone at \(levelDB) dBFS: composite peak \(peakDB) dBFS, expected \(expected)")
+        }
+    }
+
+    /// The tone is a calibration source: AGC target, Final Drive and the
+    /// processing stages must not move it (the pre-0.45 behaviour was the
+    /// opposite -- any level produced full, clipped deviation).
+    @Test func toneLevelIsIndependentOfDriveAndProcessing() {
+        let reference = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0))
+        var loud = makeFullChainToneConfig(levelDB: -12.0)
+        loud.finalDriveDB = 12.0
+        loud.widebandAGCTargetDB = -6.0
+        loud.inputGainDB = 10.0
+        var lean = makeFullChainToneConfig(levelDB: -12.0)
+        lean.finalDriveDB = 0.0
+        lean.compositeClipperEnabled = false
+        lean.preEncodeAudioLimiterEnabled = false
+        lean.multibandEnabled = false
+        lean.widebandAGCEnabled = false
+        #expect(abs(steadyStatePeakDB(loud) - reference) < 0.05)
+        #expect(abs(steadyStatePeakDB(lean) - reference) < 0.05)
+    }
+
+    /// Pre-emphasis compensation: a sine reads the same composite level at
+    /// 1 kHz and 10 kHz (50 us would otherwise add ~10 dB at 10 kHz).
+    @Test func sineLevelIsFlatAcrossFrequencyDespitePreemphasis() {
+        let at1k = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, toneFreq: 1_000.0))
+        let at10k = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, toneFreq: 10_000.0))
+        let at400 = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, toneFreq: 400.0))
+        #expect(abs(at10k - at1k) < 0.3, "1 kHz \(at1k) vs 10 kHz \(at10k)")
+        #expect(abs(at400 - at1k) < 0.3, "1 kHz \(at1k) vs 400 Hz \(at400)")
+    }
+
+    /// Mono, left-only and L=-R routing all peak the composite at the same
+    /// level (M + S reaches the same envelope for a single-channel source).
+    @Test func routingModesHitTheSameCompositePeak() {
+        let mono = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, mode: "mono"))
+        let left = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, mode: "left"))
+        let stereo = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, mode: "stereo"))
+        #expect(abs(left - mono) < 0.3, "mono \(mono) vs left \(left)")
+        #expect(abs(stereo - mono) < 0.3, "mono \(mono) vs L=-R \(stereo)")
+    }
+
+    /// The live-input path is untouched by the tone semantics: with the
+    /// source set to input, the chain still processes program normally.
+    @Test func inputPathStillProcesses() {
+        var cfg = makeFullChainToneConfig(levelDB: 0.0)
+        cfg.sourceMode = "input"
+        let gen = MPXGenerator(config: cfg, sampleRate: Double(sampleRate))
+        var peakA: Float = 0.0
+        var peakB: Float = 0.0
+        // Same -12 dBFS sine fed as INPUT through two drives: the processed
+        // path must respond to Final Drive (the calibration path must not).
+        for drive in [0.0, 12.0] {
+            var c = cfg; c.finalDriveDB = drive
+            let g = MPXGenerator(config: c, sampleRate: Double(sampleRate))
+            var peak: Float = 0.0
+            for n in 0..<(38_400 + measureFrames) {
+                let x = 0.25 * sinf(2.0 * Float.pi * 1_000.0 * Float(n) / sampleRate)
+                let y = g.renderSingleSample(leftIn: x, rightIn: x)
+                if n >= 38_400 { peak = max(peak, abs(y)) }
+            }
+            if drive == 0.0 { peakA = peak } else { peakB = peak }
+        }
+        _ = gen
+        #expect(peakB > peakA * 1.05, "input path ignored Final Drive: \(peakA) vs \(peakB)")
+    }
 }

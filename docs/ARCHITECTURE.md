@@ -170,6 +170,10 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
          runs at the audio device rate (e.g. 48 kHz). Pre-emphasis selectable.
 ```
 
+## Test tone (calibration source)
+
+When the engine renders the built-in test tone (`source_mode = tone`), `MPXGenerator` raises `renderingCalibrationTone` for each tone sample: `processProgramStereo` / `processAudioDomain` skip input gain and every dynamics / enhancement / clipping / limiting stage (the same gates `processingBypass` uses, plus the encoder HF guard), pre-emphasis and the encoder lowpass stay in (noise types need the band limit), and in `processFinalComposite` the drive is replaced by the audio-composite budget so 0 dBFS = 100% audio modulation, BS.412 is skipped, and the composite clipper and final limiter are kept in the path only for their delay (their inputs are scaled 8x below threshold so they pass the tone untouched and pilot/RDS alignment is preserved). Sine tones are pre-compensated for the pre-emphasis magnitude at the tone frequency (`updateToneGain`, the exact first-order digital response at the audio-domain rate). Pinned by `TestToneGeneratorTests`: composite peak = budget x 10^(level/20) within 0.25 dB across 0 / -6 / -20 / -40 dBFS, independent of Final Drive / AGC / processing, flat across 400 Hz / 1 kHz / 10 kHz, equal across mono / left / L=-R routing; the input path is checked to still respond to Final Drive.
+
 ## Output modes
 
 `AudioOutputMode` (`AudioOutputEngine.swift`) has three cases; the engine resolves

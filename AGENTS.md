@@ -116,6 +116,8 @@ Peak control:
 
 `Mono Mode` suppresses pilot, stereo subcarrier, and RDS — true mono composite.
 
+The built-in **test tone is a calibration source** (0.45): while a tone sample renders, `renderingCalibrationTone` bypasses input gain and every gain-changing stage, replaces Final Drive by the audio-composite budget (0 dBFS = 100% audio modulation) and makes the clipper/limiter transparent while keeping their delay; sines are pre-emphasis-compensated. Do not route the tone through the processing again -- `TestToneGeneratorTests` pins level-in / deviation-out.
+
 Oversampled clippers: `BassClipper` 4× and `DistortionCancelledClipper` 8× share a `Lagrange4Interp` + `BiquadCascade6` decimation pattern (12th-order Butterworth LP). `CompositeClipper` runs at the `mpx_clipper_oversampling` rate (default 16×, operator-selectable across {8, 16, 32} since 0.30; restart-required) with `Lagrange4Interp` + `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, `vDSP_dotpr` polyphase) — linear phase and tighter stopband than the Butterworth cascade, at the cost of group-delay latency folded into `subcarrierDelayLine`. Per-host batch buffers default-size to 32 elements (the supported max) so swapping between factors is non-allocating after first `configure()`. Soft-clip `tanhf` calls in all three are batched through `vvtanhf` (vForce SIMD) for ~5–9× speedup vs scalar tanhf at 8/16-element batches — see `TanhBatchSizeBench` for the curve. Follow these patterns for any new oversampled nonlinearity.
 
 The multiband compressor has two crossover backends, picked at engine start by output mode:

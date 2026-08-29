@@ -925,6 +925,17 @@ final class MPXGenerator {
     private var preEncodeLookaheadHFCutoffHz: Float = 4_000.0
 
     private var toneStep: Float
+    /// Level applied to the raw tone sample: `toneLevel`, times 1/|H_pre(f)|
+    /// for a sine so the composite peak is the set level regardless of
+    /// where the tone sits on the pre-emphasis curve.
+    private var toneGain: Float = 0.1
+    /// True only while a test-tone sample is inside `processSampleDetailed`:
+    /// the tone is a CALIBRATION source (0 dBFS = 100% of the audio-composite
+    /// budget), so every gain-changing stage -- input gain, AGC, EQ, multiband,
+    /// enhancers, clippers, limiters, final drive, BS.412 -- is bypassed for
+    /// it while the delay-bearing stages stay in the path (pilot/RDS alignment).
+    private var renderingCalibrationTone = false
+    private var audioStagesBypassed: Bool { processingBypass || renderingCalibrationTone }
     private var tonePhase: Float = 0.0
     /// Paul Kellet's 4-pole pink-noise IIR state. Cheap, well-known
     /// approximation (~3 dB/octave from ~0.4 Hz upward). Cycle artefacts
@@ -2172,6 +2183,23 @@ final class MPXGenerator {
             tonePhase = 0
         }
         toneLevel = powf(10.0, clampf(config.testToneLevelDB, -60.0, 0.0) / 20.0)
+        updateToneGain()
+    }
+
+    /// Sine tones are pre-compensated for the pre-emphasis magnitude at the
+    /// tone frequency (the same first-order digital network `PreemphasisFilter`
+    /// runs, evaluated at the audio-domain rate), so the composite peak equals
+    /// the configured level at any frequency. Noise types are left as-is.
+    private func updateToneGain() {
+        var compensation: Float = 1.0
+        if toneType == "sine", preemphasisUS > 0 {
+            let sr = max(8_000.0, audioDomainSampleRate)
+            let a = expf(-1.0 / (Float(preemphasisUS) * 1e-6 * sr))
+            let omega = twoPi * toneFreq / sr
+            let magnitude = sqrtf(max(1e-12, 1.0 - (2.0 * a * cosf(omega)) + (a * a))) / max(1e-9, 1.0 - a)
+            compensation = 1.0 / max(1e-6, magnitude)
+        }
+        toneGain = toneLevel * compensation
     }
 
     func currentRDSLiveSnapshot() -> BasicRDSCoder.LiveSnapshot? {
@@ -2274,6 +2302,7 @@ final class MPXGenerator {
 
     private func updateDerivedRates() {
         toneStep = twoPi * toneFreq / sampleRate
+        updateToneGain()
         pilotOsc.configure(freq: pilotFreq, sampleRate: sampleRate)
         let sr = max(8_000.0, sampleRate)
         audioCompositePeakDecayCoeff = expf(-1.0 / (0.250 * sr))
@@ -2824,7 +2853,8 @@ final class MPXGenerator {
             // Pre-fix: this path used `sinf(tonePhase)` without
             // advancing the phase, generating DC silence.
             let raw = nextToneRawSample()
-            let tone = raw * toneLevel
+            let tone = raw * toneGain
+            renderingCalibrationTone = true
             var l: Float
             var r: Float
             switch toneMode {
@@ -2952,7 +2982,8 @@ final class MPXGenerator {
         let finalClip = processedAudioFinalClipActive
         for i in 0..<frameCount {
             let raw = nextToneRawSample()
-            let tone = raw * toneLevel
+            let tone = raw * toneGain
+            renderingCalibrationTone = true
             var l: Float
             var r: Float
             switch toneMode {
@@ -3042,7 +3073,8 @@ final class MPXGenerator {
             // Phase advance is handled inside `nextToneRawSample` for
             // the sine path; pink / white paths ignore phase.
             let raw = nextToneRawSample()
-            let tone = raw * toneLevel
+            let tone = raw * toneGain
+            renderingCalibrationTone = true
             var l: Float
             var r: Float
             switch toneMode {
@@ -3077,7 +3109,8 @@ final class MPXGenerator {
         guard frameCount > 0 else { return }
         for i in 0..<frameCount {
             let raw = nextToneRawSample()
-            let tone = raw * toneLevel
+            let tone = raw * toneGain
+            renderingCalibrationTone = true
             var srcL: Float
             var srcR: Float
             switch toneMode {
@@ -3122,6 +3155,7 @@ final class MPXGenerator {
     }
 
     private func processSampleDetailed(leftIn: Float, rightIn: Float) -> (mpx: Float, analysisStereo: ProgramStereoState) {
+        defer { renderingCalibrationTone = false }
         // High-level chain order:
         // 0. Dual-rate audio chain boundary (when enabled, audio domain
         //    runs at the lower audio rate INSIDE the boundary; otherwise
@@ -3165,7 +3199,7 @@ final class MPXGenerator {
         // not colour upstream analysis readouts (widener, mid/side, scopes).
         let analysisStereo = stereo
 
-        if !processingBypass {
+        if !audioStagesBypassed {
             let protected = protectStereoImage(
                 inputL: stereo.referenceLeft,
                 inputR: stereo.referenceRight,
@@ -3190,7 +3224,7 @@ final class MPXGenerator {
         // transient that overshoots loses (part of) its pre-emphasis boost
         // for a few ms instead of being clipped or dragging the whole mix
         // down in the broadband limiter below. Default off -> not invoked.
-        if hfLimiterEnabled && !processingBypass {
+        if hfLimiterEnabled && !audioStagesBypassed {
             let limited = hfLimiter.process(
                 flatL: flatL, flatR: flatR,
                 emphasizedL: stereo.left, emphasizedR: stereo.right)
@@ -3203,13 +3237,13 @@ final class MPXGenerator {
         // pull gain across the whole signal and dull it. De-emphasis-correct
         // (acts on the pre-emphasized HF). Default off -> not invoked ->
         // bit-identical to the prior chain.
-        if hfClipperEnabled && !processingBypass {
+        if hfClipperEnabled && !audioStagesBypassed {
             let hf = hfClipper.process(left: stereo.left, right: stereo.right)
             stereo.left = hf.0
             stereo.right = hf.1
         }
 
-        if preEncodeAudioLimiterEnabled && !processingBypass {
+        if preEncodeAudioLimiterEnabled && !audioStagesBypassed {
             let limited = preEncodeAudioLimiter.process(left: stereo.left, right: stereo.right)
             stereo.left = limited.0
             stereo.right = limited.1
@@ -3243,8 +3277,9 @@ final class MPXGenerator {
     }
 
     private func processProgramStereo(leftIn: Float, rightIn: Float) -> ProgramStereoState {
-        var left = leftIn * inputGain
-        var right = rightIn * inputGain
+        let gainIn: Float = renderingCalibrationTone ? 1.0 : inputGain
+        var left = leftIn * gainIn
+        var right = rightIn * gainIn
 
         if monoMode {
             let mono = (left + right) * 0.5
@@ -3253,7 +3288,7 @@ final class MPXGenerator {
         }
         let inputActivity = max(fabsf(left), fabsf(right))
 
-        if !processingBypass {
+        if !audioStagesBypassed {
             // Phase rotation: reduce waveform asymmetry before AGC
             if phaseRotationEnabled {
                 let rotated = phaseRotator.process(left: left, right: right)
@@ -3285,7 +3320,7 @@ final class MPXGenerator {
         let referenceLeft = left
         let referenceRight = right
 
-        if !processingBypass {
+        if !audioStagesBypassed {
             let trimmed = hfTrim.process(left: left, right: right)
             left = trimmed.0
             right = trimmed.1
@@ -3356,7 +3391,7 @@ final class MPXGenerator {
         // composite clipper into audio-band cubic IM that decodes as crosstalk,
         // while the pre-emphasis-domain HF limiter does not engage at those
         // levels. Keep it.
-        if encoderHFGuardEnabled {
+        if encoderHFGuardEnabled && !renderingCalibrationTone {
             let guarded = processEncoderHFGuard(left: left, right: right)
             left = guarded.0
             right = guarded.1
@@ -3554,6 +3589,11 @@ final class MPXGenerator {
 
         // Keep the loudness work in the audio composite before the calibrated
         // pilot/RDS subcarriers are added back into the final MPX waveform.
+        // Calibration tone: the drive IS the budget, so a 0 dBFS tone sits at
+        // exactly 100% of the available audio modulation (deviation is then
+        // `mpx_deviation_khz x budget x 10^(level/20)`, plus pilot/RDS).
+        let compositeBudget = max(0.05, thresholds.audioCeiling)
+        let driveNow = renderingCalibrationTone ? compositeBudget : finalDrive
         let rawAudioComposite: Float
         if ssbStereoEnabled && ssbStereoConfigured {
             // SSB Stereo: SSB-leaning stereo assembly. Base and diff ride
@@ -3563,14 +3603,14 @@ final class MPXGenerator {
             // protects -- are exactly as in the classic path.
             let ssb = ssbStereo.process(
                 base: base, diff: diff, sub: sub, cos2: pilotOsc.cos2x())
-            rawAudioComposite = (ssb.base + ssb.stereo) * deviationScale * finalDrive
+            rawAudioComposite = (ssb.base + ssb.stereo) * deviationScale * driveNow
         } else {
             rawAudioComposite = Self.makeDrivenAudioComposite(
                 base: base,
                 diff: diff,
                 sub: sub,
                 deviationScale: deviationScale,
-                finalDrive: finalDrive
+                finalDrive: driveNow
             )
         }
         let audioCompositeShaperActive = audioCompositeSoftClipEnabled
@@ -3594,9 +3634,13 @@ final class MPXGenerator {
         // operator's ceiling/threshold pair keeps its knee width while the
         // audio composite may use the whole budget, exactly as the pre-0.45
         // shaper let it -- deviation stays where operators calibrated it).
-        let compositeBudget = max(0.05, thresholds.audioCeiling)
+        // Calibration tone: the peak stages stay in the path for their DELAY
+        // (pilot/RDS alignment) but are made transparent by scaling the tone
+        // far below their thresholds -- a sine at any level is a calibrated
+        // level, never a clipping subject.
+        let calibrationHeadroom: Float = renderingCalibrationTone ? 8.0 : 1.0
         if compositeClipperEnabled {
-            let scale = compositeBudget / compositeClipper.ceilingLinear
+            let scale = (compositeBudget / compositeClipper.ceilingLinear) * calibrationHeadroom
             audioComposite = compositeClipper.process(audioComposite / scale) * scale
         }
 
@@ -3615,7 +3659,7 @@ final class MPXGenerator {
         ).0
 
         // BS.412 MPX power limiter — rolling average power limit for EU compliance.
-        if bs412Enabled {
+        if bs412Enabled && !renderingCalibrationTone {
             audioComposite = bs412Limiter.process(audioComposite)
         }
 
@@ -3637,7 +3681,7 @@ final class MPXGenerator {
             // starts where the clipper's ceiling ends, so it rides only the
             // guard overshoot, and its 0.35 ms attack leakage stays inside the
             // 1.5% the shaper tolerates before it would clip at 1x rate.
-            let scale = (0.985 * compositeBudget) / lookaheadLimiter.threshold
+            let scale = ((0.985 * compositeBudget) / lookaheadLimiter.threshold) * calibrationHeadroom
             audioComposite = lookaheadLimiter.process(audioComposite / scale) * scale
         }
 

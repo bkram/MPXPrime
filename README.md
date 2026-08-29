@@ -20,7 +20,7 @@ The macOS GUI is organised into these sections. The Linux build has no GUI — t
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
 - `Processing`: Overview, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), experimental single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, Stereo Widener, PrimeBass, Bass Clipper, DC Clipper, HF Limiter / Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control, and the experimental SSB Stereo encoder (SSB-leaning stereo encoding) on top of the soft-clipper), BS.412, Final Stage
 - `RDS`: status (master enable + live snapshot), identity (PI / PTY / PTYN / ECC + PS banks + runtime flags TP / TA / MS / DI), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (injection level + frequency + Gaussian shaping)
-- `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level — replaces the audio input live when enabled, ⌘T)
+- `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level where 0 dBFS = 100% audio modulation -- a calibration source that bypasses the processing and shows the expected deviation; replaces the audio input live when enabled, ⌘T)
 - `Settings`: configuration path, interfaces, output mode (MPX composite vs processed audio), audio engine, spectrum options
 - Separate windows: `Scopes`, `Spectrum` (composite spectrum with FM band captions -- Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz RDS, SCA), `Levels`, `Help`
 

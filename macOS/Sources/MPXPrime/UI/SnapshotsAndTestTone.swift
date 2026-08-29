@@ -445,13 +445,19 @@ struct TestToneView: View {
                         .frame(width: 96, alignment: .leading)
                 }
                 Text(
-                    "Default -20 dBFS matches broadcast line-level reference. "
-                    + "Tone enters the chain pre-AGC, so the input meter on "
-                    + "the Monitoring tab will read the configured level "
-                    + "(modulo the chain's response to the signal)."
+                    "Calibration source: 0 dBFS = 100% of the audio modulation "
+                    + "left after the pilot/RDS reservation. The tone bypasses "
+                    + "AGC, EQ, multiband, enhancers, clippers, limiters and Final "
+                    + "Drive, and a sine is pre-compensated for the pre-emphasis "
+                    + "curve, so the deviation below is what a modulation monitor "
+                    + "reads at any frequency."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                Text(expectedDeviationText)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Expected deviation")
             }
         }
     }
@@ -491,6 +497,24 @@ struct TestToneView: View {
                 }
             }
         }
+    }
+
+    /// Audio deviation a modulation monitor should read for the current
+    /// level: `mpx_deviation_khz x budget x 10^(level/20)`, where the budget
+    /// is the audio-composite headroom after the pilot/RDS reservation (the
+    /// same arithmetic as `MPXGenerator.makeFinalCompositeThresholds` with
+    /// 0 dB output gain). Pilot and RDS add on top at their injection levels.
+    private var expectedDeviationText: String {
+        let c = model.config
+        let outputGain = max(1.0, pow(10.0, c.outputGainDB / 20.0))
+        let rdsAmplitude = c.enRDS && !c.monoMode ? c.rdsLevel / 75.0 : 0.0
+        let pilotAmplitude = c.monoMode ? 0.0 : c.pilotLevel
+        let budget = max(0.0, (0.98 / outputGain) - pilotAmplitude - rdsAmplitude - 0.02)
+        let audioKHz = c.mpxDeviationKHz * budget * pow(10.0, c.testToneLevelDB / 20.0)
+        let subcarrierKHz = c.mpxDeviationKHz * (pilotAmplitude + rdsAmplitude)
+        return String(
+            format: "Expected: %.1f kHz audio deviation (+ %.1f kHz pilot/RDS = %.1f kHz peak)",
+            audioKHz, subcarrierKHz, audioKHz + subcarrierKHz)
     }
 
     private func presetLabel(for freq: Double) -> String {

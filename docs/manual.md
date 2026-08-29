@@ -240,6 +240,10 @@ Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudne
 - Source too quiet → AGC pushing 8+ dB → noise floor lifts, breathing on quiet program. Boost upstream.
 - AGC off / bypassed → multiband and final stage see widely-varying program levels → pumping on dense material. Leave AGC on.
 
+### Test Tone (calibration source)
+
+`Tools` -> `Test Tone` (`source_mode = tone`, `test_tone_*`) replaces the audio input with a sine, pink or white source, live. Since 0.45 it is a **calibration source, not program**: the tone bypasses every gain-changing stage -- input gain, AGC, EQ, multiband / Advanced Dynamics, enhancers, bass / HF / audio clippers, HF and Audio Limiters, Final Drive, the composite clipper, BS.412 and the final limiter -- while the delay-bearing stages stay in the path so pilot and RDS remain aligned. **0 dBFS = 100% of the audio modulation** left after the pilot/RDS reservation, and the scale is linear in dB, so the composite audio deviation is exactly `mpx_deviation_khz x budget x 10^(level/20)` (budget ~0.85 with 8% pilot and 2 kHz RDS at 75 kHz: -20 dBFS gives ~6.4 kHz of audio deviation plus ~8 kHz of pilot/RDS). A sine is pre-compensated for the pre-emphasis curve, so it reads the same deviation at 400 Hz, 1 kHz or 10 kHz; pink / white noise are peak-normalised and not compensated. The Test Tone card shows the expected audio and total deviation for the current level, pilot and RDS settings -- compare it with the Meter or a modulation monitor to calibrate the exciter. Before 0.45 the tone ran through the whole processing chain, so any level was lifted by the AGC into the clipper and produced full, clipped deviation ("way too loud, and the level slider does nothing"); `TestToneGeneratorTests` now pins level-in / deviation-out.
+
 ### Final-stage presets and clipper workflow
 
 The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms — restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.

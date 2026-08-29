@@ -11,6 +11,23 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Test tone is now a calibration source (fixes "tone way too loud, level
+  slider does nothing").** The tone used to enter the full processing
+  chain, so the AGC lifted any level to its target and Final Drive pushed
+  it into the composite clipper: every setting produced full, clipped
+  deviation. Now a tone sample bypasses input gain, AGC, EQ, multiband /
+  Advanced Dynamics, enhancers, all clippers and limiters, Final Drive and
+  BS.412 (delay-bearing stages stay in the path so pilot/RDS remain
+  aligned), and **0 dBFS = 100% of the audio modulation** left after the
+  pilot/RDS reservation -- deviation = `mpx_deviation_khz x budget x
+  10^(level/20)`, linear in dB. Sines are pre-compensated for the
+  pre-emphasis curve (same level at 400 Hz, 1 kHz, 10 kHz). The Test Tone
+  card shows the expected audio and total deviation; the dashboard label
+  says what 0 dBFS means. `TestToneGeneratorTests` pins level-in /
+  deviation-out (within 0.25 dB), drive/processing independence, frequency
+  flatness, routing-mode equality, and that the input path still responds
+  to Final Drive.
+
 - **Chain pruning, measured (less is more).** Removed: the 19 kHz audio-path
   pilot notch after the encoder FIR (receiver gate identical to 0.01 dB with
   and without it -- the FIR's >80 dB stopband already covers 19 kHz) and the

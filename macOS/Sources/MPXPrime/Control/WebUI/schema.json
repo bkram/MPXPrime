@@ -2254,7 +2254,7 @@
   "test_tone_level_db": {
    "decimals": 1,
    "kind": "slider",
-   "label": "Level",
+   "label": "Level (0 dBFS = 100% audio modulation)",
    "max": 0.0,
    "min": -60.0,
    "step": 0.5,

@@ -11,6 +11,29 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **The Final-MPX Safety Limiter is now a true look-ahead limiter -- nothing
+  above its threshold reaches the 1x safety soft-clip any more.** Its detector
+  was the instantaneous |composite| into a 0.35 ms one-pole; on program whose
+  peaks move faster than that it tracked a blurred target, so the gain never
+  reached the depth the exiting peak needed and the 5 ms delay line only
+  shifted the timing. `--verify-final-ride` showed 0.87 dB of dense program
+  leaking past it on Music - Loud while it reported 0.02 dB of gain reduction
+  (hot chain: 5.8 dB reported, 2.7 dB leaked) -- exactly the 1x-shaper
+  clipping the 0.45 final-stage rework set out to remove. `LookaheadLimiter`
+  now feeds a `SlidingWindowMax` (Lemire deque, shared primitive in
+  `DSPSupport.swift`) over the sample leaving the delay line plus everything
+  still inside it, attacks with a time constant of window / 4 and floors the
+  gain at the required value. Result: safety-clip column 0.00 in every row of
+  the isolation table, `SAFETY CLIP` telemetry 0.0 on dense program, Music -
+  Loud honestly reports ~1 dB of ride on `bright_dense`, HF SINAD unchanged to
+  slightly better. Because the limiter no longer leaks, its threshold moved
+  from 0.985 x budget back onto the budget (+0.13 dB of composite level), and
+  the verifier's "safety limiter doing significant work" bounds moved from
+  2 / 3 dB to 3 / 4 dB (the honest figure on the hot Verification.ini config
+  is 2.6 dB). New `LookaheadLimiterTests` pin the contract (+0.000 dB worst
+  case at 12 dB overdrive, burst leading edge caught before it arrives, pure
+  delay below threshold). All composite baselines recaptured.
+
 - **`--verify-final-ride`: attributes the Final-MPX limiter's duty.** One
   composite-clipper candidate is switched off per row (pilot / RDS / stereo
   guard, 8x / 32x oversampling, knee width, 2 ms clipper look-ahead, the final

@@ -334,3 +334,60 @@ struct KWeightingFilter {
         shelf.reset()
     }
 }
+
+/// Sliding-window maximum over the last `windowLength` pushed values (Lemire
+/// monotonic deque): O(1) amortised per push, no allocation after
+/// `configure`. Used by look-ahead limiters as the detector that knows every
+/// peak inside their delay line, so the gain can be at depth BEFORE the peak
+/// leaves the line -- an instantaneous-|x| detector with a smoothed attack
+/// tracks a blurred target and leaks the peaks it was meant to catch.
+struct SlidingWindowMax {
+    private var values: [Float] = []
+    private var indices: [Int] = []
+    private var capacity: Int = 0
+    private var head: Int = 0
+    private var tail: Int = 0
+    private var counter: Int = 0
+    private(set) var windowLength: Int = 0
+
+    mutating func configure(windowLength: Int) {
+        self.windowLength = max(1, windowLength)
+        capacity = self.windowLength + 2
+        values = [Float](repeating: 0.0, count: capacity)
+        indices = [Int](repeating: 0, count: capacity)
+        reset()
+    }
+
+    mutating func reset() {
+        head = 0
+        tail = 0
+        counter = 0
+    }
+
+    /// Push one value; returns the maximum over it and the previous
+    /// `windowLength - 1` values.
+    @inline(__always)
+    mutating func push(_ value: Float) -> Float {
+        guard capacity > 0 else { return value }
+        let current = counter
+        counter += 1
+        let oldestValid = current - windowLength + 1
+        while head != tail, indices[head] < oldestValid {
+            head += 1
+            if head >= capacity { head = 0 }
+        }
+        while head != tail {
+            let prevTail = tail == 0 ? capacity - 1 : tail - 1
+            if values[prevTail] <= value {
+                tail = prevTail
+            } else {
+                break
+            }
+        }
+        values[tail] = value
+        indices[tail] = current
+        tail += 1
+        if tail >= capacity { tail = 0 }
+        return values[head]
+    }
+}

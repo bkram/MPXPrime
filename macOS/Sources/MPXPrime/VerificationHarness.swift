@@ -329,9 +329,13 @@ func runVerificationHarness(
     // clipper alone cannot bound the peak). ~1.5 dB on bright_dense is its
     // normal duty, not a safety event; the old 0.25 / 1.0 dB bounds date
     // from when it sat idle behind the shaper.
-    } else if worstSafety > 3.0 { naturalResult = 2
+    // 0.45 A1b: the limiter's detector is now a windowed look-ahead with a gain
+    // floor, so its reported GR is the TRUE overshoot it removes (the old
+    // detector under-reported by the amount it leaked to the shaper). The
+    // hot Verification.ini config reads 2.6 dB honestly; bounds moved 2/3 -> 3/4.
+    } else if worstSafety > 4.0 { naturalResult = 2
     } else if worstMargin < -0.25 { naturalResult = 2
-    } else if worstMargin < 0.0 || worstSafety > 2.0 { naturalResult = 1
+    } else if worstMargin < 0.0 || worstSafety > 3.0 { naturalResult = 1
     } else { naturalResult = 0 }
 
     let result: Int32

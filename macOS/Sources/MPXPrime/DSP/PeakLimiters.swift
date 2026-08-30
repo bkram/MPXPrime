@@ -382,6 +382,16 @@ struct PreEncodeAudioLimiter {
     var latencySamples: Int { limiter.latencySamples }
 }
 
+/// Final-MPX look-ahead limiter (the safety gain ride behind the composite
+/// clipper). Since 0.45 (chain review A1b) the detector is a sliding-window
+/// maximum over every sample inside the delay line, so the required gain is
+/// known `lookaheadSamples` before the peak leaves the line and the attack
+/// (time constant = window / 4) has settled by then; a hard floor guarantees
+/// the exiting sample never exceeds the threshold. The previous design fed an
+/// instantaneous |x| into a 0.35 ms one-pole, which on program whose peaks
+/// move faster than 0.35 ms tracked a blurred target and leaked: Music - Loud
+/// reported 0.02 dB of GR while 0.87 dB of dense program reached the 1x safety
+/// shaper (2.7 dB on a hot chain riding 5.8 dB) -- `--verify-final-ride`.
 struct LookaheadLimiter {
     var enabled: Bool = false
     var threshold: Float = 0.98
@@ -393,6 +403,7 @@ struct LookaheadLimiter {
     var releaseCoeff: Float = 0.0
     var holdSamples: Int = 0
     var holdCounter: Int = 0
+    private var windowMax = SlidingWindowMax()
 
     mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool) {
         self.enabled = enabled
@@ -406,19 +417,20 @@ struct LookaheadLimiter {
             delayLine = lookaheadSamples > 0 ? Array(repeating: 0.0, count: lookaheadSamples) : []
             writeIndex = 0
         }
+        // The window covers the sample leaving the line now plus everything
+        // still inside it (lookaheadSamples + 1 values).
+        windowMax.configure(windowLength: lookaheadSamples + 1)
 
-        let attackS = 0.00035 as Float
+        // Attack settles to 98% within the look-ahead window; without
+        // look-ahead fall back to the 0.35 ms feedback attack.
+        let attackS = lookaheadSamples > 0 ? Float(lookaheadSamples) / (4.0 * sr) : 0.00035
         let releaseS = 0.095 as Float
         attackCoeff = expf(-1.0 / (attackS * sr))
         releaseCoeff = expf(-1.0 / (releaseS * sr))
-        // Hold must outlast the look-ahead delay: the detector sees a peak
-        // `lookaheadSamples` before it leaves the delay line, so a shorter
-        // hold lets the release start lifting the gain before the peak has
-        // actually passed the gain stage (measured as ~1% overshoot at the
-        // old fixed 4 ms hold against a 5 ms look-ahead).
-        holdSamples = max(
-            Int((0.004 * sr).rounded()),
-            lookaheadSamples + Int((0.001 * sr).rounded()))
+        // Short hold after the last attack so successive peaks do not release
+        // between them; the windowed detector already holds the gain for as
+        // long as the peak is inside the line.
+        holdSamples = Int((0.004 * sr).rounded())
         holdCounter = 0
         if !enabled {
             gain = 1.0
@@ -428,7 +440,6 @@ struct LookaheadLimiter {
     mutating func process(_ x: Float) -> Float {
         guard enabled else { return x }
 
-        let detector = fabsf(x)
         var delayed = x
         if lookaheadSamples > 0, !delayLine.isEmpty {
             delayed = delayLine[writeIndex]
@@ -438,10 +449,12 @@ struct LookaheadLimiter {
                 writeIndex = 0
             }
         }
+        // Largest peak among the sample leaving now and all samples queued.
+        let peakAhead = windowMax.push(fabsf(x))
 
         var targetGain: Float = 1.0
-        if detector > threshold {
-            targetGain = threshold / max(1e-9, detector)
+        if peakAhead > threshold {
+            targetGain = threshold / max(1e-9, peakAhead)
         }
         targetGain = clampf(targetGain, 0.0, 1.0)
 
@@ -453,6 +466,9 @@ struct LookaheadLimiter {
         } else {
             gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * targetGain)
         }
+        // Floor: whatever the smoother's residual lag, the exiting sample must
+        // not exceed the threshold (the shaper behind us runs at 1x).
+        gain = min(gain, targetGain)
         return delayed * gain
     }
 

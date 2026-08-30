@@ -3707,11 +3707,13 @@ final class MPXGenerator {
         // Pilot and RDS are injected after all of this at constant
         // amplitude (Omnia / Orban / Stereotool practice).
         if limitEnabled {
-            // Threshold mapped just under the budget (-0.13 dB): the limiter
-            // starts where the clipper's ceiling ends, so it rides only the
-            // guard overshoot, and its 0.35 ms attack leakage stays inside the
-            // 1.5% the shaper tolerates before it would clip at 1x rate.
-            let scale = ((0.985 * compositeBudget) / lookaheadLimiter.threshold) * calibrationHeadroom
+            // Threshold mapped exactly onto the budget: the limiter starts
+            // where the clipper's ceiling ends and rides only the guard
+            // overshoot. Its windowed look-ahead detector plus gain floor
+            // (0.45, A1b) mean nothing above the threshold leaves it, so the
+            // 0.985 margin that used to absorb the old detector's attack
+            // leakage is no longer needed and the shaper behind it sits idle.
+            let scale = (compositeBudget / lookaheadLimiter.threshold) * calibrationHeadroom
             audioComposite = lookaheadLimiter.process(audioComposite / scale) * scale
         }
 

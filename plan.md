@@ -328,12 +328,15 @@ Order of work (payoff per effort; each item measured before it is heard):
   look-ahead is the big lever (kernel GR 13.7 -> 3.1 dB, final ride 5.8 -> 0.08 dB
   on the hot chain). NEW DEFECT: `LookaheadLimiter` leaks -- Music - Loud reports
   0.02 dB limiter GR while 0.87 dB of dense program reaches the safety shaper
-  (hot chain: 5.8 dB ride, 2.7 dB still leaking). **A1b** (next, before A2):
-  reproduce at unit level (`LookaheadLimiter` on a bright_dense-like burst: output
-  must never exceed threshold by > 0.1 dB with 5 ms look-ahead), check the
-  window-max / attack / hold / gain-smoothing path and the `safetyClipDB` vs GR
-  telemetry definitions, fix, then re-run the table; consider enabling the
-  clipper's look-ahead (2 ms) in Music - Loud once the limiter is honest.
+  (hot chain: 5.8 dB ride, 2.7 dB still leaking). **A1b DONE 2026-08-30:** the
+  detector was instantaneous |x| into a 0.35 ms one-pole; now a `SlidingWindowMax`
+  over the delay line + attack = window/4 + gain floor. Safety-clip column 0.00
+  everywhere, honest GR (Music - Loud ~1.0 dB on bright_dense), threshold back on
+  the budget, verifier bounds 3/4 dB, `LookaheadLimiterTests`. Open follow-up for
+  A2/A3: the clipper's own 2 ms look-ahead cuts the ride to 0.08 dB on the hot
+  chain -- evaluate enabling it in Music - Loud with the HF gate (it trades clipper
+  density for a gain ride), and apply the same windowed detector to the
+  pre-encode limiter (B5).
 - **B1** wideband AGC attack default 6 -> 150 ms, presets 100-200 ms, burst test,
   `agcGainSwingDBPer100ms` verifier metric.
 - **B2** real multi-slope release in `MonoCompressor` (platform level, fast toward

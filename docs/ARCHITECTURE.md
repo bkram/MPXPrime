@@ -283,7 +283,7 @@ Within the main audio path, MPX Prime Studio runs:
 
 1. Input gain and mono fold
 2. **Phase rotation** (4-pole allpass, optional)
-3. Wideband AGC
+3. Wideband AGC (K-weighted RMS rider; attack default 150 ms since 0.45 -- the 6 ms it shipped with was limiter-fast and ducked program 3.4 dB on a 30 ms drum hit, 0.02 dB now; profiles 100-200 ms; `--verify` flags < 50 ms)
 4. Input HPF
 5. Program lowpass
 6. HF trim

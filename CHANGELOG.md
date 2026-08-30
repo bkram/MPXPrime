@@ -11,6 +11,20 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Wideband AGC attack: 150 ms default (was 6 ms), profiles 100-200 ms (were
+  45-80).** The AGC is a gain rider; peaks belong to the Audio Limiter and
+  the composite clipper. A 6 ms attack on an RMS detector is limiter-fast:
+  `AGCDetectorTests.burstDoesNotDuckTheProgram` measures a 30 ms, +10 dB drum
+  hit on settled program ducking the whole mix by 3.35 dB at 6 ms and by
+  0.02 dB at 150 ms (Orban's "hole punching"; the Omnia.11 manual: fast AGC
+  attacks "cause sudden downward level shifts on peaks ... best controlled
+  later in the Limiter"). A sustained +10 dB step is still levelled to the
+  same depth -- the attack changes speed, not depth (`sustainedStepStillLevels`).
+  Every Format Profile is lint-checked to use >= 100 ms; `--verify` flags an
+  AGC attack under 50 ms as TIGHT; the GUI / dashboard attack slider now runs
+  to 500 ms. Preset baseline recaptured (no metric moved beyond tolerance --
+  the change is in transient handling, which the HF gate reads as unchanged).
+
 - **The Final-MPX Safety Limiter is now a true look-ahead limiter -- nothing
   above its threshold reaches the 1x safety soft-clip any more.** Its detector
   was the instantaneous |composite| into a 0.35 ms one-pole; on program whose

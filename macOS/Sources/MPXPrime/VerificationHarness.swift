@@ -163,6 +163,13 @@ func runVerificationHarness(
     var anyOverBudget = false
     var scenarioMetrics: [(VerificationScenario, VerificationMetrics)] = []
     var qualityWarnings: [String] = []
+    if config.widebandAGCEnabled, config.widebandAGCAttackMS < 50.0 {
+        // 0.45 B1: the AGC is a gain rider; peaks belong to the limiter. A
+        // limiter-fast attack ducks whole-program level on every drum hit and
+        // holds it for the release (Orban WP "hole punching").
+        qualityWarnings.append(
+            "wideband AGC attack \(String(format: "%.0f", config.widebandAGCAttackMS)) ms is limiter-fast (< 50 ms); profiles use 100-200 ms")
+    }
 
     for scenario in scenarios {
         let metrics = verifyScenario(

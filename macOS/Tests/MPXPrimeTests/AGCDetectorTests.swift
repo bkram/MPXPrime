@@ -56,6 +56,67 @@ struct AGCDetectorTests {
         return agc.telemetry
     }
 
+    // MARK: - Attack: a gain rider, not a peak controller (0.45, chain review B1)
+
+    /// Gain dip during a 30 ms, +10 dB burst on settled program. The AGC must
+    /// leave transients to the limiter (Omnia.11 manual; Orban WP "hole
+    /// punching"): at the 150 ms default the dip is under 1.5 dB, while the
+    /// pre-0.45 6 ms default dug several dB and held them for the release.
+    private func burstDipDB(attackMS: Float) -> Float {
+        var agc = makeAGC(kWeighting: true, attackMS: attackMS, releaseMS: 1_000.0)
+        let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+        let settle = Int(Double(sampleRate) * 4.0)
+        let burstStart = settle
+        let burstEnd = settle + Int(Double(sampleRate) * 0.030)
+        var gainBefore: Float = 0.0
+        var minGainDuring: Float = 100.0
+        for i in 0..<(burstEnd + 4_800) {
+            let amp: Double = (i >= burstStart && i < burstEnd) ? 0.1 * 3.162 : 0.1  // -20 dBFS, +10 dB burst
+            let s = Float(amp * sin(omega * Double(i)))
+            _ = agc.process(left: s, right: s)
+            if i == burstStart - 1 { gainBefore = agc.telemetry.gainDB }
+            if i >= burstStart, i < burstEnd + 4_800 { minGainDuring = min(minGainDuring, agc.telemetry.gainDB) }
+        }
+        return gainBefore - minGainDuring
+    }
+
+    @Test func burstDoesNotDuckTheProgram() {
+        let slow = burstDipDB(attackMS: 150.0)
+        let fast = burstDipDB(attackMS: 6.0)
+        print(String(format: "AGC 30 ms +10 dB burst: gain dip %.2f dB at 150 ms attack, %.2f dB at 6 ms", slow, fast))
+        #expect(slow < 1.5, "150 ms attack ducked the program by \(slow) dB on a 30 ms burst")
+        #expect(fast > slow + 1.0, "the test must be sensitive: 6 ms attack should dip clearly more (\(fast) vs \(slow) dB)")
+    }
+
+    @Test func sustainedStepStillLevels() {
+        // A genuine +10 dB level change must still be levelled: the slower
+        // attack changes how fast the rider gets there, not how far. After 2 s
+        // the 150 ms and 6 ms attacks must have reached the same depth
+        // (window + clamps decide it), and that depth must be real.
+        func levelled(attackMS: Float) -> Float {
+            var agc = makeAGC(kWeighting: true, attackMS: attackMS, releaseMS: 1_000.0)
+            let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+            let settle = Int(Double(sampleRate) * 4.0)
+            for i in 0..<settle { let s = Float(0.05 * sin(omega * Double(i))); _ = agc.process(left: s, right: s) }
+            let gainBefore = agc.telemetry.gainDB
+            let stepFrames = Int(Double(sampleRate) * 2.0)
+            for i in 0..<stepFrames { let s = Float(0.05 * 3.162 * sin(omega * Double(i))); _ = agc.process(left: s, right: s) }
+            return gainBefore - agc.telemetry.gainDB
+        }
+        let slow = levelled(attackMS: 150.0)
+        let fast = levelled(attackMS: 6.0)
+        print(String(format: "AGC sustained +10 dB step after 2 s: levelled %.2f dB at 150 ms attack, %.2f dB at 6 ms", slow, fast))
+        #expect(slow > 3.0, "a sustained +10 dB step must be levelled by a real amount; moved \(slow) dB")
+        #expect(abs(slow - fast) < 0.5, "attack must change speed, not depth: \(slow) vs \(fast) dB")
+    }
+
+    @Test func everyFormatProfileUsesARiderAttack() {
+        for preset in PresetCatalog.finalStagePresets {
+            #expect(preset.agcAttackMS >= 100.0, "final-stage preset \(preset.id) has a limiter-fast AGC attack (\(preset.agcAttackMS) ms)")
+        }
+        #expect(AppConfig().widebandAGCAttackMS >= 100.0)
+    }
+
     // MARK: - K-weighting
 
     @Test func kWeightingBoostsMidsOverLows() {

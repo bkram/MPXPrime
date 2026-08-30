@@ -144,12 +144,14 @@ struct AppConfigDefaultsTests {
 
     @Test func agcDefaultsMatchPopMediumTuning() {
         // Pop Medium per Orban 8500/8700i: -14 LUFS target, 20 dB range,
-        // 6 ms attack, 1.5 s release.
+        // 1.5 s release; attack 150 ms since 0.45 (a gain RIDER -- the 6 ms
+        // it shipped with was limiter-fast and ducked program on drum hits,
+        // see AGCDetectorTests.burstDoesNotDuckTheProgram).
         let cfg = AppConfig()
         #expect(abs(cfg.widebandAGCTargetDB - (-14.0)) < 0.01,
             "AGC target must be -14 dB; got \(cfg.widebandAGCTargetDB)")
-        #expect(abs(cfg.widebandAGCAttackMS - 6.0) < 0.01,
-            "AGC attack must be 6 ms; got \(cfg.widebandAGCAttackMS)")
+        #expect(abs(cfg.widebandAGCAttackMS - 150.0) < 0.01,
+            "AGC attack must be 150 ms; got \(cfg.widebandAGCAttackMS)")
         #expect(abs(cfg.widebandAGCReleaseMS - 1500.0) < 0.01,
             "AGC release must be 1500 ms; got \(cfg.widebandAGCReleaseMS)")
         #expect(abs(cfg.widebandAGCMaxGainDB - 10.0) < 0.01,

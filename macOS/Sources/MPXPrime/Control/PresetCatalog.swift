@@ -439,21 +439,24 @@ enum PresetCatalog {
         let preEncodeAudioLimiterEnabled: Bool
     }
 
+    // AGC attack 100-200 ms (0.45, chain review B1): the wideband AGC is a
+    // gain rider; peaks belong to the limiter. The 45-80 ms values it had
+    // ducked whole-program level on drum hits (Orban WP "hole punching").
     static let finalStagePresets: [FinalStagePreset] = [
         .init(id: "balanced", title: "Balanced Music",
-              agcEnabled: true, agcTargetDB: -16.0, agcAttackMS: 80.0,
+              agcEnabled: true, agcTargetDB: -16.0, agcAttackMS: 200.0,
               agcReleaseMS: 1200.0, agcMaxGainDB: 12.0, agcMinGainDB: -12.0,
               finalDriveDB: 6.0, preEncodeAudioLimiterEnabled: true),
         .init(id: "chr", title: "CHR / Dance",
-              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 55.0,
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 150.0,
               agcReleaseMS: 900.0, agcMaxGainDB: 10.0, agcMinGainDB: -9.0,
               finalDriveDB: 8.0, preEncodeAudioLimiterEnabled: true),
         .init(id: "punchy", title: "Punchy Music",
-              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 60.0,
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 150.0,
               agcReleaseMS: 1000.0, agcMaxGainDB: 11.0, agcMinGainDB: -10.0,
               finalDriveDB: 7.5, preEncodeAudioLimiterEnabled: true),
         .init(id: "speech", title: "Speech / Talk",
-              agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 45.0,
+              agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 100.0,
               agcReleaseMS: 750.0, agcMaxGainDB: 10.0, agcMinGainDB: -8.0,
               finalDriveDB: 4.5, preEncodeAudioLimiterEnabled: true)
     ]

@@ -210,7 +210,12 @@ struct AppConfig: Equatable {
     // ranges; widened release cap supplied by 0.10 program-dependent path.
     var widebandAGCEnabled: Bool = true
     var widebandAGCTargetDB: Double = -14.0
-    var widebandAGCAttackMS: Double = 6.0
+    // 150 ms: a gain RIDER, not a peak controller. 6 ms (pre-0.45) was
+    // limiter-fast on an RMS detector -- a 30 ms drum hit ducked the whole
+    // program by several dB and held it there for the release (Orban WP
+    // "hole punching"; Omnia.11: peaks belong to the limiter). Profiles use
+    // 100-200 ms; `AGCDetectorTests.burstDoesNotDuckTheProgram` pins it.
+    var widebandAGCAttackMS: Double = 150.0
     var widebandAGCReleaseMS: Double = 1500.0
     var widebandAGCMaxGainDB: Double = 10.0
     var widebandAGCMinGainDB: Double = -10.0

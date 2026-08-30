@@ -164,7 +164,7 @@ actually changed.
 For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:
 
 - **Phase Rotator** — voice waveform symmetrization (f ≈ 200 Hz)
-- **Wideband AGC** — long-term level riding (target ≈ -14 dBLU, range ±10 dB, K-weighted, program-dependent release)
+- **Wideband AGC** — long-term level riding (target ≈ -14 dBLU, range ±10 dB, K-weighted, program-dependent release, 150 ms attack -- a gain rider that leaves transients to the limiters; the 6 ms attack of earlier builds ducked the whole mix on every drum hit)
 - **Parametric EQ** — 4-band tonal shaping (shelf + 2 peaks + shelf)
 - **Multiband Compressor** — 3-band LR4 (or 5-band FIR on TX path); the `5_jazz` preset is a balanced starting point for mixed music + speech
 - **Downward Expander** — gates noise floor (threshold ≈ -45 dB, ratio 2.0:1)
@@ -205,7 +205,7 @@ The level adjustment lives upstream of MPX Prime Studio — in your studio mixer
 **2. Let AGC do the level-evening.** Open `Processing` → `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
 
 - `Platform Target` — the level the AGC drives the program *toward*. **Default −14 dBFS** (`wideband_agc_target_db`) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
-- `Enable Wideband AGC` — leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program.
+- `Enable Wideband AGC` — leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program. Keep `Attack` at 100 ms or slower (default 150 ms, profiles 100-200 ms): the AGC is a gain rider, and a fast attack turns every drum hit into a level dip that the release then drags out -- peaks are the Audio Limiter's and composite clipper's job. `--verify` flags an attack below 50 ms.
 
 Watch the `AGC GR` field in `DSP Overview` (or the AGC card itself). Healthy operation:
 

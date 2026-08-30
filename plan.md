@@ -337,8 +337,10 @@ Order of work (payoff per effort; each item measured before it is heard):
   chain -- evaluate enabling it in Music - Loud with the HF gate (it trades clipper
   density for a gain ride), and apply the same windowed detector to the
   pre-encode limiter (B5).
-- **B1** wideband AGC attack default 6 -> 150 ms, presets 100-200 ms, burst test,
-  `agcGainSwingDBPer100ms` verifier metric.
+- **B1** DONE 2026-08-30: AGC attack default 6 -> 150 ms, presets 100-200 ms,
+  burst test (30 ms +10 dB hit: 3.35 dB duck at 6 ms, 0.02 dB at 150 ms), step
+  test, preset lint, `--verify` TIGHT below 50 ms, slider to 500 ms. Skipped: the
+  `agcGainSwingDBPer100ms` verifier metric (optional; add if a later change needs it).
 - **B2** real multi-slope release in `MonoCompressor` (platform level, fast toward
   platform when > 3 dB deeper, 3x slower otherwise; drop the constant x1.1).
 - **A2** POCS re-projection passes (`mpx_clipper_iterations` 1-3, cascade of

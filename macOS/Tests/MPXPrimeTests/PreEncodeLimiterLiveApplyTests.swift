@@ -156,6 +156,30 @@ struct PreEncodeLimiterLiveApplyTests {
             "live threshold change must produce ≥1 dB GR delta; got Δ \(grAfter - grBefore) dB")
     }
 
+    /// Live-apply must reconfigure the limiter at the AUDIO-DOMAIN rate. Until
+    /// 0.45 the live path passed the MPX rate, so one threshold change made
+    /// the look-ahead delay (and attack / release / hold) 4x too long at the
+    /// 48 kHz audio domain. The latency figure is the observable: it must
+    /// be identical before and after a live threshold change and sized for
+    /// 48 kHz (1 ms look-ahead = 48 samples + the decimator's group delay).
+    @Test func liveApplyKeepsTheAudioDomainRate() {
+        var cfg = makeMinimalConfig(threshold: 0.95, releaseMS: 50.0)
+        cfg.dualRateAudioDomainEnabled = true
+        cfg.dualRateAudioDomainRateHz = 48_000.0
+        cfg.preEncodeLookaheadMS = 1.0
+        let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
+        let before = gen.preEncodeLimiterLatencySamples
+        #expect(before >= 48 && before < 48 + 96,
+            "1 ms look-ahead at 48 kHz plus the FIR decimator delay (<2 ms) expected, got \(before) samples")
+
+        var tight = cfg
+        tight.preEncodeThreshold = 0.8
+        gen.applyRuntimeConfig(MPXGenerator.makeRuntimeConfig(from: tight))
+        let after = gen.preEncodeLimiterLatencySamples
+        #expect(after == before,
+            "live-apply changed the limiter's rate: latency \(before) -> \(after) samples")
+    }
+
     @Test func preEncodeLimiterReleaseRespondsToLiveRuntimeConfig() {
         // Slow release vs fast release — push the limiter hard, then
         // drop input level. With a slow release, output recovery is

@@ -920,6 +920,9 @@ final class MPXGenerator {
 
     private var preEncodeAudioLimiterEnabled: Bool
     private var preEncodeAudioLimiter = PreEncodeAudioLimiter()
+    /// Audio-domain samples of delay the pre-encode limiter adds (look-ahead +
+    /// decimator group delay). Test hook for the live-apply rate contract.
+    var preEncodeLimiterLatencySamples: Int { preEncodeAudioLimiter.latencySamples }
     private var preEncodeThreshold: Float = 0.85
     private var preEncodeReleaseMS: Float = 50.0
     private var preEncodeBandlimitedResidualEnabled: Bool = false
@@ -1755,9 +1758,12 @@ final class MPXGenerator {
             // (not in RuntimeConfig), so the current values held on the audio
             // thread are authoritative; without passing them explicitly the
             // limiter would reset to defaults and silently drop the
-            // operator's lookahead config.
+            // operator's lookahead config. Audio-domain stage: configure at
+            // audioDomainSampleRate (until 0.45 this passed the MPX rate, so
+            // one live threshold change made look-ahead / attack / release /
+            // hold 4x too long and moved the HF detector from 4 kHz to 1 kHz).
             preEncodeAudioLimiter.configure(
-                sampleRate: sampleRate,
+                sampleRate: audioDomainSampleRate,
                 threshold: preEncodeThreshold,
                 releaseMS: preEncodeReleaseMS,
                 bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
@@ -2200,10 +2206,10 @@ final class MPXGenerator {
     private func updateToneGain() {
         var compensation: Float = 1.0
         if toneType == "sine", preemphasisUS > 0 {
-            let sr = max(8_000.0, audioDomainSampleRate)
-            let a = expf(-1.0 / (Float(preemphasisUS) * 1e-6 * sr))
-            let omega = twoPi * toneFreq / sr
-            let magnitude = sqrtf(max(1e-12, 1.0 - (2.0 * a * cosf(omega)) + (a * a))) / max(1e-9, 1.0 - a)
+            // The pre-emphasis filter is fitted to the analog curve, so the
+            // analog magnitude is the compensation.
+            let wt = twoPi * toneFreq * Float(preemphasisUS) * 1e-6
+            let magnitude = sqrtf(1.0 + (wt * wt))
             compensation = 1.0 / max(1e-6, magnitude)
         }
         toneGain = toneLevel * compensation

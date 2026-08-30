@@ -242,14 +242,23 @@ the full gate run and a baseline recapture where the composite moves.
   Fixed both sides, baselines recaptured, manual tells operators to re-check
   channel assignment with the left-routed test tone. Hardware confirmation on a
   car radio pending (operator).
-- **Step 2 -- receiver-side HF response** (FACT): the pre-encode limiter's 4x
-  decimator is a 6th-order Butterworth at 0.30 fs = 14.4 kHz (comments say
-  12th-order), -2.3 dB @14 kHz / -4 dB @14.9 kHz with only -27..-43 dB alias
-  rejection into 15-24 kHz -- a regression of the 48 kHz audio-domain move.
-  The matched-z pre-emphasis under-boosts another -0.6 dB @10 kHz / -1.4 dB
-  @15 kHz. Replace the decimator with `LinearPhaseFIRDecimator` (15.5 / 26 kHz,
-  ~95 taps), fit the pre-emphasis to the analog curve (<0.1 dB), gate with the
-  P2 sweep and `--verify-hf-transients`.
+- **Step 2 -- receiver-side HF response** DONE 2026-08-30 (FACT): the pre-encode
+  limiter's 4x decimator was a 6th-order Butterworth at 0.30 fs = 14.4 kHz
+  (comments said 12th-order), -2.3 dB @14 kHz / -4 dB @14.9 kHz with only
+  -27..-43 dB alias rejection -- a regression of the 48 kHz audio-domain move;
+  the matched-z pre-emphasis under-boosted another -0.6 dB @10 kHz / -1.4 dB
+  @15 kHz. Now: `LinearPhaseFIRDecimator` flat to 15 kHz / 80 dB by 16.5 kHz
+  (measured: a 15.5/22 kHz or 15.5/17.5 kHz design left the gap spill at
+  -31 dB -- the spill was the encoder FIR's pre-emphasised transition tail,
+  which the old Butterworth had been re-attenuating by accident, so the
+  decimator now defines the 15 kHz band edge in the emphasised domain);
+  `PreemphasisDesign` biquad fit (<0.05 dB) shared by encoder and decoder
+  (de-emphasis = exact inverse). Response sweep +/-0.5 dB to 14 kHz pinned.
+  Ride SINAD 42.6 -> 46.8 dB, hats unchanged, gap spill floor -39 -> -36
+  (gate -34). Side effect worth knowing: the receiver gate's 14 kHz tone now
+  reaches the composite clipper at full level and shows the stereo-guard M/S
+  imbalance (95 -> 31 dB) -- that is Step 4's B1, not an encoder loss. Also
+  fixed a live-apply bug (limiter reconfigured at the MPX rate).
 - **Step 3 -- multiband splitter** (FACT): `LinearPhaseMultibandSplitter5/3`
   discard `transitionHz`, hit the 2049-tap clamp -> 21.3 ms latency (docs say
   5.3 ms) and ~85 Hz brick-wall crossovers at 1.8 / 6.8 kHz (pre-ringing). Honour

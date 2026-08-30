@@ -393,13 +393,18 @@ func hfTransientChainVariants() -> [HFTransientChainVariant] {
 // Measured 2026-08-29 after the final-stage fix + HF limiter: clean/speech/
 // classical read 42-50 / 23-27 dB, music_loud 38 / 18 dB (its 8 dB drive
 // into the composite clipper is the loudness it promises; the loud gate is
-// therefore 5 dB lower). The 15-23 kHz spill floor of the chain is ~-39 dB
-// (encoder FIR + L-R sideband transition bands), gate 3 dB above it.
+// therefore 5 dB lower). The 15-23 kHz spill floor of the chain is ~-36 dB
+// (composite-clipper IM below 17 kHz plus the encoder FIR's transition tail;
+// everything the L/R limiter generates above 16.5 kHz is 80 dB down since the
+// 0.45 decimator, and the pilot region is protected by the clipper's guard).
+// The floor was ~-39 dB before Step 2 of the chain review only because the
+// old limiter decimator dropped 12-15 kHz by 2-4 dB before the clipper saw
+// it; the gate sits 2 dB above the measured floor of the corrected chain.
 let hfTransientMinRideSINADDB: Float = 30.0
 let hfTransientMinHatSINADDB: Float = 20.0
 let hfTransientMinHatSINADLoudDB: Float = 15.0
 let hfTransientMinCrestDeltaDB: Float = -6.0
-let hfTransientMaxGapSpillDB: Float = -36.0
+let hfTransientMaxGapSpillDB: Float = -34.0
 
 func runHFTransientVerification(
     baseConfig: AppConfig,

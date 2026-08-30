@@ -109,34 +109,48 @@ func effectiveEncoderLowpassHz(configured: Float, preemphasisUS: Int) -> Float {
     return min(configured, encoderCap)
 }
 
+/// FM pre-emphasis (50 / 75 us) matched to the analog network |1 + j omega tau|.
+///
+/// A direct-form biquad whose coefficients come from `PreemphasisDesign.fit`
+/// (MPXPrimeCore; the decoder's `DeemphasisFilter` is its exact inverse). See
+/// the design's documentation for why the textbook matched-z zero was replaced.
 struct PreemphasisFilter {
     var enabled: Bool = false
-    private var a: Float = 0.0
-    private var invOneMinusA: Float = 1.0
+    private var b0: Float = 1.0
+    private var b1: Float = 0.0
+    private var b2: Float = 0.0
+    private var a1: Float = 0.0
+    private var a2: Float = 0.0
     private var x1: Float = 0.0
+    private var x2: Float = 0.0
+    private var y1: Float = 0.0
+    private var y2: Float = 0.0
 
     mutating func configure(tauUS: Int, sampleRate: Float) {
         guard tauUS > 0 else {
             enabled = false
-            a = 0.0
-            invOneMinusA = 1.0
-            x1 = 0.0
+            b0 = 1.0; b1 = 0.0; b2 = 0.0; a1 = 0.0; a2 = 0.0
+            reset()
             return
         }
         enabled = true
-        let sr = max(8_000.0 as Float, sampleRate)
-        let tau = Float(tauUS) * 1e-6
-        a = expf(-1.0 / (tau * sr))
-        invOneMinusA = 1.0 / max(1e-9, (1.0 - a))
-        x1 = 0.0
+        let design = PreemphasisDesign.fit(tau: Double(tauUS) * 1e-6, sampleRate: Double(max(8_000.0, sampleRate)))
+        b0 = Float(design.b0); b1 = Float(design.b1); b2 = Float(design.b2)
+        a1 = Float(design.a1); a2 = Float(design.a2)
+        reset()
     }
 
     mutating func process(_ x: Float) -> Float {
         guard enabled else { return x }
-        let y = (x - a * x1) * invOneMinusA
-        x1 = zapDenorm(x)
+        let y = (b0 * x) + (b1 * x1) + (b2 * x2) - (a1 * y1) - (a2 * y2)
+        x2 = x1
+        x1 = x
+        y2 = y1
+        y1 = zapDenorm(y)
         return y
     }
 
-    mutating func reset() { x1 = 0.0 }
+    mutating func reset() {
+        x1 = 0.0; x2 = 0.0; y1 = 0.0; y2 = 0.0
+    }
 }

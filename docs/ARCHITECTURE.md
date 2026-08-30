@@ -78,9 +78,13 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │
 ├──► Pre-emphasis (L/R domain, region specific)
 │    ├── 50 us (Europe) / 75 us (Americas / Japan / Australia)
-│    └── Applied L/R immediately upstream of the pre-encode limiter
-│        so the limiter peak-controls the +10..12 dB HF-boosted signal
-│        (canonical Optimod / Stereotool placement)
+│    ├── Applied L/R immediately upstream of the pre-encode limiter
+│    │   so the limiter peak-controls the +10..12 dB HF-boosted signal
+│    │   (canonical Optimod / Stereotool placement)
+│    └── Network: `PreemphasisDesign` biquad fitted to the analog curve
+│        |1 + j omega tau| (<0.05 dB to 15.5 kHz at 48 kHz; the textbook
+│        matched-z zero was -1.4 dB at 15 kHz there). The decoder's
+│        de-emphasis is its exact inverse. (0.45)
 │
 ├──► HF limiter (L/R domain, gain-riding, default-ON in every profile since 0.45)
 │    └── Program-controlled pre-emphasis (Orban US 4,103,243, expired):
@@ -179,7 +183,7 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 
 ## Test tone (calibration source)
 
-When the engine renders the built-in test tone (`source_mode = tone`), `MPXGenerator` raises `renderingCalibrationTone` for each tone sample: `processProgramStereo` / `processAudioDomain` skip input gain and every dynamics / enhancement / clipping / limiting stage (the same gates `processingBypass` uses, plus the encoder HF guard), pre-emphasis and the encoder lowpass stay in (noise types need the band limit), and in `processFinalComposite` the drive is replaced by the audio-composite budget so 0 dBFS = 100% audio modulation, BS.412 is skipped, and the composite clipper and final limiter are kept in the path only for their delay (their inputs are scaled 8x below threshold so they pass the tone untouched and pilot/RDS alignment is preserved). Sine tones are pre-compensated for the pre-emphasis magnitude at the tone frequency (`updateToneGain`, the exact first-order digital response at the audio-domain rate). Pinned by `TestToneGeneratorTests`: composite peak = budget x 10^(level/20) within 0.25 dB across 0 / -6 / -20 / -40 dBFS, independent of Final Drive / AGC / processing, flat across 400 Hz / 1 kHz / 10 kHz, equal across mono / left / L=-R routing; the input path is checked to still respond to Final Drive.
+When the engine renders the built-in test tone (`source_mode = tone`), `MPXGenerator` raises `renderingCalibrationTone` for each tone sample: `processProgramStereo` / `processAudioDomain` skip input gain and every dynamics / enhancement / clipping / limiting stage (the same gates `processingBypass` uses, plus the encoder HF guard), pre-emphasis and the encoder lowpass stay in (noise types need the band limit), and in `processFinalComposite` the drive is replaced by the audio-composite budget so 0 dBFS = 100% audio modulation, BS.412 is skipped, and the composite clipper and final limiter are kept in the path only for their delay (their inputs are scaled 8x below threshold so they pass the tone untouched and pilot/RDS alignment is preserved). Sine tones are pre-compensated for the pre-emphasis magnitude at the tone frequency (`updateToneGain`, the analog curve `sqrt(1 + (2 pi f tau)^2)`, which the fitted pre-emphasis network matches). Pinned by `TestToneGeneratorTests`: composite peak = budget x 10^(level/20) within 0.25 dB across 0 / -6 / -20 / -40 dBFS, independent of Final Drive / AGC / processing, flat across 400 Hz / 1 kHz / 10 kHz, equal across mono / left / L=-R routing; the input path is checked to still respond to Final Drive.
 
 ## Output modes
 
@@ -297,10 +301,10 @@ Within the main audio path, MPX Prime Studio runs:
 14. Encoder HF guard (a fixed <= 2 dB stereo-linked HF ride ahead of the encoder lowpass; kept in 0.45 after measurement -- removing it cost 20-40 dB of receiver-side HF separation on the tone test because un-attenuated HF drives the composite clipper into audio-band IM, and the pre-emphasis-domain HF limiter does not engage at those levels)
 15. Encoder program lowpass (~15 kHz final audio-bandwidth guard before stereo encoding) — linear-phase FIR on TX, Butterworth cascade on monitor. (The 19 kHz audio-path notch that followed it was removed in 0.45: the FIR's >80 dB stopband already covers 19 kHz -- receiver gate identical to 0.01 dB with and without it.)
 16. Stereo-image protection
-17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal)
+17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10–12 dB HF-boosted signal; `PreemphasisDesign` biquad fitted to the analog curve at configure time, 0.45 -- the matched-z zero it replaced under-boosted 0.6 dB at 10 kHz / 1.4 dB at 15 kHz at the 48 kHz audio rate)
 18. HF limiter (0.45; L/R domain, default-on in every profile): program-controlled pre-emphasis after Orban US 4,103,243 -- rides only the boost component `pre - flat` with a stereo-linked feed-forward detector, boost-dominance guard, 1.5 ms attack / 5 ms hold / 20 ms release; can never cut HF below the flat program level; live-apply (`hf_limiter_*`)
 18a. Pre-emphasis-aware HF clipper (L/R domain, oversampled, optional, default-off, no longer used by any profile; clips only the pre-emphasised high band -- a waveshaper on the cymbal band, superseded by the HF limiter; configurable crossover ~5 kHz / threshold / drive; live-apply; added 0.35)
-19. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`)
+19. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` — `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`; 0.45: the 4:1 decimator is a linear-phase Kaiser FIR flat to 15 kHz and 80 dB down from 16.5 kHz at the 48 kHz audio domain, ~640 taps / 1.7 ms -- it is the chain's 15 kHz band-limit in the pre-emphasised domain, since the encoder FIR runs before pre-emphasis and its transition tail arrives +14 dB hotter; the 6th-order Butterworth at 14.4 kHz it replaced cost -2.3 dB at 14 kHz on air and had -27 dB alias rejection)
 20. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
     - **SSB Stereo** (`mpx_ssb_stereo_enabled`, experimental, default off): SSB-leaning
       assembly `diff*sin(2t) - sel*amount*hilbert(diff)*cos(2t)` -- a linear-phase 511-tap

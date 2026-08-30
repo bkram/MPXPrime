@@ -22,165 +22,24 @@ import FoundationNetworking   // URLSession/URLRequest on Linux corelibs
 import os
 #endif
 
-/// Single-channel oversampled true-peak limiter. Used by `PreEncodeAudioLimiter`
-/// per L/R channel before stereo encoding — operating on independent audio
-/// channels (no multiplexed subcarrier), the trailing tanh ceiling here is a
-/// normal soft-knee limiter behavior. **Never use this on the FM composite
-/// signal** — the memoryless tanh on a (M + S·cos38k) waveform creates
-/// intermod that demodulates as stereo-image collapse. Composite-domain
-/// peak control belongs in `CompositeClipper` (distortion-cancelled).
-struct OversampledPeakLimiter {
-    var threshold: Float = 0.94
-    var releaseMS: Float = 35.0
-    var ceiling: Float = 0.985
-    var bandlimitedResidualEnabled: Bool = false
-
-    private var gain: Float = 1.0
-    private var attackCoeff: Float = 0.0
-    private var releaseCoeff: Float = 0.0
-    private var holdSamples: Int = 0
-    private var holdCounter: Int = 0
-    private var prevPrevPrevIn: Float = 0.0
-    private var prevPrevIn: Float = 0.0
-    private var prevIn: Float = 0.0
-    private var decimationLP = BiquadCascade6()
-    private var residualClipper = AcceleratedBandlimitedResidualClipper()
-    private var initialized: Bool = false
-
-    mutating func configure(
-        sampleRate: Float,
-        threshold: Float,
-        releaseMS: Float = 35.0,
-        bandlimitedResidualEnabled: Bool = false,
-        residualTapCount: Int = 33,
-        residualCutoffFraction: Float = 0.25
-    ) {
-        let sr = max(8_000.0, sampleRate * 4.0)
-        self.threshold = clampf(threshold, 0.75, 0.995)
-        self.releaseMS = max(8.0, releaseMS)
-        self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
-        let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
-        ceiling = min(0.999, self.threshold + ceilingMargin)
-
-        let attackS = 0.00025 as Float
-        let relS = max(0.008, Double(self.releaseMS) * 0.001)
-        attackCoeff = expf(-1.0 / (attackS * sr))
-        releaseCoeff = expf(-1.0 / Float(relS * Double(sr)))
-        holdSamples = max(1, Int((0.004 * sr).rounded()))
-        holdCounter = 0
-        gain = 1.0
-        prevPrevPrevIn = 0.0
-        prevPrevIn = 0.0
-        prevIn = 0.0
-        let cutoff = min(sampleRate * 0.30, (sr * 0.5) - 1_000.0)
-        decimationLP.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: sr)
-        residualClipper.configure(
-            threshold: ceiling,
-            tapCount: residualTapCount,
-            cutoffFraction: residualCutoffFraction
-        )
-        initialized = false
-    }
-
-    mutating func process(_ x: Float) -> Float {
-        if !initialized {
-            initialized = true
-            prevPrevPrevIn = x
-            prevPrevIn = x
-            prevIn = x
-            let q = processStep(x)
-            return decimate(q1: q, q2: q, q3: q, q4: q)
-        }
-
-        let q1 = processStep(interpolateLagrange4(t: 0.25, current: x))
-        let q2 = processStep(interpolateLagrange4(t: 0.50, current: x))
-        let q3 = processStep(interpolateLagrange4(t: 0.75, current: x))
-        let q4 = processStep(x)
-        let output = decimate(q1: q1, q2: q2, q3: q3, q4: q4)
-
-        let priorPrev = prevPrevIn
-        let priorCurrent = prevIn
-        prevPrevPrevIn = priorPrev
-        prevPrevIn = priorCurrent
-        prevIn = x
-        return output
-    }
-
-    var gainReductionDB: Float {
-        let safeGain = max(1e-6, gain)
-        return max(0.0, -20.0 * log10f(safeGain))
-    }
-
-    @inline(__always)
-    private mutating func processStep(_ x: Float) -> Float {
-        let peak = fabsf(x)
-
-        var targetGain: Float = 1.0
-        if peak > threshold {
-            targetGain = threshold / max(1e-9, peak)
-        }
-        targetGain = clampf(targetGain, 0.0, 1.0)
-
-        if targetGain < gain {
-            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * targetGain)
-            holdCounter = holdSamples
-        } else if holdCounter > 0 {
-            holdCounter -= 1
-        } else {
-            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * targetGain)
-        }
-
-        let y = x * gain
-        return clipToCeiling(y)
-    }
-
-    @inline(__always)
-    private func interpolateLagrange4(t: Float, current: Float) -> Float {
-        // Causal 4-point reconstruction between prevIn and current using
-        // two prior samples for better curvature tracking.
-        let l0 = -((t + 1.0) * t * (t - 1.0)) / 6.0
-        let l1 = ((t + 2.0) * t * (t - 1.0)) * 0.5
-        let l2 = -((t + 2.0) * (t + 1.0) * (t - 1.0)) * 0.5
-        let l3 = ((t + 2.0) * (t + 1.0) * t) / 6.0
-        return (prevPrevPrevIn * l0) + (prevPrevIn * l1) + (prevIn * l2) + (current * l3)
-    }
-
-    @inline(__always)
-    private mutating func decimate(q1: Float, q2: Float, q3: Float, q4: Float) -> Float {
-        _ = decimationLP.process(q1)
-        _ = decimationLP.process(q2)
-        _ = decimationLP.process(q3)
-        return decimationLP.process(q4)
-    }
-
-    @inline(__always)
-    private mutating func clipToCeiling(_ x: Float) -> Float {
-        if bandlimitedResidualEnabled {
-            return residualClipper.process(x)
-        }
-        let ax = fabsf(x)
-        if ax <= threshold { return x }
-
-        let knee = max(1e-4, ceiling - threshold)
-        let clipped = threshold + ((ceiling - threshold) * tanhf((ax - threshold) / knee))
-        return copysignf(min(clipped, ceiling), x)
-    }
-}
-
-/// Stereo-linked variant of OversampledPeakLimiter. Shared gain
+/// Stereo-linked 4x oversampled true-peak limiter used by
+/// `PreEncodeAudioLimiter` on L/R before stereo encoding. Shared gain
 /// envelope driven by `max(|L_os|, |R_os|)` at OS rate; per-channel
-/// Lagrange interpolation and decimation filter.
+/// Lagrange interpolation and linear-phase FIR decimation.
 ///
-/// Replaces the prior per-channel limiter pair (one OversampledPeakLimiter
-/// per channel) which made independent gain decisions and produced an
-/// asymmetric image on hard-panned content — the chain-order audit
-/// recorded a +15 dB side-to-mid blowup on the synthetic-pathological
-/// `hard_panned_hf` scenario in 0.25. Stereo-linked detection applies
-/// the same GR to both channels, so L/R relative balance is preserved
-/// even when one channel peaks asymmetrically.
+/// Operating on independent audio channels (no multiplexed subcarrier),
+/// the trailing tanh ceiling is normal soft-knee limiter behaviour.
+/// **Never use this on the FM composite signal** -- a memoryless tanh on a
+/// (M + S sin 38k) waveform creates intermod that demodulates as
+/// stereo-image collapse. Composite-domain peak control belongs in
+/// `CompositeClipper` (distortion-cancelled).
 ///
-/// For monaural input (L = R) the output is bit-identical to two
-/// OversampledPeakLimiter instances on each channel.
+/// Replaced the prior per-channel limiter pair, which made independent
+/// gain decisions and produced an asymmetric image on hard-panned content
+/// (the chain-order audit recorded a +15 dB side-to-mid blowup on the
+/// synthetic `hard_panned_hf` scenario in 0.25). Stereo-linked detection
+/// applies the same GR to both channels, so L/R balance is preserved even
+/// when one channel peaks asymmetrically.
 struct StereoLinkedOversampledPeakLimiter {
     var threshold: Float = 0.94
     var releaseMS: Float = 35.0
@@ -206,10 +65,13 @@ struct StereoLinkedOversampledPeakLimiter {
     private var rPrev3: Float = 0.0
     private var rPrev2: Float = 0.0
     private var rPrev1: Float = 0.0
-    // Per-channel decimation low-pass (same 12th-order Butterworth
-    // cascade as OversampledPeakLimiter)
-    private var lDecimLP = BiquadCascade6()
-    private var rDecimLP = BiquadCascade6()
+    // Per-channel 4:1 decimator: linear-phase Kaiser FIR designed at the OS
+    // rate (see configure). Until 0.45 this was a 6th-order Butterworth at
+    // 0.30 x host rate -- 14.4 kHz at the 48 kHz audio domain, i.e. -2.3 dB
+    // at 14 kHz / -4 dB at 14.9 kHz on the program AFTER the encoder FIR,
+    // with only -27 dB alias rejection at 24 kHz.
+    private var lDecim = LinearPhaseFIRDecimator()
+    private var rDecim = LinearPhaseFIRDecimator()
     private var lResidualClipper = AcceleratedBandlimitedResidualClipper()
     private var rResidualClipper = AcceleratedBandlimitedResidualClipper()
     private var initialized: Bool = false
@@ -264,10 +126,23 @@ struct StereoLinkedOversampledPeakLimiter {
         gain = 1.0
         lPrev3 = 0.0; lPrev2 = 0.0; lPrev1 = 0.0
         rPrev3 = 0.0; rPrev2 = 0.0; rPrev1 = 0.0
-        let cutoff = min(sampleRate * 0.30, (sr * 0.5) - 1_000.0)
-        let cutoffHz = max(12_000.0 as Float, cutoff)
-        lDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
-        rDecimLP.configureLowpass(cutoffHz: cutoffHz, sampleRate: sr)
+        // Decimator doubling as the post-limiter 15 kHz band-limit in the
+        // PRE-EMPHASISED domain (Orban: "band-limit slightly above 15 kHz,
+        // embedded before the composite stage"). The encoder FIR (14.9 kHz,
+        // -6 dB at 15.65 kHz) runs before pre-emphasis, so its transition
+        // tail arrives here boosted by +14 dB; this filter matches its
+        // transition (15.0 kHz passband, 80 dB by 16.5 kHz at the 48 kHz
+        // audio domain) so the cascade rolls off twice as fast, the ceiling's
+        // products cannot fold back into the program, and the 15-23 kHz gap
+        // around the pilot stays clean. ~640 taps at 192 kHz OS (vDSP dot
+        // product), 1.67 ms. The transition scales with the host rate so the
+        // legacy 192 kHz-domain path stays affordable (6 kHz).
+        let passbandHz: Float = 15_000.0
+        let transitionHz = max(1_500.0, sampleRate / 32.0)
+        lDecim.configure(cutoffHz: passbandHz, sampleRateOS: sr, decimateFactor: 4,
+                         stopBandDB: 80.0, transitionHz: transitionHz)
+        rDecim.configure(cutoffHz: passbandHz, sampleRateOS: sr, decimateFactor: 4,
+                         stopBandDB: 80.0, transitionHz: transitionHz)
         lResidualClipper.configure(
             threshold: ceiling,
             tapCount: residualTapCount,
@@ -384,6 +259,10 @@ struct StereoLinkedOversampledPeakLimiter {
         return max(0.0, -20.0 * log10f(safeGain))
     }
 
+    /// Host-rate samples of delay this stage adds to the L/R path: the
+    /// look-ahead delay line plus the decimator's group delay.
+    var latencySamples: Int { lookaheadSamples + lDecim.groupDelayHostSamples }
+
     @inline(__always)
     private mutating func stereoStep(lOS: Float, rOS: Float, futurePeakHint: Float = 0.0) -> (Float, Float) {
         // Stereo-linked detector: peak of either channel drives the
@@ -417,8 +296,7 @@ struct StereoLinkedOversampledPeakLimiter {
     @inline(__always)
     private func interpolateLagrange4(t: Float, current: Float,
                                       p3: Float, p2: Float, p1: Float) -> Float {
-        // Same Lagrange-4 coefficients as OversampledPeakLimiter's
-        // internal helper — causal 4-point reconstruction.
+        // Causal 4-point Lagrange reconstruction between p1 and current.
         let l0 = -((t + 1.0) * t * (t - 1.0)) / 6.0
         let l1 = ((t + 2.0) * t * (t - 1.0)) * 0.5
         let l2 = -((t + 2.0) * (t + 1.0) * (t - 1.0)) * 0.5
@@ -431,17 +309,19 @@ struct StereoLinkedOversampledPeakLimiter {
     @inline(__always)
     private mutating func decimate(_ q1: Float, _ q2: Float, _ q3: Float, _ q4: Float,
                                    ch: Channel) -> Float {
+        // Exactly four pushes per host sample, so the fourth push is the
+        // one that emits a decimated output.
         switch ch {
         case .left:
-            _ = lDecimLP.process(q1)
-            _ = lDecimLP.process(q2)
-            _ = lDecimLP.process(q3)
-            return lDecimLP.process(q4)
+            _ = lDecim.push(q1)
+            _ = lDecim.push(q2)
+            _ = lDecim.push(q3)
+            return lDecim.push(q4)
         case .right:
-            _ = rDecimLP.process(q1)
-            _ = rDecimLP.process(q2)
-            _ = rDecimLP.process(q3)
-            return rDecimLP.process(q4)
+            _ = rDecim.push(q1)
+            _ = rDecim.push(q2)
+            _ = rDecim.push(q3)
+            return rDecim.push(q4)
         }
     }
 
@@ -498,6 +378,8 @@ struct PreEncodeAudioLimiter {
     }
 
     var gainReductionDB: Float { gainReduction }
+    /// Host-rate (audio-domain) samples of delay the stage adds to L/R.
+    var latencySamples: Int { limiter.latencySamples }
 }
 
 struct LookaheadLimiter {

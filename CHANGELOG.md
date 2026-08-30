@@ -11,6 +11,40 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Receiver-side HF response is now flat to the analog pre-emphasis curve
+  (+/-0.5 dB to 14 kHz; it was -3.5 dB at 14 kHz).** Two artefacts of the
+  48 kHz audio domain stacked up on air. (1) The pre-encode Audio Limiter's
+  4x decimation filter was a 6th-order Butterworth at 0.30 x the audio rate =
+  14.4 kHz (the code said "12th-order"), sitting AFTER the encoder lowpass
+  and pre-emphasis: -1.1 dB at 13 kHz, -2.3 dB at 14 kHz, -4 dB at 14.9 kHz,
+  with only -27 dB of alias rejection at 24 kHz. It is now a linear-phase
+  Kaiser FIR (`LinearPhaseFIRDecimator`, flat to 15 kHz, 80 dB down from
+  16.5 kHz, ~640 taps / 1.7 ms) which also becomes the chain's proper 15 kHz
+  band-limit in the pre-emphasised domain -- the encoder FIR runs before
+  pre-emphasis, so its transition tail arrived +14 dB hotter and the old
+  Butterworth had been re-attenuating it by accident. (2) The pre-emphasis
+  network was the textbook matched-z zero, which under-boosts toward
+  Nyquist: -0.6 dB at 10 kHz and -1.4 dB at 15 kHz at 48 kHz (a receiver
+  de-emphasises with the analog curve, so that went on air as HF droop).
+  `PreemphasisDesign` (MPXPrimeCore) now fits a minimum-phase biquad to
+  |1 + j omega tau| at configure time (<0.05 dB to 15.5 kHz, matched-z
+  fallback), the encoder uses it and the decoder's `DeemphasisFilter` is its
+  exact inverse (the Meter and the verifier de-emphasise on the analog curve
+  too; the matched-z pole was +0.09 dB at 15 kHz even at 192 kHz). Measured
+  on the HF gate: Music - Clean ride SINAD 42.6 -> 46.8 dB, hat SINAD
+  unchanged; the 15-23 kHz gap spill floor moves from -39 to -36 dB because
+  the composite clipper now receives the HF it was owed (gate re-set to -34).
+  The `--verify-receiver` 14 kHz tone now reaches the composite clipper at
+  full level for the first time, exposing the stereo-guard M/S imbalance
+  (95 -> 31 dB separation on that tone; Step 4 of the chain review). New
+  `productionChainFollowsTheAnalogPreemphasisCurve` sweep pins the response;
+  `PreemphasisFilterTests` pin both networks against the analog curve at 48
+  and 192 kHz. Also fixed: a live threshold/release change on the Audio
+  Limiter reconfigured it at the MPX rate instead of the audio-domain rate
+  (look-ahead / attack / release / hold 4x too long, HF detector at 1 kHz)
+  -- pinned by `liveApplyKeepsTheAudioDomainRate`. The unused single-channel
+  `OversampledPeakLimiter` was removed. All composite baselines recaptured.
+
 - **Stereo subcarrier polarity now follows 47 CFR 73.322 / ITU-R BS.450-3 --
   real receivers no longer play L and R swapped.** The encoder had sent
   `S = (R-L)/2` on the 38 kHz subcarrier since the first commit; the

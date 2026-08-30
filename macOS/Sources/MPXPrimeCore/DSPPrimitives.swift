@@ -295,34 +295,246 @@ public struct BiquadCascade6 {
     }
 }
 
+/// Receiver-side FM de-emphasis: the exact inverse of `PreemphasisDesign.fit`
+/// (numerator and denominator swapped), so it sits on the analog
+/// 1 / |1 + j omega tau| curve within the fit's residual and the encoder's
+/// pre-emphasis -> this filter cascade is algebraically flat. Used by
+/// `MPXDecoder` (monitor path, verifier, the Meter on real stations).
 public struct DeemphasisFilter {
     public var enabled: Bool = false
-    @usableFromInline var a: Float = 0.0
+    @usableFromInline var b0: Float = 1.0
+    @usableFromInline var b1: Float = 0.0
+    @usableFromInline var b2: Float = 0.0
+    @usableFromInline var a1: Float = 0.0
+    @usableFromInline var a2: Float = 0.0
+    @usableFromInline var x1: Float = 0.0
+    @usableFromInline var x2: Float = 0.0
     @usableFromInline var y1: Float = 0.0
+    @usableFromInline var y2: Float = 0.0
 
     public init() {}
 
     public mutating func configure(tauUS: Int, sampleRate: Float) {
         guard tauUS > 0 else {
             enabled = false
-            a = 0.0
-            y1 = 0.0
+            b0 = 1.0; b1 = 0.0; b2 = 0.0; a1 = 0.0; a2 = 0.0
+            reset()
             return
         }
         enabled = true
-        let sr = max(8_000.0 as Float, sampleRate)
-        let tau = Float(tauUS) * 1e-6
-        a = expf(-1.0 / (tau * sr))
-        y1 = 0.0
+        let pre = PreemphasisDesign.fit(tau: Double(tauUS) * 1e-6, sampleRate: Double(max(8_000.0, sampleRate)))
+        let inv = 1.0 / pre.b0
+        b0 = Float(inv)
+        b1 = Float(pre.a1 * inv)
+        b2 = Float(pre.a2 * inv)
+        a1 = Float(pre.b1 * inv)
+        a2 = Float(pre.b2 * inv)
+        reset()
     }
 
     @inlinable
     public mutating func process(_ x: Float) -> Float {
         guard enabled else { return x }
-        let y = (1.0 - a) * x + a * y1
+        let y = (b0 * x) + (b1 * x1) + (b2 * x2) - (a1 * y1) - (a2 * y2)
+        x2 = x1
+        x1 = x
+        y2 = y1
         y1 = zapDenorm(y)
         return y
     }
 
-    public mutating func reset() { y1 = 0.0 }
+    public mutating func reset() {
+        x1 = 0.0; x2 = 0.0; y1 = 0.0; y2 = 0.0
+    }
+}
+
+/// Biquad design for FM pre-emphasis: least-squares fit (Levenberg-Marquardt
+/// on the log-magnitude) of two zeros / two poles to the analog network
+/// |1 + j omega tau| over 100 Hz .. min(15.5 kHz, 0.45 fs), unity gain at DC by
+/// construction, starting from the textbook matched-z zero
+/// (`a = exp(-1/(tau fs))`). The matched-z zero is exact at DC but saturates
+/// toward Nyquist: at the 48 kHz audio-domain rate it sits -0.6 dB low at
+/// 10 kHz and -1.4 dB at 15 kHz, and a receiver de-emphasises with the analog
+/// curve, so that error went on air as an HF droop. The fit holds the curve
+/// within 0.05 dB. Falls back to matched-z if the fit is unstable, not
+/// minimum-phase, or not better. Runs at configure time only (double
+/// precision, deterministic iteration count). The encoder's pre-emphasis uses
+/// it directly; `DeemphasisFilter` uses its inverse.
+public struct PreemphasisDesign {
+    public var b0: Double
+    public var b1: Double
+    public var b2: Double
+    public var a1: Double
+    public var a2: Double
+    /// Worst |fitted - analog| in dB over the design grid.
+    public var maxErrorDB: Double
+
+    /// Analog network gain |1 + j omega tau| in dB.
+    public static func analogGainDB(frequencyHz: Double, tau: Double) -> Double {
+        let wt = 2.0 * Double.pi * frequencyHz * tau
+        return 10.0 * log10(1.0 + (wt * wt))
+    }
+
+    public static func matchedZ(tau: Double, sampleRate: Double) -> PreemphasisDesign {
+        let fs = max(8_000.0, sampleRate)
+        let a = exp(-1.0 / (tau * fs))
+        let scale = 1.0 / max(1e-12, 1.0 - a)
+        var design = PreemphasisDesign(b0: scale, b1: -a * scale, b2: 0.0, a1: 0.0, a2: 0.0, maxErrorDB: 0.0)
+        let grid = designGrid(tau: tau, sampleRate: fs)
+        design.maxErrorDB = maxAbs(residuals(design.parameters, grid: grid))
+        return design
+    }
+
+    public static func fit(tau: Double, sampleRate: Double) -> PreemphasisDesign {
+        let fs = max(8_000.0, sampleRate)
+        let fallback = matchedZ(tau: tau, sampleRate: fs)
+        let grid = designGrid(tau: tau, sampleRate: fs)
+
+        var p = fallback.parameters
+        var r = residuals(p, grid: grid)
+        var err = sumSquares(r)
+        var lambda = 1e-3
+        let count = grid.omegas.count
+        for _ in 0..<60 {
+            // Jacobian by central differences (4 parameters).
+            var jac = [[Double]](repeating: [Double](repeating: 0.0, count: 4), count: count)
+            let h = 1e-6
+            for j in 0..<4 {
+                var plus = p; plus[j] += h
+                var minus = p; minus[j] -= h
+                let rp = residuals(plus, grid: grid)
+                let rm = residuals(minus, grid: grid)
+                for k in 0..<count { jac[k][j] = (rp[k] - rm[k]) / (2.0 * h) }
+            }
+            var normal = [[Double]](repeating: [Double](repeating: 0.0, count: 4), count: 4)
+            var gradient = [Double](repeating: 0.0, count: 4)
+            for k in 0..<count {
+                for i in 0..<4 {
+                    gradient[i] += jac[k][i] * r[k]
+                    for j in 0..<4 { normal[i][j] += jac[k][i] * jac[k][j] }
+                }
+            }
+            var improved = false
+            for _ in 0..<8 {
+                var damped = normal
+                for i in 0..<4 { damped[i][i] += lambda * max(1e-12, normal[i][i]) }
+                guard let step = solve4(damped, gradient) else {
+                    lambda *= 10.0
+                    continue
+                }
+                var candidate = p
+                for i in 0..<4 { candidate[i] -= step[i] }
+                let rc = residuals(candidate, grid: grid)
+                let ec = sumSquares(rc)
+                if ec.isFinite, ec < err {
+                    p = candidate; r = rc; err = ec
+                    lambda = max(1e-9, lambda / 3.0)
+                    improved = true
+                    break
+                }
+                lambda *= 4.0
+            }
+            if !improved || err < 1e-10 { break }
+        }
+
+        let fitted = PreemphasisDesign(
+            b0: 1.0 + p[2] + p[3] - p[0] - p[1], b1: p[0], b2: p[1], a1: p[2], a2: p[3],
+            maxErrorDB: maxAbs(r))
+        guard fitted.isStableMinimumPhase, fitted.maxErrorDB.isFinite,
+              fitted.maxErrorDB < fallback.maxErrorDB else {
+            return fallback
+        }
+        return fitted
+    }
+
+    // MARK: - Internals
+
+    /// Free parameters [b1, b2, a1, a2]; b0 follows from unity DC gain.
+    private var parameters: [Double] { [b1, b2, a1, a2] }
+
+    /// Poles and zeros inside the unit circle -- required so the inverse
+    /// (de-emphasis) is stable as well.
+    private var isStableMinimumPhase: Bool {
+        guard b0.isFinite, b0 > 1e-9 else { return false }
+        let z1 = b1 / b0, z2 = b2 / b0
+        let polesInside = abs(a2) < 1.0 && abs(a1) < 1.0 + a2
+        let zerosInside = abs(z2) < 1.0 && abs(z1) < 1.0 + z2
+        return polesInside && zerosInside
+    }
+
+    private struct Grid {
+        var omegas: [Double]
+        var targetsDB: [Double]
+    }
+
+    private static func designGrid(tau: Double, sampleRate: Double) -> Grid {
+        let count = 96
+        let fMax = min(15_500.0, 0.45 * sampleRate)
+        var omegas = [Double](repeating: 0.0, count: count)
+        var targets = [Double](repeating: 0.0, count: count)
+        for i in 0..<count {
+            let f = 100.0 + ((fMax - 100.0) * Double(i) / Double(count - 1))
+            omegas[i] = 2.0 * Double.pi * f / sampleRate
+            targets[i] = analogGainDB(frequencyHz: f, tau: tau)
+        }
+        return Grid(omegas: omegas, targetsDB: targets)
+    }
+
+    private static func responseDB(_ p: [Double], omega: Double) -> Double {
+        let b1 = p[0], b2 = p[1], a1 = p[2], a2 = p[3]
+        let b0 = 1.0 + a1 + a2 - b1 - b2
+        let c1 = cos(omega), s1 = sin(omega)
+        let c2 = cos(2.0 * omega), s2 = sin(2.0 * omega)
+        let numRe = b0 + (b1 * c1) + (b2 * c2)
+        let numIm = -((b1 * s1) + (b2 * s2))
+        let denRe = 1.0 + (a1 * c1) + (a2 * c2)
+        let denIm = -((a1 * s1) + (a2 * s2))
+        let num2 = (numRe * numRe) + (numIm * numIm)
+        let den2 = max(1e-300, (denRe * denRe) + (denIm * denIm))
+        return 10.0 * log10(max(1e-300, num2 / den2))
+    }
+
+    private static func residuals(_ p: [Double], grid: Grid) -> [Double] {
+        var out = [Double](repeating: 0.0, count: grid.omegas.count)
+        for k in 0..<out.count {
+            out[k] = responseDB(p, omega: grid.omegas[k]) - grid.targetsDB[k]
+        }
+        return out
+    }
+
+    private static func sumSquares(_ r: [Double]) -> Double {
+        r.reduce(0.0) { $0 + ($1 * $1) }
+    }
+
+    private static func maxAbs(_ r: [Double]) -> Double {
+        r.reduce(0.0) { max($0, abs($1)) }
+    }
+
+    /// Gaussian elimination with partial pivoting for the 4x4 normal system.
+    private static func solve4(_ matrix: [[Double]], _ rhs: [Double]) -> [Double]? {
+        var m = matrix
+        var v = rhs
+        for col in 0..<4 {
+            var pivot = col
+            for row in (col + 1)..<4 where abs(m[row][col]) > abs(m[pivot][col]) { pivot = row }
+            guard abs(m[pivot][col]) > 1e-18 else { return nil }
+            if pivot != col {
+                m.swapAt(pivot, col)
+                v.swapAt(pivot, col)
+            }
+            for row in (col + 1)..<4 {
+                let factor = m[row][col] / m[col][col]
+                if factor == 0.0 { continue }
+                for k in col..<4 { m[row][k] -= factor * m[col][k] }
+                v[row] -= factor * v[col]
+            }
+        }
+        var x = [Double](repeating: 0.0, count: 4)
+        for row in stride(from: 3, through: 0, by: -1) {
+            var acc = v[row]
+            for k in (row + 1)..<4 { acc -= m[row][k] * x[k] }
+            x[row] = acc / m[row][row]
+        }
+        return x.allSatisfy { $0.isFinite } ? x : nil
+    }
 }

@@ -75,7 +75,8 @@ struct DualRateHFResponseTests {
         return cfg
     }
 
-    private func renderToneToMPX(frequency: Double, dualRateOn: Bool, encoderFIR: Bool) -> [Float] {
+    private func renderToneToMPX(frequency: Double, dualRateOn: Bool, encoderFIR: Bool,
+                                 amplitude amp: Float = 0.5) -> [Float] {
         var cfg = baseConfig()
         cfg.dualRateAudioDomainEnabled = dualRateOn
         cfg.dualRateAudioDomainRateHz = 48_000.0
@@ -88,7 +89,6 @@ struct DualRateHFResponseTests {
         let totalFrames = Int(sampleRate * secondsPerFreq)
         var left = [Float](repeating: 0, count: totalFrames)
         var right = [Float](repeating: 0, count: totalFrames)
-        let amp: Float = 0.5
         let sr = sampleRate
         for i in 0..<totalFrames {
             let t = Double(i) / sr
@@ -180,14 +180,43 @@ struct DualRateHFResponseTests {
         }
     }
 
-    /// Transition-region tolerance — 13-15 kHz sits just inside / against
-    /// the encoder LP's 14.9 kHz compliance cutoff, so a wider tolerance
-    /// is allowed here. Still catches catastrophic regressions (10+ dB
-    /// loss) without flagging the small bilinear-warping differences
-    /// inherent to running a steep filter at a lower rate.
+    /// The production chain's receiver-side frequency response (metric P2 of
+    /// the 0.45 chain review): with pre-emphasis on, the composite level at f
+    /// relative to 1 kHz must follow the ANALOG pre-emphasis curve to
+    /// +/-0.5 dB up to 14 kHz (the Omnia.11 spec figure; a receiver
+    /// de-emphasises with the analog network). Tone amplitude is kept low so
+    /// the pre-encode limiter never engages. Before 0.45 this read -3.5 dB at
+    /// 14 kHz: the limiter's 6th-order Butterworth decimator at 14.4 kHz plus
+    /// the matched-z pre-emphasis error, both artefacts of the 48 kHz audio
+    /// domain that `dualRateOnMatchesOffNearEncoderCutoff` tolerated at 2.5 dB.
+    @Test func productionChainFollowsTheAnalogPreemphasisCurve() {
+        let tau = 50e-6
+        func analogDB(_ f: Double) -> Double {
+            let wt = 2.0 * .pi * f * tau
+            return 10.0 * log10(1.0 + wt * wt)
+        }
+        func levelDB(_ f: Double) -> Double {
+            let mpx = renderToneToMPX(frequency: f, dualRateOn: true, encoderFIR: true, amplitude: 0.05)
+            let skip = Int(0.5 * sampleRate)
+            return 20.0 * log10(max(1e-12, goertzelMagnitude(buf: mpx, freqHz: f, sampleRate: sampleRate, startFrame: skip)))
+        }
+        let reference = levelDB(1_000.0)
+        for f in [2_000.0, 5_000.0, 8_000.0, 10_000.0, 12_000.0, 13_000.0, 14_000.0] {
+            let measuredRel = levelDB(f) - reference
+            let expectedRel = analogDB(f) - analogDB(1_000.0)
+            let error = measuredRel - expectedRel
+            #expect(abs(error) < 0.5,
+                    "production chain at \(Int(f)) Hz is \(String(format: "%+.2f", error)) dB off the analog pre-emphasis curve (measured \(String(format: "%+.2f", measuredRel)) dB re 1 kHz, expected \(String(format: "%+.2f", expectedRel)))")
+        }
+    }
+
+    /// Transition-region check -- 13-15 kHz sits just inside / against the
+    /// encoder LP's 14.9 kHz compliance cutoff. Since 0.45 both rates use the
+    /// same linear-phase FIR decimator and the analog-fitted pre-emphasis, so
+    /// the on/off difference is a fraction of a dB (it was 2.5 dB before).
     @Test func dualRateOnMatchesOffNearEncoderCutoff() {
         let frequencies: [Double] = [13_000, 14_000, 15_000]
-        let toleranceDB: Double = 2.5
+        let toleranceDB: Double = 1.0
         for f in frequencies {
             let mpxOff = renderToneToMPX(frequency: f, dualRateOn: false, encoderFIR: true)
             let mpxOn  = renderToneToMPX(frequency: f, dualRateOn: true,  encoderFIR: true)

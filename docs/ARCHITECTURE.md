@@ -292,6 +292,7 @@ Within the main audio path, MPX Prime Studio runs:
 9. Multiband compressor (3-band or 5-band)
     - **TX path**: linear-phase FIR splitters (sum-to-flat; per-crossover transition = fc floored at 120 Hz, -6 dB exactly at each crossover, 40 dB stopband, kernels zero-padded to one shared group delay -- 446 samples = 9.3 ms at the 48 kHz audio domain with the default 90 Hz lowest crossover; before 0.45 the design ignored the requested transition, sat on the 2049-tap clamp at 21.3 ms and pre-rang ~12 ms at the upper crossovers)
     - **Monitor path**: IIR Linkwitz-Riley LR4 crossovers (low latency)
+    - Program-dependent (dual-slope) release per band, default on (0.45): `MonoCompressor` applies its GR through a smoother with a ~1.5 s platform of the demanded reduction -- excursions below the platform (drum hits) release at the configured rate, recovery above it (average level dropped) 3x slower; the pre-0.45 flag only scaled the release time by a constant 1.1
     - Per-band downward expander (optional)
     - Per-band fast peak limiter (optional)
     - **Advanced Dynamics** (`advanced_dynamics_enabled`, experimental, default off) runs

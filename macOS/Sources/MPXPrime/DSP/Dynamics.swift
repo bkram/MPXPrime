@@ -355,6 +355,33 @@ struct MonoCompressor {
     private var transientHoldSamples: Int = 0
     private var transientHoldCounter: Int = 0
 
+    // Program-dependent (dual-slope) release, 0.45 chain review B2. Every
+    // broadcast multiband has one (Orban WP: "multiple time constant release
+    // ... speeds up after an abrupt transient to prevent a hole, slows as
+    // 0 dB GR is approached"; Omnia.11: per-band release + fast release;
+    // Thimeo: release hold / flatness). Before 0.45 the
+    // `multiband_release_program_dependent` flag scaled the release time by a
+    // CONSTANT 1.1 -- no program dependence at all. Now: the applied gain
+    // reduction follows the detector's target through a GR-domain smoother
+    // whose release is fast (the configured release) while the reduction sits
+    // deeper than the slow platform level (~1.5 s average of the reduction the
+    // detector demands -- Orban's "platform": a drum hit is a transient excursion below it and is
+    // recovered quickly, no hole), and 3x slower once the reduction is back
+    // at or above the platform (the average level itself dropped: release
+    // gently, no breathing). Off = single slope, bit-identical to the
+    // pre-0.45 path.
+    private var programDependentRelease: Bool = false
+    private var appliedGRDB: Float = 0.0
+    private var platformGRDB: Float = 0.0
+    private var fastReleaseCoeff: Float = 0.0
+    private var slowReleaseCoeff: Float = 0.0
+    private var platformCoeff: Float = 0.0
+    /// Hysteresis around the platform: below it by more than this = excursion.
+    static let platformExcursionDB: Float = 0.25
+    static let slowReleaseFactor: Float = 3.0
+    /// Current platform (slow-average) gain reduction in dB (<= 0); diagnostics.
+    var platformGainReductionDB: Float { platformGRDB }
+
     mutating func configure(
         sampleRate: Float,
         thresholdDB: Float,
@@ -363,7 +390,8 @@ struct MonoCompressor {
         releaseMS: Float,
         makeupDB: Float,
         kneeDB: Float = 0.0,
-        transientAwareAttackEnabled: Bool = false
+        transientAwareAttackEnabled: Bool = false,
+        programDependentRelease: Bool = false
     ) {
         let sr = max(8_000.0, sampleRate)
         let attack = max(0.1, attackMS)
@@ -373,7 +401,13 @@ struct MonoCompressor {
         self.makeupDB = makeupDB
         self.kneeDB = max(0.0, min(12.0, kneeDB))
         self.transientAwareAttackEnabled = transientAwareAttackEnabled
-        detector.configure(sampleRate: sr, attackMS: attack, releaseMS: release)
+        self.programDependentRelease = programDependentRelease
+        // With the dual-slope smoother owning the release shape, the detector
+        // must not add a second release pole of its own (two cascaded 250 ms
+        // poles recover a kick twice as slowly): it tracks the level quickly
+        // and the GR smoother decides how fast the gain comes back.
+        detector.configure(sampleRate: sr, attackMS: attack,
+                           releaseMS: programDependentRelease ? min(release, 30.0) : release)
         rmsAttackCoeff = expf(-1.0 / (0.010 * sr))
         rmsReleaseCoeff = expf(-1.0 / (0.090 * sr))
         transientAttackCoeff = expf(-1.0 / ((attack * 3.2 * 0.001) * sr))
@@ -382,6 +416,11 @@ struct MonoCompressor {
         transientDriveObserved = 0.0
         lastGainReductionDB = 0.0
         rmsPower = 0.0
+        fastReleaseCoeff = expf(-1.0 / ((release * 0.001) * sr))
+        slowReleaseCoeff = expf(-1.0 / ((release * Self.slowReleaseFactor * 0.001) * sr))
+        platformCoeff = expf(-1.0 / (1.5 * sr))
+        appliedGRDB = 0.0
+        platformGRDB = 0.0
     }
 
     mutating func process(_ x: Float, sidechainAbs: Float? = nil, thresholdBiasDB: Float = 0.0) -> Float {
@@ -393,7 +432,27 @@ struct MonoCompressor {
             : detector.processAbs(detectorSample)
         )
         let levelDB = 20.0 * log10f(env)
-        let gainDB = gainReductionDB(for: levelDB, thresholdBiasDB: thresholdBiasDB)
+        let targetGRDB = gainReductionDB(for: levelDB, thresholdBiasDB: thresholdBiasDB)
+        let gainDB: Float
+        if programDependentRelease {
+            if targetGRDB < appliedGRDB {
+                // Attack timing is the detector's; the target is followed at once.
+                appliedGRDB = targetGRDB
+            } else {
+                // Release: fast while the reduction is a transient excursion
+                // below the platform, slow once it is back near the platform.
+                let excursionDB = platformGRDB - appliedGRDB
+                let coeff = excursionDB > Self.platformExcursionDB ? fastReleaseCoeff : slowReleaseCoeff
+                appliedGRDB = zapDenorm((coeff * appliedGRDB) + ((1.0 - coeff) * targetGRDB))
+            }
+            // The platform averages the DEMANDED reduction (what the program
+            // asks for), not the applied one -- averaging the applied gain
+            // feeds back on itself and freezes the band near kick depth.
+            platformGRDB = zapDenorm((platformCoeff * platformGRDB) + ((1.0 - platformCoeff) * targetGRDB))
+            gainDB = appliedGRDB
+        } else {
+            gainDB = targetGRDB
+        }
         lastGainReductionDB = gainDB
         let gain = powf(10.0, (gainDB + makeupDB) / 20.0)
         return x * gain

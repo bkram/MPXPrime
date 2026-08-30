@@ -11,6 +11,22 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Multiband compressor: a real program-dependent release.** The
+  `multiband_release_program_dependent` flag (default on) used to multiply
+  the release time by a constant 1.1 -- no program dependence at all. Every
+  broadcast multiband has a multi-slope release (Orban: "speeds up after an
+  abrupt transient to prevent a hole, slows as 0 dB is approached"; Omnia.11:
+  release + fast release per band). `MonoCompressor` now applies its gain
+  reduction through a GR-domain smoother with Orban's platform logic: the
+  platform is a ~1.5 s average of the reduction the detector demands; while
+  the applied reduction sits below the platform (a drum hit) it releases at
+  the configured rate, and recovery above the platform (the average level
+  dropped) is 3x slower. `MultibandReleaseShapeTests`: kicks recover within
+  1 dB of the single-slope path (no hole), a 12 dB-over bed followed by quiet
+  program still holds 3 dB at 0.5 s where single slope is at 0 (no
+  breathing), and is fully released after 4 s; flag off is the exact
+  detector path. Preset baseline recaptured.
+
 - **Wideband AGC attack: 150 ms default (was 6 ms), profiles 100-200 ms (were
   45-80).** The AGC is a gain rider; peaks belong to the Audio Limiter and
   the composite clipper. A 6 ms attack on an RMS detector is limiter-fast:

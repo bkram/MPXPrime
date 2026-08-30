@@ -2573,7 +2573,7 @@ final class MPXGenerator {
             thresholdDB: multibandLowThresholdDB,
             ratio: multibandLowRatio,
             attackMS: multibandLowAttackMS,
-            releaseMS: releaseAdjusted(multibandLowReleaseMS),
+            releaseMS: multibandLowReleaseMS,
             transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
@@ -2582,7 +2582,7 @@ final class MPXGenerator {
             thresholdDB: multibandMidThresholdDB,
             ratio: multibandMidRatio,
             attackMS: multibandMidAttackMS,
-            releaseMS: releaseAdjusted(multibandMidReleaseMS),
+            releaseMS: multibandMidReleaseMS,
             transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
@@ -2591,7 +2591,7 @@ final class MPXGenerator {
             thresholdDB: multibandHighThresholdDB,
             ratio: multibandHighRatio,
             attackMS: multibandHighAttackMS,
-            releaseMS: releaseAdjusted(multibandHighReleaseMS),
+            releaseMS: multibandHighReleaseMS,
             transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
 
@@ -2601,8 +2601,8 @@ final class MPXGenerator {
         let r4 = lerpf(multibandMidRatio, multibandHighRatio, 0.5)
         let a2 = lerpf(multibandLowAttackMS, multibandMidAttackMS, 0.5)
         let a4 = lerpf(multibandMidAttackMS, multibandHighAttackMS, 0.5)
-        let rel2 = releaseAdjusted(lerpf(multibandLowReleaseMS, multibandMidReleaseMS, 0.5))
-        let rel4 = releaseAdjusted(lerpf(multibandMidReleaseMS, multibandHighReleaseMS, 0.5))
+        let rel2 = lerpf(multibandLowReleaseMS, multibandMidReleaseMS, 0.5)
+        let rel4 = lerpf(multibandMidReleaseMS, multibandHighReleaseMS, 0.5)
 
         configureCompressorPair(
             left: &mb5Comp1L,
@@ -2610,7 +2610,7 @@ final class MPXGenerator {
             thresholdDB: multibandLowThresholdDB,
             ratio: multibandLowRatio,
             attackMS: multibandLowAttackMS,
-            releaseMS: releaseAdjusted(multibandLowReleaseMS),
+            releaseMS: multibandLowReleaseMS,
             transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
@@ -2628,7 +2628,7 @@ final class MPXGenerator {
             thresholdDB: multibandMidThresholdDB,
             ratio: multibandMidRatio,
             attackMS: multibandMidAttackMS,
-            releaseMS: releaseAdjusted(multibandMidReleaseMS),
+            releaseMS: multibandMidReleaseMS,
             transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
         configureCompressorPair(
@@ -2646,16 +2646,9 @@ final class MPXGenerator {
             thresholdDB: multibandHighThresholdDB,
             ratio: multibandHighRatio,
             attackMS: multibandHighAttackMS,
-            releaseMS: releaseAdjusted(multibandHighReleaseMS),
+            releaseMS: multibandHighReleaseMS,
             transientAwareAttackEnabled: multibandTransientAwareAttackEnabled
         )
-    }
-
-    private func releaseAdjusted(_ releaseMS: Float) -> Float {
-        if multibandReleaseProgramDependent {
-            return releaseMS * 1.1
-        }
-        return releaseMS
     }
 
     static func multibandCouplingBiases(lowGainReductionDB: Float) -> (mid: Float, high: Float) {
@@ -2706,7 +2699,8 @@ final class MPXGenerator {
             releaseMS: releaseMS,
             makeupDB: 0.0,
             kneeDB: multibandKneeDB,
-            transientAwareAttackEnabled: transientAwareAttackEnabled
+            transientAwareAttackEnabled: transientAwareAttackEnabled,
+            programDependentRelease: multibandReleaseProgramDependent
         )
         right.configure(
             sampleRate: sampleRate,
@@ -2716,7 +2710,8 @@ final class MPXGenerator {
             releaseMS: releaseMS,
             makeupDB: 0.0,
             kneeDB: multibandKneeDB,
-            transientAwareAttackEnabled: transientAwareAttackEnabled
+            transientAwareAttackEnabled: transientAwareAttackEnabled,
+            programDependentRelease: multibandReleaseProgramDependent
         )
     }
 

@@ -341,8 +341,10 @@ Order of work (payoff per effort; each item measured before it is heard):
   burst test (30 ms +10 dB hit: 3.35 dB duck at 6 ms, 0.02 dB at 150 ms), step
   test, preset lint, `--verify` TIGHT below 50 ms, slider to 500 ms. Skipped: the
   `agcGainSwingDBPer100ms` verifier metric (optional; add if a later change needs it).
-- **B2** real multi-slope release in `MonoCompressor` (platform level, fast toward
-  platform when > 3 dB deeper, 3x slower otherwise; drop the constant x1.1).
+- **B2** DONE 2026-08-30: dual-slope release in `MonoCompressor` (platform = 1.5 s
+  average of DEMANDED GR; fast below it, 3x slower above; detector release <= 30 ms
+  so it is one pole). Kicks recover within 1 dB of single slope, level drops hold
+  3 dB at 0.5 s vs 0. Lesson: averaging the applied GR froze the band at kick depth.
 - **A2** POCS re-projection passes (`mpx_clipper_iterations` 1-3, cascade of
   `CompositeClipperPass`, delay summed into `recomputeSubcarrierDelay`); default 1,
   Music - Loud -> 2 after the table.

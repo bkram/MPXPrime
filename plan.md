@@ -259,21 +259,33 @@ the full gate run and a baseline recapture where the composite moves.
   reaches the composite clipper at full level and shows the stereo-guard M/S
   imbalance (95 -> 31 dB) -- that is Step 4's B1, not an encoder loss. Also
   fixed a live-apply bug (limiter reconfigured at the MPX rate).
-- **Step 3 -- multiband splitter** (FACT): `LinearPhaseMultibandSplitter5/3`
-  discard `transitionHz`, hit the 2049-tap clamp -> 21.3 ms latency (docs say
-  5.3 ms) and ~85 Hz brick-wall crossovers at 1.8 / 6.8 kHz (pre-ringing). Honour
-  the transition per crossover, zero-pad to a shared delay, stopband 60 -> 40 dB,
-  centre the Kaiser design on fc; target 7-11 ms.
-- **Step 4 -- composite clipper does its job** (FACT): the 22-53 kHz stereo guard
-  restores the WHOLE S subchannel, so the clipper only ever removes the M share of
-  a peak -- root cause of the 1.18 vs 0.966 bound overshoot and the routine
-  ~1.5 dB final-limiter ride (Orban US 6,434,241 explicitly does NOT protect
-  23-53 kHz; Thimeo / Omnia clip the full composite). New key
-  `mpx_clipper_stereo_guard` (0 = industry, 1 = current), default picked from a
-  sweep table (final-limiter duty < 0.5 dB with least program-separation loss);
-  1-2 POCS re-projection passes; final limiter back to threshold = budget with
-  150-200 ms release and a GR > 0.5 dB telemetry warning; knee default -0.5 /
-  -0.3 dB after an HF-SINAD A/B; bandwidth FIR 53 kHz / 2 kHz transition.
+- **Step 3 -- multiband splitter** DONE 2026-08-30 (FACT): the splitters
+  discarded `transitionHz`, hit the 2049-tap clamp -> 21.3 ms latency (docs said
+  5.3 ms) and gave every crossover an ~85 Hz brick wall (12 ms pre-ringing at
+  1.8 / 6.8 kHz). Now per-crossover transition = fc (floor 120 Hz), -6 dB AT the
+  crossover, 40 dB stopband, kernels padded to a shared length: 446 samples =
+  9.29 ms, -6 dB within 0.4 dB at all four crossovers, pre-ringing -28.8 dB /
+  0.56 ms, FIR multiband cheaper than IIR (0.91x). Exposed a multiband-leveler
+  property in Advanced Dynamics: a tone on a crossover skirt is lifted by the
+  neighbouring band's full range (band coupling / sync, Step 7, is the cure);
+  the unit test now uses one tone per band.
+- **Step 4a -- stereo guard share** DONE 2026-08-30: `mpx_clipper_stereo_guard`
+  (0 = industry full-composite clipping, 1 = former toggle on; old key migrates),
+  GUI + web slider, `--verify-stereo-guard` sweep. RESULT REFUTES B1 as the ride's
+  cause: Music - Loud shows no dependence at all (clipper GR 1.9 dB, final limiter
+  idle 0.02 dB, sep 35 dB, HF SINAD equal); a hot config (multiband off, 5 dB
+  clipper GR) rides 1.19 dB at guard 0 vs 1.33 at 1, guard 1 costs 5 dB of
+  14 kHz tone separation and buys +3 dB decoded hat / ride SINAD. Default kept
+  at 1.0 (measured). The final-limiter ride therefore comes from elsewhere
+  (pilot / RDS guard restoration, knee, decimator) -- Step 4b below is where to
+  look. Broken in the sweep and removed: a decoded hard-panned program side/mid
+  column read -114 dB (decode returned mono) -- the P10 program-separation
+  metric still needs a working implementation.
+- **Step 4b -- remaining clipper items**: 1-2 POCS re-projection passes (measure
+  the bound probe and the hot-config ride with them); final limiter threshold
+  back to budget + 150-200 ms release + GR > 0.5 dB telemetry warning once the
+  ride is understood; knee default -0.5 / -0.3 dB after an HF-SINAD A/B;
+  bandwidth FIR 53 kHz / 2 kHz transition.
 - **Step 5 -- dynamics practice gaps**: AGC default attack 6 ms is limiter-fast
   (Omnia: control peaks in the limiter, not the AGC) -> >= 150 ms with a burst
   test; multiband "program-dependent release" is a constant x1.1 -> real
@@ -287,6 +299,62 @@ the full gate run and a baseline recapture where the composite moves.
   master band), switchable widener / PrimeBass placement (Omnia puts enhancers
   BEFORE the multiband), speech detector easing clipper drive, per-band
   `BandLimiter` on `music_loud` as the density path before more clipping.
+
+Also found and FIXED 2026-08-30: processed-audio output mode switched the
+dual-rate boundary off after construction without re-deriving any audio-domain
+stage (pre-emphasis 50 us ran as ~12.5 us at 192 kHz, limiter time constants 4x
+off); `setAudioOutputOnly` now reuses the sample-rate-change reconfiguration and
+`processedAudioKeepsThePreemphasisCurve` pins it.
+
+Found 2026-08-30 while measuring Step 3 and FIXED: `useEncoderFIR` /
+`useMultibandFIR` defaulted to false in `MPXGenerator` and only the macOS
+`AudioOutputEngine` turned them on, so every offline gate and baseline -- and
+the Linux ALSA engine on air -- ran the IIR monitor filters (Butterworth encoder
+LP, LR4 crossovers). The generator now seeds both from config; verify sweeps and
+baselines cover the TX chain for the first time. The Linux baseline
+(`default-linux-x86_64.json`, stale since 0.42) must be recaptured on mpxbox.
+
+### Enterprise-parity roadmap (approved 2026-08-30, after Steps 1-4a)
+
+Rating vs Orban 8600 / Omnia.11 / Stereo Tool: encoder side professional-grade
+(polarity, pre-emphasis 0.05 dB, response +/-0.5 dB to 14 kHz, RDS phase-locked,
+budget-referenced peak stages); processor side mid-tier with untuned dynamics
+(Music - Loud: 17.8 dB hat SINAD, 35 dB HF separation with the clipper working).
+Order of work (payoff per effort; each item measured before it is heard):
+
+- **A1** DONE 2026-08-30 (`--verify-final-ride`, parameterised bound probe). Result:
+  pure band-limiting overshoot +0.55 dB, guards together +1.74 dB (not additive:
+  stereo guard 0 alone reads +2.21), OS factor / knee irrelevant; the clipper's 2 ms
+  look-ahead is the big lever (kernel GR 13.7 -> 3.1 dB, final ride 5.8 -> 0.08 dB
+  on the hot chain). NEW DEFECT: `LookaheadLimiter` leaks -- Music - Loud reports
+  0.02 dB limiter GR while 0.87 dB of dense program reaches the safety shaper
+  (hot chain: 5.8 dB ride, 2.7 dB still leaking). **A1b** (next, before A2):
+  reproduce at unit level (`LookaheadLimiter` on a bright_dense-like burst: output
+  must never exceed threshold by > 0.1 dB with 5 ms look-ahead), check the
+  window-max / attack / hold / gain-smoothing path and the `safetyClipDB` vs GR
+  telemetry definitions, fix, then re-run the table; consider enabling the
+  clipper's look-ahead (2 ms) in Music - Loud once the limiter is honest.
+- **B1** wideband AGC attack default 6 -> 150 ms, presets 100-200 ms, burst test,
+  `agcGainSwingDBPer100ms` verifier metric.
+- **B2** real multi-slope release in `MonoCompressor` (platform level, fast toward
+  platform when > 3 dB deeper, 3x slower otherwise; drop the constant x1.1).
+- **A2** POCS re-projection passes (`mpx_clipper_iterations` 1-3, cascade of
+  `CompositeClipperPass`, delay summed into `recomputeSubcarrierDelay`); default 1,
+  Music - Loud -> 2 after the table.
+- **B4** per-band `BandLimiter` as the density path on Music - Loud (5 ms hold, HF
+  tilt, profile fields).
+- **B3** Omnia-style band sync (`multiband_sync_db`, clamp target GR to master +/- D).
+- **B5** pre-encode limiter attack = look-ahead / 4, sliding-window-max detector,
+  look-ahead 2-3 ms.
+- **A3** clipper knee -0.5 / -0.3, bandwidth FIR 53 / 2 kHz, margin 0.005 +
+  `limitThreshold` 0.99, pilot 9 % for new installs.
+- **B6** speech / music detector easing clipper drive (`mpx_speech_drive_ease_db`).
+- **C** measurement the vendors publish: end-to-end latency in `--verify` and
+  `/api/status`, protection re subcarrier, RDS BLER, THD / SMPTE / CCIF, a WORKING
+  program-separation metric, BS.1770 + BS.412 on the verifier, Meter cross-check,
+  Linux baseline recapture.
+- **B7** clip-detection metric only (no declipper this cycle); **D** optional structure
+  (enhancer placement, AGC window, density macro, x1 120 Hz).
 
 Also noted: the receiver report's "Pilot ... Phase 45.4 deg" is the pilot's
 absolute phase at the analysis window, not pilot-to-RDS (both read ~45 deg, i.e.

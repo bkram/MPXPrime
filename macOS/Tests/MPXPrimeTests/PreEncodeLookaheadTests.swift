@@ -117,8 +117,11 @@ struct PreEncodeLookaheadTests {
 
         // Push a loud HF transient burst and capture the leading-edge peak.
         // If lookahead got reset to 0 by the live-apply, the peak will be
-        // measurably higher (no advance gain ramp).
-        let frames = 4096
+        // measurably higher (no advance gain ramp). The render must outlast
+        // the TX chain's group delay (FIR crossovers + encoder FIR + limiter
+        // decimator + dual-rate boundary, ~15 ms) or the burst never reaches
+        // the output inside the window.
+        let frames = 19_200
         let f: Float = 5_000.0
         let stepStart = 960
         var left = [Float](repeating: 0.0, count: frames)

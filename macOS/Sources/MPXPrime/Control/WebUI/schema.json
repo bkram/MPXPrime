@@ -650,7 +650,7 @@
      "mpx_clipper_lookahead_ms",
      "mpx_clipper_cancel_pilot",
      "mpx_clipper_cancel_rds",
-     "mpx_clipper_cancel_stereo",
+     "mpx_clipper_stereo_guard",
      "mpx_clipper_cancel_audio"
     ],
     "keys2": {
@@ -1264,9 +1264,14 @@
    "kind": "toggle",
    "label": "Protect RDS"
   },
-  "mpx_clipper_cancel_stereo": {
-   "kind": "toggle",
-   "label": "Protect Stereo Subcarrier"
+  "mpx_clipper_stereo_guard": {
+   "decimals": 2,
+   "kind": "slider",
+   "label": "Protect Stereo Subcarrier",
+   "max": 1.0,
+   "min": 0.0,
+   "step": 0.05,
+   "unit": ""
   },
   "mpx_clipper_ceiling_db": {
    "decimals": 1,

@@ -547,11 +547,7 @@ struct AdvancedDynamicsLeveler {
         sampleRate: Float, x1Hz: Float, x2Hz: Float, x3Hz: Float, x4Hz: Float
     ) {
         let sr = max(8_000.0, sampleRate)
-        let firTransition = max(1_000.0, x1Hz * 0.6)
-        splitter.configure(
-            x1Hz: x1Hz, x2Hz: x2Hz, x3Hz: x3Hz, x4Hz: x4Hz,
-            sampleRate: sr, stopBandDB: 60.0, transitionHz: firTransition
-        )
+        splitter.configure(x1Hz: x1Hz, x2Hz: x2Hz, x3Hz: x3Hz, x4Hz: x4Hz, sampleRate: sr)
         // Detector: 10 ms / 90 ms RMS window, 5 ms / 60 ms envelope
         // (MonoCompressor's hybrid-detector time constants).
         rmsAttackCoeff = expf(-1.0 / (0.010 * sr))

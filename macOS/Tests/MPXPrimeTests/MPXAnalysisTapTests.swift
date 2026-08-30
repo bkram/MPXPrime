@@ -12,7 +12,10 @@ struct MPXAnalysisTapTests {
         config.monoMode = false
 
         let generator = MPXGenerator(config: config, sampleRate: config.sampleRate)
-        let frameCount = 512
+        // The pre-MPX tap sits behind the linear-phase encoder FIR and the
+        // dual-rate boundary (several ms of group delay), so a DC step needs
+        // well over 512 frames to settle; measure the tail of a longer render.
+        let frameCount = 4_096
         var inputLeft = Array(repeating: Float(0.20), count: frameCount)
         var inputRight = Array(repeating: Float(0.60), count: frameCount)
         var postAGCLeft = Array(repeating: Float.zero, count: frameCount)
@@ -44,7 +47,7 @@ struct MPXAnalysisTapTests {
             }
         }
 
-        let stableRange = 256..<frameCount
+        let stableRange = (frameCount - 256)..<frameCount
         let meanPostLeft = stableRange.reduce(Float.zero) { $0 + postAGCLeft[$1] } / Float(stableRange.count)
         let meanPostRight = stableRange.reduce(Float.zero) { $0 + postAGCRight[$1] } / Float(stableRange.count)
         let meanPreLeft = stableRange.reduce(Float.zero) { $0 + preMPXLeft[$1] } / Float(stableRange.count)

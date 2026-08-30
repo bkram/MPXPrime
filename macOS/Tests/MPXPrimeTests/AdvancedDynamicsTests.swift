@@ -31,17 +31,27 @@ struct AdvancedDynamicsTests {
         return leveler
     }
 
-    /// Steady-state output RMS (dB) for a mono 1 kHz tone at `amplitude`,
-    /// measured over the last second of `seconds` of processing.
+    /// One tone per band, at the band centres of the crossovers above. A
+    /// leveler's job is program with energy in every band; a single tone on
+    /// a crossover skirt would measure the neighbouring band lifting the
+    /// crossover's leak by its full range, not the leveler (the 0.45
+    /// crossovers are deliberately no longer brick walls).
+    private static let bandCentreHz: [Float] = [60.0, 190.0, 760.0, 3_150.0, 9_000.0]
+
+    /// Steady-state output RMS (dB) for the five-tone program at the RMS a
+    /// single sine of `amplitude` would have, measured over the last second
+    /// of `seconds` of processing.
     private func steadyStateOutputDB(amplitude: Float, seconds: Float = 8.0) -> Float {
         var leveler = makeLeveler()
         let frames = Int(sampleRate * seconds)
         let measureStart = frames - Int(sampleRate)
         var sumSq: Double = 0.0
         var count = 0
+        let perTone = amplitude / sqrtf(Float(Self.bandCentreHz.count))
         for i in 0..<frames {
             let t = Float(i) / sampleRate
-            let x = amplitude * sinf(2.0 * Float.pi * 1_000.0 * t)
+            var x: Float = 0.0
+            for f in Self.bandCentreHz { x += perTone * sinf(2.0 * Float.pi * f * t) }
             let (l, _) = leveler.process(left: x, right: x)
             if i >= measureStart {
                 sumSq += Double(l * l)
@@ -99,12 +109,14 @@ struct AdvancedDynamicsTests {
     }
 
     @Test func quietAndLoudProgramConvergeTowardTarget() {
-        // The whole point of a leveler: a 23 dB input difference collapses
+        // The whole point of a leveler: a 16 dB input difference collapses
         // to a small output difference once each has settled at target.
-        // (The quiet level is chosen to need less lift than maxGainDB=18,
-        // so the clamp is not the limiting factor.)
-        let quietDB = steadyStateOutputDB(amplitude: 0.045)  // ~-27 dBFS
+        // (The quiet level is chosen so each of the five bands -- 7 dB below
+        // the total -- needs less lift than maxGainDB=18, so the clamp is
+        // not the limiting factor.)
+        let quietDB = steadyStateOutputDB(amplitude: 0.1)    // ~-20 dBFS total, ~-27 per band
         let loudDB = steadyStateOutputDB(amplitude: 0.63)    // ~-4 dBFS
+        print(String(format: "Advanced Dynamics convergence: quiet -> %.1f dB, loud -> %.1f dB", quietDB, loudDB))
         #expect(abs(loudDB - quietDB) < 6.0,
             "leveler failed to converge: quiet settled at \(quietDB) dB, loud at \(loudDB) dB")
         // And both should sit in the neighbourhood of the target, not at

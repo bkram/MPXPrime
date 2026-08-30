@@ -71,12 +71,8 @@ func kaiserSincLowpassCoefficients(
     let fc = clampf(cutoffHz, 30.0, nyq - 500.0)
     let transition = max(40.0, min(transitionHz, nyq - fc - 50.0))
     let attenuation = max(21.0, stopBandDB)
-
-    // Kaiser order estimate: N ≈ (A - 8) / (2.285 · 2π · Δf / fs).
-    let normalizedTransition = transition / sr
-    let rawN = Int(ceilf((attenuation - 8.0) / (2.285 * 2.0 * .pi * normalizedTransition)))
-    // Odd length gives a sample-centred symmetric kernel (exact linear phase).
-    let N = max(63, min(2_049, rawN | 1))
+    let N = kaiserSincLowpassTapCount(
+        cutoffHz: cutoffHz, sampleRate: sampleRate, stopBandDB: stopBandDB, transitionHz: transitionHz)
 
     let beta: Float
     if attenuation > 50 {
@@ -117,6 +113,27 @@ func kaiserSincLowpassCoefficients(
     return coeffs
 }
 
+/// The (odd) tap count `kaiserSincLowpassCoefficients` will produce for
+/// these parameters -- the standard Kaiser order estimate
+/// N ~ (A - 8) / (2.285 * 2 pi * df / fs), clamped to 63...2049. Exposed so
+/// multi-kernel designs can size a shared length before designing.
+func kaiserSincLowpassTapCount(
+    cutoffHz: Float,
+    sampleRate: Float,
+    stopBandDB: Float,
+    transitionHz: Float
+) -> Int {
+    let sr = max(8_000.0 as Float, sampleRate)
+    let nyq = sr * 0.5
+    let fc = clampf(cutoffHz, 30.0, nyq - 500.0)
+    let transition = max(40.0, min(transitionHz, nyq - fc - 50.0))
+    let attenuation = max(21.0, stopBandDB)
+    let normalizedTransition = transition / sr
+    let rawN = Int(ceilf((attenuation - 8.0) / (2.285 * 2.0 * .pi * normalizedTransition)))
+    // Odd length gives a sample-centred symmetric kernel (exact linear phase).
+    return max(63, min(2_049, rawN | 1))
+}
+
 struct LinearPhaseFIRLowpass {
     private var coeffs: [Float] = []
     // Double-buffered delay lines (size = 2 × lengthTaps). Each input
@@ -125,7 +142,7 @@ struct LinearPhaseFIRLowpass {
     // length window starting at `writeIdx + 1` and hands it to vDSP_dotpr,
     // which uses Apple Silicon's SIMD/AMX paths for ~5-10× speedup vs
     // a pure-Swift loop. Critical for affordable multiband FIR — the per-
-    // sample 2049-tap dot product is the chain's hot loop.
+    // sample ~900-tap dot products (four per channel) are the chain's hot loop.
     private var delayL: [Float] = []
     private var delayR: [Float] = []
     private var writeIdx: Int = 0
@@ -136,18 +153,27 @@ struct LinearPhaseFIRLowpass {
     var groupDelaySamples: Int { halfLength }
     var enabled: Bool { lengthTaps > 0 }
 
+    /// `padToTaps` (odd, >= the designed length) zero-pads the kernel
+    /// symmetrically so several lowpasses of different steepness share one
+    /// group delay -- what the multiband splitters need for sum-to-flat.
     mutating func configure(
         cutoffHz: Float,
         sampleRate: Float,
         stopBandDB: Float = 82.0,
-        transitionHz: Float = 1_500.0
+        transitionHz: Float = 1_500.0,
+        padToTaps: Int = 0
     ) {
-        coeffs = kaiserSincLowpassCoefficients(
+        var kernel = kaiserSincLowpassCoefficients(
             cutoffHz: cutoffHz,
             sampleRate: sampleRate,
             stopBandDB: stopBandDB,
             transitionHz: transitionHz
         )
+        if padToTaps > kernel.count, (padToTaps - kernel.count) % 2 == 0 {
+            let pad = [Float](repeating: 0.0, count: (padToTaps - kernel.count) / 2)
+            kernel = pad + kernel + pad
+        }
+        coeffs = kernel
         lengthTaps = coeffs.count
         halfLength = (lengthTaps - 1) / 2
         delayL = [Float](repeating: 0.0, count: lengthTaps * 2)
@@ -566,40 +592,58 @@ struct LinearPhaseMultibandSplitter5 {
     var groupDelaySamples: Int { halfLength }
     var enabled: Bool { halfLength > 0 }
 
+    /// Crossover design shared by the 5- and 3-band splitters (0.45).
+    ///
+    /// Each crossover gets its OWN transition, equal to its frequency and
+    /// floored at 120 Hz: -6 dB sits at the crossover and the band is
+    /// `stopBandDB` down half an octave above it -- steeper than an LR4 (which
+    /// needs ~1.7 octaves for 40 dB) but no longer the 60-85 Hz brick wall the
+    /// pre-0.45 design applied to every crossover, which (a) made the 1.8 and
+    /// 6.8 kHz crossovers pre-ring for ~12 ms whenever adjacent bands carried
+    /// different gains and (b) hit the 2049-tap clamp: 21.3 ms of latency at
+    /// the 48 kHz audio domain where the code comment promised 5.3. Kernels
+    /// are designed at their natural length and zero-padded to the longest
+    /// one, so every band still shares one group delay and the bands still
+    /// sum to the delayed input exactly. Kaiser centres its -6 dB point at
+    /// cutoff + transition/2, so the lowpass is designed at fc - transition/2
+    /// (floored at 30 Hz: a crossover below 60 Hz lands slightly high).
+    static let minTransitionHz: Float = 120.0
+
+    static func transitionHz(forCrossover fc: Float) -> Float { max(minTransitionHz, fc) }
+
+    static func designCutoffHz(forCrossover fc: Float) -> Float {
+        max(30.0, fc - (transitionHz(forCrossover: fc) * 0.5))
+    }
+
+    /// Longest natural kernel across the crossovers -- the shared tap count.
+    static func sharedTapCount(crossovers: [Float], sampleRate: Float, stopBandDB: Float) -> Int {
+        crossovers.reduce(0) { longest, fc in
+            max(longest, kaiserSincLowpassTapCount(
+                cutoffHz: designCutoffHz(forCrossover: fc), sampleRate: sampleRate,
+                stopBandDB: stopBandDB, transitionHz: transitionHz(forCrossover: fc)))
+        }
+    }
+
     mutating func configure(
         x1Hz: Float, x2Hz: Float, x3Hz: Float, x4Hz: Float,
         sampleRate: Float,
-        stopBandDB: Float = 50.0,
-        transitionHz: Float = 0.0  // ignored; kept for API symmetry
+        stopBandDB: Float = 40.0
     ) {
-        _ = transitionHz
-        // All 4 LPs MUST share the same tap count so band reconstruction
-        // is time-aligned. The transition band is the binding parameter:
-        // a tighter transition needs more taps. We size the transition
-        // for the LOWEST cutoff (the binding constraint) and apply it
-        // uniformly to all LPs. Higher-frequency LPs end up with wider-
-        // than-needed stop-bands, which is fine for band separation.
-        //
-        // Per-cutoff: transition ≈ fc × 0.4, floor 60 Hz. For x1=90 Hz
-        // that's 60 Hz transition. At 192 kHz with stopBandDB=50, Kaiser
-        // estimate yields ~1340 taps, clamped to 2049 max → group delay
-        // 1024 samples = 5.3 ms.
-        let lowest = max(30.0, min(x1Hz, min(x2Hz, min(x3Hz, x4Hz))))
-        let sharedTransition = max(60.0, lowest * 0.4)
-        lp1.configure(cutoffHz: x1Hz, sampleRate: sampleRate,
-                      stopBandDB: stopBandDB, transitionHz: sharedTransition)
-        lp2.configure(cutoffHz: x2Hz, sampleRate: sampleRate,
-                      stopBandDB: stopBandDB, transitionHz: sharedTransition)
-        lp3.configure(cutoffHz: x3Hz, sampleRate: sampleRate,
-                      stopBandDB: stopBandDB, transitionHz: sharedTransition)
-        lp4.configure(cutoffHz: x4Hz, sampleRate: sampleRate,
-                      stopBandDB: stopBandDB, transitionHz: sharedTransition)
-        // Sanity: assert all 4 share the same tap count. Should always
-        // hold since they share transition + stop-band + sample rate.
-        precondition(lp1.tapCount == lp2.tapCount,
-                     "Multiband FIR LPs out of sync (lp1=\(lp1.tapCount), lp2=\(lp2.tapCount))")
-        precondition(lp1.tapCount == lp3.tapCount)
-        precondition(lp1.tapCount == lp4.tapCount)
+        let crossovers = [x1Hz, x2Hz, x3Hz, x4Hz]
+        let taps = Self.sharedTapCount(crossovers: crossovers, sampleRate: sampleRate, stopBandDB: stopBandDB)
+        func configure(_ lp: inout LinearPhaseFIRLowpass, _ fc: Float) {
+            lp.configure(cutoffHz: Self.designCutoffHz(forCrossover: fc), sampleRate: sampleRate,
+                         stopBandDB: stopBandDB, transitionHz: Self.transitionHz(forCrossover: fc),
+                         padToTaps: taps)
+        }
+        configure(&lp1, x1Hz)
+        configure(&lp2, x2Hz)
+        configure(&lp3, x3Hz)
+        configure(&lp4, x4Hz)
+        // All four MUST share the tap count so band reconstruction is
+        // time-aligned; padding guarantees it, the precondition documents it.
+        precondition(lp1.tapCount == taps && lp2.tapCount == taps && lp3.tapCount == taps && lp4.tapCount == taps,
+                     "Multiband FIR LPs out of sync (\(lp1.tapCount)/\(lp2.tapCount)/\(lp3.tapCount)/\(lp4.tapCount) vs \(taps))")
         halfLength = lp1.groupDelaySamples
         let bufLen = max(1, halfLength + 1)
         delayL = [Float](repeating: 0.0, count: bufLen)
@@ -658,23 +702,21 @@ struct LinearPhaseMultibandSplitter3 {
     var groupDelaySamples: Int { halfLength }
     var enabled: Bool { halfLength > 0 }
 
+    /// Same crossover design as the 5-band splitter (see its documentation).
     mutating func configure(
         lowHz: Float, highHz: Float,
         sampleRate: Float,
-        stopBandDB: Float = 50.0,
-        transitionHz: Float = 0.0  // ignored; kept for API symmetry
+        stopBandDB: Float = 40.0
     ) {
-        _ = transitionHz
-        // Same approach as the 5-band variant: shared transition sized
-        // from the lower cutoff, uniform across both LPs so they share
-        // tap count and group delay.
-        let lowest = max(30.0, min(lowHz, highHz))
-        let sharedTransition = max(60.0, lowest * 0.4)
-        lp1.configure(cutoffHz: lowHz, sampleRate: sampleRate,
-                      stopBandDB: stopBandDB, transitionHz: sharedTransition)
-        lp2.configure(cutoffHz: highHz, sampleRate: sampleRate,
-                      stopBandDB: stopBandDB, transitionHz: sharedTransition)
-        precondition(lp1.tapCount == lp2.tapCount)
+        typealias Design = LinearPhaseMultibandSplitter5
+        let taps = Design.sharedTapCount(crossovers: [lowHz, highHz], sampleRate: sampleRate, stopBandDB: stopBandDB)
+        lp1.configure(cutoffHz: Design.designCutoffHz(forCrossover: lowHz), sampleRate: sampleRate,
+                      stopBandDB: stopBandDB, transitionHz: Design.transitionHz(forCrossover: lowHz),
+                      padToTaps: taps)
+        lp2.configure(cutoffHz: Design.designCutoffHz(forCrossover: highHz), sampleRate: sampleRate,
+                      stopBandDB: stopBandDB, transitionHz: Design.transitionHz(forCrossover: highHz),
+                      padToTaps: taps)
+        precondition(lp1.tapCount == taps && lp2.tapCount == taps)
         halfLength = lp1.groupDelaySamples
         let bufLen = max(1, halfLength + 1)
         delayL = [Float](repeating: 0.0, count: bufLen)

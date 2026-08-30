@@ -36,8 +36,11 @@ import os
 //   where:
 //     audio_chosen   = LR4_LP_15(up)         if cancelAudio
 //                    = LR4_LP_15(clipped)    otherwise
-//     stereo_chosen  = HP_22(LR4_LP_53(up))  if cancelStereo
-//                    = HP_22(LR4_LP_53(clipped)) otherwise
+//     stereo_chosen  = HP_22(LR4_LP_53(clipped + stereoGuard * residual))
+//                      (stereoGuard 1 restores the whole L-R subcarrier as it
+//                      went in -- the clipper then only ever removes the mono
+//                      share of an M+S peak; 0 clips the full composite the
+//                      way Orban / Omnia / Stereo Tool do; in between blends)
 //     above_53kHz    = LR4_HP_53(clipped) (i.e. clipped - LR4_LP_53(clipped))
 //
 // At the 53 kHz crossover, LR4_LP_53 + LR4_HP_53 sum to a magnitude-flat
@@ -121,7 +124,14 @@ struct CompositeClipper {
     private var residualRDSBP = Biquad()
 
     private var cancelAudio: Bool = false
-    private var cancelStereo: Bool = true
+    /// 0...1 share of the 22-53 kHz clipping residual restored to the output
+    /// (`mpx_clipper_stereo_guard`). 1 = the pre-0.45 "Protect Stereo
+    /// Subcarrier" toggle on: the S subchannel passes untouched and only the
+    /// M share of each peak is clipped, so the composite overshoots the
+    /// ceiling and the Final-MPX limiter has to ride ~1.5 dB routinely.
+    /// 0 = full composite clipping (industry practice). Picked from the
+    /// `--verify-stereo-guard` sweep.
+    private var stereoGuard: Float = 1.0
     // Pilot (19 kHz) and RDS (57 kHz) subcarriers are injected
     // post-clipper. Even so, clipper IM in the 17–21 kHz pilot guard
     // and 55–59 kHz RDS guard bands vector-sums with the cleanly-
@@ -211,7 +221,7 @@ struct CompositeClipper {
     private var lookaheadGainEnv: Float = 1.0
 
     mutating func configure(sampleRate: Float, thresholdDB: Float, ceilingDB: Float,
-                            cancelAudio: Bool = false, cancelStereo: Bool = true,
+                            cancelAudio: Bool = false, stereoGuard: Float = 1.0,
                             cancelPilot: Bool = true, cancelRDS: Bool = true,
                             lookaheadMS: Float = 0.0,
                             oversamplingFactor: Int = 16) {
@@ -293,7 +303,7 @@ struct CompositeClipper {
         residualRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
 
         self.cancelAudio = cancelAudio
-        self.cancelStereo = cancelStereo
+        self.stereoGuard = clampf(stereoGuard, 0.0, 1.0)
         self.cancelPilot = cancelPilot
         self.cancelRDS = cancelRDS
 
@@ -677,9 +687,9 @@ struct CompositeClipper {
         if cancelPilot {
             residualDecimated -= residualPilotBP.process(residualDecimated)
         }
-        if cancelStereo {
+        if stereoGuard > 0.0 {
             let split = residualStereo53.process(residualDecimated)
-            residualDecimated -= residualStereoHP.process(split.low).high
+            residualDecimated -= stereoGuard * residualStereoHP.process(split.low).high
         }
         lag.advance(xPath)
 

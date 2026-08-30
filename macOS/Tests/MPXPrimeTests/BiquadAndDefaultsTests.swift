@@ -134,8 +134,8 @@ struct AppConfigDefaultsTests {
             "Ceiling must be -0.3 dB; got \(cfg.compositeClipperCeilingDB)")
         #expect(cfg.compositeClipperCancelAudio == false,
             "Audio cancellation must be OFF by default — audio band is where peak reduction comes from")
-        #expect(cfg.compositeClipperCancelStereo == true,
-            "Stereo cancellation must be on — preserves (L-R) subcarrier integrity")
+        #expect(cfg.compositeClipperStereoGuard >= 0.0 && cfg.compositeClipperStereoGuard <= 1.0,
+            "Stereo guard is a 0...1 share (default picked from --verify-stereo-guard)")
         #expect(cfg.compositeClipperCancelPilot == true,
             "Pilot guard cancellation must be on — keeps 19 kHz region clean for post-stage pilot injection")
         #expect(cfg.compositeClipperCancelRDS == true,
@@ -240,8 +240,8 @@ struct SampleINIRoundTripTests {
             "Sample INI must enable composite clipper")
         #expect(cfg.compositeClipperCancelAudio == false,
             "Sample INI must keep audio-band clipping engaged (cancelAudio = False) so the clipper actually delivers loudness lift")
-        #expect(cfg.compositeClipperCancelStereo == true,
-            "Sample INI must enable stereo subcarrier cancellation to preserve (L-R) sideband integrity")
+        #expect(cfg.compositeClipperStereoGuard == AppConfig().compositeClipperStereoGuard,
+            "Sample INI must carry the shipped stereo guard share")
     }
 
     @Test func sampleINISurvivesRoundTrip() throws {
@@ -267,7 +267,7 @@ struct SampleINIRoundTripTests {
         #expect(reloaded.bassClipperEnabled == original.bassClipperEnabled)
         #expect(reloaded.compositeClipperEnabled == original.compositeClipperEnabled)
         #expect(reloaded.compositeClipperCancelAudio == original.compositeClipperCancelAudio)
-        #expect(reloaded.compositeClipperCancelStereo == original.compositeClipperCancelStereo)
+        #expect(abs(reloaded.compositeClipperStereoGuard - original.compositeClipperStereoGuard) < 0.001)
         #expect(abs(reloaded.compositeClipperThresholdDB - original.compositeClipperThresholdDB) < 0.01)
         #expect(abs(reloaded.compositeClipperCeilingDB - original.compositeClipperCeilingDB) < 0.01)
         #expect(reloaded.preemphasisUS == original.preemphasisUS)

@@ -31,6 +31,9 @@ struct VerificationMetrics {
     var sumSquares: Double = 0.0
     var maxLimiterGRDB: Float = 0.0
     var maxSafetyGRDB: Float = 0.0
+    /// Worst safety-shaper duty (dB over budget caught by the 1x soft clip);
+    /// 0 when clipper + final limiter own the peaks.
+    var maxSafetyClipDB: Float = 0.0
     var maxAudioCompositePeak: Float = 0.0
     var maxPostInjectionOvershoot: Float = 0.0
     /// 4x-oversampled true-peak of the composite (ITU-R BS.1770-style
@@ -59,6 +62,7 @@ struct VerificationMetrics {
         sumSquares += Double(sample * sample)
         maxLimiterGRDB = max(maxLimiterGRDB, limiter.gainReductionDB)
         maxSafetyGRDB = max(maxSafetyGRDB, limiter.safetyGainReductionDB)
+        maxSafetyClipDB = max(maxSafetyClipDB, limiter.safetyClipDB)
         maxAudioCompositePeak = max(maxAudioCompositePeak, calibration.audioPeak)
         maxPostInjectionOvershoot = max(maxPostInjectionOvershoot, calibration.postInjectionOvershoot)
         overBudget = overBudget || calibration.overBudget

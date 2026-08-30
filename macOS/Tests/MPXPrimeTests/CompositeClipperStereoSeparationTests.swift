@@ -70,7 +70,7 @@ struct CompositeClipperStereoSeparationTests {
             thresholdDB: Float(cfg.compositeClipperThresholdDB),
             ceilingDB: Float(cfg.compositeClipperCeilingDB),
             cancelAudio: cfg.compositeClipperCancelAudio,
-            cancelStereo: cfg.compositeClipperCancelStereo,
+            stereoGuard: Float(cfg.compositeClipperStereoGuard),
             cancelPilot: cfg.compositeClipperCancelPilot,
             cancelRDS: cfg.compositeClipperCancelRDS
         )
@@ -93,7 +93,54 @@ struct CompositeClipperStereoSeparationTests {
         analyze(samples).peakDBFS(in: (freqHz - tolHz)...(freqHz + tolHz))
     }
 
+    private func runClipper(_ mpx: [Float], stereoGuard: Float) -> [Float] {
+        var clip = CompositeClipper()
+        let cfg = AppConfig()
+        clip.configure(
+            sampleRate: sampleRate,
+            thresholdDB: Float(cfg.compositeClipperThresholdDB),
+            ceilingDB: Float(cfg.compositeClipperCeilingDB),
+            cancelAudio: cfg.compositeClipperCancelAudio,
+            stereoGuard: stereoGuard,
+            cancelPilot: cfg.compositeClipperCancelPilot,
+            cancelRDS: cfg.compositeClipperCancelRDS
+        )
+        var out = [Float](repeating: 0, count: mpx.count)
+        for i in 0..<mpx.count {
+            out[i] = clip.process(mpx[i])
+        }
+        return out
+    }
+
     // MARK: - Tests
+
+    /// The stereo guard share decides whether the clipper touches the L-R
+    /// subcarrier at all: at 1.0 the 37 / 39 kHz sidebands of a hard-clipped
+    /// hard-panned tone come out intact (only the mono share of the peak is
+    /// removed), at 0.0 they are clipped along with M (full composite
+    /// clipping). Pins the 0.45 `mpx_clipper_stereo_guard` plumbing.
+    @Test func stereoGuardShareControlsSubcarrierClipping() {
+        let frames = warmupFrames + fftSize
+        let left = SineGenerator.generate(freqHz: 1_000.0, amplitude: 0.95,
+                                          sampleRate: sampleRate, frameCount: frames)
+        let right = [Float](repeating: 0, count: frames)
+        // 6 dB of overdrive so the clipper is working hard, not grazing.
+        let mpx = encodeComposite(left: left, right: right).map { $0 * 2.0 }
+        func sidebandDelta(_ guardShare: Float) -> Float {
+            let out = runClipper(mpx, stereoGuard: guardShare)
+            return binDB(out, at: 39_000.0) - binDB(mpx, at: 39_000.0)
+        }
+        let guarded = sidebandDelta(1.0)
+        let half = sidebandDelta(0.5)
+        let unguarded = sidebandDelta(0.0)
+        print(String(format: "39 kHz (L-R) sideband at 6 dB overdrive: guard 1.0 %+.2f dB, 0.5 %+.2f dB, 0.0 %+.2f dB",
+                     guarded, half, unguarded))
+        // ~1 dB at 6 dB overdrive is the LR4 guard's own band-edge loss.
+        #expect(abs(guarded) < 1.5, "guard 1.0 must leave the L-R sideband intact; got \(guarded) dB")
+        #expect(unguarded < guarded - 1.0,
+            "guard 0.0 must clip the L-R sideband along with M; got \(unguarded) vs \(guarded) dB")
+        #expect(half < guarded && half > unguarded, "guard 0.5 must sit between the two")
+    }
 
     @Test func clipperPreservesLowFrequencySubcarrierSidebands() {
         // Hard-pan 1 kHz into L. Encoding produces (L-R) subcarrier

@@ -776,9 +776,8 @@ struct ProcessingCompositeClipperTab: View {
             Toggle("Protect Stereo Pilot", isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live))
                 .help("Removes clipping distortion from the 19 kHz pilot region so the receiver decodes stereo cleanly. Leave on except for diagnostic A/B.")
                 .disabled(disabled)
-            Toggle("Protect Stereo Subcarrier", isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live))
-                .help("Removes clipping distortion from the 38 kHz L-R subcarrier so stereo separation is preserved. Leave on except for diagnostic A/B.")
-                .disabled(disabled)
+            DoubleSliderRow(title: "Protect Stereo Subcarrier", value: model.configBinding(\.compositeClipperStereoGuard, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                tooltip: "How much of the clipper's distortion is kept out of the 22-53 kHz stereo (L-R) subcarrier. 1.00 restores the whole subcarrier: best HF stereo separation, but the clipper then only ever clips the mono share of a peak and the Final-MPX limiter rides the rest. 0.00 clips the full composite the way Orban / Omnia / Stereo Tool do: most loudness, least HF separation on dense program. The shipped value comes from the --verify-stereo-guard sweep.").disabled(disabled)
             Toggle("Protect RDS", isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live))
                 .help("Removes clipping distortion from the 57 kHz RDS region so receivers don't see clipper noise summed with the RDS subcarrier. Leave on except for diagnostic A/B.")
                 .disabled(disabled)

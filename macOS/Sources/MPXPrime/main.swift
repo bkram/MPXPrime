@@ -53,6 +53,8 @@ struct CLIOptions {
     var verifyAdvancedDynamics: Bool = false
     var verifySSBStereo: Bool = false
     var verifyHFTransients: Bool = false
+    var verifyStereoGuard: Bool = false
+    var verifyFinalRide: Bool = false
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
@@ -156,6 +158,14 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyHFTransients = true
             options.gui = false
+        case "--verify-stereo-guard":
+            options.verify = true
+            options.verifyStereoGuard = true
+            options.gui = false
+        case "--verify-final-ride":
+            options.verify = true
+            options.verifyFinalRide = true
+            options.gui = false
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -203,6 +213,8 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-advanced-dynamics [--seconds 5]
           MPXPrime [--config <path>] --verify-ssb-stereo [--seconds 5]
           MPXPrime [--config <path>] --verify-hf-transients [--seconds 5]
+          MPXPrime [--config <path>] --verify-stereo-guard [--seconds 5]
+          MPXPrime [--config <path>] --verify-final-ride [--seconds 4]
           MPXPrime --bench
           MPXPrime --bench-blocks
 
@@ -225,6 +237,13 @@ func printUsage() {
           --verify-hf-transients  Hi-hat / cymbal distortion gate: receiver-side HF SINAD, HF crest,
                      15-23 kHz composite spill per chain variant (field chain, every Format Profile,
                      per-stage isolation)
+          --verify-stereo-guard  Sweep the composite clipper's stereo guard share (0, 0.25, 0.5, 0.75, 1)
+                     on the Music - Loud profile: clipper / final-limiter duty, peak, deviation,
+                     14 kHz separation, hard-panned S/M, hat / ride HF SINAD -- the table the
+                     shipped `mpx_clipper_stereo_guard` default is picked from
+          --verify-final-ride  Attribute the Final-MPX limiter's duty: one composite-clipper candidate
+                     switched off per row (pilot / RDS / stereo guard, oversampling, knee, look-ahead,
+                     limiter, shaper) on a hot chain and on Music - Loud, every peak controller's duty printed
           --bench-blocks  Only the block (buffer) size sweep: worst-block cost vs block duration,
                      I/O latency, bit-identity across sizes, device HAL buffer range (~15 s).
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
@@ -356,6 +375,8 @@ do {
                 advancedDynamicsComparison: options.verifyAdvancedDynamics,
                 ssbStereoComparison: options.verifySSBStereo,
                 hfTransientsComparison: options.verifyHFTransients,
+                stereoGuardSweep: options.verifyStereoGuard,
+                finalRideIsolation: options.verifyFinalRide,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )

@@ -447,7 +447,7 @@ struct PreEncodeBandlimitedResidualLimiterTests {
         cfg.compositeClipperThresholdDB = -1.5
         cfg.compositeClipperCeilingDB = -0.3
         cfg.compositeClipperCancelAudio = false
-        cfg.compositeClipperCancelStereo = true
+        cfg.compositeClipperStereoGuard = 1.0
         cfg.compositeClipperCancelPilot = true
         cfg.compositeClipperCancelRDS = true
         cfg.widebandAGCEnabled = false

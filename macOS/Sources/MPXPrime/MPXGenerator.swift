@@ -235,7 +235,7 @@ final class MPXGenerator {
         let compositeClipperThresholdDB: Float
         let compositeClipperCeilingDB: Float
         let compositeClipperCancelAudio: Bool
-        let compositeClipperCancelStereo: Bool
+        let compositeClipperStereoGuard: Float
         let compositeClipperCancelPilot: Bool
         let compositeClipperCancelRDS: Bool
         let compositeClipperLookaheadMS: Float
@@ -373,7 +373,7 @@ final class MPXGenerator {
             compositeClipperThresholdDB: Float(config.compositeClipperThresholdDB),
             compositeClipperCeilingDB: Float(config.compositeClipperCeilingDB),
             compositeClipperCancelAudio: config.compositeClipperCancelAudio,
-            compositeClipperCancelStereo: config.compositeClipperCancelStereo,
+            compositeClipperStereoGuard: Float(config.compositeClipperStereoGuard),
             compositeClipperCancelPilot: config.compositeClipperCancelPilot,
             compositeClipperCancelRDS: config.compositeClipperCancelRDS,
             compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
@@ -813,7 +813,7 @@ final class MPXGenerator {
     private var compositeClipperThresholdDB: Float = -3.0
     private var compositeClipperCeilingDB: Float = -0.5
     private var compositeClipperCancelAudio: Bool = true
-    private var compositeClipperCancelStereo: Bool = true
+    private var compositeClipperStereoGuard: Float = 1.0
     private var compositeClipperCancelPilot: Bool = true
     private var compositeClipperCancelRDS: Bool = true
     private var compositeClipperLookaheadMS: Float = 0.0
@@ -1190,7 +1190,7 @@ final class MPXGenerator {
         self.compositeClipperThresholdDB = clampf(Float(config.compositeClipperThresholdDB), -12.0, 0.0)
         self.compositeClipperCeilingDB = clampf(Float(config.compositeClipperCeilingDB), -6.0, 0.0)
         self.compositeClipperCancelAudio = config.compositeClipperCancelAudio
-        self.compositeClipperCancelStereo = config.compositeClipperCancelStereo
+        self.compositeClipperStereoGuard = Float(config.compositeClipperStereoGuard)
         self.compositeClipperCancelPilot = config.compositeClipperCancelPilot
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
@@ -1233,6 +1233,16 @@ final class MPXGenerator {
         let audioRate = audioDomainSampleRate
         preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
         preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
+        // Transmit-grade filters are the generator's DEFAULT: the linear-phase
+        // encoder FIR and FIR multiband crossovers follow the config flags from
+        // construction, so the offline verifier, the Linux ALSA engine and the
+        // macOS engine all render the same chain. Only the low-latency monitor
+        // output turns them off (AudioOutputEngine calls the setters). Until
+        // 0.45 both defaulted to false and only AudioOutputEngine ever enabled
+        // them, so every --verify* gate and the Linux build measured / shipped
+        // the IIR monitor-path filters instead of the TX chain.
+        useEncoderFIR = config.encoderFIREnabled
+        useMultibandFIR = config.multibandFIREnabled
         applyEncoderComplianceConfiguration(sampleRate: self.sampleRate)
 
         widebandAGC.configure(
@@ -1313,7 +1323,7 @@ final class MPXGenerator {
             thresholdDB: compositeClipperThresholdDB,
             ceilingDB: compositeClipperCeilingDB,
             cancelAudio: compositeClipperCancelAudio,
-            cancelStereo: compositeClipperCancelStereo,
+            stereoGuard: compositeClipperStereoGuard,
             cancelPilot: compositeClipperCancelPilot,
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS,
@@ -1576,10 +1586,17 @@ final class MPXGenerator {
     /// config application so the dual-rate boundary is computed with it off.
     func setAudioOutputOnly(_ enabled: Bool) {
         audioOutputOnly = enabled
-        if enabled {
-            // The whole engine runs at the audio rate in this mode; no MPX-rate
-            // upsampling boundary.
+        if enabled, dualRateBoundaryEnabled {
+            // The whole engine runs at the output rate in this mode; no
+            // MPX-rate upsampling boundary. Switching the boundary off moves
+            // `audioDomainSampleRate` from 48 kHz to the output rate, so EVERY
+            // audio-domain stage must be re-derived -- until 0.45 nothing was,
+            // and processed-audio output ran pre-emphasis, limiters and
+            // crossovers with 48 kHz coefficients at 192 kHz (only the encoder
+            // FIR / multiband setters happened to reconfigure afterwards).
             dualRateBoundaryEnabled = false
+            configureDualRateBoundary()
+            reconfigureStagesForCurrentRates()
         }
     }
 
@@ -1634,12 +1651,16 @@ final class MPXGenerator {
             return
         }
         sampleRate = sr
-        // Audio-domain stages run at `audioDomainSampleRate` (= MPX rate
-        // when the dual-rate boundary is off, audio rate when on). Using
-        // `self.sampleRate` here would clobber the correct configuration
-        // applied at engine init and produce filters designed for the
-        // wrong rate — same root cause as the pre-0.30.1 setEncoderFIR
-        // regression.
+        reconfigureStagesForCurrentRates()
+    }
+
+    /// Re-derive every stage's coefficients for the current MPX rate and
+    /// audio-domain rate. Audio-domain stages run at `audioDomainSampleRate`
+    /// (= MPX rate when the dual-rate boundary is off, audio rate when on);
+    /// using `self.sampleRate` for them would produce filters designed for
+    /// the wrong rate -- the pre-0.30.1 setEncoderFIR regression. Called on
+    /// a sample-rate change and whenever the boundary itself is switched.
+    private func reconfigureStagesForCurrentRates() {
         let audioRate = audioDomainSampleRate
         preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
         preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
@@ -1720,7 +1741,7 @@ final class MPXGenerator {
             thresholdDB: compositeClipperThresholdDB,
             ceilingDB: compositeClipperCeilingDB,
             cancelAudio: compositeClipperCancelAudio,
-            cancelStereo: compositeClipperCancelStereo,
+            stereoGuard: compositeClipperStereoGuard,
             cancelPilot: compositeClipperCancelPilot,
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS,
@@ -2114,7 +2135,7 @@ final class MPXGenerator {
             || fabsf(compositeClipperThresholdDB - config.compositeClipperThresholdDB) > 0.0001
             || fabsf(compositeClipperCeilingDB - config.compositeClipperCeilingDB) > 0.0001
             || compositeClipperCancelAudio != config.compositeClipperCancelAudio
-            || compositeClipperCancelStereo != config.compositeClipperCancelStereo
+            || fabsf(compositeClipperStereoGuard - config.compositeClipperStereoGuard) > 0.0001
             || compositeClipperCancelPilot != config.compositeClipperCancelPilot
             || compositeClipperCancelRDS != config.compositeClipperCancelRDS
             || compositeClipperOversampling != config.compositeClipperOversampling
@@ -2124,7 +2145,7 @@ final class MPXGenerator {
         compositeClipperThresholdDB = clampf(config.compositeClipperThresholdDB, -12.0, 0.0)
         compositeClipperCeilingDB = clampf(config.compositeClipperCeilingDB, -6.0, 0.0)
         compositeClipperCancelAudio = config.compositeClipperCancelAudio
-        compositeClipperCancelStereo = config.compositeClipperCancelStereo
+        compositeClipperStereoGuard = clampf(config.compositeClipperStereoGuard, 0.0, 1.0)
         compositeClipperCancelPilot = config.compositeClipperCancelPilot
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
         compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
@@ -2135,7 +2156,7 @@ final class MPXGenerator {
                 thresholdDB: compositeClipperThresholdDB,
                 ceilingDB: compositeClipperCeilingDB,
                 cancelAudio: compositeClipperCancelAudio,
-                cancelStereo: compositeClipperCancelStereo,
+                stereoGuard: compositeClipperStereoGuard,
                 cancelPilot: compositeClipperCancelPilot,
                 cancelRDS: compositeClipperCancelRDS,
                 lookaheadMS: compositeClipperLookaheadMS,
@@ -2481,25 +2502,15 @@ final class MPXGenerator {
         mb5Split3.configure(cutoffHz: x3, sampleRate: sampleRate)
         mb5Split4.configure(cutoffHz: x4, sampleRate: sampleRate)
 
-        // Linear-phase FIR splitters (TX mode). Stop-band 60 dB,
-        // transition band scaled to the lowest crossover so the longest
-        // FIR (lp1 at x1) sets a reasonable tap budget. At 192 kHz with
-        // x1 = 90 Hz and transition = 1.5 kHz, the Kaiser estimate yields
-        // ~310 taps = ~155 sample group delay = ~0.81 ms.
-        let firTransition = max(1_000.0, x1 * 0.6)
+        // Linear-phase FIR splitters (TX mode). The splitter owns the
+        // crossover design (per-crossover transition = fc, floor 120 Hz,
+        // 40 dB stopband, kernels padded to a shared length); with the
+        // default 90 Hz lowest crossover that is ~893 taps at 48 kHz =
+        // 446 samples = 9.3 ms of audio-domain latency (was 2049 taps /
+        // 21.3 ms before 0.45).
         if useMultibandFIR {
-            mb3FIRSplitter.configure(
-                lowHz: x1, highHz: x2,
-                sampleRate: sampleRate,
-                stopBandDB: 60.0,
-                transitionHz: firTransition
-            )
-            mb5FIRSplitter.configure(
-                x1Hz: x1, x2Hz: x2, x3Hz: x3, x4Hz: x4,
-                sampleRate: sampleRate,
-                stopBandDB: 60.0,
-                transitionHz: firTransition
-            )
+            mb3FIRSplitter.configure(lowHz: x1, highHz: x2, sampleRate: sampleRate)
+            mb5FIRSplitter.configure(x1Hz: x1, x2Hz: x2, x3Hz: x3, x4Hz: x4, sampleRate: sampleRate)
         }
     }
 

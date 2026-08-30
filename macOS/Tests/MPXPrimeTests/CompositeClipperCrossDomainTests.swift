@@ -112,11 +112,11 @@ struct CompositeClipperCrossDomainTests {
     // MARK: - Runners
 
     private func runClipper(_ mpx: [Float], thresholdDB: Float, ceilingDB: Float,
-                            cancelAudio: Bool = true, cancelStereo: Bool = true,
+                            cancelAudio: Bool = true, stereoGuard: Float = 1.0,
                             cancelPilot: Bool = true, cancelRDS: Bool = true) -> [Float] {
         var clip = CompositeClipper()
         clip.configure(sampleRate: sampleRate, thresholdDB: thresholdDB, ceilingDB: ceilingDB,
-                       cancelAudio: cancelAudio, cancelStereo: cancelStereo,
+                       cancelAudio: cancelAudio, stereoGuard: stereoGuard,
                        cancelPilot: cancelPilot, cancelRDS: cancelRDS)
         var out = [Float](repeating: 0, count: mpx.count)
         for i in 0..<mpx.count {
@@ -162,7 +162,7 @@ struct CompositeClipperCrossDomainTests {
         // threshold at -3 dB (~0.708) → modest-heavy clipping.
         let (clean, _, _) = buildComposite(mAmplitude: 0.5, sAmplitude: 0.3, frames: frames)
         let clipped = runClipper(clean, thresholdDB: -3.0, ceilingDB: -0.5,
-                                 cancelAudio: false, cancelStereo: false,
+                                 cancelAudio: false, stereoGuard: 0.0,
                                  cancelPilot: false, cancelRDS: false)
 
         let (cleanM, cleanS) = demodulate(mpx: clean)
@@ -216,10 +216,10 @@ struct CompositeClipperCrossDomainTests {
         let frames = warmupFrames + fftSize
         let (signal, _, _) = buildComposite(mAmplitude: 0.5, sAmplitude: 0.3, frames: frames)
         let softlyClipped = runClipper(signal, thresholdDB: -3.0, ceilingDB: -0.5,
-                                       cancelAudio: false, cancelStereo: false,
+                                       cancelAudio: false, stereoGuard: 0.0,
                                        cancelPilot: false, cancelRDS: false)
         let heavilyClipped = runClipper(signal, thresholdDB: -12.0, ceilingDB: -0.5,
-                                        cancelAudio: false, cancelStereo: false,
+                                        cancelAudio: false, stereoGuard: 0.0,
                                         cancelPilot: false, cancelRDS: false)
 
         let (_, softS) = demodulate(mpx: softlyClipped)
@@ -246,7 +246,7 @@ struct CompositeClipperCrossDomainTests {
         let frames = warmupFrames + fftSize
         let (clean, _, _) = buildComposite(mAmplitude: 0.5, sAmplitude: 0.3, frames: frames)
         let clipped = runClipper(clean, thresholdDB: -3.0, ceilingDB: -0.5,
-                                 cancelAudio: false, cancelStereo: false,
+                                 cancelAudio: false, stereoGuard: 0.0,
                                  cancelPilot: false, cancelRDS: false)
 
         let (cleanM, cleanS) = demodulate(mpx: clean)
@@ -296,10 +296,10 @@ struct CompositeClipperCrossDomainTests {
         let frames = warmupFrames + fftSize
         let (clean, _, _) = buildComposite(mAmplitude: 0.5, sAmplitude: 0.3, frames: frames)
         let off = runClipper(clean, thresholdDB: -12.0, ceilingDB: -0.5,
-                             cancelAudio: false, cancelStereo: false,
+                             cancelAudio: false, stereoGuard: 0.0,
                              cancelPilot: false, cancelRDS: false)
         let onAudio = runClipper(clean, thresholdDB: -12.0, ceilingDB: -0.5,
-                                 cancelAudio: true, cancelStereo: false,
+                                 cancelAudio: true, stereoGuard: 0.0,
                                  cancelPilot: false, cancelRDS: false)
 
         let (mOff, _) = demodulate(mpx: off)
@@ -320,10 +320,10 @@ struct CompositeClipperCrossDomainTests {
         let frames = warmupFrames + fftSize
         let (clean, _, _) = buildComposite(mAmplitude: 0.5, sAmplitude: 0.3, frames: frames)
         let off = runClipper(clean, thresholdDB: -12.0, ceilingDB: -0.5,
-                             cancelAudio: false, cancelStereo: false,
+                             cancelAudio: false, stereoGuard: 0.0,
                              cancelPilot: false, cancelRDS: false)
         let onStereo = runClipper(clean, thresholdDB: -12.0, ceilingDB: -0.5,
-                                  cancelAudio: false, cancelStereo: true,
+                                  cancelAudio: false, stereoGuard: 1.0,
                                   cancelPilot: false, cancelRDS: false)
 
         let (_, sOff) = demodulate(mpx: off)

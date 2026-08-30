@@ -16,10 +16,26 @@ func runVerificationHarness(
     advancedDynamicsComparison: Bool = false,
     ssbStereoComparison: Bool = false,
     hfTransientsComparison: Bool = false,
+    stereoGuardSweep: Bool = false,
+    finalRideIsolation: Bool = false,
     captureBaseline: Bool = false,
     strictBaseline: Bool = false
 ) throws -> Int32 {
     let config = try AppConfig.load(fromINI: configPath)
+    if finalRideIsolation {
+        print("MPX Prime Final-MPX Limiter Ride Isolation")
+        print("Config: \(configPath)")
+        print("Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(3.0, min(durationSeconds, 6.0)))) s per row")
+        print("")
+        return runFinalRideIsolation(baseConfig: config, durationSeconds: durationSeconds)
+    }
+    if stereoGuardSweep {
+        print("MPX Prime Composite Clipper Stereo Guard Sweep")
+        print("Config: \(configPath)")
+        print("Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(3.0, min(durationSeconds, 6.0)))) s per point")
+        print("")
+        return runStereoGuardSweep(baseConfig: config, durationSeconds: durationSeconds)
+    }
     if hfTransientsComparison {
         print("MPX Prime HF Transient (hi-hat / cymbal) Verification")
         print("Config: \(configPath)")

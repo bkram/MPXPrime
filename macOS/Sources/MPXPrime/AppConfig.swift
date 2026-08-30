@@ -359,8 +359,13 @@ struct AppConfig: Equatable {
     // Cancellation toggles subtract bandpass-filtered clip residual from
     // protected bands of the output. Defaults:
     //   cancelAudio  = false → audio band keeps full clipping (peak control)
-    //   cancelStereo = true  → 23–53 kHz (L-R) subcarrier rides through
-    //                          clean → stereo separation preserved
+    //   stereoGuard  = 0..1  → share of the 22–53 kHz (L-R) subcarrier
+    //                          residual restored (1 = subcarrier rides
+    //                          through untouched; 0 = full composite
+    //                          clipping as Orban / Omnia / Stereo Tool do;
+    //                          `mpx_clipper_stereo_guard`, replaced the
+    //                          `mpx_clipper_cancel_stereo` toggle in 0.45 --
+    //                          default picked from `--verify-stereo-guard`)
     //   cancelPilot  = true  → 17–21 kHz pilot guard kept clean for the
     //                          post-stage 19 kHz pilot injection
     //   cancelRDS    = true  → 55–59 kHz RDS guard kept clean for the
@@ -369,7 +374,7 @@ struct AppConfig: Equatable {
     var compositeClipperThresholdDB: Double = -1.0
     var compositeClipperCeilingDB: Double = -0.3
     var compositeClipperCancelAudio: Bool = false
-    var compositeClipperCancelStereo: Bool = true
+    var compositeClipperStereoGuard: Double = 1.0
     var compositeClipperCancelPilot: Bool = true
     var compositeClipperCancelRDS: Bool = true
     // Look-ahead composite peak control (0.0 disables; recommended preset: 2.0 ms).
@@ -881,8 +886,14 @@ struct AppConfig: Equatable {
             "mpx_clipper_ceiling_db", defaultValue: cfg.compositeClipperCeilingDB)
         cfg.compositeClipperCancelAudio = mpx.bool(
             "mpx_clipper_cancel_audio", defaultValue: cfg.compositeClipperCancelAudio)
-        cfg.compositeClipperCancelStereo = mpx.bool(
-            "mpx_clipper_cancel_stereo", defaultValue: cfg.compositeClipperCancelStereo)
+        // 0.45: the 0...1 `mpx_clipper_stereo_guard` replaced the
+        // `mpx_clipper_cancel_stereo` toggle. An INI that still carries only
+        // the toggle maps True -> 1.0 / False -> 0.0 so its behaviour is kept.
+        let legacyStereoGuard: Double? = mpx["mpx_clipper_cancel_stereo"] == nil
+            ? nil
+            : (mpx.bool("mpx_clipper_cancel_stereo", defaultValue: true) ? 1.0 : 0.0)
+        cfg.compositeClipperStereoGuard = mpx.double(
+            "mpx_clipper_stereo_guard", defaultValue: legacyStereoGuard ?? cfg.compositeClipperStereoGuard)
         cfg.compositeClipperCancelPilot = mpx.bool(
             "mpx_clipper_cancel_pilot", defaultValue: cfg.compositeClipperCancelPilot)
         cfg.compositeClipperCancelRDS = mpx.bool(
@@ -1168,6 +1179,7 @@ struct AppConfig: Equatable {
         bs412WindowSeconds = max(30.0, min(90.0, bs412WindowSeconds))
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
+        compositeClipperStereoGuard = max(0.0, min(1.0, compositeClipperStereoGuard))
         ssbStereoAmount = max(0.0, min(1.0, ssbStereoAmount))
         if compositeClipperCeilingDB <= compositeClipperThresholdDB + 0.2 {
             compositeClipperCeilingDB = min(0.0, compositeClipperThresholdDB + 0.5)
@@ -1391,7 +1403,7 @@ struct AppConfig: Equatable {
             "mpx_clipper_threshold_db = \(Self.formatFloat(compositeClipperThresholdDB))",
             "mpx_clipper_ceiling_db = \(Self.formatFloat(compositeClipperCeilingDB))",
             "mpx_clipper_cancel_audio = \(Self.boolString(compositeClipperCancelAudio))",
-            "mpx_clipper_cancel_stereo = \(Self.boolString(compositeClipperCancelStereo))",
+            "mpx_clipper_stereo_guard = \(Self.formatFloat(compositeClipperStereoGuard))",
             "mpx_clipper_cancel_pilot = \(Self.boolString(compositeClipperCancelPilot))",
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",

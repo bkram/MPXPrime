@@ -11,6 +11,100 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **`--verify-final-ride`: attributes the Final-MPX limiter's duty.** One
+  composite-clipper candidate is switched off per row (pilot / RDS / stereo
+  guard, 8x / 32x oversampling, knee width, 2 ms clipper look-ahead, the final
+  limiter itself, the safety shaper) on a hot chain and on Music - Loud, with
+  every peak controller's duty printed (clipper GR, final-limiter GR, the new
+  safety-clip column, audio-composite peak, 4x true peak); the parameterised
+  `CompositeClipperBoundProbeTests.overshootAttribution` does the same at the
+  clipper alone. First results (2026-08-30): the pure band-limiting overshoot
+  of a clipped composite is +0.55 dB, the three guards together lift it to
+  +1.74 dB, oversampling factor and knee width change nothing; the clipper's
+  own 2 ms look-ahead cuts its kernel GR from 13.7 to 3.1 dB and the final
+  limiter's ride from 5.8 to 0.08 dB on the hot chain. And a defect: with the
+  limiter reporting 0.02 dB of GR on Music - Loud, 0.87 dB of dense program
+  still reaches the 1x safety shaper (2.7 dB on the hot chain while the
+  limiter rides 5.8 dB) -- the look-ahead limiter leaks peaks past its
+  threshold. Investigating that is the next chain-review item (A1b), before
+  any POCS work.
+
+- **Composite clipper: `Protect Stereo Subcarrier` is now a 0.00-1.00 share
+  (`mpx_clipper_stereo_guard`) instead of an on/off toggle, with a
+  `--verify-stereo-guard` sweep that shows what it trades.** At 1.00 the
+  22-53 kHz clipping residual is restored in full (the pre-0.45 toggle on):
+  the L-R subcarrier passes exactly as it went in and the clipper only ever
+  removes the mono share of an M+S peak. At 0.00 the clipper clips the whole
+  composite the way Orban's half-cosine limiter (US 6,434,241 does not
+  protect 23-53 kHz), Omnia and Stereo Tool do. Existing INIs load
+  `mpx_clipper_cancel_stereo = True/False` as 1.00/0.00. GUI (Composite
+  Clipper tab + inspector) and web dashboard show the slider; live-apply.
+  The chain review had blamed full S restoration for the ~1.5 dB of routine
+  Final-MPX limiter duty; the sweep refutes that: on the shipped Music - Loud
+  profile the share changes nothing (clipper GR ~1.9 dB, limiter idle at
+  0.02 dB, 35 dB separation, identical HF SINAD at every share), and on a hot
+  config (multiband off, 5 dB of clipper GR) the ride is 1.19 dB at 0 and
+  1.33 dB at 1, while guard 1 costs ~5 dB of 14 kHz tone separation (25.5 vs
+  30.6 dB, both far above the 16 dB gate) and buys ~3 dB of decoded hi-hat /
+  ride SINAD (13.7 vs 10.6 dB). The shipped default therefore stays 1.00 --
+  the measured choice, since decoded HF cleanliness is what the 0.45 work is
+  about -- and the industry-style setting is one slider move away. Unit test
+  `stereoGuardShareControlsSubcarrierClipping` pins the semantics (39 kHz
+  L-R sideband at 6 dB overdrive: -1.0 / -2.4 / -3.9 dB for 1.0 / 0.5 / 0).
+
+- **Processed-audio output mode ran its audio-domain stages at the wrong
+  sample rate.** Selecting the L/R processed-audio output switches the
+  dual-rate boundary off after the generator was built with 48 kHz
+  coefficients, and nothing re-derived them: pre-emphasis, the Audio
+  Limiter, HF limiter, AGC, EQ and the rest ran 48 kHz coefficients at the
+  output rate (a 50 us curve became ~12.5 us: +2 dB at 10 kHz instead of
+  +10.3; limiter time constants 4x too fast at 192 kHz). Only the encoder
+  FIR and the multiband crossovers happened to be reconfigured afterwards by
+  their own setters, which is also why the tests never saw it.
+  `setAudioOutputOnly` now re-derives every stage (the same routine a
+  sample-rate change uses); `processedAudioKeepsThePreemphasisCurve` pins
+  the curve at the output. Composite output was never affected.
+
+- **The verifier and the Linux build now run the transmit filters.** The
+  linear-phase encoder FIR and the FIR multiband crossovers were enabled only
+  by the macOS live engine at start; `MPXGenerator` itself defaulted both to
+  off. So every offline gate (`--verify*`, all baselines, the receiver and
+  HF sweeps) had been measuring the IIR monitor-path filters (Butterworth
+  encoder lowpass, LR4 crossovers) -- which is why the receiver gate's
+  "encoder FIR OFF" isolation row always read +0.00 and why the crossover
+  redesign above moved no baseline metric -- and the Linux ALSA engine
+  shipped those monitor filters on air. The generator now seeds both flags
+  from the config (`encoder_fir_enabled` / `multiband_fir_enabled`, default
+  on); only the low-latency monitor output switches them off. All composite
+  baselines recaptured on the TX chain. Found while measuring Step 3 of the
+  chain review.
+
+- **Multiband crossovers redesigned: 9.3 ms instead of 21.3 ms of latency, and
+  real crossover slopes instead of brick walls.** The linear-phase FIR
+  splitters (`LinearPhaseMultibandSplitter5` / `3`, also used by Advanced
+  Dynamics) silently ignored the transition width the chain asked for and
+  used 60 Hz for every crossover; at the 48 kHz audio domain the Kaiser
+  estimate then hit the 2049-tap clamp -- 1024 samples = 21.3 ms where the
+  code comment and ARCHITECTURE promised 5.3 ms -- and gave the 1.8 and
+  6.8 kHz crossovers an ~85 Hz-wide edge that pre-rang for ~12 ms whenever
+  adjacent bands carried different gains. Each crossover now gets its own
+  transition (equal to its frequency, floored at 120 Hz), the design is
+  centred so -6 dB lands exactly AT the crossover (Kaiser puts it at cutoff
+  + transition/2; the old design sat above the nominal frequency), the
+  stopband is 40 dB (vendor crossovers are 12-24 dB/oct), and the kernels
+  are zero-padded to one shared length so every band still shares one group
+  delay and the bands still sum to the delayed input at -156 dB. Measured
+  (`MultibandFIRSplitterTests`, now at 48 kHz): 446 samples = 9.29 ms,
+  -6 dB within 0.4 dB at all four crossovers, band peaks aligned to the
+  sample, pre-ringing -28.8 dB and starting 0.56 ms early with a 6 dB
+  inter-band disparity; the FIR multiband is now cheaper than the IIR path
+  (0.91x, was 1.14x). The splitter owns its design (`transitionHz` parameter
+  removed). Baselines recaptured. `AdvancedDynamicsTests` now excite the
+  leveler with one tone per band instead of a single 1 kHz tone on the
+  1.6 kHz crossover skirt (with real slopes the neighbouring band lifts
+  that leak by its full range -- the known multiband-leveler behaviour that
+  band coupling addresses, Step 7 of the chain review).
+
 - **Receiver-side HF response is now flat to the analog pre-emphasis curve
   (+/-0.5 dB to 14 kHz; it was -3.5 dB at 14 kHz).** Two artefacts of the
   48 kHz audio domain stacked up on air. (1) The pre-encode Audio Limiter's

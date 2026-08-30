@@ -188,6 +188,30 @@ struct ProcessedAudioOutputTests {
         #expect(hiMag < refMag * 0.1, "19 kHz should be band-limited well below the 1 kHz reference: \(hiMag) vs \(refMag)")
     }
 
+    // 3b. Every audio-domain stage runs at the processed-audio rate. Selecting
+    // this mode turns the dual-rate boundary off AFTER the generator was built
+    // with 48 kHz coefficients; until 0.45 only the encoder FIR and the
+    // crossovers were reconfigured, so pre-emphasis (and the limiters) ran 48 kHz
+    // coefficients at the output rate -- a 50 us curve became ~12.5 us, +2 dB at
+    // 10 kHz instead of +10.3. Pin the curve at the output.
+    @Test func processedAudioKeepsThePreemphasisCurve() {
+        let sr = 96_000.0
+        var cfg = baseConfig(sampleRate: sr)
+        cfg.preemphasisUS = 50
+        let amp: Float = 0.03   // far below the limiter threshold even after +10 dB of boost
+        func level(_ f: Double) -> Double {
+            let out = renderAudioOnly(cfg: cfg, seconds: 0.6) { _, t in
+                let s = Float(Double(amp) * sin(2.0 * .pi * f * t)); return (s, s)
+            }
+            return 20.0 * log10(max(1e-12, goertzel(out.left, freqHz: f, sampleRate: sr, startFrame: Int(sr * 0.2))))
+        }
+        let boostDB = level(10_000.0) - level(1_000.0)
+        func analog(_ f: Double) -> Double { 10.0 * log10(1.0 + pow(2.0 * .pi * f * 50e-6, 2)) }
+        let expected = analog(10_000.0) - analog(1_000.0)
+        #expect(abs(boostDB - expected) < 0.5,
+                "processed-audio pre-emphasis boost 10 kHz re 1 kHz is \(boostDB) dB, expected \(expected)")
+    }
+
     // 4. Pre-encode limiter still controls peaks AND the output is normalized to
     // full scale: a hot stereo program produces no output overs but reaches near
     // 0 dBFS (the limiter ceiling is mapped to full scale so the line feed to an

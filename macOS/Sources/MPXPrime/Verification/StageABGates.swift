@@ -610,3 +610,90 @@ func runSSBStereoComparison(
     print("Result: TIGHT - SSB Stereo is implemented, but preset use needs review.")
     return 1
 }
+
+// MARK: - Composite clipper stereo guard sweep (--verify-stereo-guard)
+//
+// Chain review 2026-08-30, finding B1: with the stereo guard at 1 the 22-53 kHz
+// clipping residual is restored in full, so the composite clipper only ever
+// removes the MONO share of an M+S peak. The output then exceeds the ceiling and
+// the Final-MPX limiter rides the difference. Orban's half-cosine limiter
+// (US 6,434,241) does not protect 23-53 kHz at all and Thimeo / Omnia clip the
+// full composite; the trade is HF stereo separation on dense program against
+// loudness / limiter duty. This sweep prints that trade, on the shipped Music -
+// Loud profile and on the config as loaded, so the default is a measured choice.
+
+private func printStereoGuardTable(label: String, config: AppConfig, durationSeconds duration: Double)
+    -> [(guardShare: Double, finalGR: Float, sep14: Float)] {
+    let scenarios = verificationScenarios()
+    guard let dense = scenarios.first(where: { $0.name == "bright_dense" }) else { return [] }
+
+    print("\(label): clipper drive \(String(format: "%.1f", config.finalDriveDB)) dB, threshold \(String(format: "%.1f", config.compositeClipperThresholdDB)) dB, ceiling \(String(format: "%.1f", config.compositeClipperCeilingDB)) dB, multiband \(config.multibandEnabled ? "on" : "off")")
+    print("Guard  ClipGR  FinalGR  Peak dBFS  Dev kHz  Sep10k  Sep14k  S-M@14k  RideSINAD  HatSINAD")
+    print("-----  ------  -------  ---------  -------  ------  ------  -------  ---------  --------")
+    var points: [(guardShare: Double, finalGR: Float, sep14: Float)] = []
+    for share in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        var cfg = config
+        cfg.compositeClipperStereoGuard = share
+        let d = verifyScenario(config: cfg, durationSeconds: duration, scenario: dense)
+        let tone14 = receiverToneAnalysis(config: cfg, toneHz: 14_000.0, durationSeconds: duration)
+        let sep10 = receiverToneAnalysis(config: cfg, toneHz: 10_000.0, durationSeconds: duration).coherent.separationDB
+        let sep14 = tone14.coherent.separationDB
+        let sideMono14 = tone14.encoderSideband.sideMonoDeltaDB
+        // Fresh HF scenarios per point: their noise generators carry state.
+        let hf = hfTransientScenarios()
+        let ride = hf.first(where: { $0.name == "ride_multitone" }).map {
+            measureHFTransient(config: cfg, scenario: $0, durationSeconds: max(5.0, duration)).hfSINADDB ?? 0.0
+        } ?? 0.0
+        let hat = hf.first(where: { $0.name == "hat_multitone" }).map {
+            measureHFTransient(config: cfg, scenario: $0, durationSeconds: max(5.0, duration)).hfSINADDB ?? 0.0
+        } ?? 0.0
+        let deviationKHz = d.peakAbs * Float(cfg.mpxDeviationKHz)
+        points.append((share, d.maxSafetyGRDB, sep14))
+        print(
+            "\(String(format: "%5.2f", share))  "
+                + "\(String(format: "%6.2f", d.maxLimiterGRDB))"
+                + "  \(String(format: "%7.2f", d.maxSafetyGRDB))"
+                + "  \(String(format: "%9.2f", dbfsValue(d.peakAbs)))"
+                + "  \(String(format: "%7.2f", deviationKHz))"
+                + "  \(String(format: "%6.1f", sep10))"
+                + "  \(String(format: "%6.1f", sep14))"
+                + "  \(String(format: "%+7.2f", sideMono14))"
+                + "  \(String(format: "%9.1f", ride))"
+                + "  \(String(format: "%8.1f", hat))"
+        )
+    }
+    print("")
+    return points
+}
+
+func runStereoGuardSweep(
+    baseConfig: AppConfig,
+    durationSeconds: Double
+) -> Int32 {
+    let duration = max(3.0, min(durationSeconds, 6.0))
+    var loud = baseConfig
+    _ = PresetCatalog.applyFormatProfile(id: "music_loud", to: &loud)
+
+    print("Per point: bright_dense (ClipGR = composite clipper, FinalGR = Final-MPX limiter duty, peak,")
+    print("deviation), 10 / 14 kHz left-only tones (coherent separation; S-M@14k = encoder-side")
+    print("sideband-sum minus mono at 14 kHz, 0 = balanced M/S), ride / hat HF SINAD (receiver-side,")
+    print("de-emphasised). Measured 2026-08-30: on Music - Loud the share changes nothing; on a hot")
+    print("config the Final-MPX ride is 1.19 dB at 0 and 1.33 dB at 1 (the ride is NOT the guard's),")
+    print("guard 1 costs ~5 dB of 14 kHz tone separation and buys ~3 dB of decoded hat / ride SINAD.")
+    print("")
+    let loudPoints = printStereoGuardTable(label: "Profile Music - Loud", config: loud, durationSeconds: duration)
+    _ = printStereoGuardTable(label: "Config as loaded", config: baseConfig, durationSeconds: duration)
+
+    print("Assessment")
+    print("Shipped default: mpx_clipper_stereo_guard = \(String(format: "%.2f", AppConfig().compositeClipperStereoGuard))")
+    let acceptable = loudPoints.filter { $0.finalGR <= 0.5 && $0.sep14 >= 20.0 }
+    if let best = acceptable.max(by: { $0.sep14 < $1.sep14 }) {
+        print("Music - Loud: guard shares with final-limiter duty <= 0.5 dB and 14 kHz separation >= 20 dB: "
+            + acceptable.map { String(format: "%.2f", $0.guardShare) }.joined(separator: ", ")
+            + "; best separation among them at \(String(format: "%.2f", best.guardShare)).")
+    } else {
+        print("Music - Loud: no guard share meets final-limiter duty <= 0.5 dB with 14 kHz separation >= 20 dB.")
+    }
+    print("Result: OK - sweep printed; the shipped default is chosen from this table (docs/manual.md, Composite Clipper).")
+    return 0
+}

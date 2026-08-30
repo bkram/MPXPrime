@@ -143,10 +143,13 @@ public struct MPXDecoder {
         let monSrc = mpx
 
         let lpr = lprLP.process(monSrc)
+        // Textbook stereo decode: S = 2 * mpx * sin(2 theta) lowpassed, L = M + S.
+        // No sign compensation belongs here -- the encoder emits the standard
+        // (L - R)/2 polarity (47 CFR 73.322 / BS.450-3), and this decoder is
+        // also what the Meter uses on real off-air stations.
         var diff = 2.0 * monSrc * subcarrier
         diff = diffLP.process(diff)
         diff *= Self.diffDecodeGain
-        diff = -diff
 
         var left = lpr + diff
         var right = lpr - diff

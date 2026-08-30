@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Stereo subcarrier polarity now follows 47 CFR 73.322 / ITU-R BS.450-3 --
+  real receivers no longer play L and R swapped.** The encoder had sent
+  `S = (R-L)/2` on the 38 kHz subcarrier since the first commit; the
+  standard is `(L-R)/2` with the subcarrier crossing zero on a positive slope
+  at every pilot zero crossing, so a standard receiver formed `L = M + S`
+  and got the RIGHT channel. `MPXDecoder` carried a silent compensating
+  negation (`diff = -diff`, added in 0.27 with the receiver-model verifier),
+  which kept the monitor path, the Meter and every verifier gate
+  self-consistent -- and also made MPX Prime Meter decode real off-air
+  stations swapped. Both are fixed: the encoder emits the standard polarity,
+  the decoder is a plain textbook decoder, and `--verify-receiver` now
+  scores separation against the DRIVEN channel (a swap reads as negative
+  separation) instead of "stronger vs weaker". New `StereoPolarityTests`
+  pin both sides against an independent hand-written decode (left-only tone
+  -> LEFT, right-only -> RIGHT, decoder on a hand-built standard composite).
+  Composite magnitudes are unchanged; the waveform is not (M + S vs M - S),
+  so all composite baselines were recaptured. Found by the 0.45 chain design
+  review; confirm on a car radio with the calibration tone routed `left`.
+
 - **`smoke-live.sh`: live-engine smoke test on a virtual output.** Runs the
   headless encoder with the REST API against BlackHole 2ch (192 kHz) using a
   COPY of the given INI (default: the station INI) and checks what the

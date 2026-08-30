@@ -432,15 +432,16 @@ struct MeterQualityMetricsTests {
         let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
         let l: Float = 0.20
         let r: Float = 0.20 * powf(10.0, -6.0 / 20.0)
-        // MPXGenerator convention: M = (L+R)/2, S = (R-L)/2, composite =
-        // M + S*sin(2pi*38k*t), with the pilot as sin(2pi*19k*t) so the
-        // subcarrier is its true second harmonic -- a cosine pilot against a
-        // cosine subcarrier is 90 deg out and decodes as no side at all.
+        // Standard composite (47 CFR 73.322 / BS.450-3): M = (L+R)/2,
+        // S = (L-R)/2, composite = M + S*sin(2pi*38k*t), with the pilot as
+        // sin(2pi*19k*t) so the subcarrier is its true second harmonic -- a
+        // cosine pilot against a cosine subcarrier is 90 deg out and decodes
+        // as no side at all. A real station with left hotter must read +dB.
         feed(a, seconds: 8.0) { t in
             let audioL = l * cosf(twoPi(1_000, t))
             let audioR = r * cosf(twoPi(1_000, t))
             let mid = (audioL + audioR) * 0.5
-            let side = (audioR - audioL) * 0.5
+            let side = (audioL - audioR) * 0.5
             return mid + side * sinf(twoPi(38_000, t))
                 + amp(6.75) * sinf(twoPi(19_000, t))
         }

@@ -120,7 +120,14 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 ├──► Stereo encoder (phase-coherent)
 │    ├── M = (L+R)/2
 │    ├── S = (L-R)/2
-│    └── DSB-SC: S x cos(2pi*38 kHz)   where 38 kHz = 2xpilot (phase locked)
+│    └── DSB-SC: S x sin(2*theta)   pilot = sin(theta), 38 kHz = 2xpilot from
+│        the same recurrence. Standard polarity (47 CFR 73.322 / BS.450-3):
+│        the subcarrier crosses zero with positive slope at every pilot zero
+│        crossing, a receiver forms L = M + S. Pre-0.45 the encoder sent
+│        (R-L)/2 and MPXDecoder negated it back -- real receivers swapped L/R.
+│        MPXDecoder is now a plain textbook decoder (no sign compensation);
+│        StereoPolarityTests pin both sides against an independent decode and
+│        --verify-receiver scores separation against the DRIVEN channel.
 │
 ├──► RDS path (parallel, MPX domain @ output rate)
 │    ├── RDS baseband (biphase / shaping)

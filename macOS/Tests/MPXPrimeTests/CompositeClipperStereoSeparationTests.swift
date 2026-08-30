@@ -44,8 +44,9 @@ struct CompositeClipperStereoSeparationTests {
 
     // MARK: - Composite encode / decode
 
-    /// Encode `(L, R)` to the audio composite using the MPXGenerator
-    /// convention: `M=(L+R)/2`, `S=(R-L)/2`, composite = M + S·sin(2π·38k·t).
+    /// Encode `(L, R)` to the audio composite using the standard (and, since
+    /// 0.45, MPXGenerator) convention: `M=(L+R)/2`, `S=(L-R)/2`,
+    /// composite = M + S·sin(2π·38k·t).
     private func encodeComposite(left: [Float], right: [Float]) -> [Float] {
         precondition(left.count == right.count)
         let frames = left.count
@@ -53,7 +54,7 @@ struct CompositeClipperStereoSeparationTests {
         let w38 = 2.0 * Double.pi * 38_000.0 / Double(sampleRate)
         for i in 0..<frames {
             let m = 0.5 * (left[i] + right[i])
-            let s = 0.5 * (right[i] - left[i])
+            let s = 0.5 * (left[i] - right[i])
             mpx[i] = m + s * Float(sin(w38 * Double(i)))
         }
         return mpx

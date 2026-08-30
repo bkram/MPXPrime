@@ -212,17 +212,26 @@ func receiverToneMetrics(
         start: window.start,
         count: window.count
     )
-    // The synthetic pilot reference may lock with either 38 kHz polarity,
-    // which swaps decoded L/R. Separation is therefore scored as stronger
-    // decoded channel vs weaker decoded channel.
-    let wanted = max(max(left.amplitude, right.amplitude), 1e-12)
-    let crosstalk = max(min(left.amplitude, right.amplitude), 1e-12)
+    let sep = drivenChannelSeparation(driven: left, other: right)
     return ReceiverToneMetrics(
         toneHz: toneHz,
-        wantedDBFS: dbfs(wanted),
-        crosstalkDBFS: dbfs(crosstalk),
-        separationDB: Float(20.0 * log10(wanted / crosstalk))
+        wantedDBFS: dbfs(sep.wanted),
+        crosstalkDBFS: dbfs(sep.crosstalk),
+        separationDB: sep.separationDB
     )
+}
+
+/// Separation scored against the channel the test actually drove (LEFT in
+/// every receiver scenario), never "stronger vs weaker". The pilot-phase fit
+/// in `estimatePilotPhase` is unambiguous (a pilot phase error of pi would be
+/// 2 pi on the 38 kHz reference), so a decode that lands the tone in the
+/// OTHER channel is a polarity fault and reads as NEGATIVE separation --
+/// exactly the fault the pre-0.45 stronger-vs-weaker scoring hid.
+func drivenChannelSeparation(driven: ToneVector, other: ToneVector)
+    -> (wanted: Double, crosstalk: Double, separationDB: Float) {
+    let wanted = max(driven.amplitude, 1e-12)
+    let crosstalk = max(other.amplitude, 1e-12)
+    return (wanted, crosstalk, Float(20.0 * log10(wanted / crosstalk)))
 }
 
 func encoderSidebandMetrics(
@@ -384,8 +393,7 @@ func receiverToneAnalysis(
         start: window.start,
         count: window.count
     )
-    let coherentWanted = max(max(coherentLeft.amplitude, coherentRight.amplitude), 1e-12)
-    let coherentCrosstalk = max(min(coherentLeft.amplitude, coherentRight.amplitude), 1e-12)
+    let coherentSep = drivenChannelSeparation(driven: coherentLeft, other: coherentRight)
 
     let pllDecoded = decodeMPXWithPLL(
         samples: samples,
@@ -407,8 +415,7 @@ func receiverToneAnalysis(
         start: window.start,
         count: window.count
     )
-    let pllWanted = max(max(pllLeft.amplitude, pllRight.amplitude), 1e-12)
-    let pllCrosstalk = max(min(pllLeft.amplitude, pllRight.amplitude), 1e-12)
+    let pllSep = drivenChannelSeparation(driven: pllLeft, other: pllRight)
     let pllDecodedMetrics = computeStereoSignalMetrics(
         left: Array(pllDecoded.left[window.start..<(window.start + window.count)]),
         right: Array(pllDecoded.right[window.start..<(window.start + window.count)])
@@ -432,23 +439,23 @@ func receiverToneAnalysis(
     let monoAmp = max(mono.amplitude, 1e-12)
     let sideAmp = max(side.amplitude, 1e-12)
     let normalizedSide = side.scaled(by: monoAmp / sideAmp)
-    let idealPlus = mono + normalizedSide
-    let idealMinus = mono - normalizedSide
-    let idealWanted = max(max(idealPlus.amplitude, idealMinus.amplitude), 1e-12)
-    let idealCrosstalk = max(min(idealPlus.amplitude, idealMinus.amplitude), 1e-12)
+    // Ideal decode with the standard reference: L = M + S for a left-driven tone.
+    let idealLeft = mono + normalizedSide
+    let idealRight = mono - normalizedSide
+    let idealSep = drivenChannelSeparation(driven: idealLeft, other: idealRight)
 
     return ReceiverToneAnalysis(
         coherent: ReceiverToneMetrics(
             toneHz: toneHz,
-            wantedDBFS: dbfs(coherentWanted),
-            crosstalkDBFS: dbfs(coherentCrosstalk),
-            separationDB: Float(20.0 * log10(coherentWanted / coherentCrosstalk))
+            wantedDBFS: dbfs(coherentSep.wanted),
+            crosstalkDBFS: dbfs(coherentSep.crosstalk),
+            separationDB: coherentSep.separationDB
         ),
         pll: ReceiverPLLRoundTripMetrics(
             toneHz: toneHz,
-            wantedDBFS: dbfs(pllWanted),
-            crosstalkDBFS: dbfs(pllCrosstalk),
-            separationDB: Float(20.0 * log10(pllWanted / pllCrosstalk)),
+            wantedDBFS: dbfs(pllSep.wanted),
+            crosstalkDBFS: dbfs(pllSep.crosstalk),
+            separationDB: pllSep.separationDB,
             decodedRMSDBFS: dbfs(Double(max(pllDecodedMetrics.rms, 1e-12))),
             decodedPeakDBFS: dbfs(Double(max(pllDecodedMetrics.peak, 1e-12))),
             correlation: pllDecodedMetrics.correlation,
@@ -456,9 +463,9 @@ func receiverToneAnalysis(
         ),
         ideal: ReceiverIdealDecodeMetrics(
             toneHz: toneHz,
-            wantedDBFS: dbfs(idealWanted),
-            crosstalkDBFS: dbfs(idealCrosstalk),
-            separationDB: Float(20.0 * log10(idealWanted / idealCrosstalk)),
+            wantedDBFS: dbfs(idealSep.wanted),
+            crosstalkDBFS: dbfs(idealSep.crosstalk),
+            separationDB: idealSep.separationDB,
             monoDBFS: dbfs(monoAmp),
             sideDBFS: dbfs(sideAmp),
             monoSideDeltaDB: dbfs(sideAmp) - dbfs(monoAmp)
@@ -751,17 +758,16 @@ func receiverPLLRoundTripMetrics(
         start: window.start,
         count: window.count
     )
-    let wanted = max(max(left.amplitude, right.amplitude), 1e-12)
-    let crosstalk = max(min(left.amplitude, right.amplitude), 1e-12)
+    let sep = drivenChannelSeparation(driven: left, other: right)
     let decodedMetrics = computeStereoSignalMetrics(
         left: Array(decoded.left[window.start..<(window.start + window.count)]),
         right: Array(decoded.right[window.start..<(window.start + window.count)])
     )
     return ReceiverPLLRoundTripMetrics(
         toneHz: toneHz,
-        wantedDBFS: dbfs(wanted),
-        crosstalkDBFS: dbfs(crosstalk),
-        separationDB: Float(20.0 * log10(wanted / crosstalk)),
+        wantedDBFS: dbfs(sep.wanted),
+        crosstalkDBFS: dbfs(sep.crosstalk),
+        separationDB: sep.separationDB,
         decodedRMSDBFS: dbfs(Double(max(decodedMetrics.rms, 1e-12))),
         decodedPeakDBFS: dbfs(Double(max(decodedMetrics.peak, 1e-12))),
         correlation: decodedMetrics.correlation,

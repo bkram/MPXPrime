@@ -256,8 +256,9 @@ func measureHFTransient(
         programActivity: 0.5, expectedSide: 0.0)
     let specL = hannPowerSpectrum(decoded.left, start: start, fftSize: fftSize)
     let specR = hannPowerSpectrum(decoded.right, start: start, fftSize: fftSize)
-    // The synthetic pilot reference may lock with either 38 kHz polarity
-    // (swapping L/R); score the channel carrying the stronger HF.
+    // The scenarios mix the hats left-dominant (0.6 / 0.48, 1.0 / 0.8); score
+    // the decoded channel carrying the stronger HF (= left with a polarity-
+    // correct decode; polarity itself is gated in --verify-receiver).
     let hfL = bandPower(specL, sampleRate: sampleRate, fftSize: fftSize, lowHz: 6_000.0, highHz: 15_000.0)
     let hfR = bandPower(specR, sampleRate: sampleRate, fftSize: fftSize, lowHz: 6_000.0, highHz: 15_000.0)
     let chosenSpec = hfL >= hfR ? specL : specR

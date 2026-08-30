@@ -301,10 +301,16 @@ struct TestToneGeneratorTests {
 
     /// Mono, left-only and L=-R routing all peak the composite at the same
     /// level (M + S reaches the same envelope for a single-channel source).
+    /// 997 Hz, not 1 kHz: 1 kHz and the 38 kHz subcarrier are both exact
+    /// divisors of 192 kHz, so that composite repeats every 192 samples and
+    /// its SAMPLED peak depends on which grid sample lands on the envelope
+    /// maximum (a subcarrier polarity flip alone moved it 0.4 dB). An
+    /// incommensurate tone sweeps every alignment inside the window.
     @Test func routingModesHitTheSameCompositePeak() {
-        let mono = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, mode: "mono"))
-        let left = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, mode: "left"))
-        let stereo = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, mode: "stereo"))
+        let f = 997.0
+        let mono = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, toneFreq: f, mode: "mono"))
+        let left = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, toneFreq: f, mode: "left"))
+        let stereo = steadyStatePeakDB(makeFullChainToneConfig(levelDB: -12.0, toneFreq: f, mode: "stereo"))
         #expect(abs(left - mono) < 0.3, "mono \(mono) vs left \(left)")
         #expect(abs(stereo - mono) < 0.3, "mono \(mono) vs L=-R \(stereo)")
     }

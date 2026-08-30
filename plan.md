@@ -219,6 +219,73 @@ the clipper is "not normal"; Stereo Tool has no HF gain rider and
 recovers brightness by raising the HF compressor / lowering the HF
 limiter -- worth trying on Music - Loud as a preset tweak.
 
+## Chain design review (approved 2026-08-30) -- what we did wrong vs published practice
+
+Three domain reviews (audio dynamics vs Orban WP / Omnia.11 manual / Thimeo docs;
+composite stage vs BS.450-3 / 47 CFR 73.322 / EN 50067 / Orban patents / Thimeo;
+measurement coverage) plus a code inventory. Findings marked FACT were verified
+in code. Work is sequenced as one measured commit per step; every step ends with
+the full gate run and a baseline recapture where the composite moves.
+
+- **Step 0 -- measurement first**: end-to-end latency (`totalChainDelaySamples`,
+  impulse test, `--verify` + `/api/status`); decoded frequency-response sweep
+  20 Hz-15 kHz (+/-0.5 dB to 14 kHz, will FAIL today -- see step 2); protection in
+  dB re subcarrier (pilot / RDS / 38 kHz / SCA); RDS BLER under load; THD / SMPTE /
+  CCIF of decoded audio; BS.1770 + BS.412 on the verifier output; verifier <->
+  Meter cross-check; stale tests moved to the 48 kHz audio rate
+  (`MultibandFIRSplitterTests`, `EncoderBandwidthTests`, `DualRateHFResponseTests`
+  tolerances hide the 14.4 kHz roll-off). Polarity instruments DONE 2026-08-30
+  (independent textbook decoder in `StereoPolarityTests`, driven-channel scoring
+  in `--verify-receiver`).
+- **Step 1 -- stereo polarity** DONE 2026-08-30: encoder sent `(R-L)/2` since the
+  first commit, `MPXDecoder` negated it back (0.27), real receivers swapped L/R.
+  Fixed both sides, baselines recaptured, manual tells operators to re-check
+  channel assignment with the left-routed test tone. Hardware confirmation on a
+  car radio pending (operator).
+- **Step 2 -- receiver-side HF response** (FACT): the pre-encode limiter's 4x
+  decimator is a 6th-order Butterworth at 0.30 fs = 14.4 kHz (comments say
+  12th-order), -2.3 dB @14 kHz / -4 dB @14.9 kHz with only -27..-43 dB alias
+  rejection into 15-24 kHz -- a regression of the 48 kHz audio-domain move.
+  The matched-z pre-emphasis under-boosts another -0.6 dB @10 kHz / -1.4 dB
+  @15 kHz. Replace the decimator with `LinearPhaseFIRDecimator` (15.5 / 26 kHz,
+  ~95 taps), fit the pre-emphasis to the analog curve (<0.1 dB), gate with the
+  P2 sweep and `--verify-hf-transients`.
+- **Step 3 -- multiband splitter** (FACT): `LinearPhaseMultibandSplitter5/3`
+  discard `transitionHz`, hit the 2049-tap clamp -> 21.3 ms latency (docs say
+  5.3 ms) and ~85 Hz brick-wall crossovers at 1.8 / 6.8 kHz (pre-ringing). Honour
+  the transition per crossover, zero-pad to a shared delay, stopband 60 -> 40 dB,
+  centre the Kaiser design on fc; target 7-11 ms.
+- **Step 4 -- composite clipper does its job** (FACT): the 22-53 kHz stereo guard
+  restores the WHOLE S subchannel, so the clipper only ever removes the M share of
+  a peak -- root cause of the 1.18 vs 0.966 bound overshoot and the routine
+  ~1.5 dB final-limiter ride (Orban US 6,434,241 explicitly does NOT protect
+  23-53 kHz; Thimeo / Omnia clip the full composite). New key
+  `mpx_clipper_stereo_guard` (0 = industry, 1 = current), default picked from a
+  sweep table (final-limiter duty < 0.5 dB with least program-separation loss);
+  1-2 POCS re-projection passes; final limiter back to threshold = budget with
+  150-200 ms release and a GR > 0.5 dB telemetry warning; knee default -0.5 /
+  -0.3 dB after an HF-SINAD A/B; bandwidth FIR 53 kHz / 2 kHz transition.
+- **Step 5 -- dynamics practice gaps**: AGC default attack 6 ms is limiter-fast
+  (Omnia: control peaks in the limiter, not the AGC) -> >= 150 ms with a burst
+  test; multiband "program-dependent release" is a constant x1.1 -> real
+  multi-slope release in `MonoCompressor`; pre-encode limiter full-band look-ahead
+  with attack ~ look-ahead, partial-link experiment vs the hard-panned case.
+- **Step 6 -- budget hygiene + defaults**: margin 0.02 -> 0.005, `limitThreshold`
+  0.99, reservation from the delayed subcarriers, pilot default 9 % (new installs),
+  document 3 kHz RDS as the field choice. The Thimeo-style post-injection
+  pilot-aware clipper (~0.5-1 dB realised) waits until steps 4-5 are measured.
+- **Step 7 -- optional structure**: Omnia-style band sync (clamp gain disparity to a
+  master band), switchable widener / PrimeBass placement (Omnia puts enhancers
+  BEFORE the multiband), speech detector easing clipper drive, per-band
+  `BandLimiter` on `music_loud` as the density path before more clipping.
+
+Also noted: the receiver report's "Pilot ... Phase 45.4 deg" is the pilot's
+absolute phase at the analysis window, not pilot-to-RDS (both read ~45 deg, i.e.
+in phase) -- relabel it. The 10 kHz PLL-path separation (~51-54 dB) vs 95 dB at
+1 / 14 kHz is a decoder-PLL artefact still to be explained. FINE / no action:
+AGC topology, multiband bands / ratios, dual-rate boundary, post-clipper
+injection, encoder HF guard (give it named constants + a test).
+
 ## Next up
 
 0. **Rework the shipped Format Profiles + PrimeBass presets. DONE (71cdf78, 2026-08-04).** Four complete profiles own the gain structure; the PrimeBass preset re-tune at the new gain structure and the input-gain-reference question (nominal -12 dBFS documented in the manual) remain open as listening items.

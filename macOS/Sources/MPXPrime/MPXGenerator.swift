@@ -3507,7 +3507,12 @@ final class MPXGenerator {
     private func makeCompositeComponents(left: Float, right: Float, inputActivity: Float)
         -> CompositeComponents {
         let base = ((left + right) * 0.5) * sumLevel
-        let diff = monoMode ? 0.0 : (((right - left) * 0.5) * diffLevel)
+        // S = (L - R)/2 on a 38 kHz subcarrier that crosses zero with positive
+        // slope at every pilot zero crossing (47 CFR 73.322, ITU-R BS.450-3):
+        // a standard receiver forms L = M + S. Until 0.45 this was (R - L)/2,
+        // which every real receiver decoded with L and R swapped; MPXDecoder
+        // carried a compensating negation so no in-repo gate could see it.
+        let diff = monoMode ? 0.0 : (((left - right) * 0.5) * diffLevel)
         // Pre-emphasis ran here pre-2026-05; it now runs in L/R domain
         // immediately upstream of the pre-encode limiter. See `preL` / `preR`.
         lastProgramActivity = inputActivity

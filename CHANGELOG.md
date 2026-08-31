@@ -11,6 +11,22 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: the analyzer always runs at the rate the device actually opened at
+  (audit P1.1).** The measurement engine, monitor and WAV recorder were built
+  from the rate PREDICTED before the device opened; a slow USB rate switch
+  (the 1.5 s nominal-rate timeout) could leave 48 kHz math on a 192 kHz
+  stream -- pilot PLL, RDS mixer, measurement FIR and the spectrum axis all
+  4x off -- while the header displayed the correct rate it was not using.
+  The engine now rebuilds the analyzer from the actual opened rate, and
+  refuses to start below 128 kHz with a plain-language error (the
+  measurement band is 0-60 kHz and RDS sits at 57 kHz; readings below that
+  rate silently excluded the stereo sidebands and counted them as noise).
+  Continuous device rate ranges are now expanded to their contained standard
+  rates (a device advertising 44.1-384 kHz used to look like it only
+  supported 384 kHz, so the preferred 192 kHz was never matched), and the
+  AUHAL slice size is tied to the engine's mix-scratch capacity instead of
+  two coincidentally equal constants.
+
 - **Meter: recording can no longer crash the app or lose a capture (audit
   P0).** Four defects in the WAV path, all pinned by new `MeterRecorderTests`:
   (1) the byte counter was `UInt32` and Swift's overflow trap killed the app

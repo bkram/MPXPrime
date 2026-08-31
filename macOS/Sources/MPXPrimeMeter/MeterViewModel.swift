@@ -393,7 +393,8 @@ final class MeterViewModel: ObservableObject {
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz),
             fullScaleKHz: audioAbsoluteCal ? Float(audioFullScaleKHz) : nil,
-            input: AUHALInputSource(deviceID: id))
+            input: AUHALInputSource(deviceID: id,
+                                    maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
         do {
             let fmt = try eng.start(monitorDeviceID: selectedOutputID)
             captureRate = fmt.sampleRate
@@ -409,7 +410,7 @@ final class MeterViewModel: ObservableObject {
             if forceRDS { eng.setForceRDS(true) }
             startTimer()
         } catch {
-            statusText = "Start failed: \(error)"
+            statusText = "Start failed: \(error.localizedDescription)"
             MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate)
             engine = nil
         }

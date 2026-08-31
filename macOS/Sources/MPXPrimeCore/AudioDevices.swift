@@ -240,9 +240,32 @@ public enum AudioDevices {
         return currentBufferFrameSize(deviceID: deviceID) ?? clamped
     }
 
-    /// The device's supported nominal sample rates (Hz). A range with
-    /// min == max is a discrete rate; ranges (rare on real hardware) are
-    /// reported by their max. Empty on error.
+    /// Expand CoreAudio rate ranges into concrete rates: a range with
+    /// min == max is a discrete rate; a continuous range contributes its
+    /// endpoints plus every standard rate inside it. Reporting only mMaximum
+    /// (pre-0.45) made a device advertising (44100...384000) look like it
+    /// supported only 384 kHz, so the Meter's exact-match test for 192 kHz
+    /// failed and it captured at 384 kHz instead of the preferred rate.
+    public static func expandRateRanges(_ ranges: [(min: Double, max: Double)]) -> [Double] {
+        let standard: [Double] = [
+            8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000,
+            88_200, 96_000, 176_400, 192_000, 352_800, 384_000
+        ]
+        var rates = Set<Double>()
+        for r in ranges {
+            if abs(r.max - r.min) < 0.5 {
+                rates.insert(r.min)
+            } else {
+                rates.insert(r.min)
+                rates.insert(r.max)
+                for s in standard where s >= r.min && s <= r.max { rates.insert(s) }
+            }
+        }
+        return rates.sorted()
+    }
+
+    /// The device's supported nominal sample rates (Hz), with continuous
+    /// ranges expanded via `expandRateRanges`. Empty on error.
     public static func availableNominalSampleRates(deviceID: AudioDeviceID) -> [Double] {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
@@ -256,7 +279,7 @@ public enum AudioDevices {
         var ranges = Array(repeating: AudioValueRange(), count: count)
         guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &dataSize, &ranges) == noErr
         else { return [] }
-        return ranges.map { $0.mMaximum }
+        return expandRateRanges(ranges.map { (min: $0.mMinimum, max: $0.mMaximum) })
     }
 
     /// Reads the device's current nominal sample rate (Hz), or nil on error.

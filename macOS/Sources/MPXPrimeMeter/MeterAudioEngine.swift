@@ -21,14 +21,33 @@ enum MeterChannel: String {
 /// configured `sampleRate` matches the device format (192 kHz for a real
 /// composite — RDS at 57 kHz needs Nyquist > 57 kHz, so >= 128 kHz).
 final class MeterAudioEngine: @unchecked Sendable {
-    private static let maxSliceFrames = 4096
+    /// Callers constructing an `AUHALInputSource` must pass this as its
+    /// `maxFramesPerSlice` -- the `.mix` scratch is sized from it, and a larger
+    /// AUHAL slice would silently truncate frames.
+    static let maxSliceFrames = 4096
+
+    /// The capture rate could not support composite measurement.
+    struct UnsupportedRateError: LocalizedError {
+        let rate: Double
+        var errorDescription: String? {
+            String(format: "capture rate %.0f Hz is too low for composite measurement "
+                   + "(needs >= 128 kHz: the measurement band is 0-60 kHz and RDS sits at 57 kHz) "
+                   + "-- set the device to 192 kHz in Audio MIDI Setup", rate)
+        }
+    }
 
     private let input: MPXInputSource
     private let ring: StereoInputRingBuffer
-    private let analysis: MeterAnalysis
+    // Rebuilt in start() when the device's ACTUAL rate differs from the
+    // predicted one -- see start().
+    private var analysis: MeterAnalysis
     private let blockFrames: Int
     private let channel: MeterChannel
-    private let sampleRate: Float
+    private var sampleRate: Float
+    // Calibration the analyzer was built with, kept so a rate rebuild
+    // preserves it.
+    private let initialPilotRefKHz: Float
+    private let initialFullScaleKHz: Float?
     // Pre-allocated scratch for the .mix sum so the capture-thread sink never
     // allocates.
     private let mixScratch: UnsafeMutablePointer<Float>
@@ -81,6 +100,8 @@ final class MeterAudioEngine: @unchecked Sendable {
         self.blockFrames = 8192
         self.channel = channel
         self.sampleRate = sampleRate
+        self.initialPilotRefKHz = pilotRefKHz
+        self.initialFullScaleKHz = fullScaleKHz
         self.mixScratchCap = Self.maxSliceFrames
         self.mixScratch = UnsafeMutablePointer<Float>.allocate(capacity: Self.maxSliceFrames)
         self.mixScratch.initialize(repeating: 0.0, count: Self.maxSliceFrames)
@@ -128,6 +149,25 @@ final class MeterAudioEngine: @unchecked Sendable {
             }
         }
         let fmt = try input.start()
+
+        // The analyzer (and everything downstream: monitor, recorder, WAV
+        // header) must run at the rate the device ACTUALLY opened at, not the
+        // one predicted before opening -- prepareInputRate's 1.5 s
+        // setNominalSampleRate timeout can fire on a slow USB rate switch and
+        // the device then finishes switching after AUHAL opens. Before 0.45
+        // the analyzer kept the predicted rate: 48 kHz math on a 192 kHz
+        // stream (pilot PLL, RDS mixer, FIR, spectrum axis all 4x off) while
+        // the GUI displayed the correct rate it wasn't using.
+        if fmt.sampleRate < 128_000 {
+            input.stop()
+            throw UnsupportedRateError(rate: fmt.sampleRate)
+        }
+        if abs(fmt.sampleRate - Double(sampleRate)) > 0.5 {
+            sampleRate = Float(fmt.sampleRate)
+            analysis = MeterAnalysis(
+                sampleRate: sampleRate, pilotRefKHz: initialPilotRefKHz,
+                fullScaleKHz: initialFullScaleKHz)
+        }
 
         if monitorEnabled {
             let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)

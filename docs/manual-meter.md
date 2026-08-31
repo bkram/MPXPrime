@@ -39,6 +39,13 @@ spectrum span, and the selected devices) between launches; they are stored in th
 standard macOS preferences and restored on the next start. Pass `--sdr-freq`
 to override the saved frequency for that launch.
 
+Capture refuses to start below 128 kHz (0.45): composite measurement needs the
+0-60 kHz band and RDS sits at 57 kHz, so readings at lower rates would silently
+exclude the stereo sidebands and count them as noise. If the Meter reports the
+rate as too low, set the interface to 192 kHz in Audio MIDI Setup. The analyzer
+always runs at the rate the device actually opened at, even when a slow USB
+rate switch lands on a different rate than requested.
+
 ## Window layout
 
 The toolbar carries only the frequent commands -- **Start/Stop** (⌘Return),

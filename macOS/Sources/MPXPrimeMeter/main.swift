@@ -341,7 +341,9 @@ private func runLive(
     let engine = MeterAudioEngine(
         sampleRate: Float(rate), channel: channel,
         monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
-        wavURL: wavURL, input: AUHALInputSource(deviceID: deviceID))
+        wavURL: wavURL,
+        input: AUHALInputSource(deviceID: deviceID,
+                                maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
     var captureRate = rate
     do {
         let fmt = try engine.start(monitorDeviceID: monitorDeviceID)

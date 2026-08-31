@@ -11,6 +11,61 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: no readout shows a confident number it cannot stand behind (audit
+  P1.4).** Ten places where the dashboard published a figure that looked like a
+  measurement and was not:
+  - **PEAK +/- froze at the last station.** The snapshot struct is reused
+    across blocks and the two peak fields were only written while a deviation
+    scale existed, so losing the pilot left the previous station's kHz on
+    screen -- red-tinted as live over-deviation. They now clear, and a
+    `peakValid` flag blanks and de-tints the readout.
+  - **The deviation strips read a confident `0.00` with no scale at all.**
+    Pilot / RDS / MAX / AVE / MIN now read `--` unless a kHz-per-unit scale is
+    established, like MPX POWER already did.
+  - **The scale itself was accepted from pilot amplitude 1e-5** -- 200x below
+    the threshold the PILOT indicator uses -- so lock-in noise on a dead
+    frequency produced an enormous scale factor: a vast fake max deviation
+    with effectively every sample counting as over 77 kHz. It now requires the
+    same pilot presence the indicator shows, with a ~0.4 s hold so a fade does
+    not flap every readout.
+  - **The SM.1268-5 exceedance statistic called itself valid after 1 second.**
+    The criterion is one sample in a million; a 1 s window at 192 kHz resolves
+    5.2e-4 %, 520x too coarse, so a single transient read as a violation. It
+    now needs a full minute, and until then publishes the upper bound the
+    counted samples support ("< 0.0002 %") instead of a number finer than its
+    own resolution.
+  - **The pilot-to-RDS phase meter primed "valid" at exactly 1.0 coherence.**
+    The coherence ratio is 1.0 on its first sample by construction and only
+    decays on a 2 s average, so for ~2 s after every retune the readout
+    published the folded angle of whatever was there -- and the folded angle
+    of noise has expectation 45 degrees, which is where the phantom "45.4 deg"
+    readings came from. It now requires a full averaging time constant, plus
+    `!inWarmup`.
+  - **A drifting phase angle read as a compliant measurement.** Coherence is
+    scale-free and says nothing about whether the angle stands still, so a
+    free-running RDS carrier walked the angle through the whole range at
+    sub-Hz rate with coherence high the entire way while the readout labelled
+    the sweep in-spec/out-of-spec as it passed. A fast-vs-slow stability gate
+    (4 deg, well inside the +/- 10 deg spec window) now rejects it; the new
+    test pins that coherence alone would have passed.
+  - **PHASE CORR had no signal gate and no mean removal.** Silence read a
+    confident amber `+0.00` and noise could read red; a residual DC offset
+    (off-centre SDR carrier with the DC blocker off) dragged the coefficient
+    to +1.00 whatever the programme did. It is now a mean-removed Pearson
+    correlation, gated on both channels carrying programme.
+  - **SIGNAL QUALITY painted its own no-data state red**, because "no data"
+    and a measured Unusable were both level 0. They are now distinct.
+  - **L / R BALANCE never expired.** Its valid flag could only go true, so a
+    standing offset stayed on screen after the programme feeding it stopped.
+  - **A retune left the decoder, pilot PLL and decode-path DC blocker
+    holding the previous station**, and changing the deviation calibration
+    (pilot reference or absolute full scale) kept accumulators measured at the
+    old scale -- peak-hold, exceedance, distribution and BS.412 max blended
+    two calibrations. Both now reset what they invalidate.
+  - Plus: `MeterAnalysis.process` no longer traps on a block longer than the
+    `maxBlock` it was configured for (it splits the block), and two unused
+    biquad cascades left `MPXDecoder`'s inlinable hot path.
+
 - **Meter: the SAMPLES DROPPED badge now also sees the tuner's own IQ drops
   (audit P1.2b).** The badge covered only the composite ring between capture
   and analysis. One layer down, where the SDR delivers IQ to the demod thread,

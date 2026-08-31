@@ -452,9 +452,10 @@ struct RootMeterView: View {
                         // when negative (out of phase = mono-compatibility risk).
                         Text(t.correlationText).font(BroadcastStyle.heroReadout)
                             .foregroundColor(
-                                t.correlation < 0 ? BroadcastStyle.overRed
-                                    : (t.correlation < 0.3 ? BroadcastStyle.tightAmber
-                                        : BroadcastStyle.readoutPrimary))
+                                !t.correlationValid ? BroadcastStyle.readoutPrimary
+                                    : (t.correlation < 0 ? BroadcastStyle.overRed
+                                        : (t.correlation < 0.3 ? BroadcastStyle.tightAmber
+                                            : BroadcastStyle.readoutPrimary)))
                         Spacer(minLength: 0)
                     }
                     .frame(width: 74)
@@ -582,7 +583,9 @@ struct RootMeterView: View {
                                 + "stereo readouts unavailable")
                     }
                     readout("SIGNAL QUALITY", t.qualityText,
-                            valueTint: Self.qualityTint(t.qualityLevel),
+                            valueTint: t.qualityValid
+                                ? Self.qualityTint(t.qualityLevel)
+                                : BroadcastStyle.readoutPrimary,
                             help: "How much energy sits ABOVE the modulated baseband "
                                 + "(over 60 kHz), where nothing is legitimately "
                                 + "transmitted -- so it is demod noise and "
@@ -803,8 +806,10 @@ struct RootMeterView: View {
                                         + "power of a +/-19 kHz sine; the regulatory limit is "
                                         + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
                             readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
-                                    valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
-                                                         limit: 75.0, warn: 71.0),
+                                    valueTint: t.peakValid
+                                        ? limitTint(max(t.posPeakKHz, -t.negPeakKHz),
+                                                    limit: 75.0, warn: 71.0)
+                                        : BroadcastStyle.readoutPrimary,
                                     help: "Highest positive / negative deviation in the last "
                                         + "60 s (50 ms peak-hold slots, measuring-receiver "
                                         + "style; a single impulse ages out instead of pinning "

@@ -30,6 +30,9 @@ final class MeterTelemetry {
     var sideText = "-inf"
     var correlation: Double = 1
     var correlationText = "+1.00"
+    /// False when neither channel carries enough programme for the phase
+    /// correlation to mean anything, or when the decode is mono (0.45).
+    var correlationValid = false
 
     // Deviation: normalized 0..1 (0..100 kHz for the modulation meter) + text.
     // Idle defaults are unitless to match the live format (the kHz unit is shown
@@ -55,6 +58,9 @@ final class MeterTelemetry {
     var negPeakText = "0.0"
     var posPeakKHz: Double = 0        // raw +peak for over-limit coloring
     var negPeakKHz: Double = 0        // raw -peak (signed) for coloring
+    /// False when the deviation scale is lost: the peaks are not measurements
+    /// and must neither be shown nor tinted as over-limit (0.45).
+    var peakValid = false
     // ITU-R SM.1268-5 exceedance: % of deviation samples > 77 kHz since reset.
     var exceedanceText = "--"
     var exceedancePct: Double = 0     // raw value for over-limit coloring
@@ -71,6 +77,10 @@ final class MeterTelemetry {
     // per-quantity readouts that go with it.
     var qualityText = "--"
     var qualityLevel = 0             // 0..4, for tinting
+    /// True once the quality scale has data. Level 0 alone is ambiguous -- it
+    /// is both "no data" and a measured Unusable, and the card painted its own
+    /// warm-up red (0.45, audit C6).
+    var qualityValid = false
     var carrierOffsetText = "--"
     var carrierOffsetKHz: Double = 0  // raw, for over-limit tinting
     var carrierOffsetValid = false
@@ -193,5 +203,8 @@ final class MeterTelemetry {
         dropWarningText = nil
         inputStalled = false
         monoDecode = false
+        correlationValid = false
+        peakValid = false
+        qualityValid = false
     }
 }

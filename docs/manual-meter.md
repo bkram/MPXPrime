@@ -53,6 +53,15 @@ capture (or losing the device) blanks the dashboard back to its idle state,
 so anything you see with the meter stopped is never mistaken for a live
 reading.
 
+Any readout can show `--`, and that is deliberate: it means the Meter does
+not currently have what it needs to measure that quantity (no deviation scale,
+too little signal, or not enough samples yet for a statistic). Every kHz
+readout depends on a scale -- absolute on SDR, from the pilot or an explicit
+"0 dBFS = N kHz" on an audio input -- and without one the deviation strips,
+PEAK +/- and MPX POWER all read `--` instead of 0.00. Changing the calibration
+resets the accumulated readings, because they were measured against the old
+scale.
+
 An amber **MONO DECODE** badge means a signal is present but the 19 kHz pilot
 is too weak to recover the stereo subcarrier, so the decoded audio is mono
 (M only) -- as it also is on a genuinely mono station. Deviation, pilot level
@@ -181,7 +190,10 @@ remembered by device UID):
 - **Audio**: IN / L / R / M / S levels and the **PHASE CORR** readout (L/R
   phase correlation: +1 = mono, ~+0.7-0.95 = normal stereo, negative =
   out-of-phase / mono-incompatible -- it turns amber near zero and red when
-  negative). Hover any readout, meter, or control for an explanation tooltip.
+  negative). It reads `--` on silence and on a mono decode: with nothing (or
+  identical channels) in L and R there is no correlation to measure, and a
+  confident number there would be an artefact. Hover any readout, meter, or
+  control for an explanation tooltip.
 - **Deviation**: pilot / RDS / total (MAX) deviation meters, on the top row
   beside the audio levels. MAX is the highest excursion in the last second
   (50 ms peak-hold slots, the ITU-R SM.1268 display convention). RDS is the
@@ -208,7 +220,8 @@ remembered by device UID):
   BALANCE** is the standing level difference between the decoded channels,
   heavily smoothed, + meaning left is louder; real programme averages to
   about 0 dB, and a persistent offset means the stereo encoder or its feed is
-  lopsided.
+  lopsided; it reads `--` when no programme has fed it recently, so a
+  standing offset never outlives the material it was measured on.
 - **Modulation**: **MPX POWER** (ITU-R BS.412: uniform sliding 60 s window,
   in dBr vs a +/-19 kHz sine) with the worst 60 s window since reset shown
   inline as "max" -- the number BS.412 compliance is judged on; it needs a
@@ -218,7 +231,11 @@ remembered by device UID):
   or one-sided clipping). **OVER 77 kHz** -- the ITU-R SM.1268 compliance
   statistic: the share of deviation samples above 77 kHz (75 kHz + the
   2 kHz measurement tolerance) since reset. Regulators treat more than
-  0.0001 % as over-deviation; rare single peaks are not a violation. Plus
+  0.0001 % as over-deviation; rare single peaks are not a violation. That
+  criterion is one sample in a million, so the statistic needs a full minute
+  of signal before it reads as a figure; until then it shows the upper bound
+  the samples so far support ("< 0.0002 %") rather than a percentage whose
+  resolution is coarser than the limit it would be compared against. Plus
   best stereo separation, the **RDS PHASE** compliance readout (see "RDS
   subcarrier phase" below), and
   Reset to clear the held values. MPX power and

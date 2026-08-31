@@ -499,6 +499,23 @@ public final class PilotRDSPhaseMeter {
     private var accPower: Float = 0.0
     private var primed = false
     private let emaAlphaPerSample: Float
+    // A second, much faster average of the same phasor. Comparing the two
+    // angles is the stability gate: coherence is scale-free and says nothing
+    // about whether the angle is STANDING STILL, so a free-running encoder
+    // (RDS carrier not locked to the pilot) walks the angle 0 -> 90 -> 0 at
+    // sub-Hz rate with coherence high the whole way, and the readout labels
+    // the sweep in-spec/out-of-spec as it passes (audit M5).
+    private var fastWReal: Float = 0.0
+    private var fastWImag: Float = 0.0
+    private let fastAlphaPerSample: Float
+    // Decimated samples accumulated since the last reset. The coherence ratio
+    // primes at EXACTLY 1.0 on its first sample (|zr^2| == |zr|^2 for a single
+    // sample), so without a count gate `valid` was true for the ~2 s EMA
+    // settling time on ANYTHING -- noise included, whose folded angle has
+    // expectation 45 deg. That is where the phantom "45.4 deg" readings after
+    // every retune came from (audit M4).
+    private var accumulatedSamples = 0
+    private let minSamplesForValid: Int
     /// Below this coherence the reading is noise, not a measurement. ~0.3
     /// corresponds to a 57 kHz in-band SNR of about -3.7 dB, well under what
     /// RDS needs to decode, so a station whose data is readable at all reads
@@ -518,6 +535,15 @@ public final class PilotRDSPhaseMeter {
         // ~2 s smoothing: the angle is a static property of the transmitter,
         // so trade settling time for a rock-steady readout.
         emaAlphaPerSample = 1.0 - expf(-1.0 / (2.0 * pilotChain.decimatedRate))
+        // ~0.25 s: fast enough to follow a drifting angle, slow enough not to
+        // be noise itself.
+        fastAlphaPerSample = 1.0 - expf(-1.0 / (0.25 * pilotChain.decimatedRate))
+        // One full EMA time constant of averaging before the angle is
+        // published. That is enough for the gate's purpose: over 2 s the
+        // coherence of NOISE averages down to ~1/sqrt(N) (order 0.01, far
+        // under the 0.3 floor), whereas at the priming sample it is exactly
+        // 1.0 and passed everything.
+        minSamplesForValid = Int(2.0 * pilotChain.decimatedRate)
     }
 
     /// Feed a block of composite samples; updates the smoothed phase estimate.
@@ -586,12 +612,17 @@ public final class PilotRDSPhaseMeter {
                 accWReal += emaAlphaPerSample * (wR - accWReal)
                 accWImag += emaAlphaPerSample * (wI - accWImag)
                 accPower += emaAlphaPerSample * (power - accPower)
+                fastWReal += fastAlphaPerSample * (wR - fastWReal)
+                fastWImag += fastAlphaPerSample * (wI - fastWImag)
             } else {
                 accWReal = wR
                 accWImag = wI
                 accPower = power
+                fastWReal = wR
+                fastWImag = wI
                 primed = true
             }
+            if accumulatedSamples < Int.max { accumulatedSamples += 1 }
         }
     }
 
@@ -613,9 +644,36 @@ public final class PilotRDSPhaseMeter {
         return min(1.0, m / accPower)
     }
 
-    /// True when a subcarrier and a pilot are both present and coherent enough
-    /// for the angle to be a measurement rather than noise.
-    public var valid: Bool { usable && primed && coherence >= Self.minCoherence }
+    /// How closely a fast (~0.25 s) average of the same phasor agrees with the
+    /// slow (~2 s) one, in degrees of PHASE (half the doubled-domain
+    /// difference). Small = the angle is standing still, which is what a
+    /// pilot-locked subcarrier does; large = it is walking.
+    public var driftDegrees: Float {
+        guard primed else { return 180.0 }
+        let slowMag = sqrtf(accWReal * accWReal + accWImag * accWImag)
+        let fastMag = sqrtf(fastWReal * fastWReal + fastWImag * fastWImag)
+        guard slowMag > 1e-20, fastMag > 1e-20 else { return 180.0 }
+        // Angle between the two doubled-domain phasors, via atan2 of the
+        // cross/dot product (numerically better than differencing angles).
+        let dot = (accWReal * fastWReal) + (accWImag * fastWImag)
+        let cross = (accWReal * fastWImag) - (accWImag * fastWReal)
+        let doubled = fabsf(atan2f(cross, dot))
+        return doubled * 0.5 * 180.0 / Float.pi
+    }
+
+    /// Above this fast-vs-slow disagreement the angle is drifting, not being
+    /// measured. 4 deg: well inside the +/- 10 deg spec window the reading is
+    /// judged against, so a compliant station never trips it.
+    public static let maxDriftDegrees: Float = 4.0
+
+    /// True when a subcarrier and a pilot are both present, enough of them has
+    /// been averaged, the estimate is coherent, and the angle is stable.
+    public var valid: Bool {
+        usable && primed
+            && accumulatedSamples >= minSamplesForValid
+            && coherence >= Self.minCoherence
+            && driftDegrees <= Self.maxDriftDegrees
+    }
 
     /// EN 50067 sec 1.2 verdict for the current reading.
     public var compliance: RDSPhaseCompliance { RDSPhaseCompliance(degrees: phaseDegrees) }
@@ -624,7 +682,10 @@ public final class PilotRDSPhaseMeter {
         accWReal = 0.0
         accWImag = 0.0
         accPower = 0.0
+        fastWReal = 0.0
+        fastWImag = 0.0
         primed = false
+        accumulatedSamples = 0
         oscC = 1.0
         oscS = 0.0
         pilotChain.reset()

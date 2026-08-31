@@ -558,6 +558,12 @@ final class MeterViewModel: ObservableObject {
     /// without a restart. (The SDR path is absolutely calibrated and ignores it.)
     func applyPilotRefChange() {
         engine?.setPilotRefKHz(Float(pilotRefKHz))
+        // Every accumulated reading was measured at the OLD kHz-per-unit
+        // scale: peak-hold, the exceedance count, the distribution and the
+        // BS.412 max would otherwise blend two calibrations into one number
+        // (a retune already resets them; a calibration change did not --
+        // audit C4).
+        resetPeaks()
     }
 
     /// Audio-path calibration changed (mode or absolute full-scale): live-apply.
@@ -565,6 +571,7 @@ final class MeterViewModel: ObservableObject {
     /// nil so the analyzer falls back to the pilot reference.
     func applyCalibrationChange() {
         engine?.setFullScaleKHz(audioAbsoluteCal ? Float(audioFullScaleKHz) : nil)
+        resetPeaks()  // same rescale-invalidates-accumulators rule as above (C4)
     }
 
     /// Gain / auto-gain changed: live-apply to the running tuner (no restart).
@@ -780,20 +787,28 @@ final class MeterViewModel: ObservableObject {
         // (audit M1). Separation and balance are gated in MeterAnalysis.
         let monoDecode = s.hasSignal && !s.stereoDecodeActive
         put(\.monoDecode, monoDecode)
-        put(\.correlation, monoDecode ? 0.0 : Double((s.stereoCorrelation * 100).rounded() / 100))
-        put(\.correlationText, monoDecode
-            ? "--" : String(format: "%+.2f", s.stereoCorrelation))
+        let corrValid = s.stereoCorrelationValid && !monoDecode
+        put(\.correlationValid, corrValid)
+        put(\.correlation, corrValid ? Double((s.stereoCorrelation * 100).rounded() / 100) : 0.0)
+        put(\.correlationText, corrValid
+            ? String(format: "%+.2f", s.stereoCorrelation) : "--")
 
         // Unitless values so they render at full size in the narrow scale-less
         // strips; the kHz unit is shown once in the group header.
+        // Without a kHz-per-unit scale (uncalibrated input, no pilot lock)
+        // these are not measurements -- they used to read a confident 0.00
+        // (audit C14).
+        let devText: (Float, String) -> String = { value, format in
+            s.devScaleValid ? String(format: format, value) : "--"
+        }
         put(\.pilotNorm, Self.qNorm(Double(s.pilotDevKHz) / MeterScale.pilotFullKHz))
-        put(\.pilotText, String(format: "%.2f", s.pilotDevKHz))
+        put(\.pilotText, devText(s.pilotDevKHz, "%.2f"))
         put(\.rdsNorm, Self.qNorm(Double(s.rdsDevKHz) / MeterScale.rdsFullKHz))
-        put(\.rdsText, String(format: "%.2f", s.rdsDevKHz))
+        put(\.rdsText, devText(s.rdsDevKHz, "%.2f"))
         put(\.maxDevNorm, Self.qNorm(Double(s.maxDevKHz) / MeterScale.maxFullKHz))
-        put(\.maxDevText, String(format: "%.1f", s.maxDevKHz))
-        put(\.aveMinDevText,
-            String(format: "%.1f / %.1f", s.aveDevKHz, s.minDevKHz))
+        put(\.maxDevText, devText(s.maxDevKHz, "%.1f"))
+        put(\.aveMinDevText, s.devScaleValid
+            ? String(format: "%.1f / %.1f", s.aveDevKHz, s.minDevKHz) : "-- / --")
 
         // EN 50067 sec 1.2 subcarrier phase. Whole degrees: that is the
         // resolution the +/- 10 deg tolerance is judged at, and a decimal
@@ -819,8 +834,12 @@ final class MeterViewModel: ObservableObject {
         }
         put(\.mpxPowerDBr, Double((s.mpxPowerDBr * 10).rounded() / 10))
         put(\.mpxPowerValid, s.mpxPowerValid)
-        put(\.posPeakText, String(format: "%+.1f", s.posPeakDevKHz))
-        put(\.negPeakText, String(format: "%+.1f", s.negPeakDevKHz))
+        // peakValid is false when the deviation scale was lost: the peaks then
+        // carry the LAST station's kHz and the view tinted them red as if they
+        // were live over-deviation (audit M7 / C2).
+        put(\.posPeakText, s.peakValid ? String(format: "%+.1f", s.posPeakDevKHz) : "--")
+        put(\.negPeakText, s.peakValid ? String(format: "%+.1f", s.negPeakDevKHz) : "--")
+        put(\.peakValid, s.peakValid)
         put(\.posPeakKHz, Double((s.posPeakDevKHz * 10).rounded() / 10))
         put(\.negPeakKHz, Double((s.negPeakDevKHz * 10).rounded() / 10))
         // SM.1268-5 exceedance readout: the compliance criterion is 1e-4 %,
@@ -829,6 +848,12 @@ final class MeterViewModel: ObservableObject {
         if s.exceedanceValid {
             put(\.exceedanceText, s.exceedancePct <= 0.0
                 ? "0 %" : String(format: "%.5f %%", s.exceedancePct))
+        } else if s.exceedanceBoundPct > 0.0 {
+            // Under a minute of samples the criterion (one sample in a
+            // million) is finer than the window resolves, so publish the
+            // upper bound the counted samples support instead of a figure
+            // that cannot mean what it says (audit M6).
+            put(\.exceedanceText, String(format: "< %.5f %%", s.exceedanceBoundPct))
         } else {
             put(\.exceedanceText, "--")
         }
@@ -845,13 +870,17 @@ final class MeterViewModel: ObservableObject {
         put(\.separationText, s.separationValid && !monoDecodeNow
             ? String(format: "%.0f dB", s.bestSeparationDB) : "--")
 
-        // Reception / chain quality.
+        // Reception / chain quality. `qualityValid` separates "no data yet"
+        // from a measured Unusable -- both were level 0, so the card painted
+        // its own warm-up red (audit C6).
         if s.basebandNoiseValid, s.hasSignal {
             put(\.qualityLevel, s.signalQuality)
+            put(\.qualityValid, true)
             put(\.qualityText, String(format: "%@  %.2f kHz",
                                       Self.qualityWord(s.signalQuality), s.basebandNoiseKHz))
         } else {
             put(\.qualityLevel, 0)
+            put(\.qualityValid, false)
             put(\.qualityText, "--")
         }
         put(\.carrierOffsetValid, s.carrierOffsetValid)

@@ -390,11 +390,16 @@ rate decodes exact mono; dead biquads out of the inlinable path;
 lost IQ samples -- ring overwrite plus RTL's low-latency skip-to-newest, not
 retune flushes -- behind a new `mpxtuner_iq_drops()` C ABI entry the badge
 folds in; the SDRplay ring counted nothing and RTL's counter was a
-function-local static). REMAINING, in order: P1.4 validity flags (peaks freeze at the last station; scale accepted
-from pilotAmp 1e-5; phase-meter coherence primes at 1.0 (the 45.4 deg
-mystery) and 0.3 admits a drifting angle; exceedance "valid" after 1 s at
-520x too-coarse resolution; calibration changes don't reset accumulators;
-quality/-corr/balance gates); P2 conventions (de-emphasis hard-wired 50 us --
+function-local static); P1.4 validity flags (peakValid / devScaleValid, the
+scale gate raised to the pilot-present threshold with a ~0.4 s hold,
+exceedance valid only after 60 s with a published upper bound before that,
+phase-meter priming + `!inWarmup` + a fast-vs-slow stability gate -- the
+45.4 deg mystery and the drifting-angle case, both test-pinned, the drift test
+asserting coherence WOULD have passed -- mean-removed and level-gated phase
+correlation, qualityValid, balance expiry, full reset now also clearing
+decoder / PilotPLL / decode DC / scale hold, calibration changes resetting the
+accumulators they invalidate, and an oversized-block split instead of a trap).
+REMAINING, in order: P2 conventions (de-emphasis hard-wired 50 us --
 75 us markets decode +3.4 dB bright at 15 kHz; RDS-level 1.320 peak factor
 documented wrongly in the primitive; --full-scale-khz ignored on the audio
 CLI path; SDR default IQ rate bypasses the byte-validated packed path; the

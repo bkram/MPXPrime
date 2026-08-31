@@ -11,6 +11,27 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: recording can no longer crash the app or lose a capture (audit
+  P0).** Four defects in the WAV path, all pinned by new `MeterRecorderTests`:
+  (1) the byte counter was `UInt32` and Swift's overflow trap killed the app
+  at 4 GiB -- 62 minutes of 24-bit stereo at 192 kHz; the writer now counts in
+  64-bit and stops cleanly at the RIFF limit, finalizing the file at a whole-
+  frame boundary with an operator-readable reason. (2) A single NaN reaching
+  the packer trapped in `Int32(_:)` -- an SDR overload/unplug while recording
+  looked like a random crash; NaN now packs as silence and +/-Inf clamps.
+  (3) The RIFF/data sizes stayed zero until close(), so any crash / SIGKILL /
+  power loss made the whole capture parse as an empty file; the header is now
+  patched every ~2 s and an interrupted file reads up to the last patch.
+  (4) A failed write (disk full, volume gone) silently discarded every later
+  block while the UI kept saying "Recording"; the recorder now exposes
+  `failureReason`, the view model polls it each tick (before the occlusion
+  gate -- recording continues while the window is covered) and stops with
+  "Recording stopped: <why>". Also: stopping or replacing a recording no
+  longer finalizes the file on the main thread while holding the lock the
+  analysis thread needs (a slow-disk flush there could overflow the input
+  ring -- the click class the recorder was built to prevent), and a
+  channel-count misuse reports instead of silently recording nothing.
+
 - **Multiband compressor: a real program-dependent release.** The
   `multiband_release_program_dependent` flag (default on) used to multiply
   the release time by a constant 1.1 -- no program dependence at all. Every

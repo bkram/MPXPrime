@@ -626,6 +626,14 @@ final class MeterViewModel: ObservableObject {
                 + "reusing it (its USB claim is held until replug or app restart)"
             return
         }
+        // Recording health -- BEFORE the occlusion gate, because recording
+        // continues while the window is covered. A writer that stopped (disk
+        // full, the 4 GB WAV limit) must not keep the red light on.
+        if isRecording, let reason = engine?.recordingFailureReason {
+            engine?.stopRecording()
+            isRecording = false
+            statusText = "Recording stopped: \(reason)"
+        }
         // Skip GUI pushes while the window is minimized / fully covered --
         // capture, analysis, and recording continue untouched (same gating
         // Studio applies to its monitoring windows).

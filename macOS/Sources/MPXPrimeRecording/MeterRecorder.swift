@@ -17,6 +17,13 @@ import Foundation
 /// Disk work still runs on a private serial queue so a filesystem flush never
 /// stalls capture: `write`/`writeMono` copy the block and hand it off.
 ///
+/// Failure contract (0.45): `failureReason` is non-nil once writing has
+/// stopped for any reason -- disk error, the RIFF 4 GiB limit, or a
+/// channel-count misuse. The engine polls it so the UI can stop the recording
+/// and say why instead of silently discarding blocks; the file on disk stays
+/// readable (the writer patches its header periodically and finalizes at the
+/// limit).
+///
 /// `@unchecked Sendable`: the interleave scratch is touched only on `ioQueue`.
 public final class MeterRecorder: @unchecked Sendable {
     public let channels: Int
@@ -24,13 +31,27 @@ public final class MeterRecorder: @unchecked Sendable {
     private let ioQueue = DispatchQueue(label: "com.mpxprime.meter.recorder", qos: .utility)
     private var interleave: [Float] = []   // touched only on ioQueue
 
-    public init(url: URL, sampleRate: Double, channels: Int) throws {
+    public convenience init(url: URL, sampleRate: Double, channels: Int) throws {
+        try self.init(url: url, sampleRate: sampleRate, channels: channels,
+                      headerPatchEveryBytes: 2_097_152,
+                      maxDataBytes: CanonicalWavWriter.riffDataLimit)
+    }
+
+    /// Internal designated init with test hooks for the header-patch interval
+    /// and the size limit.
+    init(url: URL, sampleRate: Double, channels: Int,
+         headerPatchEveryBytes: UInt64, maxDataBytes: UInt64) throws {
         self.channels = channels
         writer = try CanonicalWavWriter(
-            url: url, sampleRate: Int(sampleRate.rounded()), channels: channels)
+            url: url, sampleRate: Int(sampleRate.rounded()), channels: channels,
+            headerPatchEveryBytes: headerPatchEveryBytes, maxDataBytes: maxDataBytes)
     }
 
     deinit { finish() }
+
+    /// Non-nil once writing has stopped (disk error, size limit, misuse).
+    /// Poll from the UI; the reason is operator-readable.
+    public var failureReason: String? { writer.failureReason }
 
     /// Flush queued writes and finalize the header. Idempotent.
     public func finish() {
@@ -38,10 +59,21 @@ public final class MeterRecorder: @unchecked Sendable {
         writer.close()
     }
 
-    /// Stereo write (decoded L/R) at the capture rate. No-op unless 2-channel.
+    /// Wait for queued writes and header patches to reach the file without
+    /// closing it. Test hook.
+    func drainForTesting() {
+        ioQueue.sync {}
+        writer.drainForTesting()
+    }
+
+    /// Stereo write (decoded L/R) at the capture rate.
     /// Copies the block on the caller; interleave + pack + disk run on `ioQueue`.
     public func write(left: [Float], right: [Float], count: Int) {
-        guard channels == 2, count > 0 else { return }
+        guard count > 0 else { return }
+        guard channels == 2 else {
+            writer.reportMisuse("stereo write on a \(channels)-channel recorder")
+            return
+        }
         let l = Array(left[0..<count])
         let r = Array(right[0..<count])
         ioQueue.async { [self] in
@@ -51,9 +83,13 @@ public final class MeterRecorder: @unchecked Sendable {
         }
     }
 
-    /// Mono write (MPX composite) at the capture rate. No-op unless 1-channel.
+    /// Mono write (MPX composite) at the capture rate.
     public func writeMono(_ samples: [Float], count: Int) {
-        guard channels == 1, count > 0 else { return }
+        guard count > 0 else { return }
+        guard channels == 1 else {
+            writer.reportMisuse("mono write on a \(channels)-channel recorder")
+            return
+        }
         let s = Array(samples[0..<count])
         ioQueue.async { [self] in
             s.withUnsafeBufferPointer { writer.write($0, frames: s.count) }

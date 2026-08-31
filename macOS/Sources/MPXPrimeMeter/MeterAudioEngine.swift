@@ -258,19 +258,42 @@ final class MeterAudioEngine: @unchecked Sendable {
         let rec = try MeterRecorder(
             url: url, sampleRate: Double(sampleRate), channels: mpx ? 1 : 2)
         recordLock.lock()
+        let replaced = recorder
         recorder = rec
         recordMPX = mpx
         recordLock.unlock()
+        finalizeOffThread(replaced)
     }
 
     /// Stop recording and finalize the WAV header.
     func stopRecording() {
-        recordLock.lock(); recorder = nil; recordLock.unlock()
+        recordLock.lock()
+        let rec = recorder
+        recorder = nil
+        recordLock.unlock()
+        finalizeOffThread(rec)
+    }
+
+    /// `finish()` blocks on a full flush of the pending disk queue, and the
+    /// analysis thread takes `recordLock` on every block -- finalizing while
+    /// holding the lock on the MAIN thread stalled analysis long enough on a
+    /// slow disk for the input ring to overflow (the click class this recorder
+    /// exists to prevent). Swap out under the lock, finalize detached.
+    private func finalizeOffThread(_ rec: MeterRecorder?) {
+        guard let rec else { return }
+        DispatchQueue.global(qos: .utility).async { rec.finish() }
     }
 
     var isRecording: Bool {
         recordLock.lock(); defer { recordLock.unlock() }
         return recorder != nil
+    }
+
+    /// Non-nil once the active recording has stopped writing (disk error, the
+    /// 4 GB WAV limit, misuse). The view model polls this each tick.
+    var recordingFailureReason: String? {
+        recordLock.lock(); defer { recordLock.unlock() }
+        return recorder?.failureReason
     }
 
     /// Reset the deviation peak-hold + best-separation accumulators.

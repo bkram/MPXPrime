@@ -373,6 +373,18 @@ with any tool if you want a 48 kHz copy). They are written as canonical RIFF/WAV
 (no padding chunks) so any audio player or FFT/analysis tool reads them.
 Recording is only available while capturing.
 
+Recordings are crash-safe and honest about failure (0.45): the WAV header is
+updated every couple of seconds while recording, so a capture interrupted by a
+crash, forced quit or power loss stays readable up to the last update instead
+of parsing as an empty file. A recording that can no longer be written -- the
+disk filled up, the volume disappeared, or the file reached the classic WAV
+4 GB size limit (about 62 minutes of stereo at 192 kHz; the file is finalized
+cleanly at that point) -- stops itself and the status line says why, rather
+than keeping the record light on while silently discarding audio. Overloaded
+or non-finite decode samples are clamped into range instead of crashing the
+app. For captures longer than the 4 GB limit, start a new file when the
+status reports the limit was reached.
+
 ## Calibration and measurement validity
 
 **SDR needs no level calibration.** On the SDR path the deviation scale is a

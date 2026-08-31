@@ -113,6 +113,89 @@ import Testing
         #expect(maxErr < 1e-5)
     }
 
+    /// Non-finite samples must never reach `Int32(_:)` (which traps): NaN
+    /// packs as silence, +/-Inf clamps to full scale. An SDR overload or
+    /// unplug can push a NaN through the decode chain; before 0.45 that
+    /// crashed the whole app, but only while recording.
+    @Test func writerHandlesNonFiniteSamples() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mpxprime-rectest-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let rec = try MeterRecorder(url: url, sampleRate: 48_000.0, channels: 1)
+        let hostile: [Float] = [.nan, .infinity, -.infinity, 0.5, -.nan]
+        rec.writeMono(hostile, count: hostile.count)
+        rec.finish()
+
+        #expect(rec.failureReason == nil)
+        let (_, _, frames, ch) = try readWav(url)
+        #expect(frames == hostile.count)
+        #expect(ch[0][0] == 0.0, "NaN must pack as silence")
+        #expect(ch[0][1] > 0.99, "+Inf must clamp to full scale")
+        #expect(ch[0][2] < -0.99, "-Inf must clamp to full scale")
+        #expect(abs(ch[0][3] - 0.5) < 1e-5)
+        #expect(ch[0][4] == 0.0)
+    }
+
+    /// The writer must stop CLEANLY at the RIFF size limit -- finalized header,
+    /// whole-frame boundary, an operator-readable reason -- instead of the
+    /// pre-0.45 UInt32 overflow trap (62 minutes of stereo at 192 kHz).
+    @Test func sizeLimitFinalizesCleanly() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mpxprime-rectest-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Limit of 300 bytes = 100 mono frames.
+        let rec = try MeterRecorder(url: url, sampleRate: 48_000.0, channels: 1,
+                                    headerPatchEveryBytes: 1 << 20, maxDataBytes: 300)
+        let block = [Float](repeating: 0.25, count: 75)
+        rec.writeMono(block, count: block.count)     // 75 frames
+        rec.writeMono(block, count: block.count)     // 25 accepted, limit hit
+        rec.writeMono(block, count: block.count)     // dropped entirely
+        rec.drainForTesting()
+
+        #expect(rec.failureReason?.contains("limit") == true)
+        // The file is already finalized and readable without finish().
+        let (_, _, frames, ch) = try readWav(url)
+        #expect(frames == 100)
+        for v in ch[0] { #expect(abs(v - 0.25) < 1e-5) }
+        rec.finish()
+    }
+
+    /// The header is patched periodically, so a recording that never reaches
+    /// `finish()` (crash, SIGKILL, power loss) is still readable up to the
+    /// last patch instead of parsing as zero frames.
+    @Test func inProgressFileIsReadableWithoutFinish() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mpxprime-rectest-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let rec = try MeterRecorder(url: url, sampleRate: 48_000.0, channels: 1,
+                                    headerPatchEveryBytes: 300,
+                                    maxDataBytes: CanonicalWavWriter.riffDataLimit)
+        let block = [Float](repeating: 0.5, count: 200)
+        rec.writeMono(block, count: block.count)
+        rec.drainForTesting()   // stand-in for "the process died here"
+
+        let (_, _, frames, _) = try readWav(url)
+        #expect(frames == 200, "the periodically patched header must cover the written frames")
+        rec.finish()
+    }
+
+    /// A channel-count misuse must be reported, not silently ignored -- the
+    /// old code no-opped and recorded a zero-byte file with no error.
+    @Test func mismatchedChannelWriteReportsFailure() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mpxprime-rectest-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let rec = try MeterRecorder(url: url, sampleRate: 48_000.0, channels: 1)
+        rec.write(left: [0.1, 0.2], right: [0.1, 0.2], count: 2)   // stereo into mono
+        rec.drainForTesting()
+        #expect(rec.failureReason?.contains("channel") == true)
+        rec.finish()
+    }
+
     /// Samples beyond +/-1.0 must clamp (not wrap) so a hot decode can't produce
     /// full-scale wrap-around clicks.
     @Test func writerClampsOutOfRangeSamples() throws {

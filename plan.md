@@ -466,7 +466,37 @@ settled and what it opened:
   rate or frequency is set) -- not ours, and not related to the narrow IQ
   default.
 
-REMAINING (needs the maintainer's hardware): the factor 1 vs 4 offline IQ A/B
+**Factor 1 vs 4 IQ A/B: DONE 2026-08-31 (RTL-SDR, 105.9 MHz), and it REFUTED
+the B12 desk reasoning.** Three 75 s captures through the shipped capi (a
+scratch harness linking mpxtuner_open directly; 0 IQ drops on every run),
+replayed through the analyzer:
+
+| capture | PILOT | RDS | MAX dev | >77 kHz | noise | phase |
+| --- | --- | --- | --- | --- | --- | --- |
+| narrow (factor 1), bw auto | 7.31 | 6.72 | 101.9 | 0.362% | 6.46 | 73-82 wandering |
+| wide (factor 4), bw auto | 6.97 | 4.59 | 80.2 | 0.053% | 4.27 | 83-87 steady |
+| narrow (factor 1), bw 200 kHz | 6.94 | 4.66 | 81.0 | 0.023% | 4.18 | 85 steady |
+
+Rows 2 and 3 agree within instrument tolerance; row 1 is the outlier. So the
+narrow path is NOT the trustworthy one, and the 0.45 default change to narrow
+was reverted to 1000 kHz. Diagnosis: at factor 1 with `bandwidth_khz = 0`
+nothing band-limits the IQ ahead of the FM demod -- `FMDemod`'s ctor installs a
++/-110 kHz `m_liquidIqFilter` but leaves `m_bandwidthMode = 0` UNAPPLIED, and
+`setBandwidthHz` early-returns when the selected mode equals the current one,
+so "auto" never installs a mode filter. At factor 4 the `ComplexDecimator`
+(128 taps since 0.45) supplies the channel filtering as a side effect, which is
+why the wide path is clean. Setting an explicit 200 kHz bandwidth at factor 1
+reproduces the factor-4 numbers exactly, which is the proof.
+
+PROPOSED FIX (not applied -- it changes the shipped demod for every user on one
+dongle's evidence, so it wants a second dongle or an SDRplay cross-check
+first): call `setBandwidthHz` unconditionally at open with an explicit FM MPX
+default (200 kHz) instead of leaving mode 0 unapplied, and then re-run this
+table plus an SFP-X comparison. Alternative: make the ctor apply its own
++/-110 kHz design as a real mode so "auto" means what it says.
+
+REMAINING (needs the maintainer's hardware): a second RTL / SDRplay
+cross-check of the bandwidth fix above; the old factor 1 vs 4 offline IQ A/B
 on recorded IQ; an RTL with a known ppm error before/after the decoder PLL
 fix; an SFP-X side-by-side re-check now that P1 has landed (the conventions
 themselves did not change, so the 2026-07-07 agreement should hold); a 75 us

@@ -148,13 +148,21 @@ final class MeterViewModel: ObservableObject {
     /// open. The demod chain runs at its own rate behind a decimator, so this
     /// cannot move the MPX measurements.
     ///
-    /// Defaults to 0 since 0.45: at factor 1 the RTL backend takes its
-    /// original packed-uint8 path -- the byte-exact one the deviation and RDS
-    /// conventions were validated against (SFP-X, 2026-07-07) -- while any
-    /// wider rate routes through the newer complex path with its own
-    /// decimator. A wider span is a spectrum FEATURE the operator opts into,
-    /// not the shipped measurement default (audit B12).
-    @Published var sdrIQRateKHz: Int = 0
+    /// STAYS at 1000. The 0.45 audit (B12) reasoned from the code that the
+    /// default should be 0, so that the RTL backend takes its original
+    /// packed-uint8 path -- the byte-exact one the conventions were validated
+    /// against. An RTL-SDR bench A/B on 2026-08-31 REFUTED that: on 105.9 MHz,
+    /// three 75 s captures minutes apart (0 IQ drops each) read
+    ///   narrow, bandwidth auto : pilot 7.31  RDS 6.72  MAX 101.9  noise 6.46
+    ///   wide (factor 4), auto  : pilot 6.97  RDS 4.59  MAX  80.2  noise 4.27
+    ///   narrow + 200 kHz BW    : pilot 6.94  RDS 4.66  MAX  81.0  noise 4.18
+    /// i.e. at factor 1 with `bandwidth_khz = 0` the channel filtering ahead of
+    /// the FM demod is insufficient, and every peak-sensitive reading inflates
+    /// (+21 kHz of peak deviation, +46% RDS level, +50% baseband noise, and an
+    /// unstable pilot/RDS phase). At factor 4 the ComplexDecimator's filter
+    /// supplies that band-limiting as a side effect. Until the demod's default
+    /// bandwidth is fixed (plan.md), the wide default is the accurate one.
+    @Published var sdrIQRateKHz: Int = 1000
     /// Unit for the SIGNAL readout, and the calibration offset that makes the
     /// absolute units absolute (see `SignalUnit`). Both persist.
     @Published var signalUnit: SignalUnit = .dBFS

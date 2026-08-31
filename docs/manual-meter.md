@@ -296,19 +296,30 @@ remembered by device UID):
   degrading reception, or to check a carrier is where it should be. The centre
   line marks the tuned frequency and the grid follows the 100 kHz FM raster.
 
-  The RF span is the **Sample Rate** in the input bar: *Narrow* (the default
-  since 0.45) is the minimum the demodulator needs and shows only the tuned
-  carrier, *1 MSPS* shows about +/-0.5 MHz, and *2 MSPS* about +/-1 MHz.
-  Changing it restarts the capture. It does not change any measurement -- the
-  FM demodulator always runs at its own fixed rate behind a decimator whatever
-  the capture rate is -- so treat a wider span as the spectrum feature it is
-  and switch it on when you want the view. *Narrow* is the default because at
-  that setting the RTL-SDR path is byte-for-byte the one the deviation, pilot
-  and RDS conventions were validated against a professional measuring
-  receiver; it also costs the least USB bandwidth and CPU. (In 0.45 the wide
-  path's decimator was widened as well, from 48 to 128 taps, so its passband
-  stays flat past +/-105 kHz instead of reaching into the +/-90 kHz an FM
-  signal occupies.)
+  The RF span is the **Sample Rate** in the input bar: *1 MSPS* (the default)
+  shows about +/-0.5 MHz, *2 MSPS* about +/-1 MHz, and *Narrow* is the minimum
+  the demodulator needs and shows only the tuned carrier. Changing it restarts
+  the capture.
+
+  **On an RTL-SDR, do not use *Narrow* for measurements.** A bench A/B on
+  2026-08-31 (105.9 MHz, three 75 s captures minutes apart, no dropped IQ)
+  found that at the narrow rate the channel filtering ahead of the FM
+  demodulator is insufficient, so every peak-sensitive reading inflates:
+
+  | Setting | PILOT | RDS | MAX dev | noise |
+  | --- | --- | --- | --- | --- |
+  | Narrow, Bandwidth auto | 7.31 | 6.72 | 101.9 kHz | 6.46 kHz |
+  | 1 MSPS, Bandwidth auto | 6.97 | 4.59 | 80.2 kHz | 4.27 kHz |
+  | Narrow, Bandwidth 200 kHz | 6.94 | 4.66 | 81.0 kHz | 4.18 kHz |
+
+  At 1 MSPS the wide-capture decimator band-limits the IQ as a side effect, so
+  the demodulator sees a properly filtered channel; at the narrow rate nothing
+  does unless you set **Bandwidth** explicitly -- 200 kHz reproduces the
+  correct figures, as the third row shows. So either leave the default 1 MSPS,
+  or set an explicit Bandwidth if you need Narrow. (In 0.45 the wide path's
+  decimator was also lengthened from 48 to 128 taps, so its passband stays
+  flat past +/-105 kHz instead of reaching into the +/-90 kHz an FM signal
+  occupies.)
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
   AF / group histogram and live block-error rate. **Groups** shows each type's
   count *and its share* of the stream; **Order** shows the last 18 groups in

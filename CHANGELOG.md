@@ -106,16 +106,24 @@ combination test suite. Newest first.
     silently ignored**, so a run asked for absolute calibration and got
     pilot-referenced numbers. It works there now, and the startup line names
     the calibration convention and de-emphasis actually in use.
-  - **The shipped SDR default IQ rate is now Narrow**, i.e. the byte-exact
-    packed-uint8 RTL-SDR path that the deviation / pilot / RDS conventions
-    were validated against with a professional measuring receiver. A wider
-    span is a deliberate spectrum choice rather than the default measurement
-    path. The wide path also got better: its decimator went from 48 to 128
-    taps (12 -> 32 per phase) so its passband stays flat past +/-105 kHz
-    instead of reaching into the +/-90 kHz an FM signal occupies, and its
-    overload detection now shares one threshold with the packed path (the old
+  - **The wide SDR capture path's decimator went from 48 to 128 taps**
+    (12 -> 32 per phase) so its passband stays flat past +/-105 kHz instead of
+    reaching into the +/-90 kHz an FM signal occupies, and its overload
+    detection now shares one threshold with the packed path (the old
     hard-coded 0.995 was asymmetric against the byte mapping: it flagged
-    bytes 0, 254 and 255 but not byte 1).
+    bytes 0, 254 and 255 but not byte 1). The shipped default IQ rate was
+    briefly changed to Narrow on the audit's code-reading argument (factor 1
+    keeps the byte-exact packed path) and then **changed back to 1 MSPS when an
+    RTL-SDR bench A/B refuted it**: at the narrow rate nothing band-limits the
+    IQ ahead of the FM demod, and peak deviation read +21 kHz high, RDS level
+    +46% and baseband noise +50%, with an unstable pilot/RDS phase. At factor 4
+    the decimator supplies that filtering as a side effect, and setting an
+    explicit 200 kHz Bandwidth at the narrow rate reproduces the factor-4
+    figures exactly. The underlying defect (the demodulator's "auto" bandwidth
+    is not the filter it appears to be -- the constructor installs a
+    +/-110 kHz IQ filter but leaves the bandwidth mode unapplied) is recorded
+    for a decision rather than patched on one dongle's evidence; the manual now
+    warns against Narrow for measurements on an RTL.
   - The RDS-level primitive's file-header comment claimed the R&S
     "RMS x sqrt(2)" convention while the code deliberately publishes the
     peak-referenced figure; corrected, with the conversion between the two

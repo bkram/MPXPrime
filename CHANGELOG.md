@@ -11,6 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: dropped samples and a stalled input are now visible, and a stopped
+  meter blanks its dashboard (audit P1.2).** Input-ring overflows (the
+  analysis thread fell behind; samples were dropped) poison every peak-hold
+  and accumulated reading -- MAX DEV, the histogram, BS.412 max, the SM.1268
+  exceedance count -- yet the only report was a stderr line at stop, which a
+  double-clicked .app sends nowhere. The Quality card now raises a red
+  "SAMPLES DROPPED" badge the moment a drop happens (the accumulated readings
+  are invalid from that point; Reset Peaks clears both). A "NO INPUT" badge
+  appears when the device stops delivering for over a second while capture
+  still claims to run (USB power-save, a stalled SDR stream kept `alive`
+  true and the panel showed frozen readings indistinguishable from live).
+  And Stop / device loss now resets the whole dashboard to its idle state
+  instead of leaving the last captured frame on screen -- a frozen red
+  "MAX 78.4" bar read as live over-deviation.
+
 - **Meter: the analyzer always runs at the rate the device actually opened at
   (audit P1.1).** The measurement engine, monitor and WAV recorder were built
   from the rate PREDICTED before the device opened; a slow USB rate switch

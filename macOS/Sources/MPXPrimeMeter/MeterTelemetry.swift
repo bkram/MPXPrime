@@ -137,4 +137,55 @@ final class MeterTelemetry {
     var rfSpanHz: Double = 0
     var audioSpectrumMaxHz: Double = 20_000
     var audioSpectrumNyquistHz: Double = 0
+
+    // Measurement integrity (0.45, audit P1.2). `dropWarningText` is non-nil
+    // once input samples were dropped since the last peak reset -- the
+    // peak-hold / histogram / BS.412 / exceedance accumulators then contain a
+    // gap artefact and the badge stays up until Reset Peaks. `inputStalled`
+    // is the liveness watchdog: the input stopped delivering while capture
+    // still claims to run.
+    var dropWarningText: String?
+    var inputStalled = false
+
+    /// Restore every readout to its declared idle default -- called on stop()
+    /// and device loss so the dashboard never shows the last captured frame
+    /// as if it were live (audit C5).
+    func reset() {
+        inputNorm = 0; inputText = "-inf"
+        leftNorm = 0; leftText = "-inf"
+        rightNorm = 0; rightText = "-inf"
+        midNorm = 0; midText = "-inf"
+        sideNorm = 0; sideText = "-inf"
+        correlation = 1; correlationText = "+1.00"
+        pilotNorm = 0; pilotText = "0.00"
+        rdsNorm = 0; rdsText = "0.00"
+        maxDevNorm = 0; maxDevText = "0.0"
+        aveMinDevText = "--"
+        mpxPowerText = "--"; mpxPowerNorm = 0; mpxPowerDBr = -120; mpxPowerValid = false
+        posPeakText = "0.0"; negPeakText = "0.0"; posPeakKHz = 0; negPeakKHz = 0
+        exceedanceText = "--"; exceedancePct = 0; exceedanceValid = false
+        mpxPowerMaxText = "--"; mpxPowerMaxDBr = -120; mpxPowerMaxValid = false
+        separationText = "--"
+        qualityText = "--"; qualityLevel = 0
+        carrierOffsetText = "--"; carrierOffsetKHz = 0; carrierOffsetValid = false
+        balanceText = "--"
+        devHistogram = []; devHistogramSamples = 0; distributionSummaryText = "--"
+        rssiText = "--"; rssiNorm = 0; rssiValid = false
+        systemGainText = "--"
+        rdsStatusText = "--"
+        rdsPhaseText = "--"; rdsPhaseOutOfSpec = false
+        ptyText = "--"; ptynText = "--"; eccText = "--"
+        psText = "--"; rtText = "--"; rtPlusText = "--"
+        longPSText = "--"; ctText = "--"; afText = "--"
+        groupText = "--"; groupOrderText = "--"
+        vectorZoom = 1
+        devHistoryKHz = []; mpxPowerHistoryDBr = []
+        compositeScope = []; decodedLScope = []; decodedRScope = []
+        spectrumDB = []; spectrumMaxHz = 100_000; spectrumNyquistHz = 0
+        decodedLSpectrumDB = []; decodedRSpectrumDB = []
+        rfSpectrumDB = []; rfSpanHz = 0
+        audioSpectrumMaxHz = 20_000; audioSpectrumNyquistHz = 0
+        dropWarningText = nil
+        inputStalled = false
+    }
 }

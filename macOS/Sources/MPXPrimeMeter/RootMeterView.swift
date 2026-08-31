@@ -551,6 +551,22 @@ struct RootMeterView: View {
         GroupBox("Quality") {
             LiveObservationView(telemetry: vm.telemetry) { t in
                 VStack(alignment: .leading, spacing: 12) {
+                    if t.inputStalled {
+                        Text("NO INPUT")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.overRed)
+                            .help("The input device stopped delivering samples while "
+                                + "capture is still running (USB power-save, a stalled "
+                                + "SDR stream). The readings below are frozen, not live.")
+                            .accessibilityLabel("No input: the device stopped delivering samples")
+                    }
+                    if let warning = t.dropWarningText {
+                        Text("SAMPLES DROPPED")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.overRed)
+                            .help(warning)
+                            .accessibilityLabel(warning)
+                    }
                     readout("SIGNAL QUALITY", t.qualityText,
                             valueTint: Self.qualityTint(t.qualityLevel),
                             help: "How much energy sits ABOVE the modulated baseband "

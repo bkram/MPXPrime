@@ -491,6 +491,10 @@ final class MeterViewModel: ObservableObject {
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
+        lastDropEvents = 0
+        // Blank the dashboard: a stopped meter must not keep showing the last
+        // captured frame as if it were live (audit C5).
+        telemetry.reset()
         // Devices are all free now: refresh the picker with a full scan.
         refreshSDRDevices()
     }
@@ -607,6 +611,10 @@ final class MeterViewModel: ObservableObject {
 
     // MARK: - Polling
 
+    /// Cumulative ring drop events (overflows + torn reads) already reported
+    /// through the badge, so each tick only reacts to NEW drops.
+    private var lastDropEvents: UInt64 = 0
+
     private func startTimer() {
         let t = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -634,6 +642,25 @@ final class MeterViewModel: ObservableObject {
             engine?.stopRecording()
             isRecording = false
             statusText = "Recording stopped: \(reason)"
+        }
+        // Measurement integrity -- also before the occlusion gate. Dropped
+        // input samples poison every peak-hold / accumulated reading (MAX DEV,
+        // histogram, BS.412 max, the SM.1268 exceedance count) with a gap
+        // artefact; the badge stays until Reset Peaks. Before 0.45 the only
+        // report was a stderr line at stop, which a .app sends nowhere.
+        if running, let eng = engine {
+            let t = eng.inputTransport
+            let dropEvents = t.overflows &+ t.tornReads
+            if dropEvents > lastDropEvents {
+                lastDropEvents = dropEvents
+                telemetry.dropWarningText =
+                    "SAMPLES DROPPED -- peak / accumulated readings invalid; Reset Peaks to clear"
+            }
+            // Liveness watchdog: a device that wedged without signalling
+            // failure delivers nothing while `running` stays true; the panel
+            // must say so instead of showing frozen readings that look live.
+            let stalled = (eng.secondsSinceLastDelivery ?? 0) > 1.0
+            if stalled != telemetry.inputStalled { telemetry.inputStalled = stalled }
         }
         // Skip GUI pushes while the window is minimized / fully covered --
         // capture, analysis, and recording continue untouched (same gating
@@ -873,8 +900,12 @@ final class MeterViewModel: ObservableObject {
         put(\.audioSpectrumNyquistHz, s.audioSpectrumNyquistHz)
     }
 
-    /// Reset the deviation peak-hold + best-separation readouts.
-    func resetPeaks() { engine?.resetPeaks() }
+    /// Reset the deviation peak-hold + best-separation readouts. Also clears
+    /// the samples-dropped badge: the accumulators start clean again.
+    func resetPeaks() {
+        engine?.resetPeaks()
+        telemetry.dropWarningText = nil
+    }
 
     /// Start (with a Save panel) or stop recording. `recordMPX` selects the
     /// format: decoded stereo audio, or the raw MPX composite (mono).

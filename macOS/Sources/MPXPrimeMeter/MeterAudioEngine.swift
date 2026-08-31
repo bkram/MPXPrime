@@ -77,6 +77,13 @@ final class MeterAudioEngine: @unchecked Sendable {
     private var recorder: MeterRecorder?
     private var recordMPX = false
 
+    // Uptime nanoseconds of the last non-empty frame delivery from the input
+    // (capture thread). 0 = nothing delivered yet. The liveness watchdog: a
+    // wedged device (USB power-save, SDR stream stall) keeps `isRunning` true
+    // while delivering nothing, and the panel would show frozen readings that
+    // look live.
+    private let lastDeliveryNS = ManagedAtomic<UInt64>(0)
+
     private var consumer: Thread?
     private let runningFlag = ManagedAtomic<Bool>(false)
     private let consumerDone = DispatchSemaphore(value: 0)
@@ -136,7 +143,11 @@ final class MeterAudioEngine: @unchecked Sendable {
         let channel = self.channel
         let scratch = self.mixScratch
         let scratchCap = self.mixScratchCap
+        let lastDeliveryNS = self.lastDeliveryNS
         input.frameSink = { left, right, frames in
+            if frames > 0 {
+                lastDeliveryNS.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+            }
             switch channel {
             case .left:
                 ring.writeMono(mono: left, frameCount: frames)
@@ -334,6 +345,24 @@ final class MeterAudioEngine: @unchecked Sendable {
     var recordingFailureReason: String? {
         recordLock.lock(); defer { recordLock.unlock() }
         return recorder?.failureReason
+    }
+
+    /// Input-ring transport counters (overflows = the analysis thread fell
+    /// behind and samples were DROPPED; torn reads = a concurrent-read race
+    /// was detected). The view model polls the deltas each tick and raises the
+    /// "samples dropped" badge -- a peak-hold instrument must not silently
+    /// keep a number it computed across a gap.
+    var inputTransport: StereoInputRingBuffer.TransportSnapshot {
+        ring.transportSnapshot()
+    }
+
+    /// Seconds since the input last delivered frames; nil before the first
+    /// delivery. > ~1 s while `running` means the device wedged without
+    /// signalling failure.
+    var secondsSinceLastDelivery: Double? {
+        let ns = lastDeliveryNS.load(ordering: .relaxed)
+        guard ns > 0 else { return nil }
+        return Double(DispatchTime.now().uptimeNanoseconds &- ns) / 1_000_000_000.0
     }
 
     /// Reset the deviation peak-hold + best-separation accumulators.

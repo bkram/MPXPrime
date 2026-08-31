@@ -39,6 +39,18 @@ spectrum span, and the selected devices) between launches; they are stored in th
 standard macOS preferences and restored on the next start. Pass `--sdr-freq`
 to override the saved frequency for that launch.
 
+Measurement integrity (0.45): the Quality card raises a red **SAMPLES
+DROPPED** badge if the capture pipeline ever dropped input samples -- from
+that moment the peak-hold and accumulated readings (MAX, PEAK +/-, OVER
+77 kHz, the distribution, MPX POWER max) contain a gap artefact and should
+not be quoted; press **Reset Peaks** to clear the badge and start the
+accumulators clean. A red **NO INPUT** badge means the input device stopped
+delivering samples while capture is still running (USB power management, a
+stalled SDR stream): the readings on screen are frozen, not live. Stopping
+capture (or losing the device) blanks the dashboard back to its idle state,
+so anything you see with the meter stopped is never mistaken for a live
+reading.
+
 Capture refuses to start below 128 kHz (0.45): composite measurement needs the
 0-60 kHz band and RDS sits at 57 kHz, so readings at lower rates would silently
 exclude the stereo sidebands and count them as noise. If the Meter reports the

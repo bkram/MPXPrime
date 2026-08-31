@@ -370,6 +370,37 @@ in phase) -- relabel it. The 10 kHz PLL-path separation (~51-54 dB) vs 95 dB at
 AGC topology, multiband bands / ratios, dual-rate boundary, post-clipper
 injection, encoder HF guard (give it named constants + a test).
 
+## Meter audit (2026-08-31, 57 findings; full detail in the session plan file)
+
+Three audits (measurement engine / input+SDR+recording / GUI). SHIPPED: P0
+recording robustness (4 GiB trap, NaN trap, crash-safe header, failure
+surfacing, off-thread finalize); P1.1 rates (analyzer rebuilt at the ACTUAL
+opened rate, refuse < 128 kHz, range-reported device rates expanded, slice
+constants tied); P1.2 Swift side (SAMPLES DROPPED + NO INPUT badges off the
+ring transport counters and a last-delivery watchdog, dashboard blanks on
+stop/device loss). REMAINING, in order: P1.2b tuner drop counters
+(`mpxtuner_iq_drops` C ABI; SDRplay ring has none, RTL's is a function-local
+static); P1.3 decode integrity (MPXDecoder decodes mono below pilot amplitude
+0.02 ABSOLUTE with no flag -- 20 dB window where PILOT reads present and audio
+is M-only; the 38 kHz recovery is a fixed-lag lock-in, so capture-clock ppm
+caps separation: untrimmed RTL ~25 dB -- add frequency tracking + offset-pilot
+tests); P1.4 validity flags (peaks freeze at the last station; scale accepted
+from pilotAmp 1e-5; phase-meter coherence primes at 1.0 (the 45.4 deg
+mystery) and 0.3 admits a drifting angle; exceedance "valid" after 1 s at
+520x too-coarse resolution; calibration changes don't reset accumulators;
+quality/-corr/balance gates); P2 conventions (de-emphasis hard-wired 50 us --
+75 us markets decode +3.4 dB bright at 15 kHz; RDS-level 1.320 peak factor
+documented wrongly in the primitive; --full-scale-khz ignored on the audio
+CLI path; SDR default IQ rate bypasses the byte-validated packed path; the
+wide-capture decimator is the dominant channel filter at factor 4 -- bench
+A/B needed); P3 GUI (RF-span chip re-triggers the 0.34 toolbar leak at 20 Hz
+in RF mode; statusText @Published; occlusion gate tests an arbitrary window;
+window squeezable 240 pt below content minimum; error alerts; accessibility
+pass -- readouts aren't elements, over-limit is colour-only, 9 unlabelled
+AppKit fields; monitor uses read() not readAdaptive -> clock-drift clicks
+into an exciter). Hardware for the maintainer: RTL ppm before/after the PLL
+fix, factor 1 vs 4 IQ A/B, SFP-X re-check after P1, 75 us station after P2.
+
 ## Next up
 
 0. **Rework the shipped Format Profiles + PrimeBass presets. DONE (71cdf78, 2026-08-04).** Four complete profiles own the gain structure; the PrimeBass preset re-tune at the new gain structure and the input-gain-reference question (nominal -12 dBFS documented in the manual) remain open as listening items.

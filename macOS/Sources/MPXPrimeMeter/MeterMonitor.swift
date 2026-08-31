@@ -13,6 +13,13 @@ import MPXPrimeCore
 /// ring (capture -> analysis) and this monitor ring (analysis -> output) each
 /// have exactly one producer and one consumer.
 final class MeterMonitor: @unchecked Sendable {
+    // Target ring fill the adaptive read holds, and the deadband inside which
+    // it does not trim. ~10 ms / ~2.5 ms at 192 kHz: enough to absorb a
+    // scheduling hiccup, small enough that the added monitor latency is
+    // inaudible.
+    private static let adaptiveTargetFrames = 2048
+    private static let adaptiveDeadbandFrames = 512
+
     private let engine = AVAudioEngine()
     private let ring: StereoInputRingBuffer
     private let sampleRate: Double
@@ -56,8 +63,19 @@ final class MeterMonitor: @unchecked Sendable {
                   let rraw = abl[1].mData else { return noErr }
             let lp = lraw.assumingMemoryBound(to: Float.self)
             let rp = rraw.assumingMemoryBound(to: Float.self)
-            // Underflow pads with zeros (silence) -- acceptable for monitoring.
-            _ = ring.read(intoLeft: lp, outRight: rp, frameCount: n)
+            // Adaptive read, not a plain one: the producer clock (the capture
+            // device or the SDR's own crystal) is independent of this output
+            // device's clock, so consuming exactly `n` frames per callback
+            // lets the buffered amount drift until it underruns (a click every
+            // few minutes, straight into an exciter on the MPX pass-through)
+            // or saturates. `readAdaptive` micro-resamples to hold the target
+            // fill, the same mechanism the encoder's input path uses (audit
+            // B17). Underflow still pads with silence.
+            _ = ring.readAdaptive(
+                intoLeft: lp, outRight: rp, frameCount: n,
+                nominalConsume: n,
+                targetBuffered: max(n * 2, Self.adaptiveTargetFrames),
+                deadband: max(n / 2, Self.adaptiveDeadbandFrames))
             if gain != 1.0 {
                 var g = gain
                 vDSP_vsmul(lp, 1, &g, lp, 1, vDSP_Length(n))

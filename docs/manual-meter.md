@@ -53,6 +53,10 @@ capture (or losing the device) blanks the dashboard back to its idle state,
 so anything you see with the meter stopped is never mistaken for a live
 reading.
 
+**Reset Peaks** works with capture stopped as well as running -- that is
+exactly when held values are still on screen -- and it also clears the
+SAMPLES DROPPED badge.
+
 Any readout can show `--`, and that is deliberate: it means the Meter does
 not currently have what it needs to measure that quantity (no deviation scale,
 too little signal, or not enough samples yet for a statistic). Every kHz

@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <string>
 
 #if defined(FM_TUNER_HAS_SDRPLAY)
 
@@ -38,13 +40,43 @@ struct SDRplayApi {
 
 SDRplayApi &api() {
   static SDRplayApi a;
-  static bool tried = false;
-  if (!tried) {
-    tried = true;
+  // One-time load, under call_once: api() is reached from the Meter's UI thread
+  // (device enumeration / pickers) AND from the tuner's capture thread (every
+  // live control Update), so a plain check-then-set `tried` bool let two
+  // threads dlopen and dlsym into the same struct concurrently -- one of them
+  // could then read half-filled function pointers and call through a null.
+  static std::once_flag loadOnce;
+  std::call_once(loadOnce, [] {
     a.lib = dlopen("libsdrplay_api.dylib", RTLD_NOW | RTLD_GLOBAL);
-    if (!a.lib) a.lib = dlopen("/usr/local/lib/libsdrplay_api.dylib", RTLD_NOW | RTLD_GLOBAL);
+    std::string firstErr;
+    if (!a.lib) {
+      const char *e = dlerror();
+      firstErr = e ? e : "unknown error";
+      a.lib = dlopen("/usr/local/lib/libsdrplay_api.dylib", RTLD_NOW | RTLD_GLOBAL);
+    }
+    if (!a.lib) {
+      // Without this the absence of the SDRplay runtime was indistinguishable
+      // from a broken install (wrong arch, missing dependency, bad code
+      // signature): the backend just silently reported zero devices.
+      const char *e = dlerror();
+      fprintf(stderr,
+              "[SDRplay] cannot load libsdrplay_api.dylib -- SDRplay backend "
+              "unavailable (RTL-SDR still works). dlopen: %s / %s\n",
+              firstErr.c_str(), e ? e : "unknown error");
+    }
     if (a.lib) {
-      auto sym = [&](const char *n) { return dlsym(a.lib, n); };
+      auto sym = [&](const char *n) -> void * {
+        dlerror();  // clear any stale error so the one we read is ours
+        void *p = dlsym(a.lib, n);
+        if (!p) {
+          // A missing symbol means the installed API version does not match
+          // what this build expects; naming it is the whole diagnosis.
+          const char *e = dlerror();
+          fprintf(stderr, "[SDRplay] dlsym(%s) failed: %s\n", n,
+                  e ? e : "symbol not found");
+        }
+        return p;
+      };
       a.Open = reinterpret_cast<sdrplay_api_Open_t>(sym("sdrplay_api_Open"));
       a.Close = reinterpret_cast<sdrplay_api_Close_t>(sym("sdrplay_api_Close"));
       a.ApiVersion = reinterpret_cast<sdrplay_api_ApiVersion_t>(sym("sdrplay_api_ApiVersion"));
@@ -58,7 +90,7 @@ SDRplayApi &api() {
       a.Uninit = reinterpret_cast<sdrplay_api_Uninit_t>(sym("sdrplay_api_Uninit"));
       a.Update = reinterpret_cast<sdrplay_api_Update_t>(sym("sdrplay_api_Update"));
     }
-  }
+  });
   return a;
 }
 

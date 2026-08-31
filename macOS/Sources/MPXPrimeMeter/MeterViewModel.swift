@@ -112,7 +112,27 @@ final class MeterViewModel: ObservableObject {
     @Published var audioAbsoluteCal = false
     @Published var audioFullScaleKHz: Double = 150.0
     @Published var running = false
-    @Published var statusText = "Stopped"
+    /// Status line, shown in the native window subtitle. Deliberately NOT
+    /// @Published: no SwiftUI body reads it, but a @Published write on this
+    /// view model re-evaluates the whole window body INCLUDING the toolbar --
+    /// the documented SwiftUI-on-macOS toolbar relayout leak (CHANGELOG 0.34),
+    /// and this string changes on every retune (audit C17). It is published
+    /// through a Combine subject the app delegate subscribes to instead.
+    var statusText: String {
+        get { statusSubject.value }
+        set { statusSubject.value = newValue }
+    }
+    private let statusSubject = CurrentValueSubject<String, Never>("Stopped")
+    var statusPublisher: AnyPublisher<String, Never> {
+        statusSubject.eraseToAnyPublisher()
+    }
+
+    /// The dashboard window, handed over by the app delegate. Used only to ask
+    /// whether it is occluded: the tick used to gate on
+    /// `NSApp.windows.first(where: visible || miniaturized)`, which can be a
+    /// popover, a sheet or a save panel -- one of those being off-screen could
+    /// silently freeze the whole display (audit C13).
+    weak var mainWindow: NSWindow?
     /// WAV recording: format (false = decoded stereo, true = MPX composite) and
     /// live state.
     @Published var recordMPX = false
@@ -550,16 +570,24 @@ final class MeterViewModel: ObservableObject {
     /// MPX pass-through toggled or its device changed: applies live.
     func applyMPXPassChange() {
         saveSettings()
-        engine?.setMPXPassThrough(
+        let failure = engine?.setMPXPassThrough(
             enabled: mpxPassEnabled, deviceID: selectedMPXOutID,
             gainDB: mpxPassGainDB)
+        if let failure {
+            // Do not leave the toggle lit over a dead player (audit C12).
+            mpxPassEnabled = false
+            statusText = "MPX pass-through failed: \(failure)"
+            saveSettings()
+        }
     }
 
     /// Monitor output device changed: swap just the monitor, live -- the
     /// capture, analysis, and recording are untouched.
     func applyOutputDeviceChange() {
         saveSettings()
-        engine?.setMonitorDevice(selectedOutputID)
+        if let failure = engine?.setMonitorDevice(selectedOutputID) {
+            statusText = "Monitor output failed: \(failure)"
+        }
     }
 
     /// Apply a control change (device/channel/monitor/ref) by restarting.
@@ -704,11 +732,14 @@ final class MeterViewModel: ObservableObject {
             let stalled = (eng.secondsSinceLastDelivery ?? 0) > 1.0
             if stalled != telemetry.inputStalled { telemetry.inputStalled = stalled }
         }
-        // Skip GUI pushes while the window is minimized / fully covered --
-        // capture, analysis, and recording continue untouched (same gating
-        // Studio applies to its monitoring windows).
-        if let w = NSApp.windows.first(where: { $0.isVisible || $0.isMiniaturized }),
-           !w.occlusionState.contains(.visible) {
+        // Skip GUI pushes while the DASHBOARD window is minimized / fully
+        // covered -- capture, analysis, and recording continue untouched (same
+        // gating Studio applies to its monitoring windows). Gate on the real
+        // window only: any other NSWindow in the app (a popover, a sheet, a
+        // save panel) reports its own occlusion, and treating one of those as
+        // the dashboard could freeze the display while it is plainly visible
+        // (audit C13). With no window yet, do not gate.
+        if let w = mainWindow, !w.occlusionState.contains(.visible) {
             return
         }
         guard let s = engine?.snapshot() else { return }
@@ -746,11 +777,19 @@ final class MeterViewModel: ObservableObject {
 
     /// Copy the tuner's latest RF spectrum frame into telemetry -- only while
     /// the card is actually showing it, so the copy costs nothing otherwise.
+    /// "1.00 MHz" / "256 kHz" / "--" -- the RF span as the header chip shows it.
+    static func rfSpanLabel(hz: Double) -> String {
+        guard hz > 0 else { return "--" }
+        return hz >= 1e6 ? String(format: "%.2f MHz", hz / 1e6)
+                         : String(format: "%.0f kHz", hz / 1e3)
+    }
+
     private func pushRFSpectrum() {
         guard inputKind == .sdr, spectrumShowsRF, let source = sdrSource else {
             if !telemetry.rfSpectrumDB.isEmpty {
                 telemetry.rfSpectrumDB = []
                 telemetry.rfSpanHz = 0
+                put(\.rfSpanText, "--")
             }
             return
         }
@@ -761,6 +800,9 @@ final class MeterViewModel: ObservableObject {
         guard count > 0 else { return }
         telemetry.rfSpectrumDB = Array(rfSpectrumScratch[0..<count])
         telemetry.rfSpanHz = span
+        // Formatted here and written through the change guard: the header chip
+        // that shows it is outside the isolation wrapper (audit C1).
+        put(\.rfSpanText, Self.rfSpanLabel(hz: span))
     }
 
     // Change-guarded telemetry writes: with @Observable, every write fires the
@@ -979,6 +1021,10 @@ final class MeterViewModel: ObservableObject {
     func resetPeaks() {
         engine?.resetPeaks()
         telemetry.dropWarningText = nil
+        lastDropEvents = 0
+        // With no engine (stopped) there is nothing to reset but the display,
+        // which is the point of allowing the button there (audit C16).
+        if !running { telemetry.reset() }
     }
 
     /// Start (with a Save panel) or stop recording. `recordMPX` selects the

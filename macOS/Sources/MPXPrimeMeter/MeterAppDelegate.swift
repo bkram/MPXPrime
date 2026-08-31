@@ -47,16 +47,25 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         w.setContentSize(NSSize(
             width: min(1480, visible.width - 80),
             height: min(1100, visible.height - 60)))
-        w.contentMinSize = NSSize(width: 1020, height: 700)
+        // 1260 is the dashboard's own content minimum (RootMeterView sizes its
+        // rows so the worst-case metric strings never truncate at that width).
+        // The window used to allow 1020, i.e. 240 pt narrower than the content
+        // it holds: the vertical-only ScrollView then clipped the right-hand
+        // RDS panel with no way to reach it, and the input bar overflowed
+        // (audit C8).
+        w.contentMinSize = NSSize(width: 1260, height: 700)
         w.setFrameAutosaveName("MeterMainWindow")
         if w.frame.origin == .zero { w.center() }
         // Status line lives in the native window subtitle (HIG) rather than a
         // content-area status bar; statusText changes only on start/stop/error.
         w.subtitle = vm.statusText
-        subtitleCancellable = vm.$statusText.sink { [weak w] text in
+        subtitleCancellable = vm.statusPublisher.sink { [weak w] text in
             w?.subtitle = text
         }
         window = w
+        // The view model gates its 20 Hz GUI pushes on THIS window's occlusion
+        // (audit C13) -- never on an arbitrary NSApp window.
+        vm.mainWindow = w
 
         applyAppIcon()
         setupMainMenu()

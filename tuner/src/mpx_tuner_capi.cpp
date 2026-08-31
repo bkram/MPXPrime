@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -32,6 +33,12 @@
 namespace {
 constexpr int kRtlDemodRate = 256000;   // rate the RTL FM demod chain runs at
 constexpr int kSDRplayDemodRate = 250000;  // ditto for the SDRplay backend
+
+// Highest IQ rate the RTL-SDR's USB bulk pipe reliably sustains. Above it the
+// dongle drops samples SILENTLY (no error from librtlsdr, the ring simply
+// starves and gaps appear), which would corrupt every accumulated Meter
+// statistic without anything to show for the wider spectrum span.
+constexpr int kRtlMaxCaptureRate = 2400000;
 
 // RF spectrum: FFT size and how often a frame is produced. The capture thread
 // is not the audio render thread (it already allocates), but there is no point
@@ -299,6 +306,53 @@ struct MpxTuner {
   }
 };
 
+namespace {
+// Deadlines for the capture-thread stop handshake. A healthy thread acks in
+// well under 100 ms (readIQ blocks at most 35 ms plus one block of demod), so
+// the deadline only ever matters when a backend call is wedged: a dead USB
+// handle inside librtlsdr, or an SDRplay API call that never returns.
+// Termination gets a shorter one so quitting is not held up by a dead dongle.
+constexpr int kStopAckMsClose = 2000;
+constexpr int kStopAckMsTerminate = 750;
+
+/// Stop the capture thread and wait for it to acknowledge. Returns true ONLY
+/// when the thread has actually finished, i.e. when it can no longer
+/// dereference anything owned by `t`.
+///
+/// `alive` is cleared as the capture thread's last act (on the clean exit and
+/// on the device-failure break alike), so it IS the ack; the join() below then
+/// returns immediately. Waiting on it with a deadline -- rather than blocking
+/// in join() forever -- is what makes a wedged backend visible and, more
+/// importantly, keeps the caller from freeing state the thread still uses.
+bool stopCaptureThread(MpxTuner *t, int timeoutMs) {
+  t->running.store(false, std::memory_order_relaxed);
+  if (!t->thread.joinable()) return true;
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  while (t->alive.load(std::memory_order_relaxed) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  if (t->alive.load(std::memory_order_relaxed)) {
+    // Handshake timed out: the capture thread is STILL running and still holds
+    // pointers into `t` -- the device backends, the demod, the resampler, the
+    // IQ and spectrum buffers, and the host's sample callback. Deleting `t`
+    // (or closing the device under it) would hand it freed memory: a crash or
+    // silent corruption on its next IQ block. So detach and LEAK the tuner
+    // deliberately -- the leak is one tuner bounded by the process lifetime,
+    // a use-after-free is neither bounded nor recoverable.
+    t->thread.detach();
+    std::fprintf(stderr,
+                 "[SDR] capture thread did not stop within %d ms; leaking the "
+                 "tuner instead of freeing state it may still touch\n",
+                 timeoutMs);
+    return false;
+  }
+  t->thread.join();
+  return true;
+}
+}  // namespace
+
 extern "C" {
 
 int mpxtuner_device_count(void) {
@@ -399,8 +453,20 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
     // be an integer multiple of the demod rate so one decimator bridges them.
     t->captureRate = kRtlDemodRate;
     if (cfg->iq_rate_khz > 0) {
-      const int mult = std::max(1, static_cast<int>(std::lround(
+      int mult = std::max(1, static_cast<int>(std::lround(
           static_cast<double>(cfg->iq_rate_khz) * 1000.0 / kRtlDemodRate)));
+      // Clamp the MULTIPLIER (not the rate) so the capture rate stays an exact
+      // integer multiple of the demod rate -- the single `iqDecim` below
+      // bridges the two and its factor must divide out exactly.
+      const int maxMult = std::max(1, kRtlMaxCaptureRate / kRtlDemodRate);
+      if (mult > maxMult) {
+        std::fprintf(stderr,
+                     "[SDR] requested IQ rate %u kHz exceeds the %d Hz the RTL "
+                     "USB pipe sustains; using %d Hz\n",
+                     cfg->iq_rate_khz, kRtlMaxCaptureRate,
+                     kRtlDemodRate * maxMult);
+        mult = maxMult;
+      }
       t->captureRate = kRtlDemodRate * mult;
     }
     if (!t->rtl.setSampleRate(static_cast<uint32_t>(t->captureRate))) {
@@ -459,8 +525,7 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
 
 void mpxtuner_close(MpxTuner *t) {
   if (!t) return;
-  t->running.store(false, std::memory_order_relaxed);
-  if (t->thread.joinable()) t->thread.join();
+  if (!stopCaptureThread(t, kStopAckMsClose)) return;  // leaked deliberately
   if (t->backend == BackendSDRplay) t->sdrplay.disconnect();
   else t->rtl.disconnect();
   delete t;
@@ -468,8 +533,7 @@ void mpxtuner_close(MpxTuner *t) {
 
 void mpxtuner_close_fast(MpxTuner *t) {
   if (!t) return;
-  t->running.store(false, std::memory_order_relaxed);
-  if (t->thread.joinable()) t->thread.join();
+  if (!stopCaptureThread(t, kStopAckMsTerminate)) return;  // leaked deliberately
   if (t->backend == BackendSDRplay) t->sdrplay.disconnect();
   else t->rtl.disconnect(true /*skipDeviceClose*/);
   delete t;

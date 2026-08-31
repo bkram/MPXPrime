@@ -250,6 +250,14 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         }
     }
 
+    deinit {
+        // The tuner callback holds an UNRETAINED pointer to this object, so a
+        // source released without an explicit stop() -- a failed start, a view
+        // model dropping it -- left the capture thread calling into freed
+        // memory. `stop()` is idempotent and joins that thread (audit B15).
+        stop()
+    }
+
     /// Termination-time variant: skips the register-writing RTL device close
     /// (a dead USB handle SEGVs in libusb; the kernel releases the claim as
     /// the process exits).

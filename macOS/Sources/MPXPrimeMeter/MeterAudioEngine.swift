@@ -122,6 +122,17 @@ final class MeterAudioEngine: @unchecked Sendable {
     }
 
     deinit {
+        // Stop the input BEFORE freeing the scratch buffer the frame sink
+        // writes into. An engine released without an explicit stop() (an early
+        // return on a start failure, a view model replacing it) otherwise let
+        // the still-running capture callback write into freed memory (audit
+        // B9). `stop()` is idempotent, and both it and `input.stop()` are safe
+        // to call on an engine that never started.
+        if runningFlag.load(ordering: .relaxed) {
+            stop()
+        } else {
+            input.stop()
+        }
         mixScratch.deinitialize(count: mixScratchCap)
         mixScratch.deallocate()
     }
@@ -248,7 +259,11 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// device would low-pass away the pilot/subcarriers in SRC), so the
     /// device's nominal rate is forced to the capture rate and restored when
     /// the pass-through stops (the Studio MPX-output convention).
-    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?, gainDB: Double = 0) {
+    /// Returns a human-readable reason when the pass-through could not start
+    /// (audit C12: it used to fail silently with the toggle still lit).
+    @discardableResult
+    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?,
+                           gainDB: Double = 0) -> String? {
         // Tear down the current player + restore the prior device rate.
         mpxPassOn.store(false, ordering: .relaxed)
         mpxMonitor?.stop()
@@ -258,7 +273,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
         mpxOutDeviceID = nil
         mpxOutPriorRate = nil
-        guard enabled else { return }
+        guard enabled else { return nil }
         if let dev = deviceID {
             let prior = AudioDevices.currentNominalSampleRate(deviceID: dev)
             let got = AudioDevices.setNominalSampleRate(deviceID: dev, Double(sampleRate))
@@ -276,29 +291,37 @@ final class MeterAudioEngine: @unchecked Sendable {
         // 150/2 = 75 kHz clips the DAC, so keep a little headroom.
         let gain = Float(pow(10.0, gainDB / 20.0))
         let mon = MeterMonitor(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
-        if (try? mon.start(outputDeviceID: deviceID)) != nil {
+        do {
+            try mon.start(outputDeviceID: deviceID)
             mpxMonitor = mon
             mpxPassOn.store(true, ordering: .relaxed)
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 
     /// Swap the monitor output device live: only the monitor restarts; the
-    /// input source, ring, analysis thread, and recorder are untouched.
-    func setMonitorDevice(_ deviceID: AudioDeviceID?) {
+    /// input source, ring, analysis thread, recorder -- and the MPX
+    /// pass-through, which is an independent player on its own device -- are
+    /// untouched. It used to tear the pass-through down here and never restore
+    /// it, so changing the monitor device silently killed the composite feed
+    /// while its toggle stayed lit (audit B18).
+    ///
+    /// Returns a human-readable reason when the new device could not be
+    /// started, so the caller can say so instead of going quiet (audit C12).
+    @discardableResult
+    func setMonitorDevice(_ deviceID: AudioDeviceID?) -> String? {
         monitor?.stop()
         monitor = nil
-        mpxPassOn.store(false, ordering: .relaxed)
-        mpxMonitor?.stop()
-        mpxMonitor = nil
-        if let dev = mpxOutDeviceID, let prior = mpxOutPriorRate {
-            _ = AudioDevices.setNominalSampleRate(deviceID: dev, prior)
-        }
-        mpxOutDeviceID = nil
-        mpxOutPriorRate = nil
-        guard monitorEnabled else { return }
+        guard monitorEnabled else { return nil }
         let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
-        if (try? mon.start(outputDeviceID: deviceID)) != nil {
+        do {
+            try mon.start(outputDeviceID: deviceID)
             monitor = mon
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 

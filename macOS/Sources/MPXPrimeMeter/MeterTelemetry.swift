@@ -145,6 +145,14 @@ final class MeterTelemetry {
     // fftshifted by the tuner, plus the span they cover.
     var rfSpectrumDB: [Float] = []
     var rfSpanHz: Double = 0
+    /// The span as the header chip displays it. Pre-formatted here, and
+    /// written through the change guard, because the chip lives in the spectrum
+    /// card header OUTSIDE any LiveObservationView: reading `rfSpanHz` there
+    /// made the ROOT body (and with it the window toolbar) a dependency of a
+    /// per-tick value, which re-triggered the 0.34 SwiftUI-on-macOS toolbar
+    /// relayout leak at 20 Hz in RF-spectrum mode and rebuilt every isolated
+    /// leaf closure -- i.e. it cancelled the telemetry isolation (audit C1).
+    var rfSpanText = "--"
     var audioSpectrumMaxHz: Double = 20_000
     var audioSpectrumNyquistHz: Double = 0
 
@@ -198,7 +206,7 @@ final class MeterTelemetry {
         compositeScope = []; decodedLScope = []; decodedRScope = []
         spectrumDB = []; spectrumMaxHz = 100_000; spectrumNyquistHz = 0
         decodedLSpectrumDB = []; decodedRSpectrumDB = []
-        rfSpectrumDB = []; rfSpanHz = 0
+        rfSpectrumDB = []; rfSpanHz = 0; rfSpanText = "--"
         audioSpectrumMaxHz = 20_000; audioSpectrumNyquistHz = 0
         dropWarningText = nil
         inputStalled = false

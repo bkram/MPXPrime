@@ -11,6 +11,72 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: GUI performance, honest failures, and accessibility (audit P3).**
+  - **The 0.34 toolbar-relayout leak was live again in RF-spectrum mode.** The
+    spectrum card's "span" chip read a per-tick telemetry value from the ROOT
+    view body -- outside every isolation wrapper -- and the view model rewrote
+    it unguarded 20 times a second, so with an SDR in RF mode the whole window
+    body including the toolbar invalidated at 20 Hz and every isolated leaf
+    closure was rebuilt: the telemetry isolation was cancelled exactly where
+    it matters most. The span is now a pre-formatted, change-guarded telemetry
+    string read inside a wrapper. `statusText` also left `@Published` on the
+    view model (no SwiftUI body ever read it, but every retune re-laid-out the
+    window and toolbar); it is a Combine subject the window subtitle
+    subscribes to.
+  - **The 20 Hz display gate tested the wrong window.** It gated on the first
+    visible-or-minimized `NSApp` window, which can be a popover, a sheet or a
+    save panel -- one of those reporting itself occluded silently froze the
+    dashboard. It now gates on the dashboard window itself.
+  - **Changing the monitor output device silently killed the MPX
+    pass-through** while its toggle stayed lit -- the monitor swap tore down
+    the pass-through player (an independent player on its own device) and
+    never restored it. And both players failed silently through `try?`;
+    monitor and pass-through failures now say what went wrong, and a failed
+    pass-through clears its own toggle instead of lying.
+  - **Two use-after-free windows on teardown.** The engine's `deinit` freed
+    the scratch buffer the capture callback writes into before stopping the
+    input, and `SDRLibraryInputSource` had no `deinit` at all even though the
+    tuner callback holds an unretained pointer to it -- both reachable by
+    releasing an engine or source without an explicit stop (a failed start,
+    a view model replacing one). In the tuner itself, the close path waited
+    for the capture thread with an unbounded `join()` and would have fallen
+    through to `delete` regardless: it now waits on the thread's own
+    acknowledgement with a deadline and, if a wedged backend misses it,
+    deliberately leaks the tuner rather than freeing state that thread still
+    dereferences. An SDRplay `dlopen`/`dlsym` failure now reports `dlerror()`
+    (the absence of the runtime was indistinguishable from a broken install)
+    and its lazy load is `std::call_once` (it is reached from both the UI and
+    capture threads). RTL IQ rates are clamped to what the USB pipe sustains
+    (2.4 MHz; above it the dongle drops samples silently), clamping the
+    decimation multiplier so the capture rate stays an exact multiple of the
+    demod rate. The AUHAL input's `mDataByteSize` is clamped to the
+    allocation, so an oversized slice request returns an error instead of
+    overrunning the buffer.
+  - **The decoded-audio monitor and MPX pass-through drifted against their
+    output device's clock.** They consumed exactly one callback's worth of
+    frames per callback, so the buffered amount walked until it underran (a
+    click every few minutes, straight into an exciter on the pass-through) or
+    saturated. Both now use the same adaptive read the encoder's input path
+    uses.
+  - **Reset Peaks was disabled exactly when held values were on screen** (with
+    capture stopped). It is enabled there and clears the display too.
+  - **The window could be squeezed 240 pt below its own content minimum**,
+    where the vertical-only scroll view clipped the RDS panel with no way to
+    reach it. The minimum is now the dashboard's real content width (1260),
+    and the input bar falls back to horizontal scrolling only if it cannot
+    fit.
+  - **Accessibility pass**, which makes the release checklist's VoiceOver item
+    meaningful: the waveform/spectrum toggles were mouse-only (a tap gesture
+    with an `.isButton` trait bolted onto a non-element container, so
+    VoiceOver could neither focus nor activate them) and are now real
+    buttons; every metric readout is an accessibility element whose spoken
+    VALUE carries the over-limit state that was previously colour-only; and
+    the nine AppKit-backed numeric fields and pickers (frequency, gain, LNA,
+    ppm, bandwidth, calibration, pilot reference, full scale, pass-through
+    gain) have spoken labels. Two tooltips were also wrong or incomplete: the
+    pilot said 8-10% for 6.75-7.5 kHz (9-10% is right), and the RDS strip did
+    not name the peak-referenced convention its whole reading depends on.
+
 - **Meter: de-emphasis is now a setting, and the shipped SDR default is the
   validated measurement path (audit P2).**
   - **De-emphasis was hard-wired to 50 us** with no control, CLI flag or

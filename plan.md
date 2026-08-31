@@ -407,12 +407,30 @@ measurement path is the byte-validated packed one; wide-path decimator 48 ->
 128 taps, flat past +/-105 kHz; one shared IQ overload threshold; RDS-level
 convention comment corrected + conversion documented. STILL OPEN in P2: the
 factor 1 vs 4 offline IQ A/B, which needs recorded IQ from the maintainer's
-hardware). REMAINING: P3 GUI (RF-span chip re-triggers the 0.34 toolbar leak at 20 Hz
-in RF mode; statusText @Published; occlusion gate tests an arbitrary window;
-window squeezable 240 pt below content minimum; error alerts; accessibility
-pass -- readouts aren't elements, over-limit is colour-only, 9 unlabelled
-AppKit fields; monitor uses read() not readAdaptive -> clock-drift clicks
-into an exciter). Hardware for the maintainer: RTL ppm before/after the PLL
+hardware). P3 GUI + robustness (rfSpan chip behind isolation via a pre-formatted
+telemetry string; statusText off @Published onto a Combine subject; occlusion
+gate on the dashboard window itself; monitor + pass-through on readAdaptive;
+monitor swap no longer kills the pass-through and both report start failures;
+engine deinit stops the input before freeing the capture scratch;
+SDRLibraryInputSource deinit; tuner close waits for the capture thread's own
+ack with a deadline and leaks deliberately on a miss; SDRplay dlerror +
+call_once; RTL IQ rate clamped to 2.4 MHz via the multiplier; AUHAL
+mDataByteSize clamped to the allocation; contentMinSize 1260 + input-bar
+ViewThatFits fallback; Reset Peaks enabled while stopped; accessibility --
+real Buttons for the scope toggles, readouts as elements with the limit state
+in the spoken value, labels on all 9 AppKit fields; pilot 9-10% and the RDS
+peak convention in the tooltips). B20 examined and deliberately not changed:
+the consumer loop already pre-allocates, and the only remaining per-block
+allocation is `isolatedSnapshot()`, which must copy to be correct and runs
+~23/s on a non-realtime thread.
+
+REMAINING (needs the maintainer's hardware): the factor 1 vs 4 offline IQ A/B
+on recorded IQ; an RTL with a known ppm error before/after the decoder PLL
+fix; an SFP-X side-by-side re-check now that P1 has landed (the conventions
+themselves did not change, so the 2026-07-07 agreement should hold); a 75 us
+station check for the new de-emphasis setting; a VoiceOver pass over the
+Meter; and a long SDR + RF-spectrum GUI run with Instruments "View Body" on
+the root (it should now be 0 Hz). Hardware for the maintainer: RTL ppm before/after the PLL
 fix, factor 1 vs 4 IQ A/B, SFP-X re-check after P1, 75 us station after P2.
 
 ## Next up

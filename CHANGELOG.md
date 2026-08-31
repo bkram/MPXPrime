@@ -11,6 +11,30 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: the stereo decode now tracks the pilot's frequency and says when it
+  is decoding mono (audit P1.3).** Two defects in the shared `MPXDecoder`, both
+  measured before and after: (1) the 38 kHz recovery corrected the subcarrier
+  phase from a fixed-lag lock-in with no frequency tracking, so any pilot
+  frequency offset -- an untrimmed RTL dongle's capture clock, a transmitter's
+  own tolerance -- left a residual phase error, DOUBLED at 38 kHz, that capped
+  decoded separation: measured 47.7 dB at 25 ppm and 24.8 dB at 100 ppm against
+  64.4 dB on frequency. The recovery is now a proper second-order PLL (~2 Hz
+  loop bandwidth, critically damped) that pulls the local oscillator onto the
+  pilot: all three offsets read 64.4 dB. On-frequency decode is unchanged, so
+  the stored receiver baseline did not move. (2) The pilot-lock gate was an
+  ABSOLUTE magnitude (pilot amplitude 0.02 in raw units), 100x the Meter's own
+  pilot-present threshold -- a 20 dB window in which PILOT read present and
+  deviation read right while the decoded audio was silently mono, with side
+  level at -120 dBFS, phase correlation pinned at +1.00 and stereo recordings
+  coming out mono. The gate is now relative to the composite level (a pilot
+  carrying at least ~2.5% of the composite RMS), and the decode state is
+  published: an amber "MONO DECODE" badge on the Quality card explains that
+  deviation / pilot / MPX power stay valid while separation, balance and phase
+  correlation read `--` rather than describing the mono decode. A genuinely
+  mono station reads this too. The decoder also refuses to demodulate a 38 kHz
+  subcarrier the capture rate cannot represent (it decodes exact mono instead
+  of aliases), and two unused biquad cascades left the inlinable hot path.
+
 - **Meter: dropped samples and a stalled input are now visible, and a stopped
   meter blanks its dashboard (audit P1.2).** Input-ring overflows (the
   analysis thread fell behind; samples were dropped) poison every peak-hold

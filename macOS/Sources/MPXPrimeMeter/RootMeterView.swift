@@ -567,6 +567,20 @@ struct RootMeterView: View {
                             .help(warning)
                             .accessibilityLabel(warning)
                     }
+                    if t.monoDecode {
+                        Text("MONO DECODE")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.tightAmber)
+                            .help("A signal is present but the 19 kHz pilot is too weak "
+                                + "to recover the stereo subcarrier, so the decoded "
+                                + "audio is mono (M only). Deviation, pilot and MPX "
+                                + "power stay valid; separation, balance and phase "
+                                + "correlation read '--' because they would only "
+                                + "describe the mono decode, not the broadcast. A "
+                                + "genuinely mono station reads this too.")
+                            .accessibilityLabel("Mono decode: pilot too weak for stereo, "
+                                + "stereo readouts unavailable")
+                    }
                     readout("SIGNAL QUALITY", t.qualityText,
                             valueTint: Self.qualityTint(t.qualityLevel),
                             help: "How much energy sits ABOVE the modulated baseband "

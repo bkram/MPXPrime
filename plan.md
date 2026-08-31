@@ -378,13 +378,17 @@ surfacing, off-thread finalize); P1.1 rates (analyzer rebuilt at the ACTUAL
 opened rate, refuse < 128 kHz, range-reported device rates expanded, slice
 constants tied); P1.2 Swift side (SAMPLES DROPPED + NO INPUT badges off the
 ring transport counters and a last-delivery watchdog, dashboard blanks on
-stop/device loss). REMAINING, in order: P1.2b tuner drop counters
+stop/device loss); P1.3 decode integrity (second-order ~2 Hz PLL closes the
+38 kHz recovery -- measured A/B 24.8 dB separation at 100 ppm and 47.7 dB at
+25 ppm before vs 64.4 dB at every offset after, on-frequency unchanged so
+`receiver.json` did not move; the pilot-lock gate is now level-relative
+(~2.5% of composite mean square) instead of an absolute magnitude that
+silently decoded mono over a 20 dB window; `stereoDecodeActive` -> amber
+"MONO DECODE" badge blanking separation / balance / correlation; sub-Nyquist
+rate decodes exact mono; dead biquads out of the inlinable path;
+`MeterDecodeIntegrityTests`). REMAINING, in order: P1.2b tuner drop counters
 (`mpxtuner_iq_drops` C ABI; SDRplay ring has none, RTL's is a function-local
-static); P1.3 decode integrity (MPXDecoder decodes mono below pilot amplitude
-0.02 ABSOLUTE with no flag -- 20 dB window where PILOT reads present and audio
-is M-only; the 38 kHz recovery is a fixed-lag lock-in, so capture-clock ppm
-caps separation: untrimmed RTL ~25 dB -- add frequency tracking + offset-pilot
-tests); P1.4 validity flags (peaks freeze at the last station; scale accepted
+static); P1.4 validity flags (peaks freeze at the last station; scale accepted
 from pilotAmp 1e-5; phase-meter coherence primes at 1.0 (the 45.4 deg
 mystery) and 0.3 admits a drifting angle; exceedance "valid" after 1 s at
 520x too-coarse resolution; calibration changes don't reset accumulators;

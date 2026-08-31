@@ -51,6 +51,15 @@ capture (or losing the device) blanks the dashboard back to its idle state,
 so anything you see with the meter stopped is never mistaken for a live
 reading.
 
+An amber **MONO DECODE** badge means a signal is present but the 19 kHz pilot
+is too weak to recover the stereo subcarrier, so the decoded audio is mono
+(M only) -- as it also is on a genuinely mono station. Deviation, pilot level
+and MPX power stay valid; the readings that describe the stereo image
+(**SEPARATION**, **L / R BALANCE**, **PHASE CORR**) read `--` instead of
+describing the mono decode, and a stereo recording made in this state will
+have identical channels. Improve reception, or check that the station is
+actually transmitting a pilot.
+
 Capture refuses to start below 128 kHz (0.45): composite measurement needs the
 0-60 kHz band and RDS sits at 57 kHz, so readings at lower rates would silently
 exclude the stereo sidebands and count them as noise. If the Meter reports the

@@ -117,6 +117,10 @@ public struct MeterSnapshot {
     public var sideRMSDBFS: Float = -120.0
     /// Decoded L/R correlation: ~+1 mono, lower for wide stereo.
     public var stereoCorrelation: Float = 0.0
+    /// True while the decoder's pilot lock is strong enough for stereo decode;
+    /// false = the decoded L/R (and side / correlation / balance) are M-only,
+    /// not a measurement of the stereo image (0.45, audit M1).
+    public var stereoDecodeActive = false
     /// Decoded L/R level balance in dB (positive = left louder), smoothed and
     /// only valid while both channels carry signal. 0 dB is the target; a
     /// standing offset means the stereo encoder or the audio chain feeding it
@@ -849,7 +853,7 @@ public final class MeterAnalysis {
         let rRMS = sqrtf(rSq / n)
         let hi = max(lRMS, rRMS)
         let lo = min(lRMS, rRMS)
-        if !inWarmup, hi > 0.05, lo > 1e-4 {
+        if !inWarmup, decoder.stereoDecodeActive, hi > 0.05, lo > 1e-4 {
             let sep = min(60.0, 20.0 * log10f(hi / lo))
             if sep > bestSepDB { bestSepDB = sep; sepValid = true }
         }
@@ -859,8 +863,10 @@ public final class MeterAnalysis {
         // Stereo balance (dB, + = left louder). Smoothed hard (~3 s at 23
         // blocks/s) because real programme pans constantly -- the useful
         // reading is the standing offset, not the instantaneous one. Gated on
-        // both channels carrying signal so silence cannot pin it.
-        if !inWarmup, lRMS > 1e-3, rRMS > 1e-3 {
+        // both channels carrying signal so silence cannot pin it, and on an
+        // active stereo decode -- an M-only decode has L == R exactly, so it
+        // would otherwise pin a confident +0.0 dB "balance" (audit M1).
+        if !inWarmup, decoder.stereoDecodeActive, lRMS > 1e-3, rRMS > 1e-3 {
             let instant = 20.0 * log10f(lRMS / rRMS)
             if balancePrimed {
                 balanceDB += 0.015 * (instant - balanceDB)
@@ -895,6 +901,7 @@ public final class MeterAnalysis {
         snap.midRMSDBFS = Self.dbfs(sqrtf(mSq / n))
         snap.sideRMSDBFS = Self.dbfs(sqrtf(sSq / n))
         snap.stereoCorrelation = corr
+        snap.stereoDecodeActive = decoder.stereoDecodeActive
         // Windowed BER from the LIVE decoder state (must keep measuring even
         // while the gate blanks the published readout).
         let rdsLive = rds.state

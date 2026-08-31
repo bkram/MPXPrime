@@ -146,6 +146,11 @@ final class MeterTelemetry {
     // still claims to run.
     var dropWarningText: String?
     var inputStalled = false
+    /// True while a signal is present but the decoder's pilot lock is too weak
+    /// for stereo decode: the decoded L/R are M-only, so separation / balance /
+    /// phase correlation are not measurements of the stereo image and the
+    /// dashboard says so instead of showing them (0.45, audit M1).
+    var monoDecode = false
 
     /// Restore every readout to its declared idle default -- called on stop()
     /// and device loss so the dashboard never shows the last captured frame
@@ -187,5 +192,6 @@ final class MeterTelemetry {
         audioSpectrumMaxHz = 20_000; audioSpectrumNyquistHz = 0
         dropWarningText = nil
         inputStalled = false
+        monoDecode = false
     }
 }

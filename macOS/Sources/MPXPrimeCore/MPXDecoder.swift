@@ -31,8 +31,6 @@ public struct MPXDecoder {
     @usableFromInline var preemphasisUS: Int = 50
 
     @usableFromInline var lprLP = BiquadCascade6()
-    @usableFromInline var diffBandHP = BiquadCascade6()
-    @usableFromInline var diffBandLP = BiquadCascade6()
     @usableFromInline var diffLP = BiquadCascade6()
     @usableFromInline var pilotNotchL = Biquad()
     @usableFromInline var pilotNotchR = Biquad()
@@ -44,6 +42,35 @@ public struct MPXDecoder {
     @usableFromInline var pilotLockI: Float = 0.0
     @usableFromInline var pilotLockQ: Float = 0.0
     @usableFromInline var pilotLockCoeff: Float = 0.0
+    // Second-order PLL terms (0.45, Meter audit M2). The lock-in phasor
+    // measures the residual phase phi between the pilot and the NCO; before
+    // 0.45 the NCO ran at exactly 19 kHz and only the (20 ms-lagged) phi was
+    // applied, so a pilot frequency offset -- capture-clock ppm, transmitter
+    // tolerance -- left a standing phase lag of atan(2 pi df tau), DOUBLED at
+    // 38 kHz: an untrimmed RTL dongle (100 ppm) capped decoded separation at
+    // ~25 dB. The integrator pulls the NCO onto the pilot frequency so the
+    // lag converges to zero; kp damps the loop (~2 Hz natural frequency,
+    // critically damped -- well inside the 8 Hz lock-in pole).
+    @usableFromInline var pllFreqAdj: Float = 0.0
+    @usableFromInline var pllKp: Float = 0.0
+    @usableFromInline var pllKi: Float = 0.0
+    // Slow mean-square of the PLL-path input, so the stereo-decode gate is
+    // relative to the signal level (M1): the old absolute `mag2 > 1e-4` gate
+    // silently decoded MONO below pilot amplitude 0.02 -- 20 dB above the
+    // Meter's own pilot-present threshold -- with no flag anywhere.
+    @usableFromInline var pllInputMS: Float = 0.0
+    @usableFromInline var pllInputMSCoeff: Float = 0.0
+    /// True while the pilot-locked 38 kHz recovery considers the pilot strong
+    /// enough for stereo decode (PLL path only; the reference path is always
+    /// active). When false the decoder outputs M on both channels -- consumers
+    /// must say so instead of presenting mono as a measurement. Treat as
+    /// read-only outside this type (the setter is public only because the
+    /// @inlinable hot path must write it across the module boundary).
+    public var stereoDecodeActive = false
+    /// False when the capture rate cannot represent the 38 kHz subcarrier at
+    /// all (sub-Nyquist): the decoder then never attempts a stereo decode
+    /// instead of demodulating aliased garbage.
+    @usableFromInline var stereoSupported = true
 
     @usableFromInline var noiseGateGain: Float = 0.0
     @usableFromInline var noiseGateOpen: Bool = false
@@ -70,8 +97,6 @@ public struct MPXDecoder {
         let nyquist = max(6_000.0, (sr * 0.5) - 200.0)
 
         lprLP.configureLowpass(cutoffHz: 15_500.0, sampleRate: sr)
-        diffBandHP.configureIdentity()
-        diffBandLP.configureIdentity()
         diffLP.configureLowpass(cutoffHz: 15_500.0, sampleRate: sr)
 
         // No pre-demod RF notch (see process()): pilot/RDS are handled by the
@@ -94,6 +119,17 @@ public struct MPXDecoder {
         pilotLockI = 0.0
         pilotLockQ = 0.0
         pilotLockCoeff = expf(-1.0 / (0.020 * sr))
+        // 2nd-order loop, ~2 Hz natural frequency, critically damped.
+        let omegaN = 2.0 * Float.pi * 2.0
+        pllKp = 2.0 * omegaN / sr
+        pllKi = (omegaN * omegaN) / (sr * sr)
+        pllFreqAdj = 0.0
+        pllInputMS = 0.0
+        pllInputMSCoeff = expf(-1.0 / (0.100 * sr))
+        stereoDecodeActive = false
+        // 38 kHz DSB-SC needs Nyquist above the upper sideband; below that the
+        // "subcarrier" is aliased garbage, so stereo decode is off entirely.
+        stereoSupported = nyquist > 38_000.0 + 100.0
 
         programEnvAttackCoeff = expf(-1.0 / (0.010 * sr))
         programEnvReleaseCoeff = expf(-1.0 / (0.180 * sr))
@@ -130,7 +166,15 @@ public struct MPXDecoder {
         let programActivity = programActivityIn.isFinite ? programActivityIn : 0.0
         let expectedSide = expectedSideIn.isFinite ? expectedSideIn : 0.0
         let refSubcarrier: Float? = referenceSubcarrier.flatMap { $0.isFinite ? $0 : 0.0 }
-        let subcarrier = refSubcarrier ?? pilotLockedSubcarrier(from: mpx)
+        let subcarrier: Float
+        if let ref = refSubcarrier {
+            // Reference path (Studio monitor, verifier): the encoder hands us
+            // its own subcarrier, so the decode is always active.
+            subcarrier = ref
+            stereoDecodeActive = true
+        } else {
+            subcarrier = pilotLockedSubcarrier(from: mpx)
+        }
 
         // No pre-demod pilot/RDS notch: it used to attenuate the 19 kHz pilot
         // and 57 kHz RDS before the M/S split, but its skirts clipped the
@@ -207,25 +251,47 @@ public struct MPXDecoder {
     @inlinable
     @inline(__always)
     mutating func pilotLockedSubcarrier(from mpx: Float) -> Float {
+        guard stereoSupported else {
+            stereoDecodeActive = false
+            return 0.0
+        }
         let oscSin = sinf(pllPhase)
         let oscCos = cosf(pllPhase)
         pilotLockI = zapDenorm((pilotLockCoeff * pilotLockI) + ((1.0 - pilotLockCoeff) * (mpx * oscSin)))
         pilotLockQ = zapDenorm((pilotLockCoeff * pilotLockQ) + ((1.0 - pilotLockCoeff) * (mpx * oscCos)))
+        pllInputMS = zapDenorm((pllInputMSCoeff * pllInputMS) + ((1.0 - pllInputMSCoeff) * (mpx * mpx)))
 
+        // Level-relative gate (M1): the lock-in magnitude is A/2 of the pilot,
+        // so mag2 = A^2/4. Gate on the pilot carrying at least ~2.5% of the
+        // composite RMS (mag2 > 1.5e-4 * meanSquare) with a tiny absolute
+        // floor for true silence -- the old absolute 1e-4 gate needed pilot
+        // amplitude 0.02 in raw units, so a composite patched in at -20 dBFS
+        // (or a weak SDR station) silently decoded MONO with PILOT still
+        // reading present.
         let mag2 = (pilotLockI * pilotLockI) + (pilotLockQ * pilotLockQ)
+        let gate = max(1e-10, 1.5e-4 * pllInputMS)
         let subcarrier: Float
-        if mag2 > 1e-4 {
+        var freqCorrection: Float = 0.0
+        if mag2 > gate {
+            stereoDecodeActive = true
             let invMag2 = 1.0 / mag2
             let cos2Phi = ((pilotLockI * pilotLockI) - (pilotLockQ * pilotLockQ)) * invMag2
             let sin2Phi = (2.0 * pilotLockI * pilotLockQ) * invMag2
             let sin2Theta = 2.0 * oscSin * oscCos
             let cos2Theta = (oscCos * oscCos) - (oscSin * oscSin)
             subcarrier = (sin2Theta * cos2Phi) + (cos2Theta * sin2Phi)
+            // PLL update: phi is the residual pilot-vs-NCO phase the lock-in
+            // measures; drive the NCO onto the pilot frequency so phi (and
+            // its 20 ms lag) converges to zero (M2).
+            let phi = atan2f(pilotLockQ, pilotLockI)
+            pllFreqAdj = zapDenorm(pllFreqAdj + (pllKi * phi))
+            freqCorrection = pllFreqAdj + (pllKp * phi)
         } else {
+            stereoDecodeActive = false
             subcarrier = 0.0
         }
 
-        pllPhase += pllStep
+        pllPhase += pllStep + freqCorrection
         if pllPhase >= (Float.pi * 2.0) {
             pllPhase -= Float.pi * 2.0
         } else if pllPhase < 0.0 {

@@ -769,8 +769,14 @@ final class MeterViewModel: ObservableObject {
         put(\.midText, Self.dbText(s.midRMSDBFS))
         put(\.sideNorm, Self.qNorm(Self.dbNorm(s.sideRMSDBFS)))
         put(\.sideText, Self.dbText(s.sideRMSDBFS))
-        put(\.correlation, Double((s.stereoCorrelation * 100).rounded() / 100))
-        put(\.correlationText, String(format: "%+.2f", s.stereoCorrelation))
+        // An M-only decode has L == R exactly, so correlation is +1.00 by
+        // construction -- report the decode state instead of that number
+        // (audit M1). Separation and balance are gated in MeterAnalysis.
+        let monoDecode = s.hasSignal && !s.stereoDecodeActive
+        put(\.monoDecode, monoDecode)
+        put(\.correlation, monoDecode ? 0.0 : Double((s.stereoCorrelation * 100).rounded() / 100))
+        put(\.correlationText, monoDecode
+            ? "--" : String(format: "%+.2f", s.stereoCorrelation))
 
         // Unitless values so they render at full size in the narrow scale-less
         // strips; the kHz unit is shown once in the group header.
@@ -826,7 +832,11 @@ final class MeterViewModel: ObservableObject {
             ? String(format: "%+.1f dBr", s.mpxPowerMaxDBr) : "--")
         put(\.mpxPowerMaxDBr, Double((s.mpxPowerMaxDBr * 10).rounded() / 10))
         put(\.mpxPowerMaxValid, s.mpxPowerMaxValid)
-        put(\.separationText, s.separationValid
+        // Both describe the stereo image, so an M-only decode must not keep
+        // showing the last stereo-era value (audit M1; the peak-hold and the
+        // balance smoother hold their state across a lock loss).
+        let monoDecodeNow = s.hasSignal && !s.stereoDecodeActive
+        put(\.separationText, s.separationValid && !monoDecodeNow
             ? String(format: "%.0f dB", s.bestSeparationDB) : "--")
 
         // Reception / chain quality.
@@ -842,7 +852,7 @@ final class MeterViewModel: ObservableObject {
         put(\.carrierOffsetKHz, Double((s.carrierOffsetKHz * 10).rounded() / 10))
         put(\.carrierOffsetText, s.carrierOffsetValid
             ? String(format: "%+.1f kHz", s.carrierOffsetKHz) : "--")
-        put(\.balanceText, s.stereoBalanceValid
+        put(\.balanceText, s.stereoBalanceValid && !monoDecodeNow
             ? String(format: "%+.1f dB", s.stereoBalanceDB) : "--")
 
         // Deviation distribution: the curve plus the two figures that read off

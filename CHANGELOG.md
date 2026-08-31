@@ -11,6 +11,36 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: de-emphasis is now a setting, and the shipped SDR default is the
+  validated measurement path (audit P2).**
+  - **De-emphasis was hard-wired to 50 us** with no control, CLI flag or
+    mention in the manual, so in 75 us markets (the Americas, Japan, Korea)
+    the decoded monitor, stereo WAV recordings, the L/R levels and the audio
+    spectrum all ran about 3.4 dB bright at 15 kHz. There is now a **De-emph
+    50 / 75 us** picker in the input bar (live, persisted) and a
+    `--deemphasis 50|75` CLI flag. It shapes the decode path only --
+    deviation, pilot, RDS and MPX power are measured ahead of it -- and
+    `MeterDeemphasisTests` pins both curves against the analog formula.
+  - **`--full-scale-khz` was accepted on the audio-device CLI path and
+    silently ignored**, so a run asked for absolute calibration and got
+    pilot-referenced numbers. It works there now, and the startup line names
+    the calibration convention and de-emphasis actually in use.
+  - **The shipped SDR default IQ rate is now Narrow**, i.e. the byte-exact
+    packed-uint8 RTL-SDR path that the deviation / pilot / RDS conventions
+    were validated against with a professional measuring receiver. A wider
+    span is a deliberate spectrum choice rather than the default measurement
+    path. The wide path also got better: its decimator went from 48 to 128
+    taps (12 -> 32 per phase) so its passband stays flat past +/-105 kHz
+    instead of reaching into the +/-90 kHz an FM signal occupies, and its
+    overload detection now shares one threshold with the packed path (the old
+    hard-coded 0.995 was asymmetric against the byte mapping: it flagged
+    bytes 0, 254 and 255 but not byte 1).
+  - The RDS-level primitive's file-header comment claimed the R&S
+    "RMS x sqrt(2)" convention while the code deliberately publishes the
+    peak-referenced figure; corrected, with the conversion between the two
+    documented in the manual (an unmodulated bench carrier reads 32% high by
+    design; the RMS figure reads ~24% low on real shaped biphase).
+
 - **Meter: no readout shows a confident number it cannot stand behind (audit
   P1.4).** Ten places where the dashboard published a figure that looked like a
   measurement and was not:

@@ -19,10 +19,18 @@ import Foundation
 //   demod's carrier tuning offset appears as a DC term that adds linearly to
 //   one deviation polarity (asymmetric +/- peaks) and biases MPX power.
 // - `RDSSubcarrierLevelMeter`: coherent quadrature measurement of the 57 kHz
-//   RDS subcarrier level -- the "equivalent unmodulated subcarrier" deviation
-//   per EN 50067 sec 1.3 (the R&S "RMS x sqrt(2)" detector convention). The
-//   previous single Q=10 biquad bandpass (~5.7 kHz BW, gentle skirts) leaked
-//   53 kHz stereo energy and wideband noise into the reading.
+//   RDS subcarrier level. Published as the PEAK deviation of the shaped
+//   subcarrier -- the injection level an encoder is set to, and the peak
+//   range EN 50067 sec 1.3 states (+/-1.0 to +/-7.5 kHz). It is DERIVED from
+//   the coherent in-band RMS times the spec's shaped-biphase form factor
+//   (`shapedBiphasePeakOverRMSSqrt2` = 1.320), which is robust to the
+//   composite-clipper IM a raw envelope-peak detector rides; the bare
+//   "RMS x sqrt(2)" equivalent-unmodulated figure (the R&S detector
+//   convention) is this reading divided by 1.320, and reads ~24% low on real
+//   shaped biphase. See the type's own note for the full derivation and the
+//   two conventions that were tried and rejected. The previous single Q=10
+//   biquad bandpass (~5.7 kHz BW, gentle skirts) leaked 53 kHz stereo energy
+//   and wideband noise into the reading.
 // - `PilotRDSPhaseMeter`: the EN 50067 sec 1.2 subcarrier-phase angle between
 //   the 57 kHz RDS subcarrier and the third harmonic of the 19 kHz pilot --
 //   the "RDS phase" reading of a Belar RDS-1 / DEVA analyzer.

@@ -101,6 +101,16 @@ chosen unit is absent at start, the Meter starts on Auto with a note and keeps
 your selection. To meter two stations at once, launch the app twice and give
 each instance its own SDR -- and its own **Out** device (below).
 
+The input bar also carries a **De-emph** picker -- **50** or **75 us**,
+the receiver de-emphasis time constant (50 in ITU Region 1: Europe, Africa,
+most of Asia and Oceania; 75 in the Americas, Japan and Korea). It applies
+live, is remembered between launches, and shapes the DECODED audio only: the
+monitor, stereo WAV recordings, the decoded L/R levels and the audio spectrum.
+Deviation, pilot, RDS and MPX power are measured ahead of it and do not move.
+Set to the wrong standard the decoded top end is about 3.4 dB off at 15 kHz
+(before 0.45 it was hard-wired to 50 us with no control at all, so 75 us
+markets always monitored and recorded bright).
+
 The input bar's right side has a **DC block** checkbox (default on): a
 transmitter carrier offset becomes DC after FM demod -- an off-center
 vectorscope, offset waveforms, and DC in the monitor audio and recordings
@@ -202,6 +212,13 @@ remembered by device UID):
   shaped data waveform by its peak, and EN 50067's +/-1.0 to +/-7.5 kHz
   deviation range is a peak range). It is a solid reading that data
   modulation does not move; set 2.0 kHz on the encoder and this reads 2.0.
+  One consequence worth knowing on the bench: the reading is calibrated for
+  spec-shaped RDS data, so an UNMODULATED 57 kHz carrier (a signal generator,
+  or an encoder with the data stopped) reads 32% high -- the shaped-biphase
+  form factor is baked in. Divide by 1.32 if you need the bare
+  "equivalent unmodulated subcarrier" figure some instruments report
+  (RMS x sqrt(2)); on real shaped data that figure reads about 24% low, which
+  is exactly why this readout does not use it.
   Under the bars, **AVE / MIN** are the mean and lowest of the same last
   second of 50 ms slots MAX is drawn from. MAX far above AVE is a peaky,
   lightly-processed signal; MAX close to AVE is a dense one running near its
@@ -275,13 +292,19 @@ remembered by device UID):
   degrading reception, or to check a carrier is where it should be. The centre
   line marks the tuned frequency and the grid follows the 100 kHz FM raster.
 
-  The RF span is the **Sample Rate** in the input bar: *1 MSPS* (the default)
-  shows about +/-0.5 MHz, *2 MSPS* about +/-1 MHz, and *Narrow* is the minimum
-  the demodulator needs and shows only the tuned carrier. Changing it restarts
-  the capture. It cannot affect any measurement -- the FM demodulator always
-  runs at its own fixed rate behind a decimator whatever the capture rate is,
-  so widening the view only costs USB bandwidth and CPU. Drop to *Narrow* if a
-  dongle struggles at the higher rate.
+  The RF span is the **Sample Rate** in the input bar: *Narrow* (the default
+  since 0.45) is the minimum the demodulator needs and shows only the tuned
+  carrier, *1 MSPS* shows about +/-0.5 MHz, and *2 MSPS* about +/-1 MHz.
+  Changing it restarts the capture. It does not change any measurement -- the
+  FM demodulator always runs at its own fixed rate behind a decimator whatever
+  the capture rate is -- so treat a wider span as the spectrum feature it is
+  and switch it on when you want the view. *Narrow* is the default because at
+  that setting the RTL-SDR path is byte-for-byte the one the deviation, pilot
+  and RDS conventions were validated against a professional measuring
+  receiver; it also costs the least USB bandwidth and CPU. (In 0.45 the wide
+  path's decimator was widened as well, from 48 to 128 taps, so its passband
+  stays flat past +/-105 kHz instead of reaching into the +/-90 kHz an FM
+  signal occupies.)
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
   AF / group histogram and live block-error rate. **Groups** shows each type's
   count *and its share* of the stream; **Order** shows the last 18 groups in
@@ -452,6 +475,14 @@ is unknown. The **Calibrate** switch on the audio input bar picks how:
   75 kHz peak deviation lands at -6 dBFS, set N = 150; deviation then comes
   straight off the input amplitude, **independent of pilot recovery** -- the
   robust choice, and identical to what the SDR path does internally.
+
+Both apply live and both are available headless: `--pilot-ref-khz <kHz>` and
+`--full-scale-khz <kHz>` work on the audio-device path as well as `--stdin`
+(before 0.45 `--full-scale-khz` was accepted on the device path and silently
+ignored, so the numbers were pilot-referenced when absolute had been asked
+for). The startup line names the convention actually in effect, alongside the
+de-emphasis in use (`--deemphasis 50|75`). Changing a calibration resets the
+accumulated readings, since those were measured against the old scale.
 
 Both apply live; the SDR path is always absolute and ignores them. Two caveats:
 (1) pilot-referencing only fixes the *overall* scale -- if the source's composite

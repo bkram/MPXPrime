@@ -968,3 +968,63 @@ struct MeterExceedanceValidityDeepTests {
         #expect(abs(late.exceedancePct - expected) < 1.0)
     }
 }
+
+/// The decode path's receiver de-emphasis was hard-wired to 50 us with nothing
+/// able to reach it, so in 75 us markets (the Americas, Japan, Korea) the
+/// monitor audio, stereo recordings, decoded L/R levels and audio spectrum all
+/// ran bright at the top end (0.45, audit C3 / M9).
+@Suite("Meter de-emphasis standard")
+struct MeterDeemphasisTests {
+    /// Analog de-emphasis attenuation at `hz` for time constant `us`:
+    /// -20 log10 |1 + j w tau|.
+    private func analogDeemphasisDB(hz: Double, us: Double) -> Double {
+        let wTau = 2.0 * Double.pi * hz * us * 1e-6
+        return -10.0 * log10(1.0 + (wTau * wTau))
+    }
+
+    private func decodedLevelDBFS(preemphasisUS: Int, toneHz: Float) -> Float {
+        let a = MeterAnalysis(sampleRate: sr, preemphasisUS: preemphasisUS,
+                             fullScaleKHz: fullScale)
+        let pilotAmp = amp(6.75)
+        feed(a, seconds: 2.0) { t in
+            (0.5 * sinf(twoPi(toneHz, t))) + (pilotAmp * sinf(twoPi(19_000, t)))
+        }
+        return a.snapshot().leftRMSDBFS
+    }
+
+    @Test func the75MicrosecondSettingChangesTheDecodedTopEnd() {
+        let at50 = decodedLevelDBFS(preemphasisUS: 50, toneHz: 10_000)
+        let at75 = decodedLevelDBFS(preemphasisUS: 75, toneHz: 10_000)
+        // Expected difference is the difference of the two analog curves at
+        // 10 kHz: 13.66 dB - 10.36 dB = 3.30 dB more attenuation at 75 us.
+        let expected = analogDeemphasisDB(hz: 10_000, us: 50.0)
+            - analogDeemphasisDB(hz: 10_000, us: 75.0)
+        #expect(abs(Double(at50 - at75) - expected) < 0.5)
+        #expect(at75 < at50)
+    }
+
+    @Test func lowFrequenciesAreUnaffectedByTheStandard() {
+        // Both curves are flat well below the corner (50 us = 3.18 kHz,
+        // 75 us = 2.12 kHz), so a 100 Hz tone must read the same either way.
+        let at50 = decodedLevelDBFS(preemphasisUS: 50, toneHz: 100)
+        let at75 = decodedLevelDBFS(preemphasisUS: 75, toneHz: 100)
+        #expect(abs(at50 - at75) < 0.2)
+    }
+
+    @Test func theStandardCanBeSwitchedLive() {
+        let a = MeterAnalysis(sampleRate: sr, preemphasisUS: 50,
+                             fullScaleKHz: fullScale)
+        let pilotAmp = amp(6.75)
+        let tone: (Float) -> Float = { t in
+            (0.5 * sinf(twoPi(10_000, t))) + (pilotAmp * sinf(twoPi(19_000, t)))
+        }
+        feed(a, seconds: 2.0, tone)
+        #expect(a.preemphasisUS == 50)
+        let before = a.snapshot().leftRMSDBFS
+        a.setPreemphasisUS(75)
+        feed(a, seconds: 2.0, tone)
+        #expect(a.preemphasisUS == 75)
+        let after = a.snapshot().leftRMSDBFS
+        #expect(after < before - 2.0)
+    }
+}

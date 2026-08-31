@@ -71,10 +71,17 @@ private func printUsage() {
                          For piping an external tuner -- see run-meter-sdr.sh.
       --sample-rate <Hz> Sample rate for --stdin raw/WAV input (default 192000).
       --full-scale-khz <kHz>
-                         Absolute calibration for --stdin: digital full scale
-                         equals this many kHz of FM deviation (FM-SDR-Tuner at
-                         its default -6 dB MPX gain: 150). PILOT then becomes a
-                         real measurement instead of an assumed reference.
+                         Absolute calibration for an audio-device or --stdin
+                         input: digital full scale equals this many kHz of FM
+                         deviation (FM-SDR-Tuner at its default -6 dB MPX gain:
+                         150). PILOT then becomes a real measurement instead of
+                         an assumed reference. The startup line names the
+                         convention actually in use.
+      --deemphasis <us>  Receiver de-emphasis for the DECODED audio: 50
+                         (default; ITU Region 1) or 75 (the Americas, Japan,
+                         Korea). Affects the monitor, the WAV recording and the
+                         decoded levels only -- deviation, pilot, RDS and MPX
+                         power are measured ahead of it.
       --help             Show this help.
 
     Feed the station composite (tuner MPX out / SDR demod / loopback) to one
@@ -322,6 +329,8 @@ private func runLive(
     monitorDeviceSpec: String?,
     monitorGainDB: Float,
     pilotRefKHz: Float,
+    fullScaleKHz: Float?,
+    preemphasisUS: Int,
     wavPath: String?,
     seconds: Double?
 ) -> Int32 {
@@ -341,6 +350,7 @@ private func runLive(
     let engine = MeterAudioEngine(
         sampleRate: Float(rate), channel: channel,
         monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
+        fullScaleKHz: fullScaleKHz, preemphasisUS: preemphasisUS,
         wavURL: wavURL,
         input: AUHALInputSource(deviceID: deviceID,
                                 maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
@@ -354,8 +364,14 @@ private func runLive(
         }
         let mon = monitor ? "monitor ON" : "monitor off"
         let rec = wavPath.map { " recording -> \($0)." } ?? ""
-        print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. pilot ref %.2f kHz.%@ Ctrl-C to stop.",
-                     fmt.sampleRate, fmt.channels, channel.rawValue, mon, pilotRefKHz, rec))
+        // Name the calibration convention actually in effect: --full-scale-khz
+        // used to be accepted on this path and silently ignored, so the
+        // numbers were pilot-referenced when absolute was asked for.
+        let cal = fullScaleKHz.map { String(format: "absolute cal 0 dBFS = %.0f kHz", $0) }
+            ?? String(format: "pilot ref %.2f kHz", pilotRefKHz)
+        print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. %@, de-emphasis %d us.%@ Ctrl-C to stop.",
+                     fmt.sampleRate, fmt.channels, channel.rawValue, mon, cal,
+                     preemphasisUS, rec))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
         MeterAudioEngine.restoreInputRate(deviceID: deviceID, to: prep.prior)
@@ -384,6 +400,7 @@ private func runPipe(
     monitorGainDB: Float,
     pilotRefKHz: Float,
     fullScaleKHz: Float?,
+    preemphasisUS: Int,
     wavPath: String?,
     sampleRate: Double,
     seconds: Double?
@@ -395,7 +412,8 @@ private func runPipe(
     let engine = MeterAudioEngine(
         sampleRate: Float(sampleRate), channel: channel,
         monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
-        fullScaleKHz: fullScaleKHz, wavURL: wavURL, input: source)
+        fullScaleKHz: fullScaleKHz, preemphasisUS: preemphasisUS,
+        wavURL: wavURL, input: source)
     do {
         try engine.start(monitorDeviceID: monitorDeviceID)
         let mon = monitor ? "monitor ON" : "monitor off"
@@ -506,8 +524,15 @@ private func runGUI(sdrFreqMHz: Double?) -> Int32 {
 // absence (or an explicit --gui) opens the window.
 private let liveFlags = [
     "--device", "--channel", "--seconds", "--no-monitor",
-    "--monitor-device", "--monitor-gain", "--wav", "--pilot-ref-khz", "--full-scale-khz"
+    "--monitor-device", "--monitor-gain", "--wav", "--pilot-ref-khz",
+    "--full-scale-khz", "--deemphasis"
 ]
+
+/// `--deemphasis <50|75>`: receiver de-emphasis time constant for the decode
+/// path. Anything other than 75 means the 50 us default.
+private func parseDeemphasisUS(_ args: [String]) -> Int {
+    parseValue(args, "--deemphasis").flatMap { Int($0) } == 75 ? 75 : 50
+}
 
 let args = CommandLine.arguments
 let userArgs = Array(args.dropFirst())
@@ -527,6 +552,7 @@ if args.contains("--help") || args.contains("-h") {
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
         fullScaleKHz: parseValue(args, "--full-scale-khz").flatMap { Float($0) },
+        preemphasisUS: parseDeemphasisUS(args),
         wavPath: parseValue(args, "--wav"),
         sampleRate: parseValue(args, "--sample-rate").flatMap { Double($0) } ?? 192_000.0,
         seconds: parseSeconds(args))
@@ -544,6 +570,8 @@ if args.contains("--help") || args.contains("-h") {
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
+        fullScaleKHz: parseValue(args, "--full-scale-khz").flatMap { Float($0) },
+        preemphasisUS: parseDeemphasisUS(args),
         wavPath: parseValue(args, "--wav"),
         seconds: parseSeconds(args))
 }

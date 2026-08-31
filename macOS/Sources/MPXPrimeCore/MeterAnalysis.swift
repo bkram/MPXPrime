@@ -302,6 +302,16 @@ public final class MeterAnalysis {
     private var decodeDC: DCTracker
     private let dcBlockOn = ManagedAtomic<Bool>(true)
 
+    // Receiver de-emphasis time constant for the decode path (50 us in ITU
+    // Region 1 / most of the world, 75 us in the Americas, Japan and Korea).
+    // Live-settable: reconfiguring the decoder resets its filter state and
+    // pilot lock, so it is applied only when the value actually CHANGES.
+    // Before 0.45 this was hard-wired to 50 and nothing could reach it, so in
+    // 75 us markets the decoded monitor, stereo recordings, L-R strips and
+    // audio spectrum all ran ~3.5 dB bright at 15 kHz (audit C3 / M9).
+    private let preemphasisUSAtomic: ManagedAtomic<Int>
+    private var activePreemphasisUS: Int
+
     // RDS reception-quality gate: the stream decoder syncs on a single
     // accidental syndrome match and accepts PI/PTY from any single
     // CRC-passing block, so on noise it hallucinates data (random PI at
@@ -453,6 +463,8 @@ public final class MeterAnalysis {
         self.pilotRefBits = ManagedAtomic<UInt32>(pilotRefKHz.bitPattern)
         self.fullScaleKHz = fullScaleKHz
         self.fullScaleBits = ManagedAtomic<UInt32>((fullScaleKHz ?? Float.nan).bitPattern)
+        preemphasisUSAtomic = ManagedAtomic<Int>(preemphasisUS)
+        activePreemphasisUS = preemphasisUS
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
@@ -503,6 +515,17 @@ public final class MeterAnalysis {
 
     /// Enable/disable the decode-path DC blocker (live; default on).
     public func setDCBlock(_ on: Bool) { dcBlockOn.store(on, ordering: .relaxed) }
+
+    /// Set the receiver de-emphasis time constant in microseconds (50 or 75).
+    /// Safe from any thread; picked up at the top of the next `process`, and
+    /// only acted on when it differs from the active one (reconfiguring the
+    /// decoder clears its filter state and pilot lock).
+    public func setPreemphasisUS(_ us: Int) {
+        preemphasisUSAtomic.store(us == 75 ? 75 : 50, ordering: .relaxed)
+    }
+
+    /// The de-emphasis time constant currently in effect (us).
+    public var preemphasisUS: Int { activePreemphasisUS }
 
     /// Bypass the RDS reception-quality gate (live; default off): publish the
     /// raw decoder state even when reception is too poor to trust.
@@ -566,6 +589,12 @@ public final class MeterAnalysis {
     }
 
     private func processBlock(_ samples: UnsafeBufferPointer<Float>) {
+        let wantedPreemphasisUS = preemphasisUSAtomic.load(ordering: .relaxed)
+        if wantedPreemphasisUS != activePreemphasisUS {
+            activePreemphasisUS = wantedPreemphasisUS
+            decoder.configure(sampleRate: sampleRate,
+                              preemphasisUS: wantedPreemphasisUS)
+        }
         pilotRefKHz = Float(bitPattern: pilotRefBits.load(ordering: .relaxed))
         let fs = Float(bitPattern: fullScaleBits.load(ordering: .relaxed))
         fullScaleKHz = fs.isNaN ? nil : fs
@@ -598,7 +627,7 @@ public final class MeterAnalysis {
             // scale must not colour the first blocks of the new one (audit
             // M12 -- these four were missing, so a retune carried the old
             // lock and one block of the old scale into the new station).
-            decoder.configure(sampleRate: sampleRate, preemphasisUS: 50)
+            decoder.configure(sampleRate: sampleRate, preemphasisUS: activePreemphasisUS)
             pilot.configure(sampleRate: sampleRate)
             decodeDC.reset()
             histogramScaleKHz = 0.0

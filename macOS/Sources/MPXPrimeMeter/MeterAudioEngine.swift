@@ -97,13 +97,15 @@ final class MeterAudioEngine: @unchecked Sendable {
         monitorGain: Float = 1.0,
         pilotRefKHz: Float = 6.75,
         fullScaleKHz: Float? = nil,
+        preemphasisUS: Int = 50,
         wavURL: URL? = nil,
         input: MPXInputSource
     ) {
         self.input = input
         self.ring = StereoInputRingBuffer(capacityFrames: 1 << 16)
         self.analysis = MeterAnalysis(
-            sampleRate: sampleRate, pilotRefKHz: pilotRefKHz, fullScaleKHz: fullScaleKHz)
+            sampleRate: sampleRate, preemphasisUS: preemphasisUS,
+            pilotRefKHz: pilotRefKHz, fullScaleKHz: fullScaleKHz)
         self.blockFrames = 8192
         self.channel = channel
         self.sampleRate = sampleRate
@@ -129,6 +131,10 @@ final class MeterAudioEngine: @unchecked Sendable {
 
     /// Decode-path DC blocker (live).
     func setDCBlock(_ on: Bool) { analysis.setDCBlock(on) }
+
+    /// Receiver de-emphasis time constant in us (50 = Region 1, 75 = the
+    /// Americas / Japan / Korea). Live; only reconfigures on a real change.
+    func setPreemphasisUS(_ us: Int) { analysis.setPreemphasisUS(us) }
 
     /// Bypass the RDS reception-quality gate (live).
     func setForceRDS(_ on: Bool) { analysis.setForceRDS(on) }
@@ -176,7 +182,8 @@ final class MeterAudioEngine: @unchecked Sendable {
         if abs(fmt.sampleRate - Double(sampleRate)) > 0.5 {
             sampleRate = Float(fmt.sampleRate)
             analysis = MeterAnalysis(
-                sampleRate: sampleRate, pilotRefKHz: initialPilotRefKHz,
+                sampleRate: sampleRate, preemphasisUS: analysis.preemphasisUS,
+                pilotRefKHz: initialPilotRefKHz,
                 fullScaleKHz: initialFullScaleKHz)
         }
 

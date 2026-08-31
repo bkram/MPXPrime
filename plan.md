@@ -399,12 +399,15 @@ asserting coherence WOULD have passed -- mean-removed and level-gated phase
 correlation, qualityValid, balance expiry, full reset now also clearing
 decoder / PilotPLL / decode DC / scale hold, calibration changes resetting the
 accumulators they invalidate, and an oversized-block split instead of a trap).
-REMAINING, in order: P2 conventions (de-emphasis hard-wired 50 us --
-75 us markets decode +3.4 dB bright at 15 kHz; RDS-level 1.320 peak factor
-documented wrongly in the primitive; --full-scale-khz ignored on the audio
-CLI path; SDR default IQ rate bypasses the byte-validated packed path; the
-wide-capture decimator is the dominant channel filter at factor 4 -- bench
-A/B needed); P3 GUI (RF-span chip re-triggers the 0.34 toolbar leak at 20 Hz
+P2 conventions (de-emphasis is now a live 50/75 us setting -- input-bar
+picker + `--deemphasis` + persisted, tests pin both curves against the analog
+formula; `--full-scale-khz` works on the audio-device path and the startup
+line names the active convention; SDR default IQ rate -> 0 so the shipped
+measurement path is the byte-validated packed one; wide-path decimator 48 ->
+128 taps, flat past +/-105 kHz; one shared IQ overload threshold; RDS-level
+convention comment corrected + conversion documented. STILL OPEN in P2: the
+factor 1 vs 4 offline IQ A/B, which needs recorded IQ from the maintainer's
+hardware). REMAINING: P3 GUI (RF-span chip re-triggers the 0.34 toolbar leak at 20 Hz
 in RF mode; statusText @Published; occlusion gate tests an arbitrary window;
 window squeezable 240 pt below content minimum; error alerts; accessibility
 pass -- readouts aren't elements, over-limit is colour-only, 9 unlabelled

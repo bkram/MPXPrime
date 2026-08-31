@@ -123,11 +123,18 @@ final class MeterViewModel: ObservableObject {
     /// Which spectrum the big card shows: the demodulated MPX baseband, or the
     /// RF band around the tuned carrier (SDR only).
     @Published var spectrumShowsRF = false
-    /// SDR IQ capture rate in kHz -- the RF spectrum's span. 0 = the narrow
-    /// default. RESTART-REQUIRED: the device is reconfigured at open. The demod
-    /// chain runs at its own rate behind a decimator, so this cannot move the
-    /// MPX measurements.
-    @Published var sdrIQRateKHz: Int = 1000
+    /// SDR IQ capture rate in kHz -- the RF spectrum's span. 0 = narrow (the
+    /// demod rate itself). RESTART-REQUIRED: the device is reconfigured at
+    /// open. The demod chain runs at its own rate behind a decimator, so this
+    /// cannot move the MPX measurements.
+    ///
+    /// Defaults to 0 since 0.45: at factor 1 the RTL backend takes its
+    /// original packed-uint8 path -- the byte-exact one the deviation and RDS
+    /// conventions were validated against (SFP-X, 2026-07-07) -- while any
+    /// wider rate routes through the newer complex path with its own
+    /// decimator. A wider span is a spectrum FEATURE the operator opts into,
+    /// not the shipped measurement default (audit B12).
+    @Published var sdrIQRateKHz: Int = 0
     /// Unit for the SIGNAL readout, and the calibration offset that makes the
     /// absolute units absolute (see `SignalUnit`). Both persist.
     @Published var signalUnit: SignalUnit = .dBFS
@@ -135,6 +142,13 @@ final class MeterViewModel: ObservableObject {
     /// Decode-path DC blocker: removes demod carrier-offset DC from the
     /// decoded audio (vectorscope centering, clean monitor/recordings).
     @Published var dcBlockEnabled = true
+    /// Receiver de-emphasis time constant in microseconds: 50 (ITU Region 1 --
+    /// Europe, Africa, most of Asia and Oceania) or 75 (the Americas, Japan,
+    /// Korea). It shapes only the DECODE path: the monitor audio, stereo
+    /// recordings, the decoded L/R strips and the audio spectrum. Persisted;
+    /// live-applied. Before 0.45 it was hard-wired to 50, so a 75 us market
+    /// heard and recorded ~3.5 dB too much 15 kHz.
+    @Published var preemphasisUS: Int = 50
     /// Bypass the RDS reception-quality gate: show the raw decoder output
     /// even when reception is too poor to trust (expect garbage on noise).
     @Published var forceRDS = false
@@ -265,6 +279,7 @@ final class MeterViewModel: ObservableObject {
         static let mpxPassUID = "meter.mpxPassOutputUID"
         static let mpxPassGain = "meter.mpxPassGainDB"
         static let dcBlock = "meter.dcBlockEnabled"
+        static let preemphasisUS = "meter.preemphasisUS"
         static let forceRDS = "meter.forceRDS"
     }
 
@@ -315,6 +330,9 @@ final class MeterViewModel: ObservableObject {
         if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
         if d.object(forKey: Keys.mpxPassGain) != nil { mpxPassGainDB = d.double(forKey: Keys.mpxPassGain) }
         if d.object(forKey: Keys.dcBlock) != nil { dcBlockEnabled = d.bool(forKey: Keys.dcBlock) }
+        if d.object(forKey: Keys.preemphasisUS) != nil {
+            preemphasisUS = d.integer(forKey: Keys.preemphasisUS) == 75 ? 75 : 50
+        }
         if d.object(forKey: Keys.forceRDS) != nil { forceRDS = d.bool(forKey: Keys.forceRDS) }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
             selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
@@ -362,6 +380,7 @@ final class MeterViewModel: ObservableObject {
         d.set(mpxPassEnabled, forKey: Keys.mpxPass)
         d.set(mpxPassGainDB, forKey: Keys.mpxPassGain)
         d.set(dcBlockEnabled, forKey: Keys.dcBlock)
+        d.set(preemphasisUS, forKey: Keys.preemphasisUS)
         d.set(forceRDS, forKey: Keys.forceRDS)
         if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.mpxPassUID)
@@ -393,6 +412,7 @@ final class MeterViewModel: ObservableObject {
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz),
             fullScaleKHz: audioAbsoluteCal ? Float(audioFullScaleKHz) : nil,
+            preemphasisUS: preemphasisUS,
             input: AUHALInputSource(deviceID: id,
                                     maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
         do {
@@ -453,6 +473,7 @@ final class MeterViewModel: ObservableObject {
             sampleRate: 192_000, channel: channel,
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz), fullScaleKHz: 150,
+            preemphasisUS: preemphasisUS,
             input: source)
         do {
             _ = try eng.start(monitorDeviceID: selectedOutputID)
@@ -510,6 +531,14 @@ final class MeterViewModel: ObservableObject {
     func applyDCBlockChange() {
         saveSettings()
         engine?.setDCBlock(dcBlockEnabled)
+    }
+
+    /// De-emphasis standard changed (50 / 75 us): applies live to the decode
+    /// path. The analyzer reconfigures its decoder, which re-acquires the
+    /// pilot lock over the next fraction of a second.
+    func applyPreemphasisChange() {
+        saveSettings()
+        engine?.setPreemphasisUS(preemphasisUS)
     }
 
     /// Force-RDS toggled: applies live (bypasses the reception-quality gate).

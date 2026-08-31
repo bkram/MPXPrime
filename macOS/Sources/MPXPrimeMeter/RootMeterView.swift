@@ -338,6 +338,8 @@ struct RootMeterView: View {
             }
             Spacer()
 
+            deemphasisPicker
+
             dcBlockToggle
 
             Divider().frame(height: 16)
@@ -679,6 +681,34 @@ struct RootMeterView: View {
         + "the monitor/recordings; common on wireless audio links. Broadcast "
         + "FM has no legitimate DC, so leave it on. Deviation measurements "
         + "are always DC-tracked separately. Applies live."
+
+    private static let deemphasisHelp = "Receiver de-emphasis time constant: "
+        + "50 us in ITU Region 1 (Europe, Africa, most of Asia and Oceania), "
+        + "75 us in the Americas, Japan and Korea. It shapes the DECODED "
+        + "audio only -- the monitor, stereo recordings, the L/R levels and "
+        + "the audio spectrum. Deviation, pilot, RDS and MPX power are "
+        + "measured before it and do not change. Set wrong, the decoded top "
+        + "end is about 3.5 dB off at 15 kHz. Applies live."
+
+    // Receiver de-emphasis standard. Decode-path only (monitor audio, stereo
+    // recordings, decoded L/R strips, audio spectrum) -- deviation, pilot, RDS
+    // and MPX power are measured ahead of it and do not move.
+    private var deemphasisPicker: some View {
+        HStack(spacing: 4) {
+            Text("De-emph").foregroundStyle(.secondary)
+            Picker("De-emphasis", selection: $vm.preemphasisUS) {
+                Text("50").tag(50)
+                Text("75").tag(75)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .labelsHidden()
+            Text("us").foregroundStyle(.secondary).fixedSize()
+        }
+        .help(Self.deemphasisHelp)
+        .accessibilityLabel("De-emphasis time constant in microseconds")
+        .onChange(of: vm.preemphasisUS) { _, _ in vm.applyPreemphasisChange() }
+    }
 
     private var dcBlockToggle: some View {
         Toggle("DC block", isOn: $vm.dcBlockEnabled)

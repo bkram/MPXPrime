@@ -161,6 +161,15 @@ final class MeterAudioEngine: @unchecked Sendable {
         let scratch = self.mixScratch
         let scratchCap = self.mixScratchCap
         let lastDeliveryNS = self.lastDeliveryNS
+        // Back-pressure for sources that can wait (the stdin/file replay path):
+        // hold off once the ring is more than half full, so a file read cannot
+        // overwrite samples the analysis thread has not consumed. Real-time
+        // sources ignore this.
+        let backPressureLimit = ring.capacityFrames / 2
+        input.canAcceptFrames = { [weak ring] in
+            guard let ring else { return true }
+            return ring.bufferedFrames() < backPressureLimit
+        }
         input.frameSink = { left, right, frames in
             if frames > 0 {
                 lastDeliveryNS.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)

@@ -296,6 +296,11 @@ public final class StereoInputRingBuffer {
         return missing
     }
 
+    /// Frames the ring can hold (rounded up to a power of two at init). Lets a
+    /// non-realtime producer apply back-pressure against the fill instead of
+    /// silently overwriting unread samples.
+    public var capacityFrames: Int { capacity }
+
     public func bufferedFrames() -> Int {
         let read = readCursor.load(ordering: .acquiring)
         let write = writeCursor.load(ordering: .acquiring)

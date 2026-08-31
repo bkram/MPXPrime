@@ -424,6 +424,48 @@ the consumer loop already pre-allocates, and the only remaining per-block
 allocation is `isolatedSnapshot()`, which must copy to be correct and runs
 ~23/s on a non-realtime thread.
 
+**RTL-SDR bench run 2026-08-31** (NESDR SMArt v5, TCXO; 88.6 Veronica and
+105.9 Feelgood, 90 s composite captures replayed through the analyzer). What it
+settled and what it opened:
+
+- FIXED as a result: the stdin/file replay path had no back-pressure, so a
+  recorded capture dropped 17,975,296 frames and every accumulated reading was
+  a gap artefact while the panel still printed figures. Now 0 overflows.
+- CONFIRMED on air: pilot 5.77 kHz and RDS 3.87 kHz on 88.6 -- consistent with
+  the 2026-07-07 SFP-X validation (SFP-X 5.6-5.7 / 3.5-3.7; ours then
+  5.58-5.73 / 3.4-3.8), i.e. the P1 work did not move the conventions. RDS
+  decodes fully on both (PI/PS/RT/CT/AF, BER 0.0% and 2.9%). The 60 s
+  statistics become valid on a >60 s capture exactly as M6 intends
+  (105.9: >77 kHz = 0.00763%, >=75 kHz for 84% of slots -- but see the quality
+  caveat: that reception does not meet SM.1268's measurement conditions, so it
+  is not a compliance verdict).
+- The level-relative pilot gate (M1) holds on real off-air signal: correlation
+  and the stereo readouts publish, no spurious MONO DECODE.
+- OPEN, new: **the pilot-to-RDS phase angle is chain-dependent on an SDR
+  input.** The same station read 88 deg via the 192 kHz output path and 76 deg
+  via 256 kHz. A pure delay cancels identically in this measurement, so ~12 deg
+  is phase DISPERSION between 19 and 57 kHz inside the tuner chain (channel
+  FIR and/or the fractional resampler). That is the same order as the +/-10 deg
+  spec window, so the absolute angle on an SDR path needs characterizing before
+  it can be quoted against the standard; the category (near 0 / near 90 / near
+  neither) survives it. 88.6 reads 47 deg -- genuinely out of spec, and stable.
+  Documented as a caveat in manual-meter.md. Next step: measure the dispersion
+  directly by injecting a known-phase composite through the tuner chain, or
+  compare against the audio-input path on the same signal.
+- OPEN, new: **SIGNAL QUALITY is unusable as an absolute scale on an RTL.**
+  Both stations measured baseband noise 4.12 kHz through the 192 kHz path
+  (5.26 kHz at 256 kHz, where the >60 kHz band is wider) -- identical across
+  stations, so it is the dongle's own 8-bit demod floor, not reception. The
+  0..4 scale therefore pins at "Unusable" while RDS decodes at 0.0% BER.
+  Deliberately NOT "fixed" by moving thresholds (that is a measurement-semantics
+  change): the options are backend-aware thresholds, a narrower noise band, or
+  relabelling what the scale claims. Needs a decision plus an SDRplay
+  comparison run.
+- Not reproducible as a defect: `[R82XX] PLL not locked!` on every open is
+  librtlsdr's own init message (Homebrew's `rtl_sdr` prints it too, before the
+  rate or frequency is set) -- not ours, and not related to the narrow IQ
+  default.
+
 REMAINING (needs the maintainer's hardware): the factor 1 vs 4 offline IQ A/B
 on recorded IQ; an RTL with a known ppm error before/after the decoder PLL
 fix; an SFP-X side-by-side re-check now that P1 has landed (the conventions

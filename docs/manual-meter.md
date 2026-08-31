@@ -377,6 +377,19 @@ far from both conventions) is the worst case. A reading that will not settle
 usually means the RDS generator is free-running rather than locked to the
 pilot at all.
 
+One more caveat specific to the SDR input, measured on an RTL-SDR against two
+strong local stations (2026-08-31): the same station read **88 deg** through
+the 192 kHz output path and **76 deg** through the 256 kHz one. A pure delay
+cancels exactly in this measurement (the 57 kHz phase and 3x the 19 kHz pilot
+phase both accumulate 2*pi*57k*tau), so a difference of that size is phase
+DISPERSION between 19 and 57 kHz somewhere in the tuner chain, not a change at
+the transmitter. Until that is characterized, treat the absolute angle on an
+SDR input as carrying roughly +/-10 degrees of chain uncertainty -- the same
+order as the spec window. What survives it is the *category*: a station
+sitting near neither convention is genuinely out of spec (88.6 read 47 deg on
+the same run, far from both 0 and 90, with 0.0% RDS block errors), and a
+station reading near 0 or 90 is locked.
+
 Two caveats when judging a transmitter by this number. The standard specifies
 the tolerance **at the transmitter's MPX input**, whereas the Meter measures
 off-air (or off the audio input), so exciter and receive-path group delay add
@@ -458,6 +471,39 @@ than keeping the record light on while silently discarding audio. Overloaded
 or non-finite decode samples are clamped into range instead of crashing the
 app. For captures longer than the 4 GB limit, start a new file when the
 status reports the limit was reached.
+
+### Re-analyzing a recorded composite
+
+An MPX recording (from the Meter's own **MPX** record format, or any 16/24-bit
+mono WAV of a composite) can be pushed back through the analyzer headlessly:
+
+```bash
+macOS/.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
+    --no-monitor --seconds 200 < capture.wav
+```
+
+Use `--full-scale-khz 150` for a capture made at the SDR convention (0 dBFS =
+150 kHz), or `--pilot-ref-khz` for one whose absolute level is unknown; the
+startup line names which convention it used. The replay runs as fast as the
+analyzer can consume and is exactly repeatable, which makes it the right way
+to compare two settings on identical material. Give it enough material for the
+statistics you care about: MPX POWER max and the OVER 77 kHz figure need a
+full 60 s.
+
+### Signal quality on an RTL-SDR
+
+**SIGNAL QUALITY reads pessimistically on an RTL-SDR** and can sit at
+`Unusable` while everything else on the panel is perfect. The figure it is
+derived from is the energy above 60 kHz, and an 8-bit dongle's own demod noise
+floor puts about 4-5 kHz of deviation-equivalent there regardless of the
+station: two different strong locals measured 4.12 kHz each through the
+192 kHz path (and 5.26 kHz through the 256 kHz one, where the noise band is
+wider -- i.e. it is a broadband floor, not station noise). Both decoded RDS at
+0.0% and 2.9% block errors respectively. The scale's thresholds are calibrated
+for a clean receive path, so on an RTL treat it as a *relative* indicator
+between antenna positions on the same dongle, and judge absolute reception by
+RDS BER and the deviation readings instead. An SDRplay RSP (14-bit) does not
+have this floor.
 
 ## Calibration and measurement validity
 

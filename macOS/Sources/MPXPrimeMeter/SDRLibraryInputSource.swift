@@ -88,6 +88,12 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
 
+    /// Deliberately unused: the tuner's capture thread must not stall (its IQ
+    /// ring would overflow one layer down instead, and that gap is what
+    /// `mpxtuner_iq_drops()` reports). The composite ring's own overflow
+    /// counter covers this path.
+    var canAcceptFrames: (() -> Bool)?
+
     private let config: Config
     private let assumedRate: Double
     private var handle: OpaquePointer?

@@ -11,6 +11,21 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: replaying a recorded composite no longer destroys its own
+  measurement.** The stdin/file reader had no back-pressure: a live pipe is
+  paced by its writer, but a redirected file never blocks on read, so the
+  reader outran the analysis thread and the ring overwrote unread samples --
+  measured on a 90 s RTL-SDR recording, **17,975,296 frames dropped**, which
+  left MAX DEV, MPX power, the deviation distribution and the SM.1268
+  exceedance count as gap artefacts while the panel still printed figures
+  (0.0 kHz and `--`). Non-realtime sources now wait while the ring is more
+  than half full (`canAcceptFrames`, backed by a new
+  `StereoInputRingBuffer.capacityFrames`); the same recording now replays with
+  **0 overflows** and produces a full, correct panel, faster than real time.
+  Real-time sources (Core Audio, the in-process SDR) deliberately ignore the
+  hook -- a device callback must never block -- and keep reporting through the
+  drop counters instead.
+
 - **Meter: GUI performance, honest failures, and accessibility (audit P3).**
   - **The 0.34 toolbar-relayout leak was live again in RF-spectrum mode.** The
     spectrum card's "span" chip read a per-tick telemetry value from the ROOT

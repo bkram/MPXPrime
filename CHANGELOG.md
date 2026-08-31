@@ -11,6 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Meter: the SAMPLES DROPPED badge now also sees the tuner's own IQ drops
+  (audit P1.2b).** The badge covered only the composite ring between capture
+  and analysis. One layer down, where the SDR delivers IQ to the demod thread,
+  the SDRplay ring counted nothing at all and the RTL-SDR counter was a
+  function-local `static` that nothing outside the callback could read -- so a
+  demod thread failing to keep up with the capture rate silently punched gaps
+  into peak-hold MAX DEV, the deviation distribution, the BS.412 max window
+  and the SM.1268 exceedance count while the dashboard looked healthy. Both
+  backends now count lost IQ samples (ring overwrite, plus RTL's deliberate
+  low-latency skip-to-newest; retune flushes are deliberately not counted) and
+  publish them through a new `mpxtuner_iq_drops()` C ABI entry point that the
+  Meter folds into the same badge.
+
 - **Meter: the stereo decode now tracks the pilot's frequency and says when it
   is decoding mono (audit P1.3).** Two defects in the shared `MPXDecoder`, both
   measured before and after: (1) the 38 kHz recovery corrected the subcarrier

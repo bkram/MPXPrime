@@ -77,6 +77,13 @@ public:
   int inputRate() const { return m_inputRate; }
   /// True after a fatal streaming error / device loss.
   bool failed() const { return m_failed.load(std::memory_order_relaxed); }
+
+  /// IQ samples lost to ring overwrite since connect (the demod thread fell
+  /// behind). Non-zero means a gap is baked into every accumulated
+  /// measurement downstream.
+  uint64_t droppedIQSamples() const {
+    return m_droppedIQ.load(std::memory_order_relaxed);
+  }
   std::atomic<double> m_systemGainDb{-1000.0};
 
   /// Drain up to maxSamples complex IQ samples. Returns the count copied.
@@ -98,6 +105,11 @@ private:
   std::vector<std::complex<float>> m_ring;
   size_t m_readPos = 0, m_writePos = 0;
   bool m_full = false;
+  // IQ samples the ring overwrote before the demod thread read them (the
+  // consumer fell behind). Reported through mpxtuner_iq_drops() so the Meter
+  // can invalidate its accumulated readings -- a gap poisons peak-hold,
+  // BS.412 and the SM.1268 exceedance count. Retune flushes are NOT counted.
+  std::atomic<uint64_t> m_droppedIQ{0};
 
   void *m_handle = nullptr;   // current sdrplay device handle (opaque)
 };

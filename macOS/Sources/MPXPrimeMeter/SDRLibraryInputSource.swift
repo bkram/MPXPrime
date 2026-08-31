@@ -120,6 +120,17 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         return g <= -999.0 ? nil : g
     }
 
+    /// IQ samples the tuner lost since it opened, because the demod thread
+    /// fell behind and the IQ ring overwrote unread data. Monotonic; deliberate
+    /// retune flushes are not counted. Non-zero means a gap is baked into the
+    /// accumulated measurements, which is why the Meter raises SAMPLES DROPPED
+    /// on it (before 0.45 the SDRplay ring counted nothing and RTL's counter
+    /// was a function-local static nothing could read).
+    var droppedIQSamples: UInt64 {
+        guard let handle else { return 0 }
+        return mpxtuner_iq_drops(handle)
+    }
+
     /// IQ capture rate actually in use (Hz) -- may differ from the requested
     /// one if the device refused it. This is the RF spectrum's total span.
     var captureRateHz: Int {

@@ -119,6 +119,15 @@ int mpxtuner_capture_rate(const MpxTuner *t);
 /// -1000 when unknown (not connected, or nothing reported yet).
 double mpxtuner_system_gain_db(const MpxTuner *t);
 
+/// IQ samples the tuner lost since it opened, because the demod thread fell
+/// behind the device's delivery rate and the IQ ring overwrote unread data
+/// (plus, on RTL-SDR, the deliberate low-latency skip-to-newest). Monotonic.
+/// Non-zero means a discontinuity is baked into everything measured
+/// downstream -- peak-hold deviation, the distribution, the BS.412 window and
+/// the SM.1268 exceedance count -- so the Meter raises its SAMPLES DROPPED
+/// badge on it. Deliberate retune flushes are NOT counted.
+uint64_t mpxtuner_iq_drops(const MpxTuner *t);
+
 /// Active backend: 0 = RTL-SDR, 1 = SDRplay.
 int mpxtuner_backend(const MpxTuner *t);
 /// Number of selectable antenna inputs (1 = none / not applicable).

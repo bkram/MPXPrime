@@ -40,7 +40,9 @@ standard macOS preferences and restored on the next start. Pass `--sdr-freq`
 to override the saved frequency for that launch.
 
 Measurement integrity (0.45): the Quality card raises a red **SAMPLES
-DROPPED** badge if the capture pipeline ever dropped input samples -- from
+DROPPED** badge if the capture pipeline ever dropped input samples -- at
+either layer, the composite path into the analyzer or (on SDR input) the
+tuner's own IQ buffer when the demod thread cannot keep up -- and from
 that moment the peak-hold and accumulated readings (MAX, PEAK +/-, OVER
 77 kHz, the distribution, MPX POWER max) contain a gap artefact and should
 not be quoted; press **Reset Peaks** to clear the badge and start the

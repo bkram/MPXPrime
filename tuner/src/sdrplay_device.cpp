@@ -349,11 +349,18 @@ void SDRplayDevice::ingest(const short *xi, const short *xq, unsigned int n, boo
   // On a retune the API raises `reset`; drop the buffered old-frequency IQ so
   // the new station is heard immediately instead of after the ring drains.
   if (reset) { m_readPos = m_writePos = 0; m_full = false; }
+  uint64_t dropped = 0;
   for (unsigned int i = 0; i < n; i++) {
     m_ring[m_writePos] = std::complex<float>(xi[i] / 32768.0f, xq[i] / 32768.0f);
     m_writePos = (m_writePos + 1) % cap;
-    if (m_full) m_readPos = (m_readPos + 1) % cap;  // overwrite oldest
+    if (m_full) {
+      m_readPos = (m_readPos + 1) % cap;  // overwrite oldest
+      dropped++;
+    }
     if (m_writePos == m_readPos) m_full = true;
+  }
+  if (dropped > 0) {
+    m_droppedIQ.fetch_add(dropped, std::memory_order_relaxed);
   }
   m_cv.notify_one();
 }

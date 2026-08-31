@@ -650,7 +650,13 @@ final class MeterViewModel: ObservableObject {
         // report was a stderr line at stop, which a .app sends nowhere.
         if running, let eng = engine {
             let t = eng.inputTransport
+            // Drops happen at two layers and both poison the same
+            // accumulators: the composite ring between capture and analysis,
+            // and (SDR only) the tuner's own IQ ring between the USB/API
+            // callback and the demod thread. Counting only the first would
+            // miss a demod thread that cannot keep up with the capture rate.
             let dropEvents = t.overflows &+ t.tornReads
+                &+ (sdrSource?.droppedIQSamples ?? 0)
             if dropEvents > lastDropEvents {
                 lastDropEvents = dropEvents
                 telemetry.dropWarningText =

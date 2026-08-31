@@ -386,9 +386,11 @@ stop/device loss); P1.3 decode integrity (second-order ~2 Hz PLL closes the
 silently decoded mono over a 20 dB window; `stereoDecodeActive` -> amber
 "MONO DECODE" badge blanking separation / balance / correlation; sub-Nyquist
 rate decodes exact mono; dead biquads out of the inlinable path;
-`MeterDecodeIntegrityTests`). REMAINING, in order: P1.2b tuner drop counters
-(`mpxtuner_iq_drops` C ABI; SDRplay ring has none, RTL's is a function-local
-static); P1.4 validity flags (peaks freeze at the last station; scale accepted
+`MeterDecodeIntegrityTests`); P1.2b tuner drop counters (both backends count
+lost IQ samples -- ring overwrite plus RTL's low-latency skip-to-newest, not
+retune flushes -- behind a new `mpxtuner_iq_drops()` C ABI entry the badge
+folds in; the SDRplay ring counted nothing and RTL's counter was a
+function-local static). REMAINING, in order: P1.4 validity flags (peaks freeze at the last station; scale accepted
 from pilotAmp 1e-5; phase-meter coherence primes at 1.0 (the 45.4 deg
 mystery) and 0.3 admits a drifting angle; exceedance "valid" after 1 s at
 520x too-coarse resolution; calibration changes don't reset accumulators;

@@ -501,6 +501,12 @@ double mpxtuner_system_gain_db(const MpxTuner *t) {
   return t->rtl.currentGainDb();
 }
 
+uint64_t mpxtuner_iq_drops(const MpxTuner *t) {
+  if (!t) return 0;
+  if (t->backend == BackendSDRplay) return t->sdrplay.droppedIQSamples();
+  return t->rtl.droppedIQSamples();
+}
+
 int mpxtuner_backend(const MpxTuner *t) {
   return (t && t->backend == BackendSDRplay) ? 1 : 0;
 }

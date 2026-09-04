@@ -69,6 +69,15 @@ final class AudioOutputEngine {
         var agcDetectorDB: Float
         var agcGainDB: Float
         var agcGateActive: Bool
+        var advancedDynamicsActive: Bool
+        var advancedDynamicsDensityDB: Float
+        /// Per-band leveler gains, low to high; fixed scalars because this
+        /// struct is written on the render thread (no arrays).
+        var adBandGain1DB: Float
+        var adBandGain2DB: Float
+        var adBandGain3DB: Float
+        var adBandGain4DB: Float
+        var adBandGain5DB: Float
         var compositeClipperGainReductionDB: Float
         var compositeClipperLookaheadGainReductionDB: Float
         var preEncodeAudioLimiterGainReductionDB: Float
@@ -173,6 +182,13 @@ final class AudioOutputEngine {
         agcDetectorDB: -120.0,
         agcGainDB: 0.0,
         agcGateActive: false,
+        advancedDynamicsActive: false,
+        advancedDynamicsDensityDB: 0.0,
+        adBandGain1DB: 0.0,
+        adBandGain2DB: 0.0,
+        adBandGain3DB: 0.0,
+        adBandGain4DB: 0.0,
+        adBandGain5DB: 0.0,
         compositeClipperGainReductionDB: 0.0,
         compositeClipperLookaheadGainReductionDB: 0.0,
         preEncodeAudioLimiterGainReductionDB: 0.0,
@@ -674,6 +690,13 @@ final class AudioOutputEngine {
         meterSnapshot.agcDetectorDB = -120.0
         meterSnapshot.agcGainDB = 0.0
         meterSnapshot.agcGateActive = false
+        meterSnapshot.advancedDynamicsActive = false
+        meterSnapshot.advancedDynamicsDensityDB = 0.0
+        meterSnapshot.adBandGain1DB = 0.0
+        meterSnapshot.adBandGain2DB = 0.0
+        meterSnapshot.adBandGain3DB = 0.0
+        meterSnapshot.adBandGain4DB = 0.0
+        meterSnapshot.adBandGain5DB = 0.0
         meterSnapshot.compositeClipperGainReductionDB = 0.0
         meterSnapshot.compositeClipperLookaheadGainReductionDB = 0.0
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = 0.0
@@ -1507,6 +1530,14 @@ final class AudioOutputEngine {
         meterSnapshot.agcDetectorDB = agc.detectorDB
         meterSnapshot.agcGainDB = agc.gainDB
         meterSnapshot.agcGateActive = agc.gateActive
+        let advDyn = generator.advancedDynamicsStatus
+        meterSnapshot.advancedDynamicsActive = advDyn.enabled
+        meterSnapshot.advancedDynamicsDensityDB = advDyn.densityDB
+        meterSnapshot.adBandGain1DB = advDyn.bandGainsDB.0
+        meterSnapshot.adBandGain2DB = advDyn.bandGainsDB.1
+        meterSnapshot.adBandGain3DB = advDyn.bandGainsDB.2
+        meterSnapshot.adBandGain4DB = advDyn.bandGainsDB.3
+        meterSnapshot.adBandGain5DB = advDyn.bandGainsDB.4
         meterSnapshot.compositeClipperGainReductionDB = limiter.gainReductionDB
         meterSnapshot.compositeClipperLookaheadGainReductionDB = limiter.compositeLookaheadGainReductionDB
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = limiter.preEncodeGainReductionDB

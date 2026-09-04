@@ -219,10 +219,17 @@ private struct DeepInvariants {
         from loHz: Float,
         to hiHz: Float,
         sampleRate: Float,
-        fftSize: Int = 4096
+        fftSize: Int = 4096,
+        start: Int = 0
     ) -> Float {
-        // Pad / truncate to fftSize.
-        var padded = samples
+        // Pad / truncate to fftSize from `start`. Callers comparing chain
+        // configurations must pass a steady-state `start`: the default
+        // window is the first 21 ms at 192 kHz, which sits INSIDE the
+        // startup latency of high-group-delay stages (Advanced Dynamics'
+        // FIR splitter + the pre-encode limiter's look-ahead pushed the
+        // program entirely past it, reading as a phantom -78 dB
+        // "cancellation", 2026-09-04).
+        var padded = Array(samples.dropFirst(min(start, max(0, samples.count - 1))))
         if padded.count > fftSize {
             padded = Array(padded.prefix(fftSize))
         } else if padded.count < fftSize {
@@ -408,27 +415,33 @@ struct DeepUniversalInvariantsTests {
        .enabled(if: deepEnabled))
 struct DeepPairwiseTests {
 
-    /// Hand-curated pairwise covering array on the 11 high-impact
+    /// Hand-curated pairwise covering array on the 12 high-impact
     /// stage flags: AGC, multiband, bassClipper, dcClipper,
     /// compositeClipper, BS.412, PrimeBass, stereoWidener, phaseRot,
-    /// preEncodeLim, monoMode. Each row covers all 4 possible
-    /// (off/on, off/on) combinations of every pair. This is a small
-    /// hand-built covering set — sufficient for catching pair
-    /// interactions without 2^11 = 2048 full Cartesian rows.
+    /// preEncodeLim, monoMode, advancedDynamics. Each row covers all 4
+    /// possible (off/on, off/on) combinations of every pair. This is a
+    /// small hand-built covering set — sufficient for catching pair
+    /// interactions without 2^12 = 4096 full Cartesian rows. Verified
+    /// COMPLETE by enumeration (2026-09-04) — the AdvDyn column covers
+    /// all 4 combos against every other column, including AdvDyn=on
+    /// alongside AGC/MB=on (the leveler overrides them), and row 12 was
+    /// added to close two pre-existing gaps in the 11-flag array
+    /// (Widener×Mono (on,on) and Phase×Mono (off,on) were never covered).
     static let rows: [[Bool]] = [
-        //  AGC,   MB,   Bass, DC,   Comp, BS,   PB,   Wide, Phase,PreL, Mono
-        [ true,  true, true, false,true, false,false,false,false,true, false],
-        [ false, false,false,true, false,true, true, true, true, false,false],
-        [ true,  false,true, true, false,false,true, false,true, false,true ],
-        [ false, true, false,false,true, true, false,true, false,true, false],
-        [ true,  true, false,true, true, false,true, true, false,false,false],
-        [ false, false,true, false,false,true, false,false,true, true, true ],
-        [ true,  false,false,false,true, true, true, false,false,true, false],
-        [ false, true, true, true, false,false,false,true, true, false,false],
-        [ true,  true, true, true, true, true, true, true, true, true, false],
-        [ false, false,false,false,false,false,false,false,false,false,false],
-        [ true,  false,true, false,false,true, false,true, true, true, false],
-        [ false, true, false,true, true, false,true, false,true, false,true ],
+        //  AGC,   MB,   Bass, DC,   Comp, BS,   PB,   Wide, Phase,PreL, Mono, AdvDyn
+        [ true,  true, true, false,true, false,false,false,false,true, false, true ],
+        [ false, false,false,true, false,true, true, true, true, false,false, true ],
+        [ true,  false,true, true, false,false,true, false,true, false,true , false],
+        [ false, true, false,false,true, true, false,true, false,true, false, false],
+        [ true,  true, false,true, true, false,true, true, false,false,false, false],
+        [ false, false,true, false,false,true, false,false,true, true, true , false],
+        [ true,  false,false,false,true, true, true, false,false,true, false, false],
+        [ false, true, true, true, false,false,false,true, true, false,false, false],
+        [ true,  true, true, true, true, true, true, true, true, true, false, true ],
+        [ false, false,false,false,false,false,false,false,false,false,false, false],
+        [ true,  false,true, false,false,true, false,true, true, true, false, false],
+        [ false, true, false,true, true, false,true, false,true, false,true , true ],
+        [ false, false,false,false,true, false,false,true, false,true, true , true ],
     ]
 
     @Test(arguments: 0..<rows.count)
@@ -455,6 +468,7 @@ struct DeepPairwiseTests {
         cfg.phaseRotationEnabled     = row[8]
         cfg.preEncodeAudioLimiterEnabled = row[9]
         cfg.monoMode                 = row[10]
+        cfg.advancedDynamicsEnabled  = row[11]
 
         cfg.enRDS = !cfg.monoMode
         cfg.rdsNowPlayingEnabled = false
@@ -509,6 +523,9 @@ struct DeepCounteractTests {
         cfg.monoMode = false
         cfg.enRDS = false
         cfg.rdsNowPlayingEnabled = false
+        // Explicit so a future advanced_dynamics_enabled default flip
+        // cannot silently change what "everything off" means here.
+        cfg.advancedDynamicsEnabled = false
         return cfg
     }
 
@@ -544,6 +561,15 @@ struct DeepCounteractTests {
         StagePair(name: "ParametricEQ × Multiband",
             configureA: { $0.parametricEQEnabled = true },
             configureB: { $0.multibandEnabled = true; $0.multibandMode = 5 }),
+        StagePair(name: "AdvancedDynamics × CompositeClipper",
+            configureA: { $0.advancedDynamicsEnabled = true },
+            configureB: { $0.compositeClipperEnabled = true }),
+        StagePair(name: "AdvancedDynamics × BS.412",
+            configureA: { $0.advancedDynamicsEnabled = true },
+            configureB: { $0.bs412Enabled = true }),
+        StagePair(name: "AdvancedDynamics × PreEncodeLimiter",
+            configureA: { $0.advancedDynamicsEnabled = true },
+            configureB: { $0.preEncodeAudioLimiterEnabled = true }),
     ]
 
     @Test(arguments: 0..<pairs.count)
@@ -580,10 +606,13 @@ struct DeepCounteractTests {
 
         // Conspiracy-to-silence: combined audio-band energy at 1 kHz
         // should be at least min(A, B) − 6 dB. (Combined gain reduction
-        // is OK; complete cancellation is not.)
-        let bandA = DeepInvariants.bandEnergyDBFS(outA, from: 800, to: 1200, sampleRate: deepSampleRate)
-        let bandB = DeepInvariants.bandEnergyDBFS(outB, from: 800, to: 1200, sampleRate: deepSampleRate)
-        let bandAB = DeepInvariants.bandEnergyDBFS(outAB, from: 800, to: 1200, sampleRate: deepSampleRate)
+        // is OK; complete cancellation is not.) Measured at the render's
+        // midpoint — steady state — so stage group delay and gain settling
+        // cannot masquerade as cancellation.
+        let steadyStart = outA.count / 2
+        let bandA = DeepInvariants.bandEnergyDBFS(outA, from: 800, to: 1200, sampleRate: deepSampleRate, start: steadyStart)
+        let bandB = DeepInvariants.bandEnergyDBFS(outB, from: 800, to: 1200, sampleRate: deepSampleRate, start: steadyStart)
+        let bandAB = DeepInvariants.bandEnergyDBFS(outAB, from: 800, to: 1200, sampleRate: deepSampleRate, start: steadyStart)
         let minSingle = min(bandA, bandB)
         #expect(bandAB > minSingle - 6.0,
             "\(pair.name): combined 800-1200 Hz energy \(bandAB) dB << min(A=\(bandA), B=\(bandB)) − 6 dB — possible cancellation")

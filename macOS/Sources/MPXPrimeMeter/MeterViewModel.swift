@@ -180,6 +180,10 @@ final class MeterViewModel: ObservableObject {
     /// Bypass the RDS reception-quality gate: show the raw decoder output
     /// even when reception is too poor to trust (expect garbage on noise).
     @Published var forceRDS = false
+    /// Show the monitor-ballistics (integrating) deviation readout alongside
+    /// the SM.1268 MAX -- for comparing against hardware modulation monitors,
+    /// whose RC-smoothed detectors read below true peak on dense program.
+    @Published var monitorBallistics = false
 
     // RDS readout (changes per second; updated only when it actually changes).
     // RDS display strings live on MeterTelemetry (@Observable), NOT here:
@@ -309,6 +313,7 @@ final class MeterViewModel: ObservableObject {
         static let dcBlock = "meter.dcBlockEnabled"
         static let preemphasisUS = "meter.preemphasisUS"
         static let forceRDS = "meter.forceRDS"
+        static let monitorBallistics = "meter.monitorBallistics"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -362,6 +367,9 @@ final class MeterViewModel: ObservableObject {
             preemphasisUS = d.integer(forKey: Keys.preemphasisUS) == 75 ? 75 : 50
         }
         if d.object(forKey: Keys.forceRDS) != nil { forceRDS = d.bool(forKey: Keys.forceRDS) }
+        if d.object(forKey: Keys.monitorBallistics) != nil {
+            monitorBallistics = d.bool(forKey: Keys.monitorBallistics)
+        }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
             selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
         }
@@ -410,6 +418,7 @@ final class MeterViewModel: ObservableObject {
         d.set(dcBlockEnabled, forKey: Keys.dcBlock)
         d.set(preemphasisUS, forKey: Keys.preemphasisUS)
         d.set(forceRDS, forKey: Keys.forceRDS)
+        d.set(monitorBallistics, forKey: Keys.monitorBallistics)
         if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.mpxPassUID)
         } else {
@@ -541,6 +550,7 @@ final class MeterViewModel: ObservableObject {
         running = false
         statusText = "Stopped"
         lastDropEvents = 0
+        overloadGate.reset()
         // Blank the dashboard: a stopped meter must not keep showing the last
         // captured frame as if it were live (audit C5).
         telemetry.reset()
@@ -686,6 +696,8 @@ final class MeterViewModel: ObservableObject {
     /// Cumulative ring drop events (overflows + torn reads) already reported
     /// through the badge, so each tick only reacts to NEW drops.
     private var lastDropEvents: UInt64 = 0
+    /// Debounce for the tuner's railed-IQ share -> the RF OVERLOAD badge.
+    private var overloadGate = RFOverloadGate()
 
     private func startTimer() {
         let t = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
@@ -739,6 +751,19 @@ final class MeterViewModel: ObservableObject {
             // must say so instead of showing frozen readings that look live.
             let stalled = (eng.secondsSinceLastDelivery ?? 0) > 1.0
             if stalled != telemetry.inputStalled { telemetry.inputStalled = stalled }
+        }
+        // RF overload -- a railing front end (auto gain parked on a strong
+        // local) inflates every level-derived reading with clipping products.
+        // Measured 2026-08-31: baseband noise 4.1 kHz / "Unusable" on an
+        // auto-gain capture vs 1.15 kHz / "Poor" at a correct manual gain,
+        // same station, same dongle -- which is why the grade must not blame
+        // reception while this is up. Runs before the occlusion gate so the
+        // latch keeps time while the window is covered.
+        if running, inputKind == .sdr, let source = sdrSource {
+            let active = overloadGate.update(
+                ratio: source.iqOverloadRatio,
+                now: ProcessInfo.processInfo.systemUptime)
+            if active != telemetry.rfOverloadActive { telemetry.rfOverloadActive = active }
         }
         // Skip GUI pushes while the DASHBOARD window is minimized / fully
         // covered -- capture, analysis, and recording continue untouched (same
@@ -888,6 +913,13 @@ final class MeterViewModel: ObservableObject {
         put(\.maxDevText, devText(s.maxDevKHz, "%.1f"))
         put(\.aveMinDevText, s.devScaleValid
             ? String(format: "%.1f / %.1f", s.aveDevKHz, s.minDevKHz) : "-- / --")
+        // Monitor-ballistics readout: pushed only while the option shows it
+        // (the string write is change-guarded either way, so this is cheap).
+        if monitorBallistics {
+            put(\.monitorDevText, s.monitorDevValid
+                ? String(format: "%.1f  (max %.1f) kHz", s.monitorDevKHz, s.monitorMaxDevKHz)
+                : "--")
+        }
 
         // EN 50067 sec 1.2 subcarrier phase. Whole degrees: that is the
         // resolution the +/- 10 deg tolerance is judged at, and a decimal
@@ -952,7 +984,14 @@ final class MeterViewModel: ObservableObject {
         // Reception / chain quality. `qualityValid` separates "no data yet"
         // from a measured Unusable -- both were level 0, so the card painted
         // its own warm-up red (audit C6).
-        if s.basebandNoiseValid, s.hasSignal {
+        if s.basebandNoiseValid, s.hasSignal, telemetry.rfOverloadActive {
+            // The noise figure is a real measurement -- of the front end's
+            // clipping products, not of reception. Show the number, withhold
+            // the grade (validity invariant: no verdict without data for it).
+            put(\.qualityLevel, 0)
+            put(\.qualityValid, false)
+            put(\.qualityText, String(format: "RF Overload  %.2f kHz", s.basebandNoiseKHz))
+        } else if s.basebandNoiseValid, s.hasSignal {
             put(\.qualityLevel, s.signalQuality)
             put(\.qualityValid, true)
             put(\.qualityText, String(format: "%@  %.2f kHz",

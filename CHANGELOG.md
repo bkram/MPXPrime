@@ -11,6 +11,233 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Live real-music A/B + soak script (default-flip campaign, phase 4).**
+  New `ab-music-live.sh` (modeled on smoke-live.sh): runs the headless
+  encoder on TWO distinct BlackHole devices (player -> 2ch input at
+  48 kHz, composite -> 16ch output at 192 kHz; a shared device would feed
+  the composite back into the input, so that is a hard argument error),
+  alternates `advanced_dynamics_enabled` every window over the live PATCH
+  API while the operator plays music, and logs `/api/meters` -- including
+  the new leveler band gains/density -- at 2 Hz to CSV. Gated invariants:
+  zero capture xruns and ring overflows, Safety Clip idle, never over
+  budget, deviation inside the configured maximum, every AD toggle
+  reported applied-live with no xrun/clip spike within 2 s, and engine
+  uptime monotonic (a silent restart fails the run); `--soak <hours>`
+  loops the alternation and bounds RSS growth after a 10-minute warm-up.
+  A/B numbers stay informational (median deviation / GR per phase): live
+  audio is not sample-aligned -- `--verify-program-ab` owns precision.
+
+- **Real-music A/B verify mode + capture workflow (default-flip campaign,
+  phase 3).** New `--verify-program-ab <file-or-dir>` (macOS-only,
+  `Verification/ProgramABGate.swift`): decodes user-captured audio via
+  AVFoundation, renders each excerpt through a shipped Format Profile with
+  AGC+multiband (A) vs Advanced Dynamics (B), and measures both composites
+  with the Meter's measurement engine -- BS.412 MPX power, max/ave
+  deviation, pos/neg peaks, SM.1268 exceedance (validity-gated, "--" when
+  a window has not primed) -- plus decoded crest / >6 kHz crest / image /
+  band balance, the leveler's per-band gain range vs the AGC's max GR,
+  and a 0.5-4.5 Hz pumping index of the B/A envelope ratio. Identical
+  input per chain, so the deltas are deterministic regression material;
+  RDS stays off during the render (wall-clock text scheduler) with the
+  pilot on. `--ab-profile` picks the profile, `--ab-csv` exports rows,
+  `--seconds` caps the excerpt; report-only until `programABGatesArmed`
+  is calibrated on the corpus. The corpus comes from the user's own
+  BlackHole playback via the new `scripts/capture-program.sh` +
+  `scripts/CaptureToWav.swift` (compiled on demand; watchdogs the
+  AVAudioEngine silent-first-start bug). `ProgramABMetricsTests` covers
+  the pumping detector, crest/envelope helpers, and the decode path
+  round-tripped through `CanonicalWavWriter` -- headless, no audio checked
+  into the repo. Calibrated and ARMED the same day on a captured operator
+  corpus (3 x 60 s sessions, music_clean + music_loud): measured worst
+  case power +1.61 dBr / HF crest -0.9 / |corr| 0.06 / bands +2.8 /
+  pumping 3.82; bounds frozen above those (power 2.0, pumping 5.0 -- the
+  pumping index first aligns the chains' envelopes by SSE lag, because
+  the leveler's ~10 ms extra group delay would otherwise read a kick edge
+  as beat-rate wiggle, and it deliberately conflates leveling activity
+  with pumping: the bound catches runaways, listening judges character).
+  Both profiles exit 0 armed, at 30 s excerpts and full length.
+
+- **Advanced Dynamics hat-SINAD cost: measured out, hypotheses refuted,
+  flip decision escalated (default-flip campaign, phase 2c).**
+  `--verify-hf-transients` gained a curated Advanced Dynamics sweep
+  (canonical row, loudness-parity row at drive 4, best-tuning row at
+  drive 4 / top-band offset -6, and AD on each other shipped profile).
+  The sweep REFUTED every single-knob explanation of the known ~4 dB hat
+  cost vs plain music_loud: the -9 dB top-band offset (hat SINAD is
+  14.1-14.2 at offsets 0/-3/-6/-9 -- offset only trades ride SINAD
+  against 15-23 kHz spill), speed, the band-5 transient-acceleration
+  weight (zeroed: < 0.1 dB, tried and reverted like the 2.5 ms attack
+  floor before it), target -19, and the composite clipper (clipper OFF
+  reads WORSE, 12.8 dB -- the look-ahead limiter distorts the bursts
+  more). Loudness parity (drive 8 -> 4, matching AD's own +3.9 dB RMS)
+  recovers ~2 dB; the rest is intrinsic to leveling burst HF with the
+  current detector/smoother. Recorded in plan.md Step 2 #5; the AD row
+  stays ungated and the default flip is blocked on an explicit go/no-go
+  (deeper DSP work or a signed-off lower threshold, informed by the
+  real-music phases).
+
+- **Advanced Dynamics A/B gate hardened (default-flip campaign, phase 2).**
+  `--verify-advanced-dynamics` moved to its own
+  `Verification/AdvancedDynamicsGate.swift` (pure move) and grew teeth: the
+  neutral per-scenario quality expectations became real gates evaluated on
+  the leveler chain (image, RMS drift, occupied bandwidth), the
+  dead-since-landing `maxAbsRMSDelta` metric is printed and gated (loudness
+  parity vs the classic chain, 3.0 dB on dense program / 8.0 dB runaway
+  elsewhere), two failure-class scenarios were added (a quiet tone on the
+  mid/high crossover skirt -- the trajectory table now SHOWS the known
+  skirt double-lift, bands 3+4 at ~+8..10 dB on one tone, diagnostic until
+  band coupling lands -- and a solo bell with a natural decay), and the
+  gate reads the new `advancedDynamicsStatus` for per-band gain-trajectory
+  probes: travel, slew, beat-rate modulation (bands 3-5 above 1.0 dB at
+  the kick rate on bass_dense = audible pumping; calibrated at <= 0.02 dB)
+  plus a decoded decay-swell bound (2.0 dB; measured 0.11 -- the decay
+  guard holds through the full chain). The deep suite gained Advanced
+  Dynamics everywhere it was missing: a 12th pairwise column plus a 13th
+  row (which also closed two pre-existing coverage gaps the 11-flag array
+  claimed but never had: Widener x Mono on/on and Phase x Mono off/on,
+  found by enumeration), three counteract pairs (x composite clipper,
+  x BS.412, x pre-encode limiter), and an explicit
+  `advancedDynamicsEnabled = false` in the counteract base config so a
+  future default flip cannot silently change the fixtures. Found and fixed
+  along the way: the counteract "conspiracy-to-silence" check measured the
+  FIRST 21 ms of the render -- inside the startup latency of
+  high-group-delay stage combinations -- so Advanced Dynamics + pre-encode
+  limiter read as a phantom -78 dB mid-band "cancellation"; the band
+  energy is now measured at the render midpoint (steady state).
+
+- **Advanced Dynamics telemetry + honest AGC status (default-flip campaign,
+  phase 1).** New `advancedDynamicsStatus` on the generator (per-band gains
+  via an allocation-free tuple accessor, density, active flag) flows into
+  both engines' meters, `GET /api/meters`
+  (`advancedDynamicsActive`/`advancedDynamicsBandGainsDB`/
+  `advancedDynamicsDensityDB`, null while off), the GUI dashboard (the
+  Signal Chain AGC pill switches identity to "Adv Dyn" with density + five
+  band gains) and the web dashboard's Headroom card. `agcStatus` no longer
+  lies while the leveler owns the dynamics: it reports the AGC inactive
+  with neutral gain when Advanced Dynamics (or processing bypass) is on --
+  previously stale AGC telemetry kept displaying and being ingested while
+  the stage was bypassed. Bit-identical for AD-off configs (strict
+  baselines unchanged); pinned by three new status tests in
+  `AdvancedDynamicsTests`. Groundwork: `advanced_dynamics_*` is now pinned
+  explicitly (off) in `Verification.ini`, so the strict baselines are
+  decoupled from any later change to the AppConfig default.
+
+- **Meter: the decoded-audio monitor no longer clicks on every station
+  (0.45-cycle regression in the adaptive monitor read).** The audit P3 fix
+  put the monitor (and the MPX pass-through) on `readAdaptive` to absorb
+  producer/consumer clock drift -- but its 2048-frame target fill was sized
+  for a small-block producer, while the Meter's analysis thread writes
+  decoded audio in bursts of up to 8192 frames. The adaptive loop pinned the
+  AVERAGE fill at 2048, the instantaneous fill sawtoothed +/-4096 around it,
+  and the ring floor crossed zero on every burst cycle: a silence splice --
+  an audible click -- station-independent, while the air stayed clean (the
+  pre-adaptive plain read only clicked rarely, on accumulated drift). The
+  target/deadband are now sized against the producer burst (12288 +/- 3072:
+  worst-case floor ~27 ms of margin, ceiling well inside the ring), costing
+  ~64 ms of monitor latency, inaudible for listening/relay use. Found
+  live-debugging an operator report ("clicks in the Meter on all stations,
+  not on an FM receiver").
+
+- **Meter: optional monitor-ballistics deviation readout** (Modulation-card
+  "Monitor ballistics" checkbox; CLI `--monitor-dev` appends `MON live/max`
+  to the DEV line). Hardware modulation monitors derive deviation from an
+  RC-smoothed detector, so on densely processed program they read well below
+  the true peak -- a same-window bench comparison (2026-08-31) had a
+  reference monitor's max-hold at 65-66 kHz where the Meter's SM.1268 MAX
+  read 76, with the steady pilot agreeing exactly on both (the proof the
+  scales matched and only detector ballistics differed; a 0.5 ms sliding
+  mean of the identical capture reproduced the monitor within ~1.5 kHz).
+  The new readout is that detector -- `MonitorDeviationMeter` in
+  MPXPrimeCore, riding the same DC-tracked measurement-FIR path as the slot
+  ring so the two conventions share one scale, validity-gated with
+  `devScaleValid`, max-hold clearing with Reset Peaks -- shown ALONGSIDE
+  MAX, never instead of it: every compliance statistic (MAX, PEAK +/-,
+  >77 kHz, BS.412, the histogram) stays SM.1268-based. Test-pinned
+  (`MonitorDeviationMeterTests`: exact window-mean expectations on sines /
+  constant envelopes / impulses, hold + reset, the no-scale gate, and
+  integrating < true-peak through the full analysis). Documented in
+  manual-meter.md with the instrument-comparison guidance; on tones an
+  integrating detector genuinely under-reads (1 kHz sine ~0.64x), so expect
+  agreement on dense program, not on sines.
+
+- **GUI input-level guidance matched to the manual (and to how the AGC
+  actually behaves).** The Input Gain tooltip and the Help window's "Input
+  Levels" card recommended peaks at -6 to -3 dBFS while the manual says
+  -12 to -6 dBFS on busy program (nominal -12) -- so a correctly-staged
+  source read as "too low" in the GUI and invited needless input gain.
+  Field-verified 2026-08-31 on the 85.8 rig: peaks -10 to -8.8 dBFS had the
+  wideband AGC riding a steady +2.7 dB, dead center of its -9..+10 dB range
+  -- exactly right. Both GUI texts now say -12 to -6 (occasional peaks to
+  -3) and the tooltip explains the mid-range-AGC check.
+
+- **Meter: RF OVERLOAD detection -- a railing SDR front end can no longer
+  masquerade as bad reception.** A same-station bench A/B (2026-08-31,
+  NESDR SMArt v5 on a strong local) showed the "8-bit demod floor" the
+  earlier bench note blamed for SIGNAL QUALITY pinning at `Unusable` was in
+  fact front-end saturation: the auto tuner gain parks hot enough to rail
+  10-40% of the IQ samples, reading baseband noise 4.1 kHz where a
+  correctly-set manual gain reads **1.15 kHz / `Poor`** on the same station
+  (RDS at 0.0% block errors in both runs). The saturation share is measured
+  on the RAW capture samples BEFORE any decimation (raw bytes on the RTL
+  paths, the shared amplitude threshold on SDRplay floats -- a
+  post-decimation check goes blind at wide capture rates, where the
+  decimator's low-pass rounds clipped flat-tops off) and exported through a
+  new `mpxtuner_iq_overload()` C ABI entry, debounced by `RFOverloadGate` (MPXPrimeCore, test-pinned:
+  fires above 0.1% railed samples, holds 2 s), and surfaced as an amber
+  **RF OVERLOAD** badge on the Quality card; while it is up the SIGNAL
+  QUALITY grade is withheld (the noise figure stays -- it is a real
+  measurement, of the clipping products) per the 0.45 validity invariant.
+  manual-meter.md's quality caveat is rewritten around the real cause.
+
+- **`mpx-offline` -- the tuner's demod chain as an offline bench tool**
+  (`tuner/src/mpx_offline_main.cpp`, built by the tuner CMake alongside
+  `mpx-tuner`; needs only liquid-dsp, no SDR attached). Replays a recorded
+  packed-IQ capture -- or synthesizes an FM-modulated composite whose
+  pilot-to-RDS phase is exactly known -- through the shipped
+  FMDemod/ComplexDecimator/Resampler wiring, byte-identical input to both
+  demod paths, and writes int16 composite for `MPXPrimeMeter --stdin`. First
+  results (2026-08-31), all on one recorded capture of 105.9:
+  - **The pilot-to-RDS phase "chain dispersion" theory is refuted**: a
+    synthetic composite with known phase reads back within 1 degree at both
+    output rates, on both demod paths, with and without the channel filter
+    (injected 0 -> 0-1 deg, injected 30 -> 29 deg), and one recorded IQ
+    capture replayed to 192 and 256 kHz reads the identical angle. The
+    88-vs-76 deg spread in the earlier bench was reception (multipath between
+    captures) plus front-end effects, not the digital chain; the
+    manual-meter.md caveat now says so.
+  - **Packed vs complex demod path agree on identical IQ** to display
+    precision (the B12 same-IQ A/B the audit deferred).
+  - **The missing factor-1 channel filter's own effect is quantified**: RDS
+    +7%, MAX +3%, the >77 kHz share 2.7x on the same capture -- real, but
+    the larger term in the earlier bench table was auto-gain overload.
+
+- **`calibrate-tx.sh` -- closed-loop deviation calibration of Studio against
+  an off-air RTL-SDR measurement** (repo root; the scripted small version of
+  the plan's Studio<->Meter closed-loop trim). Reads the configured pilot
+  injection over the REST API, measures actual pilot deviation off air
+  (auto-finds the highest non-railing RF gain, refuses railed captures,
+  demodulates through `mpx-offline` with an explicit 200 kHz channel
+  filter), and trims `output_gain_db` until measured matches configured --
+  the pilot is constant-amplitude, so it calibrates with program on air.
+  Attenuation-only is respected: a transmitter that under-deviates at
+  digital full scale is reported as "raise the exciter's input sensitivity
+  by N dB" instead of being silently mis-labelled, and `--watch` prints a
+  fresh measurement every few seconds while that trimmer is turned.
+  `--tone` switches Studio to the built-in test tone (mono 997 Hz sine, the
+  0.45 calibration source) for the run and restores the program source on
+  exit -- program wobbles the pilot measurement ~+/-0.1 dB between passes,
+  with the tone repeat passes agree to a few hundredths of a dB.
+  Validated end-to-end on air (85.8 MHz, 2026-08-31): converged in two
+  passes from a 7.9 dB drive change, final state pilot 5.99 / RDS 2.95 /
+  74.4 kHz peaks on a 75 kHz system. Along the way it caught two real
+  deployment faults: the configured USB output device UID embeds the USB
+  port, so a re-plugged exciter feed silently fell back to the default
+  output device (composite on the speakers, silence on the carrier), and
+  the DAC/exciter path drooped the 57 kHz RDS subcarrier -2.3 dB relative
+  to the pilot (verified not to be the measurement chain: filter on/off
+  read within 0.4% on the same capture) -- compensated by raising
+  `rds_level` by the measured ratio, documented in the manual.
+
 - **Meter: replaying a recorded composite no longer destroys its own
   measurement.** The stdin/file reader had no back-pressure: a live pipe is
   paced by its writer, but a redirected file never blocks on read, so the

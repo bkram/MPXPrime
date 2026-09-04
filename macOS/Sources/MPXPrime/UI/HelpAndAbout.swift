@@ -106,7 +106,7 @@ struct HelpInputLevelsView: View {
                         Text("Normal Peaks")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("-6 to -3 dBFS")
+                        Text("-12 to -6 dBFS")
                             .font(.body.weight(.semibold))
                     }
                     Divider().frame(height: 28)
@@ -114,7 +114,7 @@ struct HelpInputLevelsView: View {
                         Text("Occasional Peaks")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("up to -2 dBFS")
+                        Text("up to -3 dBFS")
                             .font(.body.weight(.semibold))
                     }
                     Spacer()

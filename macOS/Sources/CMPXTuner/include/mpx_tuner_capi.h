@@ -128,6 +128,18 @@ double mpxtuner_system_gain_db(const MpxTuner *t);
 /// badge on it. Deliberate retune flushes are NOT counted.
 uint64_t mpxtuner_iq_drops(const MpxTuner *t);
 
+/// Share (0..1) of RAW IQ capture samples in the latest block that sat on the
+/// converter rails, measured BEFORE any decimation (raw bytes on the RTL
+/// paths, the shared amplitude threshold on SDRplay floats) -- a
+/// post-decimation check would be desensitized at wide capture rates, where
+/// the decimator's low-pass rounds the clipped flat-tops off. A railing
+/// front end inflates every level-derived reading with clipping products
+/// (baseband noise, signal quality, deviation peaks, RDS level), so the
+/// Meter raises an RF OVERLOAD warning while this is elevated. Bench
+/// 2026-08-31: an auto-gain capture of a strong local read baseband noise
+/// 4.1 kHz where a correctly-set manual gain read 1.15 kHz, same station.
+double mpxtuner_iq_overload(const MpxTuner *t);
+
 /// Active backend: 0 = RTL-SDR, 1 = SDRplay.
 int mpxtuner_backend(const MpxTuner *t);
 /// Number of selectable antenna inputs (1 = none / not applicable).

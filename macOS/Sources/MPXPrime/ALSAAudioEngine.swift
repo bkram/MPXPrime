@@ -209,6 +209,15 @@ private func applyRealtimeThreadPriority(_ priority: Int32) {
 /// Snapshot of the Linux engine's meters for the control API.
 struct ALSAMeterState {
     var agcGainDB: Float = 0
+    var advancedDynamicsActive = false
+    var advancedDynamicsDensityDB: Float = 0
+    // Per-band leveler gains, low to high; fixed scalars because this
+    // struct is written on the render thread (no arrays).
+    var adBandGain1DB: Float = 0
+    var adBandGain2DB: Float = 0
+    var adBandGain3DB: Float = 0
+    var adBandGain4DB: Float = 0
+    var adBandGain5DB: Float = 0
     var preEncodeGRDB: Float = 0
     var clipperGRDB: Float = 0
     var safetyGRDB: Float = 0
@@ -504,6 +513,14 @@ final class ALSAAudioEngine: @unchecked Sendable {
         let cal = generator.compositeCalibrationStatus
         var state = ALSAMeterState()
         state.agcGainDB = agc.gainDB
+        let advDyn = generator.advancedDynamicsStatus
+        state.advancedDynamicsActive = advDyn.enabled
+        state.advancedDynamicsDensityDB = advDyn.densityDB
+        state.adBandGain1DB = advDyn.bandGainsDB.0
+        state.adBandGain2DB = advDyn.bandGainsDB.1
+        state.adBandGain3DB = advDyn.bandGainsDB.2
+        state.adBandGain4DB = advDyn.bandGainsDB.3
+        state.adBandGain5DB = advDyn.bandGainsDB.4
         state.preEncodeGRDB = limiter.preEncodeGainReductionDB
         state.clipperGRDB = limiter.gainReductionDB
         state.safetyGRDB = limiter.safetyGainReductionDB

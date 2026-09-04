@@ -47,6 +47,9 @@ final class MeterTelemetry {
     /// "58.2 / 41.0" -- the AVE and MIN of the same trailing-second slot array
     /// MAX comes from. Shown under the deviation strips.
     var aveMinDevText = "--"
+    /// Monitor-ballistics (integrating) deviation readout; "--" until the
+    /// deviation scale is valid. Shown only when the option is on.
+    var monitorDevText = "--"
 
     // Modulation analysis: MPX power (BS.412), +/- peak-hold deviation, best
     // stereo separation. Text "--" when not yet valid.
@@ -164,6 +167,11 @@ final class MeterTelemetry {
     // still claims to run.
     var dropWarningText: String?
     var inputStalled = false
+    /// True while the SDR front end is clipping (railed IQ samples, held ~2 s
+    /// past the last hot block by `RFOverloadGate`): every level-derived
+    /// reading carries clipping products, so the dashboard warns and the
+    /// SIGNAL QUALITY grade steps aside instead of blaming reception.
+    var rfOverloadActive = false
     /// True while a signal is present but the decoder's pilot lock is too weak
     /// for stereo decode: the decoded L/R are M-only, so separation / balance /
     /// phase correlation are not measurements of the stereo image and the
@@ -184,6 +192,7 @@ final class MeterTelemetry {
         rdsNorm = 0; rdsText = "0.00"
         maxDevNorm = 0; maxDevText = "0.0"
         aveMinDevText = "--"
+        monitorDevText = "--"
         mpxPowerText = "--"; mpxPowerNorm = 0; mpxPowerDBr = -120; mpxPowerValid = false
         posPeakText = "0.0"; negPeakText = "0.0"; posPeakKHz = 0; negPeakKHz = 0
         exceedanceText = "--"; exceedancePct = 0; exceedanceValid = false
@@ -210,6 +219,7 @@ final class MeterTelemetry {
         audioSpectrumMaxHz = 20_000; audioSpectrumNyquistHz = 0
         dropWarningText = nil
         inputStalled = false
+        rfOverloadActive = false
         monoDecode = false
         correlationValid = false
         peakValid = false

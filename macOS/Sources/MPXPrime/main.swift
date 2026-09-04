@@ -55,6 +55,10 @@ struct CLIOptions {
     var verifyHFTransients: Bool = false
     var verifyStereoGuard: Bool = false
     var verifyFinalRide: Bool = false
+    var verifyProgramAB: Bool = false
+    var programABPath: String = ""
+    var programABProfile: String = "music_clean"
+    var programABCSV: String?
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
@@ -166,6 +170,24 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyFinalRide = true
             options.gui = false
+        case "--verify-program-ab":
+            if i + 1 < args.count {
+                options.verify = true
+                options.verifyProgramAB = true
+                options.programABPath = normalizeConfigPath(args[i + 1])
+                options.gui = false
+                i += 1
+            }
+        case "--ab-profile":
+            if i + 1 < args.count {
+                options.programABProfile = args[i + 1]
+                i += 1
+            }
+        case "--ab-csv":
+            if i + 1 < args.count {
+                options.programABCSV = normalizeConfigPath(args[i + 1])
+                i += 1
+            }
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -215,6 +237,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-hf-transients [--seconds 5]
           MPXPrime [--config <path>] --verify-stereo-guard [--seconds 5]
           MPXPrime [--config <path>] --verify-final-ride [--seconds 4]
+          MPXPrime --verify-program-ab <file-or-dir> [--ab-profile music_clean] [--ab-csv out.csv] [--seconds 30]
           MPXPrime --bench
           MPXPrime --bench-blocks
 
@@ -244,6 +267,14 @@ func printUsage() {
           --verify-final-ride  Attribute the Final-MPX limiter's duty: one composite-clipper candidate
                      switched off per row (pilot / RDS / stereo guard, oversampling, knee, look-ahead,
                      limiter, shaper) on a hot chain and on Music - Loud, every peak controller's duty printed
+          --verify-program-ab <file-or-dir>  Real-music A/B: render each audio file through the shipped
+                     Format Profile with AGC+multiband (A) vs Advanced Dynamics (B), measured with the
+                     Meter engine (BS.412 power, deviation, exceedance) plus decoded crest / image /
+                     band-balance / pumping deltas. macOS only (AVFoundation decode).
+                     --ab-profile <id>  Format Profile for both chains (default music_clean)
+                     --ab-csv <path>    Also write one CSV row per track x chain
+                     --seconds N        Excerpt length per track (default 30; excerpts cap at the
+                                        track length, so a large N measures full tracks)
           --bench-blocks  Only the block (buffer) size sweep: worst-block cost vs block duration,
                      I/O latency, bit-identity across sizes, device HAL buffer range (~15 s).
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
@@ -362,7 +393,7 @@ do {
         exit(0)
     }
     if options.verify {
-        let defaultDuration = options.verifyLong ? 30.0 : 5.0
+        let defaultDuration = (options.verifyLong || options.verifyProgramAB) ? 30.0 : 5.0
         let duration = max(1.0, options.runSeconds ?? defaultDuration)
         exit(
             try runVerificationHarness(
@@ -377,6 +408,10 @@ do {
                 hfTransientsComparison: options.verifyHFTransients,
                 stereoGuardSweep: options.verifyStereoGuard,
                 finalRideIsolation: options.verifyFinalRide,
+                programAB: options.verifyProgramAB,
+                programABPath: options.programABPath,
+                programABProfile: options.programABProfile,
+                programABCSV: options.programABCSV,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )

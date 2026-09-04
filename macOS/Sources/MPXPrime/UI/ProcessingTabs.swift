@@ -74,7 +74,7 @@ struct ProcessingCoreTab: View {
                     model.setInputGainLive($0)
                 }
             ), range: -24...24, format: "%.1f dB",
-            tooltip: "Pre-chain trim on the L/R input. Use to land your typical source peaks around -6 to -3 dBFS on the input meters. NOT the loudness knob — use AGC target + final drive + composite clipper drive for that.")
+            tooltip: "Pre-chain trim on the L/R input. Use to land your typical source peaks around -12 to -6 dBFS on the input meters -- the AGC normalizes from there (it reads mid-range, around +3 dB, when the staging is right). NOT the loudness knob -- use AGC target + final drive + composite clipper drive for that.")
             DoubleSliderRow(
                 title: model.processedAudioOutputActive ? "Output Level" : "MPX Output Level",
                 value: model.configBinding(\.outputGainDB, runtimeDisposition: .live),

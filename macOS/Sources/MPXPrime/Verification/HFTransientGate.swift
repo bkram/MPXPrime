@@ -382,8 +382,40 @@ func hfTransientChainVariants() -> [HFTransientChainVariant] {
                                 mutate: loudPlus { $0.preEncodeAudioLimiterEnabled = false }),
         HFTransientChainVariant(label: "music_loud + cancel_audio", gated: false,
                                 mutate: loudPlus { $0.compositeClipperCancelAudio = true }),
+        // Advanced Dynamics rows (default-flip campaign, plan.md Step 2 #5).
+        // The 2026-09-04 sweep refuted every single-knob hypothesis for the
+        // ~4 dB hat-SINAD cost vs plain music_loud: top-band offset
+        // (0/-3/-6/-9 all ~14.1), speed 0.5 (14.2), band-5 transient-accel
+        // weight (< 0.1 dB), target -19 (14.7), clipper OFF (12.8, WORSE).
+        // Matching drive recovers ~2 dB (loudness parity); offset -6 buys
+        // ride SINAD but spends 15-23 kHz spill (-32.6 vs the -34 gate).
+        // The kept rows are the canonical datum, the parity datum, the
+        // best-tuning datum, and AD on each other shipped profile.
         HFTransientChainVariant(label: "music_loud + advanced dynamics", gated: false,
                                 mutate: loudPlus { $0.advancedDynamicsEnabled = true }),
+        HFTransientChainVariant(label: "music_loud + AD drive 4 dB", gated: false,
+                                mutate: loudPlus {
+                                    $0.advancedDynamicsEnabled = true
+                                    $0.finalDriveDB = 4.0
+                                }),
+        HFTransientChainVariant(label: "music_loud + AD drv4 off-6", gated: false,
+                                mutate: loudPlus {
+                                    $0.advancedDynamicsEnabled = true
+                                    $0.finalDriveDB = 4.0
+                                    $0.advancedDynamicsHighOffsetDB = -6.0
+                                }),
+        HFTransientChainVariant(label: "music_clean + AD", gated: false) { c in
+            _ = PresetCatalog.applyFormatProfile(id: "music_clean", to: &c)
+            c.advancedDynamicsEnabled = true
+        },
+        HFTransientChainVariant(label: "speech + AD", gated: false) { c in
+            _ = PresetCatalog.applyFormatProfile(id: "speech", to: &c)
+            c.advancedDynamicsEnabled = true
+        },
+        HFTransientChainVariant(label: "classical_wide + AD", gated: false) { c in
+            _ = PresetCatalog.applyFormatProfile(id: "classical_wide", to: &c)
+            c.advancedDynamicsEnabled = true
+        },
         HFTransientChainVariant(label: "music_loud - safety soft clip", gated: false,
                                 mutate: loudPlus { $0.audioCompositeSoftClipEnabled = false })
     ]

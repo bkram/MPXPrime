@@ -566,6 +566,31 @@ struct RootMeterView: View {
                         + "peaky, lightly-processed signal; MAX close to AVE means "
                         + "a densely-processed one running near its ceiling "
                         + "continuously.")
+                if vm.monitorBallistics {
+                    Text("MONITOR  \(t.monitorDevText)")
+                        .font(BroadcastStyle.chipLabel)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .help("Integrating-detector deviation (0.5 ms window) -- "
+                            + "the display convention of hardware modulation "
+                            + "monitors, whose RC-smoothed detectors cannot see "
+                            + "the sub-millisecond peaks of dense processing. Use "
+                            + "it to compare against such an instrument's "
+                            + "deviation display; MAX above stays the calibrated "
+                            + "ITU-R SM.1268 true-peak figure, and all compliance "
+                            + "statistics derive from it, never from this readout. "
+                            + "On test tones an integrating detector genuinely "
+                            + "reads below true deviation -- expect agreement on "
+                            + "dense program, not on sines.")
+                }
+                Toggle("Monitor ballistics", isOn: $vm.monitorBallistics)
+                    .toggleStyle(.checkbox)
+                    .font(BroadcastStyle.chipLabel)
+                    .help("Add an integrating-detector deviation readout "
+                        + "(0.5 ms window) for comparing against hardware "
+                        + "modulation monitors. Does not change MAX or any "
+                        + "compliance statistic.")
                 }
                 .padding(6)
             }
@@ -593,6 +618,20 @@ struct RootMeterView: View {
                             .foregroundColor(BroadcastStyle.overRed)
                             .help(warning)
                             .accessibilityLabel(warning)
+                    }
+                    if t.rfOverloadActive {
+                        Text("RF OVERLOAD")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.tightAmber)
+                            .help("The tuner front end is clipping (IQ samples on the "
+                                + "converter rails). Lower the RF gain -- or stop "
+                                + "relying on auto gain, which parks too hot on strong "
+                                + "locals. While this shows, every level-derived "
+                                + "reading (baseband noise, signal quality, deviation "
+                                + "peaks, RDS level) is inflated by clipping products, "
+                                + "so the quality grade is withheld.")
+                            .accessibilityLabel("RF overload: front end clipping, "
+                                + "lower the RF gain; level readings unreliable")
                     }
                     if t.monoDecode {
                         Text("MONO DECODE")

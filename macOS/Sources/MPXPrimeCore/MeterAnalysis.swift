@@ -40,6 +40,15 @@ public struct MeterSnapshot {
     /// Highest deviation in the trailing 1 s window (max of 50 ms peak-hold
     /// slots, the SM.1268-5 sec 5 display convention / Pira "MAX" reading).
     public var maxDevKHz: Float = 0.0
+    /// Monitor-ballistics deviation (0.5 ms integrating detector,
+    /// `MonitorDeviationMeter`): the display convention of hardware
+    /// modulation monitors, shown alongside -- never instead of -- the
+    /// SM.1268 readouts. `monitorDevKHz` is the live block max of window
+    /// means; `monitorMaxDevKHz` holds until a peak reset.
+    public var monitorDevKHz: Float = 0.0
+    public var monitorMaxDevKHz: Float = 0.0
+    /// Same gate as `devScaleValid`: no kHz claim without a scale.
+    public var monitorDevValid = false
     /// Mean and lowest of the same trailing-1 s array of 50 ms peak-hold
     /// slots (the Pira "AVE" / "MIN" readings). AVE next to MAX says how hard
     /// the transmitter is driven on average, not just at its loudest instant;
@@ -280,6 +289,10 @@ public final class MeterAnalysis {
     private var decoder = MPXDecoder()
     private let rds: RDSSubcarrierDecoder
     private var snap = MeterSnapshot()
+    // Optional monitor-ballistics deviation readout (0.5 ms integrating
+    // detector); fed from the same measurement path as the slot ring so the
+    // two conventions differ ONLY in detector ballistics, never in scale.
+    private var monitorMeter: MonitorDeviationMeter
 
     // Deviation/MPX-power measurement path: sub-Hz DC tracker (SDR demod
     // carrier-offset DC otherwise adds to one deviation polarity and biases
@@ -475,6 +488,7 @@ public final class MeterAnalysis {
         // of an SDR carrier offset lands in the peak windows.
         dcTracker = DCTracker(cutoffHz: 5.0, sampleRate: sampleRate)
         decodeDC = DCTracker(cutoffHz: 2.0, sampleRate: sampleRate)
+        monitorMeter = MonitorDeviationMeter(sampleRate: sampleRate)
         // Clamp below Nyquist for low-rate captures (no RDS there anyway).
         let cutoff = min(60_000.0, 0.45 * sampleRate)
         let transition = min(8_000.0, 0.5 * sampleRate - cutoff - 1.0)
@@ -542,6 +556,7 @@ public final class MeterAnalysis {
     }
 
     private func resetPeakAccumulators() {
+        monitorMeter.resetPeaks()
         for i in posSlots.indices { posSlots[i] = 0.0 }
         for i in negSlots.indices { negSlots[i] = 0.0 }
         slotWrite = 0
@@ -616,6 +631,7 @@ public final class MeterAnalysis {
             dcTracker.reset()
             dcTracker.setCutoff(5.0, sampleRate: sampleRate)  // re-acquire
             measurementFIR.reset()
+            monitorMeter.reset()
             for i in devHistory.indices { devHistory[i] = 0.0 }
             for i in powerHistory.indices { powerHistory[i] = -30.0 }
             warmupRemaining = Int(sampleRate)  // ~1 s -- skip the relock transient
@@ -710,6 +726,8 @@ public final class MeterAnalysis {
 
             let m = measBlock[i]
             if !inWarmup {
+                // Monitor-ballistics detector rides the same measurement path.
+                monitorMeter.process(m)
                 // 50 ms peak-hold slot accumulation (feeds MAX DEV + PEAK +/-).
                 if m > curPos { curPos = m }
                 if m < curNeg { curNeg = m }
@@ -895,6 +913,19 @@ public final class MeterAnalysis {
         // One flag for "the kHz readouts mean something": without a scale a
         // deviation strip must read "--", not a confident 0.00 (audit C14).
         snap.devScaleValid = devScaleKHz != nil
+
+        // Monitor-ballistics deviation: same scale as everything above, so
+        // the two conventions differ only in detector, never in calibration.
+        let monitorLive = monitorMeter.takeBlockMax()
+        if let devScaleKHz {
+            snap.monitorDevKHz = monitorLive * devScaleKHz
+            snap.monitorMaxDevKHz = monitorMeter.maxHoldValue * devScaleKHz
+            snap.monitorDevValid = true
+        } else {
+            snap.monitorDevKHz = 0.0
+            snap.monitorMaxDevKHz = 0.0
+            snap.monitorDevValid = false
+        }
 
         // Carrier / DC offset and baseband noise, both in kHz of deviation.
         if let devScaleKHz {

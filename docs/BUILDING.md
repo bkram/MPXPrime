@@ -192,6 +192,7 @@ swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4         
 swift run --package-path macOS MPXPrime --verify-hf-transients --seconds 5         # hi-hat / cymbal distortion gate (per chain variant)
 swift run --package-path macOS MPXPrime --verify-stereo-guard --seconds 4          # composite clipper stereo-guard share sweep (duty / separation / SINAD table)
 swift run --package-path macOS MPXPrime --verify-final-ride --seconds 3            # Final-MPX limiter duty attribution (one clipper candidate off per row)
+macOS/.build/release/MPXPrime --verify-program-ab <file-or-dir> --seconds 30        # real-music A/B: AGC+multiband vs Advanced Dynamics on captured audio (macOS only; --ab-profile, --ab-csv; corpus via scripts/capture-program.sh)
 macOS/.build/release/MPXPrime --bench-blocks                                        # block (buffer) size sweep: worst-block cost, latency, bit-identity, device HAL range
 ./smoke-live.sh [--ini <path>]                                                      # LIVE engine smoke on a virtual output (BlackHole 2ch): device start, tone deviation vs expected, pilot, Safety Clip, xruns, live-apply + restart via REST
 ```

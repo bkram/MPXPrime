@@ -336,6 +336,78 @@ struct AdvancedDynamicsTests {
         }
     }
 
+    // The chain-level decay/trajectory/pumping gates live in
+    // --verify-advanced-dynamics (AdvancedDynamicsGate.swift); the unit
+    // suite covers the leveler in isolation.
+
+    @Test func statusReportsLevelerOwningTheDynamics() {
+        // With Advanced Dynamics ON the AGC is bypassed, so agcStatus must
+        // report it inactive with neutral gain (stale telemetry must never
+        // reach a meter), and advancedDynamicsStatus must be live with
+        // band gains that actually move on program.
+        var config = AppConfig()
+        config.sampleRate = 192_000.0
+        config.sourceMode = "input"
+        config.advancedDynamicsEnabled = true
+        config.widebandAGCEnabled = true
+
+        let generator = MPXGenerator(config: config, sampleRate: 192_000.0)
+        for i in 0..<96_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.7 * sinf(2.0 * Float.pi * 300.0 * t)
+                + 0.3 * sinf(2.0 * Float.pi * 4_000.0 * t)
+            _ = generator.renderSingleSample(leftIn: l, rightIn: l * 0.9)
+        }
+        let agc = generator.agcStatus
+        #expect(agc.enabled == false)
+        #expect(agc.gainDB == 0.0)
+        #expect(agc.gateActive == false)
+        let advDyn = generator.advancedDynamicsStatus
+        #expect(advDyn.enabled)
+        let gains = [advDyn.bandGainsDB.0, advDyn.bandGainsDB.1, advDyn.bandGainsDB.2,
+                     advDyn.bandGainsDB.3, advDyn.bandGainsDB.4]
+        #expect(gains.allSatisfy { $0.isFinite })
+        #expect(gains.contains { fabsf($0) > 0.1 })
+    }
+
+    @Test func statusIsNeutralWhenDisabled() {
+        var config = AppConfig()
+        config.sampleRate = 192_000.0
+        config.sourceMode = "input"
+        config.advancedDynamicsEnabled = false
+        config.widebandAGCEnabled = true
+
+        let generator = MPXGenerator(config: config, sampleRate: 192_000.0)
+        for i in 0..<24_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.6 * sinf(2.0 * Float.pi * 500.0 * t)
+            _ = generator.renderSingleSample(leftIn: l, rightIn: l)
+        }
+        #expect(generator.agcStatus.enabled)
+        let advDyn = generator.advancedDynamicsStatus
+        #expect(advDyn.enabled == false)
+        #expect(advDyn.bandGainsDB == (0, 0, 0, 0, 0))
+        #expect(advDyn.densityDB == 0.0)
+    }
+
+    @Test func processingBypassDisablesBothStatuses() {
+        var config = AppConfig()
+        config.sampleRate = 192_000.0
+        config.sourceMode = "input"
+        config.advancedDynamicsEnabled = true
+        config.widebandAGCEnabled = true
+        config.processingBypass = true
+
+        let generator = MPXGenerator(config: config, sampleRate: 192_000.0)
+        for i in 0..<24_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.6 * sinf(2.0 * Float.pi * 500.0 * t)
+            _ = generator.renderSingleSample(leftIn: l, rightIn: l)
+        }
+        #expect(generator.agcStatus.enabled == false)
+        #expect(generator.advancedDynamicsStatus.enabled == false)
+    }
+
     @Test func enabledChainRendersFiniteBoundedComposite() {
         var config = AppConfig()
         config.sampleRate = 192_000.0

@@ -82,6 +82,12 @@ private func printUsage() {
                          Korea). Affects the monitor, the WAV recording and the
                          decoded levels only -- deviation, pilot, RDS and MPX
                          power are measured ahead of it.
+      --monitor-dev      Append a monitor-ballistics deviation figure (0.5 ms
+                         integrating detector, live/max) to the DEV line --
+                         the display convention of hardware modulation
+                         monitors, for number-to-number comparison against
+                         one. MAX stays the ITU-R SM.1268 true peak and all
+                         compliance statistics derive from it.
       --help             Show this help.
 
     Feed the station composite (tuner MPX out / SDR demod / loopback) to one
@@ -199,13 +205,20 @@ private func dashboard(
         // RDS phase (EN 50067 sec 1.2) rides the deviation line: it belongs
         // with the subcarrier's injection level, and the panel's line count
         // must stay constant for the in-place ANSI refresh.
-        String(format: "DEV    PILOT %.2f   RDS %.2f   MAX %5.1f kHz   PHASE %@   (%@)",
+        String(format: "DEV    PILOT %.2f   RDS %.2f   MAX %5.1f kHz   PHASE %@   (%@)%@",
                s.pilotDevKHz, s.rdsDevKHz, s.maxDevKHz,
                s.pilotRDSPhaseValid
                    ? String(format: "%2.0f deg %@", s.pilotRDSPhaseDeg,
                             s.pilotRDSPhase.label)
                    : "--",
-               calLabel),
+               calLabel,
+               // Optional monitor-ballistics figure, appended so the panel's
+               // line count stays constant for the in-place ANSI refresh.
+               showMonitorDev
+                   ? (s.monitorDevValid
+                       ? String(format: "   MON %.1f/%.1f", s.monitorDevKHz, s.monitorMaxDevKHz)
+                       : "   MON --")
+                   : ""),
         // Modulation compliance: BS.412 sliding-60s MPX power (+ worst window
         // since start), 60 s +/- deviation peaks, SM.1268-5 >77 kHz share.
         String(format: "MOD    MPX %@ dBr (max %@)   PK %+.1f/%+.1f kHz   >77k %@",
@@ -525,8 +538,13 @@ private func runGUI(sdrFreqMHz: Double?) -> Int32 {
 private let liveFlags = [
     "--device", "--channel", "--seconds", "--no-monitor",
     "--monitor-device", "--monitor-gain", "--wav", "--pilot-ref-khz",
-    "--full-scale-khz", "--deemphasis"
+    "--full-scale-khz", "--deemphasis", "--monitor-dev"
 ]
+
+/// `--monitor-dev`: show the monitor-ballistics deviation on the DEV line.
+/// Written exactly once at startup, before any capture thread or panel
+/// rendering exists -- hence the unsafe opt-out is sound.
+nonisolated(unsafe) var showMonitorDev = false
 
 /// `--deemphasis <50|75>`: receiver de-emphasis time constant for the decode
 /// path. Anything other than 75 means the 50 us default.
@@ -536,6 +554,7 @@ private func parseDeemphasisUS(_ args: [String]) -> Int {
 
 let args = CommandLine.arguments
 let userArgs = Array(args.dropFirst())
+showMonitorDev = args.contains("--monitor-dev")
 let exitCode: Int32
 if args.contains("--help") || args.contains("-h") {
     printUsage()

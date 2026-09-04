@@ -137,6 +137,15 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         return mpxtuner_iq_drops(handle)
     }
 
+    /// Share (0..1) of IQ samples in the tuner's latest demodulated block that
+    /// sat on the converter rails. Elevated = the front end is clipping and
+    /// every level-derived reading carries clipping products; the view model
+    /// feeds it through `RFOverloadGate` into the RF OVERLOAD badge.
+    var iqOverloadRatio: Double {
+        guard let handle else { return 0 }
+        return mpxtuner_iq_overload(handle)
+    }
+
     /// IQ capture rate actually in use (Hz) -- may differ from the requested
     /// one if the device refused it. This is the RF spectrum's total span.
     var captureRateHz: Int {

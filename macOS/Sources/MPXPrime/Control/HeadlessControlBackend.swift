@@ -445,6 +445,12 @@ extension AudioOutputEngine: ControlledEngine {
             outputPeak: m.outputPeak,
             deviationKHzPeak: m.deviationKHzPeak,
             agcGainDB: m.agcGainDB,
+            advancedDynamicsActive: m.advancedDynamicsActive,
+            advancedDynamicsBandGainsDB: m.advancedDynamicsActive
+                ? [m.adBandGain1DB, m.adBandGain2DB, m.adBandGain3DB,
+                   m.adBandGain4DB, m.adBandGain5DB] : nil,
+            advancedDynamicsDensityDB: m.advancedDynamicsActive
+                ? m.advancedDynamicsDensityDB : nil,
             compositeClipperGainReductionDB: m.compositeClipperGainReductionDB,
             preEncodeLimiterGainReductionDB: m.preEncodeAudioLimiterGainReductionDB,
             safetyLimiterGainReductionDB: m.mpxSafetyLimiterGainReductionDB,
@@ -481,6 +487,12 @@ extension ALSAAudioEngine: ControlledEngine {
             outputPeak: peaks.output,
             deviationKHzPeak: state.deviationKHzPeak,
             agcGainDB: state.agcGainDB,
+            advancedDynamicsActive: state.advancedDynamicsActive,
+            advancedDynamicsBandGainsDB: state.advancedDynamicsActive
+                ? [state.adBandGain1DB, state.adBandGain2DB, state.adBandGain3DB,
+                   state.adBandGain4DB, state.adBandGain5DB] : nil,
+            advancedDynamicsDensityDB: state.advancedDynamicsActive
+                ? state.advancedDynamicsDensityDB : nil,
             compositeClipperGainReductionDB: state.clipperGRDB,
             preEncodeLimiterGainReductionDB: state.preEncodeGRDB,
             safetyLimiterGainReductionDB: state.safetyGRDB,

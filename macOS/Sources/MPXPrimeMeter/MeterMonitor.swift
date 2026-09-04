@@ -14,11 +14,21 @@ import MPXPrimeCore
 /// have exactly one producer and one consumer.
 final class MeterMonitor: @unchecked Sendable {
     // Target ring fill the adaptive read holds, and the deadband inside which
-    // it does not trim. ~10 ms / ~2.5 ms at 192 kHz: enough to absorb a
-    // scheduling hiccup, small enough that the added monitor latency is
-    // inaudible.
-    private static let adaptiveTargetFrames = 2048
-    private static let adaptiveDeadbandFrames = 512
+    // it does not trim. These MUST be sized against the PRODUCER'S BURST, not
+    // against the output callback: the analysis thread writes decoded audio
+    // in blocks of up to `MeterAudioEngine.blockFrames` (8192) frames, so the
+    // instantaneous fill sawtooths ~+/-4096 around whatever average the
+    // adaptive loop pins. The original 2048-frame target sat BELOW that swing,
+    // so the loop dutifully dragged the sawtooth's floor through zero and the
+    // monitor clicked on every burst cycle -- on ALL stations, while the air
+    // was clean (found 2026-08-31; the pre-adaptive plain read only clicked
+    // rarely, on accumulated clock drift, which is why the monitor "used to
+    // sound high-end"). 12288 +/- 3072 keeps the worst-case floor at
+    // 12288 - 3072 - 4096 = 5120 frames (~27 ms of scheduling margin) and the
+    // ceiling well inside the 32768-frame ring. The added ~64 ms of monitor /
+    // pass-through latency is irrelevant for listening and relay use.
+    private static let adaptiveTargetFrames = 12288
+    private static let adaptiveDeadbandFrames = 3072
 
     private let engine = AVAudioEngine()
     private let ring: StereoInputRingBuffer

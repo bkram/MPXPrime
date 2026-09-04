@@ -54,6 +54,13 @@ struct ControlMeters: Codable, Sendable {
     var outputPeak: Float?
     var deviationKHzPeak: Float?
     var agcGainDB: Float?
+    /// Advanced Dynamics leveler telemetry. All nil while the stage is off
+    /// (agcGainDB is the dynamics readout then); when active, agcGainDB
+    /// reads 0 because the leveler REPLACES the AGC.
+    var advancedDynamicsActive: Bool?
+    /// Per-band leveler gains in dB, low to high (5 bands).
+    var advancedDynamicsBandGainsDB: [Float]?
+    var advancedDynamicsDensityDB: Float?
     var compositeClipperGainReductionDB: Float?
     var preEncodeLimiterGainReductionDB: Float?
     var safetyLimiterGainReductionDB: Float?

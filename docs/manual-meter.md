@@ -66,6 +66,13 @@ PEAK +/- and MPX POWER all read `--` instead of 0.00. Changing the calibration
 resets the accumulated readings, because they were measured against the old
 scale.
 
+An amber **RF OVERLOAD** badge (SDR input) means the tuner front end is
+clipping -- IQ samples are sitting on the converter rails. Every
+level-derived reading (baseband noise, signal quality, deviation peaks, RDS
+level) is inflated by clipping products while it shows, and the SIGNAL
+QUALITY grade is withheld. Lower the RF gain until it clears; see "Signal
+quality and RF overload on an RTL-SDR" below.
+
 An amber **MONO DECODE** badge means a signal is present but the 19 kHz pilot
 is too weak to recover the stereo subcarrier, so the decoded audio is mono
 (M only) -- as it also is on a genuinely mono station. Deviation, pilot level
@@ -227,6 +234,16 @@ remembered by device UID):
   second of 50 ms slots MAX is drawn from. MAX far above AVE is a peaky,
   lightly-processed signal; MAX close to AVE is a dense one running near its
   ceiling continuously.
+  The **Monitor ballistics** checkbox below them adds a **MONITOR** readout
+  (live and max-hold, clearing with Reset Peaks): the same measurement path
+  through a 0.5 ms integrating detector -- the display convention of
+  hardware modulation monitors, for comparing number-to-number against such
+  an instrument (see "Expect the MAX readouts to diverge" under the SFP-X
+  validation section for why they differ and which figure is the compliance
+  one). On test tones an integrating detector genuinely reads below the true
+  deviation (a 1 kHz sine reads ~0.64x); expect agreement on dense program,
+  not on sines. The headless CLI shows the same figure with `--monitor-dev`
+  (appended to the `DEV` line as `MON live/max`).
 - **Quality** (second row, beside the vectorscope): **SIGNAL QUALITY** rates
   reception on a 5-step scale from Unusable to Excellent, with the figure it
   is derived from -- how much energy sits *above* the modulated baseband
@@ -320,6 +337,14 @@ remembered by device UID):
   decimator was also lengthened from 48 to 128 taps, so its passband stays
   flat past +/-105 kHz instead of reaching into the +/-90 kHz an FM signal
   occupies.)
+
+  A same-capture follow-up (one recorded IQ file replayed through both
+  configurations with `mpx-offline`) put numbers on the two causes separately:
+  the missing channel filter alone accounts for a moderate inflation (RDS
+  +7%, MAX +3%, the >77 kHz share 2.7x), while the rest of the table's gap
+  came from **front-end overload** -- the auto tuner gain parks hot on a
+  strong local and rails a large share of the IQ samples. Watch the **RF
+  OVERLOAD** badge (below) and prefer a manual gain on strong signals.
 - **RDS**: PI / PTY (code + name) / PTYN / ECC / PS / RT / RT+ / Long PS / CT /
   AF / group histogram and live block-error rate. **Groups** shows each type's
   count *and its share* of the stream; **Order** shows the last 18 groups in
@@ -388,18 +413,22 @@ far from both conventions) is the worst case. A reading that will not settle
 usually means the RDS generator is free-running rather than locked to the
 pilot at all.
 
-One more caveat specific to the SDR input, measured on an RTL-SDR against two
-strong local stations (2026-08-31): the same station read **88 deg** through
-the 192 kHz output path and **76 deg** through the 256 kHz one. A pure delay
-cancels exactly in this measurement (the 57 kHz phase and 3x the 19 kHz pilot
-phase both accumulate 2*pi*57k*tau), so a difference of that size is phase
-DISPERSION between 19 and 57 kHz somewhere in the tuner chain, not a change at
-the transmitter. Until that is characterized, treat the absolute angle on an
-SDR input as carrying roughly +/-10 degrees of chain uncertainty -- the same
-order as the spec window. What survives it is the *category*: a station
-sitting near neither convention is genuinely out of spec (88.6 read 47 deg on
-the same run, far from both 0 and 90, with 0.0% RDS block errors), and a
-station reading near 0 or 90 is locked.
+One more caveat specific to off-air reception. An earlier bench note blamed
+the tuner chain for a rate-dependent angle (88 deg at one output rate, 76 at
+the other, different captures); a follow-up characterization (2026-08-31,
+`mpx-offline`) exonerated the digital chain: a synthetic composite with an
+exactly-known phase FM-modulated through the shipped demod reads back within
+1 degree at both output rates, on both demod paths, with and without the
+channel filter -- and ONE recorded IQ capture replayed to both output rates
+reads the identical angle. What actually moved between those live captures
+was the signal: multipath rotates the 19 and 57 kHz components differently
+and changes between captures, and the analog front end can add its own small
+term. So on any off-air path, expect the absolute angle to wander a few
+degrees between measurements on reception alone -- judge it from a steady
+reading on a good signal, and trust the *category* most: a station sitting
+near neither convention is genuinely out of spec (88.6 read 47 deg, far from
+both 0 and 90, with 0.0% RDS block errors), and a station reading near 0 or
+90 is locked.
 
 Two caveats when judging a transmitter by this number. The standard specifies
 the tolerance **at the transmitter's MPX input**, whereas the Meter measures
@@ -501,20 +530,32 @@ to compare two settings on identical material. Give it enough material for the
 statistics you care about: MPX POWER max and the OVER 77 kHz figure need a
 full 60 s.
 
-### Signal quality on an RTL-SDR
+### Signal quality and RF overload on an RTL-SDR
 
-**SIGNAL QUALITY reads pessimistically on an RTL-SDR** and can sit at
-`Unusable` while everything else on the panel is perfect. The figure it is
-derived from is the energy above 60 kHz, and an 8-bit dongle's own demod noise
-floor puts about 4-5 kHz of deviation-equivalent there regardless of the
-station: two different strong locals measured 4.12 kHz each through the
-192 kHz path (and 5.26 kHz through the 256 kHz one, where the noise band is
-wider -- i.e. it is a broadband floor, not station noise). Both decoded RDS at
-0.0% and 2.9% block errors respectively. The scale's thresholds are calibrated
-for a clean receive path, so on an RTL treat it as a *relative* indicator
-between antenna positions on the same dongle, and judge absolute reception by
-RDS BER and the deviation readings instead. An SDRplay RSP (14-bit) does not
-have this floor.
+An earlier bench note read a 4-5 kHz baseband-noise floor on every strong
+local and blamed the dongle's 8-bit demodulator; a same-station A/B
+(2026-08-31) showed that floor is **front-end overload, not a converter
+limit**: with the auto tuner gain (which parks hot on strong locals, railing
+10-40% of the IQ samples) the station measured baseband noise 4.1 kHz and
+SIGNAL QUALITY `Unusable` -- with a correctly-set manual gain the same
+station on the same dongle read **1.15 kHz** and `Poor`, while RDS decoded at
+0.0% block errors in both runs.
+
+The Meter now detects this: when the tuner reports IQ samples on the
+converter rails, the Quality card raises an amber **RF OVERLOAD** badge, and
+the SIGNAL QUALITY grade is withheld (the noise figure stays visible -- it is
+a real measurement, but of the front end's clipping products, not of
+reception). While the badge is up, treat every level-derived reading (noise,
+quality, deviation peaks, RDS level) as inflated. The fix is RF gain: set a
+manual gain and lower it until the badge clears -- the highest gain that
+stays clear gives the best noise floor. If it rails even at minimum gain, the
+antenna is delivering too much signal (a transmitter in the same room);
+attenuate or de-tune the antenna.
+
+Even unclipped, an 8-bit dongle's scale is tighter than a 14-bit SDRplay's:
+on an RTL still treat SIGNAL QUALITY as a relative indicator between antenna
+positions, and judge absolute reception by RDS BER and the deviation
+readings.
 
 ## Calibration and measurement validity
 
@@ -583,3 +624,27 @@ moment**: deviation peaks are program-dependent, and a weaker reception path
 (multipath) inflates them. (The Studio encoder's transmit-side output was
 separately validated on the same SFP-X -- see the
 [Studio manual](manual.md#reference-receiver-validation-profline-sfp-x).)
+
+**Expect the MAX readouts to diverge on densely processed program -- that is
+detector ballistics, not a broken instrument.** A same-window comparison on a
+tightly limited composite (2026-08-31: identical 120 s judged by both
+instruments) read MAX 76 kHz here against 65-66 on the SFP-X's max-hold,
+while the PILOT figures agreed exactly -- the giveaway, because the pilot is
+a steady tone and every detector reads CW identically regardless of attack
+time. Modelling detectors on the same captured composite reproduced both
+numbers: the Meter's MAX is the SM.1268 convention (true peak within 50 ms
+windows through the 60 kHz linear-phase measurement filter), whereas the
+SFP-X's max-hold behaves like a ~0.5 ms integrating detector (64.0 kHz
+computed from the identical capture) and its live deviation display like a
+2-5 ms one -- the classic behavior of a hardware monitor that derives
+deviation from a rectified, RC-smoothed detector level rather than from the
+sample stream. An integrating detector smooths away the sub-millisecond peak
+structure that dense clipping creates, so the softer the processing, the
+closer the two conventions sit (the 2026-07-07 side-by-side, on a softer
+chain, agreed within 1-2 kHz). For occupied-deviation / compliance questions
+the SM.1268 true-peak figure is the one to quote -- trimming a transmitter
+up until an integrating meter shows 75 kHz puts the true peaks well above
+it. To read the monitor convention directly, enable **Monitor ballistics**
+on the Modulation card (or `--monitor-dev` on the CLI): the same
+measurement through the 0.5 ms integrating detector, shown alongside --
+never instead of -- MAX.

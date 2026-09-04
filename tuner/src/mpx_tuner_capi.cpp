@@ -7,6 +7,8 @@
 
 #include "mpx_tuner_capi.h"
 
+#include "dsp/iq_saturation.h"
+
 #include "dsp/liquid_primitives.h"
 #include "fm_demod.h"
 #include "rtl_sdr_device.h"
@@ -94,6 +96,16 @@ struct MpxTuner {
   std::atomic<bool> running{false};
   std::atomic<bool> alive{false};
   std::atomic<double> signalDbfs{-120.0};
+  // Share of RAW IQ samples in the latest capture block that sat on the
+  // converter rails, measured BEFORE any decimation (raw bytes on the RTL
+  // paths, the shared amplitude threshold on SDRplay floats) -- the wide
+  // path's decimating low-pass rounds clipped flat-tops off, so a
+  // post-decimation check goes blind exactly when the capture is wide. The
+  // Meter reads it through mpxtuner_iq_overload() to warn that a railing
+  // front end inflates every level-derived reading -- measured 2026-08-31: an
+  // auto-gain capture of a strong local read baseband noise 4.1 kHz where a
+  // correctly-set manual gain read 1.15 kHz on the same station.
+  std::atomic<float> iqOverload{0.0f};
 
   std::mutex cmdMutex;
   std::vector<Cmd> cmds;
@@ -256,9 +268,20 @@ struct MpxTuner {
         break;
       }
       size_t n = 0;       // demod-rate sample count
+      // Share of RAW capture samples on the converter rails, this block.
+      // Measured before any decimation: the wide path's 70 dB Kaiser
+      // low-pass rounds clipped flat-tops off, so a post-decimation check
+      // (the demod's own) is desensitized exactly when the capture is wide
+      // -- the case the RF OVERLOAD warning exists for.
+      float overloadShare = 0.0f;
       if (sp) {
         const size_t got = sdrplay.readIQ(iqWide.data(), kBlock);
         if (got == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue; }
+        size_t railed = 0;
+        for (size_t k = 0; k < got; k++) {
+          if (fm_tuner::dsp::isIqSampleSaturated(iqWide[k].real(), iqWide[k].imag())) railed++;
+        }
+        overloadShare = static_cast<float>(railed) / static_cast<float>(got);
         feedSpectrum(iqWide.data(), got);
         n = iqDecim.executeComplexIn(iqWide.data(), got, iqNarrow.data(), iqNarrow.size());
         if (n == 0) continue;
@@ -280,14 +303,22 @@ struct MpxTuner {
           feedSpectrum(iqWide.data(), got);
           n = got;
           demod->processSplit(iq.data(), mpx.data(), nullptr, n);
+          // Factor 1: the demod's own detector already counts the raw bytes.
+          overloadShare = demod->getClippingRatio();
         } else {
           // Wide capture: unpack once and reuse for both the spectrum and the
           // decimation (the packed-uint8 decimator would unpack a second time).
+          size_t railed = 0;
           for (size_t k = 0; k < got; k++) {
+            if (fm_tuner::dsp::isRtlSdrIqByteSaturated(iq[k * 2]) ||
+                fm_tuner::dsp::isRtlSdrIqByteSaturated(iq[k * 2 + 1])) {
+              railed++;
+            }
             iqWide[k] = std::complex<float>(
                 (static_cast<float>(iq[k * 2]) - 127.5f) / 127.5f,
                 (static_cast<float>(iq[k * 2 + 1]) - 127.5f) / 127.5f);
           }
+          overloadShare = static_cast<float>(railed) / static_cast<float>(got);
           feedSpectrum(iqWide.data(), got);
           n = iqDecim.executeComplexIn(iqWide.data(), got, iqNarrow.data(), iqNarrow.size());
           if (n == 0) continue;
@@ -295,6 +326,7 @@ struct MpxTuner {
         }
       }
       signalDbfs.store(demod->getFilteredChannelPowerDbfs(), std::memory_order_relaxed);
+      iqOverload.store(overloadShare, std::memory_order_relaxed);
       out.clear();
       for (size_t i = 0; i < n; i++) {
         const std::uint32_t produced = resampler.execute(mpx[i] * mpxGain, tmp);
@@ -569,6 +601,11 @@ uint64_t mpxtuner_iq_drops(const MpxTuner *t) {
   if (!t) return 0;
   if (t->backend == BackendSDRplay) return t->sdrplay.droppedIQSamples();
   return t->rtl.droppedIQSamples();
+}
+
+double mpxtuner_iq_overload(const MpxTuner *t) {
+  if (!t) return 0.0;
+  return static_cast<double>(t->iqOverload.load(std::memory_order_relaxed));
 }
 
 int mpxtuner_backend(const MpxTuner *t) {

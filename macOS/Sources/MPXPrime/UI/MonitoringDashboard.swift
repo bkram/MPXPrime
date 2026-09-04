@@ -241,7 +241,7 @@ struct MonitoringDashboardView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                 Spacer()
-                Text("Adjust source level so peaks sit between -6 and -3 dBFS")
+                Text("Adjust source level so peaks sit between -12 and -6 dBFS")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -384,7 +384,12 @@ struct MonitoringDashboardView: View {
             VStack(alignment: .leading, spacing: 12) {
                 LiveObservationView(telemetry: model.telemetry) { _ in
                     FlowStatusRow(items: [
-                        ("AGC", agcPillText, agcDotColor),
+                        // Advanced Dynamics REPLACES the AGC, so the pill
+                        // switches identity rather than showing a bypassed
+                        // AGC next to the stage that owns the dynamics.
+                        model.advancedDynamicsActive
+                            ? ("Adv Dyn", advDynPillText, .green)
+                            : ("AGC", agcPillText, agcDotColor),
                         ("Stereo", stereoPillText, .secondary.opacity(0.75)),
                         ("Pre-Lim GR", preLimText, preLimDotColor)
                     ])
@@ -500,6 +505,14 @@ struct MonitoringDashboardView: View {
         case "gate": return .orange
         default: return .green
         }
+    }
+
+    private var advDynPillText: String {
+        // Density + per-band gains on one line, parsed from
+        // `advancedDynamicsDetailText` ("Density X dB • Gain a/b/c/d/e dB").
+        let density = parseDetail(model.advancedDynamicsDetailText, key: "Density") ?? "—"
+        let gains = parseDetail(model.advancedDynamicsDetailText, key: "Gain") ?? "—"
+        return "\(density) → \(gains)"
     }
 
     private var stereoPillText: String {

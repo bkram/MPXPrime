@@ -314,6 +314,8 @@ final class MPXPrimeViewModel: ObservableObject {
     var stereoImageText: String { get { telemetry.stereoImageText } set { telemetry.stereoImageText = newValue } }
     var agcStateText: String { get { telemetry.agcStateText } set { telemetry.agcStateText = newValue } }
     var agcDetailText: String { get { telemetry.agcDetailText } set { telemetry.agcDetailText = newValue } }
+    var advancedDynamicsActive: Bool { get { telemetry.advancedDynamicsActive } set { telemetry.advancedDynamicsActive = newValue } }
+    var advancedDynamicsDetailText: String { get { telemetry.advancedDynamicsDetailText } set { telemetry.advancedDynamicsDetailText = newValue } }
     var multibandStateText: String { get { telemetry.multibandStateText } set { telemetry.multibandStateText = newValue } }
     var primeBassStateText: String { get { telemetry.primeBassStateText } set { telemetry.primeBassStateText = newValue } }
     var widenerStateText: String { get { telemetry.widenerStateText } set { telemetry.widenerStateText = newValue } }
@@ -1959,6 +1961,9 @@ final class MPXPrimeViewModel: ObservableObject {
         var agcDetectorDB: Float = -120.0
         var agcGainDB: Float = 0.0
         var agcGateActive: Bool = false
+        var advDynActive = false
+        var advDynDensityDB: Float = 0.0
+        var advDynBandGainsDB: (Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0)
         var compositeClipperGainReductionDB: Float = 0.0
         var compositeClipperLookaheadGainReductionDB: Float = 0.0
         var preEncodeAudioLimiterGainReductionDB: Float = 0.0
@@ -2095,6 +2100,11 @@ final class MPXPrimeViewModel: ObservableObject {
             agcDetectorDB = meters.agcDetectorDB
             agcGainDB = meters.agcGainDB
             agcGateActive = meters.agcGateActive
+            advDynActive = meters.advancedDynamicsActive
+            advDynDensityDB = meters.advancedDynamicsDensityDB
+            advDynBandGainsDB = (meters.adBandGain1DB, meters.adBandGain2DB,
+                                 meters.adBandGain3DB, meters.adBandGain4DB,
+                                 meters.adBandGain5DB)
             compositeClipperGainReductionDB = meters.compositeClipperGainReductionDB
             compositeClipperLookaheadGainReductionDB = meters.compositeClipperLookaheadGainReductionDB
             preEncodeAudioLimiterGainReductionDB = meters.preEncodeAudioLimiterGainReductionDB
@@ -2337,7 +2347,7 @@ final class MPXPrimeViewModel: ObservableObject {
             outputSideToMidRatio
         ))
         let agcState: String
-        if config.widebandAGCEnabled && !processingBypass {
+        if config.widebandAGCEnabled && !config.advancedDynamicsEnabled && !processingBypass {
             agcState = agcGateActive ? "Gate" : "On"
         } else {
             agcState = "Off"
@@ -2348,6 +2358,15 @@ final class MPXPrimeViewModel: ObservableObject {
             agcDetectorDB,
             agcGainDB
         ) + (agcGateActive ? " • Gate" : ""))
+        assignIfChanged(\.advancedDynamicsActive, advDynActive)
+        if advDynActive {
+            assignIfChanged(\.advancedDynamicsDetailText, String(
+                format: "Density %.1f dB • Gain %.1f/%.1f/%.1f/%.1f/%.1f dB",
+                advDynDensityDB,
+                advDynBandGainsDB.0, advDynBandGainsDB.1, advDynBandGainsDB.2,
+                advDynBandGainsDB.3, advDynBandGainsDB.4
+            ))
+        }
         assignIfChanged(\.multibandStateText, config.multibandEnabled ? "On" : "Off")
         assignIfChanged(\.primeBassStateText, config.primeBassEnabled ? "On" : "Off")
         let widenerState: String

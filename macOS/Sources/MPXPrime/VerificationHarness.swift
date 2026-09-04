@@ -18,10 +18,26 @@ func runVerificationHarness(
     hfTransientsComparison: Bool = false,
     stereoGuardSweep: Bool = false,
     finalRideIsolation: Bool = false,
+    programAB: Bool = false,
+    programABPath: String = "",
+    programABProfile: String = "music_clean",
+    programABCSV: String? = nil,
     captureBaseline: Bool = false,
     strictBaseline: Bool = false
 ) throws -> Int32 {
     let config = try AppConfig.load(fromINI: configPath)
+    if programAB {
+        print("MPX Prime Program A/B Verification (Advanced Dynamics campaign)")
+        print("Config: \(configPath) (render rate only; chains use profile defaults)")
+        print("")
+        return runProgramABVerification(
+            baseConfig: config,
+            path: programABPath,
+            profileID: programABProfile,
+            durationSeconds: durationSeconds,
+            csvPath: programABCSV
+        )
+    }
     if finalRideIsolation {
         print("MPX Prime Final-MPX Limiter Ride Isolation")
         print("Config: \(configPath)")

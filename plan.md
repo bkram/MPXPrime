@@ -191,10 +191,27 @@ REMAINING from this list: #1c DONE (Safety Clip telemetry in both UIs +
 `/api/telemetry.safetyClipDB`); #1d `cancel_audio` low-band-only (measured: no effect once the
 HF clipper is out of the path, so lower priority); #3 band-limit the HF
 clipper (opt-in only now); #4 pre-encode limiter half-cosine attack + HF-
-only gain path; #5 Advanced Dynamics HF cost (-3 dB hat SINAD, -1 dB wash crest vs the
-profile without it) -- a 2.5 ms top-band attack floor was TRIED 2026-08-29
-and changed nothing (reverted); next suspect is the -9 dB top-band target
-offset lifting sparse HF, measure that before touching the smoother; #6 dynamic pre-
+only gain path; #5 Advanced Dynamics HF cost -- MEASURED OUT 2026-09-04 (default-flip
+campaign phase 2c, `--verify-hf-transients` AD sweep, rows kept in the
+gate): every single-knob hypothesis is REFUTED. Hat SINAD vs plain
+music_loud (18.1) reads 14.1-14.2 at top-band offset 0/-3/-6/-9 (offset
+hypothesis dead), 14.2 at speed 0.5, moved < 0.1 dB with the band-5
+transient-acceleration weight zeroed (tried and reverted, like the
+2026-08-29 2.5 ms attack floor), 14.7 at target -19, and 12.8 (WORSE)
+with the composite clipper OFF -- the clipper is not the distortion
+source. Matching drive (8 -> 4 dB, AD's own +3.9 dB RMS makes that
+loudness parity) recovers to 16.1; the best tuning found (drive 4,
+offset -6) reads 32.0 ride / 16.7 hat but spends gap spill (-32.6 vs the
+-34.0 gate). Per-profile at current defaults: music_clean+AD 35.8/18.6,
+speech+AD 36.7/18.3, classical_wide+AD 36.7/21.6 -- every profile 2-7 dB
+below its classic chain on hats, spill at/over the bound. CONCLUSION:
+~2 dB of the cost is gain structure (per-profile AD tuning territory),
+the remaining ~2 dB is intrinsic to leveling burst HF with this
+detector/smoother design. The hf-transients AD row therefore stays
+UNGATED; the default flip is BLOCKED on this as a go/no-go: either
+deeper DSP work (burst-material leveling, likely with band coupling /
+Step 7) or a maintainer-signed lower AD threshold, informed by the
+real-music phases (the synthetic hat probe is adversarial by design); #6 dynamic pre-
 emphasis. NEW from the industry-order research (2026-08-29, Orban 8100A /
 8500 manuals + white paper, Omnia.11, Inovonics 719N, Thimeo docs + forum):
 (a) every vendor places the stereo widener AND the bass enhancer BEFORE
@@ -372,6 +389,10 @@ injection, encoder HF guard (give it named constants + a test).
 
 ## Meter audit (2026-08-31, 57 findings; full detail in the session plan file)
 
+The actionable remainder of this section (open fixes A1-A3, the hardware
+validation queue, parked items) is consolidated in `meter-plan.md`; this
+section stays as the historical record of what shipped and why.
+
 Three audits (measurement engine / input+SDR+recording / GUI). SHIPPED: P0
 recording robustness (4 GiB trap, NaN trap, crash-safe header, failure
 surfacing, off-thread finalize); P1.1 rates (analyzer rebuilt at the ACTUAL
@@ -441,26 +462,27 @@ settled and what it opened:
   is not a compliance verdict).
 - The level-relative pilot gate (M1) holds on real off-air signal: correlation
   and the stereo readouts publish, no spurious MONO DECODE.
-- OPEN, new: **the pilot-to-RDS phase angle is chain-dependent on an SDR
-  input.** The same station read 88 deg via the 192 kHz output path and 76 deg
-  via 256 kHz. A pure delay cancels identically in this measurement, so ~12 deg
-  is phase DISPERSION between 19 and 57 kHz inside the tuner chain (channel
-  FIR and/or the fractional resampler). That is the same order as the +/-10 deg
-  spec window, so the absolute angle on an SDR path needs characterizing before
-  it can be quoted against the standard; the category (near 0 / near 90 / near
-  neither) survives it. 88.6 reads 47 deg -- genuinely out of spec, and stable.
-  Documented as a caveat in manual-meter.md. Next step: measure the dispersion
-  directly by injecting a known-phase composite through the tuner chain, or
-  compare against the audio-input path on the same signal.
-- OPEN, new: **SIGNAL QUALITY is unusable as an absolute scale on an RTL.**
-  Both stations measured baseband noise 4.12 kHz through the 192 kHz path
-  (5.26 kHz at 256 kHz, where the >60 kHz band is wider) -- identical across
-  stations, so it is the dongle's own 8-bit demod floor, not reception. The
-  0..4 scale therefore pins at "Unusable" while RDS decodes at 0.0% BER.
-  Deliberately NOT "fixed" by moving thresholds (that is a measurement-semantics
-  change): the options are backend-aware thresholds, a narrower noise band, or
-  relabelling what the scale claims. Needs a decision plus an SDRplay
-  comparison run.
+- CLOSED 2026-08-31 (was OPEN: "the pilot-to-RDS phase angle is
+  chain-dependent"): **refuted by direct characterization.** The new
+  `mpx-offline` harness injected a known-phase synthetic composite through
+  the shipped demod wiring: within 1 deg at both output rates, on both demod
+  paths, with and without the channel filter (0 -> 0-1 deg, 30 -> 29 deg);
+  one recorded IQ capture replayed to 192 and 256 kHz reads the identical
+  angle. The 88-vs-76 deg spread was reception (multipath between captures)
+  plus front-end effects, not the digital chain -- so there is nothing to
+  correct chain-side, and the manual caveat was rewritten (angle wanders a
+  few degrees between off-air measurements on reception alone; the category
+  is robust). Detail in meter-plan.md A3.
+- CLOSED 2026-08-31 (was OPEN: "SIGNAL QUALITY is unusable as an absolute
+  scale on an RTL"): **the "8-bit demod floor" was front-end overload.**
+  Same station, same dongle: auto tuner gain rails 10-40% of IQ samples and
+  reads noise 4.14 kHz / Unusable (reproducing the bench's 4.12); a
+  correctly-set manual gain reads 1.15 kHz / Poor. Fixed by surfacing, not
+  by moving thresholds: `mpxtuner_iq_overload()` (new C ABI) ->
+  `RFOverloadGate` (Core, test-pinned) -> amber RF OVERLOAD badge, with the
+  SIGNAL QUALITY grade withheld while it is up (validity invariant). The
+  8-bit-vs-14-bit scale question remains a caveat, not a defect; an SDRplay
+  comparison run is still worthwhile. Detail in meter-plan.md A2.
 - Not reproducible as a defect: `[R82XX] PLL not locked!` on every open is
   librtlsdr's own init message (Homebrew's `rtl_sdr` prints it too, before the
   rate or frequency is set) -- not ours, and not related to the narrow IQ
@@ -495,19 +517,44 @@ default (200 kHz) instead of leaving mode 0 unapplied, and then re-run this
 table plus an SFP-X comparison. Alternative: make the ctor apply its own
 +/-110 kHz design as a real mode so "auto" means what it says.
 
+DONE 2026-08-31 (same-IQ A/B, `mpx-offline`): the offline factor A/B on
+recorded IQ -- one capture replayed through the packed byte-exact path and
+the unpack->complex path reads identically to display precision, so the two
+demod flavors agree on real signal (the different-capture variable the live
+bench A/B still had is removed); the missing factor-1 channel filter's own
+effect is RDS +7% / MAX +3% / >77 kHz 2.7x on the same capture -- real but
+modest, the big term in the bench table was auto-gain overload (see the
+CLOSED quality item above).
+
 REMAINING (needs the maintainer's hardware): a second RTL / SDRplay
-cross-check of the bandwidth fix above; the old factor 1 vs 4 offline IQ A/B
-on recorded IQ; an RTL with a known ppm error before/after the decoder PLL
-fix; an SFP-X side-by-side re-check now that P1 has landed (the conventions
-themselves did not change, so the 2026-07-07 agreement should hold); a 75 us
-station check for the new de-emphasis setting; a VoiceOver pass over the
-Meter; and a long SDR + RF-spectrum GUI run with Instruments "View Body" on
-the root (it should now be 0 Hz). Hardware for the maintainer: RTL ppm before/after the PLL
-fix, factor 1 vs 4 IQ A/B, SFP-X re-check after P1, 75 us station after P2.
+cross-check of the bandwidth fix above; an RTL with a known ppm error
+before/after the decoder PLL fix; an SFP-X side-by-side re-check now that P1
+has landed (the conventions themselves did not change, so the 2026-07-07
+agreement should hold); a 75 us station check for the new de-emphasis
+setting; a VoiceOver pass over the Meter; and a long SDR + RF-spectrum GUI
+run with Instruments "View Body" on the root (it should now be 0 Hz).
+The consolidated queue lives in meter-plan.md.
 
 ## Next up
 
-0. **Rework the shipped Format Profiles + PrimeBass presets. DONE (71cdf78, 2026-08-04).** Four complete profiles own the gain structure; the PrimeBass preset re-tune at the new gain structure and the input-gain-reference question (nominal -12 dBFS documented in the manual) remain open as listening items.
+-1. **Studio's deviation telemetry under-reads by the output gain (found
+2026-08-31 during the on-air calibration; fix next build session).**
+`AudioOutputEngine` computes `deviationKHzPeak = outputPeak x
+mpx_deviation_khz`, but `outputPeak` is metered AFTER `output_gain_db` is
+applied inside `MPXGenerator` (~line 3732) -- correct as a DAC-headroom
+display, wrong as a kHz claim: everywhere else in Studio (test tone card,
+pilot/RDS injection math) `mpx_deviation_khz` means deviation at INTERNAL
+composite full scale. With the 85.8 rig calibrated at `output_gain_db =
+-7.89`, Studio's meter maxes at 30.2 kHz while the measured air peaks at
+74.8-78 kHz (dongle-verified; 30.2 / 10^(-7.89/20) = 74.9 -- exact). Fix:
+report `outputPeak / outputGain x targetDeviationKHz` (or meter the
+pre-gain composite) so the GUI meter, `/api/meters.deviationKHzPeak` and the
+dashboard trace state ON-AIR deviation; keep a separate DAC-level readout if
+headroom display is wanted, and add a test pinning deviation telemetry
+invariant under `output_gain_db`. Until then: with a non-zero output gain,
+trust the Meter / `calibrate-tx.sh` numbers, not Studio's deviation readout.
+
+0. **Rework the shipped Format Profiles + PrimeBass presets. DONE (71cdf78, 2026-08-04).** Four complete profiles own the gain structure; the PrimeBass preset re-tune at the new gain structure and the input-gain-reference question (nominal -12 dBFS documented in the manual) remain open as listening items. Field data point 2026-08-31 (85.8 rig): source peaks -10 to -8.8 dBFS ran the wideband AGC at a steady +2.7 dB, mid-range of -9..+10 -- the manual's -12..-6 peak guidance is confirmed in practice, and the GUI texts that said -6..-3 were corrected to match (tooltip, Help "Input Levels", and the Monitoring input-meter caption; verified same day -- full suite + lint green).
 1. **Anti-aliased clipping kernel (US 6,937,912).** Phase A/B landed opt-in (`pre_encode_bandlimited_residual_enabled`). Remaining: A/B real program with it on, decide whether any loud preset enables it; optional Phase C applies the primitive to `softClipSafety` in `processFinalComposite` only if B proves benefit (keep pilot/RDS injection post-processing + budget-governor invariant); refresh baselines on real program.
 2. **Tune/validate composite clipper look-ahead.** `mpx_clipper_lookahead_ms` shipped; dense real-program A/B at 0.5 / 1 / 2 ms, verify pilot/RDS guard cleanliness, decide loud-preset default. Capture via `MPXPRIME_AUDIT_CAPTURE=1` → `macOS/.audit-out/lookahead/`.
 3. **Smoke-test pass.** Live-apply vs restart-required on difficult real material; catch transients/clicks/dropouts on toggle. New RDS live-apply paths (PI/PTY/flags/AF/scheduler) need real-receiver checks beyond the bit-stream tests.

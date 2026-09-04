@@ -46,6 +46,13 @@ final class MPXGenerator {
         let gateActive: Bool
     }
 
+    struct AdvancedDynamicsStatus {
+        let enabled: Bool
+        /// Per-band leveler gains in dB, low to high (5 bands).
+        let bandGainsDB: (Float, Float, Float, Float, Float)
+        let densityDB: Float
+    }
+
     struct FinalLimiterStatus {
         let enabled: Bool
         let gainReductionDB: Float
@@ -2289,11 +2296,24 @@ final class MPXGenerator {
 
     var agcStatus: AGCStatus {
         let telemetry = widebandAGC.telemetry
+        // Advanced Dynamics REPLACES the AGC; report the AGC inactive (and
+        // its last-run gain as neutral) so stale telemetry can never display
+        // or be ingested while the leveler owns the dynamics.
+        let active = widebandAGCEnabled && !advancedDynamicsEnabled && !processingBypass
         return AGCStatus(
-            enabled: widebandAGCEnabled && !processingBypass,
-            detectorDB: telemetry.detectorDB,
-            gainDB: telemetry.gainDB,
-            gateActive: telemetry.gateActive
+            enabled: active,
+            detectorDB: active ? telemetry.detectorDB : 0.0,
+            gainDB: active ? telemetry.gainDB : 0.0,
+            gateActive: active ? telemetry.gateActive : false
+        )
+    }
+
+    var advancedDynamicsStatus: AdvancedDynamicsStatus {
+        let active = advancedDynamicsEnabled && !processingBypass
+        return AdvancedDynamicsStatus(
+            enabled: active,
+            bandGainsDB: active ? advancedDynamics.bandGainsDBFixed : (0, 0, 0, 0, 0),
+            densityDB: active ? advancedDynamics.currentDensityDB : 0.0
         )
     }
 

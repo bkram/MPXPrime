@@ -693,7 +693,12 @@ struct AdvancedDynamicsLeveler {
     }
 
     /// Current per-band gains in dB (diagnostics / tests / verify modes).
+    /// Heap-allocates; never call from the render thread.
     var bandGainsDB: [Float] { bands.map { $0.gainDB } }
+    /// Allocation-free per-band gains for the render-thread telemetry path.
+    var bandGainsDBFixed: (Float, Float, Float, Float, Float) {
+        (bands[0].gainDB, bands[1].gainDB, bands[2].gainDB, bands[3].gainDB, bands[4].gainDB)
+    }
     var currentDensityDB: Float { density }
 
     mutating func process(left: Float, right: Float) -> (Float, Float) {
@@ -725,6 +730,13 @@ struct AdvancedDynamicsLeveler {
     }
 
     /// Graduated coupling bias per band (the multiband 5-band curve).
+    /// NOTE (plan.md Step 2 #5, measured 2026-09-04): the ~4 dB hat-SINAD
+    /// cost vs music_loud is NOT the top-band target offset (0/-3/-6/-9
+    /// all read ~14.1 dB), not `speed`, not the band-5 transient
+    /// acceleration (zeroing its weight moved the gate < 0.1 dB), and not
+    /// the composite clipper (clipper OFF reads WORSE, 12.8 dB). Matching
+    /// drive recovers ~2 dB (loudness parity); the rest is intrinsic to
+    /// leveling burst HF. Do not re-try those knobs for this fault.
     private static let couplingWeights: (Float, Float, Float, Float, Float)
         = (0.0, 0.10, 0.15, 0.22, 0.25)
 

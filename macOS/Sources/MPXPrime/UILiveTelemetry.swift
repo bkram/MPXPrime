@@ -74,6 +74,10 @@ final class LiveTelemetry {
     var stereoImageText: String = "Corr +1.00 • Side 0.00x"
     var agcStateText: String = "Off"
     var agcDetailText: String = "Detector -inf dB • Gain 0.0 dB"
+    /// Advanced Dynamics leveler: when active it REPLACES the AGC (and the
+    /// dashboard's AGC pill switches identity to it).
+    var advancedDynamicsActive: Bool = false
+    var advancedDynamicsDetailText: String = "Density 0.0 dB • Gain 0.0/0.0/0.0/0.0/0.0 dB"
     var multibandStateText: String = "Off"
     var primeBassStateText: String = "Off"
     var widenerStateText: String = "Off"

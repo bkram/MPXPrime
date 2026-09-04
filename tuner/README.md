@@ -18,6 +18,19 @@ Two consumers share these sources:
   small CLI that writes a 16-bit / 192 kHz mono WAV stream to stdout or a FIFO.
   Kept for CLI debugging; no longer shipped in the app. The Meter's `--stdin`
   path (e.g. `./run-meter.sh --stdin`) still consumes a WAV stream like this.
+- **`mpx-offline`** (second CMake executable, needs only liquid-dsp -- no SDR
+  attached) -- the same demod wiring run offline: replays a recorded
+  packed-uint8 IQ file (rtl_sdr format), or synthesizes an FM-modulated
+  composite whose pilot-to-RDS phase is exactly known, through
+  FMDemod + ComplexDecimator + Resampler exactly as the capi runs them, and
+  writes raw int16 composite for `MPXPrimeMeter --stdin`. `--path
+  packed|complex` selects the demod input path (byte-identical input to
+  both), `--bandwidth-khz` applies an explicit channel filter (0 keeps the
+  shipped "auto" behavior, which installs none at factor 1), `--mpx-rate` /
+  `--no-resample` pick the output stage. Built for the 2026-08-31 bench
+  follow-ups (phase-dispersion characterization, same-IQ path A/B, the
+  overload-vs-floor question) and used by `../calibrate-tx.sh`; see
+  meter-plan.md at the repo root.
 
 ## Provenance
 

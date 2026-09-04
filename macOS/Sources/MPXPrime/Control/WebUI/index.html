@@ -593,7 +593,7 @@ function renderMonitoring(c) {
       : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
           kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`) +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
-      kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") + kv("AGC Gain", "monAGC") + `</div>` +
+      kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") + kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + `</div>` +
     (isProcessedAudio() ? "" :
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
       kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>`) +
@@ -934,6 +934,11 @@ async function pollMeters() {
   set("monSafe", gr(m?.safetyLimiterGainReductionDB));
   set("monSafeClip", gr(m?.safetyClipDB));
   set("monAGC", m?.agcGainDB != null ? m.agcGainDB.toFixed(1) + " dB" : "-");
+  // Advanced Dynamics replaces the AGC; per-band gains low->high plus density.
+  set("monAdvDyn", (m?.advancedDynamicsActive && m?.advancedDynamicsBandGainsDB)
+    ? m.advancedDynamicsBandGainsDB.map(g => g.toFixed(1)).join("/") + " dB (density " +
+      (m?.advancedDynamicsDensityDB != null ? m.advancedDynamicsDensityDB.toFixed(1) : "-") + " dB)"
+    : "-");
   set("monPilot", m?.pilotInjectionPercent != null ? m.pilotInjectionPercent.toFixed(1) + " %" : "-");
   set("monRDS", m?.rdsInjectionPercent != null ? m.rdsInjectionPercent.toFixed(1) + " %" : "-");
   const marginEl = $("monMargin");

@@ -200,8 +200,11 @@ struct DSPThroughputTests {
             c.processingBypass = true
             return c
         }()
-        let bypass = measureThroughput(config: bypassCfg).wallSeconds
-        let full = measureThroughput(config: makeHeavyConfig()).wallSeconds
+        let fullCfg = makeHeavyConfig()
+        let (bypass, full) = measurePair(
+            { measureThroughput(config: bypassCfg).wallSeconds },
+            { measureThroughput(config: fullCfg).wallSeconds },
+            accept: { bypass, full in full / max(1e-6, bypass) < 20.0 })
         let relative = full / max(1e-6, bypass)
         #expect(relative < 20.0,
             "full chain \(full) s vs bypass \(bypass) s = \(relative)x; expected <20x on this codebase. A sharp increase (>20x) usually means a hot-path stage (limiter, clipper, or filter) started doing 2-3x its previous per-sample work.")
@@ -216,10 +219,12 @@ struct DSPThroughputTests {
         var without = makeHeavyConfig()
         without.preEncodeAudioLimiterEnabled = false
 
-        let full = measureThroughput(config: with).wallSeconds
-        let lighter = measureThroughput(config: without).wallSeconds
+        let (full, lighter) = measurePair(
+            { measureThroughput(config: with).wallSeconds },
+            { measureThroughput(config: without).wallSeconds },
+            accept: { full, lighter in lighter <= full * 1.10 })
 
-        // Expect lighter ≤ full (with a small tolerance for measurement noise).
+        // Expect lighter <= full (with a small tolerance for measurement noise).
         #expect(lighter <= full * 1.10,
             "pre-encode limiter disabled (\(lighter) s) is not lighter than enabled (\(full) s); something is wrong")
     }
@@ -235,8 +240,10 @@ struct DSPThroughputTests {
         var residual = classic
         residual.preEncodeBandlimitedResidualEnabled = true
 
-        let classicWall = measureThroughput(config: classic).wallSeconds
-        let residualWall = measureThroughput(config: residual).wallSeconds
+        let (classicWall, residualWall) = measurePair(
+            { measureThroughput(config: classic).wallSeconds },
+            { measureThroughput(config: residual).wallSeconds },
+            accept: { classic, residual in residual / max(1e-6, classic) < 2.5 })
         let relative = residualWall / max(1e-6, classicWall)
         print(String(format: "Pre-encode residual limiter cost ratio: %.2fx (residual %.3f s, classic %.3f s)",
                      relative, residualWall, classicWall))
@@ -266,8 +273,10 @@ struct DSPThroughputTests {
         let firGen = MPXGenerator(config: cfgFIR, sampleRate: Double(sampleRate))
         firGen.setMultibandFIREnabled(true)
 
-        let iirWall = measureRender(generator: iirGen)
-        let firWall = measureRender(generator: firGen)
+        let (iirWall, firWall) = measurePair(
+            { measureRender(generator: iirGen) },
+            { measureRender(generator: firGen) },
+            accept: { iir, fir in fir / max(1e-6, iir) < 5.0 })
         let ratio = firWall / max(1e-6, iirWall)
         print(String(format: "FIR/IIR multiband cost ratio: %.2fx (FIR %.3f s, IIR %.3f s)",
                      ratio, firWall, iirWall))
@@ -296,8 +305,10 @@ struct DSPThroughputTests {
         let enabledGen = MPXGenerator(config: enabled, sampleRate: Double(sampleRate))
         enabledGen.setMultibandFIREnabled(true)
 
-        let disabledWall = measureRender(generator: disabledGen)
-        let enabledWall = measureRender(generator: enabledGen)
+        let (disabledWall, enabledWall) = measurePair(
+            { measureRender(generator: disabledGen) },
+            { measureRender(generator: enabledGen) },
+            accept: { disabled, enabled in enabled / max(1e-6, disabled) < 2.0 })
         let ratio = enabledWall / max(1e-6, disabledWall)
         print(String(format: "Advanced Dynamics cost ratio (vs FIR multiband): %.2fx (enabled %.3f s, disabled %.3f s)",
                      ratio, enabledWall, disabledWall))
@@ -320,14 +331,36 @@ struct DSPThroughputTests {
         enabled.ssbStereoEnabled = true
         enabled.ssbStereoAmount = 1.0
 
-        let disabledWall = measureThroughput(config: disabled).wallSeconds
-        let enabledWall = measureThroughput(config: enabled).wallSeconds
+        let (disabledWall, enabledWall) = measurePair(
+            { measureThroughput(config: disabled).wallSeconds },
+            { measureThroughput(config: enabled).wallSeconds },
+            accept: { disabled, enabled in enabled / max(1e-6, disabled) < 1.6 })
         let ratio = enabledWall / max(1e-6, disabledWall)
         print(String(format: "SSB Stereo cost ratio: %.2fx (enabled %.3f s, disabled %.3f s)",
                      ratio, enabledWall, disabledWall))
 
         #expect(ratio < 1.6,
             "SSB Stereo cost \(enabledWall) s vs disabled \(disabledWall) s = \(ratio)x; one Hilbert FIR should not add >60% to the whole chain -- needs optimization before preset use")
+    }
+
+    /// Measures two configurations back to back and returns the pair. If
+    /// `accept` rejects the first pair, both are measured ONCE more and the
+    /// second pair is returned: a single preempted render on a shared CI
+    /// runner (observed: the "lighter" chain at 3.06 s against a 1.86 s
+    /// bound with every other test green) is by far the most common cause
+    /// of a failed relative-cost comparison, and re-measuring is what a
+    /// human does before believing it. A real regression fails both times.
+    /// Costs nothing when the first comparison passes.
+    private func measurePair(
+        _ first: () -> Double, _ second: () -> Double,
+        accept: (Double, Double) -> Bool
+    ) -> (Double, Double) {
+        var pair = (first(), second())
+        if !accept(pair.0, pair.1) {
+            print("DSP throughput: comparison failed once (\(pair.0) s vs \(pair.1) s), re-measuring")
+            pair = (first(), second())
+        }
+        return pair
     }
 
     /// Helper to render 1 s of audio through `generator` and return wall
@@ -389,8 +422,10 @@ struct DSPThroughputTests {
         var withoutPre = makeHeavyConfig()
         withoutPre.preemphasisUS = 0
 
-        let enabled = measureThroughput(config: withPre).wallSeconds
-        let disabled = measureThroughput(config: withoutPre).wallSeconds
+        let (enabled, disabled) = measurePair(
+            { measureThroughput(config: withPre).wallSeconds },
+            { measureThroughput(config: withoutPre).wallSeconds },
+            accept: { enabled, disabled in enabled / max(1e-6, disabled) < 1.5 })
 
         let delta = enabled / max(1e-6, disabled)
         #expect(delta < 1.5,

@@ -11,6 +11,26 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **CI: both legs green again after the 0.50 push.** The Linux test target
+  did not compile twice over: the `--verify-program-ab` stub wrote to
+  Glibc's mutable `stderr` global (Swift 6 strict concurrency rejects it;
+  now `FileHandle.standardError`), and the 0.45 `AudioDeviceRateExpansionTests`
+  referenced the CoreAudio-only `AudioDevices` type without an `#if os(macOS)`
+  guard. On the macOS runner `DSPThroughputTests` lost a single relative-cost
+  comparison to runner contention (the "lighter" chain at 3.06 s vs a 1.86 s
+  bound, 667 other tests green); every pair comparison there now re-measures
+  once when it fails, so a preempted render no longer reds the build while a
+  real regression (fails twice) still does.
+- **Docs: the macOS vs Linux split is now explicit.** Platforms-at-a-glance
+  table and a three-row default-config-path table (macOS, Linux source
+  build, Debian service) in the manual; Monitor operating mode flagged
+  macOS-only; `--verify-program-ab` and the live BlackHole scripts flagged
+  macOS-only in BUILDING. The Linux first start is documented honestly: the
+  Debian service ships `control_enabled = False` with no `--web`, so the web
+  dashboard -- the only Linux interface -- serves nothing until the INI the
+  first start created is edited; the old "enable the service, open :8737"
+  instructions did not work on a fresh box. (Whether the package should
+  enable the dashboard by default is an open packaging decision.)
 - **Stereo Widener removed; Mono Bass moves to the PrimeBass tab.**
   Operator verdict after listening (2026-09-04): the widener did nothing
   beneficial on air, while mono bass earns its place. The stage, its

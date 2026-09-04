@@ -1,7 +1,10 @@
+#if os(macOS)
 import Testing
 import Foundation
 import MPXPrimeCore
 
+// `AudioDevices` is the CoreAudio enumerator (macOS-only in MPXPrimeCore);
+// the Linux test target has no such type.
 // CoreAudio reports supported rates as AudioValueRanges. Pre-0.45 only
 // mMaximum was kept, so a device advertising a continuous (44100...384000)
 // range looked like it supported only 384 kHz -- the Meter's exact-match test
@@ -30,3 +33,4 @@ import MPXPrimeCore
         #expect(rates == rates.sorted())
     }
 }
+#endif

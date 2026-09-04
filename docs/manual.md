@@ -13,7 +13,7 @@ Most of this manual (controls, RDS, config keys, presets) applies to both; where
 
 | | macOS | Linux |
 |---|---|---|
-| Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (off by default -- see Usage) |
+| Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (the package enables it on all interfaces behind a generated API key -- see Usage) |
 | Audio backend and device keys | Core Audio; `*_device_uid` keys hold Core Audio UIDs, picked in the app | ALSA; `*_device_uid` keys hold PCM names (`default`, `hw:0,0`, `plughw:...`) |
 | Default config file | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` (source build); `/var/lib/mpxprime/MPXPrime.ini` (Debian package) |
 | Operating modes | MPX Composite, Processed Audio, Monitor (decoded simulation) | MPX Composite, Processed Audio (no Monitor) |
@@ -38,26 +38,34 @@ Command-line flags (run the binary inside the app bundle):
 ```
 
 **Linux.** There is no GUI: the web dashboard is the only operator interface,
-and it is **off by default**, so the first start is a two-step. The package
-installs `/usr/bin/mpxprime` and a `mpxprime` systemd service whose config,
-`/var/lib/mpxprime/MPXPrime.ini`, is created with defaults on the first run:
+and the package sets it up so a headless box is configurable from another
+machine right after install. `dpkg -i` installs `/usr/bin/mpxprime` and a
+`mpxprime` systemd service (its unit runs the encoder with `--web`), and on a
+fresh install it creates the config `/var/lib/mpxprime/MPXPrime.ini` from the
+code defaults with the dashboard **enabled on all interfaces behind a randomly
+generated API key**. The installer prints that key once; it is stored in the
+INI, so you can always read it back:
 
 ```bash
-sudo systemctl start mpxprime            # creates the INI with defaults, encodes into ALSA `default`
-sudo systemctl stop mpxprime
-sudo editor /var/lib/mpxprime/MPXPrime.ini   # [CONTROL] control_enabled = True; for access from
-                                             # another machine also control_bind = 0.0.0.0 + control_api_key
-sudo systemctl enable --now mpxprime
+sudo dpkg -i mpxprime_*.deb                        # prints "web dashboard API key: ..."
+sudo systemctl enable --now mpxprime               # encodes into ALSA `default`
+sudo grep control_api_key /var/lib/mpxprime/MPXPrime.ini   # the key, any time later
 ```
 
-Then open `http://<host>:8737/` (see [Remote control](#remote-control-rest-api--web-dashboard)
-for the [CONTROL] keys and the API key required for any non-loopback bind).
+Then open `http://<host>:8737/` from any machine on the network and paste the
+key when the dashboard asks for it (it remembers the key in that browser).
 Everything else -- devices, operating mode, levels, processing, RDS -- is set on
-the dashboard from there and persists in that INI. To run by hand instead of
-as a service: `mpxprime --nogui --config /path/to/MPXPrime.ini`, or
-`mpxprime --web` for a headless run that serves the dashboard without editing
-the INI. Devices are ALSA PCM names (`default`, `hw:0,0`, `plughw:...`), not
-Core Audio devices; the Monitor operating mode does not exist on Linux.
+the dashboard and persists in that INI. To rotate the key, edit
+`control_api_key` in the INI and restart the service; to keep the dashboard
+local only, set `control_bind = 127.0.0.1`. An existing INI is never touched
+by an upgrade. The server speaks plain HTTP; on an untrusted network front
+it with a TLS reverse proxy (see
+[Remote control](#remote-control-rest-api--web-dashboard)). To run by hand
+instead of as a service: `mpxprime --web --config /path/to/MPXPrime.ini`
+(`--web` implies `--nogui` and forces the server on; bind, port and key still
+come from the INI). Devices are ALSA PCM names (`default`, `hw:0,0`,
+`plughw:...`), not Core Audio devices; the Monitor operating mode does not
+exist on Linux.
 
 To build, run, verify, test, or package from source, see
 [docs/BUILDING.md](docs/BUILDING.md).
@@ -620,11 +628,13 @@ default**.
 
 Enable it in the INI (`[CONTROL]` section; on macOS also editable in the
 GUI's Settings tab, where changes take effect at the next app launch). On
-Linux the dashboard IS the operator interface, but it still defaults to
-off: the Debian package's service starts with `control_enabled = False`
-and serves nothing until you set these keys in
-`/var/lib/mpxprime/MPXPrime.ini` (see [Usage](#usage) for the order of
-steps); a hand-run source build can use the `--web` flag instead:
+Linux the dashboard IS the operator interface, so the Debian package seeds
+`/var/lib/mpxprime/MPXPrime.ini` on a fresh install with `control_enabled =
+True`, `control_bind = 0.0.0.0` and a randomly generated `control_api_key`
+(printed at install, readable from that file with `sudo grep control_api_key
+/var/lib/mpxprime/MPXPrime.ini`), and its service unit passes `--web` so the
+server is on regardless; edit the keys below there to rotate the key or
+restrict the bind. A hand-run build uses the `--web` flag the same way:
 
 ```ini
 [CONTROL]

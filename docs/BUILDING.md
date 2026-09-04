@@ -83,8 +83,9 @@ an audio device (`--device`) or a composite on stdin (`--stdin`). See the
 The encoder also builds and runs on Linux as a **command-line-only** port
 (experimental; dev-tested on Ubuntu 24.04 x86_64). The GUI, the MPX Prime
 Meter, the SDR tuner and the Monitor operating mode remain macOS-only, and the
-web dashboard / REST API is the only operator interface (it is off by default;
-see the user manual's Usage section for the first-start steps). Everything
+web dashboard / REST API is the only operator interface (the package enables
+it on all interfaces behind a generated API key; a hand-run build passes
+`--web`). Everything
 the headless encoder offers works: `--nogui` live encoding into an ALSA
 device, the `--verify*` modes (except `--verify-program-ab`, which decodes
 audio files through AVFoundation), `--capture-baseline`, and `--bench*`. The
@@ -165,13 +166,15 @@ The package installs `/usr/bin/mpxprime` (+ the web-dashboard resource
 bundle), a `mpxprime.service` systemd unit (dedicated `mpxprime` system
 user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`,
 created with defaults on first run; `LimitRTPRIO` grants the audio threads
-real-time scheduling), the sample INI, and the docs. The unit runs
-`mpxprime --nogui --config /var/lib/mpxprime/MPXPrime.ini` with no `--web`, and
-the INI it creates has `control_enabled = False`, so a fresh install serves no
-dashboard: start the service once to create the INI, stop it, set
-`[CONTROL] control_enabled = True` (plus `control_bind` / `control_api_key`
-for non-loopback access), then `systemctl enable --now mpxprime`. Release
-tags build and attach the Ubuntu 24.04 deb automatically
+real-time scheduling), the sample INI, and the docs. On a FRESH install
+postinst seeds `/var/lib/mpxprime/MPXPrime.ini` from the sample INI with
+`control_enabled = True`, `control_bind = 0.0.0.0` and a random 32-character
+`control_api_key` from `/dev/urandom` (printed once; an existing INI is never
+touched, so upgrades keep the operator's key and settings), and the unit runs
+`mpxprime --nogui --web --config /var/lib/mpxprime/MPXPrime.ini` -- `--web`
+forces the control server on while bind, port and key come from `[CONTROL]`
+-- so the dashboard is reachable from another machine from `systemctl enable
+--now mpxprime` onward. Release tags build and attach the Ubuntu 24.04 deb automatically
 (`.github/workflows/release.yml`); the 26.04 leg was removed until Swift.org
 ships a 26.04 toolchain -- the 24.04 deb uses a static Swift stdlib and
 installs/runs on 26.04 in the meantime. Pushes to `develop/**` and PRs to

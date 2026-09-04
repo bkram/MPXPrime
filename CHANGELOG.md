@@ -47,12 +47,19 @@ combination test suite. Newest first.
   table and a three-row default-config-path table (macOS, Linux source
   build, Debian service) in the manual; Monitor operating mode flagged
   macOS-only; `--verify-program-ab` and the live BlackHole scripts flagged
-  macOS-only in BUILDING. The Linux first start is documented honestly: the
-  Debian service ships `control_enabled = False` with no `--web`, so the web
-  dashboard -- the only Linux interface -- serves nothing until the INI the
-  first start created is edited; the old "enable the service, open :8737"
-  instructions did not work on a fresh box. (Whether the package should
-  enable the dashboard by default is an open packaging decision.)
+  macOS-only in BUILDING.
+- **Debian package: the dashboard works out of the box.** The audit found
+  that the service shipped `control_enabled = False` with no `--web`, so the
+  web dashboard -- the only Linux interface -- served nothing until the INI
+  the first start created was hand-edited; the documented "enable the
+  service, open :8737" flow never worked on a fresh box. Now `postinst`
+  seeds `/var/lib/mpxprime/MPXPrime.ini` on a fresh install (never on an
+  upgrade) from the sample INI with `control_enabled = True`, `control_bind
+  = 0.0.0.0` and a random 32-character `control_api_key` (printed once at
+  install; readable later with `grep control_api_key` on the INI, and the
+  manual says so), and the unit passes `--web`, which forces the server on
+  while bind, port and key stay INI-driven. A headless box is configurable
+  from another machine straight after `systemctl enable --now mpxprime`.
 - **Stereo Widener removed; Mono Bass moves to the PrimeBass tab.**
   Operator verdict after listening (2026-09-04): the widener did nothing
   beneficial on air, while mono bass earns its place. The stage, its

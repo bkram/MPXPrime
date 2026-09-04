@@ -82,9 +82,14 @@ an audio device (`--device`) or a composite on stdin (`--stdin`). See the
 
 The encoder also builds and runs on Linux as a **command-line-only** port
 (experimental; dev-tested on Ubuntu 24.04 x86_64). The GUI, the MPX Prime
-Meter, and the SDR tuner remain macOS-only. Everything the headless encoder
-offers works: `--nogui` live encoding into an ALSA device, all `--verify*`
-modes, `--capture-baseline`, and `--bench`.
+Meter, the SDR tuner and the Monitor operating mode remain macOS-only, and the
+web dashboard / REST API is the only operator interface (it is off by default;
+see the user manual's Usage section for the first-start steps). Everything
+the headless encoder offers works: `--nogui` live encoding into an ALSA
+device, the `--verify*` modes (except `--verify-program-ab`, which decodes
+audio files through AVFoundation), `--capture-baseline`, and `--bench*`. The
+live scripts (`smoke-live.sh`, `ab-music-live.sh`, `scripts/capture-program.sh`)
+need BlackHole / Core Audio and are macOS-only.
 
 Install the toolchain and dependencies:
 
@@ -119,7 +124,10 @@ Linux specifics:
   error; `plughw:`/`default` let alsa-lib convert (with an SRC warning printed).
   Your user must be in the `audio` group.
 - **Default config path** is `~/.local/share/MPX Prime Studio/MPX Prime
-  Studio.ini` (the XDG mapping of Application Support).
+  Studio.ini` (the XDG mapping of Application Support; the Debian package's
+  service uses `/var/lib/mpxprime/MPXPrime.ini` instead). Same INI format and
+  keys as macOS; the `<config>.devicecal.json` and `<config>.snapshots.json`
+  sidecars sit next to it exactly as on macOS.
 - **Real-time scheduling** is best-effort: the audio threads request
   SCHED_FIFO and silently fall back if the rtprio rlimit forbids it
   (`ulimit -r`; configure `/etc/security/limits.d/` for production use).
@@ -146,8 +154,13 @@ The package installs `/usr/bin/mpxprime` (+ the web-dashboard resource
 bundle), a `mpxprime.service` systemd unit (dedicated `mpxprime` system
 user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`,
 created with defaults on first run; `LimitRTPRIO` grants the audio threads
-real-time scheduling), the sample INI, and the docs. Enable with
-`systemctl enable --now mpxprime`. Release tags build and attach the Ubuntu 24.04 deb automatically
+real-time scheduling), the sample INI, and the docs. The unit runs
+`mpxprime --nogui --config /var/lib/mpxprime/MPXPrime.ini` with no `--web`, and
+the INI it creates has `control_enabled = False`, so a fresh install serves no
+dashboard: start the service once to create the INI, stop it, set
+`[CONTROL] control_enabled = True` (plus `control_bind` / `control_api_key`
+for non-loopback access), then `systemctl enable --now mpxprime`. Release
+tags build and attach the Ubuntu 24.04 deb automatically
 (`.github/workflows/release.yml`); the 26.04 leg was removed until Swift.org
 ships a 26.04 toolchain -- the 24.04 deb uses a static Swift stdlib and
 installs/runs on 26.04 in the meantime. Pushes to `develop/**` and PRs to

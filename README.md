@@ -149,6 +149,8 @@ listening aid, not the on-air signal.
     sufficient** — built-in audio or any interface works.
 - The output device's format in Audio MIDI Setup must match the configured
   `sample_rate`, or Core Audio's implicit resampling starves the render thread.
+  (Linux: devices are ALSA PCM names such as `hw:0,0`; a `hw:` device must run
+  the configured rate natively, `plughw:`/`default` let alsa-lib convert.)
 - Input devices may run at any rate; the app converts internally.
 
 ## Download
@@ -163,8 +165,11 @@ Each release is built and signed by GitHub Actions from the matching tag. Pick t
 `mpxprime_<version>-ubuntu24.04_amd64.deb` (static Swift stdlib; installs and runs on later Ubuntu releases too).
 Install with `sudo dpkg -i mpxprime_*.deb` (or `sudo apt install ./mpxprime_*.deb`
 to pull dependencies); it provides the headless encoder as a `mpxprime`
-systemd service with the web dashboard. This is the CLI encoder only — no GUI,
-no Meter. See [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
+systemd service whose operator interface is the web dashboard (default off --
+set `control_enabled = True` in `/var/lib/mpxprime/MPXPrime.ini` after the
+first start; the [manual](docs/manual.md#usage) walks through it). This is the
+CLI encoder only — no GUI, no Meter, no Monitor operating mode. See
+[docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
 
 ### First-launch security note
 

@@ -9,7 +9,18 @@ The encoder runs on two platforms with the **same DSP**; only the front end and 
 - **macOS** — the full **GUI application** (`MPX Prime Studio.app`), Core Audio, plus a headless `--nogui` mode. The companion **MPX Prime Meter** analyzer ships in the same DMG (macOS only — see its [manual](manual-meter.md)).
 - **Linux** — the **encoder only, headless** (`--nogui`, ALSA output, no GUI). Its interface is the built-in [web dashboard / REST API](#remote-control-rest-api--web-dashboard). Installed from the Debian/Ubuntu package as the `mpxprime` systemd service (config at `/var/lib/mpxprime/MPXPrime.ini`). **There is no GUI and no Meter on Linux.** Setup: [BUILDING.md → Linux (CLI-only)](BUILDING.md#linux-cli-only).
 
-Most of this manual (controls, RDS, config keys, presets) applies to both; where a control is GUI-only, Linux operators reach the equivalent through the web dashboard, which mirrors the GUI layout. Platform-specific differences (device names, config path) are flagged inline.
+Most of this manual (controls, RDS, config keys, presets) applies to both; where a control is GUI-only, Linux operators reach the equivalent through the web dashboard, which mirrors the GUI layout. Platform-specific differences are flagged inline; at a glance:
+
+| | macOS | Linux |
+|---|---|---|
+| Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (off by default -- see Usage) |
+| Audio backend and device keys | Core Audio; `*_device_uid` keys hold Core Audio UIDs, picked in the app | ALSA; `*_device_uid` keys hold PCM names (`default`, `hw:0,0`, `plughw:...`) |
+| Default config file | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` (source build); `/var/lib/mpxprime/MPXPrime.ini` (Debian package) |
+| Operating modes | MPX Composite, Processed Audio, Monitor (decoded simulation) | MPX Composite, Processed Audio (no Monitor) |
+| Companion analyzer / SDR | MPX Prime Meter (Apple Silicon only) | none |
+| Offline gates | all `--verify*` modes, `--bench*`, the live smoke / A/B scripts (need BlackHole) | all `--verify*` modes and `--bench*` except `--verify-program-ab` (needs AVFoundation); no live scripts |
+
+The same INI keys, presets, RDS features and verifier thresholds apply on both; a config file moves between platforms once the device keys are re-pointed.
 
 ## Usage
 
@@ -26,13 +37,27 @@ Command-line flags (run the binary inside the app bundle):
 "/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --web         # headless + web dashboard
 ```
 
-**Linux.** The package installs `/usr/bin/mpxprime` and runs it as a service:
-`sudo systemctl enable --now mpxprime`, then open `http://<host>:8737/` for the
-dashboard (see [Remote control](#remote-control-rest-api--web-dashboard) for
-the [CONTROL] settings and the API key needed for non-local access). To run it
-by hand: `mpxprime --nogui --config /var/lib/mpxprime/MPXPrime.ini`, or
-`mpxprime --web` for a headless run that also serves the dashboard. Devices are
-ALSA PCM names, not Core Audio devices.
+**Linux.** There is no GUI: the web dashboard is the only operator interface,
+and it is **off by default**, so the first start is a two-step. The package
+installs `/usr/bin/mpxprime` and a `mpxprime` systemd service whose config,
+`/var/lib/mpxprime/MPXPrime.ini`, is created with defaults on the first run:
+
+```bash
+sudo systemctl start mpxprime            # creates the INI with defaults, encodes into ALSA `default`
+sudo systemctl stop mpxprime
+sudo editor /var/lib/mpxprime/MPXPrime.ini   # [CONTROL] control_enabled = True; for access from
+                                             # another machine also control_bind = 0.0.0.0 + control_api_key
+sudo systemctl enable --now mpxprime
+```
+
+Then open `http://<host>:8737/` (see [Remote control](#remote-control-rest-api--web-dashboard)
+for the [CONTROL] keys and the API key required for any non-loopback bind).
+Everything else -- devices, operating mode, levels, processing, RDS -- is set on
+the dashboard from there and persists in that INI. To run by hand instead of
+as a service: `mpxprime --nogui --config /path/to/MPXPrime.ini`, or
+`mpxprime --web` for a headless run that serves the dashboard without editing
+the INI. Devices are ALSA PCM names (`default`, `hw:0,0`, `plughw:...`), not
+Core Audio devices; the Monitor operating mode does not exist on Linux.
 
 To build, run, verify, test, or package from source, see
 [docs/BUILDING.md](docs/BUILDING.md).
@@ -41,7 +66,7 @@ To build, run, verify, test, or package from source, see
 
 This is the minimum to hear MPX Prime Studio processing your audio and feeding a transmitter / SDR / loopback. Defaults are tuned to sound good out of the box — the chain ships processing-on with AGC, multiband, bass clipping, and the composite clipper engaged.
 
-**1. Plug audio in and out.** MPX Prime Studio reads from a Core Audio input device and writes the composite (MPX) signal to a Core Audio output device. Typical setups:
+**1. Plug audio in and out.** MPX Prime Studio reads from a Core Audio input device and writes the composite (MPX) signal to a Core Audio output device (on Linux: ALSA PCM devices, selected on the web dashboard's Audio I/O page or by name in the INI). Typical setups:
 
 - Soundcard input from your studio mixer / streaming source → soundcard output into an FM exciter that accepts MPX baseband.
 - BlackHole 2ch (virtual loopback) input from a music player or DAW → soundcard output into an SDR transmitter or RF generator.
@@ -113,11 +138,15 @@ If you cannot hear anything, check `Audio I/O` → output device routing, that t
 > Device_1 by probe order) -- if the service comes up stopped after a
 > reboot, reselect the device in the dashboard.
 
-Default config location:
+Default config location (the same INI format and keys on every platform; `--config <path>` overrides, and the resolved path is printed at startup):
 
-```text
-~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini
-```
+| Platform | Default config file |
+|---|---|
+| macOS (GUI app or `--nogui`) | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` |
+| Linux, run by hand from a source build | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` |
+| Linux, Debian/Ubuntu package (`mpxprime` service) | `/var/lib/mpxprime/MPXPrime.ini` |
+
+The per-device calibration memory (`<config>.devicecal.json`) and the preset slots (`<config>.snapshots.json`) live next to the INI on all three.
 
 Relevant config sections:
 
@@ -199,7 +228,7 @@ This is a sensible amateur-grade starting point. Tune from there based on listen
 
 ### Audio I/O — devices, operating mode, level calibration (0.50)
 
-The sidebar's **Audio I/O** section is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented choice over `processed_audio_output` + `monitor_enabled`: MPX Composite for a transmitter, Processed Audio for an external stereo coder or a streaming chain — MPX Prime as a plain audio processor — or Monitor to decode the composite back to speakers and audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card.
+The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented choice over `processed_audio_output` + `monitor_enabled`: MPX Composite for a transmitter, Processed Audio for an external stereo coder or a streaming chain — MPX Prime as a plain audio processor — or Monitor to decode the composite back to speakers and audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card. **Monitor mode is macOS-only**: the Linux build offers MPX Composite and Processed Audio; a `monitor_enabled = True` in a Linux INI is ignored, and the ALSA engine has no monitor device.
 
 Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound — and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
 
@@ -589,8 +618,13 @@ The encoder embeds an HTTP control server for remote and automation use --
 on macOS (GUI or `--nogui`) and on the Linux CLI build. It is **disabled by
 default**.
 
-Enable it in the INI (`[CONTROL]` section, also editable in the GUI's
-Settings tab; GUI changes take effect at the next app launch):
+Enable it in the INI (`[CONTROL]` section; on macOS also editable in the
+GUI's Settings tab, where changes take effect at the next app launch). On
+Linux the dashboard IS the operator interface, but it still defaults to
+off: the Debian package's service starts with `control_enabled = False`
+and serves nothing until you set these keys in
+`/var/lib/mpxprime/MPXPrime.ini` (see [Usage](#usage) for the order of
+steps); a hand-run source build can use the `--web` flag instead:
 
 ```ini
 [CONTROL]
@@ -601,14 +635,15 @@ control_api_key =          ; required for any non-127.0.0.1 bind
 ```
 
 The web session reads and writes the SAME configuration file as the
-Studio GUI (the default `~/Library/Application Support/MPX Prime
-Studio/MPX Prime Studio.ini`, or whatever `--config` names) -- so it
+Studio GUI (the platform's default INI listed under
+[Configuration](#configuration), or whatever `--config` names) -- so it
 starts from your existing station setup, and its changes persist for
-the next GUI launch. The resolved path is printed at startup.
+the next launch (on macOS, also for the next GUI launch). The resolved
+path is printed at startup.
 
 For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
 enables it without editing the INI; these flags imply `--nogui` (run
-headless, serve the dashboard). In the GUI app, use the Settings tab.
+headless, serve the dashboard). In the macOS GUI app, use the Settings tab.
 From a source checkout, `./run-build-web.sh` builds the release binary and
 starts it headless with the dashboard, on macOS and Linux alike.
 

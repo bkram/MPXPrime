@@ -20,7 +20,17 @@ combination test suite. Newest first.
   comparison to runner contention (the "lighter" chain at 3.06 s vs a 1.86 s
   bound, 667 other tests green); every pair comparison there now re-measures
   once when it fails, so a preempted render no longer reds the build while a
-  real regression (fails twice) still does.
+  real regression (fails twice) still does. The Linux runner then failed
+  `CompositeShaperOrderingTests` at -24 dB "shaper action" -- not a Linux
+  numerics problem (the test passes in a Linux/arm64 container) but the
+  documented RDS hazard: the test rendered with RDS on, the RDS text
+  scheduler paces by wall clock, and on a runner where the suite took 814 s
+  the two renders got different RDS bits (max delta = exactly twice the RDS
+  amplitude). Both offline-render comparisons (that suite and
+  `DualRateBoundaryTests.explicitlyDisabledIsStable`) now run with RDS off,
+  and the shaper test's failure message carries the budget inputs (pilot /
+  RDS percent, audio peak, budget margin, clipper / limiter / safety-clip
+  duty) so a future failure explains itself.
 - **Docs: the macOS vs Linux split is now explicit.** Platforms-at-a-glance
   table and a three-row default-config-path table (macOS, Linux source
   build, Debian service) in the manual; Monitor operating mode flagged

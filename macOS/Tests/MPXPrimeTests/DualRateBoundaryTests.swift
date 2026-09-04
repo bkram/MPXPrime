@@ -131,6 +131,12 @@ struct DualRateBoundaryTests {
         cfgA.dualRateAudioDomainEnabled = false
         var cfgB = makeBaseConfig()
         cfgB.dualRateAudioDomainEnabled = false
+        // Bit-identity across two renders requires RDS OFF: the RDS text
+        // scheduler paces PS/RT by wall clock, so two renders that take
+        // different real time can emit different bits (this exact class
+        // reddened CompositeShaperOrderingTests on a contended CI runner).
+        cfgA.enRDS = false
+        cfgB.enRDS = false
 
         let frames = 8_192
         let outA = render(config: cfgA, frames: frames)

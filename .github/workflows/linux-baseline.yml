@@ -10,7 +10,11 @@
 # Run it after a DELIBERATE composite-moving DSP change that already
 # recaptured the macOS baselines (default / presets / long / receiver):
 #   gh workflow run linux-baseline.yml --ref <branch>
-# then download the artifact and commit the JSON on that branch:
+# (GitHub only dispatches by name once this file is on the default branch;
+# on an integration branch that has not shipped yet, push a commit whose
+# message contains the marker [linux-baseline] instead -- the push trigger
+# below reads the workflow from the pushed branch.) Then download the
+# artifact and commit the JSON on that branch:
 #   gh run download <run-id> -n linux-x86_64-baseline -D macOS/verifier_baselines
 # The capture step first runs the physical `--verify` thresholds (exit 0
 # required -- a recapture must never launder a broken chain), then writes
@@ -19,9 +23,13 @@ name: Linux baseline capture
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'develop/**'
 
 jobs:
   capture:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[linux-baseline]')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

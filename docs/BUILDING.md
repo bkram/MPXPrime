@@ -142,8 +142,10 @@ Linux specifics:
   `MPXPrime --verify --capture-baseline` on an x86_64 box (Rosetta cannot run
   the Linux toolchain; an arm64 Linux container writes `default-linux-arm64.json`
   instead), or trigger the manual GitHub workflow
-  `gh workflow run linux-baseline.yml --ref <branch>` and download its
-  `linux-x86_64-baseline` artifact into `macOS/verifier_baselines/`
+  `gh workflow run linux-baseline.yml --ref <branch>` (or, on an integration
+  branch that has not shipped to `main` yet, push a commit whose message
+  contains `[linux-baseline]`) and download its `linux-x86_64-baseline`
+  artifact into `macOS/verifier_baselines/`
   (`.github/workflows/linux-baseline.yml`: physical thresholds first, then
   capture, then a strict round-trip).
 - **Loopback smoke test** without audio hardware: `sudo modprobe snd-aloop`,

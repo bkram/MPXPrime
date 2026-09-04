@@ -84,9 +84,9 @@ Open `Processing` → `Core` and change `Pre-emphasis (μs)` to `75` if you are 
 
 - **Safe**: nominal modulation, headroom available
 - **Tight**: near 100% modulation, fine for normal broadcast
-- **Risk**: peaks exceeding 100% — back off `MPX Output Level` on the `Core` tab
+- **Risk**: peaks exceeding 100% — back off `MPX Output Level` on the `Audio I/O` Output card
 
-`Final Drive` (on the `Final Stage` tab) controls perceived loudness; `MPX Output Level` (on the `Core` tab) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
+`Final Drive` (on the `Final Stage` tab) controls perceived loudness; `MPX Output Level` (on the `Audio I/O` Output card, remembered per device) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
 
 **5. Verify on a receiver.** Tune a real FM radio or RTL-SDR to your transmitter's frequency. You should hear stereo audio with a steady stereo-pilot indicator, see RDS PS and Radiotext on the radio's display (if your radio supports RDS), and the audio should sound louder and more present than the same source through `mpxgen` / PiFmRds.
 
@@ -127,7 +127,7 @@ Relevant config sections:
 
 ### Format Profiles (Station Format selector)
 
-For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing → Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state — not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / widener / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
+For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing → Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state — not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / mono bass / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
 
 **Upgrading from a pre-0.45 config.** An INI that still carries one of the old profile ids (`chr_top40`, `pop_ac`, `community_radio`, `rock`, `edm_dance`, `urban_hiphop`, `jazz_classical`, `news_talk`) is **reset on load**: its processing (`[MPX]`) is rebuilt from the nearest new Format Profile (`chr_top40` / `rock` / `edm_dance` / `urban_hiphop` -> Music - Loud, `community_radio` / `pop_ac` -> Music - Clean, `news_talk` -> Speech, `jazz_classical` -> Classical), while **RDS, interfaces (devices, sample rate, block size), the control server and the hardware calibration keys (pilot level, deviation, MPX output level, output gain, pre-emphasis, mono mode, test tone) are kept exactly as they were**. The reset config is saved back to disk and both apps say so at startup (status bar in Studio, a line on stderr headless). Reason: those configs typically had the Audio Limiter and Composite Clipper off with the safety soft clips doing all the clipping -- the hi-hat / cymbal distortion field finding -- and carrying that forward under a new label would keep the station distorting. If a current-profile config still has both peak controllers off, the apps warn (but do not reset); re-apply a Format Profile or enable the Composite Clipper.
 
@@ -541,7 +541,7 @@ Audio I/O -> Operating Mode -> **External coder has its own clipper**:
 
 ### Output level and rates
 
-- **Output level:** the Core tab's **Output Level** slider (`output_gain_db`). The
+- **Output level:** the Audio I/O Output card's **Output Level** slider (`output_gain_db`, remembered per output device and per mode). The
   processed feed is normalized so peaks reach ~0 dBFS at 0 dB; lower it to match
   your coder's input reference, raise it for a hotter feed.
 - **Sample rate / bit depth:** run **48 kHz / 24-bit** end to end (the >=110 kHz
@@ -623,8 +623,13 @@ mirrors the Studio GUI page-for-page: a pinned broadcast status bar
 (transport Start/Stop/Restart plus the transport-level **Bypass** button,
 IN/MPX level bars, AGC/limiter/clipper gain-reduction meters, deviation /
 pilot / RDS injection / budget-margin readouts, restart-pending badge)
-above four sidebar sections:
+above five sidebar sections:
 
+- **Audio I/O** -- input / output / monitor device pickers, the Operating
+  Mode (processed-audio toggle), the level calibration sliders (Input
+  Gain, Output Level, Line Output -- remembered per device, like the
+  native GUI), and the engine format (sample rate, block size, auto start,
+  spectrum window, monitor enable).
 - **Monitoring** -- source/output devices, input meters, MPX deviation /
   modulation, per-stage gain-reduction readouts, subcarrier injection +
   budget margin, and stream health (uptime, ring-buffer fill, OVR/UND
@@ -737,7 +742,7 @@ change (no RadioText thrash), clearing the track when playback stops.
 ### MPX line output calibration (dBFS)
 
 `mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..0, live-apply; GUI:
-Processing > Core > "Line Output"; also on the web dashboard) sets the
+Audio I/O > Output > "Line Output", remembered per output device; also on the web dashboard) sets the
 ABSOLUTE converter level of 100% modulation: at `-12.0`, a 75 kHz-deviation
 composite peaks at -12 dBFS on the output interface. It is applied at the
 DAC write, after every processing stage and meter tap -- deviation readouts,

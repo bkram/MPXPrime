@@ -84,12 +84,12 @@ func runProgramABVerification(
     csvPath: String?
 ) -> Int32 {
     #if !canImport(AVFoundation)
-    fputs("--verify-program-ab needs AVFoundation to decode audio files (macOS only).\n", stderr)
+    FileHandle.standardError.write(Data("--verify-program-ab needs AVFoundation to decode audio files (macOS only).\n".utf8))
     return 64
     #else
     let files = programABInputFiles(path: path)
     guard !files.isEmpty else {
-        fputs("--verify-program-ab: no decodable audio files at \(path)\n", stderr)
+        FileHandle.standardError.write(Data("--verify-program-ab: no decodable audio files at \(path)\n".utf8))
         return 64
     }
 
@@ -101,7 +101,7 @@ func runProgramABVerification(
     profileConfig.sourceMode = "input"
     profileConfig.enRDS = false
     guard PresetCatalog.applyFormatProfile(id: profileID, to: &profileConfig) != nil else {
-        fputs("--verify-program-ab: unknown Format Profile id '\(profileID)'\n", stderr)
+        FileHandle.standardError.write(Data("--verify-program-ab: unknown Format Profile id '\(profileID)'\n".utf8))
         return 64
     }
     var classicConfig = profileConfig
@@ -251,7 +251,7 @@ func runProgramABVerification(
                 .write(toFile: csvPath, atomically: true, encoding: .utf8)
             print("CSV written: \(csvPath)")
         } catch {
-            fputs("--verify-program-ab: could not write CSV \(csvPath): \(error)\n", stderr)
+            FileHandle.standardError.write(Data("--verify-program-ab: could not write CSV \(csvPath): \(error)\n".utf8))
         }
     }
 

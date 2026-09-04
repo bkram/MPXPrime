@@ -30,7 +30,15 @@ combination test suite. Newest first.
   `DualRateBoundaryTests.explicitlyDisabledIsStable`) now run with RDS off,
   and the shaper test's failure message carries the budget inputs (pilot /
   RDS percent, audio peak, budget margin, clipper / limiter / safety-clip
-  duty) so a future failure explains itself.
+  duty) so a future failure explains itself. With the tests green, the
+  Linux verify gate then reported 52 drift findings against
+  `default-linux-x86_64.json` -- captured 2026-07-11 with the 0.42 chain and
+  never recaptured for the 0.45 final-stage rework (the physical thresholds
+  pass; only the stored compare drifts). New manual workflow
+  `linux-baseline.yml` recaptures it on the ubuntu-24.04 runner class the
+  gate uses (physical thresholds first, capture, strict round-trip, artifact),
+  because Rosetta cannot run the Linux toolchain and the bench box is not
+  always reachable; the recaptured file lands in the same commit series.
 - **Docs: the macOS vs Linux split is now explicit.** Platforms-at-a-glance
   table and a three-row default-config-path table (macOS, Linux source
   build, Debian service) in the manual; Monitor operating mode flagged

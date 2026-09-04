@@ -136,7 +136,16 @@ Linux specifics:
   scalar tanh shim) differ at rounding level, so Linux pins its own
   `--baseline-strict` file, `macOS/verifier_baselines/default-linux-x86_64.json`
   (`default.json` stays macOS-only). The physical `--verify` thresholds are
-  identical on both platforms.
+  identical on both platforms. A deliberate chain change that recaptured the
+  macOS baselines must recapture this one on x86_64 Linux too, or the CI
+  linux job goes red on stored-baseline drift: either run
+  `MPXPrime --verify --capture-baseline` on an x86_64 box (Rosetta cannot run
+  the Linux toolchain; an arm64 Linux container writes `default-linux-arm64.json`
+  instead), or trigger the manual GitHub workflow
+  `gh workflow run linux-baseline.yml --ref <branch>` and download its
+  `linux-x86_64-baseline` artifact into `macOS/verifier_baselines/`
+  (`.github/workflows/linux-baseline.yml`: physical thresholds first, then
+  capture, then a strict round-trip).
 - **Loopback smoke test** without audio hardware: `sudo modprobe snd-aloop`,
   point `output_device_uid` at `hw:Loopback,0,0`, run the encoder with
   `source_mode = tone`, and capture the composite from the other end:

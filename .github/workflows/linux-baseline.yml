@@ -1,0 +1,71 @@
+# Manual recapture of the Linux x86_64 strict verifier baseline.
+#
+# The CI linux job compares `--verify --baseline-strict` against
+# macOS/verifier_baselines/default-linux-x86_64.json. That file can only be
+# produced on x86_64 Linux (SSE2 SIMD-shim numerics + Glibc libm), which
+# the maintainer does not always have at hand -- Rosetta cannot run the
+# Linux toolchain and the bench box is not always reachable. This workflow
+# captures it on the same ubuntu-24.04 runner class the gate runs on.
+#
+# Run it after a DELIBERATE composite-moving DSP change that already
+# recaptured the macOS baselines (default / presets / long / receiver):
+#   gh workflow run linux-baseline.yml --ref <branch>
+# then download the artifact and commit the JSON on that branch:
+#   gh run download <run-id> -n linux-x86_64-baseline -D macOS/verifier_baselines
+# The capture step first runs the physical `--verify` thresholds (exit 0
+# required -- a recapture must never launder a broken chain), then writes
+# the baseline, then proves the fresh file round-trips under --baseline-strict.
+name: Linux baseline capture
+
+on:
+  workflow_dispatch:
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq build-essential curl pkg-config binutils \
+            libcurl4-openssl-dev libedit2 libpython3-dev libsqlite3-0 \
+            libxml2-dev libz3-dev tzdata unzip zlib1g-dev libasound2-dev
+
+      - name: Install Swift (swiftly)
+        run: |
+          curl -sO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf "swiftly-$(uname -m).tar.gz"
+          ./swiftly init --assume-yes --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --assume-yes latest
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          swift --version
+
+      - name: Build (release)
+        run: swift build --package-path macOS -c release --product MPXPrime
+
+      # Physical thresholds first, WITHOUT the stored-baseline compare (the
+      # stale baseline is exactly what we are here to replace): --seconds 5
+      # like the CI gate. `--verify` exits 1 (TIGHT) on stored-baseline
+      # drift alone, so the compare is silenced by moving the old file away.
+      - name: Physical verify thresholds (must pass)
+        run: |
+          mv macOS/verifier_baselines/default-linux-x86_64.json /tmp/old-linux-baseline.json 2>/dev/null || true
+          macOS/.build/release/MPXPrime --verify --seconds 5
+
+      - name: Capture baseline
+        run: macOS/.build/release/MPXPrime --verify --capture-baseline
+
+      - name: Round-trip under --baseline-strict
+        run: macOS/.build/release/MPXPrime --verify --baseline-strict
+
+      - name: Upload baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-baseline
+          path: macOS/verifier_baselines/default-linux-x86_64.json
+          if-no-files-found: error

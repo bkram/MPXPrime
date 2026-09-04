@@ -38,7 +38,11 @@ combination test suite. Newest first.
   `linux-baseline.yml` recaptures it on the ubuntu-24.04 runner class the
   gate uses (physical thresholds first, capture, strict round-trip, artifact),
   because Rosetta cannot run the Linux toolchain and the bench box is not
-  always reachable; the recaptured file lands in the same commit series.
+  always reachable. The recaptured `default-linux-x86_64.json` matches the
+  macOS `default.json` at rounding level across all 9 scenarios (largest
+  delta 0.016 on a side/mid ratio of ~1018, no dB metric off by more than
+  0.005 dB) -- the x86_64 SIMD-shim chain is structurally identical to
+  the macOS chain after the 0.45 rework.
 - **Docs: the macOS vs Linux split is now explicit.** Platforms-at-a-glance
   table and a three-row default-config-path table (macOS, Linux source
   build, Debian service) in the manual; Monitor operating mode flagged

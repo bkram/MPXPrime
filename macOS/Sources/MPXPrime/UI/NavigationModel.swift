@@ -53,7 +53,6 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case advancedDynamics = "Adv Dyn"
     case expander = "Expander"
     case mbLimiter = "MB Limiter"
-    case widener = "Widener"
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "Audio Clip"
@@ -80,7 +79,6 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .advancedDynamics: return .processingAdvancedDynamics
         case .expander: return .processingExpander
         case .mbLimiter: return .processingMBLimiter
-        case .widener: return .processingWidener
         case .primeBass: return .processingPrimeBass
         case .bassClipper: return .processingBassClipper
         case .dcClipper: return .processingDCClipper
@@ -102,7 +100,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .overview:
             return "Bird's-eye view of every processing stage with its current state and one telling metric. Click a card's chevron to jump into its detail tab."
         case .formatProfile:
-            return "Pick a station format to atomically apply matched multiband, final-stage, PrimeBass, widener, and composite-clipper settings. Per-stage knobs stay editable afterwards. Pick `Custom` to keep your manual tuning."
+            return "Pick a station format to atomically apply matched multiband, final-stage, PrimeBass, mono bass, and composite-clipper settings. Per-stage knobs stay editable afterwards. Pick `Custom` to keep your manual tuning."
         case .core:
             return "Global engine controls: bypass, mono mode, input/output gains, pre-emphasis, audio HPF, program lowpass, HF trim. Most settings here are restart-required."
         case .phaseRotator:
@@ -119,10 +117,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
         case .mbLimiter:
             return "Per-band fast peak limiter sitting after the multiband compressor. Catches band-internal peaks before recombination, preserves the multiband target while controlling overshoots."
-        case .widener:
-            return "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe — energy-normalised so mono compatibility is preserved."
         case .primeBass:
-            return "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream."
+            return "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream. Mono Bass on the same tab sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility."
         case .bassClipper:
             return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
         case .dcClipper:
@@ -174,8 +170,6 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset Audio Clipper Tab"
         case .hfClipper:
             return "Reset HF Clipper Tab"
-        case .widener:
-            return "Reset Widener Tab"
         case .limiter:
             return "Reset Audio Limiter Tab"
         case .bs412:
@@ -219,8 +213,6 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset audio clipper tab to defaults"
         case .hfClipper:
             return "Reset HF clipper tab to defaults"
-        case .widener:
-            return "Reset Widener tab to defaults"
         case .limiter:
             return "Reset audio limiter tab to defaults"
         case .bs412:
@@ -318,7 +310,6 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingAdvancedDynamics
     case processingExpander
     case processingMBLimiter
-    case processingWidener
     case processingPrimeBass
     case processingBassClipper
     case processingDCClipper
@@ -397,7 +388,6 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPhaseRotator: return "Phase Rotator"
         case .processingParametricEQ: return "Parametric EQ"
         case .processingPrimeBass: return "PrimeBass"
-        case .processingWidener: return "Stereo Widener"
         case .processingMultiband: return "Multiband"
         case .processingAdvancedDynamics: return "Advanced Dynamics"
         case .processingMBLimiter: return "MB Limiter"
@@ -434,7 +424,6 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPhaseRotator: return "arrow.triangle.2.circlepath"
         case .processingParametricEQ: return "dial.high"
         case .processingPrimeBass: return "waveform.path"
-        case .processingWidener: return "rectangle.expand.vertical"
         case .processingMultiband: return "chart.bar.xaxis"
         case .processingAdvancedDynamics: return "wand.and.stars"
         case .processingMBLimiter: return "chart.bar.fill"
@@ -473,8 +462,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingAGC: return "Wideband AGC with K-weighting"
         case .processingPhaseRotator: return "Allpass phase rotator"
         case .processingParametricEQ: return "4-band parametric EQ"
-        case .processingPrimeBass: return "Post-multiband bass and harmonic enhancement"
-        case .processingWidener: return "Post-multiband stereo widening plus mono bass control"
+        case .processingPrimeBass: return "Post-multiband bass enhancement and mono bass"
         case .processingMultiband: return "3 / 5-band multiband compressor"
         case .processingAdvancedDynamics: return "Single-stage leveler (replaces AGC + Multiband)"
         case .processingMBLimiter: return "Per-band fast peak limiter"
@@ -530,7 +518,6 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingPhaseRotator: return .phaseRotator
         case .processingParametricEQ: return .parametricEQ
         case .processingPrimeBass: return .primeBass
-        case .processingWidener: return .widener
         case .processingMultiband: return .multiband
         case .processingAdvancedDynamics: return .advancedDynamics
         case .processingMBLimiter: return .mbLimiter

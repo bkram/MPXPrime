@@ -174,7 +174,6 @@ actor HeadlessControlBackend: ControlBackend {
     func presets() -> [String: [String]] {
         [
             "primebass": PresetCatalog.primeBassPresets.map(\.id),
-            "widener": PresetCatalog.widenerPresets.map(\.id),
             "multiband": PresetCatalog.multibandPresets.map(\.id),
             "finalstage": PresetCatalog.finalStagePresets.map(\.id),
             "format_profile": PresetCatalog.formatProfiles.map(\.id)
@@ -187,8 +186,6 @@ actor HeadlessControlBackend: ControlBackend {
         switch kind.lowercased() {
         case "primebass":
             title = PresetCatalog.applyPrimeBass(id: id, to: &newConfig)
-        case "widener":
-            title = PresetCatalog.applyWidener(id: id, to: &newConfig)
         case "finalstage":
             title = PresetCatalog.applyFinalStage(id: id, to: &newConfig)
         case "format_profile":

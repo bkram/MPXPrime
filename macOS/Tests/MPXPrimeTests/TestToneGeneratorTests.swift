@@ -85,7 +85,6 @@ struct TestToneGeneratorTests {
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false
         cfg.multibandLimiterEnabled = false

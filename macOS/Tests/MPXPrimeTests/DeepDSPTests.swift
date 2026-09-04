@@ -17,7 +17,7 @@ import MPXPrimeAcceleration
 // Five layers (run by individual @Suites within this file):
 //
 //   1. Per-stage isolation smoke tests (Phase Rotator, Parametric EQ,
-//      Mono Bass, Stereo Widener, BS.412, Pre-encode limiter, Final
+//      Mono Bass, BS.412, Pre-encode limiter, Final
 //      MPX safety limiter, etc.) — stages that have no isolated
 //      regression coverage today.
 //   2. Universal invariants on N random valid configs × an adversarial
@@ -300,7 +300,6 @@ private func randomDeepConfig(seed: UInt64) -> AppConfig {
     cfg.primeBassDensity = rng.nextRangeDouble(0.0, 1.0)
     cfg.primeBassFreqHz = rng.nextRangeDouble(50.0, 180.0)
 
-    cfg.stereoWidenEnabled = rng.nextBool(probability: 0.3)
     cfg.monoBassEnabled = rng.nextBool(probability: 0.7)
 
     cfg.multibandEnabled = rng.nextBool(probability: 0.85)
@@ -415,20 +414,20 @@ struct DeepUniversalInvariantsTests {
        .enabled(if: deepEnabled))
 struct DeepPairwiseTests {
 
-    /// Hand-curated pairwise covering array on the 12 high-impact
+    /// Hand-curated pairwise covering array on the 11 high-impact
     /// stage flags: AGC, multiband, bassClipper, dcClipper,
-    /// compositeClipper, BS.412, PrimeBass, stereoWidener, phaseRot,
+    /// compositeClipper, BS.412, PrimeBass, monoBass, phaseRot,
     /// preEncodeLim, monoMode, advancedDynamics. Each row covers all 4
     /// possible (off/on, off/on) combinations of every pair. This is a
     /// small hand-built covering set — sufficient for catching pair
     /// interactions without 2^12 = 4096 full Cartesian rows. Verified
-    /// COMPLETE by enumeration (2026-09-04) — the AdvDyn column covers
+    /// COMPLETE by enumeration (2026-09-04): the AdvDyn column covers
     /// all 4 combos against every other column, including AdvDyn=on
-    /// alongside AGC/MB=on (the leveler overrides them), and row 12 was
-    /// added to close two pre-existing gaps in the 11-flag array
-    /// (Widener×Mono (on,on) and Phase×Mono (off,on) were never covered).
+    /// alongside AGC/MB=on (the leveler overrides them). The stereo
+    /// widener column became the Mono Bass column when the widener was
+    /// removed in 0.50 (a new stage flag re-uses the covering set).
     static let rows: [[Bool]] = [
-        //  AGC,   MB,   Bass, DC,   Comp, BS,   PB,   Wide, Phase,PreL, Mono, AdvDyn
+        //  AGC,   MB,   Bass, DC,   Comp, BS,   PB,   MonoB,Phase,PreL, Mono, AdvDyn
         [ true,  true, true, false,true, false,false,false,false,true, false, true ],
         [ false, false,false,true, false,true, true, true, true, false,false, true ],
         [ true,  false,true, true, false,false,true, false,true, false,true , false],
@@ -464,7 +463,7 @@ struct DeepPairwiseTests {
         cfg.compositeClipperEnabled  = row[4]
         cfg.bs412Enabled             = row[5]
         cfg.primeBassEnabled         = row[6]
-        cfg.stereoWidenEnabled       = row[7]
+        cfg.monoBassEnabled          = row[7]
         cfg.phaseRotationEnabled     = row[8]
         cfg.preEncodeAudioLimiterEnabled = row[9]
         cfg.monoMode                 = row[10]
@@ -514,7 +513,6 @@ struct DeepCounteractTests {
         cfg.compositeClipperEnabled = false
         cfg.bs412Enabled = false
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.phaseRotationEnabled = false
         cfg.preEncodeAudioLimiterEnabled = false
         cfg.parametricEQEnabled = false
@@ -542,8 +540,8 @@ struct DeepCounteractTests {
         StagePair(name: "PreEncodeLimiter × CompositeClipper",
             configureA: { $0.preEncodeAudioLimiterEnabled = true },
             configureB: { $0.compositeClipperEnabled = true }),
-        StagePair(name: "Widener × MonoBass",
-            configureA: { $0.stereoWidenEnabled = true; $0.stereoWidenWidth = 1.4 },
+        StagePair(name: "PrimeBass × MonoBass",
+            configureA: { $0.primeBassEnabled = true; $0.primeBassAmount = 0.6; $0.primeBassHarmonics = 0.5 },
             configureB: { $0.monoBassEnabled = true }),
         StagePair(name: "PhaseRotator × Multiband",
             configureA: { $0.phaseRotationEnabled = true },
@@ -702,7 +700,6 @@ struct DeepPerStageTests {
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false
         cfg.multibandLimiterEnabled = false
@@ -738,17 +735,6 @@ struct DeepPerStageTests {
         let out = deepRender(config: cfg, program: .sustainedBass)
         DeepInvariants.assertAllFinite(out, where: "monoBass")
         DeepInvariants.assertCompositePeakBounded(out, where: "monoBass")
-    }
-
-    @Test func stereoWidenerAlone() {
-        let cfg = Self.solo {
-            $0.stereoWidenEnabled = true
-            $0.stereoWidenWidth = 1.4
-            $0.monoMode = false
-        }
-        let out = deepRender(config: cfg, program: .hfRichPop)
-        DeepInvariants.assertAllFinite(out, where: "stereoWidener")
-        DeepInvariants.assertCompositePeakBounded(out, where: "stereoWidener")
     }
 
     @Test func bs412Alone() {

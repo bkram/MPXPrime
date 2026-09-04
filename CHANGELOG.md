@@ -11,6 +11,26 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Stereo Widener removed; Mono Bass moves to the PrimeBass tab.**
+  Operator verdict after listening (2026-09-04): the widener did nothing
+  beneficial on air, while mono bass earns its place. The stage, its
+  `stereo_widen_enabled/width/center/mix` keys, the `widener` preset kind
+  (`safe_fm` / `open_music` / `wide_chr`), its sidebar tab, signal-flow
+  chip, overview card, dashboard page and telemetry are gone; an INI that
+  still carries the keys loads fine (ignored). Mono Bass is now a card on
+  the PrimeBass tab / dashboard page (both are post-multiband bass-domain
+  image controls), and Format Profiles carry the mono-bass crossover
+  directly (`monoBassFreqHz`: 140 Hz for Clean / Speech / Classical,
+  115 Hz for Loud -- exactly what their widener presets used to set).
+  Music - Loud is the one profile whose sound changes: it had the widener
+  ON via `wide_chr` (Width 0.46), so its image loses that widening and its
+  stereo-image protection ratio moves from 0.999 to the former default
+  1.025 -- the protection stage used to scale its allowed side/mid ratio
+  with the widener's Width and now uses that default as a fixed
+  reference, so every widener-off chain (all strict baselines) stays
+  bit-identical. Deep suite: the pairwise column became Mono Bass, the
+  Widener x MonoBass counteract pair became PrimeBass x MonoBass.
+
 - **Audio I/O: a dedicated sidebar section for devices, operating mode, and
   level calibration -- with per-device calibration memory.** Devices, the
   engine format, and the three level trims left the Settings window and the

@@ -27,10 +27,6 @@
     "multiband"
    ],
    [
-    "Width",
-    "widener"
-   ],
-   [
     "PrimeBass",
     "primeBass"
    ],
@@ -253,7 +249,7 @@
   ],
   "stages": [
    {
-    "help": "One picker that atomically wires multiband, final stage, PrimeBass, widener and composite-clipper settings to a coherent target for a programming format. Per-stage knobs stay editable afterwards; 'Custom' records that your settings are bespoke.",
+    "help": "One picker that atomically wires multiband, final stage, PrimeBass, mono bass and composite-clipper settings to a coherent target for a programming format. Per-stage knobs stay editable afterwards; 'Custom' records that your settings are bespoke.",
     "id": "profile",
     "keys": [],
     "pill": null,
@@ -463,33 +459,8 @@
     "title": "MB Limiter"
    },
    {
-    "enable": "stereo_widen_enabled",
-    "help": "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe — energy-normalised so mono compatibility is preserved.",
-    "id": "widener",
-    "keys": [
-     "stereo_widen_enabled",
-     "stereo_widen_width",
-     "stereo_widen_center",
-     "stereo_widen_mix",
-     "mono_bass_enabled",
-     "mono_bass_freq_hz"
-    ],
-    "pill": "Width",
-    "presetKind": "widener",
-    "sub": "M/S image and mono bass",
-    "summary": [
-     [
-      "W {stereo_widen_width} - C {stereo_widen_center}"
-     ],
-     [
-      "Mono<{mono_bass_freq_hz}"
-     ]
-    ],
-    "title": "Stereo Widener"
-   },
-   {
     "enable": "primebass_enabled",
-    "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream.",
+    "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream. Mono Bass on the same page sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility.",
     "id": "primeBass",
     "keys": [
      "primebass_enabled",
@@ -499,7 +470,9 @@
      "primebass_drive",
      "primebass_density",
      "primebass_subharmonics_enabled",
-     "primebass_subharmonics_amount"
+     "primebass_subharmonics_amount",
+     "mono_bass_enabled",
+     "mono_bass_freq_hz"
     ],
     "pill": "PrimeBass",
     "presetKind": "primebass",
@@ -510,6 +483,9 @@
      ],
      [
       "drv {primebass_drive}"
+     ],
+     [
+      "Mono<{mono_bass_freq_hz}"
      ]
     ],
     "title": "PrimeBass"
@@ -2205,37 +2181,6 @@
      "Tone"
     ]
    ]
-  },
-  "stereo_widen_center": {
-   "decimals": 2,
-   "kind": "slider",
-   "label": "Center",
-   "max": 1.0,
-   "min": 0.0,
-   "step": 0.01,
-   "unit": ""
-  },
-  "stereo_widen_enabled": {
-   "kind": "toggle",
-   "label": "Stereo Widener"
-  },
-  "stereo_widen_mix": {
-   "decimals": 2,
-   "kind": "slider",
-   "label": "Mix",
-   "max": 1.0,
-   "min": 0.0,
-   "step": 0.01,
-   "unit": ""
-  },
-  "stereo_widen_width": {
-   "decimals": 2,
-   "kind": "slider",
-   "label": "Width",
-   "max": 1.0,
-   "min": 0.0,
-   "step": 0.01,
-   "unit": ""
   },
   "sum_level": {
    "decimals": 2,

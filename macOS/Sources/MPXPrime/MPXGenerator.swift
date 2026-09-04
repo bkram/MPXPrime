@@ -154,12 +154,8 @@ final class MPXGenerator {
         let primeBassSubharmonicsEnabled: Bool
         let primeBassSubharmonicsAmount: Float
         let primeBassFreqHz: Float
-        let stereoWidenEnabled: Bool
         let monoBassEnabled: Bool
         let monoBassFreqHz: Float
-        let widenWidth: Float
-        let widenCenter: Float
-        let widenMix: Float
         let multibandEnabled: Bool
         let multibandMode: Int
         let multibandMakeupDB: Float
@@ -295,12 +291,8 @@ final class MPXGenerator {
             primeBassSubharmonicsEnabled: config.primeBassSubharmonicsEnabled,
             primeBassSubharmonicsAmount: Float(config.primeBassSubharmonicsAmount),
             primeBassFreqHz: Float(config.primeBassFreqHz),
-            stereoWidenEnabled: config.stereoWidenEnabled,
             monoBassEnabled: config.monoBassEnabled,
             monoBassFreqHz: Float(config.monoBassFreqHz),
-            widenWidth: Float(config.stereoWidenWidth),
-            widenCenter: Float(config.stereoWidenCenter),
-            widenMix: Float(config.stereoWidenMix),
             multibandEnabled: config.multibandEnabled,
             multibandMode: config.multibandMode,
             multibandMakeupDB: Float(config.multibandMakeupDB),
@@ -908,14 +900,9 @@ final class MPXGenerator {
     private var stereoSubcarrierDelayResizeScratch: [Float] = []
     private var stereoSubcarrierDelayWriteIdx: Int = 0
 
-    private var stereoWidenEnabled: Bool
     private var monoBassEnabled: Bool
     private var monoBassFreqHz: Float
-    private var widenWidth: Float
-    private var widenCenter: Float
-    private var widenMix: Float
     private var monoBassSideLP = Biquad()
-    private var widenSideHP = Biquad()
     private var stereoProtectInputMidEnv: Float = 0.0
     private var stereoProtectInputSideEnv: Float = 0.0
     private var stereoProtectMidEnv: Float = 0.0
@@ -1225,12 +1212,8 @@ final class MPXGenerator {
         self.dualRateAudioRate = ratioIsClean ? audioRateRequest : self.sampleRate
         self.dualRateFactor = ratioIsClean ? factor : 1
 
-        self.stereoWidenEnabled = config.stereoWidenEnabled
         self.monoBassEnabled = config.monoBassEnabled
         self.monoBassFreqHz = clampf(Float(config.monoBassFreqHz), 60.0, 250.0)
-        self.widenWidth = clampf(Float(config.stereoWidenWidth), 0.0, 1.0)
-        self.widenCenter = clampf(Float(config.stereoWidenCenter), 0.0, 1.0)
-        self.widenMix = clampf(Float(config.stereoWidenMix), 0.0, 1.0)
         self.rdsCoder = BasicRDSCoder(
             config: config,
             sampleRate: self.sampleRate,
@@ -1283,7 +1266,7 @@ final class MPXGenerator {
         configureSSBStereo()
         configureMultibandLimiters()
         configureDownwardExpanders()
-        configureStereoWidener()
+        configureStereoImage()
         bassClipper.configure(
             sampleRate: audioRate,
             crossoverHz: bassClipperCrossoverHz,
@@ -1703,7 +1686,7 @@ final class MPXGenerator {
         configureSSBStereo()
         configureMultibandLimiters()
         configureDownwardExpanders()
-        configureStereoWidener()
+        configureStereoImage()
         bassClipper.configure(
             sampleRate: audioRate,
             crossoverHz: bassClipperCrossoverHz,
@@ -1865,20 +1848,12 @@ final class MPXGenerator {
         }
 
         let stereoImageChanged =
-            stereoWidenEnabled != config.stereoWidenEnabled
-            || monoBassEnabled != config.monoBassEnabled
+            monoBassEnabled != config.monoBassEnabled
             || fabsf(monoBassFreqHz - config.monoBassFreqHz) > 0.0001
-            || fabsf(widenWidth - config.widenWidth) > 0.0001
-            || fabsf(widenCenter - config.widenCenter) > 0.0001
-            || fabsf(widenMix - config.widenMix) > 0.0001
-        stereoWidenEnabled = config.stereoWidenEnabled
         monoBassEnabled = config.monoBassEnabled
         monoBassFreqHz = clampf(config.monoBassFreqHz, 60.0, 250.0)
-        widenWidth = clampf(config.widenWidth, 0.0, 1.0)
-        widenCenter = clampf(config.widenCenter, 0.0, 1.0)
-        widenMix = clampf(config.widenMix, 0.0, 1.0)
         if stereoImageChanged {
-            configureStereoWidener()
+            configureStereoImage()
         }
 
         let resolvedCrossovers = Self.resolveMultibandCrossovers(
@@ -2430,13 +2405,12 @@ final class MPXGenerator {
         primeBassSlowReleaseCoeff = expf(-1.0 / ((250.0 * 0.001) * sr))
     }
 
-    private func configureStereoWidener() {
+    private func configureStereoImage() {
         // Audio-domain stage — runs at the audio rate when the dual-rate
         // boundary is on, otherwise at the engine's MPX rate.
         let sampleRate = audioDomainSampleRate
         let sr = max(8_000.0, sampleRate)
         monoBassSideLP.configureLowpass(cutoffHz: monoBassFreqHz, sampleRate: sr, q: 0.7071068)
-        widenSideHP.configureHighpass(cutoffHz: 115.0, sampleRate: sr, q: 0.7071068)
         stereoProtectInputMidEnv = 0.0
         stereoProtectInputSideEnv = 0.0
         stereoProtectMidEnv = 0.0
@@ -3245,7 +3219,7 @@ final class MPXGenerator {
         // Snapshot the program-stereo state BEFORE stereo-image protection so
         // analysis and metering callers see the unprotected program signal.
         // Image protection is a downstream side-channel limiter — it should
-        // not colour upstream analysis readouts (widener, mid/side, scopes).
+        // not colour upstream analysis readouts (mid/side, scopes).
         let analysisStereo = stereo
 
         if !audioStagesBypassed {
@@ -3381,8 +3355,9 @@ final class MPXGenerator {
                 right = eqd.1
             }
 
-            // Stereo image stage: mono bass only. Stereo widener moved
-            // post-multiband in the 2026-05 chain-order modernization.
+            // Stereo image stage: mono bass + side-energy protection. (The
+            // stereo widener that used to follow the multiband was removed in
+            // 0.50 -- measured as adding nothing beneficial on air.)
             let stereoImage = processStereoImageStage(left: left, right: right)
             left = stereoImage.left
             right = stereoImage.right
@@ -3399,14 +3374,6 @@ final class MPXGenerator {
                 let multiband = processMultibandStereo(left: left, right: right)
                 left = multiband.0
                 right = multiband.1
-            }
-
-            // Stereo widener post-multiband (canonical Optimod placement):
-            // multiband no longer compresses widened side-channel HF.
-            if stereoWidenEnabled {
-                let widened = processStereoWidener(left: left, right: right)
-                left = widened.0
-                right = widened.1
             }
 
             // PrimeBass post-multiband: multiband no longer compresses the
@@ -3592,9 +3559,6 @@ final class MPXGenerator {
             state.right = monoBass.1
         }
 
-        // Stereo widener moved to post-multiband in `processProgramStereo`
-        // (2026-05 chain-order audit) so multiband doesn't compress the
-        // widened side-channel HF energy.
         return state
     }
 
@@ -3963,7 +3927,7 @@ final class MPXGenerator {
         )
 
         let inputRatio = stereoProtectInputSideEnv / max(0.02, stereoProtectInputMidEnv)
-        let configuredRatio = 0.70 + (widenWidth * 0.65)
+        let configuredRatio = 0.70 + (Self.stereoProtectWidthReference * 0.65)
         let allowedRatio = min(1.55, max(configuredRatio, inputRatio * 1.16))
         let allowedSide = max(0.008, stereoProtectMidEnv * allowedRatio)
 
@@ -3983,31 +3947,12 @@ final class MPXGenerator {
         return (outputMid + protectedSide, outputMid - protectedSide)
     }
 
-    private func processStereoWidener(left: Float, right: Float) -> (Float, Float) {
-        let mid = (left + right) * 0.5
-        let side = (left - right) * 0.5
-        let highSide = widenSideHP.process(side)
-        let lowSide = side - highSide
-
-        let sideGain = 1.0 + ((widenWidth - 0.5) * 1.35)
-        let midGain = 1.0 + ((widenCenter - 0.5) * 0.35)
-        let lowSideRetain = 0.34 + ((1.0 - widenWidth) * 0.16)
-
-        var wetMid = mid * midGain
-        var wetSide = (highSide * sideGain) + (lowSide * lowSideRetain)
-
-        let inputEnergy = max(1e-6, (mid * mid) + (side * side))
-        let wetEnergy = max(1e-6, (wetMid * wetMid) + (wetSide * wetSide))
-        let norm = clampf(sqrtf(inputEnergy / wetEnergy), 0.90, 1.12)
-        wetMid *= norm
-        wetSide *= norm
-
-        let wetLeft = wetMid + wetSide
-        let wetRight = wetMid - wetSide
-        let mixedLeft = lerpf(left, wetLeft, widenMix)
-        let mixedRight = lerpf(right, wetRight, widenMix)
-        return (mixedLeft, mixedRight)
-    }
+    /// The stereo-image protection's allowed side/mid ratio used to scale
+    /// with the (removed) widener's Width; 0.5 was its default, so keeping
+    /// the identical runtime expression leaves every widener-off chain --
+    /// all strict baselines -- bit-identical. Music - Loud (Width 0.46 via
+    /// the old wide_chr preset) moves from a 0.999 to a 1.025 ratio.
+    private static let stereoProtectWidthReference: Float = 0.5
 
     private func processMonoBass(left: Float, right: Float) -> (Float, Float) {
         let mid = (left + right) * 0.5

@@ -219,7 +219,7 @@ protocol ControlBackend: Sendable {
     func snapshotExport(slot: Int) async -> String?
     /// Validate + normalize + store INI text into the slot (does not load it).
     func snapshotImport(slot: Int, name: String?, iniText: String) async throws -> ControlSnapshots
-    /// Available preset ids by kind (primebass / widener / multiband /
+    /// Available preset ids by kind (primebass / multiband / finalstage /
     /// format_profile) -- and application thereof.
     func presets() async -> [String: [String]]
     func applyPreset(kind: String, id: String, intensity: Double?) async throws -> ConfigApplyResult

@@ -188,7 +188,6 @@ For typical FM broadcast use (clean / community / LPFM), the recommended set of 
 
 Recommended **off** by default (enable only when needed):
 
-- **Stereo Widener** — leave off unless the source program needs subtle width enhancement; aggressive widening risks mono-compatibility on FM (see "Stereo image control" below)
 - **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
 - **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
 - **HF Clipper** — pre-emphasis-aware HF *clipper* (same tab; `hf_clipper_*`). Off by default and no longer used by any profile: it is a waveshaper on the pre-emphasised high band, so it distorts the cymbals and hi-hats it controls (the 2026-08 field finding). Keep it as a last resort for maximum HF density on dense EDM after the HF Limiter is already on; leave off for talk / classical. Controls live-apply.
@@ -326,16 +325,12 @@ All of these are exposed in the GUI; no INI editing is required.
 
 ### Stereo image control
 
-The `Processing` -> `Widener` tab now contains two separate image controls:
-
-- `Mono Bass`: collapses low-frequency side energy below a configurable crossover
-- `Stereo Widener`: applies restrained upper-band widening with stereo-image protection
+Mono Bass lives on the `Processing` -> `PrimeBass` tab (its own card below the PrimeBass controls -- both are post-multiband bass-domain image controls): it collapses low-frequency side energy below a configurable crossover, protecting deviation and FM mono compatibility. Every shipped Format Profile keeps it on (140 Hz for Clean / Speech / Classical, 115 Hz for Loud). The stereo widener that used to share a tab with it was **removed in 0.50** -- measured on air as adding nothing beneficial; the always-on stereo-image protection stage (which used to scale with the widener's Width) keeps its former default behaviour. An INI that still carries `stereo_widen_*` keys loads fine; they are ignored.
 
 Recommended starting point:
 
 - `Mono Bass`: on
 - `Bass Mono Freq`: `110-140 Hz`
-- `Width`: around `0.50`
 - `Center`: around `0.50`
 - `Mix`: around `0.70-1.00`
 
@@ -637,7 +632,7 @@ above four sidebar sections:
 - **Processing** -- the GUI's tab set one page each: Overview (stage grid
   with enable switches), Profile (station-format picker), Core, Phase
   Rotator, AGC, Parametric EQ, Multiband (incl. crossovers X1-X4),
-  Advanced Dynamics, Expander, MB Limiter, Stereo Widener, PrimeBass,
+  Advanced Dynamics, Expander, MB Limiter, PrimeBass (+ Mono Bass),
   Bass Clipper, Audio Clipper, HF Clipper, Audio Limiter, Composite
   Clipper (incl. look-ahead + oversampling), BS.412, Final Stage. Real
   switches and sliders with the GUI's control vocabulary, applied live on
@@ -676,7 +671,7 @@ configured.
 | PATCH | `/api/config` | `{"<ini_key>": "<value>", ...}` -- any key from this manual's tables |
 | GET | `/api/schema` | the dashboard's control schema: widget definitions (label/range/unit) + page model for every exposed INI key -- the single source the web UI renders from |
 | GET | `/api/config/defaults` | factory defaults, grouped like `/api/config` -- diff against it for "reset to defaults" |
-| GET | `/api/presets` | available preset ids by kind (primebass / widener / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44) |
+| GET | `/api/presets` | available preset ids by kind (primebass / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44; the widener kind left with its stage in 0.50) |
 | GET | `/api/telemetry` | live scope waveforms + MPX spectrum (display-decimated, ~6 KB; `?window_ms=` picks the scope timebase); 503 while stopped or on a platform without a scope tap |
 | GET | `/api/devices` | the machine's audio devices (CoreAudio / ALSA) with the selected input, output, AND monitor slots (`selectedMonitor` + `monitorEnabled` since 0.44) |
 | POST | `/api/nowplaying` | push the current track: `{"artist": ..., "title": ..., "display": ...}` -- feeds the RT / PS / RT+ templates (see "Now-playing push" below) |
@@ -924,7 +919,6 @@ Disabled by bypass:
 - Mono bass
 - Multiband processing (incl. per-band expander and MB limiter)
 - Advanced Dynamics
-- Stereo widener
 - Bass / audio / HF clippers
 - Pre-encode audio limiter
 - Stereo-image protection

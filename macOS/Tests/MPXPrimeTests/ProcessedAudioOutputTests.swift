@@ -33,7 +33,6 @@ struct ProcessedAudioOutputTests {
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = false
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false
         cfg.phaseRotationEnabled = false

@@ -45,7 +45,6 @@ struct StereoSeparationReceiverTests {
         cfg.multibandLimiterEnabled = false
         cfg.downwardExpanderEnabled = false
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false

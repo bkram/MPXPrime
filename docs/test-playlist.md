@@ -91,7 +91,7 @@ This is the section for the 2026-08-29 field finding. Pair it with
 | Tool -- *Aenima* (1996) **[SINGLE]** | A loud-genre master with real dynamic range -- the control against *Death Magnetic*. | Bob Katz, Digido Honor Roll |
 | Keith Jarrett -- *The Koln Concert* (1975) **[OWN]** | Long, sparse, live solo piano for a slow AGC test; widely praised, no engineer citation found. | -- |
 
-## 6. Stereo image / L-R load (stereo widener, stereo-image protection, 38 kHz sidebands)
+## 6. Stereo image / L-R load (mono bass, stereo-image protection, 38 kHz sidebands)
 
 | Track | Listen for | Source |
 | ----- | ---------- | ------ |

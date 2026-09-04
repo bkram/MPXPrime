@@ -56,7 +56,6 @@ struct PrimeBassMaxxBassTests {
         cfg.widebandAGCEnabled = false
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false
         cfg.multibandLimiterEnabled = false

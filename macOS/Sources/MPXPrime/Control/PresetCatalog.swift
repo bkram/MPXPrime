@@ -1,6 +1,6 @@
 import Foundation
 
-// Sub-effect preset catalog: PrimeBass / stereo widener / multiband tables
+// Sub-effect preset catalog: PrimeBass / multiband / final-stage / format-profile tables
 // and their pure apply-to-config logic. Extracted from the GUI view model
 // (SwiftUIControlApp.swift) so the remote-control API can apply presets on
 // the headless runtimes (macOS --nogui and the Linux CLI) with the exact
@@ -21,17 +21,6 @@ struct PrimeBassPreset {
     let density: Double
     let subharmonicsEnabled: Bool
     let subharmonicsAmount: Double
-}
-
-struct WidenerPreset {
-    let id: String
-    let title: String
-    let stereoWidenEnabled: Bool
-    let monoBassEnabled: Bool
-    let monoBassFreqHz: Double
-    let width: Double
-    let center: Double
-    let mix: Double
 }
 
 struct MultibandPreset {
@@ -126,39 +115,6 @@ enum PresetCatalog {
         .init(
             id: "talk", title: "Talk", enabled: true, amount: 0.08, freqHz: 120, harmonics: 0.04,
             drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0)
-    ]
-
-    static let widenerPresets: [WidenerPreset] = [
-        .init(
-            id: "safe_fm",
-            title: "Safe FM",
-            stereoWidenEnabled: false,
-            monoBassEnabled: true,
-            monoBassFreqHz: 140.0,
-            width: 0.30,
-            center: 0.50,
-            mix: 0.60
-        ),
-        .init(
-            id: "open_music",
-            title: "Open Music",
-            stereoWidenEnabled: true,
-            monoBassEnabled: true,
-            monoBassFreqHz: 125.0,
-            width: 0.46,
-            center: 0.50,
-            mix: 0.76
-        ),
-        .init(
-            id: "wide_chr",
-            title: "Wide CHR",
-            stereoWidenEnabled: true,
-            monoBassEnabled: true,
-            monoBassFreqHz: 115.0,
-            width: 0.46,
-            center: 0.50,
-            mix: 0.76
-        )
     ]
 
     static let multibandPresets: [MultibandPreset] = [
@@ -340,33 +296,6 @@ enum PresetCatalog {
     }
 
     @discardableResult
-    static func applyWidener(id: String, to config: inout AppConfig) -> String? {
-        guard let preset = widenerPresets.first(where: { $0.id == id }) else { return nil }
-        config.stereoWidenEnabled = preset.stereoWidenEnabled
-        config.monoBassEnabled = preset.monoBassEnabled
-        config.monoBassFreqHz = preset.monoBassFreqHz
-        config.stereoWidenWidth = preset.width
-        config.stereoWidenCenter = preset.center
-        config.stereoWidenMix = preset.mix
-        return preset.title
-    }
-
-    /// The widener preset matching the current config, or "custom".
-    static func currentWidenerPresetID(of config: AppConfig) -> String {
-        guard let preset = widenerPresets.first(where: {
-            $0.stereoWidenEnabled == config.stereoWidenEnabled
-                && $0.monoBassEnabled == config.monoBassEnabled
-                && approxEqual($0.monoBassFreqHz, config.monoBassFreqHz)
-                && approxEqual($0.width, config.stereoWidenWidth)
-                && approxEqual($0.center, config.stereoWidenCenter)
-                && approxEqual($0.mix, config.stereoWidenMix)
-        }) else {
-            return "custom"
-        }
-        return preset.id
-    }
-
-    @discardableResult
     static func applyMultiband(
         id: String, intensity: MultibandPresetIntensity, to config: inout AppConfig
     ) -> String? {
@@ -477,7 +406,7 @@ enum PresetCatalog {
 
     // MARK: - Format profiles (top-level "Station Format" bundle)
 
-    /// Atomically wires multiband / final-stage / PrimeBass / widener /
+    /// Atomically wires multiband / final-stage / PrimeBass / mono bass /
     /// composite-clipper settings to one programming format, as a wrapper
     /// over the per-stage preset tables above. Moved here from the view
     /// model so BOTH backends serve preset kind "format_profile" -- before
@@ -491,7 +420,9 @@ enum PresetCatalog {
         let finalStagePresetID: String
         let primeBassEnabled: Bool
         let primeBassPresetID: String      // recorded even when disabled
-        let widenerPresetID: String
+        /// Mono-bass crossover for the profile's image policy. Mono bass is
+        /// on in every shipped profile; the stereo widener was removed in 0.50.
+        let monoBassFreqHz: Double
         let compositeClipperThresholdDB: Double
         let compositeClipperCeilingDB: Double
         let finalDriveDB: Double
@@ -518,7 +449,7 @@ enum PresetCatalog {
               summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 6.0,
               agcEnabled: true, agcTargetDB: -16.0,
@@ -531,7 +462,7 @@ enum PresetCatalog {
               summary: "The default: transparent leveling, honest peaks, low clipper work. For stations that value fidelity over loudness.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 4.0,
               agcEnabled: true, agcTargetDB: -16.0,
@@ -544,7 +475,7 @@ enum PresetCatalog {
               summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, wide image.",
               multibandPresetID: "5_chr", multibandIntensity: .normal,
               finalStagePresetID: "chr", primeBassEnabled: true,
-              primeBassPresetID: "chr", widenerPresetID: "wide_chr",
+              primeBassPresetID: "chr", monoBassFreqHz: 115.0,
               compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
               finalDriveDB: 8.0,
               agcEnabled: true, agcTargetDB: -15.0,
@@ -557,7 +488,7 @@ enum PresetCatalog {
               summary: "Voice-optimized: phase rotator for waveform symmetry, speech multiband + final stage, conservative drive.",
               multibandPresetID: "5_talk", multibandIntensity: .light,
               finalStagePresetID: "speech", primeBassEnabled: false,
-              primeBassPresetID: "talk", widenerPresetID: "safe_fm",
+              primeBassPresetID: "talk", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 4.5,
               agcEnabled: true, agcTargetDB: -16.0,
@@ -570,7 +501,7 @@ enum PresetCatalog {
               summary: "Dynamic-preserving: gentle slow AGC, light multiband, minimal clipper work, no enhancement.",
               multibandPresetID: "5_classic", multibandIntensity: .light,
               finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
               finalDriveDB: 3.0,
               agcEnabled: true, agcTargetDB: -18.0,
@@ -607,7 +538,8 @@ enum PresetCatalog {
             config.primeBassPresetID = profile.primeBassPresetID
         }
 
-        _ = applyWidener(id: profile.widenerPresetID, to: &config)
+        config.monoBassEnabled = true
+        config.monoBassFreqHz = profile.monoBassFreqHz
 
         config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
         config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB

@@ -107,14 +107,12 @@ struct AppConfigDefaultsTests {
     }
 
     @Test func coloringStagesDefaultOff() {
-        // Stereo widener and PrimeBass color the signal and degrade
+        // PrimeBass colors the signal and degrades
         // fringe-listener SNR on low-power TX. DC clipper is too
         // aggressive for default. BS.412 only EU stations need it.
         let cfg = AppConfig()
         #expect(cfg.primeBassEnabled == false,
             "PrimeBass must be off by default — coloring stage")
-        #expect(cfg.stereoWidenEnabled == false,
-            "Stereo widener must be off by default — degrades fringe SNR")
         #expect(cfg.dcClipperEnabled == false,
             "DC clipper must be off by default — too aggressive")
         #expect(cfg.bs412Enabled == false,

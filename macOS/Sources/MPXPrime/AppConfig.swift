@@ -48,7 +48,6 @@ struct AppConfig: Equatable {
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
-    //   stereoWidenEnabled/Width/Center/Mix,
     //   multiband Enabled/Mode/X1-X4Hz/Thresholds/Ratios/Attack/Release/
     //     KneeDB/LinkStrength/MakeupDB/ReleaseProgramDependent/
     //     TransientAwareAttack/InterBandCoupling,
@@ -181,7 +180,7 @@ struct AppConfig: Equatable {
     var finalDriveDB: Double = 6.0
     var finalStagePresetID: String = "balanced"
     // Top-level "Station Format" profile that atomically applies a coherent
-    // bundle of multiband / final-stage / PrimeBass / widener / composite-
+    // bundle of multiband / final-stage / PrimeBass / mono-bass / composite-
     // clipper settings per music format (Pop, Rock, CHR, EDM, Urban,
     // Jazz/Classical, News/Talk, Community Radio). Cosmetic label only —
     // the actual chain state is determined by the individual per-stage IDs
@@ -269,12 +268,8 @@ struct AppConfig: Equatable {
     var primeBassDensity: Double = 0.45
     var primeBassSubharmonicsEnabled: Bool = false
     var primeBassSubharmonicsAmount: Double = 0.20
-    var stereoWidenEnabled: Bool = false
     var monoBassEnabled: Bool = true
     var monoBassFreqHz: Double = 125.0
-    var stereoWidenWidth: Double = 0.5
-    var stereoWidenCenter: Double = 0.5
-    var stereoWidenMix: Double = 1.0
     // Multiband defaults: 5-band AC/Pop preset at "Normal" intensity. ON
     // because no commercial processor ships multiband disabled — amateur
     // source mix needs band-aware compression to keep speech and music
@@ -767,14 +762,8 @@ struct AppConfig: Equatable {
             defaultValue: mpx.double(
                 "orbass_subharmonics_amount",
                 defaultValue: cfg.primeBassSubharmonicsAmount))
-        cfg.stereoWidenEnabled = mpx.bool(
-            "stereo_widen_enabled", defaultValue: cfg.stereoWidenEnabled)
         cfg.monoBassEnabled = mpx.bool("mono_bass_enabled", defaultValue: cfg.monoBassEnabled)
         cfg.monoBassFreqHz = mpx.double("mono_bass_freq_hz", defaultValue: cfg.monoBassFreqHz)
-        cfg.stereoWidenWidth = mpx.double("stereo_widen_width", defaultValue: cfg.stereoWidenWidth)
-        cfg.stereoWidenCenter = mpx.double(
-            "stereo_widen_center", defaultValue: cfg.stereoWidenCenter)
-        cfg.stereoWidenMix = mpx.double("stereo_widen_mix", defaultValue: cfg.stereoWidenMix)
         cfg.multibandEnabled = mpx.bool("multiband_enabled", defaultValue: cfg.multibandEnabled)
         cfg.multibandMode = mpx.int("multiband_mode", defaultValue: cfg.multibandMode)
         cfg.multibandPresetID = mpx.string("multiband_preset_id", defaultValue: cfg.multibandPresetID)
@@ -1125,10 +1114,7 @@ struct AppConfig: Equatable {
         primeBassDensity = max(0.0, min(1.0, primeBassDensity))
         primeBassSubharmonicsAmount = max(0.0, min(1.0, primeBassSubharmonicsAmount))
 
-        // Stereo widener
-        stereoWidenWidth = max(0.0, min(1.0, stereoWidenWidth))
-        stereoWidenCenter = max(0.0, min(1.0, stereoWidenCenter))
-        stereoWidenMix = max(0.0, min(1.0, stereoWidenMix))
+        // Mono bass
         monoBassFreqHz = max(60.0, min(250.0, monoBassFreqHz))
 
         // Multiband
@@ -1350,12 +1336,8 @@ struct AppConfig: Equatable {
             "primebass_density = \(Self.formatFloat(primeBassDensity))",
             "primebass_subharmonics_enabled = \(Self.boolString(primeBassSubharmonicsEnabled))",
             "primebass_subharmonics_amount = \(Self.formatFloat(primeBassSubharmonicsAmount))",
-            "stereo_widen_enabled = \(Self.boolString(stereoWidenEnabled))",
             "mono_bass_enabled = \(Self.boolString(monoBassEnabled))",
             "mono_bass_freq_hz = \(Self.formatFloat(monoBassFreqHz))",
-            "stereo_widen_width = \(Self.formatFloat(stereoWidenWidth))",
-            "stereo_widen_center = \(Self.formatFloat(stereoWidenCenter))",
-            "stereo_widen_mix = \(Self.formatFloat(stereoWidenMix))",
             "multiband_enabled = \(Self.boolString(multibandEnabled))",
             "multiband_mode = \(multibandMode)",
             "multiband_preset_id = \(multibandPresetID)",

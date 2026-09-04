@@ -53,7 +53,6 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │    │   single-stage 5-band leveler that REPLACES the wideband AGC and
 │    │   the multiband compressor when on (both are bypassed) — fused
 │    │   leveling + density shaping with program-adaptive time constants
-│    ├── Stereo widener (optional, post-multiband)
 │    └── PrimeBass (optional, post-multiband)
 │        └── Multiband doesn't compress synthesised harmonics back down
 │
@@ -75,7 +74,8 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 │        ~0.2 ms latency — keeps live monitor responsive
 │
 ├──► Stereo-image protection
-│    └── Limits side-channel expansion from PrimeBass/widener
+│    └── Limits side-channel expansion from PrimeBass (fixed allowed
+│        side/mid ratio since the widener's removal in 0.50)
 │
 ├──► Pre-emphasis (L/R domain, region specific)
 │    ├── 50 us (Europe) / 75 us (Americas / Japan / Australia)
@@ -356,7 +356,7 @@ Within the main audio path, MPX Prime Studio runs:
       in this slot when enabled and REPLACES steps 3 and 9 entirely: the wideband AGC
       call (step 3) is skipped and the single-stage 5-band leveler runs instead of the
       multiband compressor (including its per-band expander and limiter)
-10. Stereo widener (post-multiband; canonical Optimod placement so multiband doesn't compress widened side-channel HF)
+10. (Stereo widener -- removed in 0.50; measured as adding nothing beneficial. The stereo-image protection ratio it used to scale keeps the former default, so every widener-off chain is bit-identical.)
 11. PrimeBass (post-multiband; canonical MaxxBass / Aural Exciter / Big Bottom placement so multiband doesn't compress the synthesised harmonics)
 12. Bass clipper (LR4 split + tanh-clipped LF band, vvtanhf-batched, optional)
 13. Distortion-cancelled clipper (Orban-principle LF cancellation, vvtanhf-batched, optional)

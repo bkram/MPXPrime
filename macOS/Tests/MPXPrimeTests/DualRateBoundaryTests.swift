@@ -48,7 +48,6 @@ struct DualRateBoundaryTests {
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = true
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = true
         cfg.multibandMode = 5

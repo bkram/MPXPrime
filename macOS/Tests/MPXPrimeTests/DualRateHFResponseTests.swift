@@ -59,7 +59,6 @@ struct DualRateHFResponseTests {
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = false        // disable AGC so it doesn't slew on a steady tone
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false          // disable multiband so the response is unshaped
         cfg.phaseRotationEnabled = false

@@ -288,8 +288,6 @@ struct StageProcessingContent: View {
                         ProcessingDCClipperTab(model: model)
                     case .hfClipper:
                         ProcessingHFClipperTab(model: model)
-                    case .widener:
-                        ProcessingWidenerTab(model: model)
                     case .limiter:
                         ProcessingLimiterTab(model: model)
                     case .bs412:

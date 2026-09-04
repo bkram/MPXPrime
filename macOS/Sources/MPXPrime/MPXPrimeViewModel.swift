@@ -157,7 +157,6 @@ final class MPXPrimeViewModel: ObservableObject {
             return config.downwardExpanderEnabled && !config.advancedDynamicsEnabled
         case .processingMBLimiter:
             return config.multibandLimiterEnabled && !config.advancedDynamicsEnabled
-        case .processingWidener: return config.stereoWidenEnabled
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
         case .processingDCClipper: return config.dcClipperEnabled
@@ -320,7 +319,6 @@ final class MPXPrimeViewModel: ObservableObject {
     var dacPeakText: String { get { telemetry.dacPeakText } set { telemetry.dacPeakText = newValue } }
     var multibandStateText: String { get { telemetry.multibandStateText } set { telemetry.multibandStateText = newValue } }
     var primeBassStateText: String { get { telemetry.primeBassStateText } set { telemetry.primeBassStateText = newValue } }
-    var widenerStateText: String { get { telemetry.widenerStateText } set { telemetry.widenerStateText = newValue } }
 
     var rdsPS: String { get { telemetry.rdsPS } set { telemetry.rdsPS = newValue } }
     var rdsPI: String { get { telemetry.rdsPI } set { telemetry.rdsPI = newValue } }
@@ -503,11 +501,6 @@ final class MPXPrimeViewModel: ObservableObject {
 
     var primeBassPresetChoices: [PresetChoice] {
         PresetCatalog.primeBassPresets.map { PresetChoice(id: $0.id, title: $0.title) }
-    }
-
-    var widenerPresetChoices: [PresetChoice] {
-        [PresetChoice(id: "custom", title: "Custom")]
-            + PresetCatalog.widenerPresets.map { PresetChoice(id: $0.id, title: $0.title) }
     }
 
     var multibandPresetChoices: [PresetChoice] {
@@ -1077,21 +1070,6 @@ final class MPXPrimeViewModel: ObservableObject {
             : "Loaded PrimeBass preset \(title)."
     }
 
-    var currentWidenerPresetID: String {
-        PresetCatalog.currentWidenerPresetID(of: config)
-    }
-
-    func applyWidenerPreset(id: String) {
-        publishConfigChange()
-        guard let title = PresetCatalog.applyWidener(id: id, to: &config) else { return }
-        saveConfig(restartRequired: false)
-        applyLiveRuntimeConfigIfRunning()
-        statusText =
-            isRunning
-            ? "Loaded image preset \(title) live."
-            : "Loaded image preset \(title)."
-    }
-
     func applyMultibandPreset(id: String, intensity: MultibandPresetIntensity) {
         publishConfigChange()
         guard let title = PresetCatalog.applyMultiband(id: id, intensity: intensity, to: &config)
@@ -1186,6 +1164,8 @@ final class MPXPrimeViewModel: ObservableObject {
             config.widebandAGCMinGainDB = defaults.widebandAGCMinGainDB
         case .primeBass:
             config.primeBassEnabled = defaults.primeBassEnabled
+            config.monoBassEnabled = defaults.monoBassEnabled
+            config.monoBassFreqHz = defaults.monoBassFreqHz
             config.primeBassPresetID = defaults.primeBassPresetID
             config.primeBassAmount = defaults.primeBassAmount
             config.primeBassFreqHz = defaults.primeBassFreqHz
@@ -1228,13 +1208,6 @@ final class MPXPrimeViewModel: ObservableObject {
             config.advancedDynamicsMaxGainDB = defaults.advancedDynamicsMaxGainDB
             config.advancedDynamicsDensity = defaults.advancedDynamicsDensity
             config.advancedDynamicsSpeed = defaults.advancedDynamicsSpeed
-        case .widener:
-            config.stereoWidenEnabled = defaults.stereoWidenEnabled
-            config.monoBassEnabled = defaults.monoBassEnabled
-            config.monoBassFreqHz = defaults.monoBassFreqHz
-            config.stereoWidenWidth = defaults.stereoWidenWidth
-            config.stereoWidenCenter = defaults.stereoWidenCenter
-            config.stereoWidenMix = defaults.stereoWidenMix
         case .limiter:
             config.preEncodeAudioLimiterEnabled = defaults.preEncodeAudioLimiterEnabled
             config.preEncodeThreshold = defaults.preEncodeThreshold
@@ -1311,7 +1284,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .overview, .formatProfile,
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .advancedDynamics, .mbLimiter, .expander,
-             .widener, .primeBass,
+             .primeBass,
              .bassClipper, .dcClipper, .hfClipper, .limiter,
              .stereoCoder, .compositeClipper, .bs412,
              .finalStage:
@@ -1657,7 +1630,6 @@ final class MPXPrimeViewModel: ObservableObject {
     func remotePresets() -> [String: [String]] {
         [
             "primebass": PresetCatalog.primeBassPresets.map(\.id),
-            "widener": PresetCatalog.widenerPresets.map(\.id),
             "multiband": PresetCatalog.multibandPresets.map(\.id),
             "finalstage": PresetCatalog.finalStagePresets.map(\.id),
             "format_profile": PresetCatalog.formatProfiles.map(\.id)
@@ -1671,11 +1643,6 @@ final class MPXPrimeViewModel: ObservableObject {
                 throw ControlError.invalidRequest("unknown primebass preset '\(id)'")
             }
             applyPrimeBassPreset(id: id)
-        case "widener":
-            guard PresetCatalog.widenerPresets.contains(where: { $0.id == id }) else {
-                throw ControlError.invalidRequest("unknown widener preset '\(id)'")
-            }
-            applyWidenerPreset(id: id)
         case "multiband":
             guard PresetCatalog.multibandPresets.contains(where: { $0.id == id }) else {
                 throw ControlError.invalidRequest("unknown multiband preset '\(id)'")
@@ -2222,7 +2189,6 @@ final class MPXPrimeViewModel: ObservableObject {
             safetyLimiterGainReductionDBValue = 0.0
             safetyClipDBValue = 0.0
             stereoImageText = "Corr +1.00 • Side 0.00x"
-            widenerStateText = "Off"
             overflowHistory.removeAll(keepingCapacity: true)
             lastOverflowTotal = 0
             lastUnderflowTotal = 0
@@ -2404,17 +2370,6 @@ final class MPXPrimeViewModel: ObservableObject {
         }
         assignIfChanged(\.multibandStateText, config.multibandEnabled ? "On" : "Off")
         assignIfChanged(\.primeBassStateText, config.primeBassEnabled ? "On" : "Off")
-        let widenerState: String
-        if !config.stereoWidenEnabled || config.monoMode {
-            widenerState = "Off"
-        } else if outputStereoCorrelation < 0.0 || outputSideToMidRatio > 0.85 {
-            widenerState = "Risk"
-        } else if outputStereoCorrelation < 0.30 || outputSideToMidRatio > 0.55 {
-            widenerState = "Wide"
-        } else {
-            widenerState = "Safe"
-        }
-        assignIfChanged(\.widenerStateText, widenerState)
 
         let elapsed = max(0.0, now - (engineStartReference ?? now))
         updateRDSFields(elapsed: elapsed)

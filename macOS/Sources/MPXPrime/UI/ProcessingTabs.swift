@@ -198,6 +198,20 @@ struct ProcessingPrimeBassTab: View {
                 tooltip: "Synthesizes an octave-below reinforcement for fundamentals. Use sparingly — easily over-emphasizes sub-40 Hz content.")
                 .disabled(!model.config.primeBassSubharmonicsEnabled)
         }
+        // Mono Bass moved here from the removed Stereo Widener tab (0.50):
+        // both are post-multiband bass-domain image controls.
+        Card(title: "Mono Bass") {
+            Toggle("Mono Bass", isOn: model.configBinding(\.monoBassEnabled, runtimeDisposition: .live))
+                .help("Sums L and R to mono below the crossover. Sub-bass side energy eats deviation for no audible width and breaks mono compatibility on FM -- every shipped profile keeps this on.")
+            DoubleSliderRow(
+                title: "Bass Mono Freq",
+                value: model.configBinding(\.monoBassFreqHz, runtimeDisposition: .live),
+                range: 70...220,
+                format: "%.0f Hz",
+                tooltip: "Below this frequency, L and R side energy is summed to mono. 110-140 Hz is the usual range; profiles use 140 Hz (clean/speech/classical) and 115 Hz (loud)."
+            )
+            .disabled(!model.config.monoBassEnabled)
+        }
     }
 }
 
@@ -318,46 +332,6 @@ struct ProcessingMultibandTab: View {
         }
         .disabled(bypassed)
         .opacity(bypassed ? 0.5 : 1.0)
-    }
-}
-
-struct ProcessingWidenerTab: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "Stereo Widener") {
-            Picker("Preset", selection: Binding(
-                get: { self.model.currentWidenerPresetID },
-                set: { newValue in
-                    guard newValue != "custom" else { return }
-                    self.model.applyWidenerPreset(id: newValue)
-                }
-            )) {
-                ForEach(model.widenerPresetChoices) { preset in
-                    Text(preset.title).tag(preset.id)
-                }
-            }
-            .pickerStyle(.menu)
-            Toggle("Enable Stereo Widener", isOn: model.configBinding(\.stereoWidenEnabled, runtimeDisposition: .live))
-            Toggle("Mono Bass", isOn: model.configBinding(\.monoBassEnabled, runtimeDisposition: .live))
-            DoubleSliderRow(
-                title: "Bass Mono Freq",
-                value: model.configBinding(\.monoBassFreqHz, runtimeDisposition: .live),
-                range: 70...220,
-                format: "%.0f Hz",
-                tooltip: "Below this frequency, L and R side energy is summed to mono. Improves FM mono compatibility and sub-bass deviation behavior."
-            )
-            .disabled(!model.config.monoBassEnabled)
-            DoubleSliderRow(title: "Width", value: model.configBinding(\.stereoWidenWidth, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "Amount of upper-band side-channel expansion. 0 = mono-safe, 1 = maximum widening (risks over-modulation and FM noise in weak signal areas).")
-            DoubleSliderRow(title: "Center", value: model.configBinding(\.stereoWidenCenter, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "Preservation of the center image during widening. Higher = keeps vocals and lead instruments anchored in the phantom center.")
-            DoubleSliderRow(title: "Mix", value: model.configBinding(\.stereoWidenMix, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "Wet/dry blend of the widened signal. 1.0 = fully processed, 0.0 = bypass. Lower values reduce any unintended coloration.")
-            Text("Start with Safe FM, then move to Open Music only if mono compatibility and verifier output stay clean.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 }
 

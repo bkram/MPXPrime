@@ -535,12 +535,15 @@ setting; a VoiceOver pass over the Meter; and a long SDR + RF-spectrum GUI
 run with Instruments "View Body" on the root (it should now be 0 Hz).
 The consolidated queue lives in meter-plan.md.
 
-Operator verdict 2026-09-04 (backlog): **Mono Bass is useful; the Stereo
-Widener itself does not do anything beneficial.** Candidate follow-up: demote
-or remove the widener stage -- it ships disabled, no profile enables it, and
-the 2026-08-29 industry survey noted our post-multiband placement is
-nonstandard anyway. Removal is its own scoped change (widener preset kind,
-schema keys, INI keys, deep-suite pairs, image-protection docs).
+Operator verdict 2026-09-04: **Mono Bass is useful; the Stereo Widener
+itself does not do anything beneficial.** DONE the same day: the widener
+stage, its four `stereo_widen_*` keys, the `widener` preset kind and its tab
+were removed; Mono Bass moved to the PrimeBass tab and Format Profiles carry
+`monoBassFreqHz` directly (140 Hz clean/speech/classical, 115 Hz loud).
+Correction to the earlier note: Music - Loud DID enable the widener (via the
+`wide_chr` preset, Width 0.46) -- that profile's on-air image changes, and its
+stereo-image protection ratio moves from 0.999 to the former default 1.025;
+all strict baselines (widener off) stay bit-identical.
 
 ## Next up
 

@@ -85,7 +85,6 @@ struct BenchmarkRunner {
         cfg.preEncodeLookaheadMS = 1.0
         cfg.widebandAGCEnabled = true
         cfg.primeBassEnabled = true
-        cfg.stereoWidenEnabled = true
         cfg.monoBassEnabled = true
         cfg.multibandEnabled = true
         cfg.multibandMode = 5
@@ -204,7 +203,6 @@ struct BenchmarkRunner {
         StageProbe(name: "Wideband AGC", domain: .audio, mutate: { $0.widebandAGCEnabled = false }),
         StageProbe(name: "Parametric EQ", domain: .audio, mutate: { $0.parametricEQEnabled = false }),
         StageProbe(name: "PrimeBass", domain: .audio, mutate: { $0.primeBassEnabled = false }),
-        StageProbe(name: "Stereo widener", domain: .audio, mutate: { $0.stereoWidenEnabled = false }),
         StageProbe(name: "Mono bass", domain: .audio, mutate: { $0.monoBassEnabled = false }),
         StageProbe(name: "Phase rotation", domain: .audio, mutate: { $0.phaseRotationEnabled = false }),
         StageProbe(name: "Bass clipper", domain: .audio, mutate: { $0.bassClipperEnabled = false }),

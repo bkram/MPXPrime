@@ -6,7 +6,7 @@ import Foundation
 @testable import MPXPrime
 
 // Format Profile is the top-level "Station Format" picker — one selection
-// atomically applies multiband + final-stage + PrimeBass + stereo widener
+// atomically applies multiband + final-stage + PrimeBass + mono bass
 // + composite-clipper settings appropriate to the chosen format. These
 // tests pin the contract: each profile resolves to a known per-stage
 // preset ID, the apply path actually mutates the expected config fields,
@@ -61,7 +61,6 @@ struct FormatProfileTests {
         ]
         let knownFinalStage: Set<String> = ["balanced", "chr", "punchy", "speech"]
         let knownPrimeBass: Set<String> = ["chr", "urban", "rock", "ac", "talk"]
-        let knownWidener: Set<String> = ["safe_fm", "open_music", "wide_chr"]
 
         for profile in MPXPrimeViewModel.formatProfiles {
             #expect(knownMultiband.contains(profile.multibandPresetID),
@@ -70,8 +69,8 @@ struct FormatProfileTests {
                 "profile `\(profile.id)` references unknown final-stage preset `\(profile.finalStagePresetID)`")
             #expect(knownPrimeBass.contains(profile.primeBassPresetID),
                 "profile `\(profile.id)` references unknown PrimeBass preset `\(profile.primeBassPresetID)`")
-            #expect(knownWidener.contains(profile.widenerPresetID),
-                "profile `\(profile.id)` references unknown widener preset `\(profile.widenerPresetID)`")
+            #expect((60.0...250.0).contains(profile.monoBassFreqHz),
+                "profile `\(profile.id)` mono-bass crossover \(profile.monoBassFreqHz) Hz is outside the clamp")
         }
     }
 
@@ -87,7 +86,8 @@ struct FormatProfileTests {
         #expect(model.config.finalStagePresetID == "chr")
         #expect(model.config.primeBassEnabled == true)
         #expect(model.config.primeBassPresetID == "chr")
-        #expect(model.config.stereoWidenEnabled == true)  // wide_chr has stereoWidenEnabled = true
+        #expect(model.config.monoBassEnabled == true)
+        #expect(abs(model.config.monoBassFreqHz - 115.0) < 1e-6)  // loud profile: mono below 115 Hz
         #expect(abs(model.config.compositeClipperThresholdDB - (-0.8)) < 1e-6)
         #expect(abs(model.config.compositeClipperCeilingDB - (-0.2)) < 1e-6)
         #expect(abs(model.config.finalDriveDB - 8.0) < 1e-6)
@@ -143,7 +143,7 @@ struct FormatProfileTests {
         #expect(model.config.finalStagePresetID == "speech")
         #expect(model.config.primeBassEnabled == false,
             "speech profile must disable PrimeBass")
-        #expect(model.config.stereoWidenEnabled == false)  // safe_fm has stereoWidenEnabled = false
+        #expect(abs(model.config.monoBassFreqHz - 140.0) < 1e-6)  // speech: mono below 140 Hz
         #expect(abs(model.config.finalDriveDB - 4.5) < 1e-6)
     }
 
@@ -176,7 +176,7 @@ struct FormatProfileTests {
         let snapshotFinalStage = model.config.finalStagePresetID
         let snapshotPrimeBassEnabled = model.config.primeBassEnabled
         let snapshotPrimeBassID = model.config.primeBassPresetID
-        let snapshotWidenEnabled = model.config.stereoWidenEnabled
+        let snapshotMonoBassFreq = model.config.monoBassFreqHz
         let snapshotClipperThreshold = model.config.compositeClipperThresholdDB
         let snapshotClipperCeiling = model.config.compositeClipperCeilingDB
         let snapshotFinalDrive = model.config.finalDriveDB
@@ -191,7 +191,7 @@ struct FormatProfileTests {
         #expect(model.config.finalStagePresetID == snapshotFinalStage)
         #expect(model.config.primeBassEnabled == snapshotPrimeBassEnabled)
         #expect(model.config.primeBassPresetID == snapshotPrimeBassID)
-        #expect(model.config.stereoWidenEnabled == snapshotWidenEnabled)
+        #expect(abs(model.config.monoBassFreqHz - snapshotMonoBassFreq) < 1e-9)
         #expect(abs(model.config.compositeClipperThresholdDB - snapshotClipperThreshold) < 1e-9)
         #expect(abs(model.config.compositeClipperCeilingDB - snapshotClipperCeiling) < 1e-9)
         #expect(abs(model.config.finalDriveDB - snapshotFinalDrive) < 1e-9)

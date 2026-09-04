@@ -83,7 +83,6 @@ final class LiveTelemetry {
     var advancedDynamicsDetailText: String = "Density 0.0 dB • Gain 0.0/0.0/0.0/0.0/0.0 dB"
     var multibandStateText: String = "Off"
     var primeBassStateText: String = "Off"
-    var widenerStateText: String = "Off"
 
     var rdsPS: String = "-"
     var rdsPI: String = "-"

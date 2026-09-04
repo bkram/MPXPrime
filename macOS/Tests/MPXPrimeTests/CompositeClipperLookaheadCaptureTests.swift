@@ -51,7 +51,6 @@ struct CompositeClipperLookaheadCaptureTests {
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = true
         cfg.primeBassEnabled = true
-        cfg.stereoWidenEnabled = true
         cfg.monoBassEnabled = true
         cfg.multibandEnabled = true
         cfg.multibandMode = 5

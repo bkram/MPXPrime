@@ -333,14 +333,18 @@ func decodeProgramFile(
         guard let outBuffer = AVAudioPCMBuffer(
             pcmFormat: targetFormat, frameCapacity: outCapacity)
         else { return nil }
-        var handedInput = false
+        // The input block's type is @Sendable, but convert() drives it
+        // synchronously on this thread; box the one-shot flag to satisfy
+        // strict concurrency without an isolation dance.
+        final class OneShotInput: @unchecked Sendable { var handed = false }
+        let oneShot = OneShotInput()
         var conversionError: NSError?
         let status = converter.convert(to: outBuffer, error: &conversionError) { _, inputStatus in
-            if handedInput {
+            if oneShot.handed {
                 inputStatus.pointee = .endOfStream
                 return nil
             }
-            handedInput = true
+            oneShot.handed = true
             inputStatus.pointee = .haveData
             return inBuffer
         }

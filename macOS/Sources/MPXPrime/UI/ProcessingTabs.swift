@@ -68,34 +68,10 @@ struct ProcessingCoreTab: View {
                 Text("75 us").tag(75)
             }
             .pickerStyle(.segmented)
-            DoubleSliderRow(title: "Input Gain", value: Binding(
-                get: { model.inputGainDB },
-                set: {
-                    model.setInputGainLive($0)
-                }
-            ), range: -24...24, format: "%.1f dB",
-            tooltip: "Pre-chain trim on the L/R input. Use to land your typical source peaks around -12 to -6 dBFS on the input meters -- the AGC normalizes from there (it reads mid-range, around +3 dB, when the staging is right). NOT the loudness knob -- use AGC target + final drive + composite clipper drive for that.")
-            DoubleSliderRow(
-                title: model.processedAudioOutputActive ? "Output Level" : "MPX Output Level",
-                value: model.configBinding(\.outputGainDB, runtimeDisposition: .live),
-                range: model.processedAudioOutputActive ? -18...18 : -18...0,
-                format: "%.1f dB",
-                tooltip: model.processedAudioOutputActive
-                    ? "Output level trim for the processed stereo L/R feed. The pre-encode limiter ceiling is normalized to ~0 dBFS at 0 dB; lower it to match your external coder's input reference, raise it for a hotter feed."
-                    : "Attenuation-only trim on the composite before the audio device (0 dB = full composite budget). Positive values are not offered: they squeeze the audio budget (deeper clipping) and push pilot/RDS above their set injection without adding loudness. Calibrate the exciter with MPX Line Output or the exciter's input gain."
-            )
-            if !model.processedAudioOutputActive {
-                DoubleSliderRow(
-                    title: "Line Output",
-                    value: model.configBinding(\.mpxLineOutputDBFS, runtimeDisposition: .live),
-                    range: -40...0,
-                    format: "%.1f dBFS",
-                    tooltip: "Absolute DAC level of 100% modulation (75 kHz deviation) -- calibrate to the exciter's input sensitivity. Applied at the converter AFTER all processing and metering: deviation readouts and the composite budget are unaffected. Keep the OS/interface volume at 0 dB and set the level here. 0.0 dBFS is the classic full-scale convention. Values above 0 are impossible at a DAC -- they would only clip the composite and skew pilot/RDS upward; an under-driven exciter needs its input sensitivity trimmed instead."
-                )
-            }
-            Text(model.processedAudioOutputActive
-                ? "Output Level sets the processed stereo line level into your external coder."
-                : "Use MPX Output Level for final transmit/output calibration. Do not use AGC target as the main loudness knob.")
+            // Input Gain / MPX Output Level / Line Output moved to the Audio
+            // I/O section (0.50): they are rig CALIBRATION, remembered per
+            // device -- not part of the sound, so they left the DSP tabs.
+            Text("Input gain and output/line level calibration live in the sidebar's Audio I/O section (remembered per device). Loudness belongs to AGC target, Final Drive, and the composite clipper.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz",
@@ -732,6 +708,17 @@ struct ProcessingStereoCoderTab: View {
 
     var body: some View {
         Card(title: "Stereo Encoder") {
+            // Pilot Level moved here from the Settings window (0.50): it is
+            // stereo-encoder structure, not Audio I/O. Range follows ITU-R
+            // BS.450-4 / FCC 73.322 (8-10% deviation); 0-12% for headroom,
+            // 0 = mute. Composite-only (no pilot in processed audio).
+            if !model.processedAudioOutputActive {
+                DoubleSliderRow(
+                    title: "Pilot Level", value: model.pilotLevelPercentBinding(),
+                    range: 0...12, format: "%.1f %%",
+                    restartRequired: true)
+                .disabled(model.config.monoMode)
+            }
             Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
                 .help("Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom before the clipper works. Independent of the Composite Clipper's enable.")
             // Disclaimer caption (the Advanced Dynamics pattern) instead of

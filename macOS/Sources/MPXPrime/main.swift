@@ -464,7 +464,8 @@ do {
             config: cfg,
             inputDeviceID: inputID,
             outputDeviceID: outputID,
-            outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
+            outputMode: cfg.resolvedOutputMode(allowMonitor: false) == .processedAudio
+                ? .processedAudio : .mpxComposite
         )
     }
 
@@ -543,7 +544,8 @@ do {
         return ALSAAudioEngine(
             generator: generator,
             config: cfg,
-            outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
+            outputMode: cfg.resolvedOutputMode(allowMonitor: false) == .processedAudio
+                ? .processedAudio : .mpxComposite
         )
     }
     // Build the backend WITHOUT a pre-started engine, bring the control

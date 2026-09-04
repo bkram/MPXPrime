@@ -32,6 +32,10 @@ actor HeadlessControlBackend: ControlBackend {
     /// Sink for API now-playing pushes (display, artist, title) -> the shared
     /// NowPlayingState owned by main.swift.
     private let onNowPlaying: (@Sendable (String, String, String) -> Void)?
+    /// Device enumeration, injected so tests never touch the HAL (the same
+    /// rule as the GUI's deviceLister). Production default is the real one.
+    private let enumerateDevices:
+        @Sendable () -> (inputs: [ControlDevice], outputs: [ControlDevice], note: String)
 
     init(
         config: AppConfig,
@@ -39,7 +43,10 @@ actor HeadlessControlBackend: ControlBackend {
         engine: (any ControlledEngine)?,
         engineFactory: @escaping ControlEngineFactory,
         onConfigChange: (@Sendable (AppConfig) -> Void)? = nil,
-        onNowPlaying: (@Sendable (String, String, String) -> Void)? = nil
+        onNowPlaying: (@Sendable (String, String, String) -> Void)? = nil,
+        deviceEnumerator: @escaping @Sendable ()
+            -> (inputs: [ControlDevice], outputs: [ControlDevice], note: String)
+            = { AudioDeviceListing.enumerate() }
     ) {
         self.config = config
         self.configPath = configPath
@@ -47,6 +54,7 @@ actor HeadlessControlBackend: ControlBackend {
         self.makeEngine = engineFactory
         self.onConfigChange = onConfigChange
         self.onNowPlaying = onNowPlaying
+        self.enumerateDevices = deviceEnumerator
         self.startedAt = engine != nil ? Date() : nil
     }
 
@@ -61,7 +69,7 @@ actor HeadlessControlBackend: ControlBackend {
             uptimeSeconds: startedAt.map { Date().timeIntervalSince($0) },
             restartPending: restartPending,
             sourceMode: config.sourceMode,
-            outputMode: config.processedAudioOutput ? "processedAudio" : "mpxComposite",
+            outputMode: config.resolvedOutputMode(allowMonitor: false).statusString,
             notes: notes
         )
     }
@@ -107,7 +115,19 @@ actor HeadlessControlBackend: ControlBackend {
     }
 
     func applyConfigPatch(_ patch: [String: String]) throws -> ConfigApplyResult {
-        let (newConfig, outcomes, planes) = try ConfigPatch.apply(patch, to: config)
+        let oldInputUID = config.inputDeviceUID
+        let oldOutputUID = config.outputDeviceUID
+        let oldProcessed = config.processedAudioOutput
+        var (newConfig, outcomes, planes) = try ConfigPatch.apply(patch, to: config)
+        // Per-device calibration recall (Audio I/O): a device/mode change
+        // pulls the new device's remembered levels into the config BEFORE it
+        // commits. The planes were classified from the PATCH, so a pure
+        // device change never live-applies the recalled levels -- they land
+        // with the restart, atomically with the new device. Explicitly
+        // patched level keys win over recall.
+        recallCalibrationIfDeviceChanged(
+            oldInputUID: oldInputUID, oldOutputUID: oldOutputUID,
+            oldProcessed: oldProcessed, into: &newConfig, patchKeys: Set(patch.keys))
         config = newConfig
         if let engine {
             if planes.dspLive { engine.applyRuntimeConfig(newConfig) }
@@ -239,8 +259,13 @@ actor HeadlessControlBackend: ControlBackend {
         }
         // Apply as a FULL config patch so every changed key goes through the
         // canonical live/liveRDS/restart classification -- a snapshot load is
-        // just a big PATCH, and behaves exactly like one.
-        let loaded = try AppConfig.loadFromINIString(snap.configINIText)
+        // just a big PATCH, and behaves exactly like one. Installation keys
+        // (devices, engine format, mode, calibration, control server) are
+        // preserved from the live config first: snapshots restore the sound,
+        // not the wiring (and a remote load must never strand the box by
+        // turning its own control server off).
+        let loaded = AppConfig.applyingSnapshot(
+            iniText: snap.configINIText, preservingInstallationFrom: config)
         let patch = try ConfigPatch.sectionedValues(of: loaded)
             .values.reduce(into: [String: String]()) { $0.merge($1) { a, _ in a } }
         let result = try applyConfigPatch(patch)
@@ -384,6 +409,60 @@ actor HeadlessControlBackend: ControlBackend {
         } catch {
             notes = ["config save failed: \(error)"]
         }
+        captureDeviceCalibration()
+    }
+
+    // MARK: - Per-device calibration memory (Audio I/O sidecar)
+
+    /// Write-through: record the config's levels under its selected devices.
+    /// Device names / the connected set come from a best-effort enumeration
+    /// (headless PATCHes never update the `*_device_name` mirrors); an empty
+    /// enumeration just skips the UID-drift dedupe for this pass.
+    private func captureDeviceCalibration() {
+        var store = DeviceCalibrationStore.load(configPath: configPath)
+        let listing = enumerateDevices()
+        let connected = Set(listing.inputs.map(\.id) + listing.outputs.map(\.id))
+        let changed = store.capture(
+            from: config,
+            inputName: listing.inputs.first(where: { $0.id == config.inputDeviceUID })?.name,
+            outputName: listing.outputs.first(where: { $0.id == config.outputDeviceUID })?.name,
+            connectedUIDs: connected)
+        guard changed else { return }
+        do {
+            try DeviceCalibrationStore.write(store, configPath: configPath)
+        } catch {
+            notes.append("device calibration memory write failed: \(error)")
+        }
+    }
+
+    private func recallCalibrationIfDeviceChanged(
+        oldInputUID: String?, oldOutputUID: String?, oldProcessed: Bool,
+        into newConfig: inout AppConfig, patchKeys: Set<String>
+    ) {
+        let inputChanged = (newConfig.inputDeviceUID ?? "") != (oldInputUID ?? "")
+        let outputChanged = (newConfig.outputDeviceUID ?? "") != (oldOutputUID ?? "")
+            || newConfig.processedAudioOutput != oldProcessed
+        guard inputChanged || outputChanged else { return }
+        let store = DeviceCalibrationStore.load(configPath: configPath)
+        var recalled = newConfig
+        // Name fallback rides the config's *_device_name mirrors (the store
+        // falls back to them when the explicit names are nil).
+        _ = store.recall(
+            into: &recalled,
+            recallInput: inputChanged,
+            recallOutput: outputChanged,
+            inputName: nil,
+            outputName: nil)
+        if patchKeys.contains("input_gain_db") { recalled.inputGainDB = newConfig.inputGainDB }
+        if patchKeys.contains("output_gain_db") { recalled.outputGainDB = newConfig.outputGainDB }
+        if patchKeys.contains("mpx_line_output_dbfs") {
+            recalled.mpxLineOutputDBFS = newConfig.mpxLineOutputDBFS
+        }
+        recalled.validate()
+        if recalled != newConfig {
+            newConfig = recalled
+            notes.append("Recalled per-device calibration for the new device selection.")
+        }
     }
 
     private func platformName() -> String {
@@ -444,6 +523,7 @@ extension AudioOutputEngine: ControlledEngine {
             inputRightPeak: m.inputRightPeak,
             outputPeak: m.outputPeak,
             deviationKHzPeak: m.deviationKHzPeak,
+            dacPeakDBFS: m.dacPeak > 0.0 ? 20.0 * log10f(m.dacPeak) : -120.0,
             agcGainDB: m.agcGainDB,
             advancedDynamicsActive: m.advancedDynamicsActive,
             advancedDynamicsBandGainsDB: m.advancedDynamicsActive
@@ -486,6 +566,7 @@ extension ALSAAudioEngine: ControlledEngine {
             inputRightPeak: peaks.inputR,
             outputPeak: peaks.output,
             deviationKHzPeak: state.deviationKHzPeak,
+            dacPeakDBFS: state.dacPeak > 0.0 ? 20.0 * log10f(state.dacPeak) : -120.0,
             agcGainDB: state.agcGainDB,
             advancedDynamicsActive: state.advancedDynamicsActive,
             advancedDynamicsBandGainsDB: state.advancedDynamicsActive

@@ -188,8 +188,21 @@ When the engine renders the built-in test tone (`source_mode = tone`), `MPXGener
 
 ## Output modes
 
-`AudioOutputMode` (`AudioOutputEngine.swift`) has three cases; the engine resolves
-which to use at `start()` from config and routes the render callback accordingly.
+`AudioOutputMode` (`AudioOutputEngine.swift`) has three cases. Since 0.50 the
+resolution from the two stored booleans (`processed_audio_output` wins over
+`monitor_enabled`) lives in ONE place -- `AppConfig.resolvedOutputMode(allowMonitor:)`
+-- used by the GUI (allowMonitor: true), both headless mains (false; the monitor
+path is GUI-only) and the `/api/status` `outputMode` string, which now also
+reports `monitorAudio` (previously the monitor was invisible to the API). The
+GUI presents the choice as one segmented **Operating Mode** control on the
+Audio I/O page; the stored INI keys are unchanged. `MPXGenerator` also seeds
+`audioOutputOnly` from `processed_audio_output` at construction (0.50), so an
+engine that never calls `setAudioOutputOnly` -- the ALSA engine -- still runs
+the audio-only chain correctly (before the seed, Linux processed-audio kept
+the dual-rate boundary on, running 48 kHz coefficients at the output rate,
+and the optional final clipper could never engage); the macOS engine's
+`setAudioOutputOnly` call at start() is an idempotent re-assert, pinned by
+`configSeedMatchesExplicitSetAudioOutputOnly`.
 
 - **`mpxComposite`** (default): the per-sample render is `processSampleDetailed`
   -> `processAudioDomain` (audio half) -> `processMPXDomain` (stereo encode,
@@ -221,6 +234,48 @@ which to use at `start()` from config and routes the render callback accordingly
   UI hides every composite/RDS surface in this mode (RDS section, Composite Clipper
   / BS.412 / Final Stage tabs, pilot level, deviation/modulation meters, MPX
   Spectrum + Scopes windows, composite signal-flow pills).
+
+## Audio I/O and level calibration (0.50)
+
+Devices, the operating mode, and the three level-calibration keys
+(`input_gain_db`, `output_gain_db`, `mpx_line_output_dbfs`) live in the GUI's
+dedicated **Audio I/O** sidebar section (`UI/AudioIOTab.swift`; the web
+dashboard's matching page is the retitled `interfaces` tools page). They are
+installation state, not sound:
+
+- **Telemetry domains.** Deviation is a MODULATION-domain readout: both engines
+  divide `output_gain_db` back out of the metered composite
+  (`modulationReferenceScale`) so the kHz display no longer under-reads by the
+  operator's exciter trim (plan.md item -1, field-measured 30.2 kHz displayed
+  vs ~75 on air at -7.89 dB trim; `DeviationTelemetryTests` pins the
+  invariance). The electrical counterpart is `dacPeakDBFS` in `/api/meters` and
+  the Audio I/O Output card: the peak actually presented to the converter, post
+  `output_gain_db` AND `mpx_line_output_dbfs`. The calibration test tone rides
+  the same trims, so `smoke-live.sh`'s budget-arithmetic expectation is correct
+  at any station trim (it silently required 0 dB before).
+- **Per-device calibration memory** (`Control/DeviceCalibrationStore.swift`): a
+  JSON sidecar (`<configPath>.devicecal.json`, the SnapshotStore pattern)
+  remembers Input Gain per input device and MPX Output Level + Line Output per
+  output device -- per operating mode, because composite `output_gain_db`
+  (modulation trim, clamp -40..0) and processed-audio (line feed, +/-40) are
+  different physical calibrations. Write-through happens on every config
+  persist (GUI debounced save; headless `persist()`); recall fires only on an
+  effective device-UID or mode change, commits to config WITHOUT live-applying
+  (a device change is restart-class; the old rig keeps its calibration until
+  the restart, and both start paths re-apply the config), and explicitly
+  patched level keys win over recall. UID drift after a USB re-plug falls back
+  to the newest same-name entry, migrating on the next capture; a hand-edited
+  INI reload never recalls (the INI is authoritative). Both backends inject
+  their device enumeration so tests stay HAL-free.
+- **Snapshots restore the sound, not the wiring**
+  (`Control/InstallationKeys.swift`): snapshot LOAD preserves
+  `AppConfig.installationPreservedKeysBySection` -- devices + names,
+  sample_rate/blocksize, the mode booleans, the three calibration levels, and
+  the `control_*` keys (a snapshot loaded over REST must not turn off the
+  server it arrived through) -- from the live config, in both the GUI and the
+  headless backend. Save and export stay full-config. The "edited since
+  loaded" comparison normalizes installation keys, so calibration/device churn
+  never flips a preset to modified.
 
 ## Major Components
 

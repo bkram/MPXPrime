@@ -304,6 +304,9 @@ enum Stage: String, CaseIterable, Identifiable {
     // Monitoring
     case monitoring
 
+    // Audio I/O — devices, operating mode, level calibration
+    case audioIO
+
     // Processing
     case processingOverview
     case processingFormatProfile
@@ -344,6 +347,7 @@ enum Stage: String, CaseIterable, Identifiable {
     /// Sidebar group this stage belongs to.
     enum Group: String, CaseIterable {
         case monitoring = "Monitoring"
+        case audioIO = "Audio I/O"
         case processing = "Processing"
         case rds = "RDS"
         case tools = "Tools"
@@ -353,6 +357,8 @@ enum Stage: String, CaseIterable, Identifiable {
         switch self {
         case .monitoring:
             return .monitoring
+        case .audioIO:
+            return .audioIO
         case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
              .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
@@ -383,6 +389,7 @@ enum Stage: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .monitoring: return "Monitoring"
+        case .audioIO: return "Audio I/O"
         case .processingOverview: return "Overview"
         case .processingFormatProfile: return "Format Profile"
         case .processingCore: return "Core"
@@ -419,6 +426,7 @@ enum Stage: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .monitoring: return "waveform"
+        case .audioIO: return "cable.connector.horizontal"
         case .processingOverview: return "square.grid.2x2"
         case .processingFormatProfile: return "tag"
         case .processingCore: return "slider.horizontal.3"
@@ -458,6 +466,7 @@ enum Stage: String, CaseIterable, Identifiable {
     var detailSubtitle: String {
         switch self {
         case .monitoring: return "Overview and live status"
+        case .audioIO: return "Devices, operating mode, and level calibration"
         case .processingOverview: return "DSP chain status at a glance"
         case .processingFormatProfile: return "Station Format selector (atomic per-format DSP bundle)"
         case .processingCore: return "Bypass, mono, gains, HPF, LPF, HF trim"
@@ -497,6 +506,9 @@ enum Stage: String, CaseIterable, Identifiable {
     var legacySection: AppSection {
         switch group {
         case .monitoring: return .monitoring
+        // Audio I/O shows live input meters, so the legacy section gate keeps
+        // metering/analysis capture engaged, same as Test Tone below.
+        case .audioIO: return .monitoring
         case .processing: return .processing
         case .rds: return .rds
         // Test Tone reads as Monitoring for the legacy section gate so

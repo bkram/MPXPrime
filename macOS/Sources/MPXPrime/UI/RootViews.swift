@@ -218,6 +218,8 @@ struct StageContentView: View {
             Group {
                 if stage == .monitoring {
                     MonitoringDashboardView(model: model)
+                } else if stage == .audioIO {
+                    AudioIOTab(model: model)
                 } else if stage == .testTone {
                     TestToneView(model: model)
                 } else if stage == .snapshots {

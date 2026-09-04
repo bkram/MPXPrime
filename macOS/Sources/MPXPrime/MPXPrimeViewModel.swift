@@ -137,7 +137,7 @@ final class MPXPrimeViewModel: ObservableObject {
     /// only the section landing carries the badge.
     func isStageEnabled(_ stage: Stage) -> Bool? {
         switch stage {
-        case .monitoring, .processingOverview, .processingFormatProfile,
+        case .monitoring, .audioIO, .processingOverview, .processingFormatProfile,
              .processingCore, .processingFinalStage, .snapshots,
              .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsAF,
              .rdsSchedule, .rdsCarrier:
@@ -178,6 +178,7 @@ final class MPXPrimeViewModel: ObservableObject {
         let target = lastStageInGroup[group] ?? {
             switch group {
             case .monitoring: return .monitoring
+            case .audioIO: return .audioIO
             case .processing: return .processingOverview
             case .rds: return .rdsControl
             case .tools: return .testTone
@@ -316,6 +317,7 @@ final class MPXPrimeViewModel: ObservableObject {
     var agcDetailText: String { get { telemetry.agcDetailText } set { telemetry.agcDetailText = newValue } }
     var advancedDynamicsActive: Bool { get { telemetry.advancedDynamicsActive } set { telemetry.advancedDynamicsActive = newValue } }
     var advancedDynamicsDetailText: String { get { telemetry.advancedDynamicsDetailText } set { telemetry.advancedDynamicsDetailText = newValue } }
+    var dacPeakText: String { get { telemetry.dacPeakText } set { telemetry.dacPeakText = newValue } }
     var multibandStateText: String { get { telemetry.multibandStateText } set { telemetry.multibandStateText = newValue } }
     var primeBassStateText: String { get { telemetry.primeBassStateText } set { telemetry.primeBassStateText = newValue } }
     var widenerStateText: String { get { telemetry.widenerStateText } set { telemetry.widenerStateText = newValue } }
@@ -622,6 +624,9 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func persistBasicConfig() {
+        let oldInputUID = config.inputDeviceUID
+        let oldOutputUID = config.outputDeviceUID
+        let oldProcessed = config.processedAudioOutput
         config.sourceMode = sourceMode
         config.monitorEnabled = monitorEnabled
         config.processingBypass = processingBypass
@@ -634,6 +639,8 @@ final class MPXPrimeViewModel: ObservableObject {
         if let d = inputDevices.first(where: { $0.uid == selectedInputUID }) { config.inputDeviceName = d.name }
         if let d = outputDevices.first(where: { $0.uid == selectedOutputUID }) { config.outputDeviceName = d.name }
         if let d = outputDevices.first(where: { $0.uid == selectedMonitorUID }) { config.monitorDeviceName = d.name }
+        recallCalibrationIfDeviceChanged(
+            oldInputUID: oldInputUID, oldOutputUID: oldOutputUID, oldProcessed: oldProcessed)
         saveConfig(restartRequired: isRunning)
     }
 
@@ -875,10 +882,13 @@ final class MPXPrimeViewModel: ObservableObject {
         self.snapshots = file.slots
         self.activeSnapshotID = file.activeID
         self.activeSnapshotModified = file.activeModified ?? false
-        // Rebuild the exact-comparison baseline for the restored active slot.
+        // Rebuild the exact-comparison baseline for the restored active slot
+        // -- merged over the live config's installation keys, the same shape
+        // loadSnapshot() produces, so relaunch does not flip "modified".
         if let active = file.activeID,
            let snap = file.slots.compactMap({ $0 }).first(where: { $0.id == active }) {
-            self.activeSnapshotBaselineConfig = try? AppConfig.loadFromINIString(snap.configINIText)
+            self.activeSnapshotBaselineConfig = AppConfig.applyingSnapshot(
+                iniText: snap.configINIText, preservingInstallationFrom: config)
         } else {
             self.activeSnapshotBaselineConfig = nil
         }
@@ -933,28 +943,33 @@ final class MPXPrimeViewModel: ObservableObject {
     func loadSnapshot(slot: Int) {
         guard (0..<snapshots.count).contains(slot),
               let snapshot = snapshots[slot] else { return }
-        do {
-            let loaded = try AppConfig.loadFromINIString(snapshot.configINIText)
-            let outcome = applyLoadedConfig(loaded, origin: .manual)
-            activeSnapshotID = snapshot.id
-            activeSnapshotModified = false
-            activeSnapshotBaselineConfig = loaded
-            // Persist the loaded config to the main INI so disk == live, and
-            // record the active preset so the "Loaded" marker survives relaunch.
-            enqueueConfigSave(snapshot: config)
-            writeSnapshotsToDisk()
-            switch outcome {
-            case .noChanges:
-                statusText = "Loaded preset \"\(snapshot.name)\" - no changes."
-            case .appliedLive:
-                statusText = "Loaded preset \"\(snapshot.name)\" - applied live."
-            case .restartPending:
-                statusText = "Loaded preset \"\(snapshot.name)\". Restart-required changes are pending; use Apply Restart in Monitoring."
-            case .storedWhileStopped:
-                statusText = "Loaded preset \"\(snapshot.name)\"."
-            }
-        } catch {
-            statusText = "Failed to load preset: \(error.localizedDescription)"
+        // Snapshots restore THE SOUND, not the wiring: this installation's
+        // devices, engine format, operating mode, level calibration, and
+        // control-server keys are preserved from the live config
+        // (AppConfig.installationPreservedKeysBySection). The slot itself
+        // stays full-config (export is untouched).
+        let loaded = AppConfig.applyingSnapshot(
+            iniText: snapshot.configINIText, preservingInstallationFrom: config)
+        let outcome = applyLoadedConfig(loaded, origin: .manual)
+        activeSnapshotID = snapshot.id
+        activeSnapshotModified = false
+        // The baseline is the MERGED config, not the raw slot -- otherwise
+        // the preserved installation keys would read as "modified"
+        // immediately after every load.
+        activeSnapshotBaselineConfig = loaded
+        // Persist the loaded config to the main INI so disk == live, and
+        // record the active preset so the "Loaded" marker survives relaunch.
+        enqueueConfigSave(snapshot: config)
+        writeSnapshotsToDisk()
+        switch outcome {
+        case .noChanges:
+            statusText = "Loaded preset \"\(snapshot.name)\" - no changes."
+        case .appliedLive:
+            statusText = "Loaded preset \"\(snapshot.name)\" - applied live."
+        case .restartPending:
+            statusText = "Loaded preset \"\(snapshot.name)\". Restart-required changes are pending; use Apply Restart in Monitoring."
+        case .storedWhileStopped:
+            statusText = "Loaded preset \"\(snapshot.name)\"."
         }
     }
 
@@ -1152,11 +1167,10 @@ final class MPXPrimeViewModel: ObservableObject {
             applyFormatProfile(defaults.formatProfileID)
             return
         case .core:
+            // Input/output gain deliberately NOT reset: they are per-device
+            // rig calibration (Audio I/O section), not part of the sound.
             processingBypass = defaults.processingBypass
-            inputGainDB = defaults.inputGainDB
             config.processingBypass = defaults.processingBypass
-            config.inputGainDB = defaults.inputGainDB
-            config.outputGainDB = defaults.outputGainDB
             config.monoMode = defaults.monoMode
             config.preemphasisUS = defaults.preemphasisUS
             config.hpfHz = defaults.hpfHz
@@ -1500,6 +1514,9 @@ final class MPXPrimeViewModel: ObservableObject {
     /// patch granularity: mutate config, sync the VM runtime mirrors, save,
     /// hot-apply the classified planes, refresh now-playing.
     func applyRemoteConfigPatch(_ patch: [String: String]) throws -> ConfigApplyResult {
+        let oldInputUID = config.inputDeviceUID
+        let oldOutputUID = config.outputDeviceUID
+        let oldProcessed = config.processedAudioOutput
         let (newConfig, outcomes, planes) = try ConfigPatch.apply(patch, to: config)
         publishConfigChange()
         config = newConfig
@@ -1508,6 +1525,13 @@ final class MPXPrimeViewModel: ObservableObject {
         sourceMode = newConfig.sourceMode
         monitorEnabled = newConfig.monitorEnabled
         inputGainDB = newConfig.inputGainDB
+        // Per-device calibration recall on a remote device/mode change --
+        // explicitly patched level keys win over the recalled values. The
+        // planes were classified from the PATCH, so a pure device change
+        // never live-applies the recalled levels (restart-class by design).
+        recallCalibrationIfDeviceChanged(
+            oldInputUID: oldInputUID, oldOutputUID: oldOutputUID, oldProcessed: oldProcessed,
+            skippingKeys: Set(patch.keys))
         saveConfig(restartRequired: planes.restartRequired)
         if planes.dspLive { applyLiveRuntimeConfigIfRunning() }
         if planes.rdsLive { applyLiveRDSConfigIfRunning() }
@@ -1572,7 +1596,7 @@ final class MPXPrimeViewModel: ObservableObject {
             },
             restartPending: runtimeApplyPending,
             sourceMode: config.sourceMode,
-            outputMode: config.processedAudioOutput ? "processedAudio" : "mpxComposite",
+            outputMode: config.resolvedOutputMode(allowMonitor: true).statusString,
             notes: statusText.isEmpty ? [] : [statusText]
         )
     }
@@ -1788,13 +1812,18 @@ final class MPXPrimeViewModel: ObservableObject {
 
         // Processed-audio output takes precedence over the decoded-MPX monitor
         // (the monitor is meaningless when no composite is generated). It uses the
-        // main output device, not the monitor device.
-        let processedAudio = runConfig.processedAudioOutput
-        let useMonitor = monitorEnabled && !processedAudio
+        // main output device, not the monitor device. persistBasicConfig() ran
+        // above, so runConfig carries the synced monitor/processed booleans.
+        let resolved = runConfig.resolvedOutputMode(allowMonitor: true)
+        let useMonitor = resolved == .monitor
         let selectedOutUID = useMonitor ? selectedMonitorUID : selectedOutputUID
         let outputID: AudioDeviceID? = outputDevices.first(where: { $0.uid == selectedOutUID })?.id
-        let outputMode: AudioOutputMode =
-            processedAudio ? .processedAudio : (useMonitor ? .monitorAudio : .mpxComposite)
+        let outputMode: AudioOutputMode
+        switch resolved {
+        case .processedAudio: outputMode = .processedAudio
+        case .monitor: outputMode = .monitorAudio
+        case .composite: outputMode = .mpxComposite
+        }
 
         // REFUSE to start when a PREFERRED device is unplugged, instead of
         // silently streaming to whatever the OS default happens to be (a
@@ -1863,7 +1892,8 @@ final class MPXPrimeViewModel: ObservableObject {
             }
             activeRuntimeSnapshot = captureRuntimeSnapshot()
             engineStartReference = Date().timeIntervalSinceReferenceDate
-            let mode = processedAudio ? "processed-audio" : (useMonitor ? "monitor" : "output")
+            let mode = resolved == .processedAudio
+                ? "processed-audio" : (useMonitor ? "monitor" : "output")
             var line =
                 "Running source=\(runConfig.sourceMode) mode=\(mode) "
                 + "render=\(Int(engine.renderSampleRate))Hz hw=\(Int(engine.hardwareSampleRate))Hz"
@@ -1964,6 +1994,7 @@ final class MPXPrimeViewModel: ObservableObject {
         var advDynActive = false
         var advDynDensityDB: Float = 0.0
         var advDynBandGainsDB: (Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0)
+        var dacPeak: Float = 0.0
         var compositeClipperGainReductionDB: Float = 0.0
         var compositeClipperLookaheadGainReductionDB: Float = 0.0
         var preEncodeAudioLimiterGainReductionDB: Float = 0.0
@@ -2105,6 +2136,7 @@ final class MPXPrimeViewModel: ObservableObject {
             advDynBandGainsDB = (meters.adBandGain1DB, meters.adBandGain2DB,
                                  meters.adBandGain3DB, meters.adBandGain4DB,
                                  meters.adBandGain5DB)
+            dacPeak = meters.dacPeak
             compositeClipperGainReductionDB = meters.compositeClipperGainReductionDB
             compositeClipperLookaheadGainReductionDB = meters.compositeClipperLookaheadGainReductionDB
             preEncodeAudioLimiterGainReductionDB = meters.preEncodeAudioLimiterGainReductionDB
@@ -2358,6 +2390,9 @@ final class MPXPrimeViewModel: ObservableObject {
             agcDetectorDB,
             agcGainDB
         ) + (agcGateActive ? " • Gate" : ""))
+        assignIfChanged(\.dacPeakText, isRunning && dacPeak > 0.0
+            ? String(format: "%.1f dBFS", 20.0 * log10f(dacPeak))
+            : "--")
         assignIfChanged(\.advancedDynamicsActive, advDynActive)
         if advDynActive {
             assignIfChanged(\.advancedDynamicsDetailText, String(
@@ -2817,8 +2852,15 @@ final class MPXPrimeViewModel: ObservableObject {
         // "edited since loaded" only when the config ACTUALLY differs from the
         // snapshot baseline -- binding churn after a programmatic load rewrites
         // identical values and must not flip it. Persist the flip once.
+        // Installation keys (devices, engine format, calibration, control) are
+        // preserved on load and are not part of a preset's identity -- compare
+        // against the baseline with THIS config's installation overlaid, so a
+        // device switch or calibration trim never reads as "preset edited".
         if activeSnapshotID != nil, !activeSnapshotModified,
-           let baseline = activeSnapshotBaselineConfig, config != baseline {
+           let baseline = activeSnapshotBaselineConfig,
+           config != baseline,  // cheap gate; the merge below is INI-roundtrip-priced
+           config != AppConfig.applyingSnapshot(
+               iniText: baseline.iniText(), preservingInstallationFrom: config) {
             activeSnapshotModified = true
             writeSnapshotsToDisk()
         }
@@ -2990,10 +3032,75 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private func enqueueConfigSave(snapshot: AppConfig) {
+        captureDeviceCalibration(from: snapshot)
         pendingConfigSnapshot = snapshot
         guard !configSaveInFlight else { return }
         configSaveInFlight = true
         processPendingConfigSave()
+    }
+
+    // MARK: - Per-device calibration memory (Audio I/O)
+
+    /// Write-through: record the persisted config's levels under its
+    /// selected devices in the `.devicecal.json` sidecar. Runs on every
+    /// debounced save; the store's own change detection keeps disk writes
+    /// rare (a no-op unless a level, name, or selection actually moved).
+    private func captureDeviceCalibration(from snapshot: AppConfig) {
+        var store = DeviceCalibrationStore.load(configPath: configPath)
+        let connected = Set(inputDevices.map(\.uid) + outputDevices.map(\.uid))
+        let changed = store.capture(
+            from: snapshot,
+            inputName: inputDevices.first(where: { $0.uid == snapshot.inputDeviceUID })?.name,
+            outputName: outputDevices.first(where: { $0.uid == snapshot.outputDeviceUID })?.name,
+            connectedUIDs: connected)
+        guard changed else { return }
+        do {
+            try DeviceCalibrationStore.write(store, configPath: configPath)
+        } catch {
+            statusText = "Device calibration memory write failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Per-device calibration recall: when the effective input/output device
+    /// changed (or the output mode flipped -- it changes what
+    /// `output_gain_db` means), commit the new device's remembered levels to
+    /// the config. Deliberately NOT live-applied: a device change is
+    /// restart-class, the OLD rig stays on air until restart, and both start
+    /// paths re-apply the full config. Keys named in `skippingKeys` (an
+    /// explicit remote patch) win over recall. A hand-edited INI reload
+    /// never comes through here -- the INI stays authoritative there.
+    func recallCalibrationIfDeviceChanged(
+        oldInputUID: String?, oldOutputUID: String?, oldProcessed: Bool,
+        skippingKeys: Set<String> = []
+    ) {
+        let inputChanged = (config.inputDeviceUID ?? "") != (oldInputUID ?? "")
+        let outputChanged = (config.outputDeviceUID ?? "") != (oldOutputUID ?? "")
+            || config.processedAudioOutput != oldProcessed
+        guard inputChanged || outputChanged else { return }
+        let store = DeviceCalibrationStore.load(configPath: configPath)
+        var recalled = config
+        _ = store.recall(
+            into: &recalled,
+            recallInput: inputChanged,
+            recallOutput: outputChanged,
+            inputName: inputDevices.first(where: { $0.uid == config.inputDeviceUID })?.name,
+            outputName: outputDevices.first(where: { $0.uid == config.outputDeviceUID })?.name)
+        if skippingKeys.contains("input_gain_db") { recalled.inputGainDB = config.inputGainDB }
+        if skippingKeys.contains("output_gain_db") { recalled.outputGainDB = config.outputGainDB }
+        if skippingKeys.contains("mpx_line_output_dbfs") {
+            recalled.mpxLineOutputDBFS = config.mpxLineOutputDBFS
+        }
+        recalled.validate()
+        guard recalled != config else { return }
+        publishConfigChange()
+        config = recalled
+        inputGainDB = recalled.inputGainDB
+        let deviceName = outputChanged
+            ? (outputDevices.first(where: { $0.uid == config.outputDeviceUID })?.name
+                ?? config.outputDeviceName ?? "output device")
+            : (inputDevices.first(where: { $0.uid == config.inputDeviceUID })?.name
+                ?? config.inputDeviceName ?? "input device")
+        statusText = "Recalled calibration for \(deviceName)"
     }
 
     private func processPendingConfigSave() {

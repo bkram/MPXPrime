@@ -11,6 +11,60 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Audio I/O: a dedicated sidebar section for devices, operating mode, and
+  level calibration -- with per-device calibration memory.** Devices, the
+  engine format, and the three level trims left the Settings window and the
+  DSP tabs for a new Audio I/O section (`UI/AudioIOTab.swift`; the web
+  dashboard's Interfaces page is retitled and mirrors it): Input card
+  (picker + Input Gain + live IN meters), Output card (picker + MPX Output
+  Level + Line Output + a live DAC Peak readout), Monitor card, Engine
+  card, and ONE segmented Operating Mode control -- MPX Composite /
+  Processed Audio / Monitor -- over the two stored booleans (no new INI
+  key; `/api/status` now reports `monitorAudio` too, previously invisible).
+  Pilot Level moved to the Stereo Coder tab where it belongs. Calibration
+  is rig plumbing, not sound: it is REMEMBERED PER DEVICE
+  (`Control/DeviceCalibrationStore.swift`, a `<config>.devicecal.json`
+  sidecar -- input gain per input device, output level + line output per
+  output device and per operating mode, USB-UID-drift name fallback), and
+  recalled automatically when the device or mode changes, in the GUI and
+  over the REST API alike (explicitly patched keys win; recalled values
+  land with the restart, never live onto the old rig). Switching between
+  the BOMGE exciter and an SFP-X feed now restores each rig's calibration
+  with zero clicks -- the failure that motivated this: an exciter trim
+  calibrated for one rig silently under-drove the other. Snapshot loads
+  now restore THE SOUND, NOT THE WIRING
+  (`Control/InstallationKeys.swift`): devices, sample rate/block size,
+  mode, the three calibration levels, and the control-server keys are
+  preserved from the live config on load in both backends (a preset loaded
+  over REST can no longer turn off the server it arrived through); saves
+  and exports stay full-config, and installation churn no longer flips a
+  preset to "edited". Per-tab resets and the legacy-profile migration keep
+  calibration too (`input_gain_db` joined `legacyResetPreservedMPXKeys`).
+  New headless suites: `DeviceCalibrationTests` (store, view-model hooks,
+  headless backend) + snapshot-preservation cases in `SnapshotTests`.
+
+- **Honest output telemetry + one output-mode resolver (Audio I/O
+  groundwork; two bug fixes).** (1) The deviation readout is now a
+  MODULATION-domain figure: both engines divide `output_gain_db` back out
+  of the metered composite, so the kHz display no longer under-reads by
+  exactly the operator's exciter trim (plan.md item -1; field-measured
+  30.2 kHz displayed vs ~75 on air at -7.89 dB). Its electrical
+  counterpart `dacPeakDBFS` -- the peak actually presented to the
+  converter, post output gain AND line output -- joins `/api/meters`, the
+  dashboard Headroom card, and the Audio I/O Output card.
+  `DeviationTelemetryTests` pins the invariance; `smoke-live.sh`'s
+  expectation math is now correct at any station trim (before, it silently
+  required output_gain 0). (2) `MPXGenerator` seeds `audioOutputOnly` from
+  `processed_audio_output` at construction, fixing Linux processed-audio:
+  the ALSA engine never called `setAudioOutputOnly`, so the dual-rate
+  boundary stayed wrongly enabled (48 kHz coefficients at the output rate
+  -- the same class fixed on macOS 2026-08-30) and the optional final
+  clipper could never engage; pinned by
+  `configSeedMatchesExplicitSetAudioOutputOnly`. The mode resolution
+  itself (processed wins over monitor) now lives in one place,
+  `AppConfig.resolvedOutputMode(allowMonitor:)`, instead of three
+  hand-rolled copies.
+
 - **Live real-music A/B + soak script (default-flip campaign, phase 4).**
   New `ab-music-live.sh` (modeled on smoke-live.sh): runs the headless
   encoder on TWO distinct BlackHole devices (player -> 2ch input at

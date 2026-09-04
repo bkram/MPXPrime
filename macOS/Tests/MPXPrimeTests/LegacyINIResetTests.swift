@@ -62,7 +62,10 @@ import Testing
         #expect(cfg.hfLimiterEnabled)
         #expect(cfg.hfClipperEnabled == false)
         #expect(cfg.advancedDynamicsEnabled == false)
-        #expect(abs(cfg.inputGainDB) < 1e-9)
+        // input_gain_db is calibration-class since 0.50 (per-device memory,
+        // Audio I/O): the legacy reset PRESERVES the operator's source
+        // staging (3.98 in the fixture) instead of wiping it.
+        #expect(abs(cfg.inputGainDB - (-3.98)) < 1e-9)
         #expect(abs(cfg.finalDriveDB - 8.0) < 1e-9)
     }
 

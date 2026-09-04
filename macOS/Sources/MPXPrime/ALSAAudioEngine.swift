@@ -227,6 +227,8 @@ struct ALSAMeterState {
     var budgetMarginDB: Float = 0
     var overBudget = false
     var deviationKHzPeak: Float = 0
+    /// Peak presented to the converter (post output gain + line output).
+    var dacPeak: Float = 0
 }
 
 final class ALSAAudioEngine: @unchecked Sendable {
@@ -276,6 +278,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
     /// during the interleave/convert step after peak metering. Render-thread
     /// only after start; updated via the pending-config hand-off.
     private var lineOutputScale: Float
+    private var modulationReferenceScale: Float
 
     // Ring prime/regulate depths (same policy as the macOS engine, derived
     // from the period size at start()).
@@ -301,6 +304,11 @@ final class ALSAAudioEngine: @unchecked Sendable {
         self.useInputSource = config.sourceMode.lowercased() == "input"
         self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
         self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
+        // Modulation-domain deviation: divide output_gain_db back out of the
+        // metered composite (composite mode only) -- same fix as the macOS
+        // engine, see AudioOutputEngine.modulationReferenceScale.
+        self.modulationReferenceScale = outputMode == .mpxComposite
+            ? powf(10.0, -Float(config.outputGainDB) / 20.0) : 1.0
         let inputUID = config.inputDeviceUID ?? ""
         let outputUID = config.outputDeviceUID ?? ""
         self.inputDeviceName = inputUID.isEmpty ? "default" : inputUID
@@ -456,6 +464,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
                 generator.applyRuntimeConfig(runtime)
                 if outputMode == .mpxComposite {
                     lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
+                    modulationReferenceScale = powf(10.0, -runtime.outputGainDB / 20.0)
                 }
                 targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
                 // Source flip is honoured only when the capture path exists
@@ -530,7 +539,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
         state.budgetMarginDB = cal.budgetMarginDB
         state.overBudget = cal.overBudget
         if meterLock.lockIfAvailable() {
-            state.deviationKHzPeak = meterOutputPeak * targetDeviationKHz
+            state.deviationKHzPeak = meterOutputPeak * targetDeviationKHz * modulationReferenceScale
+            state.dacPeak = meterOutputPeak
+                * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
             meterState = state
             meterLock.unlock()
         }

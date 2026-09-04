@@ -134,6 +134,33 @@ struct AppConfig: Equatable {
     // rate, device format, and FIR plumbing). Takes precedence over
     // `monitorEnabled` (the decoded-MPX monitor is meaningless without a composite).
     var processedAudioOutput: Bool = false
+
+    /// The effective output mode, resolved from the two stored booleans in
+    /// ONE place (previously three hand-rolled resolutions disagreed about
+    /// monitor visibility). Processed-audio wins over the monitor; the
+    /// monitor is only reachable where the caller has a monitor path (the
+    /// macOS GUI -- headless runs and the Linux CLI pass allowMonitor: false).
+    enum ResolvedOutputMode {
+        case composite
+        case processedAudio
+        case monitor
+
+        /// The /api/status `outputMode` vocabulary (docs/manual.md endpoint table).
+        var statusString: String {
+            switch self {
+            case .composite: return "mpxComposite"
+            case .processedAudio: return "processedAudio"
+            case .monitor: return "monitorAudio"
+            }
+        }
+    }
+
+    func resolvedOutputMode(allowMonitor: Bool) -> ResolvedOutputMode {
+        if processedAudioOutput { return .processedAudio }
+        if allowMonitor && monitorEnabled { return .monitor }
+        return .composite
+    }
+
     var processingBypass: Bool = false
     var testToneMode: String = "mono"
     var testToneFreq: Double = 1000.0
@@ -549,8 +576,12 @@ struct AppConfig: Equatable {
 
     /// `[MPX]` keys that describe the station's hardware calibration rather
     /// than its processing; a legacy-profile reset keeps them.
+    /// `input_gain_db` joined in 0.50 when the levels became per-device
+    /// calibration (Audio I/O) -- it is operator source staging, and its
+    /// omission was an oversight.
     static let legacyResetPreservedMPXKeys: [String] = [
         "pilot_level", "mpx_deviation_khz", "mpx_line_output_dbfs", "output_gain_db",
+        "input_gain_db",
         "preemphasis_us", "mono_mode", "source_mode",
         "test_tone_mode", "test_tone_freq", "test_tone_level_db", "test_tone_type"
     ]

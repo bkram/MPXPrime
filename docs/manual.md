@@ -78,7 +78,7 @@ If your output device is BlackHole or a virtual loopback, the same rules apply �
 
 Open `Processing` → `Core` and change `Pre-emphasis (μs)` to `75` if you are in a 75 µs region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). The curve itself is matched to the analog network within 0.05 dB up to 15 kHz, and since 0.45 the whole chain's receiver-side response follows it within 0.5 dB to 14 kHz -- earlier builds were 1-3.5 dB low above 10 kHz at the receiver (a limiter decimation filter and the digital pre-emphasis approximation both rolled off the top of the band), so a station that added treble EQ to compensate should re-check that EQ after upgrading. EU operators required to comply with ITU-R BS.412 should also enable `Processing` → `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
 
-**3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in `Settings`, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
+**3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in the sidebar's `Audio I/O` section, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
 
 **4. Calibrate composite output level.** On `Monitoring`, watch the `Composite Budget` chip:
 
@@ -90,11 +90,11 @@ Open `Processing` → `Core` and change `Pre-emphasis (μs)` to `75` if you are 
 
 **5. Verify on a receiver.** Tune a real FM radio or RTL-SDR to your transmitter's frequency. You should hear stereo audio with a steady stereo-pilot indicator, see RDS PS and Radiotext on the radio's display (if your radio supports RDS), and the audio should sound louder and more present than the same source through `mpxgen` / PiFmRds.
 
-If you cannot hear anything, check `Settings` → output device routing, that the engine is started, and that `Processing` → `Core` → `Bypass Processing` is **off** (the default).
+If you cannot hear anything, check `Audio I/O` → output device routing, that the engine is started, and that `Processing` → `Core` → `Bypass Processing` is **off** (the default).
 
 ### Block (buffer) size
 
-`Settings` -> `Interfaces` -> `Block Size` (`blocksize` in `[INTERFACES]`, 256..8192 frames). The DSP itself does not depend on it -- the composite rendered in 64-, 480-, 1024- or 8192-frame blocks is bit-identical to 512 (pinned by a test) -- so the choice is only about latency versus dropout safety. Round-trip I/O latency is two blocks: at 192 kHz, 256 = 2.7 ms, 512 = 5.3 ms, 1024 = 10.7 ms, 2048 = 21 ms, 4096 = 43 ms, 8192 = 85 ms. Measure your machine with `--bench-blocks` on a release build: it reports the worst single block's render time as a fraction of that block's duration (100% = a dropout) -- keep at least 2x margin. On an Apple M1 Pro with the full chain the worst block is 17% at 512 and 23% at 256, so **512 is the recommended default** (256 works on Apple Silicon if you need the latency; 64 is marginal at 46%). Intel and small Linux boxes (the fanless Celeron runs the chain near 92% of real time) want 1024-2048. Two hardware caveats: CoreAudio devices clamp the buffer to their own range and the engine logs "clamped HAL buffer" when that happens (the built-in output allows 15..4096, so 8192 is never honoured there), and many USB interfaces glitch below 256 regardless of CPU headroom.
+`Audio I/O` -> `Engine` -> `Block Size` (`blocksize` in `[INTERFACES]`, 256..8192 frames). The DSP itself does not depend on it -- the composite rendered in 64-, 480-, 1024- or 8192-frame blocks is bit-identical to 512 (pinned by a test) -- so the choice is only about latency versus dropout safety. Round-trip I/O latency is two blocks: at 192 kHz, 256 = 2.7 ms, 512 = 5.3 ms, 1024 = 10.7 ms, 2048 = 21 ms, 4096 = 43 ms, 8192 = 85 ms. Measure your machine with `--bench-blocks` on a release build: it reports the worst single block's render time as a fraction of that block's duration (100% = a dropout) -- keep at least 2x margin. On an Apple M1 Pro with the full chain the worst block is 17% at 512 and 23% at 256, so **512 is the recommended default** (256 works on Apple Silicon if you need the latency; 64 is marginal at 46%). Intel and small Linux boxes (the fanless Celeron runs the chain near 92% of real time) want 1024-2048. Two hardware caveats: CoreAudio devices clamp the buffer to their own range and the engine logs "clamped HAL buffer" when that happens (the built-in output allows 15..4096, so 8192 is never honoured there), and many USB interfaces glitch below 256 regardless of CPU headroom.
 
 ## Configuration
 
@@ -107,7 +107,7 @@ If you cannot hear anything, check `Settings` → output device routing, that th
 >
 > **A missing audio device does not crash the encoder.** If the configured
 > ALSA device can't be opened at start, the control server still comes up;
-> open the dashboard, pick a present device on the **Interfaces** page, and
+> open the dashboard, pick a present device on the **Audio I/O** page, and
 > press **Start**. Note that USB cards can change their `hw:CARD=<name>`
 > across reboots when two audio cards are present (ALSA assigns Device /
 > Device_1 by probe order) -- if the service comes up stopped after a
@@ -159,6 +159,18 @@ the preset matches the live config, "applied live" when only live-apply
 settings differed, and a restart prompt only when a restart-class setting
 actually changed.
 
+Since 0.50, **loading a preset restores the sound, not the wiring**: this
+installation's device selections, sample rate / block size, operating mode,
+the three level-calibration values (input gain, MPX output level, line
+output), and the control-server settings are kept from the live config --
+a colleague's preset can no longer retarget your transmitter feed, wreck a
+per-rig calibration, or (loaded over the REST API) turn off the very
+control server it arrived through. Saves and exports remain complete
+configs, so an exported slot is still a full `--config` file; the filter
+applies only when a slot is loaded into the live config. Device or
+calibration changes after a load do not flip the "edited" marker -- they
+are not part of a preset's identity.
+
 ### Recommended DSP enablement (current default starting point)
 
 For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:
@@ -186,6 +198,14 @@ Recommended **off** by default (enable only when needed):
 
 This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
 
+### Audio I/O — devices, operating mode, level calibration (0.50)
+
+The sidebar's **Audio I/O** section is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented choice over `processed_audio_output` + `monitor_enabled`: MPX Composite for a transmitter, Processed Audio for an external stereo coder or a streaming chain — MPX Prime as a plain audio processor — or Monitor to decode the composite back to speakers and audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card.
+
+Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound — and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
+
+Two readouts, two domains: the **deviation** meter is a modulation-domain figure — `output_gain_db` and `mpx_line_output_dbfs` are divided back out, so it reads the same kHz regardless of how the exciter drive is trimmed (before 0.50 it under-read by exactly the output trim). **DAC Peak** is the electrical figure — the level actually presented to the converter, post both trims. Calibrate deviation at the exciter; watch DAC Peak to know how hot the wire is.
+
 ### Setting levels — input, AGC, Final Drive, exciter
 
 Three knobs do most of the work between your source and the exciter. They sit at three different points in the chain and each does a specific job — get them right in order and the chain sounds clean without much fiddling.
@@ -193,14 +213,14 @@ Three knobs do most of the work between your source and the exciter. They sit at
 **The chain (left to right):**
 
 ```
-source → IN meter → AGC → [DSP] → Final Drive → composite clipper → MPX Output Level → exciter
-                  ^                ^                                 ^
-                  level control    loudness lever                   hardware calibration
+source → IN meter → AGC → [DSP] → Final Drive → composite clipper → MPX Output Level → Line Output → exciter
+                  ^                ^                                 ^                  ^
+                  level control    loudness lever                    deviation trim     DAC calibration
 ```
 
 **1. Get your input into the AGC's working range.** Open `Monitoring`. The `IN` meter shows the level coming into MPX Prime Studio from your source (before any processing). Aim for input peaks landing roughly in the **−12 to −6 dBFS** range on busy program — bright but not pinned. If the source is consistently below −18 dBFS the AGC has to push hard to reach its target; if it's above −3 dBFS it's eating its own headroom before the chain even sees it.
 
-The level adjustment lives upstream of MPX Prime Studio — in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Processing` → `Core` → `Input Gain` (±24 dB) inside MPX Prime Studio, but use that only to trim — the further upstream you fix the level, the less you stack noise floors.
+The level adjustment lives upstream of MPX Prime Studio — in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Audio I/O` → `Input` → `Input Gain` (±24 dB) inside MPX Prime Studio, but use that only to trim — the further upstream you fix the level, the less you stack noise floors. The trim is remembered per input device.
 
 **2. Let AGC do the level-evening.** Open `Processing` → `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
 
@@ -224,18 +244,19 @@ Don't use AGC `Platform Target` as a loudness knob. It tunes the chain's working
   - 3 to 6 dB regular GR = competitive loudness, contemporary radio sound.
   - Sustained 6+ dB = clipper is the loudness ceiling, you're trading dynamics and HF cleanliness for level.
 
-Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudness *inside* the chain; MPX Output Level adjusts the *voltage* leaving the Mac.
+Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudness *inside* the chain; MPX Output Level and Line Output adjust the *voltage* leaving the Mac.
 
-**4. Set MPX Output Level to match the exciter's input.** `Processing` → `Core` → `MPX Output Level` (±18 dB) is the final calibration knob — it scales the composite signal between MPX Prime Studio and the exciter. The right value depends on your exciter / SDR / RF generator's input sensitivity.
+**4. Calibrate the exciter on the Audio I/O Output card.** Two knobs, both remembered per output device:
 
-- Watch the `Composite Budget` chip on `Monitoring`:
+- `MPX Output Level` (−18..0 dB, attenuation-only in composite mode) trims the whole composite — pilot and RDS included — so it is the **deviation calibration**: with the exciter's own input sensitivity fixed, trim it until the exciter shows exactly 100 % modulation (75 kHz) on peaks. Positive values are deliberately not offered: they would squeeze the audio budget (deeper clipping) and push pilot/RDS above their set injection without adding loudness.
+- `Line Output` (−40..0 dBFS) sets the absolute DAC level of 100 % modulation — the **input-sensitivity match** to the exciter. Keep the OS/interface volume at 0 dB and calibrate here. 0.0 dBFS is the classic full-scale convention and the maximum a converter can produce; an exciter that is still under-driven with both knobs at 0 needs its own input sensitivity raised (menu/trimmer) — no software knob can exceed full scale.
+- Watch the **DAC Peak** readout on the same card (the post-both-trims level at the converter) and the `Composite Budget` chip on `Monitoring`:
   - **Safe** — nominal modulation, headroom available
   - **Tight** — near 100 % modulation, fine for normal broadcast
   - **Risk** — peaks exceeding 100 %, back off
-- And on the exciter side:
-  - If your exciter has a modulation meter, aim for **100 % modulation on peaks** (75 kHz deviation in US-style FM, or whatever your local mandate is).
-  - If the exciter has an input-level meter, match what its manual recommends — typically a peak hits around `0 dBu` / `0 dBV` at full modulation.
-- Adjust **MPX Output Level until the exciter shows correct modulation**. *Don't* use MPX Output Level to chase loudness — that's Final Drive's job. Use MPX Output Level only for level-matching to hardware.
+- On the exciter side: aim for **100 % modulation on peaks** on its modulation meter, or match the input-level recommendation in its manual. *Don't* use these knobs to chase loudness — that's Final Drive's job.
+
+The deviation readout stays put while you calibrate: it reads the modulation domain (the trims divided back out), so trimming exciter drive changes DAC Peak and what the exciter sees, not the displayed kHz.
 
 **Scripted version with an RTL-SDR** -- `./calibrate-tx.sh --freq <MHz>` (repo root) closes this loop automatically against an off-air measurement: it reads the configured pilot injection over the REST API (start Studio with the control API on), measures the actual pilot deviation with an RTL-SDR through MPX Prime Meter's analysis (refusing railed captures and applying a proper channel filter), and trims `output_gain_db` until they agree -- the pilot is constant-amplitude, so this works with program on air. Because the output gain is attenuation-only in composite mode, a transmitter that under-deviates at full scale is reported as "raise the exciter's input sensitivity by N dB" rather than silently mis-calibrated; `--watch` prints a fresh measurement every few seconds so you can turn the exciter's trimmer until the error reads 0.0. `--dry-run` measures without changing anything. `--tone` switches Studio to the built-in test tone (a mono 997 Hz sine at -20 dBFS, the 0.45 calibration source) for the duration of the run and restores the program source on exit -- dense program puts pre-emphasized HF next to the 19 kHz pilot and wobbles the measurement by about +/-0.1 dB between passes, while with the tone repeat passes agree to a few hundredths of a dB.
 
@@ -492,7 +513,8 @@ mode only for gear that cannot take a composite.
 
 ### Enabling it
 
-Settings (Cmd-,) -> **Output Mode** -> select **Processed Audio**. This is
+Sidebar -> **Audio I/O** -> **Operating Mode** -> select **Processed Audio**
+(the mode picker replaced the Settings-window toggle in 0.50). This is
 restart-required (it changes render rate, device format, and filtering). When
 active, the composite-only surfaces are hidden automatically: the RDS section, the
 Composite Clipper / BS.412 / Final Stage tabs, the pilot level control, the MOD
@@ -502,7 +524,7 @@ Spectrum + Scopes windows. The status bar shows `MODE: PROC AUDIO`.
 ### Pre-emphasis ownership
 
 Exactly one device in the chain may apply pre-emphasis (50 us EU / 75 us US).
-Pick in Settings -> Output Mode -> **Pre-emphasis**:
+Pick in Audio I/O -> Operating Mode -> **Pre-emphasis**:
 
 - **Coder has NO pre-emphasis (or it is switched off):** select `50`/`75 us` so
   MPX Prime Studio applies it. Its pre-emphasis-aware limiter then controls the
@@ -513,7 +535,7 @@ Pick in Settings -> Output Mode -> **Pre-emphasis**:
 ### Optional final loudness clipper
 
 To narrow the loudness gap when the external coder has no clipper of its own,
-Settings -> Output Mode -> **External coder has its own clipper**:
+Audio I/O -> Operating Mode -> **External coder has its own clipper**:
 
 - Leave **ON** (default) if your coder clips/limits its input — MPX Prime Studio stays
   clean to avoid double-clipping.
@@ -547,7 +569,7 @@ The DSP status card's **Safety GR** is the final look-ahead MPX limiter's gain r
 - `Monitor Output Device (Decoded MPX Simulation)` is used when monitor output is enabled
 - The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input
 - `Mono Mode` now transmits true mono composite and suppresses pilot, stereo subcarrier, and RDS while enabled
-- If a remembered input / output / monitor device is not connected, **Start is refused** with an alert rather than silently streaming to the OS default -- reconnect the device or pick another in `Settings`. (Devices are remembered by UID and name, so moving an interface to another USB port keeps the selection.)
+- If a remembered input / output / monitor device is not connected, **Start is refused** with an alert rather than silently streaming to the OS default -- reconnect the device or pick another in `Audio I/O`. (Devices are remembered by UID and name, so moving an interface to another USB port keeps the selection.)
 
 ### Monitoring windows
 
@@ -624,7 +646,7 @@ above four sidebar sections:
   (mode, rotation, the 4 manual buffers, RT+ formats, Now Playing
   configuration), Long PS, Alt. Frequencies (list + method), Schedule
   (group sequence, scheduler toggles, CT/TZ), Subcarrier.
-- **Tools** -- Test Tone, Interfaces (input/output/monitor device
+- **Tools** -- Test Tone, Audio I/O (input/output/monitor device
   pickers; selecting one is a restart-class change; the read-only Remote
   Control card shows the server's own settings, which stay INI/GUI-only
   by design), Presets (per-stage preset pickers plus the 8 operator
@@ -646,8 +668,8 @@ configured.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending |
-| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation, budget margin, Advanced Dynamics leveler gains when active, and (macOS input source) input-ring health (subset on Linux) |
+| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending; `outputMode` is `mpxComposite` / `processedAudio` / `monitorAudio` |
+| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation (modulation-domain: output/line trims divided back out) + `dacPeakDBFS` (electrical: post-trims at the converter), budget margin, Advanced Dynamics leveler gains when active, and (macOS input source) input-ring health (subset on Linux) |
 | GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |
 | PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
 | GET | `/api/config` | every INI setting, grouped by section |

@@ -53,6 +53,11 @@ struct ControlMeters: Codable, Sendable {
     var inputRightPeak: Float?
     var outputPeak: Float?
     var deviationKHzPeak: Float?
+    /// Peak actually presented to the converter in dBFS: post `output_gain_db`
+    /// and post `mpx_line_output_dbfs` (composite mode). The electrical
+    /// headroom readout; `deviationKHzPeak` is the modulation-domain one
+    /// (output/line trims divided back out).
+    var dacPeakDBFS: Float?
     var agcGainDB: Float?
     /// Advanced Dynamics leveler telemetry. All nil while the stage is off
     /// (agcGainDB is the dynamics readout then); when active, agcGainDB

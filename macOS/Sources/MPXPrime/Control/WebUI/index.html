@@ -593,7 +593,7 @@ function renderMonitoring(c) {
       : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
           kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`) +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
-      kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") + kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + `</div>` +
+      kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") + kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
     (isProcessedAudio() ? "" :
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
       kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>`) +
@@ -800,8 +800,10 @@ function renderInterfaces(c, p) {
   mon.appendChild(card(["monitor_enabled"]));
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
   c.appendChild(mon);
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Format" }));
+  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Mode & Levels" }));
   c.appendChild(card(p.keys));
+  c.appendChild(Object.assign(document.createElement("div"),
+    { className:"subtitle", textContent:"Input Gain / Output Level / Line Output are rig calibration, remembered per device." }));
   if (p.keys2 && p.keys2.keys.length) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:p.keys2.title }));
     c.appendChild(card(p.keys2.keys));
@@ -894,7 +896,8 @@ async function pollStatus() {
     $("cRun").parentElement.classList.toggle("green", s.running);
     $("cSource").textContent = s.sourceMode === "tone" ? "Test Tone" : deviceName(deviceInfo?.selectedInput, "inputs");
     $("cRate").textContent = (s.sampleRateHz/1000).toFixed(0) + " kHz";
-    $("cMode").textContent = s.outputMode === "processedAudio" ? "AUDIO" : "COMPOSITE";
+    $("cMode").textContent = s.outputMode === "processedAudio" ? "AUDIO"
+      : (s.outputMode === "monitorAudio" ? "MONITOR" : "COMPOSITE");
     // A stopped engine with a note (e.g. missing audio device) takes
     // priority in the warning cell -- it is why the operator is here.
     const note = (!s.running && s.notes && s.notes.length) ? s.notes[0] : null;
@@ -934,6 +937,9 @@ async function pollMeters() {
   set("monSafe", gr(m?.safetyLimiterGainReductionDB));
   set("monSafeClip", gr(m?.safetyClipDB));
   set("monAGC", m?.agcGainDB != null ? m.agcGainDB.toFixed(1) + " dB" : "-");
+  // Electrical headroom at the converter (post output gain + line output);
+  // the deviation trace stays in the modulation domain.
+  set("monDAC", m?.dacPeakDBFS != null && m.dacPeakDBFS > -119 ? m.dacPeakDBFS.toFixed(1) + " dBFS" : "-");
   // Advanced Dynamics replaces the AGC; per-band gains low->high plus density.
   set("monAdvDyn", (m?.advancedDynamicsActive && m?.advancedDynamicsBandGainsDB)
     ? m.advancedDynamicsBandGainsDB.map(g => g.toFixed(1)).join("/") + " dB (density " +

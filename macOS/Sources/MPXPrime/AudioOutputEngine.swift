@@ -59,6 +59,10 @@ final class AudioOutputEngine {
         var outputRMS: Float
         var outputPeak: Float
         var deviationKHzPeak: Float
+        /// Peak actually presented to the converter: post `output_gain_db`
+        /// AND post `mpx_line_output_dbfs` (composite mode). The electrical
+        /// headroom readout, complementing the modulation-domain deviation.
+        var dacPeak: Float
         var liveInputPeak: Float
         var liveInputLeftPeak: Float
         var liveInputRightPeak: Float
@@ -129,6 +133,10 @@ final class AudioOutputEngine {
     /// DAC write, after every meter/scope capture (those stay in the
     /// 0 dBFS = 100% modulation domain). Render-thread only after start.
     private var lineOutputScale: Float
+    /// Divides `output_gain_db` back out of the metered composite so the
+    /// deviation readout stays in the modulation domain (composite mode; 1.0
+    /// otherwise). Updated with the runtime config on the render thread.
+    private var modulationReferenceScale: Float
     private var configuredRenderSampleRate: Double = 0.0
     private var inputRing: StereoInputRingBuffer?
     private var configuredInputSampleRate: Double?
@@ -172,6 +180,7 @@ final class AudioOutputEngine {
         outputRMS: 0.0,
         outputPeak: 0.0,
         deviationKHzPeak: 0.0,
+        dacPeak: 0.0,
         liveInputPeak: 0.0,
         liveInputLeftPeak: 0.0,
         liveInputRightPeak: 0.0,
@@ -260,6 +269,13 @@ final class AudioOutputEngine {
         self.outputMode = outputMode
         self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
         self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
+        // Deviation is a MODULATION-domain readout: the composite is metered
+        // post-`output_gain_db`, so divide the trim back out or the meter
+        // under-reads by exactly that trim (field-measured 30.2 kHz displayed
+        // vs ~75 on air at -7.89 dB). Composite mode only -- processed audio
+        // has no deviation semantics.
+        self.modulationReferenceScale = outputMode == .mpxComposite
+            ? powf(10.0, -Float(config.outputGainDB) / 20.0) : 1.0
         self.encoderFIREnabled = config.encoderFIREnabled
         self.multibandFIREnabled = config.multibandFIREnabled
     }
@@ -687,6 +703,7 @@ final class AudioOutputEngine {
         meterSnapshot.outputRMS = 0.0
         meterSnapshot.outputPeak = 0.0
         meterSnapshot.deviationKHzPeak = 0.0
+        meterSnapshot.dacPeak = 0.0
         meterSnapshot.agcDetectorDB = -120.0
         meterSnapshot.agcGainDB = 0.0
         meterSnapshot.agcGateActive = false
@@ -1276,14 +1293,16 @@ final class AudioOutputEngine {
         meterSnapshot.postAGCLeftPeak = postAGCLeftPeak
         meterSnapshot.postAGCRightPeak = postAGCRightPeak
         meterSnapshot.outputPeak = outputPeak
-        meterSnapshot.deviationKHzPeak = outputPeak * targetDeviationKHz
+        meterSnapshot.deviationKHzPeak = outputPeak * targetDeviationKHz * modulationReferenceScale
+        meterSnapshot.dacPeak = outputPeak
+            * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
         meterSnapshot.liveInputPeak = pendingInput
         meterSnapshot.liveInputLeftPeak = pendingInputLeft
         meterSnapshot.liveInputRightPeak = pendingInputRight
         meterSnapshot.livePostAGCLeftPeak = pendingPostAGCLeft
         meterSnapshot.livePostAGCRightPeak = pendingPostAGCRight
         meterSnapshot.liveOutputPeak = pendingOutput
-        meterSnapshot.liveDeviationKHzPeak = pendingOutput * targetDeviationKHz
+        meterSnapshot.liveDeviationKHzPeak = pendingOutput * targetDeviationKHz * modulationReferenceScale
         pendingInputPeak = 0.0
         pendingInputLeftPeak = 0.0
         pendingInputRightPeak = 0.0
@@ -1572,6 +1591,8 @@ final class AudioOutputEngine {
             generator.applyRuntimeConfig(runtime)
             targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
             lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
+            modulationReferenceScale = outputMode == .mpxComposite
+                ? powf(10.0, -runtime.outputGainDB / 20.0) : 1.0
             // Flip the source-mode branch live. The render callback
             // reads `useInputSource` at the start of each block; this
             // write lands within ~one block of the toggle on the GUI.

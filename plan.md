@@ -535,9 +535,27 @@ setting; a VoiceOver pass over the Meter; and a long SDR + RF-spectrum GUI
 run with Instruments "View Body" on the root (it should now be 0 Hz).
 The consolidated queue lives in meter-plan.md.
 
+Operator verdict 2026-09-04 (backlog): **Mono Bass is useful; the Stereo
+Widener itself does not do anything beneficial.** Candidate follow-up: demote
+or remove the widener stage -- it ships disabled, no profile enables it, and
+the 2026-08-29 industry survey noted our post-multiband placement is
+nonstandard anyway. Removal is its own scoped change (widener preset kind,
+schema keys, INI keys, deep-suite pairs, image-protection docs).
+
 ## Next up
 
--1. **Studio's deviation telemetry under-reads by the output gain (found
+-1. **DONE 2026-09-04 (Audio I/O redesign).** Both engines now divide
+`output_gain_db` back out of the metered composite (`modulationReferenceScale`),
+so the GUI meter, `/api/meters.deviationKHzPeak` and the dashboard trace state
+modulation-domain deviation at any trim; the DAC-headroom display exists as the
+separate `dacPeakDBFS` readout (API + Audio I/O Output card), and
+`DeviationTelemetryTests` pins the invariance under `output_gain_db`. Same
+change resolved the backlog question below: `output_gain_db` STAYS in
+`legacyResetPreservedMPXKeys` and `input_gain_db` joined it -- all three level
+trims are calibration-class, remembered per device (DeviceCalibrationStore)
+and preserved across snapshot loads (installationPreservedKeysBySection).
+Original finding:
+**Studio's deviation telemetry under-reads by the output gain (found
 2026-08-31 during the on-air calibration; fix next build session).**
 `AudioOutputEngine` computes `deviationKHzPeak = outputPeak x
 mpx_deviation_khz`, but `outputPeak` is metered AFTER `output_gain_db` is

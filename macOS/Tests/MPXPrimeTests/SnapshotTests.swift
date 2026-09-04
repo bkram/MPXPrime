@@ -35,6 +35,50 @@ struct SnapshotTests {
     // snapshot's baseline, never a side effect of binding churn rewriting
     // identical values after a load/save.
 
+    // MARK: - Installation keys preserved on load (0.50)
+    //
+    // Snapshots restore the SOUND, not the wiring: devices, engine format,
+    // operating mode, level calibration, and control-server keys stay from
+    // the live config on load (AppConfig.installationPreservedKeysBySection);
+    // save and export remain full-config.
+
+    @Test func loadPreservesInstallationKeysFromLiveConfig() {
+        let model = makeViewModel()
+        model.config.pilotLevel = 0.09
+        model.saveSnapshot(slot: 0, name: "Sound")
+        // The installation moves after the save...
+        model.config.outputDeviceUID = "rig-b"
+        model.config.outputGainDB = -9.0
+        model.config.pilotLevel = 0.10
+        model.loadSnapshot(slot: 0)
+        // ...device + calibration kept from live, the sound restored.
+        #expect(model.config.outputDeviceUID == "rig-b")
+        #expect(model.config.outputGainDB == -9.0)
+        #expect(abs(model.config.pilotLevel - 0.09) < 1e-9)
+        #expect(model.activeSnapshotModified == false)
+    }
+
+    @Test func installationChangesAfterLoadDoNotFlipModified() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Sound")
+        model.loadSnapshot(slot: 0)
+        // Calibration/installation churn is not a preset edit...
+        model.setInputGainLive(-2.0)
+        #expect(model.activeSnapshotModified == false)
+        // ...a sound change is.
+        model.configBinding(\.pilotLevel).wrappedValue = 0.10
+        #expect(model.activeSnapshotModified == true)
+    }
+
+    @Test func snapshotContentAndExportStayFullConfig() {
+        let model = makeViewModel()
+        model.config.outputGainDB = -6.0
+        model.saveSnapshot(slot: 0, name: "Full")
+        let ini = model.snapshots[0]?.configINIText ?? ""
+        #expect(ini.contains("output_gain_db"))
+        #expect(ini.contains("[CONTROL]"))
+    }
+
     @Test func saveAndLoadLeaveModifiedFalse() {
         let model = makeViewModel()
         model.config.pilotLevel = 0.09

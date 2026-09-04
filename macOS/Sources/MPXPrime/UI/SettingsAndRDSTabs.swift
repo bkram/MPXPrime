@@ -30,144 +30,6 @@ struct LevelsOnlyView: View {
     }
 }
 
-struct SystemSettingsSectionContent: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    private let sampleRates: [Double] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000]
-    private let blockSizes: [Int] = [256, 512, 1024, 2048, 4096, 8192]
-
-    var body: some View {
-        Group {
-            Picker("Sample Rate", selection: model.configBinding(\.sampleRate)) {
-                ForEach(sampleRates, id: \.self) { rate in
-                    Text("\(Int(rate)) Hz").tag(rate)
-                }
-            }
-            .pickerStyle(.menu)
-            .disabled(model.isRunning)
-
-            Picker("Block Size", selection: model.configBinding(\.blockSize)) {
-                ForEach(blockSizes, id: \.self) { size in
-                    Text("\(size)").tag(size)
-                }
-            }
-            .pickerStyle(.menu)
-
-            Toggle(
-                "Auto Start at Launch",
-                isOn: model.configBinding(\.rdsAutoStart, runtimeDisposition: .none))
-
-            // Mono Mode lives in the sidebar footer. Pilot Level is the
-            // only stereo-encoder-structure parameter exposed here.
-            // Sum/diff matrix gains are spec-fixed (M=(L+R)/2, S=(L-R)/2
-            // per ITU-R BS.450 / EN 50067) and not user-configurable;
-            // INI keys `sum_level` / `diff_level` remain for lab/debug use.
-            // Pilot Level range follows ITU-R BS.450-4 / FCC 73.322 (8-10%
-            // deviation); slider permits 0-12% for headroom and 0 = mute.
-            // Pilot is a composite-only subcarrier; no pilot in processed-audio output.
-            if !model.processedAudioOutputActive {
-                DoubleSliderRow(
-                    title: "Pilot Level", value: model.pilotLevelPercentBinding(),
-                    range: 0...12, format: "%.1f %%",
-                    restartRequired: true)
-                .disabled(model.config.monoMode)
-            }
-
-            InlineRestartRequiredNote(
-                text: model.processedAudioOutputActive
-                    ? "Sample rate, block size, output mode, pre-emphasis, program lowpass, and other encoder-structure changes."
-                    : "Sample rate, block size, mono mode, pre-emphasis, pilot level, program lowpass, and other encoder-structure changes."
-            )
-        }
-    }
-}
-
-struct InterfacesSettingsSectionContent: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Group {
-            Picker(
-                "Input Device",
-                selection: Binding(
-                    get: { model.selectedInputUID },
-                    set: {
-                        model.selectedInputUID = $0
-                        model.persistBasicConfig()
-                    }
-                )
-            ) {
-                if model.inputDevices.isEmpty {
-                    Text("No input devices").tag("")
-                } else {
-                    ForEach(model.inputDevices, id: \.uid) { device in
-                        Text(device.name).tag(device.uid)
-                    }
-                }
-            }
-            .pickerStyle(.menu)
-
-                Picker(
-                    "MPX Output Device",
-                    selection: Binding(
-                    get: { model.selectedOutputUID },
-                    set: {
-                        model.selectedOutputUID = $0
-                        model.persistBasicConfig()
-                    }
-                )
-            ) {
-                if model.outputDevices.isEmpty {
-                    Text("No output devices").tag("")
-                } else {
-                    ForEach(model.outputDevices, id: \.uid) { device in
-                        Text(device.name).tag(device.uid)
-                    }
-                }
-            }
-            .pickerStyle(.menu)
-
-            Picker(
-                "Monitor Output Device (Decoded MPX Simulation)",
-                selection: Binding(
-                    get: { model.selectedMonitorUID },
-                    set: {
-                        model.selectedMonitorUID = $0
-                        model.persistBasicConfig()
-                    }
-                )
-            ) {
-                if model.outputDevices.isEmpty {
-                    Text("No output devices").tag("")
-                } else {
-                    ForEach(model.outputDevices, id: \.uid) { device in
-                        Text(device.name).tag(device.uid)
-                    }
-                }
-            }
-            .pickerStyle(.menu)
-
-            Toggle(
-                "Enable Monitor Output",
-                isOn: Binding(
-                    get: { model.monitorEnabled },
-                    set: {
-                        model.monitorEnabled = $0
-                        model.persistBasicConfig()
-                    }
-                ))
-
-            Text("When Enable Monitor Output is on, this device is used for decoded MPX monitoring.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            InlineRestartRequiredNote(
-                text: "Source mode, monitor output routing, and input/output/monitor device changes."
-            )
-        }
-    }
-}
-
 struct RDSProgramTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
@@ -600,64 +462,6 @@ struct RDSStatusTab: View {
     }
 }
 
-/// Output-mode selector: FM composite (default) vs processed stereo audio for
-/// feeding an external stereo coder. Restart-required. When processed-audio is
-/// selected, the composite clipper / BS.412 / RDS surfaces are hidden elsewhere
-/// in the UI, and the pre-emphasis-ownership guidance below becomes critical.
-struct OutputModeSettingsSectionContent: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Picker(
-            selection: model.configBinding(\.processedAudioOutput, runtimeDisposition: .restart)
-        ) {
-            Text("MPX Composite").tag(false)
-            Text("Processed Audio").tag(true)
-        } label: {
-            HStack(spacing: 6) {
-                Text("Output")
-                RestartBadge()
-            }
-        }
-        .pickerStyle(.segmented)
-        .help("MPX Composite: the FM multiplex (pilot + stereo + RDS) for a transmitter / exciter that accepts composite. Processed Audio: processed stereo L/R for an external stereo coder + RDS encoder. Restart required.")
-
-        if model.processedAudioOutputActive {
-            Text("Emitting processed stereo L/R for an external stereo coder. The composite clipper, BS.412, pilot, and RDS are bypassed and hidden. Recommended output: 48 kHz / 24-bit.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
-                Text("Off (coder applies it)").tag(0)
-                Text("50 us (EU)").tag(50)
-                Text("75 us (US)").tag(75)
-            }
-            .pickerStyle(.segmented)
-            Text("Exactly one device may apply pre-emphasis. If your stereo coder has none (or it is switched off), pick 50/75 us here so MPX Prime applies it. If the coder applies pre-emphasis, pick Off. Never both \u{2014} two stages in series over-deviate.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Divider()
-
-            Toggle("External coder has its own clipper",
-                   isOn: model.configBinding(\.processedAudioCoderHasClipper, runtimeDisposition: .live))
-                .help("Same one-stage rule as pre-emphasis, for clipping. Leave ON if your stereo coder clips/limits its own input. Turn OFF only if it does not \u{2014} then MPX Prime adds a final loudness clipper so the feed is denser. Two clippers in series sound harsh.")
-
-            if !model.config.processedAudioCoderHasClipper {
-                DoubleSliderRow(
-                    title: "Final Clipper Drive",
-                    value: model.configBinding(\.processedAudioFinalClipDriveDB, runtimeDisposition: .live),
-                    range: 0...12,
-                    format: "%.1f dB",
-                    tooltip: "How hard the processed L/R is driven into MPX Prime's final loudness clipper. More drive = louder/denser but more clipping character. Start low and listen on a receiver.")
-                Text("MPX Prime is applying a final loudness clipper to the processed-audio feed. Make sure your external coder is NOT also clipping the input.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
 struct SettingsSectionView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
@@ -680,16 +484,10 @@ struct SettingsSectionView: View {
                 }
             }
 
-            Section("Interfaces") {
-                InterfacesSettingsSectionContent(model: model)
-            }
-
-            Section("Output Mode") {
-                OutputModeSettingsSectionContent(model: model)
-            }
-
-            Section("Audio Engine") {
-                SystemSettingsSectionContent(model: model)
+            Section("Audio I/O") {
+                Text("Devices, the operating mode, and level calibration live in the sidebar's Audio I/O section.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Spectrum") {

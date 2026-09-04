@@ -113,6 +113,46 @@ struct ProcessedAudioOutputTests {
     // at 192 kHz so all three frequencies are below Nyquist and measurable. A pure
     // SIDE input (L = -R) would, in composite mode, produce a 38 kHz DSB-SC pair
     // and a 19 kHz pilot — here there must be none.
+    // 0. The generator seeds `audioOutputOnly` from `processed_audio_output`
+    // at construction, so an engine that never calls setAudioOutputOnly (the
+    // ALSA engine) still gets the identical audio-only chain -- before the
+    // seed, Linux processed-audio ran with the dual-rate boundary wrongly on
+    // (48 kHz coefficients at the output rate) and the optional final clipper
+    // could never engage. Pinned as: config-seeded render (no setter calls at
+    // all) is bit-identical to the engine-mirroring explicit path.
+    @Test func configSeedMatchesExplicitSetAudioOutputOnly() {
+        var cfg = AppConfig()
+        cfg.sampleRate = 192_000.0
+        cfg.sourceMode = "input"
+        cfg.processedAudioOutput = true
+        cfg.processedAudioCoderHasClipper = false
+
+        let sr = cfg.sampleRate
+        let total = Int(sr * 0.5)
+        let seeded = MPXGenerator(config: cfg, sampleRate: sr)
+        var seededOut = [Float](repeating: 0, count: total)
+        var seededRight = [Float](repeating: 0, count: total)
+        for i in 0..<total {
+            let t = Double(i) / sr
+            seededOut[i] = Float(0.6 * sin(2.0 * .pi * 1_000.0 * t))
+            seededRight[i] = Float(0.4 * sin(2.0 * .pi * 5_000.0 * t))
+        }
+        seeded.renderAudioOnlyFromInputInPlace(
+            frameCount: total, left: &seededOut, right: &seededRight)
+
+        let explicit = renderAudioOnly(cfg: cfg, seconds: 0.5) { _, t in
+            (Float(0.6 * sin(2.0 * .pi * 1_000.0 * t)),
+             Float(0.4 * sin(2.0 * .pi * 5_000.0 * t)))
+        }
+        var mismatches = 0
+        for i in 0..<total where seededOut[i] != explicit.left[i] || seededRight[i] != explicit.right[i] {
+            mismatches += 1
+            if mismatches > 4 { break }
+        }
+        #expect(mismatches == 0,
+            "config-seeded audioOutputOnly renders differently from the explicit engine path")
+    }
+
     @Test func processedAudioEmitsNoSubcarriers() {
         let sr = 192_000.0
         let cfg = baseConfig(sampleRate: sr)

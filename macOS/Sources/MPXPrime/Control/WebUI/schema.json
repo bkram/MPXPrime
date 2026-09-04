@@ -268,9 +268,6 @@
      "processing_bypass",
      "mono_mode",
      "preemphasis_us",
-     "input_gain_db",
-     "output_gain_db",
-     "mpx_line_output_dbfs",
      "hpf_hz",
      "hf_trim_db",
      "hf_trim_hz",
@@ -289,7 +286,7 @@
    },
    {
     "enable": "phase_rotation_enabled",
-    "help": "4-pole allpass chain that reduces waveform asymmetry \u2014 especially on voice \u2014 by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages.",
+    "help": "4-pole allpass chain that reduces waveform asymmetry — especially on voice — by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages.",
     "id": "phaseRotator",
     "keys": [
      "phase_rotation_enabled",
@@ -427,7 +424,7 @@
    {
     "bypassedWhen": "advanced_dynamics_enabled",
     "enable": "downward_expander_enabled",
-    "help": "Per-band downward expander \u2014 pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
+    "help": "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
     "id": "expander",
     "keys": [
      "downward_expander_enabled",
@@ -467,7 +464,7 @@
    },
    {
     "enable": "stereo_widen_enabled",
-    "help": "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe \u2014 energy-normalised so mono compatibility is preserved.",
+    "help": "Post-multiband mid/side stereo image enhancement plus mono-bass control (sums L/R below the chosen cutoff). FM-safe — energy-normalised so mono compatibility is preserved.",
     "id": "widener",
     "keys": [
      "stereo_widen_enabled",
@@ -492,7 +489,7 @@
    },
    {
     "enable": "primebass_enabled",
-    "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude \u2014 saves headroom downstream.",
+    "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream.",
     "id": "primeBass",
     "keys": [
      "primebass_enabled",
@@ -598,7 +595,7 @@
    },
    {
     "enable": "pre_encode_limiter_enabled",
-    "help": "Pre-encode L/R peak limiter \u2014 4x oversampled true-peak, stereo-linked \u2014 with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis.",
+    "help": "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis.",
     "id": "limiter",
     "keys": [
      "pre_encode_limiter_enabled",
@@ -631,6 +628,7 @@
     "hiddenInProcessedAudio": true,
     "id": "stereoCoder",
     "keys": [
+     "pilot_level",
      "mpx_ssb_stereo_enabled",
      "mpx_ssb_stereo_amount"
     ],
@@ -698,7 +696,6 @@
      "limit_threshold",
      "limit_lookahead_enabled",
      "limit_lookahead_ms",
-     "mpx_line_output_dbfs",
      "pilot_level",
      "rds_level"
     ],
@@ -736,24 +733,26 @@
    {
     "id": "interfaces",
     "keys": [
-     "sample_rate",
-     "blocksize",
      "processed_audio_output",
+     "input_gain_db",
+     "output_gain_db",
+     "mpx_line_output_dbfs",
      "processed_audio_coder_has_clipper",
      "processed_audio_final_clip_drive_db"
     ],
     "keys2": {
+     "title": "Engine",
      "keys": [
+      "sample_rate",
+      "blocksize",
       "auto_start",
-      "pilot_level",
       "fft_window_92khz",
       "monitor_enabled"
-     ],
-     "title": "Engine"
+     ]
     },
     "special": "interfaces",
-    "sub": "Devices, format, engine",
-    "title": "Interfaces"
+    "sub": "Devices, mode, levels, engine",
+    "title": "Audio I/O"
    },
    {
     "id": "presets",

@@ -1205,6 +1205,15 @@ final class MPXGenerator {
         self.ssbStereoEnabled = config.ssbStereoEnabled
         self.ssbStereoAmount = clampf(Float(config.ssbStereoAmount), 0.0, 1.0)
 
+        // Processed-audio output mode, seeded from config at construction so
+        // an engine that never calls setAudioOutputOnly (the ALSA engine) still
+        // gets the audio-only path with the dual-rate boundary OFF and every
+        // audio-domain stage derived at the output rate -- before this seed,
+        // Linux processed-audio ran 48 kHz coefficients at the output rate and
+        // the optional final clipper could never engage. The macOS engine's
+        // setAudioOutputOnly call at start() is now an idempotent re-assert.
+        self.audioOutputOnly = config.processedAudioOutput
+
         // Dual-rate audio chain boundary. Only enable if the requested
         // audio rate divides the engine rate evenly (Phase 1 integer-
         // ratio only). Non-integer ratios (176.4k → 48k) silently fall

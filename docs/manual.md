@@ -518,6 +518,19 @@ Escape a colon so it is not parsed as a timing prefix:
 Visit us\: https\://example.com/10s:Alt text
 ```
 
+**Character set.** RDS fields go on air in the EN 50067 basic character
+table, which is essentially ASCII. Every text field -- typed in the GUI, read
+from the INI, pushed over the REST API, or produced by the Now Playing script
+-- is folded before framing, in this order: Unicode NFC (so a decomposed
+`e` + accent behaves like `e-acute`), typographic punctuation to its ASCII
+form (curly apostrophes and quotes to `'` / `"`, en/em dashes to `-`, the
+ellipsis to `...`, non-breaking and thin spaces to a space, `x` for the
+multiplication sign, `(c)` for the copyright sign), then accents stripped
+(`Cafe del Mar`, `Bjorn`, `ss` for the German sharp s); `O` with stroke is
+sent as its own RDS code. Anything with no Latin form (CJK, Cyrillic, emoji)
+becomes `?`. Before 0.50 the punctuation step was missing and a curly
+apostrophe in a track title reached receivers as `?`.
+
 Important defaults:
 
 - Input HPF default: `30 Hz`

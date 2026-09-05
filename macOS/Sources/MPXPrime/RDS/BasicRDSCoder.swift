@@ -2153,6 +2153,37 @@ final class BasicRDSCoder {
         0x00B0: " ", 0x2122: " ", 0x00AE: " "
     ]
 
+    /// Typographic punctuation that Unicode-aware sources (Music.app / iTunes
+    /// metadata, web CMS exports, the Now Playing script) emit for plain
+    /// ASCII marks. EN 50067 Annex E has no code points for these and
+    /// `folding(.diacriticInsensitive)` leaves punctuation alone, so until
+    /// 0.50 every one of them reached the air as "?" (field report
+    /// 2026-09-05: a track title's U+2019 apostrophe). Folded BEFORE the
+    /// generic diacritic fold; ASCII-only replacements.
+    private static let rdsPunctuationFoldMap: [UInt32: String] = [
+        // apostrophes / single quotes / primes
+        0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201B: "'", 0x2032: "'", 0x2035: "'",
+        0x02BC: "'", 0x02B9: "'", 0x02BB: "'", 0x00B4: "'", 0x2039: "'", 0x203A: "'",
+        // double quotes
+        0x201C: "\"", 0x201D: "\"", 0x201E: "\"", 0x201F: "\"", 0x2033: "\"",
+        0x00AB: "\"", 0x00BB: "\"",
+        // dashes and minus
+        0x2010: "-", 0x2011: "-", 0x2012: "-", 0x2013: "-", 0x2014: "-", 0x2015: "-",
+        0x2043: "-", 0x2212: "-",
+        // ellipsis, bullets, dots
+        0x2026: "...", 0x2022: "-", 0x00B7: ".", 0x2027: ".",
+        // spaces (NBSP, typographic spaces) and zero-width marks
+        0x00A0: " ", 0x2002: " ", 0x2003: " ", 0x2007: " ", 0x2009: " ", 0x200A: " ",
+        0x202F: " ", 0x205F: " ", 0x3000: " ", 0x200B: "", 0x200C: "", 0x200D: "", 0xFEFF: "",
+        // arithmetic and misc symbols
+        0x00D7: "x", 0x00F7: "/", 0x2044: "/", 0x2215: "/", 0x00A6: "|", 0x00B1: "+/-",
+        0x2264: "<=", 0x2265: ">=", 0x2260: "!=", 0x2248: "~", 0x2190: "<-", 0x2192: "->",
+        0x00A9: "(c)", 0x2117: "(p)", 0x2116: "No.", 0x2120: " ",
+        0x00BC: "1/4", 0x00BD: "1/2", 0x00BE: "3/4", 0x2030: "%",
+        0x00B9: "1", 0x00B2: "2", 0x00B3: "3", 0x00BF: "?", 0x00A1: "!",
+        0x00A3: "GBP", 0x00A5: "JPY", 0x00A2: "c"
+    ]
+
     private static func resolveTextMarkers(_ text: String) -> String? {
         guard text.contains("\\") else { return text }
         var failed = false
@@ -2245,18 +2276,31 @@ final class BasicRDSCoder {
     }
 
     private static func transliterateRDSText(_ text: String) -> String {
+        // NFC first: metadata from file systems and some players arrives
+        // DECOMPOSED (e + U+0301); a lone combining mark folds to nothing and
+        // surfaced as "e?" on air before 0.50.
+        let precomposed = text.precomposedStringWithCanonicalMapping
         var out = ""
-        for scalar in text.unicodeScalars {
-            if scalar.value == 0x0D || (scalar.value >= 0x20 && scalar.value <= 0x7E) {
+        for scalar in precomposed.unicodeScalars {
+            let value = scalar.value
+            if value == 0x0D || (value >= 0x20 && value <= 0x7E) {
                 out.append(Character(scalar))
-            } else if rdsDirectByteMap[scalar.value] != nil {
+            } else if rdsDirectByteMap[value] != nil {
                 out.append(Character(scalar))
-            } else if let mapped = rdsTransliterationMap[scalar.value] {
+            } else if let mapped = rdsPunctuationFoldMap[value] {
                 out += mapped
+            } else if let mapped = rdsTransliterationMap[value] {
+                out += mapped
+            } else if (0x0300...0x036F).contains(value) {
+                // Stray combining mark that NFC could not attach: drop it
+                // rather than print a marker for an invisible character.
+                continue
             } else {
+                // Language-independent fold (locale nil): the same input must
+                // produce the same on-air bytes on every machine and locale.
                 let folded = String(scalar).folding(
                     options: [.diacriticInsensitive, .widthInsensitive],
-                    locale: .current
+                    locale: nil
                 )
                 var appended = false
                 for foldedScalar in folded.unicodeScalars {
@@ -2278,6 +2322,10 @@ final class BasicRDSCoder {
         let transliterated = transliterateRDSText(raw)
         let mapped = transliterated.unicodeScalars.map { scalar -> Character in
             if scalar.value >= 0x20, scalar.value <= 0x7E {
+                return Character(scalar)
+            }
+            if rdsDirectByteMap[scalar.value] != nil {
+                // Encodable directly (EN 50067 Annex E); `rdsBytes` maps it.
                 return Character(scalar)
             }
             return " "

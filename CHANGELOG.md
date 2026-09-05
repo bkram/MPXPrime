@@ -11,6 +11,22 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **RDS text: typographic punctuation is folded to ASCII, not sent as `?`.**
+  Field report 2026-09-05: a Now Playing title carrying a Unicode apostrophe
+  variant (U+2019) went on air as `?`. `transliterateRDSText` only knew a
+  fixed list of accented Latin letters plus a generic diacritic fold, which
+  leaves punctuation alone. Every RDS text field (GUI, INI, REST, script; PS,
+  PTYN, Long PS, RT) is now folded in this order: Unicode NFC (decomposed
+  `e` + U+0301 used to become `e?`), a typographic-punctuation table (curly
+  quotes, primes, en/em dashes, ellipsis, NBSP and thin spaces, zero-width
+  marks, multiplication / division signs, `(c)`, fractions), the existing
+  accent table, then a locale-INDEPENDENT diacritic fold (`locale: nil`
+  instead of `.current` -- the same input now yields the same on-air bytes on
+  every machine); stray combining marks are dropped; only characters with
+  no Latin form (CJK, emoji) still become `?`. `O` with stroke, the one
+  letter with its own RDS code, now survives the sanitizer instead of
+  turning into a space. `RDSTextNormalizationTests` reads the bytes back
+  from the 2A / 0A groups. Manual "RDS text syntax" documents the rule.
 - **Docs verified against the code (2026-09-05 audit).** Five parallel
   doc-vs-code audits (Studio manual, Meter manual, ARCHITECTURE, README +
   BUILDING, AGENTS) found ~60 drifted statements, all fixed: removed-widener

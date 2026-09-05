@@ -244,12 +244,12 @@ Thumbs.db
 
 # Audio captures
 *.wav
-documents/EN50067_RDS_Standard.pdf
-documents/IEC-62106-2-2018.pdf
-documents/IEC-62106-6-2023.pdf
-documents/R-REC-BS.450-4-201910-I!!PDF-E.pdf
-documents/trev_307-radiotext.pdf
-documents/rds-docs-unlocked.pdf
+standards/EN50067_RDS_Standard.pdf
+standards/IEC-62106-2-2018.pdf
+standards/IEC-62106-6-2023.pdf
+standards/R-REC-BS.450-4-201910-I!!PDF-E.pdf
+standards/trev_307-radiotext.pdf
+standards/rds-docs-unlocked.pdf
 captures/**
 
 # Third-party FM-SDR-Tuner binary (build artifact, not ours) -- see bin/README.md

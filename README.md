@@ -205,7 +205,7 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 
 ## References
 
-- Standards PDFs and notes live in `documents/` (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
+- Standards PDFs live in `standards/` (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450); they are not redistributed, see [standards/README.md](standards/README.md)
 
 ## Acknowledgements
 

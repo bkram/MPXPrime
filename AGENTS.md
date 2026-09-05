@@ -107,7 +107,7 @@ Runtime code is split across eight SPM targets on macOS (see the target list und
 - `macOS/verifier_baselines/` -- JSON baselines for `--verify --baseline-strict`
 - `macOS/{MPXPrime.ini,Verification.ini}` -- sample configs; user config lives at `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini`
 - `scripts/` -- developer / maintainer tools (live smoke + A/B scripts, `run-meter.sh`, `run-build-web.sh`, `calibrate-tx.sh`, program capture, the docs checks); every shell script `cd`s to the repo root itself. `dist-scripts/` -- the operator-facing Now Playing helpers that `build-release.sh` ships inside the app bundle and the DMG. The repo root keeps only `build-release.sh` / `build-deb.sh`; do not add wrapper scripts at the root (the old `build.sh` / `run*.sh` wrappers were removed 2026-09-05 -- BUILDING documents the plain `swift build` / `swift run` commands).
-- `documents/` -- standards PDFs (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
+- `standards/` -- the specifications we implement, as PDFs (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450); gitignored, not redistributed. Distinct from `docs/`, which holds our own manuals
 - `.vscode/settings.json` -- sets `swift.searchSubfoldersForPackages: true` so sourcekit-lsp discovers `macOS/Package.swift` (workspace root is the repo root, package lives one level down)
 
 ### Signal chain (critical invariants)

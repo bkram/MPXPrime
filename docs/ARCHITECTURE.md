@@ -672,7 +672,7 @@ because it's minute-aligned).
 - UECP SPB 490 v7.05 -- encoder control protocol (not currently
   implemented; TA-edge behaviour follows the sec. 2.5.1.1 pattern).
 
-PDFs in `/documents/` for reference.
+PDFs in `standards/` for reference.
 
 ## General DSP notes
 

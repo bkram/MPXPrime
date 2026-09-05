@@ -114,5 +114,5 @@ jobs:
       - name: ASCII-only docs
         run: |
           set -e
-          bad=$(git ls-files '*.md' '**/*.md' | grep -vE '^documents/' | xargs grep -lP '[^\x00-\x7F]' || true)
+          bad=$(git ls-files '*.md' '**/*.md' | grep -vE '^standards/' | xargs grep -lP '[^\x00-\x7F]' || true)
           if [ -n "$bad" ]; then echo "non-ASCII characters in: $bad"; exit 1; fi

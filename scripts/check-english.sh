@@ -23,7 +23,7 @@ mode_ui=0; files=()
 for a in "$@"; do
     case "$a" in
         --ui) mode_ui=1 ;;
-        --all) mode_ui=1; while IFS= read -r f; do files+=("$f"); done < <(git ls-files '*.md' '**/*.md' | grep -vE '^documents/|^tuner/build') ;;
+        --all) mode_ui=1; while IFS= read -r f; do files+=("$f"); done < <(git ls-files '*.md' '**/*.md' | grep -vE '^standards/|^tuner/build') ;;
         *) files+=("$a") ;;
     esac
 done

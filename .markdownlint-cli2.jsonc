@@ -26,6 +26,6 @@
     "!**/.build/**",
     "!**/node_modules/**",
     "!tuner/build*/**",
-    "!documents/**"
+    "!standards/**"
   ]
 }

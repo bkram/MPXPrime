@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **`documents/` renamed to `standards/`.** One letter apart from `docs/` was
+  confusing: `docs/` holds this project's manuals, `standards/` holds the
+  specifications it implements (EN 50067, IEC 62106-2 / -6, UECP SPB 490,
+  ITU-R BS.450). The PDFs stay gitignored and are not redistributed; the
+  folder's README now says which document is which and points at the issuing
+  bodies. The markdownlint globs, the CI ASCII check, the English checker and
+  the doc references follow.
 - **`CONTRIBUTORS.md`**: authors and credits in one place -- the initial RDS
   block-encoder port from `ryanginn/rds-master` (CRC `0x5B9`, offset words,
   four-block group assembly) with an explicit line between what came from

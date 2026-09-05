@@ -11,6 +11,14 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **README says plainly how the project is built.** A new "How this project is
+  built" section states that MPX Prime is written largely with AI assistance
+  and doubles as a showcase of that way of working -- together with what keeps
+  it honest (deterministic verifier gates, per-platform pinned baselines,
+  several hundred tests, cross-checks against a commercial measuring receiver)
+  and two worked examples of faults that read fine as code and were only found
+  by measurement: the inverted stereo difference signal and the final-stage
+  ordering that kept the composite clipper idle.
 - **`documents/` renamed to `standards/`.** One letter apart from `docs/` was
   confusing: `docs/` holds this project's manuals, `standards/` holds the
   specifications it implements (EN 50067, IEC 62106-2 / -6, UECP SPB 490,

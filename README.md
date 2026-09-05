@@ -13,6 +13,38 @@ The same DSP core drives both: a full broadcast-style processing chain -- phase 
 
 > **Intended use and status.** MPX Prime Studio is for **experimental, hobby, and small-budget broadcast** -- community / LPFM stations, pirate and SDR-fed exciters, prosumer encoding, and study of FM signal processing. It implements core behavior from EN 50067 / IEC 62106 and common FM-stereo practice, but it is **experimental and not certified -- no conformity or compliance is promised.** Do not rely on it for regulated production broadcast.
 
+## How this project is built
+
+MPX Prime is written largely **with AI assistance**: the DSP, both apps, the
+tooling and this documentation were produced by directing Claude (Claude Code)
+and reviewing the result, rather than typed line by line. The project is
+therefore also a **showcase of that way of working** -- what it can deliver,
+and what it costs to keep honest.
+
+It costs a lot, and that shows in the repository. A language model is very good
+at producing plausible DSP, so nothing here is trusted because it reads well:
+
+- **Measurement before ears.** Offline verifier modes render deterministic
+  scenarios and score the composite -- deviation, peak control, subcarrier
+  budget, receiver-side stereo separation, hi-hat and cymbal distortion --
+  without touching audio hardware.
+- **Pinned baselines.** Every scenario's numbers are committed per platform.
+  A change that moves the composite has to recapture them deliberately, so
+  silent drift fails the build instead of shipping.
+- **Several hundred deterministic tests**, plus accessibility lint and
+  documentation checks, run in CI on macOS and Linux.
+- **Real-world confirmation.** Readings were cross-checked against a
+  commercial measuring receiver and on real FM radios.
+
+That discipline has repeatedly earned its keep. The encoder transmitted the
+stereo difference signal inverted for most of the project's life: every
+in-repo check agreed with itself because the decoder inverted it back, and
+only an independently written decoder exposed it. Separately, an operator
+reported distorted hi-hats; the gate built to chase that report found the
+cause was stage order -- a 1x safety soft-clip ran ahead of the oversampled
+composite clipper, so the clipper never engaged at all. Both faults read
+perfectly fine as code. Only measurement found them.
+
 ## App structure
 
 The macOS GUI is organised into these sections. The Linux build has no GUI -- the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing incl. the Format Profile picker, RDS, Audio I/O, Test Tone, Presets with the shared 8 operator preset slots), so the two front ends feel the same.

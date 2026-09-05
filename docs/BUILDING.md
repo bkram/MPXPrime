@@ -64,14 +64,14 @@ The default user config lives at
 ### Running the Meter (`MPXPrimeMeter`)
 
 The companion analyzer builds and runs the same way (Apple Silicon; needs
-`brew install librtlsdr liquid-dsp`). The `run-meter.sh` helper builds a release
+`brew install librtlsdr liquid-dsp`). The `scripts/run-meter.sh` helper builds a release
 Meter and launches it:
 
 ```bash
-./run-meter.sh                       # GUI; auto-detects an SDRplay / RTL-SDR dongle, else audio
-./run-meter.sh --sdr-freq 88.6       # GUI pre-tuned to an SDR station, capturing
-./run-meter.sh --device 0 --channel right --seconds 30   # headless audio-device capture
-./run-meter.sh --stdin --full-scale-khz 150              # headless, composite piped on stdin
+scripts/run-meter.sh                       # GUI; auto-detects an SDRplay / RTL-SDR dongle, else audio
+scripts/run-meter.sh --sdr-freq 88.6       # GUI pre-tuned to an SDR station, capturing
+scripts/run-meter.sh --device 0 --channel right --seconds 30   # headless audio-device capture
+scripts/run-meter.sh --stdin --full-scale-khz 150              # headless, composite piped on stdin
 ```
 
 The in-process SDR (RTL-SDR / SDRplay) is GUI-only; the headless dashboard takes
@@ -89,7 +89,7 @@ it on all interfaces behind a generated API key; a hand-run build passes
 the headless encoder offers works: `--nogui` live encoding into an ALSA
 device, the `--verify*` modes (except `--verify-program-ab`, which decodes
 audio files through AVFoundation), `--capture-baseline`, and `--bench*`. The
-live scripts (`smoke-live.sh`, `ab-music-live.sh`, `scripts/capture-program.sh`)
+live scripts (`scripts/smoke-live.sh`, `scripts/ab-music-live.sh`, `scripts/capture-program.sh`)
 need BlackHole / Core Audio and are macOS-only.
 
 Install the toolchain and dependencies:
@@ -202,7 +202,7 @@ in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
 
 `--control` (alias: `--web`) / `--control-port N` enable the REST API + web dashboard for a
 headless run (or set `[CONTROL] control_enabled = True`). See the user
-manual's "Remote control" section for endpoints and the security model. `./run-build-web.sh`
+manual's "Remote control" section for endpoints and the security model. `scripts/run-build-web.sh`
 (repo root, macOS + Linux) builds the release binary and runs it headless
 with the dashboard in one step.
 
@@ -225,8 +225,8 @@ swift run --package-path macOS MPXPrime --verify-final-ride --seconds 3         
 macOS/.build/release/MPXPrime --verify-program-ab <file-or-dir> --seconds 30        # real-music A/B: AGC+multiband vs Advanced Dynamics on captured audio (macOS only; --ab-profile, --ab-csv; corpus via scripts/capture-program.sh)
 macOS/.build/release/MPXPrime --bench-blocks                                        # block (buffer) size sweep: worst-block cost, latency, bit-identity, device HAL range
 scripts/capture-program.sh --seconds 60 --name <label>                             # record program audio from BlackHole 2ch into $MPXPRIME_MUSIC_DIR (the --verify-program-ab corpus)
-./ab-music-live.sh --cycles 4 --window 30 [--soak <hours>]                          # LIVE real-music A/B + soak on two BlackHole devices while you play music (xruns / safety clip / budget / deviation gates)
-./smoke-live.sh [--ini <path>]                                                      # LIVE engine smoke on a virtual output (BlackHole 2ch): device start, tone deviation vs expected, pilot, Safety Clip, xruns, live-apply + restart via REST
+scripts/ab-music-live.sh --cycles 4 --window 30 [--soak <hours>]                          # LIVE real-music A/B + soak on two BlackHole devices while you play music (xruns / safety clip / budget / deviation gates)
+scripts/smoke-live.sh [--ini <path>]                                                      # LIVE engine smoke on a virtual output (BlackHole 2ch): device start, tone deviation vs expected, pilot, Safety Clip, xruns, live-apply + restart via REST
 ```
 
 Baseline capture + strict compare:
@@ -279,6 +279,24 @@ The project's `.swiftlint.yml` enables the two accessibility rules
 of opt-in bug-catcher rules (force unwrapping, `first(where:)`, unowned
 captures, ...); the style rules that fight intentional DSP patterns are
 disabled. CI runs it with `--strict`.
+
+## Scripts layout
+
+- Repo root: only the two release entry points the workflows call,
+  `build-release.sh` (universal binary + DMG) and `build-deb.sh` (Debian
+  package). Run them from the root.
+- `scripts/`: developer and maintainer tools -- `run-build-web.sh`,
+  `run-meter.sh`, `smoke-live.sh`, `ab-music-live.sh`, `calibrate-tx.sh`,
+  `capture-program.sh` (+ `CaptureToWav.swift`), the docs checks
+  (`check-doc-anchors.py`, `check-english.sh`, `lt-report-filter.py`,
+  `extract-ui-strings.py`, `english-dictionary.txt`). Every shell script
+  changes to the repo root itself, so `scripts/smoke-live.sh` works from any
+  directory.
+- `dist-scripts/`: the operator-facing helpers that SHIP with the app --
+  `nowplaying.sh` and `push-nowplaying.sh` (Now Playing metadata for RDS).
+  `build-release.sh` copies them into `MPX Prime Studio.app/Contents/Resources/Scripts/`
+  and into the DMG's `Now Playing Scripts/` folder; the manual documents them
+  from the operator's side. Put a script here only if an end user runs it.
 
 ## Documentation lint and proofreading
 

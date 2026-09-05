@@ -27,7 +27,7 @@ Reproduce: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer MPXPRIME_BE
 |          16x |   0.4127 |  (reference) |         41.27% |
 |          32x |   0.5345 | +121.83 ms/s |         53.45% |
 
-New UI knob (Composite Clipper inspector). 16x is the default and matches Optimod / Omnia.11 / Stereotool. 8x trades ~6 dB alias suppression for ~6 percentage points of real-time headroom — useful on slower hardware. 32x adds ~6 dB further alias suppression at hot drives but costs ~12 percentage points of real-time vs 16x — recommended only with hardware headroom. Restart-required (changes FIR decimator tap count + Lagrange interpolator step count + per-host batch buffer sizes).
+New UI knob (Composite Clipper inspector). 16x is the default and matches Optimod / Omnia.11 / Stereotool. 8x trades ~6 dB alias suppression for ~6 percentage points of real-time headroom -- useful on slower hardware. 32x adds ~6 dB further alias suppression at hot drives but costs ~12 percentage points of real-time vs 16x -- recommended only with hardware headroom. Restart-required (changes FIR decimator tap count + Lagrange interpolator step count + per-host batch buffer sizes).
 
 ## Per-stage cost @ 192 kHz (full chain on, stage A/B)
 
@@ -54,7 +54,7 @@ New UI knob (Composite Clipper inspector). 16x is the default and matches Optimo
 **Sum audio-domain deltas:** 250.74 ms/s (25.07% of real-time)
 **Sum MPX-domain deltas:**   153.90 ms/s (15.39% of real-time)
 
-Deltas are not strictly additive — stages can interact (e.g. a hot stage feeding more limiter work). Treat as first-order estimate, not algebra.
+Deltas are not strictly additive -- stages can interact (e.g. a hot stage feeding more limiter work). Treat as first-order estimate, not algebra.
 
 ## Summary
 
@@ -68,6 +68,6 @@ Estimated savings: **16.57 percentage points** (40% relative)
 
 ## Notes vs pre-OS-selector run
 
-- Numbers reproduce the earlier `m1pro-v0.30-pre-dualrate.md` baseline within run-to-run noise (~±0.5 pp on most rows) — adding the configurable oversampling did not regress the 16x default path. Composite clipper row label is now "Composite clipper" rather than "Composite clipper (16x)" since the factor is operator-selectable.
+- Numbers reproduce the earlier `m1pro-v0.30-pre-dualrate.md` baseline within run-to-run noise (~+/-0.5 pp on most rows) -- adding the configurable oversampling did not regress the 16x default path. Composite clipper row label is now "Composite clipper" rather than "Composite clipper (16x)" since the factor is operator-selectable.
 - New oversampling sweep section captures the per-knob CPU cost, giving operators a measured number to weigh against the marginal alias-suppression improvement that 32x buys.
-- Dual-rate refactor (plan.md "Next up" #1) projection is unchanged: composite clipper stays at MPX rate regardless of audio-domain rate, so its 14.07% RT cost survives the refactor. The combination dual-rate + 32x clipper lands at roughly 24.85% RT (post dual-rate baseline) + 14 pp (32x premium over 16x) = ~39% RT — comparable to today's 16x cost, just with the spec-sheet 32x defended.
+- Dual-rate refactor (plan.md "Next up" #1) projection is unchanged: composite clipper stays at MPX rate regardless of audio-domain rate, so its 14.07% RT cost survives the refactor. The combination dual-rate + 32x clipper lands at roughly 24.85% RT (post dual-rate baseline) + 14 pp (32x premium over 16x) = ~39% RT -- comparable to today's 16x cost, just with the spec-sheet 32x defended.

@@ -8,7 +8,7 @@
 # restart-class PATCH + transport restart through the REST API -- headless,
 # without touching an exciter. Exit 0 = every check passed.
 #
-# Usage: ./smoke-live.sh [--ini <path>] [--device-uid <uid>] [--port <n>] [--seconds <n>]
+# Usage: scripts/smoke-live.sh [--ini <path>] [--device-uid <uid>] [--port <n>] [--seconds <n>]
 #   --ini         INI to smoke (default: your station INI in Application Support;
 #                 falls back to macOS/Verification.ini). The file is COPIED; the
 #                 original is never modified.
@@ -19,7 +19,7 @@
 # class and its build/render load starves a live capture.
 
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # repo root
 
 INI_DEFAULT="$HOME/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini"
 INI="$INI_DEFAULT"; [ -f "$INI" ] || INI="macOS/Verification.ini"

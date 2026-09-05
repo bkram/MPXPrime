@@ -17,7 +17,7 @@ Reproduce: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer MPXPRIME_BE
 |      176.4 |        yes |   0.3813 |    1.0000 |         38.13% |
 |      192.0 |        yes |   0.4163 |    1.0000 |         41.63% |
 
-Scaling is close to linear with rate (192/96 = 2.0; 41.6/21.3 = 1.95) — confirms the model that audio-domain stage cost scales ~linearly with outer rate.
+Scaling is close to linear with rate (192/96 = 2.0; 41.6/21.3 = 1.95) -- confirms the model that audio-domain stage cost scales ~linearly with outer rate.
 
 96 kHz row has RDS+stereo off because RDS at 57 kHz exceeds 96 kHz Nyquist; it isolates audio-only cost.
 
@@ -46,7 +46,7 @@ Scaling is close to linear with rate (192/96 = 2.0; 41.6/21.3 = 1.95) — confir
 **Sum audio-domain deltas:** 248.66 ms/s (24.87% of real-time)
 **Sum MPX-domain deltas:**   152.52 ms/s (15.25% of real-time)
 
-Deltas are not strictly additive — stages can interact (e.g. a hot stage feeding more limiter work). Treat as first-order estimate, not algebra.
+Deltas are not strictly additive -- stages can interact (e.g. a hot stage feeding more limiter work). Treat as first-order estimate, not algebra.
 
 ## Summary
 
@@ -60,7 +60,7 @@ Estimated savings: **15.74 percentage points** (38% relative)
 
 ## Surprises vs prior assumptions
 
-1. **Composite clipper (16x) is the single heaviest stage** at 14.23% RT, not the multiband splitter (4.80%). It is MPX-domain and stays at the high rate after the dual-rate refactor — dual-rate does NOT directly reduce it. The multiband-FIR-is-the-bottleneck framing in earlier discussion was wrong on Apple Silicon; vDSP/NEON+AMX makes the FIR splitter much cheaper than expected here.
+1. **Composite clipper (16x) is the single heaviest stage** at 14.23% RT, not the multiband splitter (4.80%). It is MPX-domain and stays at the high rate after the dual-rate refactor -- dual-rate does NOT directly reduce it. The multiband-FIR-is-the-bottleneck framing in earlier discussion was wrong on Apple Silicon; vDSP/NEON+AMX makes the FIR splitter much cheaper than expected here.
 2. **DC clipper (5.67%) and Bass clipper (5.10%) are heavier than the multiband splitter** on M1 Pro. Both are audio-domain (move to 48 kHz under dual-rate). Their internal oversampling stays the same final rate (192k and 384k respectively), but the outer per-sample work scales with the outer rate.
 3. **Pre-encode limiter (3.90%) and PrimeBass (2.29%)** are non-trivial. Both audio-domain.
 4. **Wideband AGC, parametric EQ, stereo widener, mono bass, phase rotation, multiband limiter, BS.412, pre-encode look-ahead** are all <1% RT each. Mostly negligible.
@@ -68,7 +68,7 @@ Estimated savings: **15.74 percentage points** (38% relative)
 
 ## Implications for the dual-rate refactor
 
-- The refactor is still worth doing — 38% relative reduction is real — but the headline value is "all audio-domain stages get cheaper proportionally," not "the multiband FIR drops to 1/4."
+- The refactor is still worth doing -- 38% relative reduction is real -- but the headline value is "all audio-domain stages get cheaper proportionally," not "the multiband FIR drops to 1/4."
 - On older Intel (MBP16,1, MBP15-Coffee-Lake-H), where AMX is unavailable and AVX2 is the SIMD floor, the audio-domain stages should be relatively heavier than on M1 Pro. The dual-rate win is expected to be larger in percentage points on those machines. Run this same benchmark on the 16,1 to confirm.
-- The composite clipper at 14.23% RT is the obvious next acceleration target *independent* of dual-rate. It already uses LinearPhaseFIRDecimator + vDSP_dotpr, but at 16× from 192 kHz the internal rate is 3.072 MHz and the decimation FIR dominates. Worth profiling further.
+- The composite clipper at 14.23% RT is the obvious next acceleration target *independent* of dual-rate. It already uses LinearPhaseFIRDecimator + vDSP_dotpr, but at 16x from 192 kHz the internal rate is 3.072 MHz and the decimation FIR dominates. Worth profiling further.
 - Resampler overhead at the 48k/192k boundary needs to come in under ~5% RT for the dual-rate to be net positive. A Kaiser-windowed sinc polyphase resampler at ~64 taps should sit well under that.

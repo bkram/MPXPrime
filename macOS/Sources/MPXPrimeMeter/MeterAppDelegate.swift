@@ -76,7 +76,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         // selected) on launch -- start with no focused field.
         DispatchQueue.main.async { [weak w] in w?.makeFirstResponder(nil) }
 
-        // Launched via run-meter.sh --gui: pre-tune the SDR and start.
+        // Launched via scripts/run-meter.sh --gui: pre-tune the SDR and start.
         if let freq = autoStartSDRFreqMHz, vm.sdrAvailable {
             vm.inputKind = .sdr
             vm.frequencyMHz = freq

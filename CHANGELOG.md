@@ -11,6 +11,25 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Repo hygiene: plans pruned, strays removed, scripts reorganized.**
+  `plan.md` (929 -> ~470 lines) and `meter-plan.md` (240 -> ~120) now hold
+  only open work and the anti-rework guardrails; every DONE item and the
+  shipped-history narrative went (CHANGELOG has them), the remaining ideas
+  from the retired `FUTURE.md` (composite peak-to-RMS governor, dynamic
+  pre-emphasis) were folded in. Removed: `FUTURE.md`, `issues.txt`,
+  `gui-plan.md` (the Meter GUI shipped in 0.37) and the undocumented
+  `build.sh` / `run.sh` / `run-build.sh` / `run-debug.sh` wrappers (BUILDING
+  documents the plain `swift` commands). Scripts now live in two places:
+  `scripts/` for developer / maintainer tools (`run-build-web.sh`,
+  `run-meter.sh`, `smoke-live.sh`, `ab-music-live.sh`, `calibrate-tx.sh`
+  moved there; each `cd`s to the repo root itself) and `dist-scripts/` for
+  the operator-facing Now Playing helpers that ship in the app bundle and
+  the DMG (`push-nowplaying.sh` is now shipped alongside `nowplaying.sh`).
+  The root keeps only `build-release.sh` / `build-deb.sh`. Every reference
+  in the manuals, BUILDING, README, AGENTS and the Meter's `--help` was
+  repointed. `.vscode/settings.json` (the sourcekit-lsp package-discovery
+  flag AGENTS already described) is tracked, with a workspace-relative
+  CMake path.
 - **Docs lint, anchor check and English proofreading as tooling + skills.**
   `.markdownlint-cli2.jsonc` (all rules except line length, sibling-only
   duplicate headings and table padding) plus a CI `docs` job that runs

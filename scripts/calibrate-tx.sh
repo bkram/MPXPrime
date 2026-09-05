@@ -1,5 +1,5 @@
 #!/bin/bash
-# calibrate-tx.sh -- closed-loop deviation calibration of MPX Prime Studio
+# scripts/calibrate-tx.sh -- closed-loop deviation calibration of MPX Prime Studio
 # against an off-air RTL-SDR measurement (the small, scripted version of the
 # Studio<->Meter closed-loop trim in meter-plan.md).
 #
@@ -22,7 +22,7 @@
 #     release) and tuner mpx-offline (built automatically if cmake is there).
 #
 # Usage:
-#   ./calibrate-tx.sh --freq 85.8 [--api http://127.0.0.1:8737]
+#   scripts/calibrate-tx.sh --freq 85.8 [--api http://127.0.0.1:8737]
 #                     [--api-key KEY] [--gain <dB>|auto] [--seconds 20]
 #                     [--iterations 5] [--tolerance-db 0.1] [--dry-run]
 #                     [--watch] [--tone [level_db]]
@@ -82,7 +82,7 @@ for tool in rtl_sdr python3 curl jq; do
   command -v "$tool" >/dev/null || { echo "calibrate-tx: $tool not found" >&2; exit 2; }
 done
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 METER="$REPO_DIR/macOS/.build/release/MPXPrimeMeter"
 [ -x "$METER" ] || { echo "calibrate-tx: $METER missing -- run: swift build --package-path macOS -c release" >&2; exit 2; }
 

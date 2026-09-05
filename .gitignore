@@ -238,7 +238,8 @@ htmlcov/
 # OS/editor
 .DS_Store
 Thumbs.db
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 
 # Audio captures

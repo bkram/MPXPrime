@@ -4,16 +4,16 @@
 # REST API + web dashboard. Works on macOS and Linux (same tree, same
 # script). The dashboard URL is printed at startup; open it in any browser.
 #
-#   ./run-build-web.sh                          # default config, port 8737
-#   ./run-build-web.sh --control-port 9000      # different port
-#   ./run-build-web.sh --config /path/to/My.ini # specific config
+#   scripts/run-build-web.sh                          # default config, port 8737
+#   scripts/run-build-web.sh --control-port 9000      # different port
+#   scripts/run-build-web.sh --config /path/to/My.ini # specific config
 #
 # Remote access: set control_bind = 0.0.0.0 AND control_api_key = <secret>
 # in the config's [CONTROL] section (the server refuses to start
 # remote-exposed without a key). See docs/manual.md "Remote control".
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # repo root
 
 # Linux: swiftly installs the toolchain but only login shells source its
 # env; pick it up here so the script works from any shell/cron.

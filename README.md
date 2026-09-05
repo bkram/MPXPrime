@@ -93,7 +93,7 @@ deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
   linked-in tuner library (no helper process, no Homebrew for end users), just a
   connected dongle. Frequency, IF bandwidth, gain / auto gain,
   LNA, antenna, Bias-T, PPM, and RTL AGC all retune **live** (no restart).
-  Headless terminal modes also exist (`./run-meter.sh --device <n>` / `--stdin`)
+  Headless terminal modes also exist (`scripts/run-meter.sh --device <n>` / `--stdin`)
 
 See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
 

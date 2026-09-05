@@ -5,7 +5,7 @@ Machine: MacBookPro18,1 / Apple M1 Pro
 Cores: 10 logical, 10 active
 OS: Version 26.5 (Build 25F71)
 Build: release
-Branch: develop/v.030 (post Phase 2 cutover — audio domain runs at 48 kHz inside the boundary)
+Branch: develop/v.030 (post Phase 2 cutover -- audio domain runs at 48 kHz inside the boundary)
 Reproduce: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer MPXPRIME_BENCH=1 swift test -c release --package-path macOS --filter Benchmark`
 
 ## Rate sweep (full chain)
@@ -27,7 +27,7 @@ Reference for the dual-rate-off path. Within run-to-run noise of the pre-cutover
 |          16x |   0.4187 |  (reference) |         41.87% |
 |          32x |   0.5456 | +126.89 ms/s |         54.56% |
 
-Composite clipper stays at MPX rate regardless of the dual-rate boundary — the cost is unchanged from prior captures.
+Composite clipper stays at MPX rate regardless of the dual-rate boundary -- the cost is unchanged from prior captures.
 
 ## Dual-rate boundary sweep (full chain @ 192 kHz, audio 48 kHz)
 
@@ -36,7 +36,7 @@ Composite clipper stays at MPX rate regardless of the dual-rate boundary — the
 | off      |   0.4185 |  (reference) |         41.85% |
 | on       |   0.2426 | -175.90 ms/s |         24.26% |
 
-**Savings: -17.59 percentage points (-42.0% relative).** This is the actual measured payoff of the Phase 2 cutover — the audio domain now runs at 48 kHz inside the boundary instead of at 192 kHz after a no-op roundtrip. The savings match the original projection from the pre-dualrate baseline (16.5 pp / 40% relative).
+**Savings: -17.59 percentage points (-42.0% relative).** This is the actual measured payoff of the Phase 2 cutover -- the audio domain now runs at 48 kHz inside the boundary instead of at 192 kHz after a no-op roundtrip. The savings match the original projection from the pre-dualrate baseline (16.5 pp / 40% relative).
 
 Receiver verification confirms the cutover preserves stereo separation:
 
@@ -46,7 +46,7 @@ Receiver verification confirms the cutover preserves stereo separation:
 |    10 kHz |              26.0 |             26.1 |
 |    14 kHz |              26.4 |             33.4 |
 
-(14 kHz separation is slightly *better* with the boundary on — likely a beneficial side effect of the audio-rate FIR splitter's coefficient profile vs the MPX-rate version. Confirmed via `--verify-receiver` after the cutover fix landed.)
+(14 kHz separation is slightly *better* with the boundary on -- likely a beneficial side effect of the audio-rate FIR splitter's coefficient profile vs the MPX-rate version. Confirmed via `--verify-receiver` after the cutover fix landed.)
 
 ## Per-stage cost @ 192 kHz (full chain on, stage A/B, boundary OFF)
 
@@ -78,5 +78,5 @@ Per-stage breakdown still reflects MPX-rate processing for the A/B (each stage i
 ## Closing notes
 
 - Phase 2 cutover landed cleanly with default-disabled bit-identical regression preserved (`DualRateBoundaryTests.defaultDisabledIsBitIdenticalToBaseline` + 384 default tests pass).
-- Two cutover-specific bugs were caught and fixed during validation: (1) interp output buffer was being read in wrong order — `[L-1], [0], [1], ..., [L-2]` instead of `[0], [1], ..., [L-1]`, creating a per-cycle temporal discontinuity that destroyed phase coherence; (2) `recomputeSubcarrierDelay()` was over-delaying the pilot by the boundary delay — the boundary sits upstream of the encoder, so the freshly-generated pilot and embedded 38 kHz subcarrier don't traverse it, and adding boundary delay to the pilot side rotated the pilot ~94° at 19 kHz relative to the embedded carrier (which trashes production decoder separation while leaving the ideal-coherent decode intact).
-- The composite clipper at 14.29% RT remains the single largest stage cost; it stays at MPX rate by design (DSB-SC subcarrier + RDS need the high rate's bandwidth). Composite-clipper acceleration would need a separate effort (e.g. higher OS internal rate vs current 16×, or a different decimator design).
+- Two cutover-specific bugs were caught and fixed during validation: (1) interp output buffer was being read in wrong order -- `[L-1], [0], [1], ..., [L-2]` instead of `[0], [1], ..., [L-1]`, creating a per-cycle temporal discontinuity that destroyed phase coherence; (2) `recomputeSubcarrierDelay()` was over-delaying the pilot by the boundary delay -- the boundary sits upstream of the encoder, so the freshly-generated pilot and embedded 38 kHz subcarrier don't traverse it, and adding boundary delay to the pilot side rotated the pilot ~94 deg at 19 kHz relative to the embedded carrier (which trashes production decoder separation while leaving the ideal-coherent decode intact).
+- The composite clipper at 14.29% RT remains the single largest stage cost; it stays at MPX rate by design (DSB-SC subcarrier + RDS need the high rate's bandwidth). Composite-clipper acceleration would need a separate effort (e.g. higher OS internal rate vs current 16x, or a different decimator design).

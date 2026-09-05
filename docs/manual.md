@@ -294,7 +294,7 @@ Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudne
 
 The deviation readout stays put while you calibrate: it reads the modulation domain (the trims divided back out), so trimming exciter drive changes DAC Peak and what the exciter sees, not the displayed kHz.
 
-**Scripted version with an RTL-SDR** -- `./calibrate-tx.sh --freq <MHz>` (repo root) closes this loop automatically against an off-air measurement: it reads the configured pilot injection over the REST API (start Studio with the control API on), measures the actual pilot deviation with an RTL-SDR through MPX Prime Meter's analysis (refusing railed captures and applying a proper channel filter), and trims `output_gain_db` until they agree -- the pilot is constant-amplitude, so this works with program on air. Because the output gain is attenuation-only in composite mode, a transmitter that under-deviates at full scale is reported as "raise the exciter's input sensitivity by N dB" rather than silently mis-calibrated; `--watch` prints a fresh measurement every few seconds so you can turn the exciter's trimmer until the error reads 0.0. `--dry-run` measures without changing anything. `--tone` switches Studio to the built-in test tone (a mono 997 Hz sine at -20 dBFS, the 0.45 calibration source) for the duration of the run and restores the program source on exit -- dense program puts pre-emphasized HF next to the 19 kHz pilot and wobbles the measurement by about +/-0.1 dB between passes, while with the tone repeat passes agree to a few hundredths of a dB.
+**Scripted version with an RTL-SDR** -- `scripts/calibrate-tx.sh --freq <MHz>` (repo root) closes this loop automatically against an off-air measurement: it reads the configured pilot injection over the REST API (start Studio with the control API on), measures the actual pilot deviation with an RTL-SDR through MPX Prime Meter's analysis (refusing railed captures and applying a proper channel filter), and trims `output_gain_db` until they agree -- the pilot is constant-amplitude, so this works with program on air. Because the output gain is attenuation-only in composite mode, a transmitter that under-deviates at full scale is reported as "raise the exciter's input sensitivity by N dB" rather than silently mis-calibrated; `--watch` prints a fresh measurement every few seconds so you can turn the exciter's trimmer until the error reads 0.0. `--dry-run` measures without changing anything. `--tone` switches Studio to the built-in test tone (a mono 997 Hz sine at -20 dBFS, the 0.45 calibration source) for the duration of the run and restores the program source on exit -- dense program puts pre-emphasized HF next to the 19 kHz pilot and wobbles the measurement by about +/-0.1 dB between passes, while with the tone repeat passes agree to a few hundredths of a dB.
 
 The same measurement also verifies the RDS injection end to end: if the reported `rds` kHz sits below `rds_level`, the DAC/exciter path is rolling off toward 57 kHz (the 19 kHz pilot is unaffected, so pilot calibration does not correct it). The dependable fix is to raise `rds_level` by the measured ratio so the ON-AIR injection lands on the intended value -- a restart-class key, so restart the transport and re-measure to confirm.
 
@@ -665,7 +665,7 @@ path is printed at startup.
 For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
 enables it without editing the INI; these flags imply `--nogui` (run
 headless, serve the dashboard). In the macOS GUI app, use the Settings window.
-From a source checkout, `./run-build-web.sh` builds the release binary and
+From a source checkout, `scripts/run-build-web.sh` builds the release binary and
 starts it headless with the dashboard, on macOS and Linux alike.
 
 **Security:** binding 127.0.0.1 needs no key. Binding any other interface
@@ -785,15 +785,15 @@ and leave `now_playing_script` empty (the push is the source). A `/`-segmented
 template shows the static segment when nothing is playing; a line whose
 `{artist}`/`{title}` is missing is skipped rather than aired half-filled.
 
-From a source checkout on macOS, `scripts/push-nowplaying.sh` does this for
+From a source checkout on macOS, `dist-scripts/push-nowplaying.sh` does this for
 VLC and Cog:
 
 ```bash
-./scripts/push-nowplaying.sh --url http://mpxbox:8737 --api-key <key>
-# or: MPXPRIME_URL=... MPXPRIME_API_KEY=... ./scripts/push-nowplaying.sh --interval 5
+./dist-scripts/push-nowplaying.sh --url http://mpxbox:8737 --api-key <key>
+# or: MPXPRIME_URL=... MPXPRIME_API_KEY=... ./dist-scripts/push-nowplaying.sh --interval 5
 ```
 
-It reuses `scripts/nowplaying.sh` for extraction and pushes only on track
+It reuses `dist-scripts/nowplaying.sh` for extraction and pushes only on track
 change (no RadioText thrash), clearing the track when playback stops.
 
 ### MPX line output calibration (dBFS)
@@ -901,7 +901,7 @@ Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled ac
 
 To build that corpus, route your player to BlackHole 2ch and record with `scripts/capture-program.sh [--seconds 60] [--name label]` -- it compiles a small capture helper on demand and writes WAVs into `$MPXPRIME_MUSIC_DIR` (or the current directory). Capture the docs/test-playlist.md regression tracks once and the offline A/B becomes a repeatable regression gate.
 
-The LIVE counterpart is `./ab-music-live.sh [--cycles 4] [--window 30] [--soak <hours>]`: it runs the headless encoder on two distinct BlackHole devices (your player feeds the 2ch input at 48 kHz; the composite goes to the 16ch output at 192 kHz -- one shared device would feed the composite back into the input), alternates `advanced_dynamics_enabled` every window over the live PATCH API while you play music, and logs `/api/meters` at 2 Hz to CSV. It gates the live invariants -- zero xruns and ring overflows, Safety Clip idle, never over budget, deviation inside the configured maximum, every toggle applied live with no spike, engine uptime monotonic -- and `--soak N` adds a bounded-RSS check over N hours of looped playlist. Its A/B numbers are deliberately loose (live audio is not sample-aligned); `--verify-program-ab` on the captured corpus owns the precise deltas.
+The LIVE counterpart is `scripts/ab-music-live.sh [--cycles 4] [--window 30] [--soak <hours>]`: it runs the headless encoder on two distinct BlackHole devices (your player feeds the 2ch input at 48 kHz; the composite goes to the 16ch output at 192 kHz -- one shared device would feed the composite back into the input), alternates `advanced_dynamics_enabled` every window over the live PATCH API while you play music, and logs `/api/meters` at 2 Hz to CSV. It gates the live invariants -- zero xruns and ring overflows, Safety Clip idle, never over budget, deviation inside the configured maximum, every toggle applied live with no spike, engine uptime monotonic -- and `--soak N` adds a bounded-RSS check over N hours of looped playlist. Its A/B numbers are deliberately loose (live audio is not sample-aligned); `--verify-program-ab` on the captured corpus owns the precise deltas.
 
 `--verify-ssb-stereo` A/Bs classic DSB stereo encoding against the SSB Stereo encoder: program scenarios on a LINEAR composite (peak controllers off, so the encoder's raw headroom effect is visible) plus tone measurements on the full chain -- 38 kHz sideband asymmetry at 1/10/14 kHz (confirms the SSB action; matches theory exactly) and coherent decode separation off/on. This is the stage's hard gate: it goes TIGHT when separation drops more than 6 dB (or below 20 dB absolute), when the composite budget is exceeded, or when no headroom is measurably reclaimed.
 

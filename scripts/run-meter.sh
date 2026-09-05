@@ -7,10 +7,10 @@
 # (the 192 kHz-capable device, composite on the RIGHT channel) when no dongle is
 # present. Examples:
 #
-#   ./run-meter.sh                       # GUI: SDR if a dongle is attached, else audio
-#   ./run-meter.sh --sdr-freq 96.8       # GUI pre-tuned to an SDR station, capturing
-#   ./run-meter.sh --device 0 --channel right --seconds 30   # headless audio capture
-#   ./run-meter.sh --list-devices
+#   scripts/run-meter.sh                       # GUI: SDR if a dongle is attached, else audio
+#   scripts/run-meter.sh --sdr-freq 96.8       # GUI pre-tuned to an SDR station, capturing
+#   scripts/run-meter.sh --device 0 --channel right --seconds 30   # headless audio capture
+#   scripts/run-meter.sh --list-devices
 #
 # Headless terminal modes: pass --device <spec> (audio input) or --stdin (a WAV
 # stream / raw composite on stdin) to run the text dashboard instead of the
@@ -19,7 +19,7 @@
 # First run may prompt for microphone/input access -- allow it.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # repo root
 
 echo "Building MPXPrimeMeter (release)..."
 swift build --package-path macOS -c release --product MPXPrimeMeter

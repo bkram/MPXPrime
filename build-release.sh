@@ -106,7 +106,7 @@ cp "$OUTPUT_DIR/$CONFIG_NAME" "$APP_DIR/Contents/Resources/"
 # bundle so they always travel with the app. They are also placed at the top
 # level of the DMG (below) for easy discovery.
 mkdir -p "$APP_DIR/Contents/Resources/Scripts"
-cp scripts/nowplaying.sh "$APP_DIR/Contents/Resources/Scripts/"
+cp dist-scripts/nowplaying.sh dist-scripts/push-nowplaying.sh "$APP_DIR/Contents/Resources/Scripts/"
 chmod +x "$APP_DIR/Contents/Resources/Scripts/"*.sh
 
 # Ad-hoc sign the completed app bundle so macOS sees a valid bundle structure.
@@ -239,7 +239,7 @@ cp -R "$APP_DIR" "$DMG_STAGING/"
 cp -R "$METER_APP_DIR" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
 mkdir -p "$DMG_STAGING/Now Playing Scripts"
-cp scripts/nowplaying.sh "$DMG_STAGING/Now Playing Scripts/"
+cp dist-scripts/nowplaying.sh dist-scripts/push-nowplaying.sh "$DMG_STAGING/Now Playing Scripts/"
 chmod +x "$DMG_STAGING/Now Playing Scripts/"*.sh
 hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH" || {
     echo "Failed to create DMG, keeping .app bundle"

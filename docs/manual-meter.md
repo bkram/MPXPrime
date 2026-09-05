@@ -28,9 +28,9 @@ that the Meter decodes are in the Studio manual's appendices
 ## Launching
 
 - Double-click `MPX Prime Meter.app`, or run `macOS/.build/release/MPXPrimeMeter --gui`.
-- Headless terminal dashboard: `./run-meter.sh --device <spec>` (audio-device
-  input) or `./run-meter.sh --stdin` (a composite piped on stdin). The in-process
-  SDR is GUI-only; with no arguments `./run-meter.sh` opens the window and
+- Headless terminal dashboard: `scripts/run-meter.sh --device <spec>` (audio-device
+  input) or `scripts/run-meter.sh --stdin` (a composite piped on stdin). The in-process
+  SDR is GUI-only; with no arguments `scripts/run-meter.sh` opens the window and
   auto-detects a dongle. Use `--sdr-freq <MHz>` to open the GUI pre-tuned.
 
 Headless flags beyond the ones used below (`--help` lists them all):
@@ -175,7 +175,7 @@ remembered by device UID):
   dylibs ship inside the app. **SDR support makes MPX Prime Meter Apple-Silicon
   only** (the RTL-SDR libraries are arm64-only); the MPX Prime Studio encoder
   remains universal. (For a headless terminal SDR readout, pipe an external
-  `fm-sdr-tuner`/`mpx-tuner` composite into `./run-meter.sh --stdin`; the
+  `fm-sdr-tuner`/`mpx-tuner` composite into `scripts/run-meter.sh --stdin`; the
   in-process SDR backend is GUI-only.) Tested with **Rafael Micro R820T** and
   **Elonics E4000** tuner dongles; other librtlsdr-supported tuners (R828D,
   FC0012/0013, FC2580) should work but are untested.

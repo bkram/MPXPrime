@@ -11,7 +11,7 @@
 # LIVE engine under the toggle and over time.
 #
 # Usage:
-#   ./ab-music-live.sh [--cycles 4] [--window 30] [--soak <hours>]
+#   scripts/ab-music-live.sh [--cycles 4] [--window 30] [--soak <hours>]
 #                      [--ini <path>] [--input-uid BlackHole2ch_UID]
 #                      [--output-uid BlackHole16ch_UID] [--port 8799]
 #                      [--csv <path>]
@@ -23,7 +23,7 @@
 # Do NOT run while MPX Prime Studio is on air (same device class).
 
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # repo root
 
 INI_DEFAULT="$HOME/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini"
 INI="$INI_DEFAULT"; [ -f "$INI" ] || INI="macOS/Verification.ini"
@@ -70,7 +70,7 @@ LOG="$WORK/engine.log"
 trap 'kill $ENGINE_PID 2>/dev/null; wait $ENGINE_PID 2>/dev/null' EXIT
 
 # Copy the INI, rewriting only what the A/B needs (same rewriter block as
-# smoke-live.sh): live input from the player device, composite to the other
+# scripts/smoke-live.sh): live input from the player device, composite to the other
 # device, control API on loopback, AD off so phase A starts deterministic.
 python3 - "$INI" "$TMP_INI" "$INPUT_UID" "$OUTPUT_UID" "$PORT" <<'EOF'
 import sys, re

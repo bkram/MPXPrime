@@ -1,0 +1,11 @@
+{
+    // Package.swift lives at macOS/Package.swift, not the repo root.
+    // Without this flag, the Swift extension's sourcekit-lsp doesn't
+    // discover the package and falls back to single-file compilation
+    // mode for files like ProcessingTabs.swift — which then can't
+    // see types defined in sibling files (the view model,
+    // NavigationModel) and reports phantom "not in scope" diagnostics
+    // even though `swift build` succeeds.
+    "swift.searchSubfoldersForPackages": true,
+    "cmake.sourceDirectory": "${workspaceFolder}/tuner"
+}

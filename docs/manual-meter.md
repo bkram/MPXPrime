@@ -238,7 +238,7 @@ remembered by device UID):
   (live and max-hold, clearing with Reset Peaks): the same measurement path
   through a 0.5 ms integrating detector -- the display convention of
   hardware modulation monitors, for comparing number-to-number against such
-  an instrument (see "Expect the MAX readouts to diverge" under the SFP-X
+  an instrument (see "Expect the MAX readouts to diverge" under the reference-receiver
   validation section for why they differ and which figure is the compliance
   one). On test tones an integrating detector genuinely reads below the true
   deviation (a 1 kHz sine reads ~0.64x); expect agreement on dense program,
@@ -612,9 +612,9 @@ BS.412 measurement. For reference, on a clean signal:
 | 6 dBr     | +/-38 kHz                            |
 | 10 dBr    | +/-60 kHz                            |
 
-## Reference-receiver validation (Profline SFP-X)
+## Reference-receiver validation
 
-MPX Prime Meter's readings were cross-validated against a Profline SFP-X
+MPX Prime Meter's readings were cross-validated against a commercial
 measuring receiver on a live commercial station (2026-07-07): pilot and RDS
 matched exactly (5.6-5.7 / 3.5-3.7 kHz on both instruments), and max deviation
 agreed within 1-2 kHz measured side-by-side at the same moment -- inside
@@ -622,19 +622,19 @@ ITU-R SM.1268's +/-2 kHz instrument accuracy requirement. When comparing peak
 deviation against any reference receiver, always compare **live at the same
 moment**: deviation peaks are program-dependent, and a weaker reception path
 (multipath) inflates them. (The Studio encoder's transmit-side output was
-separately validated on the same SFP-X -- see the
-[Studio manual](manual.md#reference-receiver-validation-profline-sfp-x).)
+separately validated on the same reference receiver -- see the
+[Studio manual](manual.md#reference-receiver-validation).)
 
 **Expect the MAX readouts to diverge on densely processed program -- that is
 detector ballistics, not a broken instrument.** A same-window comparison on a
 tightly limited composite (2026-08-31: identical 120 s judged by both
-instruments) read MAX 76 kHz here against 65-66 on the SFP-X's max-hold,
+instruments) read MAX 76 kHz here against 65-66 on the reference receiver's max-hold,
 while the PILOT figures agreed exactly -- the giveaway, because the pilot is
 a steady tone and every detector reads CW identically regardless of attack
 time. Modelling detectors on the same captured composite reproduced both
 numbers: the Meter's MAX is the SM.1268 convention (true peak within 50 ms
 windows through the 60 kHz linear-phase measurement filter), whereas the
-SFP-X's max-hold behaves like a ~0.5 ms integrating detector (64.0 kHz
+reference receiver's max-hold behaves like a ~0.5 ms integrating detector (64.0 kHz
 computed from the identical capture) and its live deviation display like a
 2-5 ms one -- the classic behavior of a hardware monitor that derives
 deviation from a rectified, RC-smoothed detector level rather than from the

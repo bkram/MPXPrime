@@ -907,16 +907,16 @@ Exit status:
 
 Measurement first, then ears: `docs/test-playlist.md` is a sourced list of reference tracks that broadcast, mastering and PA engineers use to expose specific artifacts -- asymmetrical peaks, sibilance and cymbals (the pre-emphasis stress that `--verify-hf-transients` models), dense bass, leveler pumping, wide dynamics, stereo image, speech -- mapped to the MPX Prime stage each one exercises, with a minimal per-stage regression set at the end. Use the release build against a real 192 kHz device and A/B by toggling the named stage.
 
-### Reference-receiver validation (Profline SFP-X)
+### Reference-receiver validation
 
-The composite output has been validated on a Profline SFP-X measuring receiver
+The composite output has been validated on a commercial measuring receiver
 against a 75 kHz total-deviation reference. The headline subcarrier levels read as
 expected and, importantly, read steady -- both subcarriers are injected after all
 peak-control stages at constant amplitude, so their deviation does not move with
 program audio.
 
-| Subcarrier | Setting | Measured (SFP-X) | % of 75 kHz |
-|------------|---------|------------------|-------------|
+| Subcarrier | Setting | Measured (reference receiver) | % of 75 kHz |
+|------------|---------|-------------------------------|-------------|
 | 19 kHz pilot | 10% | 7.3-7.4 kHz (steady, last-digit dither) | ~9.8% |
 | 57 kHz RDS | `rds_level` 2.4 kHz | 2.4 kHz (steady) | ~3.2% |
 
@@ -937,7 +937,7 @@ Notes:
   to different percentages (and the pilot/RDS levels should be scaled accordingly).
 
 The receive side has the same pedigree: **MPX Prime Meter's readings were
-cross-validated against the same SFP-X on a live commercial station** -- pilot
+cross-validated against the same reference receiver on a live commercial station** -- pilot
 and RDS matched exactly (5.6-5.7 / 3.5-3.7 kHz on both instruments), and max
 deviation agreed within 1-2 kHz measured side-by-side at the same moment,
 inside ITU-R SM.1268's +/-2 kHz instrument accuracy requirement. When

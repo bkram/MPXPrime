@@ -62,7 +62,7 @@ DMG. Where Studio *makes* the composite, the Meter *measures* it: feed it an
 MPX composite (a Core Audio input device, or a live station via an in-process
 RTL-SDR / SDRplay tuner) and it decodes stereo + full RDS on one dashboard
 window. Its deviation, MPX-power, and SM.1268 readings were cross-validated
-against a Profline SFP-X measuring receiver (pilot / RDS matched exactly, peak
+against a commercial measuring receiver (pilot / RDS matched exactly, peak
 deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
 (the SDR tuner is arm64) — there is no Linux or Intel Meter.**
 

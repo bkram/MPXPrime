@@ -453,7 +453,7 @@ settled and what it opened:
   recorded capture dropped 17,975,296 frames and every accumulated reading was
   a gap artefact while the panel still printed figures. Now 0 overflows.
 - CONFIRMED on air: pilot 5.77 kHz and RDS 3.87 kHz on 88.6 -- consistent with
-  the 2026-07-07 SFP-X validation (SFP-X 5.6-5.7 / 3.5-3.7; ours then
+  the 2026-07-07 reference-receiver validation (reference 5.6-5.7 / 3.5-3.7; ours then
   5.58-5.73 / 3.4-3.8), i.e. the P1 work did not move the conventions. RDS
   decodes fully on both (PI/PS/RT/CT/AF, BER 0.0% and 2.9%). The 60 s
   statistics become valid on a >60 s capture exactly as M6 intends
@@ -514,7 +514,7 @@ PROPOSED FIX (not applied -- it changes the shipped demod for every user on one
 dongle's evidence, so it wants a second dongle or an SDRplay cross-check
 first): call `setBandwidthHz` unconditionally at open with an explicit FM MPX
 default (200 kHz) instead of leaving mode 0 unapplied, and then re-run this
-table plus an SFP-X comparison. Alternative: make the ctor apply its own
+table plus a reference-receiver comparison. Alternative: make the ctor apply its own
 +/-110 kHz design as a real mode so "auto" means what it says.
 
 DONE 2026-08-31 (same-IQ A/B, `mpx-offline`): the offline factor A/B on
@@ -528,7 +528,7 @@ CLOSED quality item above).
 
 REMAINING (needs the maintainer's hardware): a second RTL / SDRplay
 cross-check of the bandwidth fix above; an RTL with a known ppm error
-before/after the decoder PLL fix; an SFP-X side-by-side re-check now that P1
+before/after the decoder PLL fix; a reference-receiver side-by-side re-check now that P1
 has landed (the conventions themselves did not change, so the 2026-07-07
 agreement should hold); a 75 us station check for the new de-emphasis
 setting; a VoiceOver pass over the Meter; and a long SDR + RF-spectrum GUI

@@ -98,7 +98,7 @@ combination test suite. Newest first.
   recalled automatically when the device or mode changes, in the GUI and
   over the REST API alike (explicitly patched keys win; recalled values
   land with the restart, never live onto the old rig). Switching between
-  the BOMGE exciter and an SFP-X feed now restores each rig's calibration
+  the BOMGE exciter and a second exciter feed now restores each rig's calibration
   with zero clicks -- the failure that motivated this: an exciter trim
   calibrated for one rig silently under-drove the other. Snapshot loads
   now restore THE SOUND, NOT THE WIRING
@@ -1635,7 +1635,7 @@ combination test suite. Newest first.
   README / ARCHITECTURE / BUILDING / AGENTS / tuner docs current: in-process SDR
   (not a helper binary), SDRplay RSP support, WAV recording + the
   `MPXPrimeRecording` target, the full seven-target layout, the Studio
-  spectrum FM band overlay and monitoring windows, the SFP-X cross-validation,
+  spectrum FM band overlay and monitoring windows, the reference-receiver cross-validation,
   and the corrected default config path / build prerequisites.
 - **Meter: RDS deviation now reads the injection level the encoder was set
   to (fixes the 0.39 under-read).** Reports after 0.39 said the RDS readout
@@ -1663,9 +1663,9 @@ combination test suite. Newest first.
   processed commercial station (same recorded composite through all three):
   steady 3.4-3.8 kHz (~4.8% injection) where 0.39 read 2.6 and the raw
   peak detector bounced between 6.5 and 8.4.
-- **Meter: readings confirmed against a Profline SFP-X measuring receiver**
-  on the same live station (2026-07-07): RDS -- SFP-X 3.5-3.7 kHz vs Meter
-  3.4-3.8; pilot -- SFP-X 5.6-5.7 kHz vs Meter 5.58-5.73; max deviation
+- **Meter: readings confirmed against a commercial measuring receiver**
+  on the same live station (2026-07-07): RDS -- reference 3.5-3.7 kHz vs Meter
+  3.4-3.8; pilot -- reference 5.6-5.7 kHz vs Meter 5.58-5.73; max deviation
   (live side-by-side, same moment) within 1-2 kHz, inside ITU-R SM.1268's
   +/-2 kHz instrument accuracy requirement. All three headline deviation
   readings now have independent professional-receiver confirmation on top

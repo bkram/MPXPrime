@@ -97,7 +97,7 @@ Alternative: make the ctor apply its own +/-110 kHz design as a real mode so
   evidence. Wants a second RTL or an SDRplay cross-check first (B1).
 - **Gate when unblocked:** re-run the 3-row A/B table (narrow/auto,
   wide/auto, narrow/200k -- rows 2 and 3 must agree, row 1 must now match
-  them), plus an SFP-X comparison. Then revisit whether the narrow default
+  them), plus a reference-receiver comparison. Then revisit whether the narrow default
   question reopens (the byte-exact packed path argument is only valid once
   factor 1 is band-limited).
 - Keep the RTL IQ-rate revert (1000 kHz) and the manual-meter.md warning
@@ -194,10 +194,10 @@ needed when the Meter runs the loop itself). Design:
    auto-gain overload (see A2).
 3. **RTL with a known ppm error, before/after the decoder PLL fix** -- field
    confirmation of the measured 24.8 -> 64.4 dB separation improvement.
-4. **SFP-X side-by-side re-check post-P1** -- conventions did not change
+4. **Reference-receiver side-by-side re-check post-P1** -- conventions did not change
    (bench confirmed pilot 5.77 / RDS 3.87 on 88.6, consistent with
    2026-07-07), so this should be a formality; do it before quoting 0.45
-   numbers against SFP-X.
+   numbers against the reference receiver.
 5. **75 us station check** for the new de-emphasis setting (a real 75 us
    market signal, not synthesized).
 6. **VoiceOver pass over the Meter** (the P3 accessibility work is in; the

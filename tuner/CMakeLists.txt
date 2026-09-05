@@ -54,7 +54,7 @@ target_include_directories(mpx-tuner PRIVATE include ${RTLSDR_INCLUDE_DIR} ${LIQ
 target_compile_definitions(mpx-tuner PRIVATE FM_TUNER_HAS_RTLSDR)
 target_link_libraries(mpx-tuner PRIVATE ${RTLSDR_LINK} ${LIQUID_LINK})
 
-# mpx-offline -- the device-free bench harness (meter-plan.md A3/B2): runs the
+# mpx-offline -- the device-free bench harness (docs/meter-roadmap.md A3/B2): runs the
 # shipped demod wiring on synthetic or recorded IQ. Needs only liquid-dsp.
 add_executable(mpx-offline
   src/mpx_offline_main.cpp

@@ -124,7 +124,7 @@ struct BassClipper {
 // the receiver's fixed 50/75 us de-emphasis still restores the intended curve
 // -- the trade is HF density, NOT the curve mismatch that relaxing pre-emphasis
 // (dynamic pre-emphasis) would cause. This is the Orban/Omnia/Stereotool
-// approach (see plan.md "HF limiter / clipper").
+// approach (see docs/project-roadmap.md "HF limiter / clipper").
 //
 // Structurally a mirror of `BassClipper`: LR4 split at the crossover, oversample
 // + tanh soft-clip the band, decimate, recombine. BassClipper clips `.low`; this

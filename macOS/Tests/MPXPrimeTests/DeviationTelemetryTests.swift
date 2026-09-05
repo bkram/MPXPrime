@@ -6,7 +6,7 @@ import Testing
 /// The deviation readout is a MODULATION-domain figure: the engines meter the
 /// composite post-`output_gain_db`, then divide the trim back out
 /// (`modulationReferenceScale`), so the displayed kHz no longer under-reads by
-/// exactly the operator's exciter trim (plan.md item -1, field-measured
+/// exactly the operator's exciter trim (docs/project-roadmap.md item -1, field-measured
 /// 30.2 kHz displayed vs ~75 on air at -7.89 dB). The engines' wiring is a
 /// three-line multiply; the invariant itself is pinned here at the generator
 /// level, headlessly: composite peak scales linearly with output gain, and

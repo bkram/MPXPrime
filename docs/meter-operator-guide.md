@@ -1,6 +1,16 @@
-# MPX Prime Meter -- User Manual
+# MPX Prime Meter -- Operator Guide
 
-MPX Prime Meter is the receive/analyze counterpart to the MPX Prime Studio
+How to run the analyzer: choosing an input (audio device or SDR dongle),
+reading the meters, recording a composite, and calibrating the scale. The
+measurement conventions and validity rules behind the numbers are collected
+at the end, under [Measurement notes](#measurement-notes).
+
+For the encoder, see the [MPX Prime Studio -- Operator
+Guide](studio-operator-guide.md). RDS country codes and programme types are
+tabulated in [RDS Country Codes and Programme
+Types](rds-country-and-pty-tables.md). For a project overview see the
+[README](../README.md); to build from source see [BUILDING.md](BUILDING.md).
+
 encoder, shipped as `MPX Prime Meter.app` in the same DMG. It takes an FM MPX
 composite, decodes stereo + full RDS, and shows everything on one dashboard
 window. Use it to check your own air signal, compare against other stations, or
@@ -17,15 +27,15 @@ validate a chain.
 > REST API + web dashboard is an encoder (MPX Prime Studio) feature. The
 > Meter is driven from its own window, or the headless terminal modes below.
 
-For the encoder, see the [MPX Prime Studio manual](manual.md). For a project
+For the encoder, see the [MPX Prime Studio manual](studio-operator-guide.md). For a project
 overview see the [README](../README.md); to build from source see
 [BUILDING.md](BUILDING.md); for the measurement-engine internals see
 [ARCHITECTURE.md](ARCHITECTURE.md). The RDS PI/ECC country and PTY code tables
 that the Meter decodes are in the Studio manual's appendices
-([PI/ECC](manual.md#appendix-rds-pi-and-ecc-country-table),
-[PTY](manual.md#appendix-rds-programme-type-pty-codes)).
+([PI/ECC](rds-country-and-pty-tables.md#rds-pi-and-ecc-country-table),
+[PTY](rds-country-and-pty-tables.md#rds-programme-type-pty-codes)).
 
-## Launching
+## Starting the Meter
 
 - Double-click `MPX Prime Meter.app`, or run `macOS/.build/release/MPXPrimeMeter --gui`.
 - Headless terminal dashboard: `scripts/run-meter.sh --device <spec>` (audio-device
@@ -97,7 +107,7 @@ rate as too low, set the interface to 192 kHz in Audio MIDI Setup. The analyzer
 always runs at the rate the device actually opened at, even when a slow USB
 rate switch lands on a different rate than requested.
 
-## Window layout
+## What is on the dashboard
 
 The toolbar carries only the frequent commands -- **Start/Stop** (Cmd-Return),
 the **Source** switch (Audio / SDR), and the **Monitor** toggle. The detailed
@@ -108,7 +118,7 @@ dark instrument displays in both Light and Dark appearance (the convention for
 audio/SDR instruments) so the traces stay legible; the surrounding window
 chrome follows the system appearance.
 
-## Input
+## Choosing an input
 
 The **Source** defaults to **SDR** when a dongle (SDRplay RSP or RTL-SDR) is
 detected at launch, otherwise to **Audio**.
@@ -214,7 +224,7 @@ remembered by device UID):
   - **PPM** / **RTL AGC** (RTL-SDR only) -- ppm frequency trim, and the RTL2832
     digital AGC separate from the tuner gain.
 
-## What it shows
+## Reading the meters
 
 - **Audio**: IN / L / R / M / S levels and the **PHASE CORR** readout (L/R
   phase correlation: +1 = mono, ~+0.7-0.95 = normal stereo, negative =
@@ -369,7 +379,7 @@ remembered by device UID):
   gated the decoder is cleared so stale garbage never flashes when it opens.
   Tick **Force** in the panel header to bypass the gate and watch the raw
   decoder output (diagnostics -- expect garbage on noise). PI and PTY are decoded against the reference tables in
-  the [Studio manual's appendices](manual.md#appendix-rds-pi-and-ecc-country-table).
+  the [Studio manual's appendices](rds-country-and-pty-tables.md#rds-pi-and-ecc-country-table).
 
 ### Signal level and dBm
 
@@ -399,6 +409,166 @@ relative to each other, but their zero point is arbitrary.
 SDRplay reports a true system gain, so the RSP path is the accurate one. On
 RTL-SDR only the tuner stage is knowable and its gain table is approximate and
 varies unit to unit -- treat an RTL dBm reading as indicative.
+
+## Recording a composite
+
+The input bar (right side) has a format toggle and a **Record** button. Choose:
+
+- **Stereo** -- the decoded L/R audio (a clean, high-quality stereo capture of
+  what the decoder produced).
+- **MPX** -- the raw MPX composite (mono): pilot + L-R + RDS, the same signal
+  the analyzer sees. Useful to re-analyze a capture later or feed another tool.
+
+Press **Record** while capturing to choose a file and start; press it again to
+stop and finalize. Both formats are 24-bit PCM WAV at the **capture rate**
+(192 kHz for SDR -- the composite needs the bandwidth for the pilot /
+subcarriers / RDS, and the stereo file stays at the native rate so recording adds
+no real-time resampling that could disturb capture; resample the file afterwards
+with any tool if you want a 48 kHz copy). They are written as canonical RIFF/WAV
+(no padding chunks) so any audio player or FFT/analysis tool reads them.
+Recording is only available while capturing.
+
+Recordings are crash-safe and honest about failure (0.45): the WAV header is
+updated every couple of seconds while recording, so a capture interrupted by a
+crash, forced quit or power loss stays readable up to the last update instead
+of parsing as an empty file. A recording that can no longer be written -- the
+disk filled up, the volume disappeared, or the file reached the classic WAV
+4 GB size limit (about 62 minutes of stereo at 192 kHz; the file is finalized
+cleanly at that point) -- stops itself and the status line says why, rather
+than keeping the record light on while silently discarding audio. Overloaded
+or non-finite decode samples are clamped into range instead of crashing the
+app. For captures longer than the 4 GB limit, start a new file when the
+status reports the limit was reached.
+
+### Re-analyzing a recorded composite
+
+A 16-bit mono WAV of a composite (or raw little-endian int16) can be pushed
+back through the analyzer headlessly. The Meter's own **MPX** recordings are
+24-bit, so convert them first (`sox in.wav -b 16 out.wav`), and pass
+`--sample-rate <Hz>` when the file is not 192 kHz -- the stdin reader takes
+the rate from that flag, not from the WAV header:
+
+```bash
+macOS/.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
+    --no-monitor --seconds 200 < capture.wav
+```
+
+Use `--full-scale-khz 150` for a capture made at the SDR convention (0 dBFS =
+150 kHz), or `--pilot-ref-khz` for one whose absolute level is unknown; the
+startup line names which convention it used. The replay runs as fast as the
+analyzer can consume and is exactly repeatable, which makes it the right way
+to compare two settings on identical material. Give it enough material for the
+statistics you care about: MPX POWER max and the OVER 77 kHz figure need a
+full 60 s.
+
+## When the SDR misbehaves
+
+- **"Device lost" while capturing**: the dongle dropped off the USB bus (or
+  was unplugged). The Meter stops and deliberately abandons the dead handle
+  -- closing it would crash inside the USB stack -- which keeps that unit's
+  USB claim until you **replug it or quit the app** (the status line says
+  so). Replug the dongle before reusing it.
+- **SDRplay missing from the picker**: if a previous Meter was killed
+  uncleanly (force-quit, crash), the SDRplay service can briefly hold the
+  RSP for the dead process. Replug the RSP or restart the SDRplay service.
+  Normal quits -- including `kill`/logout, which the Meter handles
+  gracefully -- always release it.
+- A wedged RTL dongle (garbage demod, BER pinned near 75%) needs a physical
+  replug; no software reset recovers it.
+- **RDS panel shows "no usable RDS"**: the reception-quality gate is holding
+  back the decode readout because BER is too high or the 57 kHz subcarrier is
+  too weak -- the signal genuinely has no trustworthy RDS (many audio links
+  carry none at all). The BER/level evidence stays live in that line; Force
+  (panel header) shows the raw decoder output anyway.
+
+### Signal quality and RF overload on an RTL-SDR
+
+An earlier bench note read a 4-5 kHz baseband-noise floor on every strong
+local and blamed the dongle's 8-bit demodulator; a same-station A/B
+(2026-08-31) showed that floor is **front-end overload, not a converter
+limit**: with the auto tuner gain (which parks hot on strong locals, railing
+10-40% of the IQ samples) the station measured baseband noise 4.1 kHz and
+SIGNAL QUALITY `Unusable` -- with a correctly-set manual gain the same
+station on the same dongle read **1.15 kHz** and `Poor`, while RDS decoded at
+0.0% block errors in both runs.
+
+The Meter now detects this: when the tuner reports IQ samples on the
+converter rails, the Quality card raises an amber **RF OVERLOAD** badge, and
+the SIGNAL QUALITY grade is withheld (the noise figure stays visible -- it is
+a real measurement, but of the front end's clipping products, not of
+reception). While the badge is up, treat every level-derived reading (noise,
+quality, deviation peaks, RDS level) as inflated. The fix is RF gain: set a
+manual gain and lower it until the badge clears -- the highest gain that
+stays clear gives the best noise floor. If it rails even at minimum gain, the
+antenna is delivering too much signal (a transmitter in the same room);
+attenuate or de-tune the antenna.
+
+Even unclipped, an 8-bit dongle's scale is tighter than a 14-bit SDRplay's:
+on an RTL still treat SIGNAL QUALITY as a relative indicator between antenna
+positions, and judge absolute reception by RDS BER and the deviation
+readings.
+
+## Measurement notes
+
+The rest of this guide explains the conventions behind the readouts: when a
+number is trustworthy, how the deviation scale is established, and how the
+RDS phase figure is defined. Read it when a reading surprises you or when you
+compare the Meter against another instrument.
+
+### Calibration and measurement validity
+
+**SDR needs no level calibration.** On the SDR path the deviation scale is a
+fixed property of the FM discriminator (kHz per sample is set by math, not by
+the tuner gain, AGC, or RF level), so amplitude maps directly to kHz with no
+calibration step. Tuning to an unmodulated carrier is unnecessary -- and FM
+broadcast has none anyway (even dead air carries the 19 kHz pilot). The
+audio-device path, by contrast, needs a reference because the analog input gain
+is unknown. The **Calibrate** switch on the audio input bar picks how:
+
+- **Pilot** (default; CLI `--pilot-ref-khz`, default 6.75) -- scales deviation by
+  assuming the 19 kHz pilot equals the **Pilot Ref (kHz)** field. Set it to the
+  source's actual pilot deviation: 6.75 kHz is 9%, but stations vary, and a pilot
+  that is really 5.7 kHz read against 6.75 inflates every kHz value by ~18%.
+- **0 dBFS = N kHz** -- an absolute scale anchored to a known input level, the way
+  MPXTool-style monitors calibrate (against a tuner's known composite output, a
+  Bessel-null, or a known-deviation tone). If you feed the composite so that
+  75 kHz peak deviation lands at -6 dBFS, set N = 150; deviation then comes
+  straight off the input amplitude, **independent of pilot recovery** -- the
+  robust choice, and identical to what the SDR path does internally.
+
+Both apply live and both are available headless: `--pilot-ref-khz <kHz>` and
+`--full-scale-khz <kHz>` work on the audio-device path as well as `--stdin`
+(before 0.45 `--full-scale-khz` was accepted on the device path and silently
+ignored, so the numbers were pilot-referenced when absolute had been asked
+for). The startup line names the convention actually in effect, alongside the
+de-emphasis in use (`--deemphasis 50|75`). Changing a calibration resets the
+accumulated readings, since those were measured against the old scale.
+
+Both apply live; the SDR path is always absolute and ignores them. Two caveats:
+(1) pilot-referencing only fixes the *overall* scale -- if the source's composite
+output rolls off above the audio band, the 57 kHz RDS reads low relative to the
+pilot no matter the reference, so use the SDR path for an accurate RDS-injection
+figure; (2) the only frequency trim is **PPM** for precise tuning; the
+sample-clock error scales readings by far less than 0.01% at any sane ppm, so it
+does not affect deviation.
+
+**MPX power is only valid on a strong, clean signal.** MPX power follows
+ITU-R BS.412 (the limit -- average power over 60 s must not exceed that of a
+sinusoidal tone at +/-19 kHz peak deviation) measured under the ITU-R SM.1268
+conditions: roughly >= 73 dBf signal, >= 50 dB signal-to-noise, and no
+multipath (a directional antenna is effectively required). On a weak, noisy, or
+multipath RTL-SDR reception both the peak deviation and MPX power **read high**
+-- that is a reception artifact, not over-modulation and not a calibration
+error. Rule of thumb: if the peak deviation exceeds about +/-80 kHz and the
+station is not genuinely over-deviating, the signal is too poor for a valid
+BS.412 measurement. For reference, on a clean signal:
+
+| MPX power | Peak deviation of an equivalent sine |
+|-----------|--------------------------------------|
+| 0 dBr     | +/-19 kHz (the reference)            |
+| 3 dBr     | +/-27 kHz                            |
+| 6 dBr     | +/-38 kHz                            |
+| 10 dBr    | +/-60 kHz                            |
 
 ### RDS subcarrier phase
 
@@ -470,160 +640,7 @@ readings -- linear-phase because a steep IIR filter overshoots on a clipped
 composite's edges and reads deviation the transmitter never emitted. The
 scopes, spectrum, and IN meter stay unfiltered so noise remains visible.
 
-## SDR troubleshooting
-
-- **"Device lost" while capturing**: the dongle dropped off the USB bus (or
-  was unplugged). The Meter stops and deliberately abandons the dead handle
-  -- closing it would crash inside the USB stack -- which keeps that unit's
-  USB claim until you **replug it or quit the app** (the status line says
-  so). Replug the dongle before reusing it.
-- **SDRplay missing from the picker**: if a previous Meter was killed
-  uncleanly (force-quit, crash), the SDRplay service can briefly hold the
-  RSP for the dead process. Replug the RSP or restart the SDRplay service.
-  Normal quits -- including `kill`/logout, which the Meter handles
-  gracefully -- always release it.
-- A wedged RTL dongle (garbage demod, BER pinned near 75%) needs a physical
-  replug; no software reset recovers it.
-- **RDS panel shows "no usable RDS"**: the reception-quality gate is holding
-  back the decode readout because BER is too high or the 57 kHz subcarrier is
-  too weak -- the signal genuinely has no trustworthy RDS (many audio links
-  carry none at all). The BER/level evidence stays live in that line; Force
-  (panel header) shows the raw decoder output anyway.
-
-## Recording
-
-The input bar (right side) has a format toggle and a **Record** button. Choose:
-
-- **Stereo** -- the decoded L/R audio (a clean, high-quality stereo capture of
-  what the decoder produced).
-- **MPX** -- the raw MPX composite (mono): pilot + L-R + RDS, the same signal
-  the analyzer sees. Useful to re-analyze a capture later or feed another tool.
-
-Press **Record** while capturing to choose a file and start; press it again to
-stop and finalize. Both formats are 24-bit PCM WAV at the **capture rate**
-(192 kHz for SDR -- the composite needs the bandwidth for the pilot /
-subcarriers / RDS, and the stereo file stays at the native rate so recording adds
-no real-time resampling that could disturb capture; resample the file afterwards
-with any tool if you want a 48 kHz copy). They are written as canonical RIFF/WAV
-(no padding chunks) so any audio player or FFT/analysis tool reads them.
-Recording is only available while capturing.
-
-Recordings are crash-safe and honest about failure (0.45): the WAV header is
-updated every couple of seconds while recording, so a capture interrupted by a
-crash, forced quit or power loss stays readable up to the last update instead
-of parsing as an empty file. A recording that can no longer be written -- the
-disk filled up, the volume disappeared, or the file reached the classic WAV
-4 GB size limit (about 62 minutes of stereo at 192 kHz; the file is finalized
-cleanly at that point) -- stops itself and the status line says why, rather
-than keeping the record light on while silently discarding audio. Overloaded
-or non-finite decode samples are clamped into range instead of crashing the
-app. For captures longer than the 4 GB limit, start a new file when the
-status reports the limit was reached.
-
-### Re-analyzing a recorded composite
-
-A 16-bit mono WAV of a composite (or raw little-endian int16) can be pushed
-back through the analyzer headlessly. The Meter's own **MPX** recordings are
-24-bit, so convert them first (`sox in.wav -b 16 out.wav`), and pass
-`--sample-rate <Hz>` when the file is not 192 kHz -- the stdin reader takes
-the rate from that flag, not from the WAV header:
-
-```bash
-macOS/.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
-    --no-monitor --seconds 200 < capture.wav
-```
-
-Use `--full-scale-khz 150` for a capture made at the SDR convention (0 dBFS =
-150 kHz), or `--pilot-ref-khz` for one whose absolute level is unknown; the
-startup line names which convention it used. The replay runs as fast as the
-analyzer can consume and is exactly repeatable, which makes it the right way
-to compare two settings on identical material. Give it enough material for the
-statistics you care about: MPX POWER max and the OVER 77 kHz figure need a
-full 60 s.
-
-### Signal quality and RF overload on an RTL-SDR
-
-An earlier bench note read a 4-5 kHz baseband-noise floor on every strong
-local and blamed the dongle's 8-bit demodulator; a same-station A/B
-(2026-08-31) showed that floor is **front-end overload, not a converter
-limit**: with the auto tuner gain (which parks hot on strong locals, railing
-10-40% of the IQ samples) the station measured baseband noise 4.1 kHz and
-SIGNAL QUALITY `Unusable` -- with a correctly-set manual gain the same
-station on the same dongle read **1.15 kHz** and `Poor`, while RDS decoded at
-0.0% block errors in both runs.
-
-The Meter now detects this: when the tuner reports IQ samples on the
-converter rails, the Quality card raises an amber **RF OVERLOAD** badge, and
-the SIGNAL QUALITY grade is withheld (the noise figure stays visible -- it is
-a real measurement, but of the front end's clipping products, not of
-reception). While the badge is up, treat every level-derived reading (noise,
-quality, deviation peaks, RDS level) as inflated. The fix is RF gain: set a
-manual gain and lower it until the badge clears -- the highest gain that
-stays clear gives the best noise floor. If it rails even at minimum gain, the
-antenna is delivering too much signal (a transmitter in the same room);
-attenuate or de-tune the antenna.
-
-Even unclipped, an 8-bit dongle's scale is tighter than a 14-bit SDRplay's:
-on an RTL still treat SIGNAL QUALITY as a relative indicator between antenna
-positions, and judge absolute reception by RDS BER and the deviation
-readings.
-
-## Calibration and measurement validity
-
-**SDR needs no level calibration.** On the SDR path the deviation scale is a
-fixed property of the FM discriminator (kHz per sample is set by math, not by
-the tuner gain, AGC, or RF level), so amplitude maps directly to kHz with no
-calibration step. Tuning to an unmodulated carrier is unnecessary -- and FM
-broadcast has none anyway (even dead air carries the 19 kHz pilot). The
-audio-device path, by contrast, needs a reference because the analog input gain
-is unknown. The **Calibrate** switch on the audio input bar picks how:
-
-- **Pilot** (default; CLI `--pilot-ref-khz`, default 6.75) -- scales deviation by
-  assuming the 19 kHz pilot equals the **Pilot Ref (kHz)** field. Set it to the
-  source's actual pilot deviation: 6.75 kHz is 9%, but stations vary, and a pilot
-  that is really 5.7 kHz read against 6.75 inflates every kHz value by ~18%.
-- **0 dBFS = N kHz** -- an absolute scale anchored to a known input level, the way
-  MPXTool-style monitors calibrate (against a tuner's known composite output, a
-  Bessel-null, or a known-deviation tone). If you feed the composite so that
-  75 kHz peak deviation lands at -6 dBFS, set N = 150; deviation then comes
-  straight off the input amplitude, **independent of pilot recovery** -- the
-  robust choice, and identical to what the SDR path does internally.
-
-Both apply live and both are available headless: `--pilot-ref-khz <kHz>` and
-`--full-scale-khz <kHz>` work on the audio-device path as well as `--stdin`
-(before 0.45 `--full-scale-khz` was accepted on the device path and silently
-ignored, so the numbers were pilot-referenced when absolute had been asked
-for). The startup line names the convention actually in effect, alongside the
-de-emphasis in use (`--deemphasis 50|75`). Changing a calibration resets the
-accumulated readings, since those were measured against the old scale.
-
-Both apply live; the SDR path is always absolute and ignores them. Two caveats:
-(1) pilot-referencing only fixes the *overall* scale -- if the source's composite
-output rolls off above the audio band, the 57 kHz RDS reads low relative to the
-pilot no matter the reference, so use the SDR path for an accurate RDS-injection
-figure; (2) the only frequency trim is **PPM** for precise tuning; the
-sample-clock error scales readings by far less than 0.01% at any sane ppm, so it
-does not affect deviation.
-
-**MPX power is only valid on a strong, clean signal.** MPX power follows
-ITU-R BS.412 (the limit -- average power over 60 s must not exceed that of a
-sinusoidal tone at +/-19 kHz peak deviation) measured under the ITU-R SM.1268
-conditions: roughly >= 73 dBf signal, >= 50 dB signal-to-noise, and no
-multipath (a directional antenna is effectively required). On a weak, noisy, or
-multipath RTL-SDR reception both the peak deviation and MPX power **read high**
--- that is a reception artifact, not over-modulation and not a calibration
-error. Rule of thumb: if the peak deviation exceeds about +/-80 kHz and the
-station is not genuinely over-deviating, the signal is too poor for a valid
-BS.412 measurement. For reference, on a clean signal:
-
-| MPX power | Peak deviation of an equivalent sine |
-|-----------|--------------------------------------|
-| 0 dBr     | +/-19 kHz (the reference)            |
-| 3 dBr     | +/-27 kHz                            |
-| 6 dBr     | +/-38 kHz                            |
-| 10 dBr    | +/-60 kHz                            |
-
-## Reference-receiver validation
+### Reference-receiver validation
 
 MPX Prime Meter's readings were cross-validated against a commercial
 measuring receiver on a live commercial station (2026-07-07): pilot and RDS
@@ -634,7 +651,7 @@ deviation against any reference receiver, always compare **live at the same
 moment**: deviation peaks are program-dependent, and a weaker reception path
 (multipath) inflates them. (The Studio encoder's transmit-side output was
 separately validated on the same reference receiver -- see the
-[Studio manual](manual.md#reference-receiver-validation).)
+[Studio manual](#reference-receiver-validation).)
 
 **Expect the MAX readouts to diverge on densely processed program -- that is
 detector ballistics, not a broken instrument.** A same-window comparison on a

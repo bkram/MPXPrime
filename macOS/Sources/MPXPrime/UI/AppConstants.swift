@@ -42,7 +42,7 @@ let kSettingsWindowAutosaveName = "MPXPrimeStudio.SettingsWindow"
 // Compile-time constant URL; literal is well-formed so the optional
 // returned by URL(string:) is guaranteed non-nil.
 let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
-let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual.md")!
+let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md")!
 let kLicenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 let kRestartRequiredSettingsListText =
     "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."

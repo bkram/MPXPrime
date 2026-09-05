@@ -51,13 +51,13 @@ else
     echo "warning: resource bundle not found; dashboard will serve the stub" >&2
 fi
 install -m 0644 macOS/MPXPrime.ini "$STAGE/usr/share/mpxprime/MPXPrime.sample.ini"
-install -m 0644 docs/manual.md README.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
+install -m 0644 docs/studio-operator-guide.md docs/studio-settings-reference.md docs/rds-country-and-pty-tables.md README.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
 install -m 0644 LICENSE "$STAGE/usr/share/doc/mpxprime/copyright"
 
 cat > "$STAGE/lib/systemd/system/mpxprime.service" <<'EOF'
 [Unit]
 Description=MPX Prime Studio FM composite encoder (headless)
-Documentation=file:/usr/share/doc/mpxprime/manual.md
+Documentation=file:/usr/share/doc/mpxprime/studio-operator-guide.md
 After=sound.target network.target
 
 [Service]

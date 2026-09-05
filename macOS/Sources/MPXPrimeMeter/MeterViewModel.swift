@@ -161,7 +161,7 @@ final class MeterViewModel: ObservableObject {
     /// (+21 kHz of peak deviation, +46% RDS level, +50% baseband noise, and an
     /// unstable pilot/RDS phase). At factor 4 the ComplexDecimator's filter
     /// supplies that band-limiting as a side effect. Until the demod's default
-    /// bandwidth is fixed (plan.md), the wide default is the accurate one.
+    /// bandwidth is fixed (docs/project-roadmap.md), the wide default is the accurate one.
     @Published var sdrIQRateKHz: Int = 1000
     /// Unit for the SIGNAL readout, and the calibration offset that makes the
     /// absolute units absolute (see `SignalUnit`). Both persist.

@@ -76,7 +76,7 @@ scripts/run-meter.sh --stdin --full-scale-khz 150              # headless, compo
 
 The in-process SDR (RTL-SDR / SDRplay) is GUI-only; the headless dashboard takes
 an audio device (`--device`) or a composite on stdin (`--stdin`). See the
-[Meter manual](manual-meter.md) for the full control surface.
+[Meter Operator Guide](meter-operator-guide.md) for the full control surface.
 
 ## Linux (CLI-only)
 
@@ -241,8 +241,25 @@ FAIL (post-injection composite overshoot; checked first so a TIGHT finding can
 never mask it), `64` = usage error -- most often `macOS/Verification.ini` not
 findable because the gate was not run from the repo root.
 
-See the [Offline verification](manual.md#offline-verification) section of the
-user manual for what each report field means.
+### What the report contains
+
+One row per scenario, with the composite figures first and the decoded-audio
+quality metrics after them:
+
+- MPX peak in dBFS and estimated deviation in kHz
+- composite clipper gain reduction, safety limiter gain reduction
+- audio-composite peak before the pilot/RDS sum, and the budget margin
+- pilot and RDS injection percentages, AGC reduction
+- decoded-audio quality per scenario: input/output correlation, input/output
+  side-to-mid ratio, RMS drift
+
+The deterministic scenarios are `mono_1khz`, `stereo_diff_400hz`,
+`program_mix`, `bright_dense`, `vocal_sibilant`, `hf_edge_12k`,
+`transient_push`, `hard_panned_hf` and `wide_bass`. `--verify-presets` runs
+the same measurements across the shipped 5-band presets (`5B AC/Pop`,
+`5B CHR/EDM`, `5B Rock`, `5B Talk`, `5B News`, `5B Urban`, `5B Dance`), and
+each `--verify-*` A/B mode prints its own comparison table (the one-line
+descriptions in the command block above say what each one compares).
 
 ## Tests
 
@@ -312,10 +329,12 @@ npx --yes markdownlint-cli2 --fix      # auto-fix blank-line / list-marker findi
 python3 scripts/check-doc-anchors.py   # relative links + #anchors (GitHub slug rules)
 ```
 
-English is proofread with LanguageTool (`brew install languagetool`; Java):
+English is proofread with LanguageTool (`brew install languagetool`; Java).
+This one is a writing aid rather than a gate -- it is deliberately **not** part
+of CI, because most of what it reports is style a human has to judge:
 
 ```bash
-scripts/check-english.sh docs/manual.md README.md   # Markdown prose (code, links and tables stripped first)
+scripts/check-english.sh docs/studio-operator-guide.md README.md   # Markdown prose (code, links and tables stripped first)
 scripts/check-english.sh --ui                       # the apps' operator-facing strings (scripts/extract-ui-strings.py)
 scripts/check-english.sh --all                      # everything
 ```
@@ -343,7 +362,10 @@ publishes the resulting DMG as a GitHub Release.
 
 ## See also
 
+- [studio-operator-guide.md](studio-operator-guide.md) -- MPX Prime Studio Operator Guide (install, setup, levels, RDS, troubleshooting)
+- [studio-settings-reference.md](studio-settings-reference.md) -- MPX Prime Studio Settings and API Reference (every INI key, the REST API)
+- [meter-operator-guide.md](meter-operator-guide.md) -- MPX Prime Meter Operator Guide
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- detailed DSP chain and stage descriptions
 - [`AGENTS.md`](../AGENTS.md) -- full contributor / agent workflow guidance,
   conventions, and the release validation checklist
-- [`plan.md`](../plan.md) -- roadmap
+- [`project-roadmap.md`](project-roadmap.md) -- project roadmap and open work

@@ -966,7 +966,7 @@ final class MPXGenerator {
     // limiter (canonical Optimod / Stereotool placement). The limiter then
     // peak-controls the HF-boosted signal before it crosses into composite
     // assembly. Moved here from M/S inside `makeCompositeComponents` in the
-    // 2026-05 chain-order audit — see plan.md "Pre-emphasis placement" and
+    // 2026-05 chain-order audit — see docs/project-roadmap.md "Pre-emphasis placement" and
     // the chain-order-audit report at macOS/.audit-out/chain_order/REPORT.md.
     private var preL = PreemphasisFilter()
     private var preR = PreemphasisFilter()

@@ -1,5 +1,5 @@
 // mpx-offline -- run the MPX Prime Meter's SDR demod chain on synthetic or
-// recorded IQ, with no device attached. Two jobs, both from meter-plan.md:
+// recorded IQ, with no device attached. Two jobs, both from docs/meter-roadmap.md:
 //
 //  1. Phase-dispersion characterization (A3): synthesize a composite whose
 //     pilot-to-RDS phase is EXACTLY known, FM-modulate it to IQ, run it
@@ -17,7 +17,7 @@
 // mpxtuner_open(): demod always at 256 kHz, ComplexDecimator bridging any
 // wider capture rate, liquid Resampler to the MPX output rate, and the
 // bandwidth setting left UNAPPLIED when 0 -- reproducing the shipped "auto"
-// behavior (see plan.md: the FMDemod ctor leaves mode 0 uninstalled). Keep it
+// behavior (see docs/project-roadmap.md: the FMDemod ctor leaves mode 0 uninstalled). Keep it
 // in sync with the capi when that wiring changes.
 //
 // Output is raw little-endian int16 mono at --mpx-rate, scaled by

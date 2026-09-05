@@ -16,7 +16,7 @@ the three commands below are clean.
 ```bash
 npx --yes markdownlint-cli2                 # lint every tracked .md (uses the repo config + globs)
 npx --yes markdownlint-cli2 --fix           # auto-fix blank lines around headings / lists / fences, list markers, trailing spaces
-npx --yes markdownlint-cli2 docs/manual.md  # one file
+npx --yes markdownlint-cli2 docs/studio-operator-guide.md  # one file
 python3 scripts/check-doc-anchors.py        # every relative link + #anchor resolves (GitHub slug rules)
 ```
 

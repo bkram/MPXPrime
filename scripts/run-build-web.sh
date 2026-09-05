@@ -10,7 +10,7 @@
 #
 # Remote access: set control_bind = 0.0.0.0 AND control_api_key = <secret>
 # in the config's [CONTROL] section (the server refuses to start
-# remote-exposed without a key). See docs/manual.md "Remote control".
+# remote-exposed without a key). See docs/studio-operator-guide.md "Operating it from a browser".
 set -euo pipefail
 
 cd "$(dirname "$0")/.."  # repo root

@@ -382,7 +382,7 @@ func hfTransientChainVariants() -> [HFTransientChainVariant] {
                                 mutate: loudPlus { $0.preEncodeAudioLimiterEnabled = false }),
         HFTransientChainVariant(label: "music_loud + cancel_audio", gated: false,
                                 mutate: loudPlus { $0.compositeClipperCancelAudio = true }),
-        // Advanced Dynamics rows (default-flip campaign, plan.md Step 2 #5).
+        // Advanced Dynamics rows (default-flip campaign, docs/project-roadmap.md Step 2 #5).
         // The 2026-09-04 sweep refuted every single-knob hypothesis for the
         // ~4 dB hat-SINAD cost vs plain music_loud: top-band offset
         // (0/-3/-6/-9 all ~14.1), speed 0.5 (14.2), band-5 transient-accel

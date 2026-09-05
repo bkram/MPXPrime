@@ -446,6 +446,6 @@ func runStereoGuardSweep(
     } else {
         print("Music - Loud: no guard share meets final-limiter duty <= 0.5 dB with 14 kHz separation >= 20 dB.")
     }
-    print("Result: OK - sweep printed; the shipped default is chosen from this table (docs/manual.md, Composite Clipper).")
+    print("Result: OK - sweep printed; the shipped default is chosen from this table (docs/studio-settings-reference.md, Composite Clipper).")
     return 0
 }

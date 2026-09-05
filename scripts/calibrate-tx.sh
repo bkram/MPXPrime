@@ -1,14 +1,14 @@
 #!/bin/bash
 # scripts/calibrate-tx.sh -- closed-loop deviation calibration of MPX Prime Studio
 # against an off-air RTL-SDR measurement (the small, scripted version of the
-# Studio<->Meter closed-loop trim in meter-plan.md).
+# Studio<->Meter closed-loop trim in docs/meter-roadmap.md).
 #
 # Method: the 19 kHz pilot is a constant-amplitude reference, so its measured
 # deviation is program-independent. The script reads Studio's configured
 # injection (pilot_level x mpx_deviation_khz), measures the actual pilot
 # deviation off air through the honest chain (clean manual RF gain -- auto
 # gain rails on a strong local -- and an explicit 200 kHz channel filter via
-# mpx-offline; see meter-plan.md, bench 2026-08-31), and trims Studio's
+# mpx-offline; see docs/meter-roadmap.md, bench 2026-08-31), and trims Studio's
 # output_gain_db over the REST API until the two agree. output_gain_db is
 # attenuation-only in composite mode: if calibration would need gain ABOVE
 # 0 dB the script says to raise the exciter's input sensitivity instead.

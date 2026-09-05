@@ -11,6 +11,32 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Manuals rebuilt: descriptive names, one guide per app, reference split
+  out.** `docs/manual.md` (1345 lines, everything from first launch to RDS
+  country tables) and `docs/manual-meter.md` became four documents with names
+  that say what they are:
+  `docs/studio-operator-guide.md` (install, devices and levels, Format
+  Profiles, RDS, monitoring, troubleshooting -- about half the old length),
+  `docs/studio-settings-reference.md` (every configuration key, the RDS text
+  grammar, the now-playing script protocol, the REST API),
+  `docs/meter-operator-guide.md` (the Meter, reordered so operating comes
+  first and the measurement conventions sit at the end under "Measurement
+  notes") and `docs/rds-country-and-pty-tables.md` (the PI / ECC and PTY
+  lookup tables both apps share, 343 lines that used to bloat the encoder
+  manual). Nothing was dropped: the offline-verification report fields moved
+  to BUILDING.md next to the commands that print them, and the
+  reference-receiver validation record moved to ARCHITECTURE.md as
+  measurement provenance. New in the guide: a "Getting RDS on air" walkthrough
+  (the old manual documented the RDS text grammar but never the five steps to
+  put RDS on air) and a "When something sounds wrong" troubleshooting section.
+  Section headings now say what the section does ("Setting levels: input, AGC,
+  Final Drive, exciter" rather than "Usage" / "Configuration").
+- **Roadmaps moved out of the repo root**: `plan.md` ->
+  `docs/project-roadmap.md`, `meter-plan.md` -> `docs/meter-roadmap.md`, both
+  retitled. Every reference was repointed -- README and BUILDING indexes,
+  AGENTS, the Debian package's installed docs and its systemd
+  `Documentation=` line, both apps' Help-menu manual URLs, code comments,
+  scripts and the docs skills.
 - **Repo hygiene: plans pruned, strays removed, scripts reorganized.**
   `plan.md` (929 -> ~470 lines) and `meter-plan.md` (240 -> ~120) now hold
   only open work and the anti-rework guardrails; every DONE item and the
@@ -39,13 +65,16 @@ combination test suite. Newest first.
   (fenced-block languages, blank lines around headings / lists, one H1 per
   file, no bare bold pseudo-headings, no inline HTML; the two files that
   deliberately break a rule say why in a local disable comment).
-  `scripts/check-english.sh` proofreads Markdown prose (code, links, tables
-  stripped) or the apps' operator-facing strings (`scripts/extract-ui-strings.py`
+  `scripts/check-english.sh` proofreads Markdown prose (code, links and tables
+  stripped line-preservingly, so findings map to source lines) or the apps'
+  operator-facing strings (`scripts/extract-ui-strings.py`
   pulls SwiftUI labels, tooltips, help text, preset summaries and dashboard
   schema titles) with LanguageTool, filtered through
   `scripts/english-dictionary.txt`. Two checked-in Claude Code skills,
   `.claude/skills/markdown-lint` and `.claude/skills/proofread-english`,
-  carry the rules and the fix workflow for every contributor and agent.
+  carry the rules and the fix workflow for every contributor and agent. The
+  English check is deliberately NOT a CI gate -- it mixes real errors with
+  style opinions, so it stays a writing aid a human runs on demand.
 - **RDS text: typographic punctuation is folded to ASCII, not sent as `?`.**
   Field report 2026-09-05: a Now Playing title carrying a Unicode apostrophe
   variant (U+2019) went on air as `?`. `transliterateRDSText` only knew a

@@ -425,7 +425,7 @@ func verifierBaselineTimestampNow() -> String {
 
 /// Stored receiver-decode metrics. Pins the decoder/encoder stereo
 /// separation and subcarrier health so a regression — e.g. reintroducing a
-/// decoder pilot/RDS notch (see plan.md "MPXDecoder has no pre-demod
+/// decoder pilot/RDS notch (see docs/project-roadmap.md "MPXDecoder has no pre-demod
 /// notch"), or an encoder change that quietly costs separation — is caught
 /// by `--verify-receiver --baseline-strict` instead of sailing past the
 /// loose inline >=16-18 dB thresholds. Pilot/RDS phase-lock drift already

@@ -2,7 +2,7 @@ import Foundation
 
 // Config patching for the remote-control API.
 //
-// The INI vocabulary is the public config language (docs/manual.md documents
+// The INI vocabulary is the public config language (docs/studio-settings-reference.md documents
 // every key), so the API patches configs BY INI KEY with zero per-key mapping
 // code: serialize the current AppConfig to INI text (captureAsINIString),
 // inject the patched keys into every section, and reload through the

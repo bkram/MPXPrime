@@ -1,4 +1,4 @@
-# MPX Prime Meter -- open work
+# MPX Prime Meter -- Roadmap and Open Work
 
 ## Context
 
@@ -43,7 +43,7 @@ Alternative: make the ctor apply its own +/-110 kHz design as a real mode so
   them), plus a reference-receiver comparison. Then revisit whether the narrow default
   question reopens (the byte-exact packed path argument is only valid once
   factor 1 is band-limited).
-- Keep the RTL IQ-rate revert (1000 kHz) and the manual-meter.md warning
+- Keep the RTL IQ-rate revert (1000 kHz) and the meter-operator-guide.md warning
   until this lands.
 
 ### A4. Studio<->Meter closed-loop calibration inside the Meter (designed; script version shipped as `calibrate-tx.sh`)

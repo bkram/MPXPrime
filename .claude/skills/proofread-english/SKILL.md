@@ -12,10 +12,14 @@ rules that only fire on technical layout, and drops spelling hits on words
 in `scripts/english-dictionary.txt` (the project vocabulary: MPX, RDS, dBFS,
 PrimeBass, ...).
 
+This check is **not** part of CI and never blocks a commit or a release: it
+reports style opinions alongside real errors, so a human decides. CI enforces
+only the mechanical doc rules (see the `markdown-lint` skill).
+
 ## Commands (repo root)
 
 ```bash
-scripts/check-english.sh docs/manual.md README.md   # one or more Markdown files
+scripts/check-english.sh docs/studio-operator-guide.md README.md   # one or more Markdown files
 scripts/check-english.sh --ui                       # the apps' operator-facing strings
 scripts/check-english.sh --all                      # every tracked .md plus the UI strings
 python3 scripts/extract-ui-strings.py               # see exactly which strings --ui reads (one per line, source file as comment)

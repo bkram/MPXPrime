@@ -730,7 +730,7 @@ struct AdvancedDynamicsLeveler {
     }
 
     /// Graduated coupling bias per band (the multiband 5-band curve).
-    /// NOTE (plan.md Step 2 #5, measured 2026-09-04): the ~4 dB hat-SINAD
+    /// NOTE (docs/project-roadmap.md Step 2 #5, measured 2026-09-04): the ~4 dB hat-SINAD
     /// cost vs music_loud is NOT the top-band target offset (0/-3/-6/-9
     /// all read ~14.1 dB), not `speed`, not the band-5 transient
     /// acceleration (zeroing its weight moved the gate < 0.1 dB), and not

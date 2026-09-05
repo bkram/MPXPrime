@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import MPXPrime
 
-// Phase 1 of the dual-rate audio chain refactor (plan.md "Next up" #1):
+// Phase 1 of the dual-rate audio chain refactor (docs/project-roadmap.md "Next up" #1):
 // resampler primitive plumbed into MPXGenerator as a NO-OP boundary.
 // Audio stages still run at MPX rate; the boundary just downsamples
 // input to `dual_rate_audio_domain_rate_hz` and immediately upsamples

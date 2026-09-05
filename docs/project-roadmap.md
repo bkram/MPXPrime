@@ -1,4 +1,4 @@
-# MPX Prime Roadmap
+# MPX Prime -- Project Roadmap and Open Work
 
 <!-- markdownlint-disable MD025 -->
 <!-- Planning document: several deliberate top-level parts (roadmap, open
@@ -120,7 +120,7 @@ measured before it is heard:
 The 2026-08-31 Meter audit and the RTL-SDR bench are closed; their history is
 in CHANGELOG. The open remainder (tuner channel-filter fix blocked on a second
 dongle, the Meter-integrated calibration loop, the maintainer's hardware
-validation queue, parked items) lives in `meter-plan.md`.
+validation queue, parked items) lives in [meter-roadmap.md](meter-roadmap.md).
 
 ## Next up
 
@@ -234,7 +234,7 @@ clippers, mono bass) is codec-agnostic and stays.
 
 ### Docs (same commit series)
 
-manual.md "Processed-audio output mode" gets a "Delivery target" subsection
+studio-operator-guide.md "Processed audio instead of MPX" gets a "Delivery target" subsection
 (what digital turns off and why, the ceiling, the LUFS readout, the new
 profile), the Audio I/O section names the control, the Format Profile table
 gains the row; ARCHITECTURE output-modes section + the audio-domain stage

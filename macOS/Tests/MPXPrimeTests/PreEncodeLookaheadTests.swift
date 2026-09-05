@@ -15,7 +15,7 @@ import Foundation
 //    detector?" test.
 //
 // Subband-aware HF-only lookahead (US 5,579,404 / EP 0685130, Dolby,
-// expired 2013) is the Phase 2 follow-up — see plan.md.
+// expired 2013) is the Phase 2 follow-up — see docs/project-roadmap.md.
 
 @Suite("Pre-encode limiter look-ahead")
 struct PreEncodeLookaheadTests {

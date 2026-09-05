@@ -3,7 +3,7 @@
 # LanguageTool (brew install languagetool; Java). Used by the
 # `proofread-english` skill (.claude/skills/proofread-english).
 #
-#   scripts/check-english.sh docs/manual.md README.md      # Markdown files
+#   scripts/check-english.sh docs/studio-operator-guide.md README.md      # Markdown files
 #   scripts/check-english.sh --ui                          # Swift/JSON UI strings
 #   scripts/check-english.sh --all                         # every tracked .md + UI strings
 #
@@ -29,23 +29,33 @@ for a in "$@"; do
 done
 [ ${#files[@]} -eq 0 ] && [ $mode_ui -eq 0 ] && { sed -n '2,12p' "$0"; exit 2; }
 
-strip_markdown() {  # $1 in, $2 out
+strip_markdown() {  # $1 in, $2 out -- LINE-PRESERVING, so findings map to source lines
     python3 - "$1" "$2" <<'PY'
 import re, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-text = re.sub(r"```.*?```", "", text, flags=re.S)                 # fenced code
-text = re.sub(r"`[^`\n]*`", "CODE", text)                         # inline code -> placeholder word
-text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)                  # images
-text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)              # links -> text
-text = re.sub(r"https?://\S+", "URL", text)
-text = re.sub(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$", "", text, flags=re.M)  # table rules
-text = re.sub(r"^\s*#{1,6}\s+", "", text, flags=re.M)             # heading markers
-text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.M)              # bullets
-text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.M)              # numbered lists
-text = re.sub(r"[*_]{1,3}([^*_\n]+)[*_]{1,3}", r"\1", text)       # emphasis
-text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-text = text.replace("|", " ")
-open(sys.argv[2], "w", encoding="utf-8").write(text)
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+out, in_fence = [], False
+for line in lines:
+    if line.lstrip().startswith("```"):          # fenced code: blank it, keep the line
+        in_fence = not in_fence
+        out.append("")
+        continue
+    if in_fence:
+        out.append("")
+        continue
+    s = line
+    s = re.sub(r"`[^`]*`", " CODE ", s)           # inline code -> a real word, spaced
+    s = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", s)      # images
+    s = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)  # links -> their text
+    s = re.sub(r"https?://\S+", "URL", s)
+    if re.match(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$", s):
+        s = ""                                    # table rule rows
+    s = re.sub(r"^\s*#{1,6}\s+", "", s)           # heading markers
+    s = re.sub(r"^\s*[-*+]\s+", "", s)            # bullets
+    s = re.sub(r"^\s*\d+\.\s+", "", s)           # numbered lists
+    s = re.sub(r"[*_]{1,3}([^*_]+)[*_]{1,3}", r"\1", s)   # emphasis
+    s = re.sub(r"<!--.*?-->", "", s)
+    out.append(s.replace("|", " "))
+open(sys.argv[2], "w", encoding="utf-8").write("\n".join(out))
 PY
 }
 

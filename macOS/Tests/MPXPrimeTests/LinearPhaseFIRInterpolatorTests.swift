@@ -5,7 +5,7 @@ import Foundation
 // Linear-phase 1:L FIR interpolator regression tests.
 //
 // `LinearPhaseFIRInterpolator` is the companion to `LinearPhaseFIRDecimator`
-// for the dual-rate audio chain boundary (plan.md "Next up" #1). The
+// for the dual-rate audio chain boundary (docs/project-roadmap.md "Next up" #1). The
 // load-bearing assertions:
 //
 // (1) Round-trip identity. A signal downsampled then upsampled (or upsampled

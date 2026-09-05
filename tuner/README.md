@@ -30,7 +30,7 @@ Two consumers share these sources:
   `--no-resample` pick the output stage. Built for the 2026-08-31 bench
   follow-ups (phase-dispersion characterization, same-IQ path A/B, the
   overload-vs-floor question) and used by `../calibrate-tx.sh`; see
-  meter-plan.md at the repo root.
+  docs/meter-roadmap.md.
 
 ## Provenance
 

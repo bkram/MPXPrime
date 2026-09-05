@@ -136,7 +136,7 @@ func advancedDynamicsHardeningScenarios(x3Hz: Double) -> [VerificationScenario] 
     // Slightly above the mid/high crossover: the 0.45 non-brick-wall
     // splitters put this tone on both bands' skirts, where a multiband
     // leveler can lift it by the neighbouring band's full range
-    // (plan.md Step 3 finding).
+    // (docs/project-roadmap.md Step 3 finding).
     let skirtHz = 1.06 * x3Hz
     return [
         VerificationScenario(
@@ -221,7 +221,7 @@ func runAdvancedDynamicsComparison(
     // Scenarios where the leveler is expected to land at the same loudness
     // as the classic chain (dense/steady program). The leveling showcases
     // (level_jump, quiet_ballad, hf_transients) are expected hotter, and
-    // crossover_skirt stays diagnostic until band coupling (plan.md Step 7)
+    // crossover_skirt stays diagnostic until band coupling (docs/project-roadmap.md Step 7)
     // cures the known skirt lift -- those only carry the runaway bound.
     let rmsParityScenarios: Set<String> = ["bass_dense"]
     var bChainAbsolutes: [(name: String, metrics: VerificationMetrics)] = []

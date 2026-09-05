@@ -88,7 +88,7 @@ struct AppConfig: Equatable {
     var sampleRate: Double = 192_000.0
     var fftWindow96kHz: Bool = true
     var blockSize: Int = 1024
-    // Dual-rate audio chain (plan.md "Next up" #1, Phase 2 LANDED 0.30).
+    // Dual-rate audio chain (docs/project-roadmap.md "Next up" #1, Phase 2 LANDED 0.30).
     //
     // When enabled, the entire audio domain (program stereo, multiband,
     // AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs
@@ -144,7 +144,7 @@ struct AppConfig: Equatable {
         case processedAudio
         case monitor
 
-        /// The /api/status `outputMode` vocabulary (docs/manual.md endpoint table).
+        /// The /api/status `outputMode` vocabulary (docs/studio-settings-reference.md endpoint table).
         var statusString: String {
             switch self {
             case .composite: return "mpxComposite"
@@ -407,7 +407,7 @@ struct AppConfig: Equatable {
     // Look-ahead composite peak control (0.0 disables; recommended preset: 2.0 ms).
     // Sliding-window-max detector + half-cosine attack + 200 Hz smoothed gain
     // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
-    // See plan.md "Enterprise-parity status" / 0.26 release plan.
+    // See docs/project-roadmap.md "Enterprise-parity status" / 0.26 release plan.
     var compositeClipperLookaheadMS: Double = 0.0
     // Composite clipper oversampling factor. 16 (default) matches Optimod
     // 8X00 / Omnia.11 / Stereotool industry practice. 8 trades some

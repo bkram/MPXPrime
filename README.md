@@ -95,7 +95,7 @@ deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
   LNA, antenna, Bias-T, PPM, and RTL AGC all retune **live** (no restart).
   Headless terminal modes also exist (`scripts/run-meter.sh --device <n>` / `--stdin`)
 
-See the [MPX Prime Meter manual](docs/manual-meter.md) for details.
+See the [MPX Prime Meter Operator Guide](docs/meter-operator-guide.md) for details.
 
 ## Remote control
 
@@ -104,7 +104,7 @@ INI, or the GUI Settings tab) controls the encoder locally or remotely:
 transport, live meters, RDS text/TA, sound presets, and every INI setting
 with live-apply where the engine supports it. Localhost needs no
 authentication; any wider bind requires an API key. See the
-[user manual](docs/manual.md#remote-control-rest-api--web-dashboard).
+[Operator Guide](docs/studio-operator-guide.md#operating-it-from-a-browser).
 
 This is a **MPX Prime Studio (encoder)** feature only -- on both macOS and
 Linux. The **MPX Prime Meter has no REST API or web interface** for now;
@@ -127,7 +127,7 @@ depends on which you use:
   **48 kHz / 24-bit is all you need** -- the high composite sample rates do not
   apply. Pre-emphasis is selectable (apply it here, or stay flat if the coder
   does), with an optional final loudness clipper. See the
-  [user manual](docs/manual.md#processed-audio-output-mode).
+  [Operator Guide](docs/studio-operator-guide.md#processed-audio-instead-of-mpx).
 
 A separate, optional **Decoded Monitor** output (any sample rate) demodulates the
 internal composite back to L/R for headphone monitoring on a second device -- a
@@ -169,7 +169,7 @@ systemd service that always serves the web dashboard -- its only operator
 interface -- at `http://<host>:8737/` on all interfaces, behind a random API
 key the installer generates and prints (stored in
 `/var/lib/mpxprime/MPXPrime.ini` as `control_api_key`; the
-[manual](docs/manual.md#usage) walks through it). This is the
+[Operator Guide](docs/studio-operator-guide.md#installing-and-starting) walks through it). This is the
 CLI encoder only -- no GUI, no Meter, no Monitor operating mode. See
 [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
 
@@ -192,12 +192,14 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 
 ## Documentation
 
-- [docs/manual.md](docs/manual.md) -- **MPX Prime Studio manual**: usage, first-time setup, configuration, RDS text, monitoring windows, verification, and the RDS PI/ECC + PTY reference tables
-- [docs/manual-meter.md](docs/manual-meter.md) -- **MPX Prime Meter manual**: SDR/audio input, the measurement readouts, WAV recording, and calibration
+- [docs/studio-operator-guide.md](docs/studio-operator-guide.md) -- **MPX Prime Studio Operator Guide**: install, first-time setup, audio devices and levels, Format Profiles, RDS, monitoring, troubleshooting
+- [docs/studio-settings-reference.md](docs/studio-settings-reference.md) -- **MPX Prime Studio Settings and API Reference**: every configuration key, the RDS text grammar, the now-playing script protocol, the REST API
+- [docs/meter-operator-guide.md](docs/meter-operator-guide.md) -- **MPX Prime Meter Operator Guide**: SDR / audio input, the measurement readouts, WAV recording, calibration and measurement notes
+- [docs/rds-country-and-pty-tables.md](docs/rds-country-and-pty-tables.md) -- **RDS country codes and programme types**: the PI / ECC and PTY lookup tables both apps use
 - [docs/BUILDING.md](docs/BUILDING.md) -- build, run, verify, test, and package from source
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- detailed DSP chain and stage descriptions
 - [`AGENTS.md`](AGENTS.md) -- contributor / agent workflow guidance and release checklist
-- [`plan.md`](plan.md) -- roadmap
+- [docs/project-roadmap.md](docs/project-roadmap.md) -- project roadmap: open work and the anti-rework guardrails
 - [`CHANGELOG.md`](CHANGELOG.md) -- version history
 
 ## References

@@ -51,6 +51,7 @@ Deltas are not strictly additive — stages can interact (e.g. a hot stage feedi
 ## Summary
 
 Current chain cost @ 192 kHz, full features: **41.54% of real-time**
+
 - audio-domain stages contribute ~23.75% of real-time
 - MPX-domain stages contribute   ~14.97% of real-time
 

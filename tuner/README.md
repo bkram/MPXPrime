@@ -35,7 +35,7 @@ Two consumers share these sources:
 ## Provenance
 
 This is a **stripped, vendored subset of FM-SDR-Tuner**
-(https://github.com/bkram/FM-SDR-Tuner), GPL-3.0, by the same author. The
+(<https://github.com/bkram/FM-SDR-Tuner>), GPL-3.0, by the same author. The
 upstream commit it was taken from is recorded in `UPSTREAM_COMMIT.txt`. Both
 projects are GPL-3.0, so vendoring is license-clean.
 

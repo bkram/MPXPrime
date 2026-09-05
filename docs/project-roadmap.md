@@ -137,81 +137,37 @@ validation queue, parked items) lives in [meter-roadmap.md](meter-roadmap.md).
    paths (PI / PTY / flags / AF / scheduler) need real-receiver checks beyond
    the bit-stream tests.
 
-## Operating modes: one four-way choice, stages gated per mode (planned 2026-09-05)
+## Operating modes: one four-way choice, stages gated per mode -- LANDED 2026-09-05
 
 Operator direction (issues list, 2026-09-05): the output shape should be ONE
 choice with four values, and every control, stage and side service should
 exist only where it has a function in that mode. Web and GUI on par.
 
-| Mode | What leaves the output | Replaces today's |
-| --- | --- | --- |
-| **MPX Output** | stereo multiplex: FM processing + stereo coder + pilot + RDS | `processed_audio_output = False` |
-| **FM Output** | FM processing (pre-emphasis, 15 kHz, image protection) as L/R for an external stereo coder | `processed_audio_output = True`, `processed_audio_target = fm_coder` |
-| **HD Output** | processing for streaming / digital broadcasting (DAB+, AAC): full bandwidth, flat, true-peak ceiling | `processed_audio_output = True`, `processed_audio_target = digital` |
-| **AM Output** | processing for an AM transmitter: mono sum, NRSC-style band limit and pre-emphasis, asymmetric positive-peak headroom | new |
+**Landed:** `operating_mode` (`mpx` | `fm` | `hd` | `am`) with load-time
+migration from the two booleans and REST aliases for them; the `ChainFeature`
+applicability table driving the engine, the GUI sidebar, the dashboard schema
+(page- and widget-level `modes`) and the tests; RDS, the Now Playing poller and
+SSB inert outside MPX; the AM Output mode (mono sum, NRSC pre-emphasis and
+band limit, asymmetric peaks through the existing peak guard); the dashboard's
+bypass confirmation removed; and an unrecognised CLI argument turned into a
+usage error. `ModeGatingTests` + `AMOutputTests` pin it; all five gates
+zero-drift.
 
-Monitor (decoded simulation) stays a separate GUI-only listening switch and is
-not a mode; it is only meaningful under MPX Output.
+**Remaining from the operator's list:**
 
-Findings behind the list (verified in the code 2026-09-05):
-
-- **RDS is hidden but not switched off outside MPX Output.** Both front
-  ends hide the RDS pages under processed audio (`hiddenInProcessedAudio` in
-  `NavigationModel` and `index.html`), but `en_rds` stays true in the
-  config, so `/api/status` still reports RDS on, the dashboard's rate
-  warning keys off it, and the Now Playing script is still polled
-  (`NowPlayingScriptRunner.apply` only looks at the RDS keys) -- a
-  processed-audio box runs a script every few seconds for nothing. The
-  runtime side services must key off the resolved mode too.
-- **SSB Stereo is hidden with the Stereo Coder tab, not gated.** Its keys
-  still accept PATCHes and its status still publishes under processed audio,
-  where there is no stereo coder to lean; the API should refuse or ignore a
-  stage that does not exist in the mode, and the digital target's own
-  follow-ups (pre-emphasis, coder-has-clipper) are hidden by hand-written
-  `if !digital` checks in `AudioIOTab` rather than by the same table.
-- **Hiding is per-widget and ad hoc** (`hiddenInProcessedAudio` per stage
-  and per widget in `schema.json`, the `if !digital` checks in
-  `AudioIOTab`). It needs one vocabulary: a `modes` list per widget in the
-  schema and one `visible(in:)` rule per Processing tab / card in the GUI,
-  both derived from the same table.
-- **Bypass Processing asks for confirmation on the dashboard** (`confirm(...)`
-  in `index.html`); the GUI toggle and Command-B do not. Drop the dialog: it
-  is a deliberate engineer's action and the status bar already shows BYPASS.
-
-Plan:
-
-1. **Storage.** One new key `operating_mode = mpx | fm | hd | am`
-   (`[INTERFACES]`, restart-class) with a load-time migration from the two
-   booleans (`processed_audio_output` + `processed_audio_target` written back
-   for one release so an old INI / API client keeps working; the API accepts
-   both spellings, reports the new one). `ResolvedOutputMode` grows the four
-   cases and every mode check in the generator (`audioOutputOnly`,
-   `digitalDelivery`) is derived from it.
-2. **Per-stage applicability table** (one source, `Control/StageApplicability.swift`):
-   for each stage and side service, the modes it exists in. Pre-emphasis:
-   MPX/FM/AM (AM uses its own curve). Stereo coder, pilot, RDS, SSB, composite
-   clipper, BS.412, final MPX limiter, Now Playing polling: MPX only.
-   Stereo-image protection: MPX/FM. True-peak ceiling: HD. Program lowpass
-   caps: 16 kHz MPX/FM, 20 kHz HD, 4.5-10 kHz AM. Output make-up: full scale
-   MPX/FM, ceiling HD, AM positive-peak asymmetry (125 % positive / 100 %
-   negative, NRSC-G100). Tests pin that a stage absent from a mode is
-   bit-identical to disabled in that mode (the digital tests already do this
-   for `digital`; generalise them).
-3. **Interfaces.** GUI: one segmented four-way `Operating Mode` in Audio I/O
-   (Monitor becomes a toggle beneath it under MPX); sidebar stages, tabs,
-   cards and the RDS section hide when absent from the mode; the status bar
-   mode cell reads the four names. Web: `schema.json` widgets carry `modes`,
-   the dashboard reads the resolved mode from `/api/status` and hides pages
-   and widgets the same way; `ControlSchemaTests` fails on a widget without
-   a `modes` entry. Bypass: remove the confirmation dialog in both.
-4. **AM processing** is the only new DSP: mono sum ahead of the multiband,
-   NRSC-1 75 us pre-emphasis with the 10 kHz (or narrower) lowpass, and an
-   asymmetric final limiter. Ships behind the mode, own file in `DSP/`,
-   own verify gate; the composite baselines cannot move (mode-gated like
-   `digital`).
-
-Open before starting: whether AM is in scope for 0.50 or lands as a fifth
-step after the four-way switch ships with three working modes.
+- **AM verification against hardware.** The mode is measured (mono sum, the
+  75 us curve, the band limit, both peak cases) but has never been checked on
+  a modulation monitor with a real AM transmitter. Until then it is a
+  first implementation, and the docs say so.
+- **AM processing tuning.** The chain's defaults are FM-shaped: an AM Format
+  Profile (denser, narrower, heavier low-mid control, no HF sizzle) is the
+  natural follow-up, and wants the same treatment the digital profile is
+  waiting for.
+- **The Advanced page is deliberately un-gated.** It is the raw INI editor and
+  shows every key in every mode by design; a mode-aware view there would hide
+  keys an operator may need to fix by hand.
+- **A "what would this mode change?" preview** before a restart-class mode
+  switch (the operator sees the new controls only after the restart today).
 
 ## Digital delivery target for Processed Audio (streaming / DAB) -- CORE LANDED 2026-09-05
 

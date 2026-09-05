@@ -360,20 +360,22 @@ enum Stage: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Stages that operate only in the composite domain and are therefore
-    /// meaningless in processed-audio output mode (no pilot / subcarrier / RDS /
-    /// composite): the whole RDS group plus the composite clipper, BS.412, and the
-    /// Final Stage (final drive, MPX deviation, composite safety limiter, budget).
-    /// The UI hides these when processed-audio output is selected. The Core tab
-    /// stays (input gain, mono, pre-emphasis, output level all still apply).
-    var hiddenInProcessedAudio: Bool {
+    /// The part of the chain this sidebar stage configures, or nil when the
+    /// stage applies in every operating mode. The applicability rules live in
+    /// `ChainFeature` -- one table for the GUI, the dashboard and the engine.
+    var chainFeature: ChainFeature? {
         switch self {
-        case .processingStereoCoder, .processingCompositeClipper, .processingBS412,
-             .processingFinalStage:
-            return true
-        default:
-            return group == .rds
+        case .processingStereoCoder: return .stereoCoder
+        case .processingCompositeClipper: return .compositeClipper
+        case .processingBS412: return .bs412
+        case .processingFinalStage: return .finalStage
+        default: return group == .rds ? .rds : nil
         }
+    }
+
+    /// Does this stage configure anything that has a function in `mode`?
+    func applies(in mode: AppConfig.OperatingMode) -> Bool {
+        chainFeature?.applies(in: mode) ?? true
     }
 
     /// Sidebar row label.

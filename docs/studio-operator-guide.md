@@ -30,7 +30,7 @@ Everything in this guide applies to both platforms; where a control is GUI-only,
 | Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (the package enables it on all interfaces behind a generated API key -- see Usage) |
 | Audio backend and device keys | Core Audio; `*_device_uid` keys hold Core Audio UIDs, picked in the app | ALSA; `*_device_uid` keys hold PCM names (`default`, `hw:0,0`, `plughw:...`) |
 | Default config file | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` (source build); `/var/lib/mpxprime/MPXPrime.ini` (Debian package) |
-| Operating modes | MPX Composite, Processed Audio, Monitor (decoded simulation; GUI only, not in `--nogui`) | MPX Composite, Processed Audio (no Monitor) |
+| Operating modes | MPX / FM / HD / AM Output, plus the decoded Monitor switch (GUI only, not in `--nogui`) | MPX / FM / HD / AM Output (no Monitor) |
 | Companion analyzer / SDR | MPX Prime Meter (Apple Silicon only) | none |
 | Offline gates | all `--verify*` modes, `--bench*`, the live smoke / A/B scripts (need BlackHole) | all `--verify*` modes and `--bench*` except `--verify-program-ab` (needs AVFoundation); no live scripts |
 
@@ -163,7 +163,7 @@ Relevant config sections:
 
 ## The Audio I/O section: devices, operating mode, level calibration
 
-The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented choice over `processed_audio_output` + `monitor_enabled`: MPX Composite for a transmitter, Processed Audio for an external stereo coder or a streaming chain -- MPX Prime as a plain audio processor -- or Monitor to decode the composite back to speakers and audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card. **Monitor mode is GUI-only**: headless runs (`--nogui` / `--web` on macOS, and the whole Linux build) offer MPX Composite and Processed Audio, ignore `monitor_enabled = True`, and the ALSA engine has no monitor device.
+The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented four-way choice, `operating_mode`: MPX Output for a transmitter, FM Output for an external stereo coder, HD Output for streaming or digital radio, AM Output for an AM transmitter -- plus the Monitor switch under MPX Output, which decodes the composite back to speakers so you can audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card. **Monitor is GUI-only**: headless runs (`--nogui` / `--web` on macOS, and the whole Linux build) offer all four operating modes, ignore `monitor_enabled = True`, and the ALSA engine has no monitor device.
 
 Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound -- and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
 
@@ -416,51 +416,77 @@ Non-ASCII characters are folded to the RDS character set before transmission
 track title pasted from a streaming service goes out readable rather than as
 question marks.
 
-## Processed audio instead of MPX
+## Operating modes
 
-By default, MPX Prime Studio emits the finished FM composite (pilot + stereo subcarrier +
-optional RDS) for a transmitter / exciter that accepts a composite/MPX baseband
-input. **Processed-audio output mode** instead emits the processed stereo **L/R
-audio** -- for transmitters that only accept L/R analog or AES3 audio and have
-their own built-in stereo coder + RDS encoder (the classic separate-processor
-topology). You keep MPX Prime Studio's full audio chain (AGC, EQ, multiband, stereo,
-bass, clippers, pre-emphasis, pre-encode limiter); you give up the composite-only
-stages (composite clipper, BS.412, pilot-locked RDS), which the external box now
-provides.
+**What leaves the output device is one choice.** Sidebar -> **Audio I/O** ->
+**Operating Mode** (INI: `operating_mode` in `[INTERFACES]`; restart-class,
+because the modes differ in render rate, device format and filtering).
 
-The composite path always sounds louder/denser because the composite clipper is
-the main loudness stage. Where a transmitter accepts a composite input, prefer
-composite-direct and switch the exciter's own stereo coder off. Use processed-audio
-mode only for gear that cannot take a composite.
+| Mode | Output | Use it for |
+| --- | --- | --- |
+| **MPX Output** (default) | the finished FM composite: pilot + stereo subcarrier + RDS | a transmitter / exciter with a composite (MPX) baseband input |
+| **FM Output** | FM-shaped stereo L/R | a transmitter or exciter with its own stereo coder and RDS encoder |
+| **HD Output** | flat, full-bandwidth stereo L/R with a true-peak ceiling | a stream encoder or a digital-radio box (DAB+, AAC) |
+| **AM Output** | mono, NRSC-shaped, asymmetric peaks | an AM transmitter |
 
-### Enabling it
+Everything that has no function in the selected mode is switched off and
+hidden, in the app and on the dashboard alike: outside MPX Output there is no
+composite, so the RDS section, the Stereo Coder / Composite Clipper / BS.412 /
+Final Stage tabs, the pilot level, the MOD (deviation) meter, the MPX Spectrum
+and Scopes windows and the decoded monitor all disappear, RDS stops being
+generated and the Now Playing script stops being polled. The status bar shows
+the mode.
 
-Sidebar -> **Audio I/O** -> **Operating Mode** -> select **Processed Audio**
-(the mode picker replaced the Settings-window toggle in 0.50). This is
-restart-required (it changes render rate, device format, and filtering). When
-active, the composite-only surfaces are hidden automatically: the RDS section, the
-Composite Clipper / BS.412 / Final Stage tabs, the pilot level control, the MOD
-(deviation) meter, the composite readouts on the Monitoring dashboard, and the MPX
-Spectrum + Scopes windows. The status bar shows `MODE: PROC AUDIO`.
+Migration is automatic: a pre-0.50 INI with `processed_audio_output` /
+`processed_audio_target` is read into the new key on load, and the REST API
+still accepts both old spellings.
 
-### Delivery target: FM coder or digital
+### MPX Output vs FM Output
 
-Processed audio can feed two very different things, so pick which one in
-`Audio I/O` -> `Operating Mode` -> `Delivery` (INI: `processed_audio_target`
-in `[INTERFACES]`; restart-class, like the operating mode itself).
+The composite path always sounds louder and denser, because the composite
+clipper is the main loudness stage. Where a transmitter accepts a composite
+input, prefer MPX Output and switch the exciter's own stereo coder off. Use FM
+Output only for gear that cannot take a composite: you keep the full audio
+chain (AGC, EQ, multiband, bass, clippers, pre-emphasis, pre-encode limiter)
+and give up the composite-only stages, which the external box then provides.
 
-- **FM stereo coder** (default, and what every existing config keeps) leaves
-  the feed FM-shaped: band-limited under the pilot, pre-emphasised here or in
-  the coder, image-protected, and normalised so peaks reach full scale.
-- **Digital (streaming / DAB)** aims at a stream encoder or a DAB+ / AAC box
-  instead. The FM-only stages leave the path: the audio keeps its full
-  bandwidth (up to the `Program Lowpass` setting, now allowed to 20 kHz),
-  pre-emphasis is forced off, stereo-image protection is skipped because a
-  digital carrier has neither deviation nor multipath to protect, and the
-  final loudness clipper is not offered -- clipping into a codec costs
-  quality. Peaks are held at the true-peak ceiling instead of normalised.
+### HD Output (streaming and digital radio)
 
-**True-peak ceiling.** With the digital target selected, `Audio I/O` ->
+The FM-only stages leave the path: the audio keeps its full bandwidth (up to
+the `Program Lowpass` setting, allowed to 20 kHz here), pre-emphasis is forced
+off, stereo-image protection is skipped because a digital carrier has neither
+deviation nor multipath to protect, and the final loudness clipper is not
+offered -- clipping into a codec costs quality. Peaks are held at the true-peak
+ceiling instead of being normalised to full scale.
+
+### AM Output
+
+The AM feed is **mono**: left and right are summed before the processing, so
+every stage levels and limits the signal that actually goes on air, and both
+output channels carry it.
+
+- **AM Pre-emphasis** (`am_preemphasis_us`, restart-class): 75 us is the NRSC-1
+  curve an NRSC receiver de-emphasises. Switch it off only when the
+  transmitter or an outboard box already applies it -- the same one-stage rule
+  as on FM.
+- **AM Bandwidth** (`am_lowpass_hz`, restart-class, 3-10 kHz): NRSC-1 specifies
+  10 kHz; many stations run 4.5-6 kHz to fit the channel and the receivers.
+- **Positive Peak Headroom** (`am_positive_peak_pct`, live, 100-125 %):
+  asymmetric modulation. 47 CFR 73.1570 allows positive peaks to 125 % while
+  the negative peak stays at 100 %, so MPX Prime Studio holds the **negative**
+  side at 100/125 of full scale and lets positive peaks use the rest.
+  **Calibrate the transmitter on the negative peak**: set it so a negative peak
+  at full modulation reads 100 %. Symmetric program lands symmetric; speech and
+  most single-instrument material is what actually uses the extra positive
+  room. At 100 % the mode is symmetric again and the feed is simply normalised.
+
+The composite stages, the stereo coder, the pilot and RDS are not generated in
+AM Output. This mode is new in 0.50 and has been verified by measurement (mono
+sum, the NRSC curve, the band limit and the peak asymmetry each have a test);
+it has not yet been checked against a modulation monitor on a real AM
+transmitter.
+
+**True-peak ceiling.** In HD Output, `Audio I/O` ->
 `Operating Mode` -> `True-peak Ceiling` (`processed_audio_ceiling_dbtp`,
 live-apply) sets where peaks land. **-1.0 dBTP** is the default and the shared
 recommendation of EBU R128, AES TD1008 and the streaming platforms. Use
@@ -513,7 +539,7 @@ Audio I/O -> Operating Mode -> **External coder has its own clipper**:
   monitored signal is not artificially bright; the decoded-MPX monitor remains the
   reference for final on-air sound.
 
-INI keys: `processed_audio_output`, `preemphasis_us`,
+INI keys: `operating_mode`, `preemphasis_us`,
 `processed_audio_coder_has_clipper`, `processed_audio_final_clip_drive_db`,
 `output_gain_db`.
 
@@ -625,11 +651,12 @@ dashboard's Audio I/O page under Tools):
 Every change reports back live / live-RDS / needs-restart. The Bypass
 button mirrors the GUI's Cmd-B exactly: it flips `processing_bypass`
 (restart-class, so it restarts the engine when running), shows a red
-BYPASSED state, and asks for confirmation before putting unprocessed
-audio on air. With `processed_audio_output` enabled the dashboard hides
-the same pages the GUI hides (RDS group, Composite Clipper, BS.412,
-Final Stage) and Monitoring swaps the MPX/subcarrier cards for a
-processed-audio output card. The dashboard is a single self-contained
+BYPASSED state, and does it without a confirmation dialog (0.50: it is a
+deliberate engineer's action and the state is visible). The dashboard hides
+exactly what the GUI hides for the operating mode -- the same
+`ChainFeature` table drives both -- down to individual controls, and
+Monitoring swaps the MPX/subcarrier cards for a processed-audio output
+card outside MPX Output. The dashboard is a single self-contained
 page (no internet access needed) and prompts for the API key when one is
 configured.
 

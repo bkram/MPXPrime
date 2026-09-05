@@ -190,16 +190,37 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 
 When the engine renders the built-in test tone (`source_mode = tone`), `MPXGenerator` raises `renderingCalibrationTone` for each tone sample: `processProgramStereo` / `processAudioDomain` skip input gain and every dynamics / enhancement / clipping / limiting stage (the same gates `processingBypass` uses, plus the encoder HF guard), pre-emphasis and the encoder lowpass stay in (noise types need the band limit), and in `processFinalComposite` the drive is replaced by the audio-composite budget so 0 dBFS = 100% audio modulation, BS.412 is skipped, and the composite clipper and final limiter are kept in the path only for their delay (their inputs are scaled 8x below threshold so they pass the tone untouched and pilot/RDS alignment is preserved). Sine tones are pre-compensated for the pre-emphasis magnitude at the tone frequency (`updateToneGain`, the analog curve `sqrt(1 + (2 pi f tau)^2)`, which the fitted pre-emphasis network matches). Pinned by `TestToneGeneratorTests`: composite peak = budget x 10^(level/20) within 0.25 dB across 0 / -6 / -20 / -40 dBFS, independent of Final Drive / AGC / processing, flat across 400 Hz / 1 kHz / 10 kHz, equal across mono / left / L=-R routing; the input path is checked to still respond to Final Drive.
 
-## Output modes
+## Operating modes
 
-`AudioOutputMode` (`AudioOutputEngine.swift`) has three cases. Since 0.50 the
-resolution from the two stored booleans (`processed_audio_output` wins over
-`monitor_enabled`) lives in ONE place -- `AppConfig.resolvedOutputMode(allowMonitor:)`
--- used by the GUI (allowMonitor: true), both headless mains (false; the monitor
-path is GUI-only) and the `/api/status` `outputMode` string, which now also
-reports `monitorAudio` (previously the monitor was invisible to the API). The
-GUI presents the choice as one segmented **Operating Mode** control on the
-Audio I/O page; the stored INI keys are unchanged. `MPXGenerator` also seeds
+`AppConfig.OperatingMode` (`operating_mode`, restart-class) has four cases --
+`mpx`, `fm`, `hd`, `am` -- and is the ONLY answer to "which mode are we in".
+`AppConfig.resolvedOutputMode(allowMonitor:)` adds the decoded monitor, which
+is a listening switch rather than an output shape: it exists only under `mpx`
+and only where the caller has a monitor path (the GUI passes allowMonitor:
+true, both headless mains false). `AudioOutputMode` (`AudioOutputEngine.swift`)
+is the engine-side mapping (composite / processed / monitor). The `/api/status`
+`outputMode` string reports the mode name, or `monitor`.
+
+Which parts of the chain exist in which mode is ONE table,
+`ChainFeature` (`Control/StageApplicability.swift`), read by the engine, the
+GUI's sidebar (`Stage.chainFeature`), the dashboard schema (`modes` on a page
+or a widget) and the tests (`ModeGatingTests`). A feature absent from a mode is
+inert AND invisible: outside `mpx` the RDS encoder does not run whatever
+`en_rds` says (gated in `MPXGenerator.applyRDSRuntimeConfig`, on the engine's
+own immutable mode), the Now Playing poller does not poll
+(`NowPlayingScriptRunner.Settings`), and the SSB stereo option cannot reach
+the chain. The gates deliberately live on the ENGINE and not in
+`makeRuntimeConfig` / `RDSRuntimeConfig.make`: `ConfigPatch` derives its
+dispositions by diffing those factories, so a mode-dependent field there would
+make a restart-class mode change report itself as a live RDS edit.
+
+Pre-0.50 configs stored the mode as `processed_audio_output` +
+`processed_audio_target`. Those are migrated on load
+(`AppConfig.migratedOperatingMode`) and still accepted by the REST API, which
+resolves them onto `operating_mode` in `ConfigPatch.resolvedOverlay` -- one
+boundary, so storage keeps a single key.
+
+`MPXGenerator` also seeds
 `audioOutputOnly` from `processed_audio_output` at construction (0.50), so an
 engine that never calls `setAudioOutputOnly` -- the ALSA engine -- still runs
 the audio-only chain correctly (before the seed, Linux processed-audio kept
@@ -234,10 +255,11 @@ and the optional final clipper could never engage); the macOS engine's
   `processed_audio_final_clip_drive_db`) engages only when the operator marks the
   external coder as having no clipper of its own
   (`processed_audio_coder_has_clipper = false`) -- the one-clipper rule, mirroring
-  pre-emphasis ownership. Config: `processed_audio_output` (restart-required). The
-  UI hides every composite/RDS surface in this mode (RDS section, Composite Clipper
-  / BS.412 / Final Stage tabs, pilot level, deviation/modulation meters, MPX
-  Spectrum + Scopes windows, composite signal-flow pills).
+  pre-emphasis ownership. Config: `operating_mode = fm` (restart-required). The
+  UI hides every composite/RDS surface in this mode (RDS section, Stereo Coder /
+  Composite Clipper / BS.412 / Final Stage tabs, pilot level,
+  deviation/modulation meters, MPX Spectrum + Scopes windows, composite
+  signal-flow pills).
 
 ## Audio I/O and level calibration (0.50)
 
@@ -311,30 +333,40 @@ Further Meter runtime behavior (0.41 cycle): an **MPX pass-through** duplicates 
 - `Verification/`: one file per verify mode (`VerificationCore`, `ReceiverModel`, `QualityMetrics`, `PresetSweep`, `StageABGates`, `AdvancedDynamicsGate`, `HFTransientGate`, `FinalRideIsolation`, `ProgramABGate`) behind the `VerificationHarness.swift` dispatcher; `VerifierBaseline.swift` holds the baseline schema + compare; `BenchmarkRunner.swift` implements `--bench` / `--bench-blocks`.
 - `UI/`: `AppConstants`, `NavigationModel`, `RootViews`, `MonitoringDashboard`, `AudioIOTab`, `ProcessingTabs`, `SettingsAndRDSTabs`, `SnapshotsAndTestTone`, `HelpAndAbout`, `SharedControls`; plus the pre-split `UIBroadcastStatusBar`, `UISignalFlowStrip`, `UIInspector`, `UIProcessingOverview` and `UILiveTelemetry.swift` (the `@Observable` per-tick `LiveTelemetry` object). `NowPlayingSupport.swift` + `RDSTextParser.swift` feed RT metadata from an external script.
 
-## Processed-audio delivery targets (0.50)
+## Audio output modes: FM, HD and AM (0.50)
 
-Processed-audio output has two shapes, chosen by `processed_audio_target` and
-resolved in ONE place: `AppConfig.processedAudioDigitalDelivery`, which is
-false unless `processed_audio_output` is also on. `MPXGenerator` seeds
+The three audio-output modes differ from each other in the table below.
+`hd` is resolved through `AppConfig.processedAudioDigitalDelivery`
+(`operatingMode == .hd`). `MPXGenerator` seeds
 `digitalDelivery` from it at construction (the same rule as `audioOutputOnly`,
 so the verifier and the Linux ALSA engine see it too), and every difference is
 gated on that single flag, which is why the composite path cannot be reached
 by this feature:
 
-| Stage | `fm_coder` | `digital` |
-| --- | --- | --- |
-| Program + encoder lowpass | FM caps (15.3 / 14.9 kHz emphasised, 16 kHz flat) via `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz` | the configured `program_lowpass_hz`, up to 20 kHz |
-| Pre-encode limiter decimator passband | 15 kHz (it doubles as the emphasised-domain band limit) | the program bandwidth, via the `passbandHz` parameter |
-| Pre-emphasis + encoder HF guard | as configured | forced off (the guard disables itself at 0 us) |
-| Stereo-image protection | on | bypassed (no deviation or multipath to protect) |
-| Final loudness clipper | optional, when the coder has none | never |
-| Output make-up | limiter ceiling normalised to full scale | limiter ceiling mapped onto `processed_audio_ceiling_dbtp`, less a 0.1 dB margin |
-| True-peak guard (`StereoTruePeakGuard`, `DSP/TruePeakGuard.swift`) | absent | after the make-up: stereo-linked gain rider on a 4x Kaiser reconstruction detector, 2 ms look-ahead, `gain = min(gain, target)` floor, no clipping; adds 2 ms of delay |
+| Stage | `fm` | `hd` | `am` |
+| --- | --- | --- | --- |
+| Program + encoder lowpass | FM caps (15.3 / 14.9 kHz emphasised, 16 kHz flat) via `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz` | the configured `program_lowpass_hz`, up to 20 kHz | `am_lowpass_hz` (3-10 kHz), applied by seeding `programLowpassHz` |
+| Pre-encode limiter decimator passband | 15 kHz (it doubles as the emphasised-domain band limit) | the program bandwidth, via the `passbandHz` parameter | 15 kHz (the AM band limit is far below it) |
+| Pre-emphasis + encoder HF guard | as configured | forced off (the guard disables itself at 0 us) | `am_preemphasis_us` (NRSC 75 us or flat); guard off |
+| Stereo-image protection | on | bypassed (no deviation or multipath to protect) | bypassed (the feed is mono) |
+| Final loudness clipper | optional, when the coder has none | never | never (the peak guard owns the peaks) |
+| Output make-up | limiter ceiling normalised to full scale | limiter ceiling mapped onto `processed_audio_ceiling_dbtp`, less a 0.1 dB margin | limiter ceiling normalised to full scale (the POSITIVE bound) |
+| Channel handling | stereo | stereo | L+R summed BEFORE the chain, so every stage levels the on-air signal |
+| Output peak guard (`StereoTruePeakGuard`, `DSP/TruePeakGuard.swift`) | absent | after the make-up: stereo-linked gain rider on a 4x Kaiser reconstruction detector, 2 ms look-ahead, `gain = min(gain, target)` floor, no clipping; adds 2 ms of delay | same stage with ASYMMETRIC ceilings: positive at full scale, negative at `100 / am_positive_peak_pct` |
 
 `oversampledLimiterCeiling(threshold:)` in `DSP/PeakLimiters.swift` is the one
 rule for the limiter's hard bound, shared by the limiter's own `configure` and
 by the make-up, so the two cannot drift: mapping the THRESHOLD instead reads
 about 1.3 dB hot, which is how the sharing was found.
+
+AM's asymmetry (47 CFR 73.1570: positive peaks to 125 % with the negative peak
+at 100 %) is why the guard's two ceilings are separate. The make-up normalises
+onto the POSITIVE bound and the guard holds the negative one: normalising onto
+the negative bound instead would cap both halves there and the asymmetry could
+never be used, because the pre-encode limiter bounds |x| symmetrically. So
+symmetric program lands symmetric and only positive-heavy program (speech, most
+single-instrument material) uses the extra room. `AMOutputTests` pins the mono
+sum, the NRSC curve, the band limit and both peak cases.
 
 The guard exists because the limiter alone is not a true-peak bound on hard
 transients: it clips in its 4x domain and then decimates, and the decimation

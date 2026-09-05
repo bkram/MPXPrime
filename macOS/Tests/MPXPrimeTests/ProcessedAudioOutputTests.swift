@@ -25,7 +25,7 @@ struct ProcessedAudioOutputTests {
         cfg.blockSize = blockSize
         cfg.sourceMode = "input"
         cfg.monitorEnabled = false
-        cfg.processedAudioOutput = true
+        cfg.operatingMode = .fm
         cfg.processingBypass = false
         cfg.preemphasisUS = 0                 // flat for clean spectral assertions
         cfg.mpxDeviationKHz = 75.0
@@ -359,7 +359,7 @@ struct ProcessedAudioOutputTests {
 
     private func digitalConfig(sampleRate: Double) -> AppConfig {
         var cfg = baseConfig(sampleRate: sampleRate)
-        cfg.processedAudioTarget = "digital"
+        cfg.operatingMode = .hd
         cfg.programLowpassHz = 20_000.0
         return cfg
     }
@@ -432,9 +432,9 @@ struct ProcessedAudioOutputTests {
         let sr = 96_000.0
         var cfg = digitalConfig(sampleRate: sr)
         cfg.inputGainDB = 6.0
-        func sideToMid(_ target: String) -> Double {
+        func sideToMid(_ mode: AppConfig.OperatingMode) -> Double {
             var c = cfg
-            c.processedAudioTarget = target
+            c.operatingMode = mode
             let out = renderAudioOnly(cfg: c, seconds: 0.6) { _, t in
                 (Float(0.7 * sin(2.0 * .pi * 900.0 * t)), 0.0)   // hard left
             }
@@ -448,7 +448,7 @@ struct ProcessedAudioOutputTests {
             }
             return sqrt(side) / max(1e-9, sqrt(mid))
         }
-        let digital = sideToMid("digital")
+        let digital = sideToMid(.hd)
         #expect(digital > 0.95,
                 "hard-panned side/mid should stay near 1.0 on the digital target, got \(digital)")
     }
@@ -474,24 +474,23 @@ struct ProcessedAudioOutputTests {
                 "the coder-has-clipper flag changed the digital output at frame \(firstDiff ?? -1)")
     }
 
-    @Test func digitalTargetConfigRoundTripsAndDefaultsToFMCoder() {
+    @Test func digitalTargetConfigRoundTripsAndDefaultsToMPX() {
         var cfg = AppConfig()
-        #expect(cfg.processedAudioTarget == "fm_coder", "default target must not change existing installs")
+        #expect(cfg.operatingMode == .mpx, "default mode must not change existing installs")
         #expect(cfg.processedAudioDigitalDelivery == false)
-        cfg.processedAudioOutput = true
-        cfg.processedAudioTarget = "digital"
+        cfg.operatingMode = .hd
         cfg.processedAudioCeilingDBTP = -2.0
         #expect(cfg.processedAudioDigitalDelivery == true)
         let restored = try? AppConfig.loadFromINIString(cfg.captureAsINIString())
-        #expect(restored?.processedAudioTarget == "digital")
+        #expect(restored?.operatingMode == .hd)
         #expect(abs((restored?.processedAudioCeilingDBTP ?? 0) - (-2.0)) < 0.01)
         #expect(restored?.processedAudioDigitalDelivery == true)
-        // An unknown value normalises to the FM coder rather than silently
-        // dropping the FM band limit.
-        var bogus = cfg
-        bogus.processedAudioTarget = "hd-radio"
-        bogus.validate()
-        #expect(bogus.processedAudioTarget == "fm_coder")
+        // An unknown mode word falls back to MPX rather than silently
+        // dropping the composite.
+        let bogus = try? AppConfig.loadFromINIString(
+            cfg.captureAsINIString().replacingOccurrences(
+                of: "operating_mode = hd", with: "operating_mode = hd-radio"))
+        #expect(bogus?.operatingMode == .mpx)
     }
 
     @Test func digitalTargetFrequencyResponseIsFlatAcrossTheAudioBand() {
@@ -583,10 +582,10 @@ struct ProcessedAudioOutputTests {
         // false unless processed-audio output is on. A composite config carrying
         // the digital target must render identically to one without it.
         var composite = baseConfig(sampleRate: 192_000.0)
-        composite.processedAudioOutput = false
+        composite.operatingMode = .mpx
         composite.preemphasisUS = 50
         var tagged = composite
-        tagged.processedAudioTarget = "digital"
+        tagged.processedAudioCeilingDBTP = -3.0     // an HD-only key on an MPX config
         #expect(tagged.processedAudioDigitalDelivery == false)
         func renderComposite(_ c: AppConfig) -> [Float] {
             let gen = MPXGenerator(config: c, sampleRate: c.sampleRate)

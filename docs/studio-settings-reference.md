@@ -84,18 +84,44 @@ While the stage is active, the Monitoring dashboard's Signal Chain "AGC" pill sw
 
 While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and MB Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
 
-### Processed-audio delivery target
+### Operating mode
 
-`processed_audio_target` (`[INTERFACES]`, default `fm_coder`, restart-class)
-selects what the processed-audio feed is shaped for. `fm_coder` keeps the FM
-shape an external stereo coder expects. `digital` targets a stream or a
-DAB+ / AAC encoder: the band limit follows `program_lowpass_hz` (clamp raised
-to 20 kHz for this reason) instead of the 16 kHz FM cap, `preemphasis_us` is
-forced to 0 for the render while the stored value is left untouched, the
-stereo-image protector and the optional final clipper are skipped, and the
-output make-up targets the true-peak ceiling below rather than full scale.
-The key is ignored entirely unless `processed_audio_output` is on, so it can
-never affect a composite render.
+`operating_mode` (`[INTERFACES]`, default `mpx`, restart-class) is the single
+key that says what leaves the output device. Everything mode-conditional in
+the engine and in both interfaces is derived from it through
+`ChainFeature` -- there is no second spelling.
+
+| Value | Output | What is switched off |
+| --- | --- | --- |
+| `mpx` | FM composite: pilot + stereo subcarrier + RDS | nothing |
+| `fm` | FM-shaped stereo L/R for an external coder | stereo coder, composite clipper, BS.412, final MPX stage, RDS, monitor |
+| `hd` | flat full-bandwidth L/R with a true-peak ceiling | the above, plus pre-emphasis (forced to 0 for the render), stereo-image protection and the optional final clipper |
+| `am` | mono NRSC-shaped feed with asymmetric peaks | the above, plus the FM pre-emphasis picker (AM has its own) |
+
+Outside `mpx` the RDS encoder does not run whatever `en_rds` says, the Now
+Playing script is not polled, and the SSB stereo option cannot reach the
+chain -- a control with no function is inert, not merely hidden.
+
+A pre-0.50 INI carrying `processed_audio_output` / `processed_audio_target` is
+migrated on load and rewritten to `operating_mode` on the next save. The REST
+API still accepts both old keys and resolves them onto the mode, in any order.
+
+### AM output shaping
+
+Read only when `operating_mode = am`:
+
+- `am_preemphasis_us` (`[MPX]`, default `75`, values 0 or 75, restart-class):
+  NRSC-1 pre-emphasis, or flat when the transmitter already applies it.
+- `am_lowpass_hz` (`[MPX]`, default `10000`, range 3000-10000, restart-class):
+  audio bandwidth of the AM feed. NRSC-1 specifies 10 kHz.
+- `am_positive_peak_pct` (`[MPX]`, default `125`, range 100-125, live-apply):
+  asymmetric modulation per 47 CFR 73.1570. The NEGATIVE side is held at
+  100/pct of full scale and positive peaks may use the rest, so the
+  transmitter is calibrated on the negative peak. At 100 the feed is
+  symmetric. Held by the same peak guard the digital ceiling uses.
+
+Left and right are summed before the processing chain, so every stage acts on
+the signal that goes on air, and both output channels carry the mono result.
 
 `processed_audio_ceiling_dbtp` (`[MPX]`, default `-1.0`, range -6..0,
 live-apply) is the true-peak ceiling for the digital target. Two stages
@@ -280,7 +306,7 @@ section. The endpoints below are what the dashboard itself uses.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending; `outputMode` is `mpxComposite` / `processedAudio` / `monitorAudio` |
+| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending; `outputMode` is the operating mode (`mpx` / `fm` / `hd` / `am`), or `monitor` while the decoded monitor is active |
 | GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation (modulation-domain: output/line trims divided back out) + `dacPeakDBFS` (electrical: post-trims at the converter), budget margin, Advanced Dynamics leveler gains when active, and (macOS input source) input-ring health (subset on Linux) |
 | GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |
 | PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |

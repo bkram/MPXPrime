@@ -126,53 +126,121 @@ struct AppConfig: Equatable {
     var outputDeviceName: String?
     var monitorDeviceName: String?
     var monitorEnabled: Bool = false
-    // Output mode. When true, the MPX output device emits processed stereo L/R
-    // audio (post pre-encode limiter) instead of the FM composite — for feeding
-    // an external stereo coder / RDS encoder. No pilot / subcarrier / RDS /
-    // composite clipper / BS.412 in this mode. Restart-required (changes render
-    // rate, device format, and FIR plumbing). Takes precedence over
-    // `monitorEnabled` (the decoded-MPX monitor is meaningless without a composite).
-    var processedAudioOutput: Bool = false
 
-    // Delivery target for processed-audio output (0.50). `fm_coder` keeps the
-    // FM-shaped feed an external stereo coder expects: band-limited under the
-    // pilot, pre-emphasised, image-protected, normalised to full scale.
-    // `digital` targets a stream or a DAB+ / AAC encoder instead -- the FM-only
-    // stages leave the path and peaks are held at `processed_audio_ceiling_dbtp`
-    // rather than normalised. Restart-class like the operating mode itself, and
-    // ignored entirely unless `processed_audio_output` is on.
-    var processedAudioTarget: String = "fm_coder"
+    /// What the output device carries, as ONE operator choice (0.50). Every
+    /// stage's applicability is derived from it through `StageApplicability`,
+    /// and every mode-conditional branch in the engine, both front ends and
+    /// the REST API reads this and nothing else -- there is no second
+    /// spelling of "which mode are we in".
+    ///
+    /// Restart-class: the modes differ in render rate, device format and FIR
+    /// plumbing. The `am` and `hd` modes emit processed L/R on the output
+    /// device; `fm` does too but keeps the FM shape an external stereo coder
+    /// expects; only `mpx` emits a composite (and only there is the decoded
+    /// monitor, the pilot, the stereo subcarrier and RDS meaningful).
+    enum OperatingMode: String, CaseIterable, Sendable {
+        /// Stereo multiplex: FM processing + stereo coder + pilot + RDS.
+        case mpx
+        /// FM processing as L/R for an external stereo coder / RDS encoder.
+        case fm
+        /// Streaming or digital broadcasting (DAB+, AAC): flat, full bandwidth,
+        /// true-peak ceiling. ("HD" in the operator's vocabulary.)
+        case hd
+        /// AM transmitter feed: mono, NRSC pre-emphasis and band limit,
+        /// asymmetric positive-peak headroom.
+        case am
+
+        /// Operator-facing name, identical in the GUI, the dashboard and the docs.
+        var title: String {
+            switch self {
+            case .mpx: return "MPX Output"
+            case .fm: return "FM Output"
+            case .hd: return "HD Output"
+            case .am: return "AM Output"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .mpx: return "Stereo multiplex with pilot and RDS, for an exciter"
+            case .fm: return "FM processing as L/R, for an external stereo coder"
+            case .hd: return "Processing for streaming or digital radio (DAB+, AAC)"
+            case .am: return "Mono processing for an AM transmitter"
+            }
+        }
+
+        /// True when the output device carries processed L/R audio rather than
+        /// the FM composite. The composite path exists only in `mpx`.
+        var isAudioOutput: Bool { self != .mpx }
+    }
+
+    var operatingMode: OperatingMode = .mpx
+
+    /// Pre-0.50 storage (`processed_audio_output` + `processed_audio_target`)
+    /// mapped onto the mode. Also the resolution rule for the REST API's
+    /// aliases, so an old client and an old INI agree.
+    static func migratedOperatingMode(
+        processedAudioOutput: Bool, processedAudioTarget: String
+    ) -> OperatingMode {
+        guard processedAudioOutput else { return .mpx }
+        switch processedAudioTarget.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "digital", "hd": return .hd
+        case "am": return .am
+        default: return .fm
+        }
+    }
+
+    /// The legacy `processed_audio_target` spelling of a mode, for the API alias.
+    static func legacyProcessedAudioTarget(for mode: OperatingMode) -> String {
+        switch mode {
+        case .mpx, .fm: return "fm_coder"
+        case .hd: return "digital"
+        case .am: return "am"
+        }
+    }
 
     /// The ONE expression every digital bypass in `MPXGenerator` is gated on,
     /// so the composite path cannot be reached by this feature by construction.
-    var processedAudioDigitalDelivery: Bool {
-        processedAudioOutput && processedAudioTarget.lowercased() == "digital"
+    var processedAudioDigitalDelivery: Bool { operatingMode == .hd }
+
+    /// Legacy spelling of the mode, kept as an API alias (see
+    /// `ConfigPatch.operatingModeAliases`) and used where "is this an audio
+    /// output" is the only question being asked.
+    var processedAudioOutput: Bool {
+        get { operatingMode.isAudioOutput }
+        set { operatingMode = newValue ? (operatingMode.isAudioOutput ? operatingMode : .fm) : .mpx }
     }
 
-    /// The effective output mode, resolved from the two stored booleans in
-    /// ONE place (previously three hand-rolled resolutions disagreed about
-    /// monitor visibility). Processed-audio wins over the monitor; the
-    /// monitor is only reachable where the caller has a monitor path (the
-    /// macOS GUI -- headless runs and the Linux CLI pass allowMonitor: false).
-    enum ResolvedOutputMode {
-        case composite
-        case processedAudio
+    /// The effective output mode including the decoded-MPX monitor, which is
+    /// not a mode of its own: it is a listening switch that only exists under
+    /// `mpx`, and only where the caller has a monitor path (the macOS GUI --
+    /// headless runs and the Linux CLI pass allowMonitor: false).
+    enum ResolvedOutputMode: Equatable {
+        case output(OperatingMode)
         case monitor
 
-        /// The /api/status `outputMode` vocabulary (docs/studio-settings-reference.md endpoint table).
+        /// The `/api/status` `outputMode` vocabulary (see the endpoint table in
+        /// docs/studio-settings-reference.md).
         var statusString: String {
             switch self {
-            case .composite: return "mpxComposite"
-            case .processedAudio: return "processedAudio"
-            case .monitor: return "monitorAudio"
+            case .output(let mode): return mode.rawValue
+            case .monitor: return "monitor"
+            }
+        }
+
+        /// The mode whose stage applicability applies. The monitor decodes a
+        /// composite, so it is an `mpx` chain.
+        var mode: OperatingMode {
+            switch self {
+            case .output(let mode): return mode
+            case .monitor: return .mpx
             }
         }
     }
 
     func resolvedOutputMode(allowMonitor: Bool) -> ResolvedOutputMode {
-        if processedAudioOutput { return .processedAudio }
-        if allowMonitor && monitorEnabled { return .monitor }
-        return .composite
+        if allowMonitor && monitorEnabled && !operatingMode.isAudioOutput { return .monitor }
+        return .output(operatingMode)
     }
 
     var processingBypass: Bool = false
@@ -398,6 +466,20 @@ struct AppConfig: Equatable {
     // AAC), because lossy encoding pushes inter-sample peaks up. Read only
     // while the digital target is active.
     var processedAudioCeilingDBTP: Double = -1.0
+
+    // AM Output shaping (0.50). Only read in the `am` operating mode.
+    // `am_preemphasis_us`: NRSC-1 pre-emphasis (75 us) or flat. Restart-class
+    // (reconfigures the pre-emphasis network at the audio-domain rate).
+    var amPreemphasisUS: Int = 75
+    // Audio bandwidth of the AM feed. NRSC-1 specifies 10 kHz; narrower is
+    // common practice to fit the channel and the receiver. Restart-class
+    // (the band-limit FIRs are designed at configure time).
+    var amLowpassHz: Double = 10_000.0
+    // Asymmetric modulation: 47 CFR 73.1570 allows positive peaks to 125 %
+    // while negative peaks stay at 100 %. The negative side is held at
+    // 100/pct of full scale so the positive side can use the rest; calibrate
+    // the transmitter so the NEGATIVE peak reads 100 % modulation.
+    var amPositivePeakPct: Double = 125.0
     var bs412Enabled: Bool = false
     var bs412ThresholdDB: Double = -10.0
     var bs412WindowSeconds: Double = 60.0
@@ -658,10 +740,19 @@ struct AppConfig: Equatable {
         cfg.outputDeviceName = interfaces.optionalString("output_device_name")
         cfg.monitorDeviceName = interfaces.optionalString("monitor_device_name")
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
-        cfg.processedAudioOutput = interfaces.bool(
-            "processed_audio_output", defaultValue: cfg.processedAudioOutput)
-        cfg.processedAudioTarget = interfaces.string(
-            "processed_audio_target", defaultValue: cfg.processedAudioTarget)
+        // Operating mode. `operating_mode` is the key; a pre-0.50 INI carries
+        // the two booleans it replaced and is migrated here (and rewritten on
+        // the next save). The legacy pair is only read when the new key is
+        // absent, so a patch of `operating_mode` cannot be overridden by a
+        // stale mirror -- the REST API's aliases are resolved in ConfigPatch.
+        if let raw = interfaces.optionalString("operating_mode"),
+           let mode = OperatingMode(rawValue: raw.trimmingCharacters(in: .whitespaces).lowercased()) {
+            cfg.operatingMode = mode
+        } else {
+            cfg.operatingMode = Self.migratedOperatingMode(
+                processedAudioOutput: interfaces.bool("processed_audio_output", defaultValue: false),
+                processedAudioTarget: interfaces.string("processed_audio_target", defaultValue: "fm_coder"))
+        }
         cfg.processingBypass = mpx.bool("processing_bypass", defaultValue: cfg.processingBypass)
         cfg.testToneMode = mpx.string("test_tone_mode", defaultValue: cfg.testToneMode)
         cfg.testToneFreq = mpx.double("test_tone_freq", defaultValue: cfg.testToneFreq)
@@ -924,6 +1015,10 @@ struct AppConfig: Equatable {
             "processed_audio_final_clip_drive_db", defaultValue: cfg.processedAudioFinalClipDriveDB)
         cfg.processedAudioCeilingDBTP = mpx.double(
             "processed_audio_ceiling_dbtp", defaultValue: cfg.processedAudioCeilingDBTP)
+        cfg.amPreemphasisUS = mpx.int("am_preemphasis_us", defaultValue: cfg.amPreemphasisUS)
+        cfg.amLowpassHz = mpx.double("am_lowpass_hz", defaultValue: cfg.amLowpassHz)
+        cfg.amPositivePeakPct = mpx.double(
+            "am_positive_peak_pct", defaultValue: cfg.amPositivePeakPct)
         cfg.bs412Enabled = mpx.bool("bs412_enabled", defaultValue: cfg.bs412Enabled)
         cfg.bs412ThresholdDB = mpx.double(
             "bs412_threshold_db", defaultValue: cfg.bs412ThresholdDB)
@@ -1223,8 +1318,9 @@ struct AppConfig: Equatable {
         dcClipperCancelFreqHz = max(500.0, min(4000.0, dcClipperCancelFreqHz))
         processedAudioFinalClipDriveDB = max(0.0, min(12.0, processedAudioFinalClipDriveDB))
         processedAudioCeilingDBTP = max(-6.0, min(0.0, processedAudioCeilingDBTP))
-        processedAudioTarget =
-            processedAudioTarget.lowercased() == "digital" ? "digital" : "fm_coder"
+        amPreemphasisUS = amPreemphasisUS == 0 ? 0 : 75
+        amLowpassHz = max(3_000.0, min(10_000.0, amLowpassHz))
+        amPositivePeakPct = max(100.0, min(125.0, amPositivePeakPct))
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
@@ -1448,6 +1544,9 @@ struct AppConfig: Equatable {
             "processed_audio_coder_has_clipper = \(Self.boolString(processedAudioCoderHasClipper))",
             "processed_audio_final_clip_drive_db = \(Self.formatFloat(processedAudioFinalClipDriveDB))",
             "processed_audio_ceiling_dbtp = \(Self.formatFloat(processedAudioCeilingDBTP))",
+            "am_preemphasis_us = \(amPreemphasisUS)",
+            "am_lowpass_hz = \(Self.formatFloat(amLowpassHz))",
+            "am_positive_peak_pct = \(Self.formatFloat(amPositivePeakPct))",
             "bs412_enabled = \(Self.boolString(bs412Enabled))",
             "bs412_threshold_db = \(Self.formatFloat(bs412ThresholdDB))",
             "bs412_window_seconds = \(Self.formatFloat(bs412WindowSeconds))",
@@ -1546,8 +1645,7 @@ struct AppConfig: Equatable {
             "[INTERFACES]",
             "source_mode = \(sourceMode)",
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
-            "processed_audio_output = \(Self.boolString(processedAudioOutput))",
-            "processed_audio_target = \(processedAudioTarget)",
+            "operating_mode = \(operatingMode.rawValue)",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             // sample_rate was read but never written (a non-default rate
             // vanished on the first autosave); persisted since the remote

@@ -50,7 +50,7 @@ perfectly fine as code. Only measurement found them.
 The macOS GUI is organised into these sections. The Linux build has no GUI -- the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing incl. the Format Profile picker, RDS, Audio I/O, Test Tone, Presets with the shared 8 operator preset slots), so the two front ends feel the same.
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
-- `Audio I/O` (0.50): input / MPX output / monitor device pickers, the Operating Mode (MPX Composite / Processed Audio / Monitor), engine format, and the level calibration -- Input Gain, MPX Output Level, Line Output with a live DAC Peak readout -- remembered **per device** and recalled when you switch rigs
+- `Audio I/O` (0.50): input / MPX output / monitor device pickers, the Operating Mode (MPX / FM / HD / AM Output, plus the Monitor switch), engine format, and the level calibration -- Input Gain, MPX Output Level, Line Output with a live DAC Peak readout -- remembered **per device** and recalled when you switch rigs
 - `Processing`: Overview, Format Profile, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), experimental single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, PrimeBass (+ Mono Bass), Bass Clipper, DC Clipper, HF Limiter / Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control, and the experimental SSB Stereo encoder (SSB-leaning stereo encoding) on top of the soft-clipper), BS.412, Final Stage
 - `RDS`: status (master enable + live snapshot), identity (PI / PTY / PTYN / ECC + PS banks + runtime flags TP / TA / MS / DI), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (injection level + frequency + Gaussian shaping)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level where 0 dBFS = 100% audio modulation -- a calibration source that bypasses the processing and shows the expected deviation; replaces the audio input live when enabled, Cmd-T)
@@ -81,7 +81,7 @@ Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
 - Broadcast preset picker for AGC/final-stage tuning (`Balanced Music`, `CHR / Dance`, `Punchy Music`, `Speech / Talk`)
 - Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
 - Decoded MPX monitor output on a selectable monitor device
-- **Processed-audio output mode** (Audio I/O - Operating Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
+- **Four operating modes** (Audio I/O - Operating Mode), one choice for what leaves the output device: **MPX Output** (the FM composite), **FM Output** (processed stereo L/R for an external stereo coder + RDS encoder, for transmitters that only accept L/R / AES3), **HD Output** (flat full-bandwidth L/R with a true-peak ceiling, for streaming or DAB+ / AAC) and **AM Output** (mono, NRSC pre-emphasis and band limit, asymmetric positive-peak headroom). Every stage with no function in the selected mode is switched off and hidden -- outside MPX Output no composite, pilot or RDS is generated at all -- in the app and on the web dashboard alike.
 - Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; the dashboard shows live meters/readouts and exposes the scope/spectrum data via `GET /api/telemetry` for external tooling -- no in-browser graphs)
 - **Remote control** -- an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build. Since 0.44 the dashboard has **full parity with the native GUI**: every setting, station formats + final-stage presets, the 8 operator preset slots (shared with the GUI), and a scope/spectrum telemetry endpoint for external tooling
 - **Linux command-line build** (experimental): the encoder runs headless with ALSA output, SIMD-accelerated so the full chain fits low-power hardware; shipped as Debian/Ubuntu packages with a systemd service. No GUI, no Meter.
@@ -148,18 +148,25 @@ MPX Prime Studio drives its main output device in one of two modes, chosen in
 **Audio I/O -> Operating Mode** (restart-required). What you need from your hardware
 depends on which you use:
 
-- **MPX Composite** (default) -- the finished FM multiplex: mono sum + 38 kHz
+- **MPX Output** (default) -- the finished FM multiplex: mono sum + 38 kHz
   stereo subcarrier + 19 kHz pilot + optional 57 kHz RDS, for a transmitter /
   exciter that accepts a composite ("MPX" / "wideband" / baseband) input.
   **Needs a 192 kHz output device** so the ~59 kHz upper RDS sideband stays below
   Nyquist. A 96 kHz device can carry stereo but **not** RDS.
-- **Processed Audio** -- the processed stereo **L/R** audio only (no pilot /
+- **FM Output** -- the processed stereo **L/R** audio only (no pilot /
   subcarrier / RDS / composite clipper / BS.412), for transmitters that accept
   only L/R analog or AES3 audio and have their own stereo coder + RDS encoder.
   **48 kHz / 24-bit is all you need** -- the high composite sample rates do not
   apply. Pre-emphasis is selectable (apply it here, or stay flat if the coder
-  does), with an optional final loudness clipper. See the
-  [Operator Guide](docs/studio-operator-guide.md#processed-audio-instead-of-mpx).
+  does), with an optional final loudness clipper.
+- **HD Output** -- flat, full-bandwidth L/R for a stream encoder or a digital
+  radio box (DAB+, AAC): no pre-emphasis, no image protection, peaks held at a
+  true-peak ceiling (-1 dBTP by default, -2 ahead of a codec).
+- **AM Output** -- a mono AM transmitter feed: L+R summed ahead of the chain,
+  NRSC pre-emphasis and band limit, and asymmetric positive-peak headroom
+  (positive to 125 % while the negative peak stays the calibrated 100 %).
+
+  See the [Operator Guide](docs/studio-operator-guide.md#operating-modes).
 
 A separate, optional **Decoded Monitor** output (any sample rate) demodulates the
 internal composite back to L/R for headphone monitoring on a second device -- a
@@ -177,7 +184,7 @@ listening aid, not the on-air signal.
   - *MPX Composite with RDS:* an external USB / Thunderbolt interface that runs
     **192 kHz** natively. Built-in Mac audio tops out at 96 kHz, which cannot
     carry the 57 kHz RDS subcarrier; 96 kHz can do stereo-without-RDS.
-  - *Processed Audio (feeding an external coder):* **48 kHz / 24-bit is
+  - *FM / HD / AM Output (feeding an external coder, encoder or AM rig):* **48 kHz / 24-bit is
     sufficient** -- built-in audio or any interface works.
 - The output device's format in Audio MIDI Setup must match the configured
   `sample_rate`, or Core Audio's implicit resampling starves the render thread.

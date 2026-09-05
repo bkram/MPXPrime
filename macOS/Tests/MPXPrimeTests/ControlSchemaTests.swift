@@ -135,6 +135,58 @@ struct ControlSchemaTests {
                 "page keys without a widget (would render as nothing): \(dropped)")
     }
 
+    @Test func everyModesListUsesTheOperatingModeVocabulary() throws {
+        // A typo in a `modes` list hides a control forever, silently, in one
+        // mode only -- the kind of defect nobody finds by clicking around.
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let valid = Set(AppConfig.OperatingMode.allCases.map(\.rawValue))
+        var checked = 0
+
+        func check(_ modes: Any?, _ owner: String) {
+            guard let modes = modes as? [String] else { return }
+            checked += 1
+            #expect(!modes.isEmpty, "\(owner) carries an empty modes list, so it can never be shown")
+            let unknown = Set(modes).subtracting(valid).sorted()
+            #expect(unknown.isEmpty, "\(owner) lists unknown operating modes: \(unknown)")
+        }
+
+        let model = root["model"] as? [String: Any] ?? [:]
+        check(model["rdsModes"], "model.rdsModes")
+        check(model["monitorModes"], "model.monitorModes")
+        for page in (model["stages"] as? [[String: Any]] ?? []) {
+            check(page["modes"], "stage \(page["id"] ?? "?")")
+        }
+        for (key, widget) in (root["schema"] as? [String: [String: Any]] ?? [:]) {
+            check(widget["modes"], "widget \(key)")
+        }
+        #expect(checked > 5, "expected the mode gating to be present in the schema; checked \(checked)")
+    }
+
+    @Test func modeGatedWidgetsMatchTheChainFeatureTable() throws {
+        // The dashboard and the native GUI must hide the same things: the
+        // schema's `modes` lists are the web copy of `ChainFeature`, so they
+        // are compared against it rather than maintained by eye.
+        let schema = try loadSchema()
+        let expected: [String: ChainFeature] = [
+            "preemphasis_us": .preemphasis,
+            "processed_audio_ceiling_dbtp": .digitalCeiling,
+            "processed_audio_coder_has_clipper": .coderFinalClipper,
+            "processed_audio_final_clip_drive_db": .coderFinalClipper,
+            "am_preemphasis_us": .amShaping,
+            "am_lowpass_hz": .amShaping,
+            "am_positive_peak_pct": .amShaping,
+            "monitor_enabled": .monitorPath
+        ]
+        for (key, feature) in expected {
+            let modes = schema.widgets[key]?["modes"] as? [String] ?? []
+            #expect(modes == feature.modes,
+                    "widget \(key) is gated to \(modes) but \(feature) applies in \(feature.modes)")
+        }
+    }
+
     @Test func everyWidgetHasAValidKindAndSliderBounds() throws {
         let schema = try loadSchema()
         for (key, w) in schema.widgets {

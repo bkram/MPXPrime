@@ -103,11 +103,11 @@ final class MPXPrimeViewModel: ObservableObject {
     /// gating of composite/RDS surfaces). Reflects the persisted config value.
     var processedAudioOutputActive: Bool { config.processedAudioOutput }
 
-    /// A sidebar stage is hidden when processed-audio output is active and the
-    /// stage only makes sense in the composite domain (RDS, composite clipper,
-    /// BS.412). See `Stage.hiddenInProcessedAudio`.
+    /// A sidebar stage is shown only where it configures something with a
+    /// function in the current operating mode (`ChainFeature`): no composite
+    /// means no stereo coder, composite clipper, BS.412, final stage or RDS.
     func isStageVisible(_ stage: Stage) -> Bool {
-        !(processedAudioOutputActive && stage.hiddenInProcessedAudio)
+        stage.applies(in: config.operatingMode)
     }
 
     /// If the current selection points at a stage hidden by the active output
@@ -1787,9 +1787,8 @@ final class MPXPrimeViewModel: ObservableObject {
         let outputID: AudioDeviceID? = outputDevices.first(where: { $0.uid == selectedOutUID })?.id
         let outputMode: AudioOutputMode
         switch resolved {
-        case .processedAudio: outputMode = .processedAudio
         case .monitor: outputMode = .monitorAudio
-        case .composite: outputMode = .mpxComposite
+        case .output(let mode): outputMode = mode.isAudioOutput ? .processedAudio : .mpxComposite
         }
 
         // REFUSE to start when a PREFERRED device is unplugged, instead of
@@ -1859,8 +1858,7 @@ final class MPXPrimeViewModel: ObservableObject {
             }
             activeRuntimeSnapshot = captureRuntimeSnapshot()
             engineStartReference = Date().timeIntervalSinceReferenceDate
-            let mode = resolved == .processedAudio
-                ? "processed-audio" : (useMonitor ? "monitor" : "output")
+            let mode = useMonitor ? "monitor" : runConfig.operatingMode.rawValue
             var line =
                 "Running source=\(runConfig.sourceMode) mode=\(mode) "
                 + "render=\(Int(engine.renderSampleRate))Hz hw=\(Int(engine.hardwareSampleRate))Hz"

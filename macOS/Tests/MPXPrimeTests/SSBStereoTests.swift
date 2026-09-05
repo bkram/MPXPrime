@@ -137,6 +137,10 @@ struct SSBStereoTests {
         var base = AppConfig()
         base.sampleRate = Double(sampleRate)
         base.sourceMode = "input"
+        // RDS OFF: the text scheduler paces by WALL CLOCK, so two generators
+        // rendered in the same loop can emit different bits on a busy machine
+        // (the documented offline-comparison rule in AGENTS.md).
+        base.enRDS = false
 
         var tweaked = base
         tweaked.ssbStereoEnabled = false

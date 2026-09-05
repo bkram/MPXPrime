@@ -11,6 +11,43 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **One operating mode with four values, and every stage gated on it.**
+  `operating_mode` (`[INTERFACES]`, default `mpx`, restart-class) replaces the
+  `processed_audio_output` + `processed_audio_target` pair: **MPX Output**
+  (composite), **FM Output** (L/R for an external stereo coder), **HD Output**
+  (streaming / DAB+) and the new **AM Output**. Pre-0.50 INIs migrate on load
+  and the REST API still accepts both old keys, resolving them onto the mode at
+  the boundary so storage keeps one spelling.
+  What has no function in the selected mode is now switched OFF, not just
+  hidden -- the operator's report was that a processed-audio box still ran an
+  RDS encoder into a composite nobody generated and still polled the Now
+  Playing script for it every few seconds. Outside MPX Output the RDS encoder
+  is inert whatever `en_rds` says, the poller does not poll, and the SSB stereo
+  option cannot reach the chain. The applicability rules are ONE table
+  (`ChainFeature`, `Control/StageApplicability.swift`) read by the engine, the
+  GUI sidebar, the dashboard schema and the tests, replacing a per-stage flag
+  in the GUI, a copy of the same list in JavaScript and hand-written
+  `if !digital` checks in the Audio I/O tab. Widget-level gating means a
+  control with no function in the mode is not rendered at all, in either
+  interface.
+- **AM Output.** A mono transmitter feed: L+R are summed ahead of the chain so
+  every stage levels the signal that goes on air, NRSC-1 pre-emphasis
+  (`am_preemphasis_us`, 75 us or flat) and band limit (`am_lowpass_hz`,
+  3-10 kHz) shape it, and `am_positive_peak_pct` (100-125, live) gives the
+  asymmetric headroom 47 CFR 73.1570 allows: the NEGATIVE peak is held at
+  100/pct of full scale as the calibrated 100 % reference while positive peaks
+  use the rest. The same peak guard the HD ceiling uses does it, with separate
+  ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
+  checked against a modulation monitor on a real AM transmitter.
+- **The dashboard no longer asks before bypassing processing.** It is a
+  deliberate engineer's action and the button turns red.
+- **An unrecognised command-line argument is now a usage error (exit 64).**
+  It used to be ignored, which meant `MPXPrime "--verify --seconds 5"` -- one
+  quoted argument, as a shell that does not word-split produces -- silently
+  started the LIVE GUI ENCODER instead of the offline verifier, grabbed the
+  audio devices, and reported success. Found the hard way while running the
+  0.50 gates.
+
 - **Processed audio can target streaming / DAB instead of an FM coder.**
   `processed_audio_target` (`[INTERFACES]`, default `fm_coder`, restart-class)
   picks the shape of the processed-audio feed; `digital` takes the FM-only

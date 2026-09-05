@@ -232,6 +232,7 @@ final class MPXGenerator {
         let processedAudioCoderHasClipper: Bool
         let processedAudioFinalClipDriveDB: Float
         let processedAudioCeilingDBTP: Float
+        let amPositivePeakPct: Float
         let bs412Enabled: Bool
         let bs412ThresholdDB: Float
         let bs412WindowSeconds: Float
@@ -367,6 +368,7 @@ final class MPXGenerator {
             processedAudioCoderHasClipper: config.processedAudioCoderHasClipper,
             processedAudioFinalClipDriveDB: Float(config.processedAudioFinalClipDriveDB),
             processedAudioCeilingDBTP: Float(config.processedAudioCeilingDBTP),
+            amPositivePeakPct: Float(config.amPositivePeakPct),
             bs412Enabled: config.bs412Enabled,
             bs412ThresholdDB: Float(config.bs412ThresholdDB),
             bs412WindowSeconds: Float(config.bs412WindowSeconds),
@@ -395,8 +397,10 @@ final class MPXGenerator {
     /// frequency, Gaussian shaping FIR, RDS injection level) — those
     /// touch DSP allocation and stay restart-only.
     struct RDSRuntimeConfig: Equatable {
-        // Master + injection
-        let enabled: Bool
+        // Master + injection. `var` only so the engine can gate it off in a
+        // mode that carries no composite (see `applyRDSRuntimeConfig`); the
+        // factory never varies it by mode.
+        var enabled: Bool
 
         // Identification
         let pi: Int
@@ -528,6 +532,21 @@ final class MPXGenerator {
     /// False for every composite render, so the FM chain is untouched by
     /// construction. Seeded at init like `audioOutputOnly`; restart-class.
     private let digitalDelivery: Bool
+
+    /// The operating mode this engine was built for. Restart-class and seeded
+    /// at construction like `audioOutputOnly`, so every mode-conditional branch
+    /// reads one immutable value and the composite path cannot be reached from
+    /// a non-MPX mode by construction.
+    private let operatingMode: AppConfig.OperatingMode
+
+    /// AM Output: mono sum in, NRSC shaping, asymmetric peak headroom out.
+    private var amDelivery: Bool { operatingMode == .am }
+
+    /// Linear ceiling for the NEGATIVE half of the AM feed. 47 CFR 73.1570
+    /// allows positive peaks to 125 % while the negative side stays at 100 %,
+    /// so the negative side is held at 100/pct of full scale and the operator
+    /// calibrates the transmitter so THAT reads 100 % modulation.
+    private var amNegativeCeiling: Float = 0.8
     /// True-peak ceiling for the digital target, linear. The pre-encode
     /// limiter is already a 4x oversampled true-peak limiter, so mapping its
     /// threshold onto this value IS the ceiling; live-apply.
@@ -1055,10 +1074,15 @@ final class MPXGenerator {
         // meaning ahead of a codec, and with it gone the HF limiter has no
         // boost to ride and the encoder HF guard disables itself. The INI value
         // is untouched, so switching back to the FM-coder target restores it.
-        let digital = config.processedAudioDigitalDelivery
+        let mode = config.operatingMode
+        self.operatingMode = mode
+        let digital = mode == .hd
+        let am = mode == .am
         self.digitalDelivery = digital
-        self.preemphasisUS = digital ? 0 : config.preemphasisUS
-        self.encoderHFGuardEnabled = !digital && config.preemphasisUS > 0
+        // AM rides the NRSC curve (75 us or flat), chosen by its own key: the
+        // FM pre-emphasis picker has no function on an AM feed.
+        self.preemphasisUS = digital ? 0 : (am ? config.amPreemphasisUS : config.preemphasisUS)
+        self.encoderHFGuardEnabled = !digital && !am && config.preemphasisUS > 0
         self.toneFreq = Float(config.testToneFreq)
         self.toneMode = config.testToneMode.lowercased()
         self.toneType = config.testToneType.lowercased()
@@ -1076,7 +1100,12 @@ final class MPXGenerator {
         self.limitEnabled = config.limitMPX
         self.threshold = clampf(Float(config.limitThreshold), 0.5, 0.999)
         self.deviationScale = Float(config.mpxDeviationKHz / 75.0)
-        self.programLowpassHz = Float(config.programLowpassHz)
+        // AM narrows the program band to its own bandwidth key (NRSC-1 is
+        // 10 kHz; narrower is common). Everything downstream reads this one
+        // value, so no stage needs an AM branch of its own.
+        self.programLowpassHz = am
+            ? Float(min(config.programLowpassHz, config.amLowpassHz))
+            : Float(config.programLowpassHz)
 
         self.widebandAGCEnabled = config.widebandAGCEnabled
         self.widebandAGCTargetDB = Float(config.widebandAGCTargetDB)
@@ -1200,6 +1229,7 @@ final class MPXGenerator {
             powf(10.0, clampf(Float(config.processedAudioFinalClipDriveDB), 0.0, 12.0) / 20.0)
         self.processedAudioCeiling =
             powf(10.0, clampf(Float(config.processedAudioCeilingDBTP), -6.0, 0.0) / 20.0)
+        self.amNegativeCeiling = 100.0 / clampf(Float(config.amPositivePeakPct), 100.0, 125.0)
 
         self.bs412Enabled = config.bs412Enabled
         self.bs412ThresholdDB = clampf(Float(config.bs412ThresholdDB), -20.0, 0.0)
@@ -1213,7 +1243,12 @@ final class MPXGenerator {
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
         self.compositeClipperOversampling = config.compositeClipperOversampling
+        // SSB leaning is a property of the stereo ENCODER; there is no
+        // encoder outside MPX Output, so the flag never reaches the chain in
+        // another mode (it also stops the Hilbert FIRs from being allocated
+        // for a subcarrier nobody generates).
         self.ssbStereoEnabled = config.ssbStereoEnabled
+            && ChainFeature.stereoCoder.applies(in: mode)
         self.ssbStereoAmount = clampf(Float(config.ssbStereoAmount), 0.0, 1.0)
 
         // Processed-audio output mode, seeded from config at construction so
@@ -2135,7 +2170,8 @@ final class MPXGenerator {
             powf(10.0, clampf(config.processedAudioFinalClipDriveDB, 0.0, 12.0) / 20.0)
         processedAudioCeiling =
             powf(10.0, clampf(config.processedAudioCeilingDBTP, -6.0, 0.0) / 20.0)
-        truePeakGuard.ceiling = processedAudioCeiling
+        amNegativeCeiling = 100.0 / clampf(config.amPositivePeakPct, 100.0, 125.0)
+        truePeakGuard.ceiling = digitalDelivery ? processedAudioCeiling : 1.0
 
         // BS.412
         let bs412Changed =
@@ -2210,6 +2246,7 @@ final class MPXGenerator {
         let ssbStereoAmountChanged =
             fabsf(ssbStereoAmount - config.ssbStereoAmount) > 0.0001
         ssbStereoEnabled = config.ssbStereoEnabled
+            && ChainFeature.stereoCoder.applies(in: operatingMode)
         ssbStereoAmount = clampf(config.ssbStereoAmount, 0.0, 1.0)
         if ssbStereoToggled || (ssbStereoEnabled && !ssbStereoConfigured) {
             configureSSBStereo()
@@ -2268,8 +2305,15 @@ final class MPXGenerator {
         rdsCoder?.currentLiveSnapshot()
     }
 
+    /// RDS exists only where a composite carries it (`ChainFeature.rds`). The
+    /// gate lives HERE, on the engine's own immutable mode, and NOT in
+    /// `RDSRuntimeConfig.make`: the runtime planes must stay mode-free because
+    /// `ConfigPatch` derives its dispositions by diffing them, and a mode
+    /// change is restart-class, not a live RDS edit.
     func applyRDSRuntimeConfig(_ config: RDSRuntimeConfig) {
-        rdsCoder?.applyRDSRuntimeConfig(config)
+        var gated = config
+        if !ChainFeature.rds.applies(in: operatingMode) { gated.enabled = false }
+        rdsCoder?.applyRDSRuntimeConfig(gated)
     }
 
     private func makeEncoderComplianceConfig() -> EncoderComplianceConfig {
@@ -2968,7 +3012,7 @@ final class MPXGenerator {
     /// clipper of its own (otherwise we would double-clip).
     @inline(__always)
     private var processedAudioFinalClipActive: Bool {
-        audioOutputOnly && !processedAudioCoderHasClipper && !digitalDelivery
+        audioOutputOnly && !processedAudioCoderHasClipper && !digitalDelivery && !amDelivery
     }
 
     /// Drive the L/R into the final loudness clipper (drive pre-gain sets density;
@@ -3005,9 +3049,18 @@ final class MPXGenerator {
     /// program, +1.4 dB on clicks -- not a margin's job).
     private static let processedAudioTruePeakMarginDB: Float = 0.1
 
+    /// The output peak guard: a true-peak ceiling for HD Output, and the
+    /// asymmetric positive/negative pair for AM Output. Both are gain rides on
+    /// the same reconstruction detector -- neither clips.
     private func configureTruePeakGuard(sampleRate: Float) {
-        truePeakGuard.configure(sampleRate: sampleRate, ceilingLinear: processedAudioCeiling,
-                                lookaheadMS: 2.0, enabled: digitalDelivery)
+        if amDelivery {
+            truePeakGuard.configure(sampleRate: sampleRate, ceilingLinear: 1.0,
+                                    ceilingNegativeLinear: amNegativeCeiling,
+                                    lookaheadMS: 2.0, enabled: true)
+        } else {
+            truePeakGuard.configure(sampleRate: sampleRate, ceilingLinear: processedAudioCeiling,
+                                    lookaheadMS: 2.0, enabled: digitalDelivery)
+        }
     }
 
     /// Test-visible duty of the digital true-peak guard (dB of gain ride).
@@ -3015,6 +3068,20 @@ final class MPXGenerator {
 
     @inline(__always)
     private func audioOnlyOutputMakeup() -> Float {
+        if amDelivery {
+            // Normalise the limiter's ceiling onto FULL SCALE -- the positive
+            // bound -- and let the guard hold the negative side at
+            // 100/pct. Normalising onto the negative bound instead would cap
+            // both halves there and the asymmetry could never be used: the
+            // pre-encode limiter bounds |x| symmetrically, so positive peaks
+            // have to be allowed above the negative ceiling to exist at all.
+            // Symmetric program still lands symmetric (the guard rides both
+            // halves down together); only positive-heavy program -- speech,
+            // most single-instrument material -- uses the extra room.
+            guard preEncodeAudioLimiterEnabled else { return outputGain }
+            let limiterCeiling = oversampledLimiterCeiling(threshold: preEncodeThreshold)
+            return outputGain / max(0.1, limiterCeiling)
+        }
         if digitalDelivery {
             // Map the true-peak limiter's threshold onto the configured dBTP
             // ceiling instead of onto full scale: a codec wants headroom, not
@@ -3049,8 +3116,14 @@ final class MPXGenerator {
         guard frameCount > 0 else { return }
         let makeup = audioOnlyOutputMakeup()
         let finalClip = processedAudioFinalClipActive
+        let mono = amDelivery
+        let guardActive = digitalDelivery || amDelivery
         for i in 0..<frameCount {
-            let audio = processAudioDomain(leftIn: left[i], rightIn: right[i])
+            // AM is a mono service: sum FIRST so every stage downstream levels,
+            // compresses and limits the signal that actually goes on air.
+            let inL = mono ? (left[i] + right[i]) * 0.5 : left[i]
+            let inR = mono ? inL : right[i]
+            let audio = processAudioDomain(leftIn: inL, rightIn: inR)
             var l = audio.left
             var r = audio.right
             if finalClip {
@@ -3060,7 +3133,7 @@ final class MPXGenerator {
             }
             var madeUpL = l * makeup
             var madeUpR = r * makeup
-            if digitalDelivery {
+            if guardActive {
                 (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
             }
             let outL = clampf(madeUpL, -1.0, 1.0)
@@ -3116,7 +3189,7 @@ final class MPXGenerator {
             }
             var madeUpL = pl * makeup
             var madeUpR = pr * makeup
-            if digitalDelivery {
+            if digitalDelivery || amDelivery {
                 (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
             }
             let outL = clampf(madeUpL, -1.0, 1.0)
@@ -3312,7 +3385,7 @@ final class MPXGenerator {
 
         // Stereo-image protection is an FM deviation / multipath guard: a
         // digital carrier has neither, so the full image goes to the encoder.
-        if !audioStagesBypassed && !digitalDelivery {
+        if !audioStagesBypassed && !digitalDelivery && !amDelivery {
             let protected = protectStereoImage(
                 inputL: stereo.referenceLeft,
                 inputR: stereo.referenceRight,

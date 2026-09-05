@@ -27,15 +27,29 @@ import Foundation
 /// (chain review A1b), applied to L/R with a reconstruction-aware detector.
 ///
 /// Real-time safe: every buffer is allocated in `configure`.
+///
+/// The ceilings are SEPARATE per polarity so the same stage serves the AM
+/// Output mode, where 47 CFR 73.1570 allows positive peaks to 125 % while
+/// negative peaks must stay at 100 % -- there the negative ceiling sits
+/// 100/125 of full scale and the positive one at full scale, and asymmetric
+/// program (speech, most music with a dominant polarity) uses the extra
+/// positive room instead of being pulled down to the symmetric bound.
 struct StereoTruePeakGuard {
     private(set) var enabled: Bool = false
-    /// Linear ceiling the interpolated peak is held to.
-    var ceiling: Float = 0.891_25
+    /// Linear ceiling the interpolated POSITIVE peak is held to.
+    var ceiling: Float = 0.891_25 {
+        didSet { if symmetric { ceilingNegative = ceiling } }
+    }
+    /// Linear ceiling for the NEGATIVE peak. Equal to `ceiling` unless the
+    /// caller configured an asymmetric pair.
+    private(set) var ceilingNegative: Float = 0.891_25
+    private var symmetric: Bool = true
 
     private var interpL = LinearPhaseFIRInterpolator()
     private var interpR = LinearPhaseFIRInterpolator()
     private var osL = [Float](repeating: 0, count: 4)
     private var osR = [Float](repeating: 0, count: 4)
+    private var windowMaxNegative = SlidingWindowMax()
     private var delayL: [Float] = []
     private var delayR: [Float] = []
     private var writeIndex: Int = 0
@@ -59,9 +73,16 @@ struct StereoTruePeakGuard {
     ///     least the interpolator's own group delay plus one sample, because
     ///     the estimate for a sample enters the window that late and must
     ///     still be inside it when the sample leaves the delay line.
-    mutating func configure(sampleRate: Float, ceilingLinear: Float, lookaheadMS: Float = 2.0, enabled: Bool) {
+    ///   - ceilingNegativeLinear: ceiling for the negative half. Defaults to
+    ///     the positive one (a true-peak ceiling is symmetric); AM Output
+    ///     passes a lower value to buy positive-peak headroom.
+    mutating func configure(sampleRate: Float, ceilingLinear: Float,
+                            ceilingNegativeLinear: Float? = nil,
+                            lookaheadMS: Float = 2.0, enabled: Bool) {
         self.enabled = enabled
+        self.symmetric = ceilingNegativeLinear == nil
         self.ceiling = clampf(ceilingLinear, 0.05, 1.0)
+        self.ceilingNegative = clampf(ceilingNegativeLinear ?? ceilingLinear, 0.05, 1.0)
         let sr = max(8_000.0, sampleRate)
         // 4x reconstruction detector: passband to 0.45 fs, 60 dB stopband,
         // transition 0.1 fs -- short enough (tens of taps per phase) that the
@@ -80,6 +101,7 @@ struct StereoTruePeakGuard {
             writeIndex = 0
         }
         windowMax.configure(windowLength: lookaheadSamples + 1)
+        windowMaxNegative.configure(windowLength: lookaheadSamples + 1)
         let attackS = Float(lookaheadSamples) / (4.0 * sr)
         attackCoeff = expf(-1.0 / (max(1e-5, attackS) * sr))
         releaseCoeff = expf(-1.0 / (0.1 * sr))
@@ -92,6 +114,7 @@ struct StereoTruePeakGuard {
         for i in 0..<delayL.count { delayL[i] = 0; delayR[i] = 0 }
         writeIndex = 0
         windowMax.reset()
+        windowMaxNegative.reset()
         gain = 1.0
         holdCounter = 0
     }
@@ -102,18 +125,26 @@ struct StereoTruePeakGuard {
 
         // Reconstruction-aware detector: the largest interpolated magnitude
         // on either channel for the sample just pushed.
-        var peak: Float = 0
+        var peakPositive: Float = 0
+        var peakNegative: Float = 0
         osL.withUnsafeMutableBufferPointer { o in
             // swiftlint:disable:next force_unwrapping
             interpL.push(left, into: o.baseAddress!)
-            for i in 0..<4 { peak = max(peak, fabsf(o[i])) }
+            for i in 0..<4 {
+                peakPositive = max(peakPositive, o[i])
+                peakNegative = max(peakNegative, -o[i])
+            }
         }
         osR.withUnsafeMutableBufferPointer { o in
             // swiftlint:disable:next force_unwrapping
             interpR.push(right, into: o.baseAddress!)
-            for i in 0..<4 { peak = max(peak, fabsf(o[i])) }
+            for i in 0..<4 {
+                peakPositive = max(peakPositive, o[i])
+                peakNegative = max(peakNegative, -o[i])
+            }
         }
-        let peakAhead = windowMax.push(peak)
+        let positiveAhead = windowMax.push(peakPositive)
+        let negativeAhead = windowMaxNegative.push(peakNegative)
 
         let delayedL = delayL[writeIndex]
         let delayedR = delayR[writeIndex]
@@ -123,8 +154,11 @@ struct StereoTruePeakGuard {
         if writeIndex >= lookaheadSamples { writeIndex = 0 }
 
         var target: Float = 1.0
-        if peakAhead > ceiling {
-            target = ceiling / max(1e-9, peakAhead)
+        if positiveAhead > ceiling {
+            target = ceiling / max(1e-9, positiveAhead)
+        }
+        if negativeAhead > ceilingNegative {
+            target = min(target, ceilingNegative / max(1e-9, negativeAhead))
         }
         if target < gain {
             gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * target)

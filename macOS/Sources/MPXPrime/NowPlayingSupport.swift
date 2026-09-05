@@ -174,7 +174,14 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         var timeoutSeconds: Double
 
         init(config: AppConfig) {
+            // RDS metadata has no consumer outside MPX Output: there is no
+            // composite to carry it. Polling an external script every few
+            // seconds for a feed nobody transmits is exactly the kind of
+            // "still running in a mode where it has no function" the 0.50
+            // mode gating removes -- so the poller follows the mode, not just
+            // its own enable flag.
             enabled = config.rdsNowPlayingEnabled
+                && ChainFeature.rds.applies(in: config.operatingMode)
             // An empty/whitespace script means "no local script" -- keep it
             // empty. normalizeScriptPath("") would otherwise resolve to the
             // working directory (a non-empty path), which made the poller try

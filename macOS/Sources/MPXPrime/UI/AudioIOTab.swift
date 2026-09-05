@@ -38,42 +38,40 @@ struct AudioIOTab: View {
     }
 }
 
-/// One segmented control over the two stored booleans
-/// (`processed_audio_output` + `monitor_enabled` -- no new INI key): the
-/// operating mode is a single decision, not two toggles in different places.
+/// The operating mode: ONE four-way choice (`operating_mode`), with the
+/// decoded monitor as a separate listening switch beneath it because it is
+/// not an output shape. Every follow-up control shown here is one that has a
+/// function in the selected mode -- the applicability rules live in
+/// `ChainFeature`, not in this view.
 struct OperatingModeCardContent: View {
     @ObservedObject var model: MPXPrimeViewModel
 
-    private var modeBinding: Binding<AppConfig.ResolvedOutputMode> {
+    private var mode: AppConfig.OperatingMode { model.config.operatingMode }
+
+    private var modeBinding: Binding<AppConfig.OperatingMode> {
         Binding(
-            get: { model.config.resolvedOutputMode(allowMonitor: true) },
-            set: { mode in
+            get: { model.config.operatingMode },
+            set: { newMode in
+                guard newMode != model.config.operatingMode else { return }
                 let oldProcessed = model.config.processedAudioOutput
-                if model.monitorEnabled != (mode == .monitor) {
-                    model.monitorEnabled = mode == .monitor
-                    model.persistBasicConfig()
-                }
-                let processed = model.configBinding(
-                    \.processedAudioOutput, runtimeDisposition: .restart)
-                if processed.wrappedValue != (mode == .processedAudio) {
-                    processed.wrappedValue = mode == .processedAudio
-                    // The mode changes what output_gain_db MEANS, so recall
-                    // the output device's per-mode calibration and persist it.
-                    model.recallCalibrationIfDeviceChanged(
-                        oldInputUID: model.config.inputDeviceUID,
-                        oldOutputUID: model.config.outputDeviceUID,
-                        oldProcessed: oldProcessed)
-                    model.persistBasicConfig()
-                }
+                let bound = model.configBinding(\.operatingMode, runtimeDisposition: .restart)
+                bound.wrappedValue = newMode
+                // The mode changes what output_gain_db MEANS, so recall the
+                // output device's per-mode calibration and persist it.
+                model.recallCalibrationIfDeviceChanged(
+                    oldInputUID: model.config.inputDeviceUID,
+                    oldOutputUID: model.config.outputDeviceUID,
+                    oldProcessed: oldProcessed)
+                model.persistBasicConfig()
             }
         )
     }
 
     var body: some View {
         Picker(selection: modeBinding) {
-            Text("MPX Composite").tag(AppConfig.ResolvedOutputMode.composite)
-            Text("Processed Audio").tag(AppConfig.ResolvedOutputMode.processedAudio)
-            Text("Monitor").tag(AppConfig.ResolvedOutputMode.monitor)
+            ForEach(AppConfig.OperatingMode.allCases, id: \.self) { mode in
+                Text(mode.title).tag(mode)
+            }
         } label: {
             HStack(spacing: 6) {
                 Text("Mode")
@@ -81,39 +79,45 @@ struct OperatingModeCardContent: View {
             }
         }
         .pickerStyle(.segmented)
-        .help("MPX Composite: the FM multiplex (pilot + stereo + RDS) for a transmitter / exciter. Processed Audio: processed stereo L/R for an external stereo coder + RDS encoder — MPX Prime as a plain audio processor. Monitor: decode the composite back to audio on the monitor device (simulate FM listening, no transmitter). Restart required.")
+        .help("MPX Output: the FM multiplex (pilot + stereo + RDS) for a transmitter / exciter. FM Output: FM-shaped stereo L/R for an external stereo coder + RDS encoder. HD Output: processing for streaming or digital radio (DAB+, AAC) -- flat, full bandwidth, true-peak ceiling. AM Output: mono processing for an AM transmitter. Restart required.")
 
-        if model.processedAudioOutputActive {
-            Text("Emitting processed stereo L/R for an external stereo coder or streaming chain. The composite clipper, BS.412, pilot, and RDS are bypassed and hidden. Recommended output: 48 kHz / 24-bit.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Text(mode.subtitle)
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
-            Picker("Delivery", selection: model.configBinding(\.processedAudioTarget, runtimeDisposition: .restart)) {
-                Text("FM stereo coder").tag("fm_coder")
-                Text("Digital (streaming / DAB)").tag("digital")
-            }
-            .pickerStyle(.segmented)
-            Text(model.config.processedAudioDigitalDelivery
-                ? "Aimed at a stream or a DAB+ / AAC encoder: full audio bandwidth, no pre-emphasis, no image protection, and peaks held at the true-peak ceiling below instead of normalised to full scale. Restart required."
-                : "Aimed at an external FM stereo coder: band-limited under the pilot, pre-emphasised here or in the coder, image-protected, normalised to full scale. Restart required.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if model.config.processedAudioDigitalDelivery {
-                DoubleSliderRow(
-                    title: "True-peak Ceiling",
-                    value: model.configBinding(\.processedAudioCeilingDBTP, runtimeDisposition: .live),
-                    range: -6...0,
-                    format: "%.1f dBTP",
-                    tooltip: "Where peaks are held for the encoder downstream. -1.0 dBTP is the shared recommendation of EBU R128, AES TD1008 and the streaming platforms; use -2.0 when the next box is a data-reduction codec (DAB+, AAC), because lossy encoding pushes inter-sample peaks up.")
-                Text("Loudness is set upstream by the AGC target, not here: aim for about -16 LUFS for a stream, or -23 LUFS under EBU R128 for DAB.")
+        if ChainFeature.monitorPath.applies(in: mode) {
+            Toggle("Monitor: decode the composite back to audio",
+                   isOn: Binding(
+                    get: { model.monitorEnabled },
+                    set: { model.monitorEnabled = $0; model.persistBasicConfig() }))
+                .help("Auditioning switch, not an output shape: the transmitter feed is REPLACED by decoded audio on the monitor device, so you hear what an FM receiver would. Not for being on air.")
+            if model.monitorEnabled {
+                Text("The transmitter feed is REPLACED by decoded audio on the monitor device \u{2014} this mode is for auditioning the FM sound without a transmitter, not for being on air.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                Divider()
             }
+        }
 
-            if !model.config.processedAudioDigitalDelivery {
+        if ChainFeature.digitalCeiling.applies(in: mode) {
+            Divider()
+            DoubleSliderRow(
+                title: "True-peak Ceiling",
+                value: model.configBinding(\.processedAudioCeilingDBTP, runtimeDisposition: .live),
+                range: -6...0,
+                format: "%.1f dBTP",
+                tooltip: "Where peaks are held for the encoder downstream. -1.0 dBTP is the shared recommendation of EBU R128, AES TD1008 and the streaming platforms; use -2.0 when the next box is a data-reduction codec (DAB+, AAC), because lossy encoding pushes inter-sample peaks up.")
+            Text("Loudness is set upstream by the AGC target, not here: aim for about -16 LUFS for a stream, or -23 LUFS under EBU R128 for DAB.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        if ChainFeature.amShaping.applies(in: mode) {
+            Divider()
+            AMOutputControls(model: model)
+        }
+
+        if ChainFeature.preemphasis.applies(in: mode) && mode.isAudioOutput {
+            Divider()
             Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
                 Text("Off (coder applies it)").tag(0)
                 Text("50 us (EU)").tag(50)
@@ -123,11 +127,10 @@ struct OperatingModeCardContent: View {
             Text("Exactly one device may apply pre-emphasis. If your stereo coder has none (or it is switched off), pick 50/75 us here so MPX Prime applies it. If the coder applies pre-emphasis, pick Off. Never both \u{2014} two stages in series over-deviate.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
 
+        if ChainFeature.coderFinalClipper.applies(in: mode) {
             Divider()
-            }
-
-            if !model.config.processedAudioDigitalDelivery {
             Toggle("External coder has its own clipper",
                    isOn: model.configBinding(\.processedAudioCoderHasClipper, runtimeDisposition: .live))
                 .help("Same one-stage rule as pre-emphasis, for clipping. Leave ON if your stereo coder clips/limits its own input. Turn OFF only if it does not \u{2014} then MPX Prime adds a final loudness clipper so the feed is denser. Two clippers in series sound harsh.")
@@ -143,13 +146,40 @@ struct OperatingModeCardContent: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            }
         }
-        if model.config.resolvedOutputMode(allowMonitor: true) == .monitor {
-            Text("The transmitter feed is REPLACED by decoded audio on the monitor device \u{2014} this mode is for auditioning the FM sound without a transmitter, not for being on air.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    }
+}
+
+/// AM Output follow-ups: the NRSC shaping and the asymmetry an AM transmitter
+/// feed needs. Shown only in AM, where they have a function.
+struct AMOutputControls: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        Picker("AM Pre-emphasis", selection: model.configBinding(\.amPreemphasisUS, runtimeDisposition: .restart)) {
+            Text("Off (flat)").tag(0)
+            Text("75 us (NRSC)").tag(75)
         }
+        .pickerStyle(.segmented)
+        .help("NRSC-1 pre-emphasis, the curve an NRSC receiver de-emphasises. Switch it off only when the transmitter or an outboard box already applies it.")
+
+        DoubleSliderRow(
+            title: "AM Bandwidth",
+            value: model.configBinding(\.amLowpassHz, runtimeDisposition: .restart),
+            range: 3_000...10_000,
+            format: "%.0f Hz",
+            tooltip: "Audio bandwidth of the AM feed. NRSC-1 specifies 10 kHz; many stations run 4.5-6 kHz to fit the channel and the receiver. Restart required.")
+
+        DoubleSliderRow(
+            title: "Positive Peak Headroom",
+            value: model.configBinding(\.amPositivePeakPct, runtimeDisposition: .live),
+            range: 100...125,
+            format: "%.0f %%",
+            tooltip: "Asymmetric modulation: the FCC allows positive peaks to 125 % while negative peaks must stay at 100 %. At 125 the negative side is held 1.9 dB below full scale so the positive side can use the rest -- calibrate the transmitter so the negative peak reads 100 % modulation.")
+
+        Text("Mono: the AM feed is the L+R sum. Pilot, stereo subcarrier, RDS and the composite stages are not generated.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }
 

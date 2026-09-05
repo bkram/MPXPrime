@@ -276,6 +276,10 @@ struct AdvancedDynamicsTests {
         var base = AppConfig()
         base.sampleRate = 192_000.0
         base.sourceMode = "input"
+        // RDS OFF: the text scheduler paces by WALL CLOCK, so two generators
+        // rendered in the same loop can emit different bits on a busy machine
+        // (the documented offline-comparison rule in AGENTS.md).
+        base.enRDS = false
 
         var tweaked = base
         tweaked.advancedDynamicsEnabled = false
@@ -306,6 +310,10 @@ struct AdvancedDynamicsTests {
         var loud = AppConfig()
         loud.sampleRate = 192_000.0
         loud.sourceMode = "input"
+        // RDS OFF: the text scheduler paces by WALL CLOCK, so two generators
+        // rendered in the same loop can emit different bits on a busy machine
+        // (the documented offline-comparison rule in AGENTS.md).
+        loud.enRDS = false
         loud.advancedDynamicsEnabled = true
         loud.widebandAGCEnabled = true
         loud.widebandAGCTargetDB = -30.0        // extreme: would crush audio

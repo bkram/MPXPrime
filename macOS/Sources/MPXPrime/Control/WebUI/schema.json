@@ -59,6 +59,12 @@
     null
    ]
   ],
+  "monitorModes": [
+   "mpx"
+  ],
+  "rdsModes": [
+   "mpx"
+  ],
   "rds": [
    {
     "id": "rdsStatus",
@@ -601,7 +607,9 @@
    {
     "enable": "mpx_ssb_stereo_enabled",
     "help": "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. The experimental SSB Stereo option leans the 38 kHz subcarrier toward single-sideband, keeping whichever sideband currently peaks lower to reclaim composite headroom ahead of the clipper. Independent of the Composite Clipper's enable; verify with --verify-ssb-stereo and a real receiver before regular use.",
-    "hiddenInProcessedAudio": true,
+    "modes": [
+     "mpx"
+    ],
     "id": "stereoCoder",
     "keys": [
      "pilot_level",
@@ -615,7 +623,9 @@
    {
     "enable": "mpx_clipper_enabled",
     "help": "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever.",
-    "hiddenInProcessedAudio": true,
+    "modes": [
+     "mpx"
+    ],
     "id": "compositeClipper",
     "keys": [
      "mpx_clipper_enabled",
@@ -645,7 +655,9 @@
    {
     "enable": "bs412_enabled",
     "help": "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries.",
-    "hiddenInProcessedAudio": true,
+    "modes": [
+     "mpx"
+    ],
     "id": "bs412",
     "keys": [
      "bs412_enabled",
@@ -663,7 +675,9 @@
    },
    {
     "help": "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry.",
-    "hiddenInProcessedAudio": true,
+    "modes": [
+     "mpx"
+    ],
     "id": "finalStage",
     "keys": [
      "final_drive_db",
@@ -709,8 +723,10 @@
    {
     "id": "interfaces",
     "keys": [
-     "processed_audio_output",
-     "processed_audio_target",
+     "operating_mode",
+     "am_preemphasis_us",
+     "am_lowpass_hz",
+     "am_positive_peak_pct",
      "input_gain_db",
      "output_gain_db",
      "mpx_line_output_dbfs",
@@ -747,6 +763,45 @@
   ]
  },
  "schema": {
+  "am_lowpass_hz": {
+   "kind": "slider",
+   "label": "AM Bandwidth",
+   "max": 10000,
+   "min": 3000,
+   "modes": [
+    "am"
+   ],
+   "step": 100,
+   "unit": "Hz"
+  },
+  "am_positive_peak_pct": {
+   "kind": "slider",
+   "label": "Positive Peak Headroom",
+   "max": 125,
+   "min": 100,
+   "modes": [
+    "am"
+   ],
+   "step": 1,
+   "unit": "%"
+  },
+  "am_preemphasis_us": {
+   "kind": "seg",
+   "label": "AM Pre-emphasis",
+   "modes": [
+    "am"
+   ],
+   "options": [
+    [
+     "0",
+     "Off (flat)"
+    ],
+    [
+     "75",
+     "75 us (NRSC)"
+    ]
+   ]
+  },
   "advanced_dynamics_density": {
    "decimals": 2,
    "kind": "slider",
@@ -1209,6 +1264,9 @@
    "label": "Append CR"
   },
   "monitor_enabled": {
+   "modes": [
+    "mpx"
+   ],
    "kind": "toggle",
    "label": "Monitor Output"
   },
@@ -1830,6 +1888,10 @@
    "unit": ""
   },
   "preemphasis_us": {
+   "modes": [
+    "mpx",
+    "fm"
+   ],
    "kind": "seg",
    "label": "Pre-emphasis",
    "options": [
@@ -1910,6 +1972,9 @@
    "label": "Subharmonics"
   },
   "processed_audio_ceiling_dbtp": {
+   "modes": [
+    "hd"
+   ],
    "decimals": 1,
    "kind": "slider",
    "label": "True-peak Ceiling",
@@ -1919,10 +1984,16 @@
    "unit": " dBTP"
   },
   "processed_audio_coder_has_clipper": {
+   "modes": [
+    "fm"
+   ],
    "kind": "toggle",
    "label": "External coder has its own clipper"
   },
   "processed_audio_final_clip_drive_db": {
+   "modes": [
+    "fm"
+   ],
    "decimals": 1,
    "kind": "slider",
    "label": "Final Clip Drive",
@@ -1931,21 +2002,25 @@
    "step": 0.1,
    "unit": " dB"
   },
-  "processed_audio_output": {
-   "kind": "toggle",
-   "label": "Processed Audio Output (L/R to external coder)"
-  },
-  "processed_audio_target": {
+  "operating_mode": {
    "kind": "seg",
-   "label": "Delivery",
+   "label": "Operating Mode",
    "options": [
     [
-     "fm_coder",
-     "FM stereo coder"
+     "mpx",
+     "MPX Output"
     ],
     [
-     "digital",
-     "Digital (streaming / DAB)"
+     "fm",
+     "FM Output"
+    ],
+    [
+     "hd",
+     "HD Output"
+    ],
+    [
+     "am",
+     "AM Output"
     ]
    ]
   },

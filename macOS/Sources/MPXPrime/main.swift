@@ -214,7 +214,16 @@ func parseCLI() -> CLIOptions {
                 i += 1
             }
         default:
-            break
+            // An UNRECOGNISED argument is a usage error, never something to
+            // ignore. Ignoring it is how `MPXPrime "--verify --seconds 5"`
+            // (one quoted argument -- a shell that does not word-split, e.g.
+            // zsh passing an unsplit variable) silently launched the LIVE GUI
+            // ENCODER instead of the offline verifier: a debug build then
+            // pegs a core, grabs the audio devices and fails on buffers,
+            // while the caller reports a passing "gate". Fail loudly instead.
+            fputs("MPX Prime: unrecognised argument: \(arg)\n", stderr)
+            printUsage()
+            exit(64)  // EX_USAGE
         }
         i += 1
     }
@@ -464,8 +473,7 @@ do {
             config: cfg,
             inputDeviceID: inputID,
             outputDeviceID: outputID,
-            outputMode: cfg.resolvedOutputMode(allowMonitor: false) == .processedAudio
-                ? .processedAudio : .mpxComposite
+            outputMode: cfg.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite
         )
     }
 
@@ -544,8 +552,7 @@ do {
         return ALSAAudioEngine(
             generator: generator,
             config: cfg,
-            outputMode: cfg.resolvedOutputMode(allowMonitor: false) == .processedAudio
-                ? .processedAudio : .mpxComposite
+            outputMode: cfg.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite
         )
     }
     // Build the backend WITHOUT a pre-started engine, bring the control

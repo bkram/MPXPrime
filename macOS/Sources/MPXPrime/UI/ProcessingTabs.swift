@@ -56,18 +56,28 @@ struct ProcessingCoreTab: View {
                 get: { model.processingBypass },
                 set: { _ in model.toggleBypass() }
             ))
-            Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
-            Text(model.processedAudioOutputActive
-                ? "Mono Mode sums L+R to mono. The full DSP chain still runs; the processed output is identical on both channels."
-                : "Mono Mode transmits true mono composite. The full DSP chain (AGC, multiband, clippers, limiters) still runs; only the 19 kHz pilot, 38 kHz stereo subcarrier, and RDS are suppressed at composite assembly.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
-                Text("Off").tag(0)
-                Text("50 us").tag(50)
-                Text("75 us").tag(75)
+            // AM Output is mono by construction (L+R are summed ahead of the
+            // chain), so the toggle has nothing to switch there.
+            if model.config.operatingMode != .am {
+                Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
+                Text(model.processedAudioOutputActive
+                    ? "Mono Mode sums L+R to mono. The full DSP chain still runs; the processed output is identical on both channels."
+                    : "Mono Mode transmits true mono composite. The full DSP chain (AGC, multiband, clippers, limiters) still runs; only the 19 kHz pilot, 38 kHz stereo subcarrier, and RDS are suppressed at composite assembly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .pickerStyle(.segmented)
+            // Pre-emphasis: shown where it is THIS control that owns it --
+            // under MPX Output. FM Output puts the same picker on Audio I/O
+            // next to the coder-ownership question, HD forces it off, and AM
+            // has its own NRSC picker (see `ChainFeature.preemphasis`).
+            if !model.config.operatingMode.isAudioOutput {
+                Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
+                    Text("Off").tag(0)
+                    Text("50 us").tag(50)
+                    Text("75 us").tag(75)
+                }
+                .pickerStyle(.segmented)
+            }
             // Input Gain / MPX Output Level / Line Output moved to the Audio
             // I/O section (0.50): they are rig CALIBRATION, remembered per
             // device -- not part of the sound, so they left the DSP tabs.
@@ -81,7 +91,9 @@ struct ProcessingCoreTab: View {
             DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz",
                 tooltip: "Centre frequency for the HF Trim shelf above. 4 kHz default targets vocal presence and cymbal sheen.")
             DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...(model.config.processedAudioDigitalDelivery ? 20_000 : 16_000), format: "%.0f Hz",
-                tooltip: model.processedAudioOutputActive
+                tooltip: model.config.operatingMode == .am
+                    ? "Audio-bandwidth lowpass. In AM Output the narrower of this and the AM Bandwidth setting (Audio I/O) applies, so leave it wide and set the bandwidth there."
+                    : model.processedAudioOutputActive
                     ? "Audio-bandwidth lowpass on the L/R output. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM; 16 kHz default. This band-limits the feed to your external coder. Lower for narrower bandwidth (talk)."
                     : "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")
         }

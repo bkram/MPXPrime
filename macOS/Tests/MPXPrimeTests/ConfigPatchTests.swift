@@ -86,22 +86,46 @@ struct ConfigPatchTests {
         // is restart-class like the operating mode; the true-peak ceiling only
         // rescales the make-up and must hot-apply.
         var cfg = AppConfig()
-        cfg.processedAudioOutput = true
+        cfg.operatingMode = .fm
         let (target, targetOutcomes, planesA) = try ConfigPatch.apply(
-            ["processed_audio_target": "digital"], to: cfg)
+            ["operating_mode": "hd"], to: cfg)
         #expect(targetOutcomes[0].disposition == .restartRequired)
         #expect(planesA.restartRequired)
-        #expect(target.processedAudioTarget == "digital")
+        #expect(target.operatingMode == .hd)
         let (ceiling, ceilingOutcomes, planesB) = try ConfigPatch.apply(
             ["processed_audio_ceiling_dbtp": "-2.0"], to: cfg)
         #expect(ceilingOutcomes[0].disposition == .live)
         #expect(planesB.dspLive && !planesB.restartRequired)
         #expect(abs(ceiling.processedAudioCeilingDBTP - (-2.0)) < 1e-9)
-        // Out-of-range values clamp; unknown target words fall back to fm_coder.
+        // Out-of-range values clamp; an unknown mode word falls back to MPX.
         let (clamped, _, _) = try ConfigPatch.apply(["processed_audio_ceiling_dbtp": "-9.0"], to: cfg)
         #expect(abs(clamped.processedAudioCeilingDBTP - (-6.0)) < 1e-9)
-        let (bogus, _, _) = try ConfigPatch.apply(["processed_audio_target": "hd"], to: cfg)
-        #expect(bogus.processedAudioTarget == "fm_coder")
+        let (bogus, _, _) = try ConfigPatch.apply(["operating_mode": "hd-radio"], to: cfg)
+        #expect(bogus.operatingMode == .mpx)
+    }
+
+    @Test func preZeroFiftyModeKeysStillPatch() throws {
+        // The REST API keeps accepting the two keys `operating_mode` replaced,
+        // in either order and with or without the other, so an old client and
+        // an old script keep working.
+        let cfg = AppConfig()
+        let (fm, fmOutcomes, _) = try ConfigPatch.apply(
+            ["processed_audio_output": "True"], to: cfg)
+        #expect(fm.operatingMode == .fm)
+        #expect(fmOutcomes[0].key == "processed_audio_output")
+        #expect(fmOutcomes[0].disposition == .restartRequired)
+
+        let (hd, _, _) = try ConfigPatch.apply(
+            ["processed_audio_output": "True", "processed_audio_target": "digital"], to: cfg)
+        #expect(hd.operatingMode == .hd, "a combined legacy patch must land on HD whatever the key order")
+
+        var fmCfg = cfg
+        fmCfg.operatingMode = .fm
+        let (hd2, _, _) = try ConfigPatch.apply(["processed_audio_target": "digital"], to: fmCfg)
+        #expect(hd2.operatingMode == .hd, "the target alone must move an already-processed mode")
+
+        let (back, _, _) = try ConfigPatch.apply(["processed_audio_output": "False"], to: fmCfg)
+        #expect(back.operatingMode == .mpx)
     }
 
     @Test func sampleRateClassifiesRestart() throws {

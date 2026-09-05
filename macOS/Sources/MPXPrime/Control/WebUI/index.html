@@ -241,16 +241,18 @@ async function loadConfig() {
   for (const sec of Object.values(sections)) Object.assign(cfg, sec);
 }
 
-/* Processed-audio output mode: no composite is generated, so composite-only
-   pages (RDS, Composite Clipper, BS.412, Final Stage) hide -- mirroring the
-   GUI's hiddenInProcessedAudio. Driven by the CONFIG flag (intent), matching
-   the GUI's sidebar behavior. */
-const isProcessedAudio = () => isTrue(cfg.processed_audio_output);
+/* Operating mode gating. Nothing is shown that has no function in the
+   selected mode: pages and individual widgets carry a `modes` list in the
+   schema (absent = every mode), generated from the SAME ChainFeature table
+   the native GUI and the engine read. Driven by the CONFIG value (intent),
+   so the dashboard follows a mode change before the restart. */
+const currentMode = () => (cfg.operating_mode || "mpx");
+const inCurrentMode = (modes) => !modes || modes.indexOf(currentMode()) >= 0;
 const pageHiddenInMode = (id) => {
-  if (!isProcessedAudio()) return false;
-  if (MODEL.rds.some(p => p.id === id)) return true;
+  const rds = MODEL.rds.find(p => p.id === id);
+  if (rds) return !inCurrentMode(rds.modes || MODEL.rdsModes);
   const st = MODEL.stages.find(x => x.id === id);
-  return !!(st && st.hiddenInProcessedAudio);
+  return !!(st && !inCurrentMode(st.modes));
 };
 
 /* ---------------- sidebar ---------------- */
@@ -281,12 +283,13 @@ function renderSidebar() {
   add('<div class="shead">Processing</div>');
   nav.appendChild(navItem("overview", "Overview"));
   for (const s of MODEL.stages) {
-    if (isProcessedAudio() && s.hiddenInProcessedAudio) continue;
+    if (!inCurrentMode(s.modes)) continue;
     nav.appendChild(navItem(s.id, s.title, s.enable, s.bypassedWhen));
   }
-  if (!isProcessedAudio()) {
+  const rdsPages = MODEL.rds.filter(p => inCurrentMode(p.modes || MODEL.rdsModes));
+  if (rdsPages.length) {
     add('<div class="shead">RDS</div>');
-    for (const p of MODEL.rds) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
+    for (const p of rdsPages) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
   }
   add('<div class="shead">Tools</div>');
   for (const p of MODEL.tools) nav.appendChild(navItem(p.id, p.title));
@@ -375,6 +378,10 @@ function textRow(key) {
 function controlFor(key) {
   const def = SCHEMA[key];
   if (!def) return null;
+  /* One choke point for widget-level mode gating: a control with no function
+     in this mode is not rendered anywhere (stage pages, Audio I/O cards,
+     preset panels all come through here). */
+  if (!inCurrentMode(def.modes)) return null;
   if (def.kind === "toggle") return checkRow(key);
   if (def.kind === "slider") return sliderRow(key);
   if (def.kind === "seg") return segRow(key);
@@ -390,17 +397,18 @@ function card(keys, extraEl) {
   if (extraEl) el.appendChild(extraEl);
   return el;
 }
-let lastProcessedAudioMode = null;
+let lastOperatingMode = null;
 function syncAll() {
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el._sync && el.dataset.key in cfg) el._sync(cfg[el.dataset.key]);
   });
-  const mode = isProcessedAudio();
-  if (lastProcessedAudioMode !== null && mode !== lastProcessedAudioMode) {
+  const mode = currentMode();
+  if (lastOperatingMode !== null && mode !== lastOperatingMode) {
     renderSidebar();
     if (pageHiddenInMode(currentPage)) showPage("monitoring");
+    else if (currentPage) showPage(currentPage);   // re-render: widget visibility follows the mode
   }
-  lastProcessedAudioMode = mode;
+  lastOperatingMode = mode;
   refreshSidebarDots();
   updateBypassButton();
 }
@@ -798,8 +806,10 @@ function renderInterfaces(c, p) {
   mon.innerHTML =
     '<div class="row"><div class="rlabel">Monitor Device</div><select id="devMon" style="max-width:340px"></select></div>';
   mon.appendChild(card(["monitor_enabled"]));
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
-  c.appendChild(mon);
+  if (inCurrentMode(MODEL.monitorModes)) {
+    c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
+    c.appendChild(mon);
+  }
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Mode & Levels" }));
   c.appendChild(card(p.keys));
   c.appendChild(Object.assign(document.createElement("div"),
@@ -896,12 +906,12 @@ async function pollStatus() {
     $("cRun").parentElement.classList.toggle("green", s.running);
     $("cSource").textContent = s.sourceMode === "tone" ? "Test Tone" : deviceName(deviceInfo?.selectedInput, "inputs");
     $("cRate").textContent = (s.sampleRateHz/1000).toFixed(0) + " kHz";
-    $("cMode").textContent = s.outputMode === "processedAudio" ? "AUDIO"
-      : (s.outputMode === "monitorAudio" ? "MONITOR" : "COMPOSITE");
+    const MODE_LABEL = { mpx: "MPX", fm: "FM", hd: "HD", am: "AM", monitor: "MONITOR" };
+    $("cMode").textContent = MODE_LABEL[s.outputMode] || String(s.outputMode || "").toUpperCase();
     // A stopped engine with a note (e.g. missing audio device) takes
     // priority in the warning cell -- it is why the operator is here.
     const note = (!s.running && s.notes && s.notes.length) ? s.notes[0] : null;
-    const rateWarn = isTrue(cfg.en_rds) && s.sampleRateHz < 192000 && s.outputMode !== "processedAudio";
+    const rateWarn = isTrue(cfg.en_rds) && s.sampleRateHz < 192000 && s.outputMode === "mpx";
     if (note) {
       $("cWarnCell").hidden = false;
       $("cWarnCell").querySelector(".k").textContent = "Engine";
@@ -995,9 +1005,10 @@ function updateBypassButton() {
   b.className = on ? "red" : "";
 }
 $("btnBypass").onclick = async () => {
+  /* No confirmation: bypass is a deliberate engineer's action, the button
+     turns red and the status bar shows BYPASS. (Operator ruling 2026-09-05:
+     "just do it, trust the engineer".) */
   const on = isTrue(cfg.processing_bypass);
-  if (!on && statusInfo?.running &&
-      !confirm("Bypass ALL processing? Unprocessed audio goes to air after the engine restarts.")) return;
   await patchKey("processing_bypass", on ? "False" : "True", true);
   updateBypassButton();
   if (statusInfo?.running) {

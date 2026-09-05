@@ -157,7 +157,7 @@ that the mode resolver, the generator and both front ends all read.
 | Pre-emphasis 50/75 us + HF limiter (rides the boost only) + HF clipper | `PreemphasisFilter`, `HFLimiter`, `HFClipper` | FM transmission curve | Force `preemphasis_us = 0`; the HF limiter then has zero boost to ride (idle); hide the pre-emphasis picker and the HF Limiter / Clipper tab |
 | Stereo-image protector (`configureStereoImage`, `processStereoImageStage`: limits side/mid expansion) | `MPXGenerator.swift` | deviation and multipath on FM | Bypass (digital carries the full image); Mono Bass stays available as a taste control |
 | Output make-up normalises the limiter ceiling to full scale (peaks ~0 dBFS) | `audioOnlyOutputMakeup` | analog / AES3 feed to a coder with its own clipper | Replace by a true-peak CEILING (default -1 dBTP; EBU R128 s1 / streaming platforms); no normalisation |
-| Optional processed-audio final clipper (`processed_audio_coder_has_clipper = False`) | `processedAudioFinalClipper` | FM loudness when the coder has no clipper | Not offered (clipping into a codec costs quality); key ignored, control hidden |
+| Optional processed-audio final clipper (`processed_audio_coder_has_clipper = False`) | `processedAudioFinalClipper` | FM loudness when the coder has no clipper | Keep the control, give digital its own drive value defaulting to OFF (Thimeo ships a separate "Web/HD/DAB clipper drive" because streams want far less clipping than FM); the true-peak limiter is the peak controller |
 | AGC target / multiband drive / Format Profiles tuned for FM density | `PresetCatalog` | competitive FM loudness | New profile "Digital -- Streaming / DAB": gentler drive, AGC target chosen for a LUFS goal, PrimeBass off |
 | Pre-encode limiter: 4x oversampled true-peak with tanh ceiling, look-ahead | `StereoLinkedOversampledPeakLimiter` | generic | KEEP -- it is already a true-peak limiter; its threshold becomes the ceiling |
 | No loudness readout (AGC shows dB K-weighted "dBLU") | `WidebandAGCRider` uses `KWeightingFilter` | FM meters are deviation | Add EBU R128 momentary / short-term / integrated LUFS + true-peak max readouts for this target (reuse `KWeightingFilter`; gating per ITU-R BS.1770-4) |
@@ -166,13 +166,85 @@ Everything else in the audio-domain chain (input gain, HPF, AGC, PEQ,
 multiband / Advanced Dynamics, expander, MB limiter, PrimeBass, bass / DC
 clippers, mono bass) is codec-agnostic and stays.
 
+### How the established processors do it (web research 2026-09-05)
+
+Checked against Orban, Telos/Omnia, Thimeo and the loudness recommendations,
+to see whether "a target inside Processed Audio" is the right shape and what
+the defaults should be. Sources at the end of this subsection.
+
+- **Everyone splits the chain, and they split it late.** Orban's 8600 runs the
+  digital-radio path from after the AGC, giving the HD chain its own EQ and
+  five-band settings, then its own peak limiter; the analog FM path keeps
+  pre-emphasis, the composite limiter and composite clipping, which the HD
+  path does not have at all. Omnia.11 describes the same shape as a "parallel
+  HD processing path with its own final mixer and look-ahead limiter".
+  CONFIRMS our design: everything up to the multiband is codec-agnostic and
+  shared; what changes is the final stage.
+- **The digital path is 20 kHz and flat.** Orban states 20 kHz audio bandwidth
+  and no pre-emphasis on the HD chain. CONFIRMS lifting the 16 kHz clamp and
+  forcing `preemphasis_us = 0`.
+- **Peak control becomes true-peak look-ahead limiting, not clipping.** Orban
+  predicts true peak "to an accuracy of better than 0.5 dB" on the HD path to
+  protect the D/A in playback devices; Omnia sells "ultra-low-distortion
+  look-ahead final limiting optimized for HD and other lossy codecs".
+  CONFIRMS reusing our existing 4x oversampled true-peak limiter as the
+  ceiling, rather than the FM-style clipper.
+- **CORRECTION -- do not hide the final clipper, give it a lower drive.**
+  Thimeo exposes a separate "Web/HD/DAB clipper drive" precisely because
+  "audio for FM needs to be clipped much harder than streams". So digital gets
+  its own drive value, defaulting to OFF, instead of the control disappearing:
+  an operator who wants a little density on a stream should not have to switch
+  the delivery target to get it.
+- **CORRECTION -- the ceiling default needs a codec caveat.** -1 dBTP is the
+  common recommendation (EBU R128, AES TD1008, and every major streaming
+  platform), so it stays our default, but EBU production guidance asks for
+  -2 dBTP ahead of a data-reduction codec, because lossy encoding pushes
+  inter-sample peaks up. The manual must say: -1 for a linear feed, -2 when
+  the next box is a DAB+ or AAC encoder.
+- **CORRECTION -- name the loudness targets properly.** AES TD1008 recommends
+  DELIVERING -16 LUFS for music, -18 for speech, -17 where one chain carries
+  both; EBU R128 broadcast (the DAB case in Europe) is -23 LUFS. The -14 LUFS
+  figure that circulates for Spotify / YouTube / Tidal is a PLAYBACK
+  normalisation level, not a delivery spec, and the Digital Format Profile
+  should not chase it. Profile aims at -16 with the AGC target, and the manual
+  gives -23 for EBU-compliant DAB.
+- **GAP we are not closing in v1: codec conditioning.** All three vendors
+  pre-condition audio for the encoder -- Omnia's "Sensus" analyses content and
+  adapts processing for the target encoder, Thimeo has a "Prepare for lossy
+  compression (MP3/AAC/OGG)" mode built on a pre/de-emphasis pair around the
+  codec, and the published patent art describes estimating quantisation
+  artifacts before encoding. We do none of this, and it is a genuine
+  difference in kind, not degree. v1 scope stays: leave the codec real
+  headroom (the true-peak ceiling) and stop clipping into it. Record
+  codec conditioning as a separate future item, gated on being able to
+  MEASURE artifacts (encode the verifier scenarios through an AAC encoder and
+  score the decode) rather than shipping a knob on faith.
+- **Deliberate limitation to document: no simultaneous FM + digital.** The
+  vendors run both chains at once, with up to 12 s of diversity delay to
+  align an HD1 stream against the analog signal. One MPX Prime instance emits
+  one thing; an operator who needs both runs two instances. Diversity delay is
+  out of scope.
+
+Sources: Orban OPTIMOD 8600 in-depth description
+(<https://www.orban.com/indepth-optimodfm8600>), Telos Alliance Omnia.11
+(<https://telosalliance.com/radio-processing/radio-processors/omnia11>) and
+Omnia VOLT HD-Pro (<https://bgs.cc/omnia-volt-hd-pro/>), Thimeo Stereo Tool
+documentation on limiting and clipping
+(<https://www.thimeo.com/documentation/limiting_and_clipping.html>),
+EBU R 128 (<https://tech.ebu.ch/docs/r/r128.pdf>), AES TD1008
+(<https://aes2.org/wp-content/uploads/2024/01/20210924_TD1008_v3.13.pdf>),
+Telos Alliance on streaming loudness
+(<https://docs.telosalliance.com/docs/understanding-loudness-for-streaming-audio>).
+
 ### Design
 
 - **One new INI key** `processed_audio_target = fm_coder | digital` (`[INTERFACES]`,
   default `fm_coder` so every existing INI is unchanged; restart-class like the
   operating mode because it changes filtering and the make-up). **One new level
   key** `processed_audio_ceiling_dbtp` (`[MPX]`, default -1.0, range -6..0,
-  live-apply; only read for the digital target). Both get a schema.json widget
+  live-apply; only read for the digital target -- -1 dBTP matches EBU R128 /
+  AES TD1008 / the streaming platforms, and the manual tells operators to use
+  -2 when the next box is a DAB+ or AAC encoder). Both get a schema.json widget
   (`ControlSchemaTests`), and `installationPreservedKeysBySection` gains the
   target (it is wiring, like the mode).
 - **Resolver**: `AppConfig.resolvedOutputMode` stays three-valued; a new
@@ -208,8 +280,10 @@ clippers, mono bass) is codec-agnostic and stays.
 - **Format Profile** "Digital -- Streaming / DAB" (`PresetCatalog`): AGC
   target -18, multiband `5_jazz`-class intensity light, PrimeBass off, bass
   clipper off, HF limiter irrelevant, drive low; documented as a starting
-  point for -16 LUFS (streaming) with a note on -23 LUFS (DAB / EBU R128)
-  via the AGC target. Profiles are FM-tuned today, so this is the first
+  point for -16 LUFS music / -17 mixed (AES TD1008 DELIVERY levels) with a
+  note on -23 LUFS for EBU R128 DAB, set via the AGC target. The -14 LUFS
+  figure quoted for Spotify / YouTube is a playback normalisation level, not
+  a delivery target, and the profile deliberately does not chase it. Profiles are FM-tuned today, so this is the first
   non-FM one; `FormatProfileTests` pin its keys.
 
 ### Verification (metric-first, per AGENTS.md)

@@ -88,3 +88,31 @@ jobs:
         run: |
           macOS/.build/release/MPXPrime --verify --seconds 5
           macOS/.build/release/MPXPrime --verify --baseline-strict
+
+  # Documentation lint: every tracked Markdown file passes markdownlint with
+  # the repo config (.markdownlint-cli2.jsonc) and every intra-repo link /
+  # heading anchor resolves. Docs are part of "done" (AGENTS.md); the
+  # `markdown-lint` skill documents the rules and the fix workflow.
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: markdownlint
+        run: npx --yes markdownlint-cli2
+
+      - name: Intra-doc anchors
+        run: python3 scripts/check-doc-anchors.py
+
+      - name: ASCII-only docs
+        run: |
+          set -e
+          bad=$(git ls-files '*.md' '**/*.md' | grep -vE '^documents/' | xargs grep -lP '[^\x00-\x7F]' || true)
+          if [ -n "$bad" ]; then echo "non-ASCII characters in: $bad"; exit 1; fi

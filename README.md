@@ -190,7 +190,6 @@ After the first approval, MPX Prime Studio launches normally on subsequent runs.
 
 If you would rather skip the Gatekeeper dialog entirely, build from source (see [docs/BUILDING.md](docs/BUILDING.md)) -- locally built binaries are not subject to the same check.
 
-
 ## Documentation
 
 - [docs/manual.md](docs/manual.md) -- **MPX Prime Studio manual**: usage, first-time setup, configuration, RDS text, monitoring windows, verification, and the RDS PI/ECC + PTY reference tables
@@ -204,7 +203,6 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 ## References
 
 - Standards PDFs and notes live in `documents/` (EN 50067 / IEC 62106-2 / IEC 62106-6 / UECP SPB 490 / ITU-R BS.450)
-
 
 ## Acknowledgements
 

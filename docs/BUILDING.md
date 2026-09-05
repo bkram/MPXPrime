@@ -280,6 +280,34 @@ of opt-in bug-catcher rules (force unwrapping, `first(where:)`, unowned
 captures, ...); the style rules that fight intentional DSP patterns are
 disabled. CI runs it with `--strict`.
 
+## Documentation lint and proofreading
+
+Every tracked Markdown file must pass `markdownlint` with the repo config
+(`.markdownlint-cli2.jsonc`: all rules on except line length, sibling-only
+duplicate headings, table padding), every intra-repo link and heading anchor
+must resolve, and docs are ASCII-only (AGENTS.md); the CI `docs` job enforces
+all three on every push. From the repo root:
+
+```bash
+npx --yes markdownlint-cli2            # lint all tracked .md (Node from Homebrew; nothing installed in the repo)
+npx --yes markdownlint-cli2 --fix      # auto-fix blank-line / list-marker findings first
+python3 scripts/check-doc-anchors.py   # relative links + #anchors (GitHub slug rules)
+```
+
+English is proofread with LanguageTool (`brew install languagetool`; Java):
+
+```bash
+scripts/check-english.sh docs/manual.md README.md   # Markdown prose (code, links and tables stripped first)
+scripts/check-english.sh --ui                       # the apps' operator-facing strings (scripts/extract-ui-strings.py)
+scripts/check-english.sh --all                      # everything
+```
+
+Spelling hits on project vocabulary are filtered through
+`scripts/english-dictionary.txt`; add a word there only when it is a real
+term, never to hide a typo. The two Claude Code skills in `.claude/skills/`
+(`markdown-lint`, `proofread-english`) carry the rules and the fix workflow;
+they are checked in so every contributor and agent gets the same checks.
+
 ## Release build and DMG
 
 Build a universal release app bundle and DMG:

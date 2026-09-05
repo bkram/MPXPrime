@@ -1,5 +1,9 @@
 # MPX Prime Roadmap
 
+<!-- markdownlint-disable MD025 -->
+<!-- Planning document: several deliberate top-level parts (roadmap, open
+     work, guardrails), each a `#` heading so they read as separate papers. -->
+
 Active work list + anti-rework guardrails. **Not** a readme: positioning, architecture, and build live in `README.md` / `docs/ARCHITECTURE.md` / `docs/BUILDING.md`; shipped-feature history lives in `CHANGELOG.md`. Don't re-plan shipped work as pending -- cross-check CHANGELOG before acting.
 
 ## Status
@@ -629,13 +633,15 @@ Analysis of a third-party processor's press release (loudness/cleanliness claims
 
 ## Code-quality priorities
 
-**P0 -- confidence/safety**
+### P0 -- confidence/safety
+
 1. Deterministic primitive tests: Biquad/BiquadCascade6/LR4/Lagrange/FIR decimator (`FilterPrimitiveTests`), AGC envelope (`AGCDetectorTests`), and Preemphasis/Deemphasis (`PreemphasisFilterTests`, added v.037) are all covered. Remaining low-value gaps only: an isolated M/S encode round-trip (algebra is trivial; chain separation tests already exercise it) and a focused bypass-null contract (the `DeepDSPTests` "Silence" input already covers it at chain level). Effectively done.
 2. Fix verifier bandwidth metric so RDS doesn't skew occupied-width (`bright_dense` occ999 reads differently with `en_rds` on/off). NOTE: this is a metric *redefinition* (exclude the 57 kHz RDS band from the occupied-width / above-60k/67k power sums), not an active bug -- the threshold + baseline already account for RDS. Cascades into 3 baselined bandwidth fields -> recapture. Decide the metric's intended meaning (audio-only width vs total composite) before doing it.
 3. **DONE.** Render-path scratch growth already guarded: `ensureMonitorScratchCapacity`/`ensureAnalysisScratchCapacity` carry an `assertionFailure` debug trap + release-only graceful grow, `recordObservedRenderFrames`/`maxObservedRenderFrameCount` track the max off the render path, and `preAllocateBuffers` sizes to ~100 ms (>> any CoreAudio block).
 4. **DONE (v.037 + already).** Stored receiver baseline landed (`receiver.json`, `--verify-receiver --baseline-strict`). `postInjectionOvershoot > 0` is already a hard fail (`naturalResult = 2`) on the composite path.
 
 **P1 -- modularization** (MPXPrimeCore is the forcing function; companion-app needs the same boundaries)
+
 - `MPXPrimeCore` target landed: `MPXDecoder` + DSP primitives (Biquad/BiquadCascade6/DeemphasisFilter) + symmetric `RDSStreamDecoder`. Hot `process()` is `@inlinable` so it still inlines across the module boundary.
 - Remaining: extract the RDS subcarrier front-end (57 kHz mixdown -> biphase symbol+clock recovery -> differential decode) feeding `RDSStreamDecoder`, and an `MPXAnalysisTap`/FFT helper; split `MPXGenerator.swift` into stage files; split `AudioOutputEngine.swift` by concern; split `SwiftUIControlApp.swift` one-card-per-file; reduce engine/config/generator/UI coupling.
 
@@ -658,6 +664,7 @@ The GUI HIG/professional/usability/accessibility pass landed on develop/v.037 (s
 2. **EON (14A/14B)** -- linked-network PI/PS/AF/TP/TA mirroring across PSNs. ~3-5 d.
 3. **Multi-PSN / Data Sets** -- per-PSN `RDSRuntimeConfig`, boundary switchover without PI flap. ~1 wk, builds on UECP.
 4. **Ops: SNMP MIB + watchdog + time-of-day scheduler + on-air loopback verify.** ~2-3 wk.
+
 - Deferred standards item: Group 15A UTF-8 Long PS toggle bit (IEC 62106-2:2018 sec. 6.8; ASCII Long PS is correct for amateur use today).
 
 ## Shipped (was future here) -- see CHANGELOG for detail
@@ -668,7 +675,7 @@ The GUI HIG/professional/usability/accessibility pass landed on develop/v.037 (s
 - **Linux CLI port** of the encoder: headless `--nogui` into ALSA, all
   `--verify*` / `--bench`, SIMD acceleration shim (SSE2; full FIR + 16x
   clipper chain fits a Celeron J4105 at ~92% CPU), Debian/Ubuntu packages
-  + systemd service, per-platform strict baseline. Delivered ALSA-only
+  - systemd service, per-platform strict baseline. Delivered ALSA-only
   (no JACK / no `AudioBackend` protocol abstraction -- the render-callback
   contract is shared via the existing engine entry points).
 - **REST API + embedded web dashboard** (remote control, both platforms):

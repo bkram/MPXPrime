@@ -1,0 +1,31 @@
+// markdownlint-cli2 configuration for every Markdown file in the repo.
+// Run:  npx --yes markdownlint-cli2            (whole repo, honours the globs below)
+//       npx --yes markdownlint-cli2 --fix      (auto-fix blank-line / list-style findings)
+// The `markdown-lint` skill (.claude/skills/markdown-lint) documents the rules
+// and the house conventions (ASCII only, anchors checked by
+// scripts/check-doc-anchors.py).
+{
+  "config": {
+    "default": true,
+    // Prose is written in paragraphs and the manuals carry long tables and
+    // long shell commands; hard-wrapping at 80 would hurt more than help.
+    "MD013": false,
+    // CHANGELOG and the manuals repeat the same sub-heading under different
+    // parents (per version / per app); only sibling duplicates are errors.
+    "MD024": { "siblings_only": true },
+    // Table cell padding is left to the author (mixed compact / aligned
+    // tables exist and both render fine).
+    "MD060": false,
+    // Fenced code blocks must declare a language (`text` for plain output).
+    "MD040": true,
+    // Inline HTML: none is used deliberately; keep the rule on.
+    "MD033": true
+  },
+  "globs": [
+    "**/*.md",
+    "!**/.build/**",
+    "!**/node_modules/**",
+    "!tuner/build*/**",
+    "!documents/**"
+  ]
+}

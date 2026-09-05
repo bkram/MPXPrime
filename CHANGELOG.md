@@ -11,6 +11,22 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Docs lint, anchor check and English proofreading as tooling + skills.**
+  `.markdownlint-cli2.jsonc` (all rules except line length, sibling-only
+  duplicate headings and table padding) plus a CI `docs` job that runs
+  `markdownlint-cli2`, `scripts/check-doc-anchors.py` (every relative link
+  and heading anchor, GitHub slug rules) and an ASCII-only check over every
+  tracked Markdown file. The whole doc set was brought to zero findings
+  (fenced-block languages, blank lines around headings / lists, one H1 per
+  file, no bare bold pseudo-headings, no inline HTML; the two files that
+  deliberately break a rule say why in a local disable comment).
+  `scripts/check-english.sh` proofreads Markdown prose (code, links, tables
+  stripped) or the apps' operator-facing strings (`scripts/extract-ui-strings.py`
+  pulls SwiftUI labels, tooltips, help text, preset summaries and dashboard
+  schema titles) with LanguageTool, filtered through
+  `scripts/english-dictionary.txt`. Two checked-in Claude Code skills,
+  `.claude/skills/markdown-lint` and `.claude/skills/proofread-english`,
+  carry the rules and the fix workflow for every contributor and agent.
 - **RDS text: typographic punctuation is folded to ASCII, not sent as `?`.**
   Field report 2026-09-05: a Now Playing title carrying a Unicode apostrophe
   variant (U+2019) went on air as `?`. `transliterateRDSText` only knew a
@@ -653,7 +669,7 @@ combination test suite. Newest first.
   block while the UI kept saying "Recording"; the recorder now exposes
   `failureReason`, the view model polls it each tick (before the occlusion
   gate -- recording continues while the window is covered) and stops with
-  "Recording stopped: <why>". Also: stopping or replacing a recording no
+  "Recording stopped: `<why>`". Also: stopping or replacing a recording no
   longer finalizes the file on the main thread while holding the lock the
   analysis thread needs (a slow-disk flush there could overflow the input
   ring -- the click class the recorder was built to prevent), and a
@@ -791,7 +807,7 @@ combination test suite. Newest first.
   adjacent bands carried different gains. Each crossover now gets its own
   transition (equal to its frequency, floored at 120 Hz), the design is
   centred so -6 dB lands exactly AT the crossover (Kaiser puts it at cutoff
-  + transition/2; the old design sat above the nominal frequency), the
+  - transition/2; the old design sat above the nominal frequency), the
   stopband is 40 dB (vendor crossovers are 12-24 dB/oct), and the kernels
   are zero-padded to one shared length so every band still shares one group
   delay and the bands still sum to the delayed input at -156 dB. Measured
@@ -2237,7 +2253,7 @@ hardening, and RDS/RT+ correctness + guidance work.
   now-playing must appear in an RT message via `{artist}`/`{title}` macros.
   Station identity belongs in PS / Long PS.
 - **Cog now-playing poller.** New `scripts/cog-nowplaying.sh` reads the current
-  track from Cog (https://github.com/losnoco/cog) via its AppleScript
+  track from Cog (<https://github.com/losnoco/cog>) via its AppleScript
   dictionary, mirroring the VLC poller's output contract. Both pollers now gate
   on `pgrep` (a pure process check that sends no Apple events) so they never
   launch the player when it is not running. Both example scripts ship in the
@@ -2312,6 +2328,7 @@ Second same-day hotfix for an Intel-only "white noise after a couple of songs" b
 Apple Silicon's NEON / AMX handle denormals at full speed so the failure mode is invisible there -- only the production Intel install reproduced it.
 
 **Fix.** New `MPXPrimeNative` C target (Swift can't write MXCSR / FPCR control registers directly). Exposes `mpx_enable_flush_to_zero()`:
+
 - **x86_64**: MXCSR FTZ (bit 15) + DAZ (bit 6) via `_MM_SET_FLUSH_ZERO_MODE` / `_MM_SET_DENORMALS_ZERO_MODE` from the SSE / SSE3 platform headers.
 - **arm64**: FPCR FZ (bit 24) via `mrs` / `msr` inline asm. Defensive on Apple Silicon (NEON handles denormals fine) but keeps behaviour consistent across architectures.
 
@@ -2343,6 +2360,7 @@ When a FIR's 14.9 kHz cutoff is designed at `fcNorm = 14.9 / 96 = 0.0776` (targe
 **Why the 0.30 verifier suite missed it.** `--verify-receiver` tested stereo separation at 1 / 10 / 14 kHz via the internal `MPXDecoder`, which itself runs deemphasis + bandwidth-limiting filters that masked the encoder-side HF loss. The receiver-decoded "Wanted" levels matched the off baseline within 0.3 dB -- looked clean. But the encoder-side audio composite was missing all HF; the receiver was deemphasizing an already-deemphasized signal and finding nothing where the deemphasis curve put it. The HF amplitude response of the audio chain *itself* was never measured.
 
 **Regression guard.** New `DualRateHFResponseTests` with two default-on (not env-gated) tests:
+
 - `dualRateOnMatchesOffInAudioPassbandWithProductionFIR` -- sweep 1 / 2 / 4 / 8 / 10 / 12 kHz with encoder FIR enabled (production default), fail if delta vs boundary-off exceeds +/-0.5 dB.
 - `dualRateOnMatchesOffNearEncoderCutoff` -- same at 13 / 14 / 15 kHz with +/-2.5 dB tolerance (closer to FIR rolloff).
 
@@ -2455,6 +2473,7 @@ First infrastructure step of the dual-rate refactor (plan.md "Next up" #1). The 
 `CompositeClipper` was hardcoded at 16x oversampling since post-0.29. It is now configurable to 8 / 16 / 32 via the new `mpx_clipper_oversampling` INI key (default 16, preserves shipping behaviour) and a segmented picker in the Composite Clipper inspector.
 
 Why each option exists:
+
 - **16x (default)** matches Optimod 8X00 / Omnia.11 / Stereotool industry practice. Sweet spot -- pick this unless there is a specific reason to deviate.
 - **8x** halves this stage's CPU cost. Gives up ~6 dB alias suppression at hot drives -- measurable but almost never audible on amateur program. The right answer when CPU headroom is the constraint (older Intel Macs, Pi-class hardware).
 - **32x** doubles this stage's CPU cost. Adds ~6 dB further alias suppression -- Omnia.9-class spec-sheet number, mostly visible in measurement rather than audible. For operators who want the maximum-quality knob defended and have the CPU to spend.
@@ -2462,6 +2481,7 @@ Why each option exists:
 Restart-required (changes FIR decimator tap count, Lagrange interpolator step count, and per-host batch buffer sizes). `CompositeClipper.factor` is now an instance var assigned in `configure()`. Per-host batch buffers default-size to 32 (the supported maximum) so swapping to a smaller factor shrinks them without reallocating, and bumping back up is also non-allocating after first configure. `RuntimeConfig` carries the field so the live-apply structural-change detector picks up a mismatch (defense-in-depth -- the UI uses `.restart` disposition so the engine fully rebuilds on change).
 
 Measured cost on M1 Pro (release, full chain, 192 kHz):
+
 - 8x:  35.1% of real-time (-6.2 pp vs 16x)
 - 16x: 41.3% of real-time  (reference)
 - 32x: 53.5% of real-time (+12.2 pp vs 16x)
@@ -2481,6 +2501,7 @@ Purpose: capture a durable "before dual-rate" baseline (plan.md "Next up" #1) so
 Top-of-Processing-Overview Format Profile picker that atomically applies a coherent bundle of multiband + final-stage + PrimeBass + stereo widener + composite-clipper settings per programming format. One-click "make this sound right for my format" -- operator picks the format, downstream stages all receive matching settings. Per-stage knobs remain editable after; the profile is a cosmetic label that stays selected until the operator picks a different one.
 
 Eight format profiles ship:
+
 - **Community Radio** (default) -- `5_ac` light + `balanced` + no PrimeBass + `safe_fm` + +4 dB drive
 - **Pop / Adult Contemporary** -- `5_ac` normal + `balanced` + PrimeBass `ac` + `open_music` + +6 dB
 - **CHR / Top 40** -- `5_chr` normal + `chr` + PrimeBass `chr` + `wide_chr` + +8 dB
@@ -2493,6 +2514,7 @@ Eight format profiles ship:
 The "Community Radio" default produces a chain state equivalent to the shipping defaults (regression-guarded by `defaultProfileMatchesShippingDefaults` test) so the new default is a rename, not a behavioural change at first install. Closes "Next up #3" in plan.md (open since 0.26). All eight profiles reuse the existing per-stage preset IDs -- no new multiband / final-stage / PrimeBass / widener entries.
 
 New surface:
+
 - `MPXPrimeViewModel.FormatProfile` struct + `formatProfiles` static catalogue + `applyFormatProfile(_:)` + `formatProfileBinding()` + `currentFormatProfileSummary`
 - `AppConfig.formatProfileID` (INI key `format_profile_id`, default `community_radio`)
 - `ProcessingOverviewGrid` picker card above the existing stage grid
@@ -2719,6 +2741,7 @@ All three exceed plan.md "Next up -- HF separation" targets (>=35 / >=30 / >=25-
 ## 0.25 -- 2026-05-10
 
 ### DSP -- chain-order modernization
+
 - **Pre-emphasis relocated from M/S to L/R, upstream of the pre-encode limiter.** Canonical Optimod / Stereotool placement: pre-emphasis runs in L/R domain immediately before the pre-encode audio limiter, so the limiter peak-controls the +10-12 dB HF-boosted signal before composite assembly. Previously ran in M/S inside `makeCompositeComponents`, after the limiter -- HF transients flew un-peak-controlled into the composite stage. Phase 1 chain-order audit (see `macOS/.audit-out/chain_order/REPORT.md`) confirmed: C1 CPU gate PASS at 1.07x release-build ratio (b806053-class regression no longer reproducible on the current chain -- vvtanhf, vDSP_dotpr, FIR multiband, and differential composite clipper optimizations between 0.10 and 0.24 cut absolute chain cost from ~95% to ~28% of real-time); C2 sustained-load PASS over 30 s; HF guard band cleaner above 60/67 kHz on `bright_dense`, `mono_1khz`, `stereo_diff_400hz`, `wide_bass`. Renamed `preSum`/`preDiff` -> `preL`/`preR` to reflect the operating domain change.
 - **PrimeBass moved post-multiband.** Industry canonical: bass enhancers (MaxxBass / Aural Exciter / Big Bottom-class) belong after the multiband stage. Multiband no longer compresses synthesised harmonics that PrimeBass just generated. Zero verifier-baseline drift on the standard scenarios; listening confirmed the move on real program.
 - **Stereo widener moved post-multiband.** Industry canonical: a widener belongs after multiband. Multiband on a widened L/R can over-enhance side-channel differences in HF bands where compression ratios are highest. Mono bass stays inside `processStereoImageStage`. Zero verifier-baseline drift; listening confirmed.
@@ -2726,10 +2749,12 @@ All three exceed plan.md "Next up -- HF separation" targets (>=35 / >=30 / >=25-
 ## 0.24 -- 2026-05-10
 
 ### Audio I/O
+
 - **AUHAL input capture replaces the AVAudioEngine input path.** New `InputAUHAL` wrapper around a direct `kAudioUnitSubType_HALOutput` audio unit configured for input capture, replacing the second `AVAudioEngine` instance that `AudioOutputEngine.setupInputCapture` used to spin up. Closes the longstanding bug where AVAudioEngine's first `start()` with a non-default input device intermittently failed to deliver tap callbacks even though every API call returned success -- `engine.start()` ok, `capture.isRunning == true`, ring stayed at 0/N forever. The two-AUHAL pattern (separate input AU + output AVAudioEngine + ring buffer as the only bridge) is documented in TN2091 and is what professional audio apps (Stereotool, CAPlayThrough, AudioKit's non-default-device path) use on macOS. Setup follows TN2091's 11-step sequence verbatim; client format pinned to the device's native sample rate (AUHAL's built-in converter does packing/format only, NOT sample-rate conversion -- the existing adaptive cubic resampler in `StereoInputRingBuffer.readAdaptive` handles 48->192/96->192 plus clock drift). Channel selection via `kAudioOutputUnitProperty_ChannelMap` covers mono devices (`[0,0]`) and multichannel devices (`[0,1]`). Output stays on AVAudioEngine -- output side is not the bug source.
 - **Auto-start Stop+Start watchdog removed.** The 1.5 s startup stall + cycle that previously masked the AVAudioEngine first-start failure is gone -- AUHAL delivers frames immediately on cold boot. `transportInputStalled` and `cycleEngineForRecovery` deleted from the view model.
 
 ### UI
+
 - **GUI exposure of the last engine + safety-limiter knobs that were INI-only.** Two new cards close out the "every operator setting reachable from the GUI" story that started in 0.23:
   - Core tab -> "Engine -- TX path" card: `Encoder Lowpass: linear-phase FIR` (FIR vs Butterworth -- ~1.67 ms vs ~0.2 ms latency, >80 dB vs ~40 dB stop-band) and `Multiband Crossovers: linear-phase FIR` (FIR splitters vs IIR LR4 -- ~5.3 ms vs ~0.3 ms, sum-to-flat at -155 dB). Both restart-required.
   - Final Stage tab -> "Final-MPX Safety Limiter" card: `Enable Safety Limiter` (`limit_mpx`), `Threshold` (0.5..0.999), `Enable Look-Ahead`, `Look-Ahead` (0..20 ms). Restart-required.
@@ -2738,15 +2763,23 @@ All three exceed plan.md "Next up -- HF separation" targets (>=35 / >=30 / >=25-
   - **BS.412 / Composite Clipper order was reversed.** Strip showed `Lim -> BS.412 -> MPX-Clip -> Final`; actual code runs Composite Clipper *before* BS.412 in the audio-composite domain. Swapped to `Lim -> MPX-Clip -> BS.412 -> Final`.
   - **MB Limiter and Downward Expander removed from the strip.** They are *per-band* processors *inside* the multiband stage, not three serial stages -- strip was implying a sequential flow that doesn't match the code. Sidebar entries kept (operators still want their own controls cards).
 
+<!-- markdownlint-disable MD024 -->
+<!-- 0.23 .. 0.11 predate the one-heading-per-topic convention and repeat
+     Added / Changed / Fixed sub-headings inside one version; history is
+     kept verbatim rather than rewritten. -->
+
 ## 0.23 -- 2026-05-10
 
 ### Tools
+
 - **Test Tone tab -- first-class sidebar stage with Stereo Tool parity.** Engine had a sine-only generator (mono / stereo (L=-R) / left-only / right-only) wired up since 0.11 but **never surfaced in the GUI** and stuck at full-scale (1.0) amplitude -- operators couldn't run any calibration workflow. New "Tools" sidebar group with a "Test Tone" tab (Cmd-T from anywhere). Tab content: Enable toggle (live-flips the engine source from input -> tone with no restart), Type picker (Sine / Pink / White), Stereo mode picker (Mono / Stereo / Left / Right), Frequency text field + presets (50 / 100 / 400 / 1k / 5k / 10k / 12k / 15k Hz, sine only), Level slider (-60 to 0 dBFS, default -20 dBFS for broadcast line reference), and a Status grid summarising the current source / type / mode / freq / level. Tone enters the chain pre-AGC so operators can observe how the chain responds at calibrated input levels. Pink noise via Paul Kellet's 4-pole IIR (~3 dB/octave); white noise via xorshift64* uniform. New `test_tone_level_db` and `test_tone_type` INI keys; existing `test_tone_freq` / `test_tone_mode` stay. New `TestToneGeneratorTests` suite (8 tests) covers AppConfig defaults / clamps / type+mode validation, plus end-to-end render-amplitude checks at -20 dBFS and -40 dBFS through a mono-mode minimal-chain `MPXGenerator`. Default verifier baseline bit-identical to prior build (engine source defaults to `input`; Test Tone is opt-in). Pre-existing minor bug in the non-monitor tone render path (where `tonePhase` was never advanced -- generated DC silence) fixed in the same commit.
 
 ### DSP
+
 - **PrimeBass Phase 3: Werrbach Big Bottom envelope follower** (Aphex US 5,359,665, expired 2012-07-31 -- public domain; finishes the bass-enhancement patent backlog). Replaces the prior spectral-ratio detector + transient-hold machinery in `processPrimeBass` with a direct LF-level envelope follower: ~10 ms attack catches the leading edge of a kick / plucked-bass note, ~300 ms release lets the boost extend over the natural decay. Net effect per the patent: "envelope duration extension" -- same peak boost as a static gain, just held longer through the note tail. Removes ~25 lines of spectral-ratio gating (`primeBassRatioEst`, `primeBassTargetRatio`, `primeBassRatioDeadband`, `primeBassHoldRemaining`, the 1.2 s / 2.8 s post-target smoother) that tracked compositional balance over seconds and so couldn't engage on a typical drum hit before the hit was over. New `bigBottomEnvelopeAttacksFastAndReleasesSlow` test verifies the envelope's behaviour at three phases (pre-onset / sustained / post-release) via the internal `primeBassAdaptiveGain` accessor.
 
 ### UI
+
 - **Final Stage / Audio Limiter split.** The previous single "Final Stage" tab conflated the pre-encode peak limiter (a single chain slot) with three workflow controls (Broadcast Preset, Final Drive, Composite Deviation) that are not the limiter at all. Split into two stages: **"Audio Limiter"** (existing slot, `Lim` pill stays at its real chain position) carrying just the pre-encode limiter, and a new **"Final Stage"** tab (new `Final` pill at the end of the chain strip after `MPX-Clip`) carrying the workflow controls. New `Stage.processingFinalStage` case + new `ProcessingTab.finalStage`. Sidebar reset menus and chain-strip routing updated. Workflow language ("Final Stage Preset", `final_stage_preset_id`) preserved.
 - **Audio Limiter Threshold + Release exposed in GUI.** `pre_encode_threshold` (0.5..0.999 linear ceiling) and `pre_encode_release_ms` (10..200 ms) were previously INI-only; now editable as live-apply sliders on the Audio Limiter tab.
 - **Composite Clipper per-band cancellation toggles in GUI.** The four `mpx_clipper_cancel_*` flags (`audio` default off; `pilot` / `stereo` / `rds` default on) were INI-only; now exposed as live-apply toggles in the Composite Clipper card with HIG help tooltips. Operators can recover HF detail (Cancel audio band on) without editing the INI.
@@ -2757,9 +2790,11 @@ All three exceed plan.md "Next up -- HF separation" targets (>=35 / >=30 / >=25-
 - **HIG audit fixes:** three Settings buttons (`Reveal Config`, `Reload Config`, `Refresh Devices`) now have `.buttonStyle(.bordered)`; `DSPStatusPill` values are `.textSelection(.enabled)` (PI / PTY / RDS App ID codes are operator-copyable); spectrum Canvas backgrounds use `BroadcastStyle.panelInsetCornerRadius` instead of hardcoded `8`; Help window styleMask matches Settings (no `.miniaturizable` on utility windows); `UISignalFlowStrip` `.active` chip now has the `.help()` modifier the other chip cases already had; decorative connector `Rectangle()` is `.accessibilityHidden(true)` so VoiceOver narrates clean chip names. Dead `MonitoringStatusLine` removed.
 
 ### DSP
+
 - **Active meter timer reverted to 30 Hz.** The 60 Hz active rate from the adaptive-FPS work in 0.20 was real-time-capable on release builds but preempted the audio thread on debug builds, producing buffer underruns. Inline spectrum keeps the modest `12 -> 24 Hz` lift (FFT runs off-main, cheap). Adaptive on-screen / off-screen behaviour (occlusion / minimize / inactive-app gates) stays in place.
 
 ### Docs
+
 - **External 192 kHz audio interface emphasised in README.** Apple's built-in audio output on Mac laptops and most desktops tops out at 96 kHz, which cannot carry RDS (the 57 kHz subcarrier exceeds 48 kHz Nyquist). README now calls this out as effectively required for any FM-with-RDS chain in both the Requirements bullet list and the Quick Start audio-routing section.
 - **"Leave BS.412 and the Composite Clipper off when not needed" recommendation** added to README. Both stages visibly cost stereo image and HF detail when engaged; outside EU regulatory environments operators don't need BS.412 at all, and the composite clipper is a loudness lever that trades image / HF for raw level. Per-band cancel toggles documented alongside.
 - **`main` is the default branch** (was per-release `develop/v.NN`); integration branches now use `develop/v.NNN` (three digits, leading zero, e.g. `develop/v.023`).
@@ -2770,6 +2805,7 @@ All three exceed plan.md "Next up -- HF separation" targets (>=35 / >=30 / >=25-
 ## 0.21 -- 2026-05-09
 
 ### Docs
+
 - **Patent-attribution list complete.** The "Compared to commercial processors" paragraph in README previously credited only `US 4,460,871` and `US 5,737,434` (the 0.11 references). Updated to list all six expired patents whose published claims are used as design references: those two (Orban distortion-cancelled composite clipping) plus `US 6,337,999` (Orban differential composite clipper topology, expired 2022), `US 5,930,373` (Waves MaxxBass equal-loudness harmonics, expired 2017), `US 4,150,253` (Aphex Aural Exciter pre-waveshaper topology adapted for bass via allpass, expired 1996), and `US 5,424,488` (Werrbach transient-discriminate harmonic gain, expired 2013). Each linked to Google Patents; framed as public-domain prior art, not licensed reproductions.
 - **Trademarks and affiliations** subsection added to README. Names referenced descriptively throughout the project (Orban, Optimod, Omnia, Stereo Tool / Stereotool, Aphex, Waves / MaxxBass, BBE, DTS, Music Tribe, Inovonics, DEVA, Audemat, BW, JUCE, Qt, Apple, macOS / AVFoundation / CoreAudio / vDSP / vForce, JACK, ALSA, AES3, DAB+, Livewire, Dante, Ravenna) are trademarks of their respective owners; MPX Prime is independent and not affiliated with any of them. The PrimeBass rename in 0.20 was specifically to remove the unintended trademark adjacency to Orban.
 
@@ -2778,6 +2814,7 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 ## 0.20 -- 2026-05-09
 
 ### Added
+
 - **Optional deep DSP combination test suite.** New `DeepDSPTests.swift` adds an opt-in test suite that catches stage-interaction bugs the existing per-stage tests miss. Five layers: (1) per-stage isolation smoke tests for the previously-unstested stages -- Phase Rotator, Parametric EQ, Mono Bass, Stereo Widener, BS.412, Pre-encode limiter, DC clipper, 3-band multiband, multiband limiter, encoder FIR, final MPX safety limiter (12 tests). (2) Universal invariants on 200 deterministically-seeded random valid configs x 7 adversarial programs (HF-rich pop / sustained bass / percussive transients / pink noise / silence / DC offset / full-scale step) -- asserts no NaN / inf, composite peak <= 1.05, pilot RMS within tolerance when stereo subcarriers are emitted, RDS energy present when active. (3) Pairwise enable/disable matrix on 11 high-impact stage flags (12 covering rows). (4) Counteract detection -- for 10 suspect pairs (AGC x Multiband, PrimeBass x BassClipper, CompositeClipper x BS.412, Pre-encode x CompositeClipper, Widener x MonoBass, etc.) renders A-only / B-only / A+B and asserts no amplitude conspiracy (combined peak <= max single x 1.10) and no cancellation conspiracy (combined 1 kHz energy >= min single - 6 dB). (5) Per-preset safety check on five 5-band presets (`5_ac`, `5_talk`, `5_chr`, `5_rock`, `5_dance`) x three programs. The whole suite is gated behind `MPXPRIME_DEEP=1` so the default `swift test` stays at ~10 s; running deep takes ~4 min on M1. Invocation: `MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS --filter Deep`.
 
 - **Bass enhancer renamed `Orbass` -> `PrimeBass`.** The previous name read as a portmanteau of "Orban bass" -- too close to a registered broadcast-equipment trademark for comfort. New name anchors to the MPXPrime brand. Renamed across Swift identifiers (`primeBassEnabled`, `processPrimeBass`, etc.), UI labels, INI keys (`primebass_enabled`, `primebass_amount`, ...), and tests. **Backwards compatibility:** the legacy `orbass_*` INI keys are still read as fallback values when the new `primebass_*` keys are missing, so existing user configurations keep working. The legacy keys will be removed in a later release. INI files written by the app now emit only `primebass_*`.
@@ -2793,46 +2830,57 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 - **MOD chip in broadcast status bar.** The persistent header bar now shows MPX modulation as a percentage (`peak_dev / configured_dev x 100`) alongside the existing kHz DEV chip -- the standard Stereotool / Omnia / Optimod readout. Width 80 pt; same colour thresholds as DEV (green safe / amber tight / red over).
 
 ### Changed
+
 - **`Date()` deferred from audio render thread.** The RDS encoder's PS / RT / PTYN / Long PS sequence-advance helpers and `applyRDSRuntimeConfig` seq-start markers were calling `Date().timeIntervalSinceReferenceDate` on the audio thread. Replaced with `BasicRDSCoder.monotonicSeconds()` (`@inline(__always)` wrapper around `ProcessInfo.systemUptime`, commpage-backed `mach_continuous_time`, no syscall). 9 audio-thread `Date()` reads removed. Two `Date()` calls intentionally retained: `refreshClockCache` runs on the background `clockUpdateQueue` and needs wall-clock for CT (4A) generation; the RT `{time}/{date}` macro substitution path also needs wall-clock and is handled separately (its DateFormatter cost dwarfs the `Date()` call).
 - **CT live-toggle now starts the clock-cache timer.** Enabling `rds_enable_ct` via runtime config without a restart now correctly primes the clock cache and starts the per-second update timer. Previously the cache only initialised at engine init, so live-enabling CT after start emitted Group 4A frames with stale data until the next restart.
 
 ### Removed
+
 - **Per-band Multiband gain-reduction meter.** Built and iterated through four smoothing topologies (peak-hold + multiplicative decay, asymmetric one-pole, peak-hold + linear decay at 30 dB/s, peak-hold + linear decay at 6 dB/s); none produced visible meter movement on real program material. Root cause was a combination of compressor producing tiny GR values on default-tuned program, UI sample-rate mismatch with display ballistic, and display scale choices. Cut the feature cleanly: removed `MonoCompressor.lastGainReductionDB`, the five smoothed per-band fields, decay coefficient, `MultibandStatus` struct, `multibandStatus` getter, the per-sample write-throughs in `processThreeBandMultiband` / `processFiveBandMultiband`, the `MeterSnapshot` per-band fields, the `multibandBandGRDB` view-model array, and the `MultibandGRRow` view. Dead-code grep confirms zero residual references.
 
 ### Fixed
+
 - **VSCode SourceKit "not in scope" phantom diagnostics for `StageInspector` and `SignalFlowStrip`.** `Package.swift` lives in the `macOS/` subdirectory rather than the workspace root. Without a workspace setting, the Swift extension's sourcekit-lsp didn't discover the SPM target and fell back to single-file compilation mode for individual `.swift` files -- each file analysed in isolation, with no knowledge of sibling files in the same target. New `.vscode/settings.json` sets `swift.searchSubfoldersForPackages: true`; window reload required for the setting to apply.
 
 ### Tests
+
 - **+23 tests across the new RDS live-apply suite (204 -> 227 across 25 -> 26 suites):**
   - `RDSLiveApplyTests` (17) -- covers PI / PTY / PTYN / Long PS / AF list / group sequence / CT-enable round-trips through `applyRDSRuntimeConfig`, master-enable disengage cleanly, runtime config factory roundtrip, AF Method B encoding (3 tests), TA-edge auto-injection (3 tests).
 
 ### Added
+
 - **Configurable PS rotation default duration.** New `rds_ps_frame_seconds` INI key (default 3.0 s, range 0.5-10 s). Sets the per-segment duration when PS text has no explicit `Ns:` / `Nt:` timing marker. Stereotool-style markers (`3s:NEWS/4s:WEATHER`) still take precedence -- the configured default only kicks in for unmarked text. Live-applied via `RDSRuntimeConfig.psFrameSeconds`. New PS Frame slider in the RDS Program tab. `PSFrameSecondsTests` locks in marker-precedence behavior.
 - **Auto-start input stall watchdog.** `applicationDidFinishLaunching` now arms a 1.5 s watchdog after auto-start that detects the AVAudioEngine first-start input stall (`isRunning == true` but ring stays at 0 frames) and triggers an automatic Stop+Start cycle. Mirrors the manual recovery the user was doing by hand. Marked `WORKAROUND` inline; the proper fix (replacing AVAudioEngine input capture with a direct AUHAL render callback) is tracked in plan.md.
 - **`os.Logger` instrumentation in input capture.** Subsystem `com.mpxprime.app`, category `input-capture`. Logs permission status, `setCurrentDevice` outcome, `inputFormat`, tap install, capture start, first tap callback (frames + peak), and a 2 s "tap has not fired" warning. Stream via `/usr/bin/log stream --predicate 'subsystem == "com.mpxprime.app"'` to diagnose future input issues without rebuilding.
 - **Microphone permission gate.** `AudioOutputEngine.start()` now calls `AVCaptureDevice.requestAccess(for: .audio)` synchronously when `useInputSource` is true and TCC status is `.notDetermined`. Eliminates the first-launch race where the engine would start before the system permission prompt resolved.
 
 ### Changed
+
 - **RT+ scheduling.** Two fixes after operator-reported intermittent RT+ display on car radios:
   - 11A is suppressed (replaced by 0A in the schedule slot) when `rtPlusTags` is empty. The previous all-zero-content-type 11A read as "RT+ withdrawn" on Pioneer / Sony receivers and made RT+ flicker on / off as content changed.
   - Auto schedule appends 3A every cycle (~2.3 s) instead of every other cycle (~4.5 s). Receivers that need to see AID 0x4BD7 within 5-10 s of tune-in are now well inside the window.
 
 ### Fixed
+
 - **Levels window meter strip readability.** Replaced `.fixedSize()` on each strip's value Text with `.minimumScaleFactor(0.6)` + `.frame(maxWidth: .infinity)`. Long readouts no longer spill into adjacent meter columns. Strip the trailing `"   N.N pk"` suffix from the value text on vertical strips -- the white peak-hold tick already conveys peak position visually, so the duplicate text only added clutter and overflowed the 58 pt column.
 
 ### Removed
+
 - **Loudness meter + `MonitorLoudnessAnalyzer` DSP path.** Dropped the Loudness card from the Levels window plus its entire backing DSP plumbing (K-weighting biquads, energy ring buffer, momentary / short-term / integrated LUFS gating, `setAnalysisCapture(loudness:)` parameter, ~200 lines total). Operator feedback was that the on-screen LUFS readouts were noise -- broadcast loudness is judged on the receiver, not in the GUI. The audio thread no longer runs the per-sample K-weighting on the monitor path.
 - **Dead `HelpSectionView` struct (~40 lines).** Defined but never instantiated -- leftover from an earlier Help layout that was superseded by `HelpInputLevelsView` / `HelpRDSTextView`.
 
 ### DSP audit (perf / correctness, output bit-identical)
+
 - **Cached RDS auto / standard schedules.** `generateAutoSchedule` / `generateStandardSchedule` were called from `nextGroupBits` on every group (~11x/sec at the RDS bitstream rate), each call allocating a fresh `[RDSGroupSpec]`. After the post-0.11 RT+ fix the schedules became pure functions of feature flags, so they can be cached. Schedules now rebuild only on init and when `rtMode2B` / `rtPlusEnabled` toggle in `applyRDSRuntimeConfig`. Removed the dead `scheduleGenerateCounter` (still incremented but never read after the RT+ change). Output verified bit-identical via `--verify --baseline-strict`.
 - **Reused 104-byte `bitBuffer` in `buildGroupBits`.** Each `buildGroupBits` call previously allocated a fresh `[UInt8]` of capacity 104, plus an inner 4-element `[block1..block4]` array literal -- both ~11x/sec on the audio thread. `bitBuffer` is now pre-allocated once and subscript-assigned in place; CoW gives test callers their own logical array on retention. The block iteration uses an unrolled `writeBlockBits` helper with explicit offsets. Output verified bit-identical via `--verify --baseline-strict`.
 
 ### Tooling / docs
+
 - **DMG bundled INI now matches the canonical sample.** `build-release.sh` previously hand-authored a stub config with lowercase / spaced section headers (`[ mpxprime ]`, `[pilot ]`, etc.). The parser only recognises canonical uppercase `[MPX]` / `[RDS]` / `[INTERFACES]`, so every value in those mismatched sections silently fell back to AppConfig defaults -- most visibly `preemphasis_us = 75` in the template was being ignored, so US-region operators got 50 us pre-emphasis after a fresh install. Replaced the heredoc with `cp macOS/MPXPrime.ini` so the DMG ships the same canonical INI that `SampleINIRoundTripTests` already validates.
 - **Help window updated for the post-0.11 PS frame seconds.** The "Untimed plain text" help line now distinguishes single-chunk (10 s hold) from multi-chunk (configurable PS Frame default for PS, 2.5 s for RT / PTYN / Long PS).
 
 ### Tests
+
 - **+38 tests across 5 new suites** -- 166 -> 204 across 18 -> 25 suites:
   - `PSFrameSecondsTests` (6) -- locks in marker-precedence semantics for the new configurable default.
   - `AppConfigInvalidInputTests` (8) -- type coercion robustness (garbage numerics, bool synonyms, empty values, inline comments, unknown sections).
@@ -2843,31 +2891,39 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 ## 0.11 -- 2026-05-06
 
 ### Added
+
 - **Linear-phase FIR multiband crossovers (TX path).** Replaces the IIR LR4 cascade with Kaiser-windowed-sinc FIR splitters that all share group delay, so summed bands reconstruct the input delayed-by-`groupDelaySamples` exactly (-155 dB sum-to-flat error floor). Eliminates the inter-band phase rotation that smears transients and the inter-band gain-modulation that causes spectral pumping when bands compress at different rates -- the core reason multiband-on tended to sound worse than multiband-off on percussive material in 0.10. New `LinearPhaseFIRSplitter`, `LinearPhaseMultibandSplitter3`, `LinearPhaseMultibandSplitter5` structs (simultaneous-split / parallel-cumulative-LP topology). Monitor mode keeps the low-latency LR4 path. New `multiband_fir_enabled` INI key (default true), restart-required. Latency cost: ~5.3 ms at 192 kHz with the default 90 Hz lowest crossover (the binding constraint for Kaiser-FIR transition width).
 - **vDSP-backed FIR convolution.** `LinearPhaseFIRLowpass.process` now runs through `vDSP_dotpr` instead of a pure-Swift accumulator loop, with a double-buffered delay line so the read window is always contiguous. ~5-10x speedup measured against the manual loop; FIR-path multiband ends up only ~24% more expensive than the IIR path, well inside real-time budget. Without this acceleration the multiband-FIR path overruns budget on most machines (manifested as audio crackle + RDS BCH corruption from sample dropouts). New `DSPThroughputTests.multibandFIRStaysInsideRelativeBudget` guards the FIR/IIR cost ratio (<5x) so a regression that bypasses vDSP would surface immediately rather than at user-facing dropout time.
 - **vvtanhf-batched soft-clipping in oversampled clippers.** `CompositeClipper`, `BassClipper`, and `DistortionCancelledClipper` previously called scalar `tanhf` per oversample step (8 / 8 / 16 calls per host sample respectively). The clippers now restructure their `process()` into a 3-phase pattern -- pre-compute oversampled inputs, batch the `tanhf` evaluation through `vvtanhf` on the gathered N-element buffer, then run the per-OS-step filter cascades using the precomputed clipped values. Measured on Apple Silicon: 8-element batches give ~5x speedup vs scalar; 16-element batches give ~9x. Output is bit-exact identical (vvtanhf uses the same math kernel as libm tanhf) -- verifier strict baseline unchanged. New `TanhBatchSizeBench` micro-benchmark documents the batch-size/speedup curve so the trade-off stays visible.
 - **Italo / Pump multiband presets (`5_italo`, `3_italo`).** Tempo-synchronised low-band release tuned for 120 BPM four-on-the-floor -- at `5_italo` the band-2 (kick band, 80-280 Hz) effective release sits ~90 ms = ~18% of a quarter note for audible kick-driven ducking, while the high band stays light (1.3:1, 100 ms) so cymbals and synths sparkle. Lower link strength (0.30 vs 0.52 default) widens the bass image. Research-backed against published EDM/dance mastering practice and Orban Optimod dance-preset design. Selectable from the Multiband preset picker.
 
 ### Changed
+
 - **Default `multibandIntensity` `light` -> `normal`** + per-band AppConfig defaults updated to the published `5_ac` recipe (no Light multiplier baked in). The previous "Light" intensity offset thresholds +1.5 dB and scaled ratios x0.9 -- combined with the soft-knee soft-release `5_ac` numbers, the result was a multiband chain so transparent operators reported it sounded like nothing was happening. Normal is audible but still clean; Light is still a one-click option in the picker for operators who want maximum transparency.
 - **Default audio block size 2048 -> 1024.** Drops TX-path latency by ~5 ms (10.7 ms -> 5.3 ms of block-driven delay at 192 kHz) for tighter off-air monitor sync. No quality cost -- just more callbacks per second. Chain is throughput-validated at blockSize 512 by `DSPThroughputTests`, so 1024 has comfortable headroom. Operators on lower-CPU machines can revert via `blocksize = 2048` in INI.
 
 ### Fixed
+
 - **Composite clipper pilot / RDS guard regression.** During the post-0.10 clipper rewrite the `cancelPilot` / `cancelRDS` flags became no-ops because the documentation rationale ("subcarriers inject post-clipper, so receiver doesn't see clipper IM in those bands") was wrong -- clipper IM at 19 kHz / 57 kHz vector-sums with the cleanly-injected pilot and RDS at the receiver, masking pilot PLL lock and adding noise to RDS demodulation. With audio-band clipping engaged (the new `cancel_audio = false` default), this manifested as RDS being readable when the chain was stopped but corrupted when it was running. Fix: replaced the inert pilot/RDS LR4 cancellation paths with RBJ bandpass biquads centred at 19 kHz (Q=4) and 57 kHz (Q=14). Centre-frequency cancellation now drops pilot and RDS regions to -80 / -127 dBFS under hot drive. New `clipperKeepsPilotAndRDSCentreFrequenciesClean` test guards this.
 - **Composite clipper no longer collapses HF stereo image.** The 0.10 cross-domain cancellation used 2x cascaded LR4 splits at 23 / 53 kHz to bound the stereo subcarrier band. The cascade gives -12 dB at the corners, which attenuated the (L-R) DSB-SC subcarrier sidebands generated by HF audio (~10-14 kHz panned content modulating to 24/52 kHz) and visibly collapsed stereo image at the receiver. The new clipper uses a single-LR4 split with the stereo cutoff moved from 23 to 22 kHz so the actual 23-53 kHz subcarrier sits in the passband, not on the corner. Sideband preservation now within ~1 dB across the full HF audio range; new `CompositeClipperStereoSeparationTests` suite locks this in.
 
 ### Removed
+
 - **`CompositeTruePeakLimiter` deleted.** The composite-domain limiter used `|composite|` peak detection (driven hardest by stereo subcarrier crests) and a memoryless `tanhf` ceiling that produced intermod across 23-53 kHz, demodulating as `(L-R)` cancellation at the receiver -- i.e. it actively destroyed stereo separation when enabled. The old struct's per-channel use inside `PreEncodeAudioLimiter` (audio-domain L/R limiting, where the failure mode doesn't apply) was preserved by renaming it to `OversampledPeakLimiter`. The composite-domain instance, chain call, UI toggle, preset field, and `compositeLimiterGainReductionDB` telemetry are gone; the meter's headroom-reduction value is now sourced from the composite clipper.
 - **Legacy INI key `composite_clipper_enabled` removed.** This key was wired to the (now-removed) composite limiter, not the clipper -- flagged as a sharp edge in `CLAUDE.md`. The actual composite clipper toggle stays at `mpx_clipper_enabled`. INI files containing the old key will silently lose that setting; the limiter no longer exists, so this is a no-op for output behaviour.
 
 ### Changed
+
 - Composite clipper `cancel_audio` default flipped `True -> False`. The old default with the substitution algorithm made the clipper a near no-op for peak reduction; the new delta-based algorithm under `cancel_audio = False` keeps the audio band fully clipped (which is where the loudness lift comes from) while still preserving subcarrier integrity via `cancel_stereo`.
 - Composite clipper `cancel_pilot` and `cancel_rds` defaults flipped `False -> True`. They were stubs in 0.10; the new algorithm actually subtracts clip residual in the 17-21 kHz pilot guard and 55-59 kHz RDS guard, so receiver-side pilot PLL lock and RDS BER are no longer corrupted by clipper IM in those bands.
 - Existing `audioBandCancellationDropsMonoIM` and `stereoBandCancellationDropsCrossDomainMixingProducts` cross-domain tests relaxed from >20 dB / >10 dB to >3 dB / >7 dB drops respectively. The delta-based cancellation is bounded by LR4 phase rolloff in the protected bands; the trade-off (less aggressive cancellation depth, full sideband preservation) is intentional and what fixes the user-reported "stereo image disappears" issue.
 
+<!-- markdownlint-enable MD024 -->
+
 ## 0.10
 
 ### Added
+
 - **Composite clipper: cross-domain IM cancellation via Linkwitz-Riley substitution.** Splits both the clipper input and its clipped output into 4 bands at 15 / 23 / 53 kHz crossovers, then substitutes the clean input band for the distorted clipped band in the audio (0-15 kHz) and stereo subband (23-53 kHz) regions. LR4 LP+HP form a phase-coherent allpass pair so the cancellation is delay-matched. Measured drops on the cross-domain IM test suite: M^3 at 3 kHz drops 56 dB with audio cancellation; M^2*S at 2400 Hz drops 12-14 dB with stereo cancellation; combined hot-drive cleanup -39 dBFS -> -64 dBFS. Inspired by Orban US 5,168,526 + US 6,434,241 (both expired and public domain). New INI keys `mpx_clipper_cancel_audio` / `mpx_clipper_cancel_stereo` (live-apply, default true).
 - **Wideband AGC broadcast-grade upgrade.** K-weighted detector (BS.1770-flavoured HPF ~38 Hz Q 0.5 + high-shelf +4 dB @ ~1.5 kHz) on the detector sidechain. Program-dependent release tracks fast-vs-slow envelope divergence (50 ms vs 1 s); effective release scales 1x-3x with a ~0.5 s smoothed density estimate. Release cap extended from 1.2 s to 5 s. Toggleable via `agc_k_weighting` and `agc_release_program_dependent` (default on).
 - **Linear-phase FIR brick-wall 15 kHz on TX path.** Kaiser-windowed FIR replaces the Butterworth program lowpass when running in composite output mode. >=80 dB stop-band at 17 kHz, ~1.67 ms group delay at 192 kHz. Monitor mode retains the Butterworth cascade for low latency. Config toggle `encoder_fir_enabled` (default on).
@@ -2881,6 +2937,7 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 - **Sane out-of-box defaults.** AGC on, multiband on (5-band AC/Pop, light intensity), bass clipper on, composite clipper on with cross-domain IM cancellation. Stereo widener and Orbass off (responsible defaults -- both color the signal and degrade fringe-listener SNR). BS.412 off (US default; EU operators flip to True). Sample `MPXPrime.ini` rewritten to mirror these defaults with rationale comments per stage. A fresh install audibly outperforms `mpxgen` / PiFmRds with zero operator action.
 
 ### Changed
+
 - AGC release cap extended 1.2 s -> 5 s; defaults retuned to "Pop Medium" range (target -14 LUFS, range 20 dB, attack 6 ms, release 1.5 s).
 - Multiband default intensity changed `normal` -> `light` (thresholds offset +1.5 dB, ratios x0.9).
 - Composite clipper default thresholds tightened -3.0 / -0.5 dB -> -1.0 / -0.3 dB so it actually engages on real program.
@@ -2888,11 +2945,13 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 - `RT dynamic-sequence cache` skips `parseTimedSequence` and `expandNowPlayingMacros` on the audio thread when inputs are stable.
 
 ### Fixed
+
 - `composite_clipper_enabled` INI key collision documented in sample INI comments -- that key is the composite *limiter* (legacy name); the actual composite clipper uses `mpx_clipper_*` keys.
 
 ## 0.85
 
 ### Added
+
 - Configurable now-playing script support in the RDS Radiotext section with native file picker, poll interval, timeout, and runtime status display
 - Radiotext macro expansion for now-playing metadata: `{now_playing}`, `{display}`, `{artist}`, and `{title}`
 - Additional Radiotext template macros: `{date}` and `{time}`
@@ -2917,6 +2976,7 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 - Window frame persistence for the main window and utility windows
 
 ### Fixed
+
 - RT+ tagging now uses structured now-playing metadata more reliably for artist/title extraction
 - RT+ tag ordering now follows the field positions in transmitted radiotext
 - Now-playing script failures and empty output now clear the active metadata, show a friendly `No Song Data` status, and discard the affected RT segment instead of leaving blank labels behind
@@ -2937,6 +2997,7 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 ## 0.8
 
 ### Added
+
 - Multiband dynamics presets (CHR/EDM, Rock, AC/Pop, Country, Talk, Urban, Dance, News, Jazz, Classical) with intensity control (Light/Normal/Heavy)
 - FFT spectrum window toggle (96 kHz full / 60 kHz FM band)
 - Reset Processing to Defaults button
@@ -2944,6 +3005,7 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 - Native MPX Prime app icon assets for runtime and release builds
 
 ### Changed
+
 - Updated default RDS text to "MPX Prime: FM MPX + RDS Audio Processor"
 - Unified window sizes for Scopes, Spectrum, and Levels windows (700x500, min 600x450)
 - Processing section refactored with HIG-compliant plain Section style
@@ -2955,6 +3017,7 @@ No source changes vs 0.20. Audio path bit-identical; binary identical except for
 - Monitoring view and Settings were updated for more native macOS behavior and layout
 
 ### Fixed
+
 - Level meters now properly displayed in Levels window
 - Removed duplicate state variables in Processing section
 - Main window close behavior now keeps the app running and supports reopen from Dock / Window menu

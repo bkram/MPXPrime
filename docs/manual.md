@@ -248,7 +248,7 @@ Three knobs do most of the work between your source and the exciter. They sit at
 
 **The chain (left to right):**
 
-```
+```text
 source -> IN meter -> AGC -> [DSP] -> Final Drive -> composite clipper -> MPX Output Level -> Line Output -> exciter
                   ^                ^                                 ^                  ^
                   level control    loudness lever                    deviation trim     DAC calibration
@@ -891,7 +891,6 @@ Two opt-in-feature A/B modes (0.28+) compare default-chain vs feature-enabled ac
 ./macOS/.build/debug/MPXPrime --verify-multiband-coupling --seconds 2
 ```
 
-
 `--verify-multiband-coupling` forces multiband on, disables AGC for isolation, and toggles `multiband_inter_band_coupling_enabled` off/on across 5 program scenarios (bass-heavy, kick/vocal, dance, wide-bass, speech-bed), reporting per-band Low/Mid/High deltas + correlation / side-to-mid / peak / overshoot / render-cost ratio.
 
 `--verify-advanced-dynamics` A/Bs the classic AGC + multiband chain against the single-stage Advanced Dynamics leveler on 6 program scenarios (a 20 dB level jump, dense bass, a quiet ballad, HF transients, a tone on the mid/high crossover skirt, and a solo bell with a natural decay), reporting RMS / per-band / correlation / side / peak / overshoot deltas, per-scenario quality expectations on the leveler chain itself (image, RMS drift, occupied bandwidth), loudness parity on dense program, a per-band gain-trajectory table (travel, slew, beat-rate modulation -- bass pumping the upper bands trips the gate), a decoded decay-swell check (a natural fade must not swell back), plus two leveler-specific metrics: re-processing idempotency (feeding the leveler's output through a fresh leveler should barely change it) and the render-cost ratio against the two stages it replaces.
@@ -984,7 +983,6 @@ Disabled by bypass:
 - Bass / audio / HF clippers
 - Pre-encode audio limiter
 - Stereo-image protection
-
 
 ## MPX Prime Meter (companion analyzer)
 
@@ -1344,4 +1342,3 @@ Notes:
 - Receivers display short (8-character) and long (16-character) abbreviations of
   these names; the exact wording varies by manufacturer, but the code-to-genre
   mapping is fixed by the standard.
-

@@ -4,7 +4,7 @@
 
 MPX Prime Studio is a native macOS audio application built with Swift and SwiftUI. It provides real-time FM stereo MPX generation with RDS support using AVAudioEngine (direct AUHAL input capture). Per-tick meter values live on a separate `@Observable` `LiveTelemetry` object rather than the view model; the Linux CLI build runs the same generator headless on `ALSAAudioEngine` with the web dashboard as its interface.
 
-```
+```text
 SwiftUI UI  <->  App State (ObservableObject)
                         |
                         v
@@ -14,7 +14,7 @@ SwiftUI UI  <->  App State (ObservableObject)
 
 ## Block Diagram
 
-```
+```text
 Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 |  via `InputAUHAL` (direct AUHAL audio unit) -> `StereoInputRingBuffer`
 |  Adaptive cubic resampler in the output render callback absorbs
@@ -407,50 +407,62 @@ When `Mono Mode` is enabled, MPX Prime Studio suppresses the pilot, stereo subca
 ## DSP Stage Details
 
 ### Phase Rotator
+
 4-pole cascaded second-order allpass filters at configurable frequency (default 200 Hz). Reduces waveform asymmetry (especially male voice) by 3-4 dB, providing free headroom for downstream AGC, compressors, and limiters. Standard in Orban Optimod, Stereotool, and BreakawayOne.
 
 ### Parametric EQ
+
 4-band EQ placed before dynamics processing: band 1 (low shelf), bands 2-3 (peaking), band 4 (high shelf). All bands expose frequency and gain (+/-12 dB). Q is exposed only for the peaking bands; the shelves use an RBJ slope=1.0 (Butterworth) shape. Provides tonal shaping that feeds into the multiband crossover splitting.
 
 ### Multiband Limiter
+
 Per-band fast peak limiters operating after multiband compression and before band summation. Fast attack, high ratio brick-wall limiting controls instantaneous transient peaks independently from the compressor's ratio-based dynamics. Prevents transient leakage without forcing the compressor to be overly aggressive.
 
 ### Multiband Transient-Aware Attack (0.28, optional)
+
 `multiband_transient_aware_attack_enabled` keeps the legacy peak detector as the default. When enabled, `MonoCompressor` runs an RMS envelope (10 ms attack / 90 ms release) alongside the peak follower; the peak-to-RMS ratio drives a transient indicator that triggers when peak rises above 1.65x RMS, latched for 10 ms. On a transient the detector blends mostly RMS (peakWeight drops 0.58 -> 0.18) and the attack coefficient stretches to 3.2x the base attack -- kick/snare fronts pass hotter than the classic peak-only detector while sustained content converges back near the classic level. Matches Optimod "Smart Attack" character. `MultibandPhase2Tests` covers transient-burst vs classic, sustained convergence, and runtime-config flag propagation. Wired through both 3-band and 5-band compressor pairs via `configureCompressorPair`.
 
 ### Multiband Inter-Band Coupling (0.28, optional)
+
 `multiband_inter_band_coupling_enabled` keeps the default chain unchanged when off. When enabled, low-band gain reduction is smoothed with a 20 ms attack / 300 ms release control envelope and converted into small negative threshold biases for upper bands. In 3-band mode the current mapping is `midBiasDB = -0.15 * lowGR` and `highBiasDB = -0.25 * lowGR`; in 5-band mode the biases are -0.10 / -0.15 / -0.22 / -0.25 times the low-band GR for bands 2-5. This is an Optimod-style tonal-glue control law: heavy bass control makes mids/highs slightly more controlled without applying one wideband gain ride. `MultibandInterBandCouplingTests` covers runtime plumbing, arithmetic ratios, zero-bias transparency, and increased upper-band control under bias. `--verify-multiband-coupling` performs the program-material A/B gate with multiband forced on and AGC off for isolation.
 
 ### Advanced Dynamics single-stage leveler (0.44, experimental, optional)
+
 `advanced_dynamics_enabled` (default off) swaps the wideband AGC + multiband compressor pair for one fused 5-band leveling stage (`AdvancedDynamicsLeveler`); when off the chain is bit-identical to before the stage existed (the AGC gate reduces to the previous check). Rationale: two cascaded gain-riding stages can fight (AGC pulling program down while multiband pushes bands up), which is a classic pumping source; a single stage levels each band toward a target with no second controller to disagree with. Per band: linked-RMS sidechain (one shared gain per band keeps the stereo image exact), the `MonoCompressor`-pattern RMS/peak hybrid transient detector, and a gain smoother with *program-adaptive* coefficients -- a transient blends the attack toward a near-instant anchor coefficient (~1000x the 30 ms base, precomputed so there is no per-sample `expf`), inside the target window the gain freezes entirely, and the dual-envelope program-density estimator (the `WidebandAGCRider` pattern) slows release on busy material, and a per-band decay guard (slow-release peak tracker; env > 3 dB below it = an active fade) holds the lift while program decays naturally so solo fades are not flattened into audible ringing. Gain range is -24 dB..+`advanced_dynamics_max_gain_db` per band; low/mid/high target offsets interpolate across 5 bands exactly like the multiband threshold anchors; the low band's smoothed reduction biases upper-band targets with the multiband coupling curve (-0.10/-0.15/-0.22/-0.25). Band split is an own-instance `LinearPhaseMultibandSplitter5` at the multiband crossovers, configured lazily so the disabled stage allocates nothing. All parameters are live-apply (`RuntimeConfig`); structure (FIR split) rebuilds only on enable-toggle or crossover change. `AdvancedDynamicsTests` covers plumbing, INI round-trip, quiet/loud convergence, the at-target freeze, transient catch, the silence gate, hostile input, and chain inertness when off; `advancedDynamicsCostStaysBounded` bounds cost at <2x the two stages it replaces (measured ~1.0x); `--verify-advanced-dynamics` is the program-material A/B gate, hardened for the default-flip campaign (0.45): 6 scenarios (the original 4 plus a quiet tone on the mid/high crossover skirt and a solo-bell natural decay), per-scenario quality expectations evaluated on the leveler chain (image, RMS drift, occupied bandwidth), loudness parity vs the classic chain on dense program (bound 3.0 dB; runaway bound 8.0 dB elsewhere), per-band gain-trajectory probes off `advancedDynamicsStatus` (beat-rate modulation of bands 3-5 above 1.0 dB on bass_dense = pumping, calibrated 2026-09-04 at <= 0.02 dB), a decoded decay-swell bound of 2.0 dB (measured 0.11), and re-processing idempotency (second pass through a fresh leveler moves RMS < 0.3 dB -- already-processed material passes essentially untouched). The skirt scenario is diagnostic for lift magnitude (the trajectory table shows bands 3 AND 4 both lifting ~+8..10 dB on one skirt tone) until band coupling (plan.md Step 7) cures the known skirt lift. Measured 2026-08-29 with `--verify-hf-transients`: enabling the stage on Music - Loud costs ~3 dB of decoded hi-hat SINAD and ~1 dB of cymbal-wash crest versus the AGC + multiband pair. The 2026-09-04 sweep (rows kept in the gate) refuted every single-knob explanation: the top-band target offset (hat SINAD 14.1-14.2 at 0/-3/-6/-9; offset only trades ride SINAD against 15-23 kHz spill), speed, the band-5 transient-acceleration weight (zeroed: < 0.1 dB, reverted like the 2.5 ms attack floor), target -19, and the composite clipper (OFF reads worse). Drive parity recovers ~2 dB; the remainder is intrinsic to leveling burst HF with this detector/smoother -- see plan.md Step 2 #5 for the go/no-go this puts on the default flip.
 
 Telemetry (0.45): `MPXGenerator.advancedDynamicsStatus` reports `enabled`, the five per-band gains (allocation-free tuple via `AdvancedDynamicsLeveler.bandGainsDBFixed` -- the render-thread-safe sibling of the heap-allocating `bandGainsDB`), and the density estimate. It flows through both engines' meter snapshots into `GET /api/meters` (`advancedDynamicsActive` / `advancedDynamicsBandGainsDB` / `advancedDynamicsDensityDB`, null while off) and the GUI dashboard, whose AGC chain pill switches identity to "Adv Dyn" while the leveler is active. In the same change `agcStatus` stopped lying while the leveler owns the dynamics: `enabled` now includes `!advancedDynamicsEnabled`, and detector/gain/gate read neutral whenever the AGC is not the active stage (previously stale AGC telemetry kept displaying while bypassed). Bit-identical for AD-off configs; pinned by the status tests in `AdvancedDynamicsTests`.
 
 ### Downward Expander
+
 Per-band noise reduction within the multiband compressor stage. Threshold-based gain reduction on quiet bands prevents AGC from lifting the noise floor during quiet passages.
 
 ### Bass Clipper
+
 Dedicated clipper for low-frequency content using LR4 crossover to split, tanh-clip the low band, and recombine. Pre-clipping bass peaks independently before the final stages dramatically reduces bass-induced intermodulation distortion. Used by Omnia, Breakaway, and Stereotool.
 
 ### Distortion-Cancelled Clipper
+
 L/R domain audio clipper implementing Orban's distortion-cancellation principle: clip the signal, extract the error (clipped minus original), lowpass-filter the error below a configurable cancellation frequency (~2 kHz), and subtract it from the clipped signal. This cancels low-frequency distortion products while leaving only high-frequency distortion that is psychoacoustically masked by the signal. The error path uses a Linkwitz-Riley 4th-order LP (two cascaded 2nd-order Butterworth sections at Q=0.707), giving a 24 dB/oct rolloff with -6 dB at the cancellation cutoff.
 
 ### BS.412 MPX Power Limiter
+
 ITU-R BS.412 rolling average power measurement with slow gain reduction for European regulatory compliance (required in DE, AT, CH, SE, CZ, SI, and others). Measures decimated RMS power over a configurable sliding window (default 60 seconds) and applies slow gain reduction when average power exceeds the threshold. Operates on the audio composite before the safety limiter.
 
 Structurally a **dual-integrator power AGC**: power-detect (square sample) -> first integrator (per-block sum + 60-s rolling window) -> sample-and-hold (per-64-sample boundary flush) -> second integrator (gain smoothing with 1 s attack / 5 s release) -> feedback gain ride. Functionally equivalent to the topology described in US 6,618,486 (CRL Systems / Harman, expired 2015-09-09). We use a flat rolling-average window instead of the patent's leaky-integrator first stage -- gives a harder, more compliance-predictable boundary at the 60-s mark, generally preferred for type-approval testing.
 
 ### HF Limiter (0.45, default-on)
+
 `HFLimiter` implements program-controlled pre-emphasis after Orban US 4,103,243 (the Optimod-FM 8100 HF limiter, expired 1997): the pre-emphasised L/R signal is treated as `flat + boost` and only the boost component rides a gain, `out = flat + g * (pre - flat)`, `g` in `[gMin, 1]`. g = 1 is full pre-emphasis, g = 0 the flat response, so the stage can never cut HF below the program's own level; the receiver's fixed de-emphasis turns the action into a brief, bounded HF dip -- the trade every broadcast HF limiter makes. Detector: feed-forward, stereo-linked; when the pre-emphasised peak exceeds the threshold AND the boost carries at least 20% of that peak (Dolby US 4,498,055-style modulation control -- bass/mid-driven peaks with little boost are left to the broadband limiter), the target gain removes exactly the excess from the boost, floored at `-hf_limiter_max_reduction_db`. Attack 1.5 ms, 5 ms hold, release 20 ms (Orban's analog original: 3 ms / 10 ms); whatever leaks during the attack is caught by the pre-encode look-ahead limiter that follows (Orban's clipper-after-HF-limiter division of labour). Runs inside the dual-rate audio domain; all parameters live-apply. It replaced the HF *clipper* in the Music - Loud profile because the clipper -- a waveshaper on the very band cymbals live in -- cost 17 dB of decoded HF SINAD on hi-hats (`--verify-hf-transients`, 2026-08-29). `HFLimiterTests` pins passthrough when off, pull-to-threshold, the bass-peak guard, release, the reduction cap, stereo-link ratio, and INI/RuntimeConfig round-trips. Prior-art table: plan.md "HF transient / pre-emphasis limiting prior art".
 
 ### Composite Clipper (differential topology with delta-based per-band substitution)
+
 Oversampled tanh soft-clipper on the audio composite, sitting after the pre-encode audio limiter and before BS.412 / final-MPX safety limiter. The oversampling factor is operator-selectable across {8, 16, 32} via `mpx_clipper_oversampling` (default 16; restart-required) -- 8x for CPU-constrained hardware, 16x for industry-standard parity (Optimod 8X00 / Omnia.11 / Stereotool default), 32x for Omnia.9-class spec-sheet defence at roughly double this stage's CPU cost. Numbers in the rest of this section assume the 16x default unless stated otherwise; tap counts, batch sizes, and internal rates scale linearly with the active factor. Since 0.11 this is the **only** non-linearity on the audio composite -- the prior `CompositeTruePeakLimiter` (memoryless tanh on `|composite|` peak detection) was deleted because its IM bled into the 38 kHz stereo sidebands and demodulated as `(L-R)` cancellation. As of 0.20 the clipper runs the **differential topology** of Orban US 6,337,999 (expired 2022, public domain): only the *clipping residual* (input - clipped) goes through decimation, while the wanted signal rides a 1x delay-matched bypass and the residual is subtracted at the output. The decimator's stopband leakage and any phase non-flatness now only colour the residual subtracted at output, not the wanted (L-R) sideband content. Decimation itself uses `LinearPhaseFIRDecimator` (Kaiser-windowed sinc, ~147 taps, `vDSP_dotpr` polyphase, >=90 dB stopband, flat passband 0-53 kHz) -- replaces the prior `BiquadCascade6` 12th-order Butterworth which had ~70-80 dB stopband and 1-2 dB rolloff at the upper subcarrier edge. Cost: ~9 host samples (~47 us at 192 kHz) of TX-path latency. The clipper does double duty: peak control plus loudness, the same role Orban's "Half-Cosine" / "Smart Clipper" stages play in the 8500/8600 line.
 
 The bare clipper produces cubic IM that scatters across the FM baseband: M^n self-products in the audio band, M^2*S / M*S^2 cross-products in the 23-53 kHz stereo sidebands, and broadband harmonic energy that lands inside the pilot guard band (17-21 kHz) and RDS guard band (55-59 kHz). The stereo-sideband products demodulate as audio in the S channel ("breathing") and the guard-band products vector-sum with the cleanly-injected pilot/RDS, degrading stereo decoding and RDS BCH integrity.
 
 **Delta-based per-band substitution.** For each band we compute the bandpassed clean input `o<band>` and the bandpassed clipped output `c<band>`, then add the **delta** `(o<band> - c<band>)` back into the clipper output. That delta is exactly the per-band distortion the clipper introduced; subtracting it restores the band to the clean input while leaving every other band still clipped. Because the bandpass filters are applied identically to both `up` and `clipped`, group delay is matched within each band by construction -- there is no IIR phase mismatch the way an LP-only error path would produce.
 
-```
+```text
 output = clipped
        + cancelAudio  ? (oAudio  - cAudio)  : 0
        + cancelPilot  ? (oPilot  - cPilot)  : 0
@@ -484,24 +496,31 @@ Live-apply via `RuntimeConfig`. INI keys `mpx_clipper_enabled`, `mpx_clipper_thr
 `CompositeClipperCrossDomainTests` and `CompositeClipperStereoSeparationTests` are the regression guards. The first asserts cross-domain IM drop with each guard band engaged; the second asserts that decoded L/R separation is preserved within tolerance when the stereo guard is on. `CompositeClipperLookaheadTests` covers the (0.26) look-ahead path: overshoot bound (`max(|out|) <= ceiling x 1.005` at 2 ms), steady-state transparency on pink noise, pilot/stereo/RDS guard regression with look-ahead engaged, cross-domain cancellation regression (catches asymmetric per-band gain leak), and total-delay reporting. Together they catch regressions in cancellation depth, over-cancellation that would collapse the stereo image, look-ahead detector / gain-application asymmetry and latency-reporting drift.
 
 ### Audio Composite Bandwidth FIR (0.26)
+
 Linear-phase FIR cleanup stage placed after the composite clipper and before BS.412 / final-MPX safety limiting. Strips shaper/clipper spill that would otherwise live above the upper stereo sideband and beat with the cleanly-injected pilot/RDS. Group delay (~112 host samples at 192 kHz) folds into `recomputeSubcarrierDelay()` so the post-clipper subcarrier delay line tracks the new audio path delay automatically.
 
 ### Safety-clip duty telemetry (0.45)
+
 `FinalLimiterStatus.safetyClipDB` is a 250 ms decaying peak of `20 log10(|composite| / budget)` measured at the shaper's input -- how far the audio composite exceeded the budget and had to be caught by the 1x safety soft clip. Both engines forward it (`mpxSafetyClipDB` in the CoreAudio meter snapshot, `safetyClipDB` in the ALSA state) to the GUI Monitoring card ("SAFETY CLIP") and the control DTO (`safetyClipDB` in `/api/telemetry`, "Safety Clip" on the dashboard). Contract: 0.0 with the composite clipper and final limiter enabled; anything above zero means the shaper is doing peak control.
 
 ### Composite Budget Governor (0.26)
+
 Smoothed gain ride on the audio composite that runs *before* pilot/RDS injection. `MPXGenerator.makeFinalCompositeThresholds(outputGain:threshold:reserved:)` derives
-```
+
+```text
 effectiveThreshold = threshold / max(1.0, outputGain)
 allowedAudioAbs    = max(0, effectiveThreshold - reservedSubcarrier - safetyMargin)  // safetyMargin = 0.02
 overBudget         = allowedAudioAbs <= 0
 ```
+
 `processFinalComposite` applies a smoothed gain ride driven by `audioCeilOut = postLimiterCeiling x outputGain`. The audible work is done by the smoothed ride (separate attack/release time constants); a hard ceiling remains at the same value as a last-sample guard for attack-time transients. Pilot and RDS are *not* scaled or clipped -- only the audio composite is reduced. The final `clampf(mpx, -1, 1)` survives only as a numeric guard against illegal samples reaching CoreAudio; for valid configs it should never engage. `CompositeCalibrationStatus.overBudget` re-derives from current `outputGain` and the smoothed `subcarrierReservationEnv`, exposing impossible configs (e.g. very hot output gain where pilot reservation alone exceeds the threshold) to UI and verifier. `postInjectionOvershoot` (50 ms decayed envelope) reports the size of any residual clamp engagement so transient governor lag is visible too. The verifier reports both `worstPostInjectionOvershoot` and `compositeBudgetExceeded` per scenario.
 
 ### Subcarrier Delay Alignment (0.26)
+
 A new host-rate `subcarrierDelayLine` ring buffer delays pilot+RDS by the composite clipper's total delay plus the safety-limiter lookahead samples. `recomputeSubcarrierDelay()` sizes the line dynamically from the active stage delays (composite clipper FIR decimator group delay + composite-clipper look-ahead samples + audio-composite bandwidth FIR group delay + safety limiter look-ahead). The receiver's pilot-derived 38 kHz reference is now phase-coherent with the audio composite's internal L-R subcarrier modulation, closing a stereo-decode degradation that grew with the differential-topology + audio-bandwidth-FIR + look-ahead stack. `StereoSeparationReceiverTests` is the regression guard.
 
 ### Encoder program lowpass (FIR / Butterworth split)
+
 Final audio-bandwidth guard sitting immediately before stereo encoding. Two implementations co-exist and the engine picks per output mode:
 
 - **Transmit / processed-audio (`mpxComposite` / `processedAudio`)**: Kaiser-windowed linear-phase FIR with ~80 dB stop-band attenuation. Tap count is derived from sample rate to maintain ~1.5 kHz transition at 15 kHz cutoff (~641 taps at 192 kHz, ~160 taps at 48 kHz). Group delay ~1.67 ms. The steep roll-off prevents downstream nonlinear stages (DC clipper, composite clipper) from re-broadening audio content into the 19 kHz pilot region, bringing DC-clipper aliasing from ~-38 dBFS (Butterworth) to below -75 dBFS. In processed-audio output this same FIR is the 15 kHz band-limit on the L/R feed.

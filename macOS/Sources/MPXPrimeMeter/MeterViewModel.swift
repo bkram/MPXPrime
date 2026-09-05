@@ -175,7 +175,7 @@ final class MeterViewModel: ObservableObject {
     /// Korea). It shapes only the DECODE path: the monitor audio, stereo
     /// recordings, the decoded L/R strips and the audio spectrum. Persisted;
     /// live-applied. Before 0.45 it was hard-wired to 50, so a 75 us market
-    /// heard and recorded ~3.5 dB too much 15 kHz.
+    /// heard and recorded ~3.4 dB too much 15 kHz.
     @Published var preemphasisUS: Int = 50
     /// Bypass the RDS reception-quality gate: show the raw decoder output
     /// even when reception is too poor to trust (expect garbage on noise).

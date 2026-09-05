@@ -1,7 +1,7 @@
 # Building from source
 
 This document covers building, running, testing, and packaging MPX Prime from
-source. If you only want to run the app, download the release DMG instead — see
+source. If you only want to run the app, download the release DMG instead -- see
 the [Download](../README.md#download) section of the README.
 
 ## Requirements
@@ -15,8 +15,8 @@ The package is a Swift Package Manager project rooted at `macOS/`. Its SwiftPM
 dependencies are `swift-atomics` and `hummingbird` (2.x, pulling in SwiftNIO --
 the embedded remote-control REST server, compiled into `MPXPrime` on both
 platforms). Building the **`MPXPrime`** encoder needs nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
-Homebrew SDR libraries its in-process tuner links — `brew install librtlsdr
-liquid-dsp` — and, optionally, the SDRplay API SDK (installed under
+Homebrew SDR libraries its in-process tuner links -- `brew install librtlsdr
+liquid-dsp` -- and, optionally, the SDRplay API SDK (installed under
 `/Library/SDRplayAPI/`) to compile the SDRplay RSP backend; without the SDK the
 Meter still builds and falls back to RTL-SDR. Because the Meter links the
 arm64-only RTL-SDR libraries it is **Apple-Silicon-only**; build the x86_64
@@ -40,7 +40,7 @@ swift build --package-path macOS -c release
 > and `swift run` produce a debug binary without compiler optimizations. The
 > audio render thread shares CPU with the main-thread UI loop, and on a debug
 > build the meter / scope / spectrum work in `refreshMonitoringSnapshot` is slow
-> enough to occasionally preempt the audio thread — you will hear clicks, buffer
+> enough to occasionally preempt the audio thread -- you will hear clicks, buffer
 > underruns, or input-ring overflows. Debug builds are fine for development,
 > unit testing, and `--verify` runs (which do not touch real audio devices), but
 > **for actual on-air or monitor playback always use a release build**: either
@@ -159,14 +159,15 @@ Linux specifics:
 ### Debian/Ubuntu package
 
 `./build-deb.sh <version> [distro-label]` builds `mpxprime_<ver>_amd64.deb`
+(`mpxprime_<ver>-<label>_amd64.deb` with the distro label, which the release
+workflow always passes)
 from a release build (`swift build --package-path macOS -c release
 --product MPXPrime --static-swift-stdlib` first -- the Swift runtime is
 linked statically; remaining system deps are computed by dpkg-shlibdeps).
 The package installs `/usr/bin/mpxprime` (+ the web-dashboard resource
 bundle), a `mpxprime.service` systemd unit (dedicated `mpxprime` system
-user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`,
-created with defaults on first run; `LimitRTPRIO` grants the audio threads
-real-time scheduling), the sample INI, and the docs. On a FRESH install
+user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`;
+`LimitRTPRIO` grants the audio threads real-time scheduling), the sample INI, and the docs. On a FRESH install
 postinst seeds `/var/lib/mpxprime/MPXPrime.ini` from the sample INI with
 `control_enabled = True`, `control_bind = 0.0.0.0` and a random 32-character
 `control_api_key` from `/dev/urandom` (printed once; an existing INI is never
@@ -178,8 +179,10 @@ forces the control server on while bind, port and key come from `[CONTROL]`
 (`.github/workflows/release.yml`); the 26.04 leg was removed until Swift.org
 ships a 26.04 toolchain -- the 24.04 deb uses a static Swift stdlib and
 installs/runs on 26.04 in the meantime. Pushes to `develop/**` and PRs to
-`main` run CI (`.github/workflows/ci.yml`): build + tests + the fast verify
-gates (incl. `--verify --baseline-strict`) on macOS and Ubuntu 24.04.
+`main` run CI (`.github/workflows/ci.yml`): build + tests on both platforms,
+`swiftlint --strict` and `--verify-receiver` on macOS, and the fast verify
+gates (`--verify --seconds 5` and `--verify --baseline-strict` against each
+platform's own baseline) on macOS and Ubuntu 24.04.
 
 Internals: the `MPXPrimeAcceleration` target supplies same-name implementations
 of the small vDSP/vForce surface the encoder uses (plus an
@@ -233,19 +236,22 @@ swift run --package-path macOS MPXPrime --capture-baseline    # writes macOS/ver
 swift run --package-path macOS MPXPrime --verify --baseline-strict
 ```
 
-Exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN.
+Exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN, `3` =
+FAIL (post-injection composite overshoot; checked first so a TIGHT finding can
+never mask it), `64` = usage error -- most often `macOS/Verification.ini` not
+findable because the gate was not run from the repo root.
 
-See the [Offline verification](../README.md#offline-verification) section of the
-README for what each report field means.
+See the [Offline verification](manual.md#offline-verification) section of the
+user manual for what each report field means.
 
 ## Tests
 
-Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) — not
+Tests use **Swift Testing** (`import Testing`, `@Test` / `#expect`) -- not
 XCTest. Running them requires a full Xcode install, so `DEVELOPER_DIR` must point
 at Xcode (the Command Line Tools ship no `Testing.framework`):
 
 ```bash
-# Full default suite (fast, ~10 s)
+# Full default suite (~40 s)
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS
 
 # Single suite / filter
@@ -253,7 +259,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-pa
 ```
 
 Optional deep DSP combination suite (~3 min; opt-in, catches stage-interaction
-regressions — run before a release or when touching multiple stages):
+regressions -- run before a release or when touching multiple stages):
 
 ```bash
 MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
@@ -268,8 +274,11 @@ UI changes should pass the accessibility lint before committing:
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint
 ```
 
-The project ships a `.swiftlint.yml` that runs only
-`accessibility_label_for_image` and `accessibility_trait_for_button`.
+The project's `.swiftlint.yml` enables the two accessibility rules
+(`accessibility_label_for_image`, `accessibility_trait_for_button`) plus a set
+of opt-in bug-catcher rules (force unwrapping, `first(where:)`, unowned
+captures, ...); the style rules that fight intentional DSP patterns are
+disabled. CI runs it with `--strict`.
 
 ## Release build and DMG
 
@@ -282,13 +291,13 @@ Build a universal release app bundle and DMG:
 Artifacts are written to `macOS/dist/`.
 
 Releases ship by merging the integration branch (`develop/v.NNN`) into `main`,
-tagging `v<version>` from `main`, and pushing the tag — which triggers
+tagging `v<version>` from `main`, and pushing the tag -- which triggers
 `.github/workflows/release.yml`, runs `./build-release.sh <version>`, and
 publishes the resulting DMG as a GitHub Release.
 
 ## See also
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — detailed DSP chain and stage descriptions
-- [`AGENTS.md`](../AGENTS.md) — full contributor / agent workflow guidance,
+- [ARCHITECTURE.md](ARCHITECTURE.md) -- detailed DSP chain and stage descriptions
+- [`AGENTS.md`](../AGENTS.md) -- full contributor / agent workflow guidance,
   conventions, and the release validation checklist
-- [`plan.md`](../plan.md) — roadmap
+- [`plan.md`](../plan.md) -- roadmap

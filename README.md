@@ -6,43 +6,43 @@ MPX Prime Studio is an FM composite (MPX) generator written in Swift. It takes l
 
 **It runs on two platforms:**
 
-- **macOS** — a native SwiftUI application: the **MPX Prime Studio** encoder plus its companion **MPX Prime Meter** analyzer, both shipped in one DMG (Core Audio, full GUI).
-- **Linux** — the **encoder** runs headless from the command line (ALSA output, no GUI), with the embedded REST API + **web dashboard** as its interface. SIMD-accelerated so the full chain runs in real time on low-power hardware (a fanless Celeron J4105 handles it); shipped as a Debian/Ubuntu package with a systemd service.
+- **macOS** -- a native SwiftUI application: the **MPX Prime Studio** encoder plus its companion **MPX Prime Meter** analyzer, both shipped in one DMG (Core Audio, full GUI).
+- **Linux** -- the **encoder** runs headless from the command line (ALSA output, no GUI), with the embedded REST API + **web dashboard** as its interface. SIMD-accelerated so the full chain runs in real time on low-power hardware (a fanless Celeron J4105 handles it); shipped as a Debian/Ubuntu package with a systemd service.
 
-The same DSP core drives both: a full broadcast-style processing chain — phase rotator, wideband AGC, 4-band parametric EQ, 3-/5-band multiband compressor, PrimeBass, mono bass, bass and audio-band clippers, L/R pre-emphasis, a gain-riding HF limiter (program-controlled pre-emphasis), pre-encode true-peak limiter, BS.412 power limiting, and an oversampled composite clipper with a look-ahead composite limiter behind it — ahead of a pilot-locked stereo encoder, keeping the pilot and RDS subcarriers out of all peak control (post-clipper injection). The Linux build is bit-for-bit the same processing; only the audio backend and the front end differ.
+The same DSP core drives both: a full broadcast-style processing chain -- phase rotator, wideband AGC, 4-band parametric EQ, 3-/5-band multiband compressor, PrimeBass, mono bass, bass and audio-band clippers, L/R pre-emphasis, a gain-riding HF limiter (program-controlled pre-emphasis), pre-encode true-peak limiter, BS.412 power limiting, and an oversampled composite clipper with a look-ahead composite limiter behind it -- ahead of a pilot-locked stereo encoder, keeping the pilot and RDS subcarriers out of all peak control (post-clipper injection). The Linux build is bit-for-bit the same processing; only the audio backend and the front end differ.
 
-> **Intended use and status.** MPX Prime Studio is for **experimental, hobby, and small-budget broadcast** — community / LPFM stations, pirate and SDR-fed exciters, prosumer encoding, and study of FM signal processing. It implements core behavior from EN 50067 / IEC 62106 and common FM-stereo practice, but it is **experimental and not certified — no conformity or compliance is promised.** Do not rely on it for regulated production broadcast.
+> **Intended use and status.** MPX Prime Studio is for **experimental, hobby, and small-budget broadcast** -- community / LPFM stations, pirate and SDR-fed exciters, prosumer encoding, and study of FM signal processing. It implements core behavior from EN 50067 / IEC 62106 and common FM-stereo practice, but it is **experimental and not certified -- no conformity or compliance is promised.** Do not rely on it for regulated production broadcast.
 
 ## App structure
 
-The macOS GUI is organised into these sections. The Linux build has no GUI — the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing incl. the Format Profile picker, RDS, Interfaces, Test Tone, Presets with the shared 8 operator preset slots), so the two front ends feel the same.
+The macOS GUI is organised into these sections. The Linux build has no GUI -- the **web dashboard** (see [Remote control](#remote-control)) mirrors this same layout (Monitoring, per-stage Processing incl. the Format Profile picker, RDS, Audio I/O, Test Tone, Presets with the shared 8 operator preset slots), so the two front ends feel the same.
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
 - `Audio I/O` (0.50): input / MPX output / monitor device pickers, the Operating Mode (MPX Composite / Processed Audio / Monitor), engine format, and the level calibration -- Input Gain, MPX Output Level, Line Output with a live DAC Peak readout -- remembered **per device** and recalled when you switch rigs
-- `Processing`: Overview, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), experimental single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, PrimeBass (+ Mono Bass), Bass Clipper, DC Clipper, HF Limiter / Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control, and the experimental SSB Stereo encoder (SSB-leaning stereo encoding) on top of the soft-clipper), BS.412, Final Stage
+- `Processing`: Overview, Format Profile, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), experimental single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, PrimeBass (+ Mono Bass), Bass Clipper, DC Clipper, HF Limiter / Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control, and the experimental SSB Stereo encoder (SSB-leaning stereo encoding) on top of the soft-clipper), BS.412, Final Stage
 - `RDS`: status (master enable + live snapshot), identity (PI / PTY / PTYN / ECC + PS banks + runtime flags TP / TA / MS / DI), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (injection level + frequency + Gaussian shaping)
-- `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level where 0 dBFS = 100% audio modulation -- a calibration source that bypasses the processing and shows the expected deviation; replaces the audio input live when enabled, ⌘T)
-- `Settings`: configuration path, interfaces, output mode (MPX composite vs processed audio), audio engine, spectrum options
+- `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level where 0 dBFS = 100% audio modulation -- a calibration source that bypasses the processing and shows the expected deviation; replaces the audio input live when enabled, Cmd-T)
+- `Settings` (a window, not a sidebar section): configuration path, spectrum options, remote control; devices, operating mode and engine format moved to `Audio I/O` in 0.50
 - Separate windows: `Scopes`, `Spectrum` (composite spectrum with FM band captions -- Mono L+R, 19 kHz Pilot, Stereo L-R, 57 kHz RDS, SCA), `Levels`, `Help`
 
 The RDS detail tabs are organised per UECP message-class taxonomy
 (AF is a peer of PS, RT+ lives under ODA, etc.). Every operationally
-toggled RDS setting applies live without restarting the transport —
+toggled RDS setting applies live without restarting the transport --
 PI, PTY, PTYN, TP/TA/MS/DI flags, AF list, group sequence, CT
 enable, all RT/PS/Long PS text. Only physical-layer settings
 (`rds_level`, Gaussian shaping FIR taps/BW) require a
 transport restart since they reconfigure the modulator.
 
-## MPX Prime Studio — the encoder (macOS + Linux)
+## MPX Prime Studio -- the encoder (macOS + Linux)
 
 Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
 
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
 - **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
 - Optional RDS generation with pilot-locked 57 kHz subcarrier
-- Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=−R / left-only / right-only modes, frequency presets, −60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
+- Live input source or built-in **Test Tone** generator (sine / pink / white, mono / L=-R / left-only / right-only modes, frequency presets, -60..0 dBFS level slider, live Enable toggle that replaces the audio input without restarting the engine)
 - Optional wideband AGC, HPF, program lowpass, HF trim, PrimeBass, mono bass, and multiband processing (including 0.28 opt-in transient-aware attack + inter-band gain coupling)
-- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4× oversampled stereo-linked true-peak limiter with default-on look-ahead and Dolby HF-subband-aware detector — `US 5,579,404`, expired 2013 — for audibly cleaner HF transients and preserved LF punch), feeding the 16× oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control) with live clipper telemetry
+- Broadcast-style **Final Stage** (Broadcast Preset + Final Drive + Composite Deviation + Final-MPX safety limiter with look-ahead) and a separate **Audio Limiter** tab (pre-encode 4x oversampled stereo-linked true-peak limiter with default-on look-ahead and Dolby HF-subband-aware detector -- `US 5,579,404`, expired 2013 -- for audibly cleaner HF transients and preserved LF punch), feeding the 16x oversampled composite clipper (with optional OS-rate sliding-window-max look-ahead peak control) with live clipper telemetry
 - Calibrated **MPX line output** in dBFS for repeatable exciter drive; since 0.50 all level calibration is remembered **per device** (switching exciters recalls each rig's trims), presets restore the sound but never the wiring, and the deviation meter reads the modulation domain with a separate **DAC Peak** electrical readout
 - TX-path engine toggles on the Core tab: linear-phase FIR encoder lowpass and FIR multiband splitters (latency vs. quality choices, restart-required)
 - Composite budget telemetry with pilot/RDS/audio visibility, safety-limiter readout, and a composite budget governor that holds the audio path under the post-injection clamp so pilot/RDS subcarrier amplitude stays constant for sane configs (over-budget flag for impossible configs)
@@ -50,12 +50,12 @@ Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
 - Italo / disco / dance multiband presets (`5B Italo`, `3B Italo`) with pumped low-band character
 - Decoded MPX monitor output on a selectable monitor device
 - **Processed-audio output mode** (Audio I/O - Operating Mode): emit processed stereo L/R instead of the FM composite, to feed an external stereo coder + RDS encoder on transmitters that only accept L/R / AES3 audio. Runs the full audio chain (no composite clipper / BS.412 / pilot / RDS), with selectable pre-emphasis (apply it here, or stay flat if the coder does); runs at the audio device rate (48 kHz / 24-bit recommended). Composite-only and RDS controls hide while it is active.
-- Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; the dashboard shows live meters/readouts and exposes the scope/spectrum data via `GET /api/telemetry` for external tooling — no in-browser graphs)
-- **Remote control** — an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build. Since 0.44 the dashboard has **full parity with the native GUI**: every setting, station formats + final-stage presets, the 8 operator preset slots (shared with the GUI), and a scope/spectrum telemetry endpoint for external tooling
+- Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; the dashboard shows live meters/readouts and exposes the scope/spectrum data via `GET /api/telemetry` for external tooling -- no in-browser graphs)
+- **Remote control** -- an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build. Since 0.44 the dashboard has **full parity with the native GUI**: every setting, station formats + final-stage presets, the 8 operator preset slots (shared with the GUI), and a scope/spectrum telemetry endpoint for external tooling
 - **Linux command-line build** (experimental): the encoder runs headless with ALSA output, SIMD-accelerated so the full chain fits low-power hardware; shipped as Debian/Ubuntu packages with a systemd service. No GUI, no Meter.
 - Config persisted to the INI (`~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` on macOS; `~/.local/share/...` or `/var/lib/mpxprime/` on Linux)
 
-## MPX Prime Meter — the analyzer (macOS only)
+## MPX Prime Meter -- the analyzer (macOS only)
 
 The receive/analyze counterpart, shipped as `MPX Prime Meter.app` in the same
 DMG. Where Studio *makes* the composite, the Meter *measures* it: feed it an
@@ -64,7 +64,7 @@ RTL-SDR / SDRplay tuner) and it decodes stereo + full RDS on one dashboard
 window. Its deviation, MPX-power, and SM.1268 readings were cross-validated
 against a commercial measuring receiver (pilot / RDS matched exactly, peak
 deviation within the SM.1268 +/-2 kHz tolerance). **macOS only, Apple Silicon
-(the SDR tuner is arm64) — there is no Linux or Intel Meter.**
+(the SDR tuner is arm64) -- there is no Linux or Intel Meter.**
 
 - Decoded scopes (composite, decoded L, decoded R) and a stereo vectorscope
 - MPX spectrum (0-100 kHz) with band captions (Mono L+R, 19 kHz Pilot,
@@ -106,31 +106,31 @@ with live-apply where the engine supports it. Localhost needs no
 authentication; any wider bind requires an API key. See the
 [user manual](docs/manual.md#remote-control-rest-api--web-dashboard).
 
-This is a **MPX Prime Studio (encoder)** feature only — on both macOS and
+This is a **MPX Prime Studio (encoder)** feature only -- on both macOS and
 Linux. The **MPX Prime Meter has no REST API or web interface** for now;
 it is operated from its own window (or its headless terminal modes).
 
 ## Output modes
 
 MPX Prime Studio drives its main output device in one of two modes, chosen in
-**Audio I/O → Operating Mode** (restart-required). What you need from your hardware
+**Audio I/O -> Operating Mode** (restart-required). What you need from your hardware
 depends on which you use:
 
-- **MPX Composite** (default) — the finished FM multiplex: mono sum + 38 kHz
+- **MPX Composite** (default) -- the finished FM multiplex: mono sum + 38 kHz
   stereo subcarrier + 19 kHz pilot + optional 57 kHz RDS, for a transmitter /
   exciter that accepts a composite ("MPX" / "wideband" / baseband) input.
   **Needs a 192 kHz output device** so the ~59 kHz upper RDS sideband stays below
   Nyquist. A 96 kHz device can carry stereo but **not** RDS.
-- **Processed Audio** — the processed stereo **L/R** audio only (no pilot /
+- **Processed Audio** -- the processed stereo **L/R** audio only (no pilot /
   subcarrier / RDS / composite clipper / BS.412), for transmitters that accept
   only L/R analog or AES3 audio and have their own stereo coder + RDS encoder.
-  **48 kHz / 24-bit is all you need** — the high composite sample rates do not
+  **48 kHz / 24-bit is all you need** -- the high composite sample rates do not
   apply. Pre-emphasis is selectable (apply it here, or stay flat if the coder
   does), with an optional final loudness clipper. See the
   [user manual](docs/manual.md#processed-audio-output-mode).
 
 A separate, optional **Decoded Monitor** output (any sample rate) demodulates the
-internal composite back to L/R for headphone monitoring on a second device — a
+internal composite back to L/R for headphone monitoring on a second device -- a
 listening aid, not the on-air signal.
 
 ## Requirements
@@ -139,14 +139,14 @@ listening aid, not the on-air signal.
   of the encoder (headless `--nogui` into an ALSA device, verifier, benchmark;
   no GUI, no Meter) builds from the same source tree -- see
   [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only).
-- **Platform support tiers:** **Apple Silicon (arm64) is Tier 1** — the primary, fully-supported target. **Intel (x86_64) is Tier 2, best-effort** — the universal binary runs and the audio chain is identical, but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first; Intel gets lighter-weight fallbacks where they help but is not the optimization priority.
-- Xcode command line tools / Swift 6 toolchain (only needed for building from source — download the DMG below if you just want to run it)
-- **Audio output device — depends on the output mode (see above):**
+- **Platform support tiers:** **Apple Silicon (arm64) is Tier 1** -- the primary, fully-supported target. **Intel (x86_64) is Tier 2, best-effort** -- the universal binary runs and the audio chain is identical, but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first; Intel gets lighter-weight fallbacks where they help but is not the optimization priority.
+- Xcode command line tools / Swift 6 toolchain (only needed for building from source -- download the DMG below if you just want to run it)
+- **Audio output device -- depends on the output mode (see above):**
   - *MPX Composite with RDS:* an external USB / Thunderbolt interface that runs
     **192 kHz** natively. Built-in Mac audio tops out at 96 kHz, which cannot
     carry the 57 kHz RDS subcarrier; 96 kHz can do stereo-without-RDS.
   - *Processed Audio (feeding an external coder):* **48 kHz / 24-bit is
-    sufficient** — built-in audio or any interface works.
+    sufficient** -- built-in audio or any interface works.
 - The output device's format in Audio MIDI Setup must match the configured
   `sample_rate`, or Core Audio's implicit resampling starves the render thread.
   (Linux: devices are ALSA PCM names such as `hw:0,0`; a `hw:` device must run
@@ -159,7 +159,7 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 
 **[github.com/bkram/MPXPrime/releases](https://github.com/bkram/MPXPrime/releases)**
 
-Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) — install whichever you need.
+Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) -- install whichever you need.
 
 **Linux (encoder only):** the same releases attach Debian/Ubuntu packages
 `mpxprime_<version>-ubuntu24.04_amd64.deb` (static Swift stdlib; installs and runs on later Ubuntu releases too).
@@ -170,36 +170,36 @@ interface -- at `http://<host>:8737/` on all interfaces, behind a random API
 key the installer generates and prints (stored in
 `/var/lib/mpxprime/MPXPrime.ini` as `control_api_key`; the
 [manual](docs/manual.md#usage) walks through it). This is the
-CLI encoder only — no GUI, no Meter, no Monitor operating mode. See
+CLI encoder only -- no GUI, no Meter, no Monitor operating mode. See
 [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
 
 ### First-launch security note
 
-MPX Prime Studio is **ad-hoc signed**, not Apple-notarized. The DMG is built and signed by an automated GitHub Actions workflow with a self-managed signing identity — it is *not* enrolled in the Apple Developer Notary Service. As a result, macOS Gatekeeper will refuse to open the app on first launch with a message similar to:
+MPX Prime Studio is **ad-hoc signed**, not Apple-notarized. The DMG is built and signed by an automated GitHub Actions workflow with a self-managed signing identity -- it is *not* enrolled in the Apple Developer Notary Service. As a result, macOS Gatekeeper will refuse to open the app on first launch with a message similar to:
 
 > *"MPX Prime Studio" cannot be opened because Apple cannot check it for malicious software.*
 
 This is the standard macOS warning for any app distributed outside the Mac App Store / Apple Notarization. To approve the app once:
 
-1. Open **System Settings → Privacy & Security**.
+1. Open **System Settings -> Privacy & Security**.
 2. Scroll to the **Security** section near the bottom. You will see a message like *"MPX Prime Studio was blocked from use because it is not from an identified developer"*.
 3. Click **Open Anyway** next to that message.
-4. The next time you launch MPX Prime Studio, macOS will prompt one more time — click **Open**.
+4. The next time you launch MPX Prime Studio, macOS will prompt one more time -- click **Open**.
 
 After the first approval, MPX Prime Studio launches normally on subsequent runs. This is a one-time per-version operation; updating to a new release will trigger the prompt again on first launch.
 
-If you would rather skip the Gatekeeper dialog entirely, build from source (see [docs/BUILDING.md](docs/BUILDING.md)) — locally built binaries are not subject to the same check.
+If you would rather skip the Gatekeeper dialog entirely, build from source (see [docs/BUILDING.md](docs/BUILDING.md)) -- locally built binaries are not subject to the same check.
 
 
 ## Documentation
 
-- [docs/manual.md](docs/manual.md) — **MPX Prime Studio manual**: usage, first-time setup, configuration, RDS text, monitoring windows, verification, and the RDS PI/ECC + PTY reference tables
-- [docs/manual-meter.md](docs/manual-meter.md) — **MPX Prime Meter manual**: SDR/audio input, the measurement readouts, WAV recording, and calibration
-- [docs/BUILDING.md](docs/BUILDING.md) — build, run, verify, test, and package from source
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — detailed DSP chain and stage descriptions
-- [`AGENTS.md`](AGENTS.md) — contributor / agent workflow guidance and release checklist
-- [`plan.md`](plan.md) — roadmap
-- [`CHANGELOG.md`](CHANGELOG.md) — version history
+- [docs/manual.md](docs/manual.md) -- **MPX Prime Studio manual**: usage, first-time setup, configuration, RDS text, monitoring windows, verification, and the RDS PI/ECC + PTY reference tables
+- [docs/manual-meter.md](docs/manual-meter.md) -- **MPX Prime Meter manual**: SDR/audio input, the measurement readouts, WAV recording, and calibration
+- [docs/BUILDING.md](docs/BUILDING.md) -- build, run, verify, test, and package from source
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- detailed DSP chain and stage descriptions
+- [`AGENTS.md`](AGENTS.md) -- contributor / agent workflow guidance and release checklist
+- [`plan.md`](plan.md) -- roadmap
+- [`CHANGELOG.md`](CHANGELOG.md) -- version history
 
 ## References
 
@@ -208,14 +208,14 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 
 ## Acknowledgements
 
-The block-level RDS bit encoder in `BasicRDSCoder` — CRC (`0x5B9`), offset words, and the four-block group assembly shared by groups 0/2/3A/4A/10A/11A/15A — was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). Everything around it is MPX Prime Studio's own work: the 1187.5 bit/s biphase + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation, the audio-thread real-time pipeline (pre-allocated bit buffer, atomic CT cache, monotonic-clock timing), the `RDSRuntimeConfig` live-apply path, AF Method B, RT+ ODA (AID 0x4BD7), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, Group 1A ECC/LIC, the Stereotool-compatible text grammar, and the full FM composite chain that the encoder feeds into.
+The block-level RDS bit encoder in `BasicRDSCoder` -- CRC (`0x5B9`), offset words, and the four-block group assembly shared by groups 0/2/3A/4A/10A/11A/15A -- was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). Everything around it is MPX Prime Studio's own work: the 1187.5 bit/s biphase + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation, the audio-thread real-time pipeline (pre-allocated bit buffer, atomic CT cache, monotonic-clock timing), the `RDSRuntimeConfig` live-apply path, AF Method B, RT+ ODA (AID 0x4BD7), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, Group 1A ECC/LIC, the Stereotool-compatible text grammar, and the full FM composite chain that the encoder feeds into.
 
 ## Trademarks
 
 MPX Prime Studio is an independent open-source project and is not affiliated with,
 endorsed by, or sponsored by any of the companies named in this documentation.
-Product and company names — including Orban, Optimod, Omnia, Stereo Tool /
-Stereotool, Aphex, Waves, and others — are trademarks of their respective owners
+Product and company names -- including Orban, Optimod, Omnia, Stereo Tool /
+Stereotool, Aphex, Waves, and others -- are trademarks of their respective owners
 and are used here descriptively only, to identify published behavior, prior art,
 and platform APIs for comparison.
 

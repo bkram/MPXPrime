@@ -65,10 +65,10 @@ private func printUsage() {
       --gui              Open the graphical dashboard window (also the default
                          when launched with no arguments, e.g. the .app bundle).
       --sdr-freq <MHz>   Open the GUI pre-tuned to this RTL-SDR frequency and
-                         start capturing (used by run-meter-sdr.sh --gui).
+                         start capturing (used by run-meter.sh --gui).
       --stdin            Read the MPX composite from stdin (a WAV stream or raw
                          little-endian int16 mono) instead of an audio device.
-                         For piping an external tuner -- see run-meter-sdr.sh.
+                         For piping an external tuner -- see run-meter.sh.
       --sample-rate <Hz> Sample rate for --stdin raw/WAV input (default 192000).
       --full-scale-khz <kHz>
                          Absolute calibration for an audio-device or --stdin
@@ -522,7 +522,7 @@ private func parseValue(_ args: [String], _ flag: String) -> String? {
 
 /// Launch the SwiftUI dashboard window (blocks until the app quits). When
 /// `sdrFreqMHz` is set, the window opens pre-tuned to that SDR frequency and
-/// starts capturing immediately (used by run-meter-sdr.sh --gui).
+/// starts capturing immediately (used by run-meter.sh --gui).
 @MainActor
 private func runGUI(sdrFreqMHz: Double?) -> Int32 {
     let app = NSApplication.shared

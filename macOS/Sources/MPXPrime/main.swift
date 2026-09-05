@@ -242,7 +242,7 @@ func printUsage() {
           MPXPrime --bench-blocks
 
         Options:
-          --config   Path to macOS INI config (default: ~/Library/Application Support/MPX Prime/MPX Prime.ini)
+          --config   Path to the INI config (default: ~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini; Linux: ~/.local/share/MPX Prime Studio/MPX Prime Studio.ini)
           --seconds  Auto-stop after N seconds (GUI or headless)
           --gui      Launch native SwiftUI macOS window (default)
           --nogui    Run headless

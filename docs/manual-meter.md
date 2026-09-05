@@ -1,4 +1,4 @@
-# MPX Prime Meter — User Manual
+# MPX Prime Meter -- User Manual
 
 MPX Prime Meter is the receive/analyze counterpart to the MPX Prime Studio
 encoder, shipped as `MPX Prime Meter.app` in the same DMG. It takes an FM MPX
@@ -13,7 +13,7 @@ validate a chain.
 > does not. To analyze a signal from a Linux box, capture it on a Mac running
 > the Meter.
 >
-> The Meter also has **no REST API or web interface** — the remote-control
+> The Meter also has **no REST API or web interface** -- the remote-control
 > REST API + web dashboard is an encoder (MPX Prime Studio) feature. The
 > Meter is driven from its own window, or the headless terminal modes below.
 
@@ -33,9 +33,17 @@ that the Meter decodes are in the Studio manual's appendices
   SDR is GUI-only; with no arguments `./run-meter.sh` opens the window and
   auto-detects a dongle. Use `--sdr-freq <MHz>` to open the GUI pre-tuned.
 
-The Meter **remembers your last-used settings** (frequency, input source, all SDR
-controls, channel, monitor, pilot reference / calibration, record format,
-spectrum span, and the selected devices) between launches; they are stored in the
+Headless flags beyond the ones used below (`--help` lists them all):
+`--list-devices`; `--device <spec>` (list index, UID or name substring);
+`--channel left|right|mix` (the CLI defaults to left, the GUI to right);
+`--sample-rate <Hz>` for `--stdin`; `--wav <path>` to record the decoded
+stereo to a 24-bit WAV; `--monitor-device <spec>` / `--monitor-gain <dB>`;
+`--selftest` (synthesized composite, no hardware).
+
+The Meter **remembers your last-used settings** (frequency, input source, every SDR
+control, channel, monitor and MPX pass-through outputs, calibration mode /
+pilot reference / signal unit, de-emphasis, DC block, Force RDS, monitor
+ballistics, record format, spectrum span, and the selected devices) between launches; they are stored in the
 standard macOS preferences and restored on the next start. Pass `--sdr-freq`
 to override the saved frequency for that launch.
 
@@ -91,7 +99,7 @@ rate switch lands on a different rate than requested.
 
 ## Window layout
 
-The toolbar carries only the frequent commands -- **Start/Stop** (⌘Return),
+The toolbar carries only the frequent commands -- **Start/Stop** (Cmd-Return),
 the **Source** switch (Audio / SDR), and the **Monitor** toggle. The detailed
 input settings for the selected source (audio device + channel, or SDR
 frequency / AGC / gain) live in a translucent **input bar** directly below the
@@ -276,7 +284,7 @@ remembered by device UID):
   resolution is coarser than the limit it would be compared against. Plus
   best stereo separation, the **RDS PHASE** compliance readout (see "RDS
   subcarrier phase" below), and
-  Reset to clear the held values. MPX power and
+  Reset Peaks to clear the held values. MPX power and
   the peaks turn amber near and red at/over the limit (0 dBr, 75 kHz). On
   SDR it also shows **SIGNAL** -- the received level (green strong / red
   weak). See "Signal level and dBm" below for the units.
@@ -334,7 +342,7 @@ remembered by device UID):
   does unless you set **Bandwidth** explicitly -- 200 kHz reproduces the
   correct figures, as the third row shows. So either leave the default 1 MSPS,
   or set an explicit Bandwidth if you need Narrow. (In 0.45 the wide path's
-  decimator was also lengthened from 48 to 128 taps, so its passband stays
+  decimator was also lengthened from 48 to 128 taps at the 1 MSPS default (32 per decimation phase), so its passband stays
   flat past +/-105 kHz instead of reaching into the +/-90 kHz an FM signal
   occupies.)
 
@@ -514,8 +522,11 @@ status reports the limit was reached.
 
 ### Re-analyzing a recorded composite
 
-An MPX recording (from the Meter's own **MPX** record format, or any 16/24-bit
-mono WAV of a composite) can be pushed back through the analyzer headlessly:
+A 16-bit mono WAV of a composite (or raw little-endian int16) can be pushed
+back through the analyzer headlessly. The Meter's own **MPX** recordings are
+24-bit, so convert them first (`sox in.wav -b 16 out.wav`), and pass
+`--sample-rate <Hz>` when the file is not 192 kHz -- the stdin reader takes
+the rate from that flag, not from the WAV header:
 
 ```bash
 macOS/.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
@@ -567,7 +578,7 @@ broadcast has none anyway (even dead air carries the 19 kHz pilot). The
 audio-device path, by contrast, needs a reference because the analog input gain
 is unknown. The **Calibrate** switch on the audio input bar picks how:
 
-- **Pilot** (default, `pilot_ref_khz`, default 6.75) -- scales deviation by
+- **Pilot** (default; CLI `--pilot-ref-khz`, default 6.75) -- scales deviation by
   assuming the 19 kHz pilot equals the **Pilot Ref (kHz)** field. Set it to the
   source's actual pilot deviation: 6.75 kHz is 9%, but stations vary, and a pilot
   that is really 5.7 kHz read against 6.75 inflates every kHz value by ~18%.

@@ -472,7 +472,7 @@ enum PresetCatalog {
               hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
               phaseRotationEnabled: false),
         .init(id: "music_loud", title: "Music — Loud",
-              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, wide image.",
+              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, mono bass at 115 Hz.",
               multibandPresetID: "5_chr", multibandIntensity: .normal,
               finalStagePresetID: "chr", primeBassEnabled: true,
               primeBassPresetID: "chr", monoBassFreqHz: 115.0,

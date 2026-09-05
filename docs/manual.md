@@ -1,4 +1,4 @@
-# MPX Prime Studio — User Manual
+# MPX Prime Studio -- User Manual
 
 Operation, configuration, and reference for running MPX Prime Studio (the encoder). For a project overview see the [README](../README.md); to build from source see [BUILDING.md](BUILDING.md); for the DSP chain internals see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -6,8 +6,8 @@ Operation, configuration, and reference for running MPX Prime Studio (the encode
 
 The encoder runs on two platforms with the **same DSP**; only the front end and audio backend differ:
 
-- **macOS** — the full **GUI application** (`MPX Prime Studio.app`), Core Audio, plus a headless `--nogui` mode. The companion **MPX Prime Meter** analyzer ships in the same DMG (macOS only — see its [manual](manual-meter.md)).
-- **Linux** — the **encoder only, headless** (`--nogui`, ALSA output, no GUI). Its interface is the built-in [web dashboard / REST API](#remote-control-rest-api--web-dashboard). Installed from the Debian/Ubuntu package as the `mpxprime` systemd service (config at `/var/lib/mpxprime/MPXPrime.ini`). **There is no GUI and no Meter on Linux.** Setup: [BUILDING.md → Linux (CLI-only)](BUILDING.md#linux-cli-only).
+- **macOS** -- the full **GUI application** (`MPX Prime Studio.app`), Core Audio, plus a headless `--nogui` mode. The companion **MPX Prime Meter** analyzer ships in the same DMG (macOS only -- see its [manual](manual-meter.md)).
+- **Linux** -- the **encoder only, headless** (`--nogui`, ALSA output, no GUI). Its interface is the built-in [web dashboard / REST API](#remote-control-rest-api--web-dashboard). Installed from the Debian/Ubuntu package as the `mpxprime` systemd service (config at `/var/lib/mpxprime/MPXPrime.ini`). **There is no GUI and no Meter on Linux.** Setup: [BUILDING.md -> Linux (CLI-only)](BUILDING.md#linux-cli-only).
 
 Most of this manual (controls, RDS, config keys, presets) applies to both; where a control is GUI-only, Linux operators reach the equivalent through the web dashboard, which mirrors the GUI layout. Platform-specific differences are flagged inline; at a glance:
 
@@ -16,7 +16,7 @@ Most of this manual (controls, RDS, config keys, presets) applies to both; where
 | Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (the package enables it on all interfaces behind a generated API key -- see Usage) |
 | Audio backend and device keys | Core Audio; `*_device_uid` keys hold Core Audio UIDs, picked in the app | ALSA; `*_device_uid` keys hold PCM names (`default`, `hw:0,0`, `plughw:...`) |
 | Default config file | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` (source build); `/var/lib/mpxprime/MPXPrime.ini` (Debian package) |
-| Operating modes | MPX Composite, Processed Audio, Monitor (decoded simulation) | MPX Composite, Processed Audio (no Monitor) |
+| Operating modes | MPX Composite, Processed Audio, Monitor (decoded simulation; GUI only, not in `--nogui`) | MPX Composite, Processed Audio (no Monitor) |
 | Companion analyzer / SDR | MPX Prime Meter (Apple Silicon only) | none |
 | Offline gates | all `--verify*` modes, `--bench*`, the live smoke / A/B scripts (need BlackHole) | all `--verify*` modes and `--bench*` except `--verify-program-ab` (needs AVFoundation); no live scripts |
 
@@ -25,7 +25,7 @@ The same INI keys, presets, RDS features and verifier thresholds apply on both; 
 ## Usage
 
 **macOS.** Launch MPX Prime Studio from `/Applications` (or wherever you copied it). On first run,
-grant input access when macOS prompts — this is required to capture audio. Then
+grant input access when macOS prompts -- this is required to capture audio. Then
 pick your input and MPX output devices in the app and start the engine.
 
 Command-line flags (run the binary inside the app bundle):
@@ -68,66 +68,66 @@ come from the INI). Devices are ALSA PCM names (`default`, `hw:0,0`,
 exist on Linux.
 
 To build, run, verify, test, or package from source, see
-[docs/BUILDING.md](docs/BUILDING.md).
+[docs/BUILDING.md](BUILDING.md).
 
 ## Quick start (first-time use)
 
-This is the minimum to hear MPX Prime Studio processing your audio and feeding a transmitter / SDR / loopback. Defaults are tuned to sound good out of the box — the chain ships processing-on with AGC, multiband, bass clipping, and the composite clipper engaged.
+This is the minimum to hear MPX Prime Studio processing your audio and feeding a transmitter / SDR / loopback. Defaults are tuned to sound good out of the box -- the chain ships processing-on with AGC, multiband, bass clipping, and the composite clipper engaged.
 
 **1. Plug audio in and out.** MPX Prime Studio reads from a Core Audio input device and writes the composite (MPX) signal to a Core Audio output device (on Linux: ALSA PCM devices, selected on the web dashboard's Audio I/O page or by name in the INI). Typical setups:
 
-- Soundcard input from your studio mixer / streaming source → soundcard output into an FM exciter that accepts MPX baseband.
-- BlackHole 2ch (virtual loopback) input from a music player or DAW → soundcard output into an SDR transmitter or RF generator.
-- Test tone source (built-in) → output to verify metering and routing without external audio.
+- Soundcard input from your studio mixer / streaming source -> soundcard output into an FM exciter that accepts MPX baseband.
+- BlackHole 2ch (virtual loopback) input from a music player or DAW -> soundcard output into an SDR transmitter or RF generator.
+- Test tone source (built-in) -> output to verify metering and routing without external audio.
 
-192 kHz output is **required for the full composite with RDS.** RDS sits at 57 kHz, which exceeds the 48 kHz Nyquist of 96 kHz sample rates — the RDS subcarrier cannot be represented at 96 kHz or below. 96 kHz is just enough to carry the FM stereo composite alone (M + 19 kHz pilot + 38 kHz DSB-SC stereo subcarrier) provided the audio bandwidth is limited so the upper L−R sideband doesn't push past 48 kHz; pilot-locked stereo decoding works, but disable RDS at this rate. Below 96 kHz the stereo subcarrier itself doesn't fit. 192 kHz is the recommended rate for everything because it gives Nyquist headroom for the post-clipper pilot/RDS injection plus the oversampled peak-control stages the chain runs above the host rate.
+192 kHz output is **required for the full composite with RDS.** RDS sits at 57 kHz, which exceeds the 48 kHz Nyquist of 96 kHz sample rates -- the RDS subcarrier cannot be represented at 96 kHz or below. 96 kHz is just enough to carry the FM stereo composite alone (M + 19 kHz pilot + 38 kHz DSB-SC stereo subcarrier) provided the audio bandwidth is limited so the upper L-R sideband doesn't push past 48 kHz; pilot-locked stereo decoding works, but disable RDS at this rate. Below 96 kHz the stereo subcarrier itself doesn't fit. 192 kHz is the recommended rate for everything because it gives Nyquist headroom for the post-clipper pilot/RDS injection plus the oversampled peak-control stages the chain runs above the host rate.
 
-> **External sound card required for RDS.** Apple's built-in audio output on Mac laptops and most desktops tops out at **96 kHz**, which cannot carry RDS — the 57 kHz subcarrier exceeds 48 kHz Nyquist. For any FM-with-RDS chain you need a USB / Thunderbolt audio interface that natively runs at **192 kHz**. Most pro and prosumer interfaces (RME, MOTU, Focusrite Scarlett 3rd-gen+, Apogee, etc.) support 192 kHz on at least the analog or AES outputs — check the spec sheet before ordering. The internal Mac speakers / headphone jack are fine for *listening to a test tone* through MPX Prime Studio, but they cannot be the production output if RDS is in play.
+> **External sound card required for RDS.** Apple's built-in audio output on Mac laptops and most desktops tops out at **96 kHz**, which cannot carry RDS -- the 57 kHz subcarrier exceeds 48 kHz Nyquist. For any FM-with-RDS chain you need a USB / Thunderbolt audio interface that natively runs at **192 kHz**. Most pro and prosumer interfaces (RME, MOTU, Focusrite Scarlett 3rd-gen+, Apogee, etc.) support 192 kHz on at least the analog or AES outputs -- check the spec sheet before ordering. The internal Mac speakers / headphone jack are fine for *listening to a test tone* through MPX Prime Studio, but they cannot be the production output if RDS is in play.
 
-### Audio MIDI Setup — required device configuration
+### Audio MIDI Setup -- required device configuration
 
-macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime Studio tells the engine what rate it wants, but the device-side format and volume are owned by the OS — wrong values there silently corrupt the composite before it leaves the Mac.
+macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime Studio tells the engine what rate it wants, but the device-side format and volume are owned by the OS -- wrong values there silently corrupt the composite before it leaves the Mac.
 
 **Output device** (feeding your exciter / SDR / RF generator):
 
-1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly. **Required for RDS** — the 57 kHz RDS subcarrier needs at least ~119 kHz Nyquist; 176.4 kHz is the lowest device rate that carries it correctly, 192 kHz is the canonical default. On start MPX Prime Studio now **sets the output device to the configured rate itself** (and restores the device's prior rate on stop); if the device can't run that rate it surfaces a routing note telling you to set it in Audio MIDI Setup, rather than letting Core Audio quietly resample.
-2. **Bit depth**: **24-bit integer or 32-bit float**. Either is fine; 32-bit float is the AVAudioEngine native format. 16-bit also *works* for the composite (96 dB SNR is well above any FM receiver's noise floor and you cannot hear the difference at the listener), but 24/32-bit is best practice — no extra dither/truncation step at the chain output, and headroom for downstream tools that further process the composite (resamplers, SDR DSPs).
-3. **Volume / output gain**: **100 % (0 dB) on every channel**. This is the critical one. The macOS volume slider is post-mix — it scales the engine's already-finalised composite. If output volume is at, say, 75 %, the FM exciter receives a signal at 0.75× amplitude and your modulation undershoots by ~2.5 dB; the loudness target the chain just enforced is silently wrong. Audio MIDI Setup → device → "Master Stream" or per-channel volume sliders. Lock these at unity for any broadcast use.
+1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly. **Required for RDS** -- the 57 kHz RDS subcarrier needs at least ~119 kHz Nyquist; 176.4 kHz is the lowest device rate that carries it correctly, 192 kHz is the canonical default. On start MPX Prime Studio now **sets the output device to the configured rate itself** (and restores the device's prior rate on stop); if the device can't run that rate it surfaces a routing note telling you to set it in Audio MIDI Setup, rather than letting Core Audio quietly resample.
+2. **Bit depth**: **24-bit integer or 32-bit float**. Either is fine; 32-bit float is the AVAudioEngine native format. 16-bit also *works* for the composite (96 dB SNR is well above any FM receiver's noise floor and you cannot hear the difference at the listener), but 24/32-bit is best practice -- no extra dither/truncation step at the chain output, and headroom for downstream tools that further process the composite (resamplers, SDR DSPs).
+3. **Volume / output gain**: **100 % (0 dB) on every channel**. This is the critical one. The macOS volume slider is post-mix -- it scales the engine's already-finalised composite. If output volume is at, say, 75 %, the FM exciter receives a signal at 0.75x amplitude and your modulation undershoots by ~2.5 dB; the loudness target the chain just enforced is silently wrong. Audio MIDI Setup -> device -> "Master Stream" or per-channel volume sliders. Lock these at unity for any broadcast use.
 
-**Device selection is remembered by UID and name.** Each selected input / output / monitor device is stored by its Core Audio UID *and* its name (`input_device_uid` / `input_device_name`, etc.). At launch the device is matched by UID first, then by name — so moving a USB interface to a different port (which can change its UID) still re-finds the same device. If a remembered device is simply unplugged, MPX Prime Studio **keeps** your selection (and shows a status note) instead of silently switching to whatever device is first in the list; reconnect it, or pick another.
+**Device selection is remembered by UID and name.** Each selected input / output / monitor device is stored by its Core Audio UID *and* its name (`input_device_uid` / `input_device_name`, etc.). At launch the device is matched by UID first, then by name -- so moving a USB interface to a different port (which can change its UID) still re-finds the same device. If a remembered device is simply unplugged, MPX Prime Studio **keeps** your selection (and shows a status note) instead of silently switching to whatever device is first in the list; reconnect it, or pick another.
 
-**Input device** (your audio source — interface, BlackHole loopback, or built-in audio):
+**Input device** (your audio source -- interface, BlackHole loopback, or built-in audio):
 
-1. **Format / sample rate**: **48 000 Hz, 24-bit** is the recommended sweet spot. The reason is the dual-rate audio chain (default-on since 0.30) — the entire audio domain (multiband, AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs at 48 kHz internally, then upsamples to the MPX rate at the stereo encoder boundary. Setting the input device to 48 kHz means the source audio passes into the audio domain without any Core Audio upsampling on the way in (no information gain from higher input rates anyway — audio source material has zero useful content above ~20 kHz). 44.1 kHz also works fine; Core Audio's input-side SRC handles the small upsample to 48 kHz cleanly.
+1. **Format / sample rate**: **48 000 Hz, 24-bit** is the recommended sweet spot. The reason is the dual-rate audio chain (default-on since 0.30) -- the entire audio domain (multiband, AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs at 48 kHz internally, then upsamples to the MPX rate at the stereo encoder boundary. Setting the input device to 48 kHz means the source audio passes into the audio domain without any Core Audio upsampling on the way in (no information gain from higher input rates anyway -- audio source material has zero useful content above ~20 kHz). 44.1 kHz also works fine; Core Audio's input-side SRC handles the small upsample to 48 kHz cleanly.
 2. **Bit depth**: **24-bit** is recommended. 16-bit is fine for the audio itself, but the chain runs in 32-bit float internally through many stages and 24-bit input keeps the noise margin below the audible threshold even under hot processing.
-3. **Volume**: per-device — set whatever produces a sensible input level on the `IN L/R` meter at the top of the app. Aim for peaks around -12 to -6 dBFS on the input meter so the wideband AGC has something to work with.
+3. **Volume**: per-device -- set whatever produces a sensible input level on the `IN L/R` meter at the top of the app. Aim for peaks around -12 to -6 dBFS on the input meter so the wideband AGC has something to work with.
 
-If your output device is BlackHole or a virtual loopback, the same rules apply — check both the loopback device's format and the receiving app's input format. Mismatch there is the #1 cause of "the chain looks right but the receiver sounds wrong" reports.
+If your output device is BlackHole or a virtual loopback, the same rules apply -- check both the loopback device's format and the receiving app's input format. Mismatch there is the #1 cause of "the chain looks right but the receiver sounds wrong" reports.
 
 **2. Set your region.** Pre-emphasis differs by region:
 
-- **USA / Canada / South Korea**: 75 µs
-- **Everywhere else (EU, ROW)**: 50 µs (current default)
+- **USA / Canada / South Korea**: 75 us
+- **Everywhere else (EU, ROW)**: 50 us (current default)
 
-Open `Processing` → `Core` and change `Pre-emphasis (μs)` to `75` if you are in a 75 µs region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). The curve itself is matched to the analog network within 0.05 dB up to 15 kHz, and since 0.45 the whole chain's receiver-side response follows it within 0.5 dB to 14 kHz -- earlier builds were 1-3.5 dB low above 10 kHz at the receiver (a limiter decimation filter and the digital pre-emphasis approximation both rolled off the top of the band), so a station that added treble EQ to compensate should re-check that EQ after upgrading. EU operators required to comply with ITU-R BS.412 should also enable `Processing` → `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
+Open `Processing` -> `Core` and change `Pre-emphasis` to `75` if you are in a 75 us region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). The curve itself is matched to the analog network within 0.05 dB up to 15 kHz, and since 0.45 the whole chain's receiver-side response follows it within 0.5 dB to 14 kHz -- earlier builds were 1-3.5 dB low above 10 kHz at the receiver (a limiter decimation filter and the digital pre-emphasis approximation both rolled off the top of the band), so a station that added treble EQ to compensate should re-check that EQ after upgrading. EU operators required to comply with ITU-R BS.412 should also enable `Processing` -> `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
 
-**3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in the sidebar's `Audio I/O` section, then press `Start` (⌘Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection — if those move with your audio, the chain is processing.
+**3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in the sidebar's `Audio I/O` section, then press `Start` (Cmd-Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection -- if those move with your audio, the chain is processing.
 
 **4. Calibrate composite output level.** On `Monitoring`, watch the `Composite Budget` chip:
 
 - **Safe**: nominal modulation, headroom available
 - **Tight**: near 100% modulation, fine for normal broadcast
-- **Risk**: peaks exceeding 100% — back off `MPX Output Level` on the `Audio I/O` Output card
+- **Risk**: peaks exceeding 100% -- back off `MPX Output Level` on the `Audio I/O` Output card
 
 `Final Drive` (on the `Final Stage` tab) controls perceived loudness; `MPX Output Level` (on the `Audio I/O` Output card, remembered per device) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
 
 **5. Verify on a receiver.** Tune a real FM radio or RTL-SDR to your transmitter's frequency. You should hear stereo audio with a steady stereo-pilot indicator, see RDS PS and Radiotext on the radio's display (if your radio supports RDS), and the audio should sound louder and more present than the same source through `mpxgen` / PiFmRds.
 
-If you cannot hear anything, check `Audio I/O` → output device routing, that the engine is started, and that `Processing` → `Core` → `Bypass Processing` is **off** (the default).
+If you cannot hear anything, check `Audio I/O` -> output device routing, that the engine is started, and that `Processing` -> `Core` -> `Bypass Processing` is **off** (the default).
 
 ### Block (buffer) size
 
-`Audio I/O` -> `Engine` -> `Block Size` (`blocksize` in `[INTERFACES]`, 256..8192 frames). The DSP itself does not depend on it -- the composite rendered in 64-, 480-, 1024- or 8192-frame blocks is bit-identical to 512 (pinned by a test) -- so the choice is only about latency versus dropout safety. Round-trip I/O latency is two blocks: at 192 kHz, 256 = 2.7 ms, 512 = 5.3 ms, 1024 = 10.7 ms, 2048 = 21 ms, 4096 = 43 ms, 8192 = 85 ms. Measure your machine with `--bench-blocks` on a release build: it reports the worst single block's render time as a fraction of that block's duration (100% = a dropout) -- keep at least 2x margin. On an Apple M1 Pro with the full chain the worst block is 17% at 512 and 23% at 256, so **512 is the recommended default** (256 works on Apple Silicon if you need the latency; 64 is marginal at 46%). Intel and small Linux boxes (the fanless Celeron runs the chain near 92% of real time) want 1024-2048. Two hardware caveats: CoreAudio devices clamp the buffer to their own range and the engine logs "clamped HAL buffer" when that happens (the built-in output allows 15..4096, so 8192 is never honoured there), and many USB interfaces glitch below 256 regardless of CPU headroom.
+`Audio I/O` -> `Engine` -> `Block Size` (`blocksize` in `[INTERFACES]`, 256..8192 frames). The DSP itself does not depend on it -- the composite rendered in 64-, 480-, 1024- or 8192-frame blocks is bit-identical to 512 (pinned by a test) -- so the choice is only about latency versus dropout safety. Round-trip I/O latency is two blocks: at 192 kHz, 256 = 2.7 ms, 512 = 5.3 ms, 1024 = 10.7 ms, 2048 = 21 ms, 4096 = 43 ms, 8192 = 85 ms. Measure your machine with `--bench-blocks` on a release build: it reports the worst single block's render time as a fraction of that block's duration (100% = a dropout) -- keep at least 2x margin. On an Apple M1 Pro with the full chain the worst block is 17% at 512 and 23% at 256, so **512 is the recommended setting on Apple Silicon** (the shipped default is 1024, safe on every machine; 256 works on Apple Silicon if you need the latency; 64 is marginal at 46%). Intel and small Linux boxes (the fanless Celeron runs the chain near 92% of real time) want 1024-2048. Two hardware caveats: CoreAudio devices clamp the buffer to their own range and the engine logs "clamped HAL buffer" when that happens (the built-in output allows 15..4096, so 8192 is never honoured there), and many USB interfaces glitch below 256 regardless of CPU headroom.
 
 ## Configuration
 
@@ -164,18 +164,18 @@ Relevant config sections:
 
 ### Format Profiles (Station Format selector)
 
-For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing → Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state — not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / mono bass / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
+For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing -> Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state -- not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / mono bass / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
 
 **Upgrading from a pre-0.45 config.** An INI that still carries one of the old profile ids (`chr_top40`, `pop_ac`, `community_radio`, `rock`, `edm_dance`, `urban_hiphop`, `jazz_classical`, `news_talk`) is **reset on load**: its processing (`[MPX]`) is rebuilt from the nearest new Format Profile (`chr_top40` / `rock` / `edm_dance` / `urban_hiphop` -> Music - Loud, `community_radio` / `pop_ac` -> Music - Clean, `news_talk` -> Speech, `jazz_classical` -> Classical), while **RDS, interfaces (devices, sample rate, block size), the control server and the hardware calibration keys (pilot level, deviation, MPX output level, output gain, pre-emphasis, mono mode, test tone) are kept exactly as they were**. The reset config is saved back to disk and both apps say so at startup (status bar in Studio, a line on stderr headless). Reason: those configs typically had the Audio Limiter and Composite Clipper off with the safety soft clips doing all the clipping -- the hi-hat / cymbal distortion field finding -- and carrying that forward under a new label would keep the station distorting. If a current-profile config still has both peak controllers off, the apps warn (but do not reset); re-apply a Format Profile or enable the Composite Clipper.
 
 | Profile | Character | AGC target | Drive | Extras |
 |---|---|---|---|---|
-| **Music — Clean** (default) | Transparent leveling, honest peaks, low clipper work | -16 dB | +4 dB | — |
-| **Music — Loud** | Competitive loudness into the clipper | -15 dB | +8 dB | HF + bass clippers, PrimeBass, wide image |
+| **Music -- Clean** (default) | Transparent leveling, honest peaks, low clipper work | -16 dB | +4 dB | -- |
+| **Music -- Loud** | Competitive loudness into the clipper | -15 dB | +8 dB | HF Limiter + Bass Clipper, PrimeBass, mono bass at 115 Hz |
 | **Speech / Talk** | Voice-optimized | -16 dB | +4.5 dB | Phase rotator on |
 | **Classical / Wide Dynamics** | Dynamic-preserving | -18 dB | +3 dB | Light multiband, gentle limiter |
 
-Pick once, tune as needed. The selected profile is stored as `format_profile_id`; switching profiles overwrites the per-stage settings to the new profile (except `custom`, a no-op label). Assume a nominal input level around **-12 dBFS** (pro line-up convention) — the AGC absorbs source variation from there; 0 dBFS masters work but arrive with no headroom of their own.
+Pick once, tune as needed. The selected profile is stored as `format_profile_id`; switching profiles overwrites the per-stage settings to the new profile (except `custom`, a no-op label). Assume a nominal input level around **-12 dBFS** (pro line-up convention) -- the AGC absorbs source variation from there; 0 dBFS masters work but arrive with no headroom of their own.
 
 ### Preset slots (snapshots)
 
@@ -212,69 +212,69 @@ are not part of a preset's identity.
 
 For typical FM broadcast use (clean / community / LPFM), the recommended set of processing stages to **enable** is:
 
-- **Phase Rotator** — voice waveform symmetrization (f ≈ 200 Hz)
-- **Wideband AGC** — long-term level riding (target ≈ -14 dBLU, range ±10 dB, K-weighted, program-dependent release, 150 ms attack -- a gain rider that leaves transients to the limiters; the 6 ms attack of earlier builds ducked the whole mix on every drum hit)
-- **Parametric EQ** — 4-band tonal shaping (shelf + 2 peaks + shelf)
-- **Multiband Compressor** — 3-band LR4 (or 5-band FIR on TX path); the `5_jazz` preset is a balanced starting point for mixed music + speech
-- **Downward Expander** — gates noise floor (threshold ≈ -45 dB, ratio 2.0:1)
-- **MB Limiter** — per-band peak control (threshold ≈ -3 dB, atk 0.5 ms, rel 50 ms)
-- **DC Clipper** — distortion-cancelled audio-band clipping with pilot/RDS protection
-- **HF Limiter** — pre-emphasis-aware, gain-riding HF control (`Processing` -> `HF Limiter / Clipper`; `hf_limiter_enabled`, `hf_limiter_threshold_db` -2 dB, `hf_limiter_attack_ms` 1.5, `hf_limiter_release_ms` 20, `hf_limiter_max_reduction_db` 12). On by default in every Format Profile (0.45). It rides only the pre-emphasis *boost*: a cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter, and it can never cut HF below the flat (un-emphasised) program level. Bass-driven peaks with little HF boost are ignored, so a kick cannot flutter the highs. The receiver's fixed de-emphasis turns the action into a brief, bounded HF dip -- the trade every broadcast HF limiter makes (Optimod topology). Threshold: set at or a little below the Audio Limiter threshold. All controls live-apply. Measured with `--verify-hf-transients`: on Music - Loud it keeps the decoded hi-hat SINAD at 18 dB where the HF clipper gave 12 dB. Note that a separate, fixed 2 dB "encoder HF guard" ahead of the encoder lowpass stays in the chain: measurements showed it protects receiver-side HF stereo separation (composite-clipper IM) at levels where this limiter does not engage.
-- **Audio Limiter** — pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) — see 0.30 CHANGELOG
-- **Composite Clipper** — 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB). Oversampling factor is configurable (`mpx_clipper_oversampling`, default 16): 8 for older hardware that needs the CPU back, 32 for Omnia.9-class spec-sheet parity at roughly double this stage's CPU cost. See the comment block in the sample `MPXPrime.ini` for when each value makes sense.
+- **Phase Rotator** -- voice waveform symmetrization (f ~ 200 Hz)
+- **Wideband AGC** -- long-term level riding (target ~ -14 dBLU, range +/-10 dB, K-weighted, program-dependent release, 150 ms attack -- a gain rider that leaves transients to the limiters; the 6 ms attack of earlier builds ducked the whole mix on every drum hit)
+- **Parametric EQ** -- 4-band tonal shaping (shelf + 2 peaks + shelf)
+- **Multiband Compressor** -- 3-band LR4 (or 5-band FIR on TX path); the `5_jazz` preset is a balanced starting point for mixed music + speech
+- **Downward Expander** -- gates noise floor (threshold ~ -45 dB, ratio 2.0:1)
+- **MB Limiter** -- per-band peak control (threshold ~ -3 dB, atk 0.5 ms, rel 50 ms)
+- **DC Clipper** -- distortion-cancelled audio-band clipping with pilot/RDS protection
+- **HF Limiter** -- pre-emphasis-aware, gain-riding HF control (`Processing` -> `HF Limiter / Clipper`; `hf_limiter_enabled`, `hf_limiter_threshold_db` -2 dB, `hf_limiter_attack_ms` 1.5, `hf_limiter_release_ms` 20, `hf_limiter_max_reduction_db` 12). On by default in every Format Profile (0.45). It rides only the pre-emphasis *boost*: a cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter, and it can never cut HF below the flat (un-emphasised) program level. Bass-driven peaks with little HF boost are ignored, so a kick cannot flutter the highs. The receiver's fixed de-emphasis turns the action into a brief, bounded HF dip -- the trade every broadcast HF limiter makes (Optimod topology). Threshold: set at or a little below the Audio Limiter threshold. All controls live-apply. Measured with `--verify-hf-transients`: on Music - Loud it keeps the decoded hi-hat SINAD at 18 dB where the HF clipper gave 12 dB. Note that a separate, fixed 2 dB "encoder HF guard" ahead of the encoder lowpass stays in the chain: measurements showed it protects receiver-side HF stereo separation (composite-clipper IM) at levels where this limiter does not engage.
+- **Audio Limiter** -- pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) -- see 0.30 CHANGELOG
+- **Composite Clipper** -- 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB). Oversampling factor is configurable (`mpx_clipper_oversampling`, default 16): 8 for older hardware that needs the CPU back, 32 for Omnia.9-class spec-sheet parity at roughly double this stage's CPU cost. See the comment block in the sample `MPXPrime.ini` for when each value makes sense.
 
 Recommended **off** by default (enable only when needed):
 
-- **PrimeBass** — bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
-- **Bass Clipper** — engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
-- **HF Clipper** — pre-emphasis-aware HF *clipper* (same tab; `hf_clipper_*`). Off by default and no longer used by any profile: it is a waveshaper on the pre-emphasised high band, so it distorts the cymbals and hi-hats it controls (the 2026-08 field finding). Keep it as a last resort for maximum HF density on dense EDM after the HF Limiter is already on; leave off for talk / classical. Controls live-apply.
-- **BS.412 MPX Power Limiter** — required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
-- **Advanced Dynamics** — experimental single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Processing` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
-- **SSB Stereo Encoder** — experimental SSB-leaning stereo encoder (`mpx_ssb_stereo_enabled` + `mpx_ssb_stereo_amount`, the dedicated `Stereo Coder` tab/page in both UIs, between Audio Limiter and Composite Clipper -- chain position of the stereo encoder itself). Leans the 38 kHz L-R subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower. Decode-compatible (coherent separation measured 81+ dB with it on) and mono-transparent, but the loudness benefit is not yet demonstrated on synthetic program — treat it as a listening experiment, verify with `--verify-ssb-stereo` and a real receiver, and leave it off otherwise.
+- **PrimeBass** -- bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
+- **Bass Clipper** -- engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
+- **HF Clipper** -- pre-emphasis-aware HF *clipper* (same tab; `hf_clipper_*`). Off by default and no longer used by any profile: it is a waveshaper on the pre-emphasised high band, so it distorts the cymbals and hi-hats it controls (the 2026-08 field finding). Keep it as a last resort for maximum HF density on dense EDM after the HF Limiter is already on; leave off for talk / classical. Controls live-apply.
+- **BS.412 MPX Power Limiter** -- required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
+- **Advanced Dynamics** -- experimental single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Processing` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
+- **SSB Stereo Encoder** -- experimental SSB-leaning stereo encoder (`mpx_ssb_stereo_enabled` + `mpx_ssb_stereo_amount`, the dedicated `Stereo Coder` tab/page in both UIs, between Audio Limiter and Composite Clipper -- chain position of the stereo encoder itself). Leans the 38 kHz L-R subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower. Decode-compatible (coherent separation measured 81+ dB with it on) and mono-transparent, but the loudness benefit is not yet demonstrated on synthetic program -- treat it as a listening experiment, verify with `--verify-ssb-stereo` and a real receiver, and leave it off otherwise.
 
 This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
 
-### Audio I/O — devices, operating mode, level calibration (0.50)
+### Audio I/O -- devices, operating mode, level calibration (0.50)
 
-The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented choice over `processed_audio_output` + `monitor_enabled`: MPX Composite for a transmitter, Processed Audio for an external stereo coder or a streaming chain — MPX Prime as a plain audio processor — or Monitor to decode the composite back to speakers and audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card. **Monitor mode is macOS-only**: the Linux build offers MPX Composite and Processed Audio; a `monitor_enabled = True` in a Linux INI is ignored, and the ALSA engine has no monitor device.
+The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented choice over `processed_audio_output` + `monitor_enabled`: MPX Composite for a transmitter, Processed Audio for an external stereo coder or a streaming chain -- MPX Prime as a plain audio processor -- or Monitor to decode the composite back to speakers and audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card. **Monitor mode is GUI-only**: headless runs (`--nogui` / `--web` on macOS, and the whole Linux build) offer MPX Composite and Processed Audio, ignore `monitor_enabled = True`, and the ALSA engine has no monitor device.
 
-Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound — and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
+Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound -- and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
 
-Two readouts, two domains: the **deviation** meter is a modulation-domain figure — `output_gain_db` and `mpx_line_output_dbfs` are divided back out, so it reads the same kHz regardless of how the exciter drive is trimmed (before 0.50 it under-read by exactly the output trim). **DAC Peak** is the electrical figure — the level actually presented to the converter, post both trims. Calibrate deviation at the exciter; watch DAC Peak to know how hot the wire is.
+Two readouts, two domains: the **deviation** meter is a modulation-domain figure -- `output_gain_db` and `mpx_line_output_dbfs` are divided back out, so it reads the same kHz regardless of how the exciter drive is trimmed (before 0.50 it under-read by exactly the output trim). **DAC Peak** is the electrical figure -- the level actually presented to the converter, post both trims. Calibrate deviation at the exciter; watch DAC Peak to know how hot the wire is.
 
-### Setting levels — input, AGC, Final Drive, exciter
+### Setting levels -- input, AGC, Final Drive, exciter
 
-Three knobs do most of the work between your source and the exciter. They sit at three different points in the chain and each does a specific job — get them right in order and the chain sounds clean without much fiddling.
+Three knobs do most of the work between your source and the exciter. They sit at three different points in the chain and each does a specific job -- get them right in order and the chain sounds clean without much fiddling.
 
 **The chain (left to right):**
 
 ```
-source → IN meter → AGC → [DSP] → Final Drive → composite clipper → MPX Output Level → Line Output → exciter
+source -> IN meter -> AGC -> [DSP] -> Final Drive -> composite clipper -> MPX Output Level -> Line Output -> exciter
                   ^                ^                                 ^                  ^
                   level control    loudness lever                    deviation trim     DAC calibration
 ```
 
-**1. Get your input into the AGC's working range.** Open `Monitoring`. The `IN` meter shows the level coming into MPX Prime Studio from your source (before any processing). Aim for input peaks landing roughly in the **−12 to −6 dBFS** range on busy program — bright but not pinned. If the source is consistently below −18 dBFS the AGC has to push hard to reach its target; if it's above −3 dBFS it's eating its own headroom before the chain even sees it.
+**1. Get your input into the AGC's working range.** Open `Monitoring`. The `IN` meter shows the level coming into MPX Prime Studio from your source (before any processing). Aim for input peaks landing roughly in the **-12 to -6 dBFS** range on busy program -- bright but not pinned. If the source is consistently below -18 dBFS the AGC has to push hard to reach its target; if it's above -3 dBFS it's eating its own headroom before the chain even sees it.
 
-The level adjustment lives upstream of MPX Prime Studio — in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Audio I/O` → `Input` → `Input Gain` (±24 dB) inside MPX Prime Studio, but use that only to trim — the further upstream you fix the level, the less you stack noise floors. The trim is remembered per input device.
+The level adjustment lives upstream of MPX Prime Studio -- in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Audio I/O` -> `Input` -> `Input Gain` (+/-24 dB) inside MPX Prime Studio, but use that only to trim -- the further upstream you fix the level, the less you stack noise floors. The trim is remembered per input device.
 
-**2. Let AGC do the level-evening.** Open `Processing` → `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
+**2. Let AGC do the level-evening.** Open `Processing` -> `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
 
-- `Platform Target` — the level the AGC drives the program *toward*. **Default −14 dBFS** (`wideband_agc_target_db`) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
-- `Enable Wideband AGC` — leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program. Keep `Attack` at 100 ms or slower (default 150 ms, profiles 100-200 ms): the AGC is a gain rider, and a fast attack turns every drum hit into a level dip that the release then drags out -- peaks are the Audio Limiter's and composite clipper's job. `--verify` flags an attack below 50 ms.
+- `Platform Target` -- the level the AGC drives the program *toward*. **Default -14 dBFS** (`wideband_agc_target_db`) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
+- `Enable Wideband AGC` -- leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program. Keep `Attack` at 100 ms or slower (default 150 ms, profiles 100-200 ms): the AGC is a gain rider, and a fast attack turns every drum hit into a level dip that the release then drags out -- peaks are the Audio Limiter's and composite clipper's job. `--verify` flags an attack below 50 ms.
 
 Watch the `AGC GR` field in `DSP Overview` (or the AGC card itself). Healthy operation:
 
 - **0 to 3 dB occasional pulls** = source feeding cleanly, AGC riding lightly. Goal state.
 - **Sustained 6+ dB pulls** = source is too hot. Back off upstream.
 - **AGC pushing 6+ dB consistently (positive gain)** = source is too quiet. Boost upstream.
-- **AGC parked at min/max gain limit** = source is so far off the AGC can't keep up — fix the source level.
+- **AGC parked at min/max gain limit** = source is so far off the AGC can't keep up -- fix the source level.
 
 Don't use AGC `Platform Target` as a loudness knob. It tunes the chain's working point, not perceived broadcast loudness.
 
-**3. Set Final Drive for the loudness you want.** `Processing` → `Final Stage` → `Final Drive` is the primary loudness lever. It drives the audio composite into the composite clipper — higher drive = harder clipping = louder, denser, but also harsher. Range 0..12 dB.
+**3. Set Final Drive for the loudness you want.** `Processing` -> `Final Stage` -> `Final Drive` is the primary loudness lever. It drives the audio composite into the composite clipper -- higher drive = harder clipping = louder, denser, but also harsher. Range 0..12 dB.
 
-- Pick the `Broadcast Preset` matching your content (Balanced Music / CHR-Dance / Punchy / Speech-Talk) — that sets a sensible Final Drive starting point along with matched AGC tuning.
+- Pick the `Broadcast Preset` matching your content (Balanced Music / CHR-Dance / Punchy / Speech-Talk) -- that sets a sensible Final Drive starting point along with matched AGC tuning.
 - Nudge from there. Watch the **composite clipper `GR`** in `Monitoring`:
   - 0 to 3 dB occasional GR = clean, dynamic. Good for talk and acoustic music.
   - 3 to 6 dB regular GR = competitive loudness, contemporary radio sound.
@@ -284,13 +284,13 @@ Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudne
 
 **4. Calibrate the exciter on the Audio I/O Output card.** Two knobs, both remembered per output device:
 
-- `MPX Output Level` (−18..0 dB, attenuation-only in composite mode) trims the whole composite — pilot and RDS included — so it is the **deviation calibration**: with the exciter's own input sensitivity fixed, trim it until the exciter shows exactly 100 % modulation (75 kHz) on peaks. Positive values are deliberately not offered: they would squeeze the audio budget (deeper clipping) and push pilot/RDS above their set injection without adding loudness.
-- `Line Output` (−40..0 dBFS) sets the absolute DAC level of 100 % modulation — the **input-sensitivity match** to the exciter. Keep the OS/interface volume at 0 dB and calibrate here. 0.0 dBFS is the classic full-scale convention and the maximum a converter can produce; an exciter that is still under-driven with both knobs at 0 needs its own input sensitivity raised (menu/trimmer) — no software knob can exceed full scale.
+- `MPX Output Level` (-18..0 dB, attenuation-only in composite mode) trims the whole composite -- pilot and RDS included -- so it is the **deviation calibration**: with the exciter's own input sensitivity fixed, trim it until the exciter shows exactly 100 % modulation (75 kHz) on peaks. Positive values are deliberately not offered: they would squeeze the audio budget (deeper clipping) and push pilot/RDS above their set injection without adding loudness.
+- `Line Output` (-40..0 dBFS) sets the absolute DAC level of 100 % modulation -- the **input-sensitivity match** to the exciter. Keep the OS/interface volume at 0 dB and calibrate here. 0.0 dBFS is the classic full-scale convention and the maximum a converter can produce; an exciter that is still under-driven with both knobs at 0 needs its own input sensitivity raised (menu/trimmer) -- no software knob can exceed full scale.
 - Watch the **DAC Peak** readout on the same card (the post-both-trims level at the converter) and the `Composite Budget` chip on `Monitoring`:
-  - **Safe** — nominal modulation, headroom available
-  - **Tight** — near 100 % modulation, fine for normal broadcast
-  - **Risk** — peaks exceeding 100 %, back off
-- On the exciter side: aim for **100 % modulation on peaks** on its modulation meter, or match the input-level recommendation in its manual. *Don't* use these knobs to chase loudness — that's Final Drive's job.
+  - **Safe** -- nominal modulation, headroom available
+  - **Tight** -- near 100 % modulation, fine for normal broadcast
+  - **Risk** -- peaks exceeding 100 %, back off
+- On the exciter side: aim for **100 % modulation on peaks** on its modulation meter, or match the input-level recommendation in its manual. *Don't* use these knobs to chase loudness -- that's Final Drive's job.
 
 The deviation readout stays put while you calibrate: it reads the modulation domain (the trims divided back out), so trimming exciter drive changes DAC Peak and what the exciter sees, not the displayed kHz.
 
@@ -300,10 +300,10 @@ The same measurement also verifies the RDS injection end to end: if the reported
 
 **Common mistakes:**
 
-- Driving Final Drive hard while MPX Output Level is low → audio sounds limited but exciter is under-modulated → quiet on-air. Check the modulation meter.
-- Cranking MPX Output Level for loudness → exciter over-modulates → splatter / distortion / regulatory issues. Final Drive is the loudness knob.
-- Source too quiet → AGC pushing 8+ dB → noise floor lifts, breathing on quiet program. Boost upstream.
-- AGC off / bypassed → multiband and final stage see widely-varying program levels → pumping on dense material. Leave AGC on.
+- Driving Final Drive hard while MPX Output Level is low -> audio sounds limited but exciter is under-modulated -> quiet on-air. Check the modulation meter.
+- Cranking MPX Output Level for loudness -> exciter over-modulates -> splatter / distortion / regulatory issues. Final Drive is the loudness knob.
+- Source too quiet -> AGC pushing 8+ dB -> noise floor lifts, breathing on quiet program. Boost upstream.
+- AGC off / bypassed -> multiband and final stage see widely-varying program levels -> pumping on dense material. Leave AGC on.
 
 ### Test Tone (calibration source)
 
@@ -311,7 +311,7 @@ The same measurement also verifies the RDS injection end to end: if the reported
 
 ### Final-stage presets and clipper workflow
 
-The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms — restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
+The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms -- restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
 
 - `Broadcast Preset`: loads a matched AGC + final-stage starting point
 - `Final Drive`: drives the composite clipper harder or softer
@@ -350,13 +350,13 @@ Monitoring also shows composite calibration status:
 
 ### When to leave BS.412 and the Composite Clipper off
 
-Both stages are loudness / regulatory tools and both visibly cost stereo image and high-frequency detail when engaged. If you do not need them, leave them off — the chain still produces a fully compliant FM composite.
+Both stages are loudness / regulatory tools and both visibly cost stereo image and high-frequency detail when engaged. If you do not need them, leave them off -- the chain still produces a fully compliant FM composite.
 
-- `BS.412` (`Processing` -> `BS.412`): only required if you operate under EU power-limiting rules (rolling 60-second MPX power cap). Outside that regulatory context, leave `Enable BS.412` off — it actively pulls level back over long windows and dulls dynamics.
+- `BS.412` (`Processing` -> `BS.412`): only required if you operate under EU power-limiting rules (rolling 60-second MPX power cap). Outside that regulatory context, leave `Enable BS.412` off -- it actively pulls level back over long windows and dulls dynamics.
 - `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band protection toggles let you choose what to keep clean:
-  - `Protect Stereo Pilot`, `Protect RDS` — leave on (defaults). These keep the 19 kHz pilot and 57 kHz RDS regions clean of clip IM.
-  - `Protect Stereo Subcarrier` (`mpx_clipper_stereo_guard`, 0.00-1.00; since 0.45 a share instead of an on/off toggle, the old `mpx_clipper_cancel_stereo = True/False` is read as 1.00/0.00) — how much of the clipper's distortion is kept out of the 22-53 kHz stereo (L-R) subcarrier. At 1.00 the subcarrier passes exactly as it went in, so HF stereo separation is preserved but the clipper only ever removes the mono share of a peak and the Final-MPX Safety Limiter rides whatever overshoot that leaves. At 0.00 the clipper clips the whole composite the way Orban, Omnia and Stereo Tool do: the most loudness per dB of drive and the least HF separation on dense program. Values in between blend. The shipped default (1.00) is picked from the `--verify-stereo-guard` sweep (see Verification), which prints clipper and Final-MPX limiter duty, peak, deviation, 10 / 14 kHz separation, the encoder-side M/S balance at 14 kHz and the hi-hat / ride HF SINAD for every share: on Music - Loud the share makes no measurable difference, and on a hot chain 1.00 buys about 3 dB of decoded hi-hat cleanliness for about 5 dB of 14 kHz tone separation. Run the sweep on your own INI before moving the slider.
-  - `Protect Audio Highs` — off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
+  - `Protect Stereo Pilot`, `Protect RDS` -- leave on (defaults). These keep the 19 kHz pilot and 57 kHz RDS regions clean of clip IM.
+  - `Protect Stereo Subcarrier` (`mpx_clipper_stereo_guard`, 0.00-1.00; since 0.45 a share instead of an on/off toggle, the old `mpx_clipper_cancel_stereo = True/False` is read as 1.00/0.00) -- how much of the clipper's distortion is kept out of the 22-53 kHz stereo (L-R) subcarrier. At 1.00 the subcarrier passes exactly as it went in, so HF stereo separation is preserved but the clipper only ever removes the mono share of a peak and the Final-MPX Safety Limiter rides whatever overshoot that leaves. At 0.00 the clipper clips the whole composite the way Orban, Omnia and Stereo Tool do: the most loudness per dB of drive and the least HF separation on dense program. Values in between blend. The shipped default (1.00) is picked from the `--verify-stereo-guard` sweep (see Verification), which prints clipper and Final-MPX limiter duty, peak, deviation, 10 / 14 kHz separation, the encoder-side M/S balance at 14 kHz and the hi-hat / ride HF SINAD for every share: on Music - Loud the share makes no measurable difference, and on a hot chain 1.00 buys about 3 dB of decoded hi-hat cleanliness for about 5 dB of 14 kHz tone separation. Run the sweep on your own INI before moving the slider.
+  - `Protect Audio Highs` -- off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
 
 All of these are exposed in the GUI; no INI editing is required.
 
@@ -368,8 +368,6 @@ Recommended starting point:
 
 - `Mono Bass`: on
 - `Bass Mono Freq`: `110-140 Hz`
-- `Center`: around `0.50`
-- `Mix`: around `0.70-1.00`
 
 This keeps bass more mono-compatible while leaving the upper image open enough for FM.
 
@@ -378,7 +376,7 @@ This keeps bass more mono-compatible while leaving the upper image open enough f
 The current low-frequency enhancement and multiband stages are now tuned more conservatively than earlier builds.
 
 - `PrimeBass` adds perceived bass weight by synthesising controlled harmonics of low-frequency content. The listener hears more bass without the chain having to push LF peaks higher, which saves headroom for the rest of the dynamics chain.
-- `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `−155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move — not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Since 0.45 each crossover sits at exactly -6 dB with a slope of about half an octave to -40 dB (steeper than a Linkwitz-Riley 4, far gentler than the near-brick-wall edges of earlier builds), and the crossovers cost 9.3 ms of processing latency at the 48 kHz audio domain instead of 21 ms. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on). Two advanced options are default-off while being evaluated: `multiband_transient_aware_attack_enabled` for peak/RMS transient handling, and `multiband_inter_band_coupling_enabled` for low-band-GR-driven upper-band threshold bias. `multiband_release_program_dependent` (default on) gives each band a dual-slope release since 0.45: a drum hit's extra gain reduction comes back at the band's release time (no hole after the hit), while a genuine drop in average level releases three times more gently (no breathing when a chorus ends); earlier builds only lengthened the release by 10% under this flag.
+- `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `-155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move -- not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Since 0.45 each crossover sits at exactly -6 dB with a slope of about half an octave to -40 dB (steeper than a Linkwitz-Riley 4, far gentler than the near-brick-wall edges of earlier builds), and the crossovers cost 9.3 ms of processing latency at the 48 kHz audio domain instead of 21 ms. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on). Two advanced options are default-off while being evaluated: `multiband_transient_aware_attack_enabled` for peak/RMS transient handling, and `multiband_inter_band_coupling_enabled` for low-band-GR-driven upper-band threshold bias. `multiband_release_program_dependent` (default on) gives each band a dual-slope release since 0.45: a drum hit's extra gain reduction comes back at the band's release time (no hole after the hit), while a genuine drop in average level releases three times more gently (no breathing when a chorus ends); earlier builds only lengthened the release by 10% under this flag.
 
 Recommended starting point:
 
@@ -389,19 +387,19 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 ### Advanced Dynamics (experimental single-stage leveler)
 
-`advanced_dynamics_enabled` (default `False`) replaces the wideband AGC **and** the multiband compressor with one fused 5-band leveling stage. The point of the fusion is that slow leveling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with program-adaptive speed — near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
+`advanced_dynamics_enabled` (default `False`) replaces the wideband AGC **and** the multiband compressor with one fused 5-band leveling stage. The point of the fusion is that slow leveling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with program-adaptive speed -- near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
 
-- `advanced_dynamics_target_db` (default `-16.0`) — the level every band is brought toward.
-- `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) — tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
-- `advanced_dynamics_max_gain_db` (default `12.0`) — maximum lift for quiet program (the reduction side is fixed at 24 dB). The default was lowered from 18 after field testing: high boost both chases natural fades harder and lowers the silence gate (`target - max_gain - 10 dB`), pumping tails on sparse material. Raise it deliberately for wide-dynamics formats.
-- `advanced_dynamics_density` (`0..1`, default `0.5`) — denser = tighter hold window and faster leveling.
-- `advanced_dynamics_speed` (`0.25..4`, default `1.0`) — overall time-constant scale.
+- `advanced_dynamics_target_db` (default `-16.0`) -- the level every band is brought toward.
+- `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) -- tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
+- `advanced_dynamics_max_gain_db` (default `12.0`) -- maximum lift for quiet program (the reduction side is fixed at 24 dB). The default was lowered from 18 after field testing: high boost both chases natural fades harder and lowers the silence gate (`target - max_gain - 10 dB`), pumping tails on sparse material. Raise it deliberately for wide-dynamics formats.
+- `advanced_dynamics_density` (`0..1`, default `0.5`) -- denser = tighter hold window and faster leveling.
+- `advanced_dynamics_speed` (`0.25..4`, default `1.0`) -- overall time-constant scale.
 
 A built-in **decay guard** distinguishes "program actively fading" from "program is quiet": while a band's envelope sits well below its recent peak (a note or song decaying naturally), the leveler holds instead of lifting, resuming when the level stabilizes or new material arrives. Without it a solo decaying sound (a bell, a fade-out) gets its fade flattened and extended -- heard as added ringing/sustain.
 
 Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics` and must pass program-material A/B plus listening before any preset enables it.
 
-In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced Dynamics", between Multiband and Expander, with a card on the Processing Overview grid); in the web dashboard it is the "Advanced Dynamics" card on the same page as Multiband.
+In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced Dynamics", between Multiband and Expander, with a card on the Processing Overview grid); in the web dashboard it has its own "Advanced Dynamics" page.
 
 While the stage is active, the Monitoring dashboard's Signal Chain "AGC" pill switches identity to **Adv Dyn** and reads the leveler's density plus its five per-band gains (low to high, dB); the web dashboard's Headroom card gains the matching "Adv Dynamics" row. The AGC readouts honestly report the AGC as Off (gain 0.0) while it is bypassed -- the leveler replaces it, so a moving "AGC gain" would be stale telemetry. Over the API the same values are `advancedDynamicsActive`, `advancedDynamicsBandGainsDB` (5 floats, low to high), and `advancedDynamicsDensityDB` in `GET /api/meters` (null while the stage is off).
 
@@ -415,7 +413,7 @@ A ready-to-use example poller ships with MPX Prime Studio, in the DMG's
 `Now Playing Scripts/` folder and inside the app at
 `MPX Prime Studio.app/Contents/Resources/Scripts/`:
 
-- `nowplaying.sh` — auto-detects the running player and reads its metadata via
+- `nowplaying.sh` -- auto-detects the running player and reads its metadata via
   AppleScript: **VLC** (current item, only while playing) first, then
   [**Cog**](https://github.com/losnoco/cog) (current entry via its `currentEntry`
   dictionary). Note: Cog exposes no play/pause state, so it reports the loaded
@@ -424,7 +422,7 @@ A ready-to-use example poller ships with MPX Prime Studio, in the DMG's
   it as a template for another player by adding one fetch function.
 
 The script strips parenthetical `(Radio Edit)` / `(feat. X)` and bracketed
-`[Official Video]` / `[Remastered]` decorations from the title — they routinely
+`[Official Video]` / `[Remastered]` decorations from the title -- they routinely
 push the RadioText / PS over length, e.g. `Song Title (Radio Edit) [Official Video]`
 becomes `Song Title`. Both are **on by default**; set `STRIP_TITLE_PARENS=0` and/or
 `STRIP_TITLE_BRACKETS=0` in the script's environment to keep them. If stripping
@@ -495,7 +493,7 @@ MPX Prime Studio accepts the same RDS text grammar as Stereotool for PS, PTYN, L
 | `Ns:TEXT` | Timed segment, `N` seconds. Fractional accepted (`1.5s:`). |
 | `Nt:TEXT` | Transmit-count segment. Advances after `N` full transmissions of the field. |
 | `/` | Separates repeating segments. |
-| `<TEXT` / `>TEXT` | Scroll left / right. **PS only** — too slow to be useful on Radiotext. Repeat the marker for more chars per tick: `<<TEXT` scrolls twice as fast. |
+| `<TEXT` / `>TEXT` | Scroll left / right. **PS only** -- too slow to be useful on Radiotext. Repeat the marker for more chars per tick: `<<TEXT` scrolls twice as fast. |
 | `\|\|` | Word-wrap toggle. Word-wrap is always on; accepted as a no-op. |
 | `\\<`  `\\>`  `\\\|`  `\\:`  `\\/`  `\\\\` | Escape the special character so it transmits literally. |
 | `\R"path"` / `\r"path"` | Load file contents (uppercase / as-is). |
@@ -531,7 +529,7 @@ Important defaults:
 By default MPX Prime Studio emits the finished FM composite (pilot + stereo subcarrier +
 optional RDS) for a transmitter / exciter that accepts a composite/MPX baseband
 input. **Processed-audio output mode** instead emits the processed stereo **L/R
-audio** — for transmitters that only accept L/R analog or AES3 audio and have
+audio** -- for transmitters that only accept L/R analog or AES3 audio and have
 their own built-in stereo coder + RDS encoder (the classic separate-processor
 topology). You keep MPX Prime Studio's full audio chain (AGC, EQ, multiband, stereo,
 bass, clippers, pre-emphasis, pre-encode limiter); you give up the composite-only
@@ -562,16 +560,16 @@ Pick in Audio I/O -> Operating Mode -> **Pre-emphasis**:
   MPX Prime Studio applies it. Its pre-emphasis-aware limiter then controls the
   HF peaks. (Common for cheap exciters.)
 - **Coder applies pre-emphasis:** select `Off` so MPX Prime Studio stays flat.
-- **Never both** — two pre-emphasis stages in series over-deviate.
+- **Never both** -- two pre-emphasis stages in series over-deviate.
 
 ### Optional final loudness clipper
 
 To narrow the loudness gap when the external coder has no clipper of its own,
 Audio I/O -> Operating Mode -> **External coder has its own clipper**:
 
-- Leave **ON** (default) if your coder clips/limits its input — MPX Prime Studio stays
+- Leave **ON** (default) if your coder clips/limits its input -- MPX Prime Studio stays
   clean to avoid double-clipping.
-- Turn **OFF** if it does not — MPX Prime Studio then applies an oversampled
+- Turn **OFF** if it does not -- MPX Prime Studio then applies an oversampled
   distortion-cancelled final clipper, with a **Final Clipper Drive** slider
   (0-12 dB) to set density. Two clippers in series sound harsh, so only enable
   this when the coder genuinely does not clip.
@@ -595,10 +593,10 @@ INI keys: `processed_audio_output`, `preemphasis_us`,
 
 ## Monitoring and output notes
 
-The DSP status card's **Safety GR** is the final look-ahead MPX limiter's gain reduction (about 1 dB on dense program is normal: it rides the composite clipper's guard-band overshoot; since 0.45 it reports the true amount it removes). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/telemetry` and "Safety Clip" on the dashboard.
+The DSP status card's **Safety GR** is the final look-ahead MPX limiter's gain reduction (about 1 dB on dense program is normal: it rides the composite clipper's guard-band overshoot; since 0.45 it reports the true amount it removes). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/meters` and "Safety Clip" on the dashboard.
 
-- `MPX Output Device` is the composite/baseband output device
-- `Monitor Output Device (Decoded MPX Simulation)` is used when monitor output is enabled
+- `Audio I/O` -> `Output` is the composite/baseband output device
+- `Audio I/O` -> `Monitor (Decoded MPX Simulation)` is the device the Monitor operating mode plays the decoded composite to
 - The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input
 - `Mono Mode` now transmits true mono composite and suppresses pilot, stereo subcarrier, and RDS while enabled
 - If a remembered input / output / monitor device is not connected, **Start is refused** with an alert rather than silently streaming to the OS default -- reconnect the device or pick another in `Audio I/O`. (Devices are remembered by UID and name, so moving an interface to another USB port keeps the selection.)
@@ -610,12 +608,12 @@ windows (from the toolbar / Window menu). Like the Meter's displays, they are
 dark instrument panels and repaint in `Canvas` so a live value change never
 triggers a layout pass:
 
-- **Spectrum** -- the composite (MPX) spectrum after stereo encoding, with the
+- **MPX Spectrum** -- the composite (MPX) spectrum after stereo encoding, with the
   same FM band-region overlay the Meter draws: **Mono L+R**, **19 kHz Pilot**,
   **Stereo L-R** (lower and upper sideband -- the same L-R signal mirrored around 38 kHz), **57 kHz RDS**, and **SCA** captions mark where each component
   sits, so you can confirm the pilot, subcarrier, and RDS land in the right
   places at the right levels.
-- **Pre-MPX Spectrum** -- an RTA-style bar spectrum of the processed L/R audio
+- **Audio Spectrum** (pre-MPX) -- an RTA-style bar spectrum of the processed L/R audio
   before composite assembly (the audio the encoder is about to modulate).
 - **Scopes** -- composite / decoded-monitor waveforms.
 - **Levels** -- the vertical deviation / level meters as a standalone window.
@@ -627,7 +625,7 @@ on macOS (GUI or `--nogui`) and on the Linux CLI build. It is **disabled by
 default**.
 
 Enable it in the INI (`[CONTROL]` section; on macOS also editable in the
-GUI's Settings tab, where changes take effect at the next app launch). On
+GUI's Settings window, where changes take effect at the next app launch). On
 Linux the dashboard IS the operator interface, so the Debian package seeds
 `/var/lib/mpxprime/MPXPrime.ini` on a fresh install with `control_enabled =
 True`, `control_bind = 0.0.0.0` and a randomly generated `control_api_key`
@@ -653,7 +651,7 @@ path is printed at startup.
 
 For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
 enables it without editing the INI; these flags imply `--nogui` (run
-headless, serve the dashboard). In the macOS GUI app, use the Settings tab.
+headless, serve the dashboard). In the macOS GUI app, use the Settings window.
 From a source checkout, `./run-build-web.sh` builds the release binary and
 starts it headless with the dashboard, on macOS and Linux alike.
 
@@ -668,13 +666,9 @@ mirrors the Studio GUI page-for-page: a pinned broadcast status bar
 (transport Start/Stop/Restart plus the transport-level **Bypass** button,
 IN/MPX level bars, AGC/limiter/clipper gain-reduction meters, deviation /
 pilot / RDS injection / budget-margin readouts, restart-pending badge)
-above five sidebar sections:
+above four sidebar sections (the native GUI's Audio I/O section is the
+dashboard's Audio I/O page under Tools):
 
-- **Audio I/O** -- input / output / monitor device pickers, the Operating
-  Mode (processed-audio toggle), the level calibration sliders (Input
-  Gain, Output Level, Line Output -- remembered per device, like the
-  native GUI), and the engine format (sample rate, block size, auto start,
-  spectrum window, monitor enable).
 - **Monitoring** -- source/output devices, input meters, MPX deviation /
   modulation, per-stage gain-reduction readouts, subcarrier injection +
   budget margin, and stream health (uptime, ring-buffer fill, OVR/UND
@@ -683,18 +677,22 @@ above five sidebar sections:
   with enable switches), Profile (station-format picker), Core, Phase
   Rotator, AGC, Parametric EQ, Multiband (incl. crossovers X1-X4),
   Advanced Dynamics, Expander, MB Limiter, PrimeBass (+ Mono Bass),
-  Bass Clipper, Audio Clipper, HF Clipper, Audio Limiter, Composite
-  Clipper (incl. look-ahead + oversampling), BS.412, Final Stage. Real
+  Bass Clipper, Audio Clipper, HF Limiter (incl. the HF clipper), Audio
+  Limiter, Stereo Coder, Composite Clipper (incl. look-ahead +
+  oversampling), BS.412, Final Stage. Real
   switches and sliders with the GUI's control vocabulary, applied live on
   release; each page has the GUI's "Reset This Tab" button.
 - **RDS** -- Status (on-air PS/RT/PTYN/Long PS), Identity, Radiotext
   (mode, rotation, the 4 manual buffers, RT+ formats, Now Playing
   configuration), Long PS, Alt. Frequencies (list + method), Schedule
   (group sequence, scheduler toggles, CT/TZ), Subcarrier.
-- **Tools** -- Test Tone, Audio I/O (input/output/monitor device
-  pickers; selecting one is a restart-class change; the read-only Remote
-  Control card shows the server's own settings, which stay INI/GUI-only
-  by design), Presets (per-stage preset pickers plus the 8 operator
+- **Tools** -- Test Tone, Audio I/O (input / output / monitor device
+  pickers -- selecting one is a restart-class change; the Operating Mode
+  toggle; the level calibration sliders Input Gain, Output Level, Line
+  Output, remembered per device like the native GUI; the engine format:
+  sample rate, block size, auto start, spectrum window, monitor enable;
+  and the read-only Remote Control card showing the server's own settings,
+  which stay INI/GUI-only by design), Presets (per-stage preset pickers plus the 8 operator
   preset slots: name, Save/Load/Export/Clear, Import into empty slots),
   and an Advanced page holding the raw all-settings editor.
 
@@ -728,13 +726,14 @@ configured.
 | GET | `/api/snapshots` | the 8 operator preset slots (name, saved-at, active/modified) -- shared with the native GUI's Presets sidebar |
 | POST | `/api/snapshots/N/save`, `/load` | capture the current config into slot N (body `{"name": ...}` optional) / apply slot N as one full config patch |
 | PATCH / DELETE | `/api/snapshots/N` | rename / clear slot N |
-| GET / PUT | `/api/snapshots/N/export`, import | the slot's full INI text (doubles as a `--config` file) / import INI (body `{"name": ..., "ini": "..."}`) |
+| GET | `/api/snapshots/N/export` | the slot's full INI text (doubles as a `--config` file) |
+| PUT | `/api/snapshots/N` | import INI text into slot N (body `{"name": ..., "ini": "..."}`) |
 | POST | `/api/presets` | `{"kind": "multiband", "id": "3_chr", "intensity": 1.0}` (intensity <0.75 light / >1.25 heavy) |
 | POST | `/api/transport/start\|stop\|restart` | engine lifecycle |
 
 `PATCH /api/config` responds with a per-key **disposition**: `live` /
 `liveRDS` (hot-applied to the running engine, no restart), `restartRequired`
-(saved; takes effect at the next start -- e.g. `rds_level`, `pilot_level`,
+(saved; takes effect at the next start -- e.g. `rds_level`,
 `sample_rate`, devices), or `unchanged` (value identical after
 clamping/parsing, or unknown key). The classification is derived from the
 same runtime structures the engine hot-applies, so it always matches what
@@ -786,7 +785,7 @@ change (no RadioText thrash), clearing the track when playback stops.
 
 ### MPX line output calibration (dBFS)
 
-`mpx_line_output_dbfs` ([MPX], default `0.0`, range -40..0, live-apply; GUI:
+`mpx_line_output_dbfs` ([MPX], default `0.0`, slider range -40..0 (the INI accepts down to -60), live-apply; GUI:
 Audio I/O > Output > "Line Output", remembered per output device; also on the web dashboard) sets the
 ABSOLUTE converter level of 100% modulation: at `-12.0`, a 75 kHz-deviation
 composite peaks at -12 dBFS on the output interface. It is applied at the
@@ -982,7 +981,7 @@ an audio device or an in-process RTL-SDR / SDRplay tuner), decodes stereo +
 full RDS, and measures deviation, MPX power (ITU-R BS.412), and SM.1268
 compliance on one dashboard window.
 
-It has its own manual: **[MPX Prime Meter — User Manual](manual-meter.md)**.
+It has its own manual: **[MPX Prime Meter -- User Manual](manual-meter.md)**.
 The RDS PI/ECC and PTY reference tables below serve both apps (the encoder
 sets these fields; the Meter decodes them).
 
@@ -995,7 +994,7 @@ RDS country identity is derived from:
 
 Together they identify a country or area. There is no special "pirate" country code.
 
-Group `1A` also carries the `LIC` language code (e.g. `15` Italian, `09` English, `0F` French, `08` German, `0A` Spanish, `1D` Dutch) and an optional Programme Item Number (PIN). PIN is off by default (transmits 0); enable it in **RDS → Program → Station Identity** to send the current programme item's scheduled day / hour / minute (config keys `pin_enabled`, `pin_day`, `pin_hour`, `pin_minute`). PIN is a legacy field that few modern receivers decode.
+Group `1A` also carries the `LIC` language code (e.g. `15` Italian, `09` English, `0F` French, `08` German, `0A` Spanish, `1D` Dutch) and an optional Programme Item Number (PIN). PIN is off by default (transmits 0); enable it in **RDS -> Program -> Station Identity** to send the current programme item's scheduled day / hour / minute (config keys `pin_enabled`, `pin_day`, `pin_hour`, `pin_minute`). PIN is a legacy field that few modern receivers decode.
 
 This appendix is a practical reference table for the published RDS country and area allocations. It is grouped the same way the published tables are grouped, so some countries and areas appear in more than one regional list.
 
@@ -1272,12 +1271,12 @@ This appendix is a practical reference table for the published RDS country and a
 
 `PTY` is a 5-bit programme-type ("genre") code carried in every group. The code
 is the same field worldwide, but **Europe (RDS) and North America (RBDS) assign
-different genres to the same number** — there is no in-band flag telling a
+different genres to the same number** -- there is no in-band flag telling a
 receiver which table to use, so receivers pick by region. The **PTY Region**
-toggle in the RDS identity tab (`Europe (RDS)` / `USA (RBDS)`, INI key
+toggle on the RDS -> Program tab (web dashboard: Identity page; `Europe (RDS)` / `USA (RBDS)`, INI key
 `pty_rbds`) switches which table labels the picker and the status display; the
 transmitted 5-bit code is identical either way. Pick the table that matches your
-audience — e.g. code 10 reads as `Pop Music` on an RDS receiver but `Country` on
+audience -- e.g. code 10 reads as `Pop Music` on an RDS receiver but `Country` on
 an RBDS receiver.
 
 ### Europe (RDS, EN 50067 / IEC 62106)

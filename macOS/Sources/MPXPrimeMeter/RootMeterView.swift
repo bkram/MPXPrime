@@ -752,7 +752,7 @@ struct RootMeterView: View {
         + "audio only -- the monitor, stereo recordings, the L/R levels and "
         + "the audio spectrum. Deviation, pilot, RDS and MPX power are "
         + "measured before it and do not change. Set wrong, the decoded top "
-        + "end is about 3.5 dB off at 15 kHz. Applies live."
+        + "end is about 3.4 dB off at 15 kHz. Applies live."
 
     // Receiver de-emphasis standard. Decode-path only (monitor audio, stereo
     // recordings, decoded L/R strips, audio spectrum) -- deviation, pilot, RDS

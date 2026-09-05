@@ -11,6 +11,33 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Processed audio can target streaming / DAB instead of an FM coder.**
+  `processed_audio_target` (`[INTERFACES]`, default `fm_coder`, restart-class)
+  picks the shape of the processed-audio feed; `digital` takes the FM-only
+  stages out of the path. The audio keeps its full bandwidth (the
+  `program_lowpass_hz` clamp rises to 20 kHz, and the composite path is capped
+  at 16 kHz by the band-limit helpers instead of by the clamp), pre-emphasis
+  is forced off for the render while the stored value is left alone, the
+  stereo-image protector is skipped (a digital carrier has neither deviation
+  nor multipath), the optional final clipper never runs, and peaks are held at
+  `processed_audio_ceiling_dbtp` (`[MPX]`, default -1.0 dBTP, live-apply)
+  instead of being normalised to full scale. Both front ends get a Delivery
+  control and the ceiling slider. Everything is gated on one expression that
+  is false unless processed-audio output is on, so the composite path cannot
+  be reached: all four strict baselines are zero-drift and a test renders a
+  composite config carrying the digital target to prove it.
+  Two defects surfaced while building it, both found by the new tests rather
+  than by reading: the pre-encode limiter's 4:1 decimator carried a
+  hard-coded 15 kHz passband -- an FM band plan buried in a generic-looking
+  peak limiter -- so the 15 kHz limit survived the target switch until an
+  18 kHz probe caught it (the passband is a parameter now); and mapping the
+  limiter's THRESHOLD onto the dBTP ceiling read 1.3 dB hot, because its real
+  bound is its ceiling. `oversampledLimiterCeiling(threshold:)` is now the one
+  shared rule, used by the limiter's own `configure` and by the make-up.
+  Defaults come from the 2026-09-05 survey of how Orban, Omnia and Thimeo
+  split FM from digital (see the roadmap): -1 dBTP for a linear feed, -2 dBTP
+  ahead of a codec, and loudness by the AES TD1008 delivery levels rather
+  than the -14 LUFS playback figure.
 - **README says plainly how the project is built.** A new "How this project is
   built" section states that MPX Prime is written largely with AI assistance
   and doubles as a showcase of that way of working -- together with what keeps

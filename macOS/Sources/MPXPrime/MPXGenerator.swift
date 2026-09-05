@@ -231,6 +231,7 @@ final class MPXGenerator {
         let dcClipperCancelFreqHz: Float
         let processedAudioCoderHasClipper: Bool
         let processedAudioFinalClipDriveDB: Float
+        let processedAudioCeilingDBTP: Float
         let bs412Enabled: Bool
         let bs412ThresholdDB: Float
         let bs412WindowSeconds: Float
@@ -365,6 +366,7 @@ final class MPXGenerator {
             dcClipperCancelFreqHz: Float(config.dcClipperCancelFreqHz),
             processedAudioCoderHasClipper: config.processedAudioCoderHasClipper,
             processedAudioFinalClipDriveDB: Float(config.processedAudioFinalClipDriveDB),
+            processedAudioCeilingDBTP: Float(config.processedAudioCeilingDBTP),
             bs412Enabled: config.bs412Enabled,
             bs412ThresholdDB: Float(config.bs412ThresholdDB),
             bs412WindowSeconds: Float(config.bs412WindowSeconds),
@@ -522,6 +524,14 @@ final class MPXGenerator {
 
     private var sampleRate: Float
     private let preemphasisUS: Int
+    /// Processed-audio DIGITAL delivery (stream / DAB+ encoder ahead of us).
+    /// False for every composite render, so the FM chain is untouched by
+    /// construction. Seeded at init like `audioOutputOnly`; restart-class.
+    private let digitalDelivery: Bool
+    /// True-peak ceiling for the digital target, linear. The pre-encode
+    /// limiter is already a 4x oversampled true-peak limiter, so mapping its
+    /// threshold onto this value IS the ceiling; live-apply.
+    private var processedAudioCeiling: Float = 0.891_25
     private let encoderHFGuardEnabled: Bool
     // Tone-generator parameters. All `var` for live-apply through
     // `applyRuntimeConfig` — the Test Tone tab adjusts these on a
@@ -1035,8 +1045,15 @@ final class MPXGenerator {
 
     init(config: AppConfig, sampleRate: Double, nowPlayingState: NowPlayingState? = nil) {
         self.sampleRate = Float(max(8_000.0, sampleRate))
-        self.preemphasisUS = config.preemphasisUS
-        self.encoderHFGuardEnabled = config.preemphasisUS > 0
+        // Digital delivery drops the FM-only stages. Pre-emphasis is forced OFF
+        // rather than merely recommended off: the transmission curve has no
+        // meaning ahead of a codec, and with it gone the HF limiter has no
+        // boost to ride and the encoder HF guard disables itself. The INI value
+        // is untouched, so switching back to the FM-coder target restores it.
+        let digital = config.processedAudioDigitalDelivery
+        self.digitalDelivery = digital
+        self.preemphasisUS = digital ? 0 : config.preemphasisUS
+        self.encoderHFGuardEnabled = !digital && config.preemphasisUS > 0
         self.toneFreq = Float(config.testToneFreq)
         self.toneMode = config.testToneMode.lowercased()
         self.toneType = config.testToneType.lowercased()
@@ -1176,6 +1193,8 @@ final class MPXGenerator {
         self.processedAudioCoderHasClipper = config.processedAudioCoderHasClipper
         self.processedAudioFinalClipDrive =
             powf(10.0, clampf(Float(config.processedAudioFinalClipDriveDB), 0.0, 12.0) / 20.0)
+        self.processedAudioCeiling =
+            powf(10.0, clampf(Float(config.processedAudioCeilingDBTP), -6.0, 0.0) / 20.0)
 
         self.bs412Enabled = config.bs412Enabled
         self.bs412ThresholdDB = clampf(Float(config.bs412ThresholdDB), -20.0, 0.0)
@@ -1310,7 +1329,8 @@ final class MPXGenerator {
             residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
             lookaheadMS: preEncodeLookaheadMS,
             lookaheadHFOnly: preEncodeLookaheadHFOnly,
-            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
+            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
+            passbandHz: preEncodeLimiterPassbandHz
         )
         bs412Limiter.configure(
             sampleRate: self.sampleRate,
@@ -1615,11 +1635,15 @@ final class MPXGenerator {
         // regression.
         let audioRate = audioDomainSampleRate
         encoderProgramLP.configure(
-            cutoffHz: effectiveEncoderLowpassHz(configured: programLowpassHz, preemphasisUS: preemphasisUS),
+            cutoffHz: effectiveEncoderLowpassHz(
+                configured: programLowpassHz, preemphasisUS: preemphasisUS,
+                digital: digitalDelivery),
             sampleRate: audioRate
         )
         encoderProgramFIR.configure(
-            cutoffHz: effectiveEncoderLowpassHz(configured: programLowpassHz, preemphasisUS: preemphasisUS),
+            cutoffHz: effectiveEncoderLowpassHz(
+                configured: programLowpassHz, preemphasisUS: preemphasisUS,
+                digital: digitalDelivery),
             sampleRate: audioRate
         )
     }
@@ -1728,7 +1752,8 @@ final class MPXGenerator {
             residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
             lookaheadMS: preEncodeLookaheadMS,
             lookaheadHFOnly: preEncodeLookaheadHFOnly,
-            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
+            lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
+            passbandHz: preEncodeLimiterPassbandHz
         )
         bs412Limiter.configure(
             sampleRate: sampleRate,
@@ -1791,7 +1816,8 @@ final class MPXGenerator {
                 residualCutoffFraction: preEncodeBandlimitedResidualCutoffFraction,
                 lookaheadMS: preEncodeLookaheadMS,
                 lookaheadHFOnly: preEncodeLookaheadHFOnly,
-                lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz
+                lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
+                passbandHz: preEncodeLimiterPassbandHz
             )
         }
 
@@ -2099,6 +2125,8 @@ final class MPXGenerator {
         processedAudioCoderHasClipper = config.processedAudioCoderHasClipper
         processedAudioFinalClipDrive =
             powf(10.0, clampf(config.processedAudioFinalClipDriveDB, 0.0, 12.0) / 20.0)
+        processedAudioCeiling =
+            powf(10.0, clampf(config.processedAudioCeilingDBTP, -6.0, 0.0) / 20.0)
 
         // BS.412
         let bs412Changed =
@@ -2238,11 +2266,13 @@ final class MPXGenerator {
     private func makeEncoderComplianceConfig() -> EncoderComplianceConfig {
         let effectiveProgramLP = effectiveProgramLowpassHz(
             configured: programLowpassHz,
-            preemphasisUS: preemphasisUS
+            preemphasisUS: preemphasisUS,
+            digital: digitalDelivery
         )
         let effectiveEncoderLP = effectiveEncoderLowpassHz(
             configured: effectiveProgramLP,
-            preemphasisUS: preemphasisUS
+            preemphasisUS: preemphasisUS,
+            digital: digitalDelivery
         )
         return EncoderComplianceConfig(
             programLowpassHz: effectiveProgramLP,
@@ -2928,7 +2958,7 @@ final class MPXGenerator {
     /// clipper of its own (otherwise we would double-clip).
     @inline(__always)
     private var processedAudioFinalClipActive: Bool {
-        audioOutputOnly && !processedAudioCoderHasClipper
+        audioOutputOnly && !processedAudioCoderHasClipper && !digitalDelivery
     }
 
     /// Drive the L/R into the final loudness clipper (drive pre-gain sets density;
@@ -2946,8 +2976,37 @@ final class MPXGenerator {
     /// output sits at the limiter ceiling (~-1.4 dBFS) and reads quiet. Normalize
     /// so the binding ceiling maps to full scale (peaks reach ~0 dBFS), then apply
     /// the operator output gain. The clamp in the render loop catches any overs.
+    /// Passband for the pre-encode limiter's 4:1 decimator, which doubles as
+    /// the chain's band-limit in the pre-emphasised domain. 15 kHz is the FM
+    /// band plan and stays the default; digital delivery hands it the program
+    /// bandwidth instead, or that 15 kHz limit silently survives the target
+    /// switch -- it did, and the 18 kHz probe in `ProcessedAudioOutputTests`
+    /// is what caught it.
+    private var preEncodeLimiterPassbandHz: Float {
+        guard digitalDelivery else { return 15_000.0 }
+        return min(20_000.0, max(10_000.0, programLowpassHz))
+    }
+
+    /// The pre-encode limiter bounds peaks at its ceiling in the 4x oversampled
+    /// domain; between those samples a band-limited signal still rises a little.
+    /// Measured 0.33 dB on a burst program, so the digital make-up aims this far
+    /// below the requested ceiling: a ceiling is a never-exceed number and
+    /// undershooting is the safe side.
+    private static let processedAudioTruePeakMarginDB: Float = 0.4
+
     @inline(__always)
     private func audioOnlyOutputMakeup() -> Float {
+        if digitalDelivery {
+            // Map the true-peak limiter's threshold onto the configured dBTP
+            // ceiling instead of onto full scale: a codec wants headroom, not
+            // a normalised feed. With the limiter off there is nothing holding
+            // peaks, so the operator's gain stands and the render clamp is the
+            // only guard.
+            guard preEncodeAudioLimiterEnabled else { return outputGain }
+            let limiterCeiling = oversampledLimiterCeiling(threshold: preEncodeThreshold)
+            let margin = powf(10.0, -Self.processedAudioTruePeakMarginDB / 20.0)
+            return outputGain * ((processedAudioCeiling * margin) / max(0.1, limiterCeiling))
+        }
         if processedAudioFinalClipActive {
             // Peaks are capped by the final clipper; normalize its ceiling to full scale.
             let ceilLin = powf(10.0, Self.processedAudioFinalClipCeilingDB / 20.0)
@@ -3222,7 +3281,9 @@ final class MPXGenerator {
         // not colour upstream analysis readouts (mid/side, scopes).
         let analysisStereo = stereo
 
-        if !audioStagesBypassed {
+        // Stereo-image protection is an FM deviation / multipath guard: a
+        // digital carrier has neither, so the full image goes to the encoder.
+        if !audioStagesBypassed && !digitalDelivery {
             let protected = protectStereoImage(
                 inputL: stereo.referenceLeft,
                 inputR: stereo.referenceRight,

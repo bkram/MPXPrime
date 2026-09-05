@@ -134,6 +134,21 @@ struct AppConfig: Equatable {
     // `monitorEnabled` (the decoded-MPX monitor is meaningless without a composite).
     var processedAudioOutput: Bool = false
 
+    // Delivery target for processed-audio output (0.50). `fm_coder` keeps the
+    // FM-shaped feed an external stereo coder expects: band-limited under the
+    // pilot, pre-emphasised, image-protected, normalised to full scale.
+    // `digital` targets a stream or a DAB+ / AAC encoder instead -- the FM-only
+    // stages leave the path and peaks are held at `processed_audio_ceiling_dbtp`
+    // rather than normalised. Restart-class like the operating mode itself, and
+    // ignored entirely unless `processed_audio_output` is on.
+    var processedAudioTarget: String = "fm_coder"
+
+    /// The ONE expression every digital bypass in `MPXGenerator` is gated on,
+    /// so the composite path cannot be reached by this feature by construction.
+    var processedAudioDigitalDelivery: Bool {
+        processedAudioOutput && processedAudioTarget.lowercased() == "digital"
+    }
+
     /// The effective output mode, resolved from the two stored booleans in
     /// ONE place (previously three hand-rolled resolutions disagreed about
     /// monitor visibility). Processed-audio wins over the monitor; the
@@ -376,6 +391,13 @@ struct AppConfig: Equatable {
     // add density. Only active in processed-audio output mode.
     var processedAudioCoderHasClipper: Bool = true
     var processedAudioFinalClipDriveDB: Double = 6.0
+
+    // True-peak ceiling for the digital delivery target, in dBTP. -1.0 is the
+    // shared recommendation of EBU R128, AES TD1008 and the streaming
+    // platforms; use -2.0 when the next box is a data-reduction codec (DAB+,
+    // AAC), because lossy encoding pushes inter-sample peaks up. Read only
+    // while the digital target is active.
+    var processedAudioCeilingDBTP: Double = -1.0
     var bs412Enabled: Bool = false
     var bs412ThresholdDB: Double = -10.0
     var bs412WindowSeconds: Double = 60.0
@@ -638,6 +660,8 @@ struct AppConfig: Equatable {
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
         cfg.processedAudioOutput = interfaces.bool(
             "processed_audio_output", defaultValue: cfg.processedAudioOutput)
+        cfg.processedAudioTarget = interfaces.string(
+            "processed_audio_target", defaultValue: cfg.processedAudioTarget)
         cfg.processingBypass = mpx.bool("processing_bypass", defaultValue: cfg.processingBypass)
         cfg.testToneMode = mpx.string("test_tone_mode", defaultValue: cfg.testToneMode)
         cfg.testToneFreq = mpx.double("test_tone_freq", defaultValue: cfg.testToneFreq)
@@ -898,6 +922,8 @@ struct AppConfig: Equatable {
             "processed_audio_coder_has_clipper", defaultValue: cfg.processedAudioCoderHasClipper)
         cfg.processedAudioFinalClipDriveDB = mpx.double(
             "processed_audio_final_clip_drive_db", defaultValue: cfg.processedAudioFinalClipDriveDB)
+        cfg.processedAudioCeilingDBTP = mpx.double(
+            "processed_audio_ceiling_dbtp", defaultValue: cfg.processedAudioCeilingDBTP)
         cfg.bs412Enabled = mpx.bool("bs412_enabled", defaultValue: cfg.bs412Enabled)
         cfg.bs412ThresholdDB = mpx.double(
             "bs412_threshold_db", defaultValue: cfg.bs412ThresholdDB)
@@ -1073,7 +1099,11 @@ struct AppConfig: Equatable {
         hpfHz = max(10.0, min(200.0, hpfHz))
         hfTrimDB = max(-12.0, min(0.0, hfTrimDB))
         hfTrimHz = max(500.0, min(12_000.0, hfTrimHz))
-        programLowpassHz = max(8_000.0, min(16_000.0, programLowpassHz))
+        // 20 kHz is the DIGITAL delivery ceiling (a stream or DAB+ carries it).
+        // The composite and FM-coder paths never see more than 16 kHz whatever
+        // is stored here: `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz`
+        // apply that cap, so widening this clamp cannot move the FM chain.
+        programLowpassHz = max(8_000.0, min(20_000.0, programLowpassHz))
 
         // Limiter
         limitThreshold = max(0.5, min(0.999, limitThreshold))
@@ -1192,6 +1222,9 @@ struct AppConfig: Equatable {
         dcClipperCeilingDB = max(-6.0, min(0.0, dcClipperCeilingDB))
         dcClipperCancelFreqHz = max(500.0, min(4000.0, dcClipperCancelFreqHz))
         processedAudioFinalClipDriveDB = max(0.0, min(12.0, processedAudioFinalClipDriveDB))
+        processedAudioCeilingDBTP = max(-6.0, min(0.0, processedAudioCeilingDBTP))
+        processedAudioTarget =
+            processedAudioTarget.lowercased() == "digital" ? "digital" : "fm_coder"
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
@@ -1414,6 +1447,7 @@ struct AppConfig: Equatable {
             "dc_clipper_cancel_freq_hz = \(Self.formatFloat(dcClipperCancelFreqHz))",
             "processed_audio_coder_has_clipper = \(Self.boolString(processedAudioCoderHasClipper))",
             "processed_audio_final_clip_drive_db = \(Self.formatFloat(processedAudioFinalClipDriveDB))",
+            "processed_audio_ceiling_dbtp = \(Self.formatFloat(processedAudioCeilingDBTP))",
             "bs412_enabled = \(Self.boolString(bs412Enabled))",
             "bs412_threshold_db = \(Self.formatFloat(bs412ThresholdDB))",
             "bs412_window_seconds = \(Self.formatFloat(bs412WindowSeconds))",
@@ -1513,6 +1547,7 @@ struct AppConfig: Equatable {
             "source_mode = \(sourceMode)",
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
             "processed_audio_output = \(Self.boolString(processedAudioOutput))",
+            "processed_audio_target = \(processedAudioTarget)",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             // sample_rate was read but never written (a non-default rate
             // vanished on the first autosave); persisted since the remote

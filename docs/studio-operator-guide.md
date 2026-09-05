@@ -443,6 +443,38 @@ Composite Clipper / BS.412 / Final Stage tabs, the pilot level control, the MOD
 (deviation) meter, the composite readouts on the Monitoring dashboard, and the MPX
 Spectrum + Scopes windows. The status bar shows `MODE: PROC AUDIO`.
 
+### Delivery target: FM coder or digital
+
+Processed audio can feed two very different things, so pick which one in
+`Audio I/O` -> `Operating Mode` -> `Delivery` (INI: `processed_audio_target`
+in `[INTERFACES]`; restart-class, like the operating mode itself).
+
+- **FM stereo coder** (default, and what every existing config keeps) leaves
+  the feed FM-shaped: band-limited under the pilot, pre-emphasised here or in
+  the coder, image-protected, and normalised so peaks reach full scale.
+- **Digital (streaming / DAB)** aims at a stream encoder or a DAB+ / AAC box
+  instead. The FM-only stages leave the path: the audio keeps its full
+  bandwidth (up to the `Program Lowpass` setting, now allowed to 20 kHz),
+  pre-emphasis is forced off, stereo-image protection is skipped because a
+  digital carrier has neither deviation nor multipath to protect, and the
+  final loudness clipper is not offered -- clipping into a codec costs
+  quality. Peaks are held at the true-peak ceiling instead of normalised.
+
+**True-peak ceiling.** With the digital target selected, `Audio I/O` ->
+`Operating Mode` -> `True-peak Ceiling` (`processed_audio_ceiling_dbtp`,
+live-apply) sets where peaks land. **-1.0 dBTP** is the default and the shared
+recommendation of EBU R128, AES TD1008 and the streaming platforms. Use
+**-2.0 dBTP** when the next box is a data-reduction codec such as DAB+ or AAC:
+lossy encoding pushes inter-sample peaks up, and the extra headroom is what
+keeps them from clipping in the listener's decoder.
+
+**Loudness is set upstream**, by the AGC's Platform Target, not by this
+ceiling. Useful numbers: about **-16 LUFS** for a music stream and -18 for
+speech (AES TD1008 delivery levels), or **-23 LUFS** for EBU R128 broadcast,
+which is the usual DAB case in Europe. The -14 LUFS figure quoted for Spotify
+or YouTube is a playback normalisation level, not a delivery target; aiming at
+it only costs you dynamics.
+
 ### Pre-emphasis ownership
 
 Exactly one device in the chain may apply pre-emphasis (50 us EU / 75 us US).

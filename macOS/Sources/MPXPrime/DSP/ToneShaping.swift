@@ -96,15 +96,23 @@ struct ParametricEQ4Band {
 }
 
 @inline(__always)
-func effectiveProgramLowpassHz(configured: Float, preemphasisUS: Int) -> Float {
-    guard preemphasisUS > 0 else { return configured }
+func effectiveProgramLowpassHz(configured: Float, preemphasisUS: Int, digital: Bool = false)
+    -> Float {
+    // Digital delivery (stream / DAB+) has no FM band plan: the configured
+    // lowpass stands as written, up to the config clamp (20 kHz).
+    if digital { return configured }
+    // Composite and FM-coder feeds stay under the 19 kHz pilot even when the
+    // INI asks for more -- this cap is what lets the config clamp be 20 kHz.
+    guard preemphasisUS > 0 else { return min(configured, 16_000.0) }
     let complianceCap: Float = preemphasisUS <= 50 ? 15_300.0 : 15_000.0
     return min(configured, complianceCap)
 }
 
 @inline(__always)
-func effectiveEncoderLowpassHz(configured: Float, preemphasisUS: Int) -> Float {
-    guard preemphasisUS > 0 else { return configured }
+func effectiveEncoderLowpassHz(configured: Float, preemphasisUS: Int, digital: Bool = false)
+    -> Float {
+    if digital { return configured }
+    guard preemphasisUS > 0 else { return min(configured, 16_000.0) }
     let encoderCap: Float = preemphasisUS <= 50 ? 14_900.0 : 14_600.0
     return min(configured, encoderCap)
 }

@@ -137,7 +137,38 @@ validation queue, parked items) lives in [meter-roadmap.md](meter-roadmap.md).
    paths (PI / PTY / flags / AF / scheduler) need real-receiver checks beyond
    the bit-stream tests.
 
-## Digital delivery target for Processed Audio (streaming / DAB) -- PROPOSED 2026-09-05, not yet approved
+## Digital delivery target for Processed Audio (streaming / DAB) -- CORE LANDED 2026-09-05
+
+**Landed:** the two INI keys (`processed_audio_target`,
+`processed_audio_ceiling_dbtp`), the one-place resolver
+(`AppConfig.processedAudioDigitalDelivery`, seeded into `MPXGenerator` at
+init), all five generator differences in the table below, the segmented
+Delivery control plus the ceiling slider in BOTH front ends, and seven tests
+in `ProcessedAudioOutputTests`. All four strict baselines zero-drift, full
+suite green. Two defects the tests found on the way: the pre-encode limiter's
+decimator carried a hard-coded 15 kHz band limit that survived the target
+switch, and mapping the limiter's THRESHOLD (rather than its ceiling) onto the
+dBTP target read 1.3 dB hot -- the ceiling rule is now one shared function.
+
+**Still open from this plan:**
+
+- **BS.1770-4 loudness metering** (momentary / short-term / integrated LUFS +
+  true-peak max) on the Monitoring dashboard and `/api/meters`, with the EBU
+  Tech 3341 gating vectors as its test. Without it the operator sets loudness
+  by the AGC target and an external meter.
+- **A "Digital -- Streaming / DAB" Format Profile** (AGC target for -16 LUFS
+  music, light multiband, PrimeBass off), which wants the meter first so the
+  target can be verified rather than asserted.
+- **A separate digital clipper drive** defaulting to off (Thimeo's
+  "Web/HD/DAB clipper drive" model). Today the final clipper is simply
+  inactive for the digital target, which is the right default but not the
+  full control.
+- **Codec conditioning** stays out of scope, gated on the measurement
+  described under "Codec conditioning prior art".
+
+The rest of this section is the original plan and the research behind it.
+
+## Digital delivery target -- original plan (2026-09-05)
 
 **Question asked:** do we need a special mode for the audio processor without
 MPX, so the 15 kHz filtering and every other FM-specific stage can be switched

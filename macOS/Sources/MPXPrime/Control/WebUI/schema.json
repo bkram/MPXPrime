@@ -710,11 +710,13 @@
     "id": "interfaces",
     "keys": [
      "processed_audio_output",
+     "processed_audio_target",
      "input_gain_db",
      "output_gain_db",
      "mpx_line_output_dbfs",
      "processed_audio_coder_has_clipper",
-     "processed_audio_final_clip_drive_db"
+     "processed_audio_final_clip_drive_db",
+     "processed_audio_ceiling_dbtp"
     ],
     "keys2": {
      "title": "Engine",
@@ -1907,6 +1909,15 @@
    "kind": "toggle",
    "label": "Subharmonics"
   },
+  "processed_audio_ceiling_dbtp": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "True-peak Ceiling",
+   "max": 0.0,
+   "min": -6.0,
+   "step": 0.1,
+   "unit": " dBTP"
+  },
   "processed_audio_coder_has_clipper": {
    "kind": "toggle",
    "label": "External coder has its own clipper"
@@ -1923,6 +1934,20 @@
   "processed_audio_output": {
    "kind": "toggle",
    "label": "Processed Audio Output (L/R to external coder)"
+  },
+  "processed_audio_target": {
+   "kind": "seg",
+   "label": "Delivery",
+   "options": [
+    [
+     "fm_coder",
+     "FM stereo coder"
+    ],
+    [
+     "digital",
+     "Digital (streaming / DAB)"
+    ]
+   ]
   },
   "processing_bypass": {
    "kind": "toggle",

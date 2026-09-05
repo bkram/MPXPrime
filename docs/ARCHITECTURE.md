@@ -311,6 +311,30 @@ Further Meter runtime behavior (0.41 cycle): an **MPX pass-through** duplicates 
 - `Verification/`: one file per verify mode (`VerificationCore`, `ReceiverModel`, `QualityMetrics`, `PresetSweep`, `StageABGates`, `AdvancedDynamicsGate`, `HFTransientGate`, `FinalRideIsolation`, `ProgramABGate`) behind the `VerificationHarness.swift` dispatcher; `VerifierBaseline.swift` holds the baseline schema + compare; `BenchmarkRunner.swift` implements `--bench` / `--bench-blocks`.
 - `UI/`: `AppConstants`, `NavigationModel`, `RootViews`, `MonitoringDashboard`, `AudioIOTab`, `ProcessingTabs`, `SettingsAndRDSTabs`, `SnapshotsAndTestTone`, `HelpAndAbout`, `SharedControls`; plus the pre-split `UIBroadcastStatusBar`, `UISignalFlowStrip`, `UIInspector`, `UIProcessingOverview` and `UILiveTelemetry.swift` (the `@Observable` per-tick `LiveTelemetry` object). `NowPlayingSupport.swift` + `RDSTextParser.swift` feed RT metadata from an external script.
 
+## Processed-audio delivery targets (0.50)
+
+Processed-audio output has two shapes, chosen by `processed_audio_target` and
+resolved in ONE place: `AppConfig.processedAudioDigitalDelivery`, which is
+false unless `processed_audio_output` is also on. `MPXGenerator` seeds
+`digitalDelivery` from it at construction (the same rule as `audioOutputOnly`,
+so the verifier and the Linux ALSA engine see it too), and every difference is
+gated on that single flag, which is why the composite path cannot be reached
+by this feature:
+
+| Stage | `fm_coder` | `digital` |
+| --- | --- | --- |
+| Program + encoder lowpass | FM caps (15.3 / 14.9 kHz emphasised, 16 kHz flat) via `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz` | the configured `program_lowpass_hz`, up to 20 kHz |
+| Pre-encode limiter decimator passband | 15 kHz (it doubles as the emphasised-domain band limit) | the program bandwidth, via the `passbandHz` parameter |
+| Pre-emphasis + encoder HF guard | as configured | forced off (the guard disables itself at 0 us) |
+| Stereo-image protection | on | bypassed (no deviation or multipath to protect) |
+| Final loudness clipper | optional, when the coder has none | never |
+| Output make-up | limiter ceiling normalised to full scale | limiter ceiling mapped onto `processed_audio_ceiling_dbtp`, less a 0.4 dB inter-sample margin |
+
+`oversampledLimiterCeiling(threshold:)` in `DSP/PeakLimiters.swift` is the one
+rule for the limiter's hard bound, shared by the limiter's own `configure` and
+by the make-up, so the two cannot drift: mapping the THRESHOLD instead reads
+about 1.3 dB hot, which is how the sharing was found.
+
 ## Measurement provenance
 
 The composite output has been validated on a commercial measuring receiver

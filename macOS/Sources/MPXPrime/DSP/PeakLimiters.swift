@@ -107,14 +107,14 @@ struct StereoLinkedOversampledPeakLimiter {
         residualCutoffFraction: Float = 0.25,
         lookaheadMS: Float = 0.0,
         lookaheadHFOnly: Bool = false,
-        lookaheadHFCutoffHz: Float = 4_000.0
+        lookaheadHFCutoffHz: Float = 4_000.0,
+        passbandHz: Float = 15_000.0
     ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
         self.releaseMS = max(8.0, releaseMS)
         self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
-        let ceilingMargin = max(0.012, (1.0 - self.threshold) * 0.65)
-        ceiling = min(0.999, self.threshold + ceilingMargin)
+        ceiling = oversampledLimiterCeiling(threshold: self.threshold)
         ceilingKnee = max(1e-4, ceiling - threshold)
 
         let attackS = 0.00025 as Float
@@ -137,11 +137,13 @@ struct StereoLinkedOversampledPeakLimiter {
         // around the pilot stays clean. ~640 taps at 192 kHz OS (vDSP dot
         // product), 1.67 ms. The transition scales with the host rate so the
         // legacy 192 kHz-domain path stays affordable (6 kHz).
-        let passbandHz: Float = 15_000.0
+        // 15 kHz is the FM band plan; a digital delivery target hands in its own
+        // (wider) program bandwidth, which is why this is a parameter now.
+        let passband = clampf(passbandHz, 10_000.0, max(10_000.0, sampleRate * 0.42))
         let transitionHz = max(1_500.0, sampleRate / 32.0)
-        lDecim.configure(cutoffHz: passbandHz, sampleRateOS: sr, decimateFactor: 4,
+        lDecim.configure(cutoffHz: passband, sampleRateOS: sr, decimateFactor: 4,
                          stopBandDB: 80.0, transitionHz: transitionHz)
-        rDecim.configure(cutoffHz: passbandHz, sampleRateOS: sr, decimateFactor: 4,
+        rDecim.configure(cutoffHz: passband, sampleRateOS: sr, decimateFactor: 4,
                          stopBandDB: 80.0, transitionHz: transitionHz)
         lResidualClipper.configure(
             threshold: ceiling,
@@ -342,6 +344,19 @@ struct StereoLinkedOversampledPeakLimiter {
     }
 }
 
+/// The hard upper bound an `OversampledPeakLimiter` imposes for a given
+/// threshold: the soft knee sits between the two and nothing leaves the stage
+/// above this value. Shared as a free function so a caller that has to map the
+/// limiter's REAL ceiling onto another target -- the processed-audio digital
+/// true-peak ceiling does exactly that -- cannot drift from the limiter's own
+/// rule. Mapping the THRESHOLD instead reads about 1.3 dB hot, which is how
+/// this was found.
+@inline(__always)
+func oversampledLimiterCeiling(threshold: Float) -> Float {
+    let thr = clampf(threshold, 0.75, 0.995)
+    return min(0.999, thr + max(0.012, (1.0 - thr) * 0.65))
+}
+
 struct PreEncodeAudioLimiter {
     private var limiter = StereoLinkedOversampledPeakLimiter()
     private var gainReduction: Float = 0.0
@@ -355,7 +370,8 @@ struct PreEncodeAudioLimiter {
         residualCutoffFraction: Float = 0.25,
         lookaheadMS: Float = 0.0,
         lookaheadHFOnly: Bool = false,
-        lookaheadHFCutoffHz: Float = 4_000.0
+        lookaheadHFCutoffHz: Float = 4_000.0,
+        passbandHz: Float = 15_000.0
     ) {
         limiter.configure(
             sampleRate: sampleRate,
@@ -366,7 +382,8 @@ struct PreEncodeAudioLimiter {
             residualCutoffFraction: residualCutoffFraction,
             lookaheadMS: lookaheadMS,
             lookaheadHFOnly: lookaheadHFOnly,
-            lookaheadHFCutoffHz: lookaheadHFCutoffHz
+            lookaheadHFCutoffHz: lookaheadHFCutoffHz,
+            passbandHz: passbandHz
         )
         gainReduction = 0.0
     }

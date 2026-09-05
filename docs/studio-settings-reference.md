@@ -84,6 +84,27 @@ While the stage is active, the Monitoring dashboard's Signal Chain "AGC" pill sw
 
 While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and MB Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
 
+### Processed-audio delivery target
+
+`processed_audio_target` (`[INTERFACES]`, default `fm_coder`, restart-class)
+selects what the processed-audio feed is shaped for. `fm_coder` keeps the FM
+shape an external stereo coder expects. `digital` targets a stream or a
+DAB+ / AAC encoder: the band limit follows `program_lowpass_hz` (clamp raised
+to 20 kHz for this reason) instead of the 16 kHz FM cap, `preemphasis_us` is
+forced to 0 for the render while the stored value is left untouched, the
+stereo-image protector and the optional final clipper are skipped, and the
+output make-up targets the true-peak ceiling below rather than full scale.
+The key is ignored entirely unless `processed_audio_output` is on, so it can
+never affect a composite render.
+
+`processed_audio_ceiling_dbtp` (`[MPX]`, default `-1.0`, range -6..0,
+live-apply) is the true-peak ceiling for the digital target. The pre-encode
+limiter is already a 4x oversampled true-peak limiter, so the ceiling is
+implemented by mapping that limiter's own ceiling onto this value, less a
+0.4 dB margin for the inter-sample rise the 4x domain cannot see. Measured
+delivery on a burst program lands just under the requested figure; the
+`digitalTargetHoldsTheTruePeakCeiling` test pins it.
+
 ### MPX line output calibration (dBFS)
 
 `mpx_line_output_dbfs` ([MPX], default `0.0`, slider range -40..0 (the INI accepts down to -60), live-apply; GUI:

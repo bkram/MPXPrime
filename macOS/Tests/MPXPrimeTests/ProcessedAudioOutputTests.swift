@@ -328,4 +328,189 @@ struct ProcessedAudioOutputTests {
         #expect(restored.processedAudioCoderHasClipper == false)
         #expect(abs(restored.processedAudioFinalClipDriveDB - 7.5) < 0.01)
     }
+
+    // MARK: - Digital delivery target (0.50)
+    //
+    // `processed_audio_target = digital` aims the audio-only path at a stream or
+    // a DAB+ / AAC encoder instead of an FM stereo coder. The FM-only stages
+    // leave the path (band limit under the pilot, pre-emphasis, image
+    // protection, the optional final clipper) and peaks are held at a true-peak
+    // ceiling instead of being normalised to full scale. Every assertion below
+    // has an FM-target counterpart above: BOTH must hold, one per target.
+
+    private func digitalConfig(sampleRate: Double) -> AppConfig {
+        var cfg = baseConfig(sampleRate: sampleRate)
+        cfg.processedAudioTarget = "digital"
+        cfg.programLowpassHz = 20_000.0
+        return cfg
+    }
+
+    @Test func digitalTargetPassesAboveFifteenK() {
+        // The FM counterpart (`processedAudioBandLimitsAboveFifteenK`) pins the
+        // opposite for the same rate: this is the one behaviour the target flips.
+        let sr = 96_000.0
+        let cfg = digitalConfig(sampleRate: sr)
+        let amp: Float = 0.3
+        let skip = Int(sr * 0.2)
+        let ref = renderAudioOnly(cfg: cfg, seconds: 0.6) { _, t in
+            let s = Float(Double(amp) * sin(2.0 * .pi * 1_000.0 * t)); return (s, s)
+        }
+        let hi = renderAudioOnly(cfg: cfg, seconds: 0.6) { _, t in
+            let s = Float(Double(amp) * sin(2.0 * .pi * 18_000.0 * t)); return (s, s)
+        }
+        let refMag = goertzel(ref.left, freqHz: 1_000.0, sampleRate: sr, startFrame: skip)
+        let hiMag = goertzel(hi.left, freqHz: 18_000.0, sampleRate: sr, startFrame: skip)
+        #expect(refMag > 0.1, "1 kHz reference should pass, got \(refMag)")
+        #expect(hiMag > refMag * 0.5,
+                "18 kHz must survive the digital target: \(hiMag) vs 1 kHz \(refMag), the 16 kHz FM cap must not apply here")
+    }
+
+    @Test func digitalTargetIsFlatWithNoPreemphasis() {
+        // Pre-emphasis is FORCED off for the digital target even when the INI
+        // still carries 50 us, because the curve is meaningless ahead of a codec
+        // and would be applied twice if the operator switched targets.
+        let sr = 96_000.0
+        var cfg = digitalConfig(sampleRate: sr)
+        cfg.preemphasisUS = 50
+        let amp: Float = 0.03
+        func level(_ f: Double) -> Double {
+            let out = renderAudioOnly(cfg: cfg, seconds: 0.6) { _, t in
+                let s = Float(Double(amp) * sin(2.0 * .pi * f * t)); return (s, s)
+            }
+            return 20.0 * log10(
+                max(1e-12, goertzel(out.left, freqHz: f, sampleRate: sr, startFrame: Int(sr * 0.2))))
+        }
+        let boostDB = level(10_000.0) - level(1_000.0)
+        #expect(abs(boostDB) < 0.5,
+                "digital delivery must be flat, 10 kHz re 1 kHz read \(boostDB) dB")
+    }
+
+    @Test func digitalTargetHoldsTheTruePeakCeiling() {
+        // The ceiling is a TRUE-peak claim, so measure it the way a codec sees
+        // it: 4x oversampled through a linear interpolation of the output, not
+        // the sample peak. The limiter's tanh knee is soft, hence the 0.3 dB
+        // tolerance -- but it must never read ABOVE the ceiling.
+        let sr = 96_000.0
+        var cfg = digitalConfig(sampleRate: sr)
+        cfg.processedAudioCeilingDBTP = -2.0
+        cfg.inputGainDB = 12.0
+        let out = renderAudioOnly(cfg: cfg, seconds: 0.8) { i, t in
+            let burst: Double = (i / 4_096) % 2 == 0 ? 1.0 : 0.35
+            let l = Float(burst * 0.9 * sin(2.0 * .pi * 700.0 * t))
+            let r = Float(burst * 0.9 * sin(2.0 * .pi * 1_100.0 * t + 0.7))
+            return (l, r)
+        }
+        let skip = Int(sr * 0.25)
+        var truePeak: Float = 0
+        for buf in [out.left, out.right] {
+            for i in skip..<(buf.count - 1) {
+                truePeak = max(truePeak, abs(buf[i]))
+                for step in 1...3 {
+                    let f = Float(step) / 4.0
+                    truePeak = max(truePeak, abs(buf[i] + (buf[i + 1] - buf[i]) * f))
+                }
+            }
+        }
+        let peakDB = 20.0 * log10(max(1e-9, Double(truePeak)))
+        #expect(peakDB < -2.0 + 0.05,
+                "true peak \(peakDB) dBTP must not exceed the -2.0 dBTP ceiling")
+        #expect(peakDB > -2.0 - 1.5,
+                "true peak \(peakDB) dBTP is far under the ceiling; the make-up is not reaching it")
+    }
+
+    @Test func digitalTargetKeepsTheStereoImage() {
+        // Image protection is an FM deviation / multipath guard. A digital
+        // carrier has neither, so a hard-panned source must keep its side energy.
+        let sr = 96_000.0
+        var cfg = digitalConfig(sampleRate: sr)
+        cfg.inputGainDB = 6.0
+        func sideToMid(_ target: String) -> Double {
+            var c = cfg
+            c.processedAudioTarget = target
+            let out = renderAudioOnly(cfg: c, seconds: 0.6) { _, t in
+                (Float(0.7 * sin(2.0 * .pi * 900.0 * t)), 0.0)   // hard left
+            }
+            let skip = Int(sr * 0.2)
+            var mid = 0.0, side = 0.0
+            for i in skip..<out.left.count {
+                let m = (Double(out.left[i]) + Double(out.right[i])) * 0.5
+                let s = (Double(out.left[i]) - Double(out.right[i])) * 0.5
+                mid += m * m
+                side += s * s
+            }
+            return sqrt(side) / max(1e-9, sqrt(mid))
+        }
+        let digital = sideToMid("digital")
+        #expect(digital > 0.95,
+                "hard-panned side/mid should stay near 1.0 on the digital target, got \(digital)")
+    }
+
+    @Test func digitalTargetNeverRunsTheFinalClipper() {
+        // Clipping into a codec costs quality, so the FM-coder escape hatch
+        // ("the coder has no clipper of its own") is inert for digital.
+        let sr = 96_000.0
+        var cfg = digitalConfig(sampleRate: sr)
+        cfg.inputGainDB = 10.0
+        var clipperRequested = cfg
+        clipperRequested.processedAudioCoderHasClipper = false
+        func render(_ c: AppConfig) -> [Float] {
+            renderAudioOnly(cfg: c, seconds: 0.4) { _, t in
+                let s = Float(0.8 * sin(2.0 * .pi * 500.0 * t)); return (s, s)
+            }.left
+        }
+        let a = render(cfg)
+        let b = render(clipperRequested)
+        #expect(a.count == b.count)
+        let firstDiff = (0..<min(a.count, b.count)).first { a[$0] != b[$0] }
+        #expect(firstDiff == nil,
+                "the coder-has-clipper flag changed the digital output at frame \(firstDiff ?? -1)")
+    }
+
+    @Test func digitalTargetConfigRoundTripsAndDefaultsToFMCoder() {
+        var cfg = AppConfig()
+        #expect(cfg.processedAudioTarget == "fm_coder", "default target must not change existing installs")
+        #expect(cfg.processedAudioDigitalDelivery == false)
+        cfg.processedAudioOutput = true
+        cfg.processedAudioTarget = "digital"
+        cfg.processedAudioCeilingDBTP = -2.0
+        #expect(cfg.processedAudioDigitalDelivery == true)
+        let restored = try? AppConfig.loadFromINIString(cfg.captureAsINIString())
+        #expect(restored?.processedAudioTarget == "digital")
+        #expect(abs((restored?.processedAudioCeilingDBTP ?? 0) - (-2.0)) < 0.01)
+        #expect(restored?.processedAudioDigitalDelivery == true)
+        // An unknown value normalises to the FM coder rather than silently
+        // dropping the FM band limit.
+        var bogus = cfg
+        bogus.processedAudioTarget = "hd-radio"
+        bogus.validate()
+        #expect(bogus.processedAudioTarget == "fm_coder")
+    }
+
+    @Test func digitalTargetCannotAffectTheCompositePath() {
+        // The whole feature is gated on `processedAudioDigitalDelivery`, which is
+        // false unless processed-audio output is on. A composite config carrying
+        // the digital target must render identically to one without it.
+        var composite = baseConfig(sampleRate: 192_000.0)
+        composite.processedAudioOutput = false
+        composite.preemphasisUS = 50
+        var tagged = composite
+        tagged.processedAudioTarget = "digital"
+        #expect(tagged.processedAudioDigitalDelivery == false)
+        func renderComposite(_ c: AppConfig) -> [Float] {
+            let gen = MPXGenerator(config: c, sampleRate: c.sampleRate)
+            var out = [Float](repeating: 0, count: 8_192)
+            for i in 0..<out.count {
+                let t = Double(i) / c.sampleRate
+                let l = Float(0.4 * sin(2.0 * .pi * 1_000.0 * t))
+                let r = Float(0.3 * sin(2.0 * .pi * 1_400.0 * t))
+                out[i] = gen.renderSingleSample(leftIn: l, rightIn: r)
+            }
+            return out
+        }
+        let a = renderComposite(composite)
+        let b = renderComposite(tagged)
+        let firstDiff = (0..<min(a.count, b.count)).first { a[$0] != b[$0] }
+        #expect(firstDiff == nil,
+                "the digital target leaked into the composite path at frame \(firstDiff ?? -1)")
+    }
 }

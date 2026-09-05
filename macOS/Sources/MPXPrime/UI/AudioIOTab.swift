@@ -88,6 +88,32 @@ struct OperatingModeCardContent: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Picker("Delivery", selection: model.configBinding(\.processedAudioTarget, runtimeDisposition: .restart)) {
+                Text("FM stereo coder").tag("fm_coder")
+                Text("Digital (streaming / DAB)").tag("digital")
+            }
+            .pickerStyle(.segmented)
+            Text(model.config.processedAudioDigitalDelivery
+                ? "Aimed at a stream or a DAB+ / AAC encoder: full audio bandwidth, no pre-emphasis, no image protection, and peaks held at the true-peak ceiling below instead of normalised to full scale. Restart required."
+                : "Aimed at an external FM stereo coder: band-limited under the pilot, pre-emphasised here or in the coder, image-protected, normalised to full scale. Restart required.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if model.config.processedAudioDigitalDelivery {
+                DoubleSliderRow(
+                    title: "True-peak Ceiling",
+                    value: model.configBinding(\.processedAudioCeilingDBTP, runtimeDisposition: .live),
+                    range: -6...0,
+                    format: "%.1f dBTP",
+                    tooltip: "Where peaks are held for the encoder downstream. -1.0 dBTP is the shared recommendation of EBU R128, AES TD1008 and the streaming platforms; use -2.0 when the next box is a data-reduction codec (DAB+, AAC), because lossy encoding pushes inter-sample peaks up.")
+                Text("Loudness is set upstream by the AGC target, not here: aim for about -16 LUFS for a stream, or -23 LUFS under EBU R128 for DAB.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+            }
+
+            if !model.config.processedAudioDigitalDelivery {
             Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
                 Text("Off (coder applies it)").tag(0)
                 Text("50 us (EU)").tag(50)
@@ -99,7 +125,9 @@ struct OperatingModeCardContent: View {
                 .foregroundStyle(.secondary)
 
             Divider()
+            }
 
+            if !model.config.processedAudioDigitalDelivery {
             Toggle("External coder has its own clipper",
                    isOn: model.configBinding(\.processedAudioCoderHasClipper, runtimeDisposition: .live))
                 .help("Same one-stage rule as pre-emphasis, for clipping. Leave ON if your stereo coder clips/limits its own input. Turn OFF only if it does not \u{2014} then MPX Prime adds a final loudness clipper so the feed is denser. Two clippers in series sound harsh.")
@@ -114,6 +142,7 @@ struct OperatingModeCardContent: View {
                 Text("MPX Prime is applying a final loudness clipper to the processed-audio feed. Make sure your external coder is NOT also clipping the input.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
             }
         }
         if model.config.resolvedOutputMode(allowMonitor: true) == .monitor {

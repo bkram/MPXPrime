@@ -201,6 +201,7 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 - [`AGENTS.md`](AGENTS.md) -- contributor / agent workflow guidance and release checklist
 - [docs/project-roadmap.md](docs/project-roadmap.md) -- project roadmap: open work and the anti-rework guardrails
 - [`CHANGELOG.md`](CHANGELOG.md) -- version history
+- [`CONTRIBUTORS.md`](CONTRIBUTORS.md) -- authors, the initial RDS port, vendored code and library licenses
 
 ## References
 
@@ -208,7 +209,13 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 
 ## Acknowledgements
 
-The block-level RDS bit encoder in `BasicRDSCoder` -- CRC (`0x5B9`), offset words, and the four-block group assembly shared by groups 0/2/3A/4A/10A/11A/15A -- was initially ported from the Python `RDSHelper` in [ryanginn/rds-master](https://github.com/ryanginn/rds-master). Everything around it is MPX Prime Studio's own work: the 1187.5 bit/s biphase + Gaussian shaping FIR, the pilot-locked 57 kHz subcarrier generation, the audio-thread real-time pipeline (pre-allocated bit buffer, atomic CT cache, monotonic-clock timing), the `RDSRuntimeConfig` live-apply path, AF Method B, RT+ ODA (AID 0x4BD7), Group 4A clock-time with MJD + TZ, Group 10A PTYN, Group 15A Long PS, Group 1A ECC/LIC, the Stereotool-compatible text grammar, and the full FM composite chain that the encoder feeds into.
+The block-level RDS bit encoder in `BasicRDSCoder` was initially ported from
+the Python `RDSHelper` in
+[ryanginn/rds-master](https://github.com/ryanginn/rds-master); the Meter's
+in-process tuner is a vendored subset of
+[FM-SDR-Tuner](https://github.com/bkram/FM-SDR-Tuner). Full credits, what came
+from where, and the library licenses are in
+[CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## Trademarks
 

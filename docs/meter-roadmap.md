@@ -26,7 +26,7 @@ file holds only what is still open. Pruned 2026-09-05.
 
 ## A. Software fixes and decisions (evidence-gated, agent-doable once unblocked)
 
-### A1. Tuner channel filter: make "auto" bandwidth mean something (BLOCKED on B1)
+### A1. Tuner channel filter: make "auto" bandwidth mean something (READY)
 
 The bench proved that at factor 1 with `bandwidth_khz = 0` nothing band-limits
 the IQ ahead of the FM demod, inflating every peak-sensitive reading (+21 kHz
@@ -36,15 +36,21 @@ with an explicit FM MPX default (200 kHz) instead of leaving mode 0 unapplied.
 Alternative: make the ctor apply its own +/-110 kHz design as a real mode so
 "auto" means what it says.
 
-- **Why blocked:** it changes the shipped demod for every user on ONE dongle's
-  evidence. Wants a second RTL or an SDRplay cross-check first (B1).
-- **Gate when unblocked:** re-run the 3-row A/B table (narrow/auto,
-  wide/auto, narrow/200k -- rows 2 and 3 must agree, row 1 must now match
-  them), plus a reference-receiver comparison. Then revisit whether the narrow default
-  question reopens (the byte-exact packed path argument is only valid once
-  factor 1 is band-limited).
-- Keep the RTL IQ-rate revert (1000 kHz) and the meter-operator-guide.md warning
-  until this lands.
+- **No longer blocked (operator decision 2026-09-05):** one RTL-SDR is
+  representative of all RTL-SDR sticks -- they share the tuner path, and what
+  differs between them is front-end gain, which the RF OVERLOAD badge already
+  surfaces. The single-dongle bench evidence is therefore enough to change the
+  shipped demod.
+- **Gate:** re-run the 3-row A/B table on the bench RTL (narrow/auto,
+  wide/auto, narrow/200k -- rows 2 and 3 must agree, and row 1 must now match
+  them instead of reading +21 kHz MAX / +46% RDS). Then revisit whether the
+  narrow-default question reopens (the byte-exact packed-path argument is only
+  valid once factor 1 is band-limited).
+- Keep the RTL IQ-rate revert (1000 kHz) and the meter-operator-guide.md
+  warning until this lands.
+- The fix touches the shared `FMDemod`, so the SDRplay backend check (B1)
+  should re-confirm the bandwidth behaviour there once hardware is at hand --
+  but it does not gate the RTL work.
 
 ### A4. Studio<->Meter closed-loop calibration inside the Meter (designed; script version shipped as `calibrate-tx.sh`)
 
@@ -66,26 +72,28 @@ The headless script closes the loop today (REST read of the configured pilot inj
 
 ## B. Hardware validation queue (maintainer; agent prepares harnesses)
 
-1. **Second RTL / SDRplay cross-check of the A1 bandwidth fix** -- unblocks A1;
-   the SDRplay run also settles the 8-bit-vs-14-bit SIGNAL QUALITY scale
-   caveat (a caveat, not a defect: the bench's "8-bit floor" was auto-gain
-   overload, now surfaced as the RF OVERLOAD badge). Reuse the bench method: scratch cmake build of `mpx-tuner`,
-   capture composite, replay via `--stdin`; the capi harness for the shipped
-   path already exists as a pattern (~45 lines against `mpxtuner_open`).
-2. **RTL with a known ppm error, before/after the decoder PLL fix** -- field
-   confirmation of the measured 24.8 -> 64.4 dB separation improvement.
-3. **Reference-receiver side-by-side re-check post-P1** -- conventions did not change
-   (bench confirmed pilot 5.77 / RDS 3.87 on 88.6, consistent with
+Only ONE SDR-hardware item remains: RTL-SDR needs no cross-device work (see
+"Deliberately NOT doing"), while SDRplay is a separate backend and does.
+
+1. **SDRplay backend check** -- the RSPdx wide-capture path has been
+   hardware-unverified since 0.43; the same session should confirm the A1
+   bandwidth behaviour on that backend and settle the 8-bit-vs-14-bit SIGNAL
+   QUALITY scale caveat (a caveat, not a defect: the bench's "8-bit floor" was
+   auto-gain overload, now surfaced by the RF OVERLOAD badge). Reuse the bench
+   method: scratch cmake build of `mpx-tuner`, capture composite, replay via
+   `--stdin`; the capi harness for the shipped path already exists as a
+   pattern (~45 lines against `mpxtuner_open`).
+2. **Reference-receiver side-by-side re-check post-P1** -- conventions did not
+   change (bench confirmed pilot 5.77 / RDS 3.87 on 88.6, consistent with
    2026-07-07), so this should be a formality; do it before quoting 0.45
    numbers against the reference receiver.
-4. **75 us station check** for the new de-emphasis setting (a real 75 us
-   market signal, not synthesized).
-5. **VoiceOver pass over the Meter** (the P3 accessibility work is in; the
+3. **75 us station check** for the de-emphasis setting (a real 75 us market
+   signal, not synthesized).
+4. **VoiceOver pass over the Meter** (the P3 accessibility work is in; the
    audit checklist item is the human pass).
-6. **Long SDR + RF-spectrum GUI run with Instruments** -- "View Body" on the
+5. **Long SDR + RF-spectrum GUI run with Instruments** -- "View Body" on the
    root should now be 0 Hz (rfSpan chip isolation fix); also re-checks the
    0.34-class leak stays fixed in the one mode it regressed in.
-7. **RSPdx wide-capture path** -- still hardware-unverified since 0.43.
 
 ## C. Parked / larger items (decision or dependency first)
 
@@ -105,6 +113,15 @@ The headless script closes the loop today (REST read of the configured pilot inj
   findings").
 
 ## Deliberately NOT doing (do not re-litigate without new evidence)
+
+- Cross-RTL validation (operator decision 2026-09-05): if a change works on
+  one RTL-SDR it works on all of them -- same tuner path, and the per-stick
+  differences are front-end gain, which the RF OVERLOAD badge surfaces.
+  A second RTL proves nothing new, and neither does chasing a stick with a
+  known ppm error (the decoder PLL fix is already measured offline with
+  `mpx-offline`: 24.8 -> 64.4 dB separation at 100 ppm). SDRplay is the
+  exception: it is a different backend, not a different dongle, so it keeps
+  its own item (B1).
 
 - Narrow (factor 1) IQ default: refuted by the bench A/B; stays 1000 kHz
   until A1 lands and is re-measured.

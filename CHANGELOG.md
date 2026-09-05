@@ -11,6 +11,24 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **`CONTRIBUTORS.md`**: authors and credits in one place -- the initial RDS
+  block-encoder port from `ryanginn/rds-master` (CRC `0x5B9`, offset words,
+  four-block group assembly) with an explicit line between what came from
+  there and what this project built around it, the vendored FM-SDR-Tuner
+  subset, and every library license. The README's Acknowledgements section
+  now points at it instead of carrying the detail, and the Debian package
+  installs it alongside the README so the attribution travels with the
+  binary.
+- **Meter roadmap: the tuner channel-filter fix is unblocked.** Operator
+  decision 2026-09-05: one RTL-SDR is representative of all RTL-SDR sticks
+  (same tuner path; per-stick differences are front-end gain, which the RF
+  OVERLOAD badge already surfaces), so the single-dongle bench evidence is
+  enough to change the shipped demod. A1 moves from BLOCKED to READY with an
+  RTL-only gate, and the cross-RTL items leave the hardware queue -- the
+  second-dongle cross-check and the known-ppm-error stick (the decoder PLL fix
+  is already measured offline at 100 ppm). SDRplay stays on the list as a
+  separate backend: the RSPdx wide-capture path, the A1 behaviour there, and
+  the 8-bit-vs-14-bit signal-quality caveat are one remaining session.
 - **Manuals rebuilt: descriptive names, one guide per app, reference split
   out.** `docs/manual.md` (1345 lines, everything from first launch to RDS
   country tables) and `docs/manual-meter.md` became four documents with names

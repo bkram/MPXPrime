@@ -51,7 +51,7 @@ else
     echo "warning: resource bundle not found; dashboard will serve the stub" >&2
 fi
 install -m 0644 macOS/MPXPrime.ini "$STAGE/usr/share/mpxprime/MPXPrime.sample.ini"
-install -m 0644 docs/studio-operator-guide.md docs/studio-settings-reference.md docs/rds-country-and-pty-tables.md README.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
+install -m 0644 docs/studio-operator-guide.md docs/studio-settings-reference.md docs/rds-country-and-pty-tables.md README.md CONTRIBUTORS.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
 install -m 0644 LICENSE "$STAGE/usr/share/doc/mpxprime/copyright"
 
 cat > "$STAGE/lib/systemd/system/mpxprime.service" <<'EOF'

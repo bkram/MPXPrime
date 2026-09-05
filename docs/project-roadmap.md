@@ -208,6 +208,11 @@ the defaults should be. Sources at the end of this subsection.
   normalisation level, not a delivery spec, and the Digital Format Profile
   should not chase it. Profile aims at -16 with the AGC target, and the manual
   gives -23 for EBU-compliant DAB.
+- **The codec-conditioning method is free to use** (patent check 2026-09-05,
+  detail under "Codec conditioning prior art" in the guardrails): the one
+  filing that claims simulate-the-codec-then-precondition was **never
+  granted** anywhere, so there is no obstacle if we ever build it -- and its
+  publication is prior art against anyone else claiming it now.
 - **GAP we are not closing in v1: codec conditioning.** All three vendors
   pre-condition audio for the encoder -- Omnia's "Sensus" analyses content and
   adapts processing for the target encoder, Thimeo has a "Prepare for lossy
@@ -501,6 +506,28 @@ Recommended combination for Step 2 #2: 5,574,791's HF/total log-ratio detector w
 | [US 4,150,253](https://patents.google.com/patent/US4150253A/en) | Aphex Aural Exciter -- HP-then-clip | `processPrimeBass` (`4d4a70f`) | Adapted: a pre-waveshaper *allpass* at F0 (not HPF) rotates phase ~180 deg without amplitude loss, decorrelating harmonic phase from the direct path so they don't comb-filter at the bass-clipper input. |
 | [US 5,424,488](https://patents.google.com/patent/US5424488A/en) | Werrbach transient-discriminate harmonics (Aphex) | `processPrimeBass` Phase 2 (`af7b883`) | Dual-envelope transient detector (fast - slow, normalized) modulates harmonic-band gain 0.7x sustain -> 1.4x peak on onsets. Verified via `transientGainObserved`. |
 | [US 5,359,665](https://patents.google.com/patent/US5359665A/en) | Werrbach Big Bottom -- dynamic bass extension (Aphex) | `processPrimeBass` Phase 3 (0.23) | LF-envelope follower (~10 ms attack / ~300 ms release) drives `primeBassAdaptiveGain` -- "envelope duration extension". Verified via `primeBassAdaptiveGain`. |
+
+## Codec conditioning prior art (survey 2026-09-05, for the digital delivery target)
+
+Checked before proposing any "prepare for lossy" feature. Conclusion: the
+core idea is free, the neighbouring codec-internal work is not, and the
+level-and-bandwidth part was never patentable in the first place.
+
+| What | Reference | Status | Verdict |
+| --- | --- | --- | --- |
+| Simulate the target codec, compare against the delayed original, pre-condition the input so the predicted artifacts shrink | [WO 2007/098258](https://patents.google.com/patent/WO2007098258A1/en) / US 2007/0239295 (Neural Audio Corp, priority 2006-02-24) | **Never granted**: PCT ceased, US application abandoned | FREE to implement. This is also the published description of what "codec conditioning" means, and it doubles as our measurement method |
+| Complementary spectral shaping around a lossy encoder (the "prepare for lossy" idea) | FM pre-emphasis (1930s), Dolby A / B companding (1960s) | Long expired | FREE, but note we control only the encoder INPUT: any half of a complementary pair that would have to run after the codec is not available to us |
+| True-peak headroom before the encoder, lower clipper drive on the digital path, band-limiting to the codec's rate | EBU R128, AES TD1008, ITU-R BS.1770 | Standards, not patents | FREE. Parameter choices, not patentable subject matter |
+| Transient / pre-echo handling INSIDE the codec (encoder-decoder pairs, side information, post-processors) | [US 10,720,170](https://patents.google.com/patent/US10720170B2/en) and US 11,094,331 (Fraunhofer), [US 2011/0178617](https://patents.google.com/patent/US20110178617) and US 2015/0170668 (Orange) | ACTIVE | DESIGN AROUND: we process the encoder's input only and signal nothing to the decoder. Do not add anything that requires decoder cooperation |
+| Orban "PreCode" | Trademark; the published description is deliberately vague ("energy and spectrum aware band detection"), and Orban holds granted patents | Assume protected | Do not reimplement from their marketing copy, and never use the name. Build from the Neural Audio disclosure and our own measurements |
+
+**How this would be gated.** The Neural Audio disclosure describes the same
+loop we would need as a TEST: encode a rendered scenario through the target
+codec, decode it, time-align against the original, and score the difference.
+That gate has to exist and show a real improvement before any conditioning
+knob ships -- exactly the rule the rest of this file applies to DSP claims.
+Ordering: build the measurement first, and only then decide whether
+conditioning earns its place.
 
 ## Skipped -- active patents or non-additive (design-around noted)
 

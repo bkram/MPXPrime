@@ -80,7 +80,7 @@ struct ProcessingCoreTab: View {
                 tooltip: "Pre-multiband shelf cut/boost at HF Trim Freq. Negative values tame harsh sources before they hit the multiband; positive values brighten dull material. Apply sparingly — global tonal shaping is the Parametric EQ stage's job.")
             DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz",
                 tooltip: "Centre frequency for the HF Trim shelf above. 4 kHz default targets vocal presence and cymbal sheen.")
-            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...16_000, format: "%.0f Hz",
+            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...(model.config.processedAudioDigitalDelivery ? 20_000 : 16_000), format: "%.0f Hz",
                 tooltip: model.processedAudioOutputActive
                     ? "Audio-bandwidth lowpass on the L/R output. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM; 16 kHz default. This band-limits the feed to your external coder. Lower for narrower bandwidth (talk)."
                     : "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")

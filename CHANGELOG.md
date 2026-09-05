@@ -38,6 +38,23 @@ combination test suite. Newest first.
   split FM from digital (see the roadmap): -1 dBTP for a linear feed, -2 dBTP
   ahead of a codec, and loudness by the AES TD1008 delivery levels rather
   than the -14 LUFS playback figure.
+  Verification of the target (2026-09-05) added a **true-peak guard**
+  (`StereoTruePeakGuard`, `DSP/TruePeakGuard.swift`) after the output
+  make-up: a click program measured 0.0 dBTP against the -1.0 ceiling even
+  with the limiter's look-ahead tripled, because the limiter's post-clip
+  decimation FIR rings on hard transients (+1.4 dB over its own ceiling) and
+  on the digital target nothing followed to catch it. The guard is a
+  stereo-linked gain rider on a 4x reconstruction detector with a 2 ms
+  look-ahead and a hard gain floor -- no clipping anywhere; the make-up
+  margin dropped from 0.4 to 0.1 dB. Adversarial programs now land within
+  0.05 dB of the ceiling on an independent 8x estimate. Also fixed on the
+  way: the GUI and dashboard capped `program_lowpass_hz` at 16 kHz on this
+  target (now 20 kHz), the ceiling was not preserved across snapshot loads,
+  and the dispositions (target restart, ceiling live) are pinned by a test.
+  A measured chain finding is recorded in the roadmap rather than fixed
+  here: the pre-encode limiter's one-sided Lagrange interpolator has +0.32 dB
+  at fs/4 and -0.41 dB at 3fs/8 (12 and 18 kHz at the 48 kHz audio domain),
+  on the FM path too; fixing it moves every composite baseline.
 - **README says plainly how the project is built.** A new "How this project is
   built" section states that MPX Prime is written largely with AI assistance
   and doubles as a showcase of that way of working -- together with what keeps

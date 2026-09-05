@@ -27,7 +27,7 @@ extension AppConfig {
             "processed_audio_output", "processed_audio_target", "monitor_enabled"
         ],
         "MPX": [
-            "input_gain_db", "output_gain_db", "mpx_line_output_dbfs"
+            "input_gain_db", "output_gain_db", "mpx_line_output_dbfs", "processed_audio_ceiling_dbtp"
         ],
         "CONTROL": [
             "control_enabled", "control_bind", "control_port", "control_api_key"

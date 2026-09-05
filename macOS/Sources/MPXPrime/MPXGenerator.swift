@@ -532,6 +532,11 @@ final class MPXGenerator {
     /// limiter is already a 4x oversampled true-peak limiter, so mapping its
     /// threshold onto this value IS the ceiling; live-apply.
     private var processedAudioCeiling: Float = 0.891_25
+    /// Post-make-up true-peak guard for the digital target (see
+    /// `StereoTruePeakGuard`): the pre-encode limiter's decimation FIR rings
+    /// above the limiter's ceiling on hard transients, and on this target
+    /// nothing else follows to catch it.
+    private var truePeakGuard = StereoTruePeakGuard()
     private let encoderHFGuardEnabled: Bool
     // Tone-generator parameters. All `var` for live-apply through
     // `applyRuntimeConfig` — the Test Tone tab adjusts these on a
@@ -1332,6 +1337,7 @@ final class MPXGenerator {
             lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
             passbandHz: preEncodeLimiterPassbandHz
         )
+        configureTruePeakGuard(sampleRate: audioRate)
         bs412Limiter.configure(
             sampleRate: self.sampleRate,
             thresholdDB: bs412ThresholdDB,
@@ -1755,6 +1761,7 @@ final class MPXGenerator {
             lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
             passbandHz: preEncodeLimiterPassbandHz
         )
+        configureTruePeakGuard(sampleRate: audioRate)
         bs412Limiter.configure(
             sampleRate: sampleRate,
             thresholdDB: bs412ThresholdDB,
@@ -1819,6 +1826,7 @@ final class MPXGenerator {
                 lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
                 passbandHz: preEncodeLimiterPassbandHz
             )
+            configureTruePeakGuard(sampleRate: audioDomainSampleRate)
         }
 
         let agcChanged =
@@ -2127,6 +2135,7 @@ final class MPXGenerator {
             powf(10.0, clampf(config.processedAudioFinalClipDriveDB, 0.0, 12.0) / 20.0)
         processedAudioCeiling =
             powf(10.0, clampf(config.processedAudioCeilingDBTP, -6.0, 0.0) / 20.0)
+        truePeakGuard.ceiling = processedAudioCeiling
 
         // BS.412
         let bs412Changed =
@@ -2446,6 +2455,7 @@ final class MPXGenerator {
         stereoProtectMidEnv = 0.0
         stereoProtectSideEnv = 0.0
         stereoProtectGain = 1.0
+        truePeakGuard.reset()
         stereoProtectAttackCoeff = expf(-1.0 / (0.010 * sr))
         stereoProtectReleaseCoeff = expf(-1.0 / (0.300 * sr))
     }
@@ -2987,12 +2997,21 @@ final class MPXGenerator {
         return min(20_000.0, max(10_000.0, programLowpassHz))
     }
 
-    /// The pre-encode limiter bounds peaks at its ceiling in the 4x oversampled
-    /// domain; between those samples a band-limited signal still rises a little.
-    /// Measured 0.33 dB on a burst program, so the digital make-up aims this far
-    /// below the requested ceiling: a ceiling is a never-exceed number and
-    /// undershooting is the safe side.
-    private static let processedAudioTruePeakMarginDB: Float = 0.4
+    /// The digital make-up aims a hair under the requested ceiling and the
+    /// true-peak guard holds the rest. With the guard in place the margin only
+    /// covers the difference between its 4x Kaiser reconstruction and a real
+    /// D/A or codec reconstruction; before the guard existed it had to cover
+    /// the pre-encode limiter's decimation ringing as well (0.33 dB on a burst
+    /// program, +1.4 dB on clicks -- not a margin's job).
+    private static let processedAudioTruePeakMarginDB: Float = 0.1
+
+    private func configureTruePeakGuard(sampleRate: Float) {
+        truePeakGuard.configure(sampleRate: sampleRate, ceilingLinear: processedAudioCeiling,
+                                lookaheadMS: 2.0, enabled: digitalDelivery)
+    }
+
+    /// Test-visible duty of the digital true-peak guard (dB of gain ride).
+    var truePeakGuardGainReductionDB: Float { truePeakGuard.gainReductionDB }
 
     @inline(__always)
     private func audioOnlyOutputMakeup() -> Float {
@@ -3039,8 +3058,13 @@ final class MPXGenerator {
                 l = c.0
                 r = c.1
             }
-            let outL = clampf(l * makeup, -1.0, 1.0)
-            let outR = clampf(r * makeup, -1.0, 1.0)
+            var madeUpL = l * makeup
+            var madeUpR = r * makeup
+            if digitalDelivery {
+                (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
+            }
+            let outL = clampf(madeUpL, -1.0, 1.0)
+            let outR = clampf(madeUpR, -1.0, 1.0)
             writeAnalysisSample(
                 index: i,
                 postAGCLeft: audio.analysisStereo.postAGCLeft,
@@ -3090,8 +3114,13 @@ final class MPXGenerator {
                 pl = c.0
                 pr = c.1
             }
-            let outL = clampf(pl * makeup, -1.0, 1.0)
-            let outR = clampf(pr * makeup, -1.0, 1.0)
+            var madeUpL = pl * makeup
+            var madeUpR = pr * makeup
+            if digitalDelivery {
+                (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
+            }
+            let outL = clampf(madeUpL, -1.0, 1.0)
+            let outR = clampf(madeUpR, -1.0, 1.0)
             writeAnalysisSample(
                 index: i,
                 postAGCLeft: audio.analysisStereo.postAGCLeft,

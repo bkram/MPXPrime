@@ -328,12 +328,27 @@ by this feature:
 | Pre-emphasis + encoder HF guard | as configured | forced off (the guard disables itself at 0 us) |
 | Stereo-image protection | on | bypassed (no deviation or multipath to protect) |
 | Final loudness clipper | optional, when the coder has none | never |
-| Output make-up | limiter ceiling normalised to full scale | limiter ceiling mapped onto `processed_audio_ceiling_dbtp`, less a 0.4 dB inter-sample margin |
+| Output make-up | limiter ceiling normalised to full scale | limiter ceiling mapped onto `processed_audio_ceiling_dbtp`, less a 0.1 dB margin |
+| True-peak guard (`StereoTruePeakGuard`, `DSP/TruePeakGuard.swift`) | absent | after the make-up: stereo-linked gain rider on a 4x Kaiser reconstruction detector, 2 ms look-ahead, `gain = min(gain, target)` floor, no clipping; adds 2 ms of delay |
 
 `oversampledLimiterCeiling(threshold:)` in `DSP/PeakLimiters.swift` is the one
 rule for the limiter's hard bound, shared by the limiter's own `configure` and
 by the make-up, so the two cannot drift: mapping the THRESHOLD instead reads
 about 1.3 dB hot, which is how the sharing was found.
+
+The guard exists because the limiter alone is not a true-peak bound on hard
+transients: it clips in its 4x domain and then decimates, and the decimation
+FIR rings on what it just clipped, so the limiter's output read +1.4 dB over
+its ceiling on a click program (a 3 ms look-ahead in the limiter did not
+help; the ringing is downstream of the clip). On the FM paths the composite
+clipper and the final look-ahead limiter follow and catch it; on the digital
+target nothing did. Measured with an independent 8x / 90 dB reconstruction:
+bright dense, hard-panned HF and click programs all land within 0.05 dB of
+the ceiling with the guard in place. The digital feed's response is flat
+within 0.1 dB to 3 kHz and within 0.45 dB to 18 kHz at 48 kHz; the ripple
+(+0.32 dB at fs/4, -0.41 dB at 3fs/8, reproduced analytically) is the
+limiter's one-sided Lagrange-4 interpolator and is shared with the FM chain
+(roadmap "Pre-encode limiter interpolator response").
 
 ## Measurement provenance
 

@@ -137,6 +137,82 @@ validation queue, parked items) lives in [meter-roadmap.md](meter-roadmap.md).
    paths (PI / PTY / flags / AF / scheduler) need real-receiver checks beyond
    the bit-stream tests.
 
+## Operating modes: one four-way choice, stages gated per mode (planned 2026-09-05)
+
+Operator direction (issues list, 2026-09-05): the output shape should be ONE
+choice with four values, and every control, stage and side service should
+exist only where it has a function in that mode. Web and GUI on par.
+
+| Mode | What leaves the output | Replaces today's |
+| --- | --- | --- |
+| **MPX Output** | stereo multiplex: FM processing + stereo coder + pilot + RDS | `processed_audio_output = False` |
+| **FM Output** | FM processing (pre-emphasis, 15 kHz, image protection) as L/R for an external stereo coder | `processed_audio_output = True`, `processed_audio_target = fm_coder` |
+| **HD Output** | processing for streaming / digital broadcasting (DAB+, AAC): full bandwidth, flat, true-peak ceiling | `processed_audio_output = True`, `processed_audio_target = digital` |
+| **AM Output** | processing for an AM transmitter: mono sum, NRSC-style band limit and pre-emphasis, asymmetric positive-peak headroom | new |
+
+Monitor (decoded simulation) stays a separate GUI-only listening switch and is
+not a mode; it is only meaningful under MPX Output.
+
+Findings behind the list (verified in the code 2026-09-05):
+
+- **RDS is hidden but not switched off outside MPX Output.** Both front
+  ends hide the RDS pages under processed audio (`hiddenInProcessedAudio` in
+  `NavigationModel` and `index.html`), but `en_rds` stays true in the
+  config, so `/api/status` still reports RDS on, the dashboard's rate
+  warning keys off it, and the Now Playing script is still polled
+  (`NowPlayingScriptRunner.apply` only looks at the RDS keys) -- a
+  processed-audio box runs a script every few seconds for nothing. The
+  runtime side services must key off the resolved mode too.
+- **SSB Stereo is hidden with the Stereo Coder tab, not gated.** Its keys
+  still accept PATCHes and its status still publishes under processed audio,
+  where there is no stereo coder to lean; the API should refuse or ignore a
+  stage that does not exist in the mode, and the digital target's own
+  follow-ups (pre-emphasis, coder-has-clipper) are hidden by hand-written
+  `if !digital` checks in `AudioIOTab` rather than by the same table.
+- **Hiding is per-widget and ad hoc** (`hiddenInProcessedAudio` per stage
+  and per widget in `schema.json`, the `if !digital` checks in
+  `AudioIOTab`). It needs one vocabulary: a `modes` list per widget in the
+  schema and one `visible(in:)` rule per Processing tab / card in the GUI,
+  both derived from the same table.
+- **Bypass Processing asks for confirmation on the dashboard** (`confirm(...)`
+  in `index.html`); the GUI toggle and Command-B do not. Drop the dialog: it
+  is a deliberate engineer's action and the status bar already shows BYPASS.
+
+Plan:
+
+1. **Storage.** One new key `operating_mode = mpx | fm | hd | am`
+   (`[INTERFACES]`, restart-class) with a load-time migration from the two
+   booleans (`processed_audio_output` + `processed_audio_target` written back
+   for one release so an old INI / API client keeps working; the API accepts
+   both spellings, reports the new one). `ResolvedOutputMode` grows the four
+   cases and every mode check in the generator (`audioOutputOnly`,
+   `digitalDelivery`) is derived from it.
+2. **Per-stage applicability table** (one source, `Control/StageApplicability.swift`):
+   for each stage and side service, the modes it exists in. Pre-emphasis:
+   MPX/FM/AM (AM uses its own curve). Stereo coder, pilot, RDS, SSB, composite
+   clipper, BS.412, final MPX limiter, Now Playing polling: MPX only.
+   Stereo-image protection: MPX/FM. True-peak ceiling: HD. Program lowpass
+   caps: 16 kHz MPX/FM, 20 kHz HD, 4.5-10 kHz AM. Output make-up: full scale
+   MPX/FM, ceiling HD, AM positive-peak asymmetry (125 % positive / 100 %
+   negative, NRSC-G100). Tests pin that a stage absent from a mode is
+   bit-identical to disabled in that mode (the digital tests already do this
+   for `digital`; generalise them).
+3. **Interfaces.** GUI: one segmented four-way `Operating Mode` in Audio I/O
+   (Monitor becomes a toggle beneath it under MPX); sidebar stages, tabs,
+   cards and the RDS section hide when absent from the mode; the status bar
+   mode cell reads the four names. Web: `schema.json` widgets carry `modes`,
+   the dashboard reads the resolved mode from `/api/status` and hides pages
+   and widgets the same way; `ControlSchemaTests` fails on a widget without
+   a `modes` entry. Bypass: remove the confirmation dialog in both.
+4. **AM processing** is the only new DSP: mono sum ahead of the multiband,
+   NRSC-1 75 us pre-emphasis with the 10 kHz (or narrower) lowpass, and an
+   asymmetric final limiter. Ships behind the mode, own file in `DSP/`,
+   own verify gate; the composite baselines cannot move (mode-gated like
+   `digital`).
+
+Open before starting: whether AM is in scope for 0.50 or lands as a fifth
+step after the four-way switch ships with three working modes.
+
 ## Digital delivery target for Processed Audio (streaming / DAB) -- CORE LANDED 2026-09-05
 
 **Landed:** the two INI keys (`processed_audio_target`,
@@ -410,6 +486,39 @@ Analysis of a third-party processor's press release (loudness/cleanliness claims
 2. **AGC validation** -- density-scaling tuning on real program; decide whether a lookahead path is worth the latency.
 3. **Stereo image validation** -- mono bass / PrimeBass / multiband interaction on difficult real program.
 4. **Live-apply smoke testing** -- TA-edge auto-injection and AF Method B switching in particular.
+
+## Pre-encode limiter interpolator response (found 2026-09-05)
+
+`StereoLinkedOversampledPeakLimiter` upsamples 4x with a ONE-SIDED Lagrange-4
+interpolator (`interpolateLagrange4`: points at -2, -1, 0, +1 host samples,
+evaluated at t = 0.25 / 0.5 / 0.75 between the last two). Its polyphase
+magnitude is not flat: +0.01 dB at fs/12, +0.15 at fs/6, **+0.32 at fs/4**,
++0.19 at 5fs/16, -0.14 at 17/48 fs, **-0.41 at 3fs/8** -- measured on the
+digital delivery target at 48 kHz (limiter on vs off is the whole difference;
+the analytic polyphase sum reproduces every figure to 0.02 dB). At the FM
+chain's 48 kHz audio domain that is +0.32 dB at 12 kHz on air, inside the
+`productionChainFollowsTheAnalogPreemphasisCurve` 0.5 dB tolerance, which is
+why it went unnoticed. Fix candidates: a symmetric Lagrange-4 (points -1..+2,
+one host sample of extra delay in the OS path, droop only, no bump) or a
+short linear-phase FIR interpolator like the guard's. Either moves the
+composite output of every scenario, so it is a deliberate chain change with
+all four macOS baselines plus the Linux baseline recaptured in one commit,
+and the `DualRateHFResponseTests` tolerance tightened to hold the gain.
+
+## Live-apply gaps found while verifying the digital target (2026-09-05)
+
+- **`program_lowpass_hz` is reported `live` by the REST API but never reaches a
+  running engine.** `RuntimeConfig` carries the field, so `ConfigPatch` derives
+  a `live` disposition from the diff, yet `MPXGenerator.programLowpassHz` is a
+  `let` and `applyEncoderComplianceConfiguration` runs only at init and on a
+  sample-rate change -- a PATCH changes the INI and nothing else until restart.
+  The GUI binds the same slider as restart-class (badge shown), so the two
+  front ends disagree about the key. Fix is one of: make the generator store
+  the value and re-run the compliance configuration on change (true live), or
+  drop the field from `RuntimeConfig` so the derived disposition says
+  `restartRequired` honestly. Pin with a test either way (the derivation rule
+  "disposition follows the RuntimeConfig diff" assumed every carried field is
+  applied).
 
 ## Verifier coverage follow-ups
 

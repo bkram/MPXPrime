@@ -1957,7 +1957,7 @@
    "decimals": 0,
    "kind": "slider",
    "label": "Program Lowpass",
-   "max": 16000.0,
+   "max": 20000.0,
    "min": 8000.0,
    "step": 1,
    "unit": " Hz"

@@ -98,12 +98,19 @@ The key is ignored entirely unless `processed_audio_output` is on, so it can
 never affect a composite render.
 
 `processed_audio_ceiling_dbtp` (`[MPX]`, default `-1.0`, range -6..0,
-live-apply) is the true-peak ceiling for the digital target. The pre-encode
-limiter is already a 4x oversampled true-peak limiter, so the ceiling is
-implemented by mapping that limiter's own ceiling onto this value, less a
-0.4 dB margin for the inter-sample rise the 4x domain cannot see. Measured
-delivery on a burst program lands just under the requested figure; the
-`digitalTargetHoldsTheTruePeakCeiling` test pins it.
+live-apply) is the true-peak ceiling for the digital target. Two stages
+hold it: the pre-encode limiter's ceiling is mapped onto this value (less a
+0.1 dB margin), and a stereo-linked true-peak guard after the output make-up
+rides a 4x reconstruction detector with 2 ms look-ahead, because the
+limiter's post-clip decimation filter rings on hard transients and its output
+alone read up to 1.4 dB over the ceiling on a click program. The guard is a
+pure 2 ms delay below the ceiling and never clips. Measured delivery on
+bright, hard-panned and click programs lands within 0.05 dB of the requested
+figure (`digitalTargetTruePeakHoldsOnAdversarialProgram`,
+`TruePeakGuardTests`). The frequency response of the digital feed is flat
+within 0.1 dB to 3 kHz and within 0.45 dB to 18 kHz at the 48 kHz audio
+rate; the ripple is the pre-encode limiter's interpolator, shared with the
+FM chain (see the roadmap).
 
 ### MPX line output calibration (dBFS)
 

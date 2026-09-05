@@ -81,6 +81,29 @@ struct ConfigPatchTests {
         #expect(plusThree.mpxLineOutputDBFS == 0.0)
     }
 
+    @Test func deliveryTargetClassifiesRestartAndCeilingLive() throws {
+        // The digital delivery target changes filtering and the make-up, so it
+        // is restart-class like the operating mode; the true-peak ceiling only
+        // rescales the make-up and must hot-apply.
+        var cfg = AppConfig()
+        cfg.processedAudioOutput = true
+        let (target, targetOutcomes, planesA) = try ConfigPatch.apply(
+            ["processed_audio_target": "digital"], to: cfg)
+        #expect(targetOutcomes[0].disposition == .restartRequired)
+        #expect(planesA.restartRequired)
+        #expect(target.processedAudioTarget == "digital")
+        let (ceiling, ceilingOutcomes, planesB) = try ConfigPatch.apply(
+            ["processed_audio_ceiling_dbtp": "-2.0"], to: cfg)
+        #expect(ceilingOutcomes[0].disposition == .live)
+        #expect(planesB.dspLive && !planesB.restartRequired)
+        #expect(abs(ceiling.processedAudioCeilingDBTP - (-2.0)) < 1e-9)
+        // Out-of-range values clamp; unknown target words fall back to fm_coder.
+        let (clamped, _, _) = try ConfigPatch.apply(["processed_audio_ceiling_dbtp": "-9.0"], to: cfg)
+        #expect(abs(clamped.processedAudioCeilingDBTP - (-6.0)) < 1e-9)
+        let (bogus, _, _) = try ConfigPatch.apply(["processed_audio_target": "hd"], to: cfg)
+        #expect(bogus.processedAudioTarget == "fm_coder")
+    }
+
     @Test func sampleRateClassifiesRestart() throws {
         let cfg = baseConfig()
         let (patched, outcomes, planes) = try ConfigPatch.apply(

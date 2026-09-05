@@ -89,6 +89,25 @@ struct ProcessedAudioOutputTests {
         return (left, right)
     }
 
+    /// True-peak estimate in dBTP: 8x Kaiser-sinc interpolation (90 dB stopband,
+    /// a sharper reconstruction than the guard's own 4x detector, so the test is
+    /// not merely checking the guard against itself), max magnitude from `skip`.
+    private func truePeakDBTP(_ left: [Float], _ right: [Float], sampleRate: Double, skip: Int) -> Double {
+        var peak: Float = 0
+        var os = [Float](repeating: 0, count: 8)
+        for buf in [left, right] {
+            var interp = LinearPhaseFIRInterpolator()
+            interp.configure(cutoffHz: Float(sampleRate) * 0.45, sampleRateOS: Float(sampleRate) * 8,
+                             interpolateFactor: 8, stopBandDB: 90.0, transitionHz: Float(sampleRate) * 0.06)
+            let lead = interp.groupDelayInputSamples
+            for (i, x) in buf.enumerated() {
+                os.withUnsafeMutableBufferPointer { o in interp.push(x, into: o.baseAddress!) }
+                if i - lead >= skip { for v in os { peak = max(peak, abs(v)) } }
+            }
+        }
+        return 20.0 * log10(max(1e-9, Double(peak)))
+    }
+
     /// Goertzel single-bin magnitude (linear amplitude).
     private func goertzel(_ buf: [Float], freqHz: Double, sampleRate: Double, startFrame: Int) -> Double {
         let span = buf.count - startFrame
@@ -400,18 +419,7 @@ struct ProcessedAudioOutputTests {
             let r = Float(burst * 0.9 * sin(2.0 * .pi * 1_100.0 * t + 0.7))
             return (l, r)
         }
-        let skip = Int(sr * 0.25)
-        var truePeak: Float = 0
-        for buf in [out.left, out.right] {
-            for i in skip..<(buf.count - 1) {
-                truePeak = max(truePeak, abs(buf[i]))
-                for step in 1...3 {
-                    let f = Float(step) / 4.0
-                    truePeak = max(truePeak, abs(buf[i] + (buf[i + 1] - buf[i]) * f))
-                }
-            }
-        }
-        let peakDB = 20.0 * log10(max(1e-9, Double(truePeak)))
+        let peakDB = truePeakDBTP(out.left, out.right, sampleRate: sr, skip: Int(sr * 0.25))
         #expect(peakDB < -2.0 + 0.05,
                 "true peak \(peakDB) dBTP must not exceed the -2.0 dBTP ceiling")
         #expect(peakDB > -2.0 - 1.5,
@@ -484,6 +492,90 @@ struct ProcessedAudioOutputTests {
         bogus.processedAudioTarget = "hd-radio"
         bogus.validate()
         #expect(bogus.processedAudioTarget == "fm_coder")
+    }
+
+    @Test func digitalTargetFrequencyResponseIsFlatAcrossTheAudioBand() {
+        // The point of the target: what a codec receives is the program, not
+        // an FM-shaped version of it. Tolerances come from the measured table
+        // (2026-09-05, stage isolation): with the pre-encode limiter off the
+        // path is flat within 0.05 dB to 18 kHz at both rates; every deviation
+        // below is the limiter's one-sided Lagrange-4 interpolator (points at
+        // -2..+1 host samples, evaluated between the last two), whose
+        // polyphase response is +0.32 dB at fs/4 and -0.41 dB at 3fs/8 --
+        // reproduced analytically to 0.02 dB. It is a property of the
+        // limiter, shared with the FM chain at its 48 kHz audio domain, and is
+        // recorded in the roadmap as a chain-review item because fixing it
+        // moves every composite baseline. The 48 kHz case is the production
+        // audio rate operators get; 96 kHz is the rate the rest of this suite
+        // renders at (the ripple sits at half the normalised frequency there).
+        struct Row { let hz: Double; let tol48: Double; let tol96: Double }
+        let rows = [Row(hz: 100, tol48: 0.15, tol96: 0.15), Row(hz: 300, tol48: 0.1, tol96: 0.1),
+                    Row(hz: 3_000, tol48: 0.1, tol96: 0.1), Row(hz: 8_000, tol48: 0.25, tol96: 0.15),
+                    Row(hz: 12_000, tol48: 0.45, tol96: 0.2), Row(hz: 15_000, tol48: 0.35, tol96: 0.2),
+                    Row(hz: 17_000, tol48: 0.3, tol96: 0.3), Row(hz: 18_000, tol48: 0.6, tol96: 0.8)]
+        for sr in [48_000.0, 96_000.0] {
+            let cfg = digitalConfig(sampleRate: sr)
+            let amp: Float = 0.05
+            let skip = Int(sr * 0.2)
+            func level(_ f: Double) -> Double {
+                let out = renderAudioOnly(cfg: cfg, seconds: 0.5) { _, t in
+                    let s = Float(Double(amp) * sin(2.0 * .pi * f * t)); return (s, s)
+                }
+                return 20.0 * log10(max(1e-12, goertzel(out.left, freqHz: f, sampleRate: sr, startFrame: skip)))
+            }
+            let reference = level(1_000.0)
+            let table = rows.map { row in (row, level(row.hz) - reference) }
+            let report = table.map { String(format: "%.0f Hz: %+.2f dB", $0.0.hz, $0.1) }.joined(separator: ", ")
+            for (row, delta) in table {
+                let tol = sr < 60_000 ? row.tol48 : row.tol96
+                #expect(abs(delta) < tol,
+                        "digital response at \(Int(sr)) Hz rate, \(Int(row.hz)) Hz off by \(delta) dB re 1 kHz -- \(report)")
+            }
+        }
+    }
+
+    @Test func digitalTargetTruePeakHoldsOnAdversarialProgram() {
+        // The ceiling has to hold on the material that breaks true-peak
+        // limiters: dense bright multitone, hard-panned HF, and clicks -- not
+        // just the tidy burst the basic ceiling test uses. Same 4x linear
+        // interpolation estimate; the make-up's 0.4 dB margin is what keeps
+        // this under the line.
+        let sr = 96_000.0
+        var cfg = digitalConfig(sampleRate: sr)
+        cfg.processedAudioCeilingDBTP = -1.0
+        cfg.inputGainDB = 14.0
+        let programs: [(String, (Int, Double) -> (Float, Float))] = [
+            ("bright dense", { _, t in
+                var l = 0.0, r = 0.0
+                for (k, f) in [220.0, 1_330.0, 4_010.0, 7_900.0, 11_700.0, 14_300.0].enumerated() {
+                    l += 0.22 * sin(2.0 * .pi * f * t + Double(k))
+                    r += 0.22 * sin(2.0 * .pi * (f * 1.013) * t - Double(k))
+                }
+                return (Float(l), Float(r))
+            }),
+            ("hard-panned HF", { _, t in
+                (Float(0.9 * sin(2.0 * .pi * 9_800.0 * t) * (0.6 + 0.4 * sin(2.0 * .pi * 3.0 * t))), 0.0)
+            }),
+            ("clicks", { i, t in
+                let click: Double = (i % 4_800) < 3 ? 0.95 : 0.0
+                let bed = 0.3 * sin(2.0 * .pi * 440.0 * t)
+                return (Float(bed + click), Float(bed - click))
+            }),
+        ]
+        let skip = Int(sr * 0.25)
+        var report: [String] = []
+        var peaks: [(String, Double)] = []
+        for (name, program) in programs {
+            let out = renderAudioOnly(cfg: cfg, seconds: 0.8, sample: program)
+            let peakDB = truePeakDBTP(out.left, out.right, sampleRate: sr, skip: skip)
+            peaks.append((name, peakDB))
+            report.append(String(format: "%@ %.2f dBTP", name, peakDB))
+        }
+        let summary = report.joined(separator: ", ")
+        for (name, peakDB) in peaks {
+            #expect(peakDB < -1.0 + 0.05, "\(name) exceeds the -1.0 dBTP ceiling -- \(summary)")
+            #expect(peakDB > -1.0 - 1.5, "\(name) sits far under the ceiling -- \(summary)")
+        }
     }
 
     @Test func digitalTargetCannotAffectTheCompositePath() {

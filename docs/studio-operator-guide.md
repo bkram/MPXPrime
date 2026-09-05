@@ -466,7 +466,9 @@ live-apply) sets where peaks land. **-1.0 dBTP** is the default and the shared
 recommendation of EBU R128, AES TD1008 and the streaming platforms. Use
 **-2.0 dBTP** when the next box is a data-reduction codec such as DAB+ or AAC:
 lossy encoding pushes inter-sample peaks up, and the extra headroom is what
-keeps them from clipping in the listener's decoder.
+keeps them from clipping in the listener's decoder. The ceiling is a true-peak
+figure: a look-ahead guard after the limiter holds inter-sample peaks to it
+on every program, at the cost of 2 ms of extra delay on this target only.
 
 **Loudness is set upstream**, by the AGC's Platform Target, not by this
 ceiling. Useful numbers: about **-16 LUFS** for a music stream and -18 for

@@ -587,6 +587,130 @@ trust the Meter / `calibrate-tx.sh` numbers, not Studio's deviation readout.
 5. **Receiver-model verifier hardening. DONE (develop/v.045).** `postInjectionOvershoot > 1e-4` is now a hard failure (exit 3) in the main and preset sweeps, checked before the softer branches that used to mask it; receiver-side baselines (`receiver.json`) already existed since 0.36-0.43.
 6. **HF stereo separation -- `MPXDecoder` audit. DONE (develop/v.037).** Root cause was the pre-demod pilot/RDS notches clipping the S-channel sidebands; removed them -- separation 65/51.6/44.2 -> 98.3/86.1/97.2 dB at 1/10/14 kHz, composite untouched. See "Settled findings".
 
+## Digital delivery target for Processed Audio (streaming / DAB) -- PROPOSED 2026-09-05, not yet approved
+
+**Question asked:** do we need a special mode for the audio processor without
+MPX, so the 15 kHz filtering and every other FM-specific stage can be switched
+off? **Answer: yes, but as a delivery TARGET inside the existing Processed Audio
+operating mode, not a fourth operating mode.** Processed Audio already skips the
+composite stages; what it still does is shaped for an FM stereo coder. The
+operator should not have to know which six keys are FM-only, and the UI must be
+able to hide the FM-only controls, so the target has to be one explicit choice
+that the mode resolver, the generator and both front ends all read.
+
+### What Processed Audio still does that is FM-specific (code facts)
+
+| Stage / behaviour | Where | FM reason | Digital verdict |
+|---|---|---|---|
+| Program lowpass clamped to 16 kHz (`program_lowpass_hz`, `AppConfig.validate`) and the encoder bandwidth FIR / Butterworth at that frequency (`encoderProgramFIR` / `encoderProgramLP`, ahead of pre-emphasis) | `AppConfig.swift` clamp; `MPXGenerator.processAudioDomain` "Final encoder-facing bandwidth guard" | 15 kHz audio bandwidth of the FM multiplex (pilot at 19 kHz) | Bypass or widen to 20 kHz: DAB+ and stream codecs carry 16-20 kHz |
+| Encoder HF guard (`processEncoderHFGuard`, fixed 2 dB HF duck) | `MPXGenerator.swift:1039` -- ALREADY off when `preemphasis_us = 0` | protects receiver-side HF separation against composite-clipper IM | Nothing to do once pre-emphasis is forced off |
+| Pre-emphasis 50/75 us + HF limiter (rides the boost only) + HF clipper | `PreemphasisFilter`, `HFLimiter`, `HFClipper` | FM transmission curve | Force `preemphasis_us = 0`; the HF limiter then has zero boost to ride (idle); hide the pre-emphasis picker and the HF Limiter / Clipper tab |
+| Stereo-image protector (`configureStereoImage`, `processStereoImageStage`: limits side/mid expansion) | `MPXGenerator.swift` | deviation and multipath on FM | Bypass (digital carries the full image); Mono Bass stays available as a taste control |
+| Output make-up normalises the limiter ceiling to full scale (peaks ~0 dBFS) | `audioOnlyOutputMakeup` | analog / AES3 feed to a coder with its own clipper | Replace by a true-peak CEILING (default -1 dBTP; EBU R128 s1 / streaming platforms); no normalisation |
+| Optional processed-audio final clipper (`processed_audio_coder_has_clipper = False`) | `processedAudioFinalClipper` | FM loudness when the coder has no clipper | Not offered (clipping into a codec costs quality); key ignored, control hidden |
+| AGC target / multiband drive / Format Profiles tuned for FM density | `PresetCatalog` | competitive FM loudness | New profile "Digital -- Streaming / DAB": gentler drive, AGC target chosen for a LUFS goal, PrimeBass off |
+| Pre-encode limiter: 4x oversampled true-peak with tanh ceiling, look-ahead | `StereoLinkedOversampledPeakLimiter` | generic | KEEP -- it is already a true-peak limiter; its threshold becomes the ceiling |
+| No loudness readout (AGC shows dB K-weighted "dBLU") | `WidebandAGCRider` uses `KWeightingFilter` | FM meters are deviation | Add EBU R128 momentary / short-term / integrated LUFS + true-peak max readouts for this target (reuse `KWeightingFilter`; gating per ITU-R BS.1770-4) |
+
+Everything else in the audio-domain chain (input gain, HPF, AGC, PEQ,
+multiband / Advanced Dynamics, expander, MB limiter, PrimeBass, bass / DC
+clippers, mono bass) is codec-agnostic and stays.
+
+### Design
+
+- **One new INI key** `processed_audio_target = fm_coder | digital` (`[INTERFACES]`,
+  default `fm_coder` so every existing INI is unchanged; restart-class like the
+  operating mode because it changes filtering and the make-up). **One new level
+  key** `processed_audio_ceiling_dbtp` (`[MPX]`, default -1.0, range -6..0,
+  live-apply; only read for the digital target). Both get a schema.json widget
+  (`ControlSchemaTests`), and `installationPreservedKeysBySection` gains the
+  target (it is wiring, like the mode).
+- **Resolver**: `AppConfig.resolvedOutputMode` stays three-valued; a new
+  `AppConfig.processedAudioTarget` enum + `MPXGenerator.digitalDelivery: Bool`
+  seeded at init from the config (same seeding rule as `audioOutputOnly`, so
+  the verifier and the Linux ALSA engine see it too). No new
+  `AudioOutputMode` case: the engines already run the audio-only render path.
+- **Generator, when digital**: `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz`
+  get a `digital` argument that lifts the 16 kHz clamp to `min(configured, 0.45 x
+  audioDomainRate)` (20 kHz at 48 kHz) -- or bypasses the encoder FIR entirely
+  when `program_lowpass_hz` >= 20 kHz; `preemphasisUS` forced 0 in the derived
+  runtime config (the INI value is kept for when the operator switches back);
+  `processStereoImageStage` bypassed; `audioOnlyOutputMakeup` returns
+  `outputGain` only and the pre-encode limiter threshold is set from
+  `processed_audio_ceiling_dbtp` (0.891 for -1 dBTP; the limiter is already
+  true-peak so the ceiling is honoured on inter-sample peaks -- pin it with a
+  4x-oversampled measurement in the test); final clipper inactive.
+- **Metering**: new `LoudnessMeter` in `DSP/` (K-weighting -> 400 ms / 3 s
+  windows -> BS.1770-4 absolute -70 LUFS and relative -10 LU gating ->
+  integrated; plus true-peak max from the existing 4x path) fed from the
+  audio-only render path; published through `LiveTelemetry` (`@Observable`,
+  Canvas readout) and `/api/meters` (`lufsMomentary`, `lufsShortTerm`,
+  `lufsIntegrated`, `truePeakDBTP`), with a Reset. Shown on the Monitoring
+  dashboard in place of the MOD meter when the target is digital (the
+  composite readouts are already hidden in Processed Audio).
+- **UI (both front ends, same change)**: Audio I/O -> Operating Mode card gains
+  a "Delivery" segmented control under Processed Audio: "FM stereo coder" /
+  "Digital (streaming / DAB)". Digital hides the pre-emphasis picker, the
+  coder-has-clipper toggle and the Final Clipper Drive slider, and shows the
+  ceiling slider; the Processing sidebar hides the HF Limiter / Clipper tab
+  (nothing to ride); the status bar reads `MODE: PROC AUDIO / DIGITAL`. The
+  web dashboard mirrors it on the Audio I/O page and the Headroom card.
+- **Format Profile** "Digital -- Streaming / DAB" (`PresetCatalog`): AGC
+  target -18, multiband `5_jazz`-class intensity light, PrimeBass off, bass
+  clipper off, HF limiter irrelevant, drive low; documented as a starting
+  point for -16 LUFS (streaming) with a note on -23 LUFS (DAB / EBU R128)
+  via the AGC target. Profiles are FM-tuned today, so this is the first
+  non-FM one; `FormatProfileTests` pin its keys.
+
+### Verification (metric-first, per AGENTS.md)
+
+- `ProcessedAudioOutputTests` additions: digital target passes 18 kHz
+  (currently `processedAudioBandLimitsAboveFifteenK` pins the opposite for
+  the FM target -- both must hold, one per target); no pre-emphasis curve
+  (flat within 0.1 dB to 18 kHz); true-peak never exceeds the ceiling by
+  more than 0.1 dB on the adversarial programs (4x-oversampled measurement);
+  stereo image passes unmodified (side/mid ratio of a hard-panned source
+  equals the input's); final clipper inactive even with
+  `processed_audio_coder_has_clipper = False`; config round-trip of the two
+  keys; INI without the keys = FM target (zero drift for existing users).
+- New `LoudnessMeterTests`: BS.1770-4 known-answer signals (-23 LUFS 1 kHz
+  sine reads -23.0 +/- 0.1; the EBU Tech 3341 gating test sequences).
+- Strict baselines: untouched by construction (composite path unchanged;
+  `--verify --baseline-strict` on all four + Linux must be zero-drift).
+- Deep suite untouched-areas sanity; swiftlint 0; `ControlSchemaTests` for
+  the two keys; `SectionNavigationTests` for the hidden tab.
+- Listening (release build, BlackHole -> a stream encoder or a DAB+ codec
+  file): confirm the 16-20 kHz air is back and no codec overs.
+
+### Docs (same commit series)
+
+manual.md "Processed-audio output mode" gets a "Delivery target" subsection
+(what digital turns off and why, the ceiling, the LUFS readout, the new
+profile), the Audio I/O section names the control, the Format Profile table
+gains the row; ARCHITECTURE output-modes section + the audio-domain stage
+list note the digital bypasses; README feature bullet ("also a plain stereo
+processor for streaming / DAB with a true-peak ceiling and LUFS metering");
+AGENTS: the resolver / seeding rule and the "profiles are FM-tuned except
+Digital" note; CHANGELOG.
+
+### Effort and risks
+
+- Size: medium. Generator changes are small and gated (a handful of `if
+  digitalDelivery` sites); the loudness meter is the largest new piece (~300
+  lines + tests); UI x2 and docs are routine. Roughly two days of work plus a
+  listening pass.
+- Risk 1: the 16 kHz clamp is also what keeps the FM target safe; the lift
+  must be strictly target-conditional (test both).
+- Risk 2: the limiter's tanh ceiling has a soft knee; verify the true-peak
+  bound with the oversampled measurement rather than assuming threshold =
+  ceiling, and document the residual (expected < 0.1 dB).
+- Risk 3: LUFS gating edge cases (silence, very short programme) -- follow
+  BS.1770-4 exactly and pin with the EBU test vectors before showing the
+  integrated number; publish validity flags like the Meter does.
+- Out of scope: a true broadcast loudness NORMALISER (automatic gain to a
+  LUFS target over a whole programme) -- the AGC target is the operator's
+  lever for now; revisit after the meter exists.
+
 ## Opt-in advanced stages -- validate + decide default
 
 Highest-leverage audible-gap closer vs the enterprise tier: these stages are implemented and shipped but **default-off and not preset-validated**, so a fresh install runs below the chain's real capability. Each needs a verifier/listening A/B -> a per-preset enablement decision. OFF must stay bit-identical (`--verify --baseline-strict` green); ON validated via `--verify-receiver` (separation + pilot/RDS guards unchanged).

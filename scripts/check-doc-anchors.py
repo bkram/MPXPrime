@@ -36,6 +36,9 @@ for f in files:
     p = pathlib.Path(f)
     if not p.exists(): continue
     text = p.read_text(encoding="utf-8")
+    # Links quoted inside code spans / fences are examples, not links.
+    text = re.sub(r"```.*?```", "", text, flags=re.S)
+    text = re.sub(r"`[^`\n]*`", "", text)
     for m in re.finditer(r"\]\(([^)\s]+?)(?:#([^)\s]+))?\)", text):
         target, anchor = m.group(1), m.group(2)
         if target.startswith("http") or target.startswith("mailto"): continue

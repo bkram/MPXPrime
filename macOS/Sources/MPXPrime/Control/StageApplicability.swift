@@ -39,6 +39,13 @@ enum ChainFeature: String, CaseIterable, Sendable {
     /// AM-specific shaping: mono sum, NRSC pre-emphasis and band limit,
     /// asymmetric positive-peak headroom.
     case amShaping
+    /// Anything that acts on the DIFFERENCE between the channels: Mono Mode,
+    /// Mono Bass, the multiband stereo link.
+    case stereoProgram
+    /// The HF limiter, which rides the pre-emphasis BOOST (`out = flat + g *
+    /// boost`). Where nothing pre-emphasises, boost is zero and the stage is
+    /// an identity whatever its settings say.
+    case hfLimiter
 
     /// Does this part of the chain do anything in `mode`?
     func applies(in mode: AppConfig.OperatingMode) -> Bool {
@@ -64,6 +71,14 @@ enum ChainFeature: String, CaseIterable, Sendable {
             return mode == .fm
         case .amShaping:
             return mode == .am
+        case .stereoProgram:
+            // AM sums L+R ahead of the chain, so every stage downstream sees
+            // one signal on both channels and these controls do nothing.
+            return mode != .am
+        case .hfLimiter:
+            // AM pre-emphasises on the NRSC curve, so the ride still has
+            // something to ride; the digital target is deliberately flat.
+            return mode != .hd
         }
     }
 

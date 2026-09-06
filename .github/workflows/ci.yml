@@ -111,6 +111,13 @@ jobs:
       - name: Intra-doc anchors
         run: python3 scripts/check-doc-anchors.py
 
+      # Renders the dashboard in every operating mode with a real DOM. The
+      # page is one inline script, so nothing else in CI ever executes it: a
+      # helper deleted in 0.50 left two call sites behind and broke the
+      # landing page in every mode with no job going red.
+      - name: Web dashboard renders
+        run: scripts/check-webui.sh
+
       - name: ASCII-only docs
         run: |
           set -e

@@ -257,3 +257,6 @@ bin/fm-sdr-tuner
 
 # mpx-tuner CMake build dir
 tuner/build*/
+
+# jsdom cache for scripts/check-webui.sh
+.webui-check/

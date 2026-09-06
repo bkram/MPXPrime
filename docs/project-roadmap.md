@@ -153,6 +153,14 @@ bypass confirmation removed; and an unrecognised CLI argument turned into a
 usage error. `ModeGatingTests` + `AMOutputTests` pin it; all five gates
 zero-drift.
 
+**Follow-up 2026-09-06 (same operator report, "still an issue"):** the
+dashboard's landing page was throwing in every mode -- a helper deleted during
+the mode work with two call sites left behind, invisible to every test we had.
+Fixed, plus the Overview grid / signal chain / Headroom card gating and four
+more controls that do nothing in a mode. The durable part is
+`scripts/check-webui.sh`: the dashboard is now RENDERED in CI, in all four
+modes, and a stale reference or an out-of-mode control fails the build.
+
 **Remaining from the operator's list:**
 
 - **AM verification against hardware.** The mode is measured (mono sum, the

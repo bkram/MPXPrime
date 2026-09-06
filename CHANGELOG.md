@@ -39,6 +39,26 @@ combination test suite. Newest first.
   use the rest. The same peak guard the HD ceiling uses does it, with separate
   ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
   checked against a modulation monitor on a real AM transmitter.
+- **Fixed: the web dashboard's Monitoring page threw in every mode.** The
+  operating-mode work removed a helper and left two call sites behind, so the
+  landing page raised a ReferenceError and the reader got a half-built page.
+  Nothing caught it: the dashboard is one inline script, and neither the
+  schema tests nor a syntax check ever RUNS a render. `scripts/check-webui.sh`
+  now renders the real page against a real DOM in all four modes -- in CI --
+  and fails on a render error, on a page or control shown where it has no
+  function, and on a card left empty by gating. It reproduces this bug when
+  the fix is reverted.
+- **More gating found by that check and by asking what each control does.**
+  The Overview grid and the Monitoring signal chain listed composite stages in
+  every mode and linked to pages the sidebar had hidden; the Monitoring
+  Headroom card offered composite and safety-clip readouts outside MPX; the
+  output card now names the mode and shows the number that matters for it (the
+  true-peak ceiling, or the positive-peak limit). Newly hidden because they do
+  nothing there, each pinned by a bit-identity test: Mono Mode, Mono Bass and
+  the multiband stereo Link in AM Output (the chain is mono before them), and
+  the whole HF Limiter stage in HD Output (it rides the pre-emphasis boost,
+  and the digital target is flat). The Advanced page reports a failed config
+  load instead of leaving an empty box.
 - **The dashboard no longer asks before bypassing processing.** It is a
   deliberate engineer's action and the button turns red.
 - **An unrecognised command-line argument is now a usage error (exit 64).**

@@ -248,12 +248,35 @@ async function loadConfig() {
    so the dashboard follows a mode change before the restart. */
 const currentMode = () => (cfg.operating_mode || "mpx");
 const inCurrentMode = (modes) => !modes || modes.indexOf(currentMode()) >= 0;
+/* Does a composite exist at all in this mode? Sourced from the schema's
+   `compositeModes` (ChainFeature.finalStage), never spelled out in JS. */
+const compositeMode = () => inCurrentMode(MODEL.compositeModes);
 const pageHiddenInMode = (id) => {
   const rds = MODEL.rds.find(p => p.id === id);
   if (rds) return !inCurrentMode(rds.modes || MODEL.rdsModes);
   const st = MODEL.stages.find(x => x.id === id);
   return !!(st && !inCurrentMode(st.modes));
 };
+
+/* What the output card is called, and the one number that says where peaks
+   land, per mode. Composite modes get the MPX card above instead. */
+const OUTPUT_CARD_TITLE = {
+  fm: "Output (processed audio)",
+  hd: "Output (digital)",
+  am: "Output (AM)"
+};
+function outputTargetRow() {
+  const mode = currentMode();
+  if (mode === "hd") {
+    const c = cfg.processed_audio_ceiling_dbtp;
+    return `<div class="kvrow"><span class="k">True-Peak Ceiling</span><span class="v">${c != null ? (+c).toFixed(1) + " dBTP" : "-"}</span></div>`;
+  }
+  if (mode === "am") {
+    const p = cfg.am_positive_peak_pct;
+    return `<div class="kvrow"><span class="k">Positive Peaks</span><span class="v">${p != null ? (+p).toFixed(0) + " %" : "-"}</span></div>`;
+  }
+  return "";
+}
 
 /* ---------------- sidebar ---------------- */
 /* A stage whose schema entry carries `bypassedWhen: <key>` is out of the
@@ -552,7 +575,7 @@ function renderOverview(c) {
   const grid = document.createElement("div");
   grid.className = "ovgrid";
   for (const s of MODEL.stages) {
-    if (!s.enable) continue;
+    if (!s.enable || !inCurrentMode(s.modes)) continue;
     const el = document.createElement("div");
     el.className = "ovcard";
     const bypassed = stageBypassed(s);
@@ -595,16 +618,18 @@ function renderMonitoring(c) {
       `<div class="kvrow"><span class="k">Output</span><span class="v">${outName()}</span></div>` +
       `<div class="hmeter"><div class="lab"><span>INPUT L</span><span id="monInLv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInL"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div>` +
       `<div class="hmeter"><div class="lab"><span>INPUT R</span><span id="monInRv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInR"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div></div>` +
-    (isProcessedAudio()
-      ? `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Output (processed audio)</div>` +
-          kv("Output", "monOut") + `</div>`
-      : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
-          kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`) +
+    (compositeMode()
+      ? `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
+          kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`
+      : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">${OUTPUT_CARD_TITLE[currentMode()] || "Output"}</div>` +
+          kv("Output", "monOut") + (outputTargetRow() || "") + `</div>`) +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
-      kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") + kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
-    (isProcessedAudio() ? "" :
+      kv("Pre-Encode GR", "monPre") +
+      (compositeMode() ? kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") : "") +
+      kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
+    (compositeMode() ?
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
-      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>`) +
+      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>` : "") +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stream Health</div>` +
       kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + `</div>`;
   c.appendChild(grid);
@@ -612,7 +637,7 @@ function renderMonitoring(c) {
   const chain = document.createElement("div");
   chain.className = "ovgrid";
   for (const s of MODEL.stages) {
-    if (!s.summary) continue;
+    if (!s.summary || !inCurrentMode(s.modes)) continue;
     const bypassed = stageBypassed(s);
     const on = (!s.enable || isTrue(cfg[s.enable])) && !bypassed;
     const el = document.createElement("div");
@@ -839,7 +864,16 @@ function renderAdvanced(c) {
   host.id = "configTables";
   c.appendChild(host);
   (async () => {
-    const sections = await api("/api/config");
+    let sections;
+    // Every other page reports a failed call instead of leaving the reader
+    // with an empty box and an unhandled rejection in the console.
+    try {
+      sections = await api("/api/config");
+    } catch (e) {
+      host.insertAdjacentHTML("beforeend",
+        `<div class="subtitle">GET /api/config failed: ${e.message}. Reload once the encoder is reachable.</div>`);
+      return;
+    }
     for (const sec of Object.keys(sections).sort()) {
       const keys = Object.keys(sections[sec]).sort();
       if (!keys.length) continue;

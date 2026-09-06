@@ -59,7 +59,8 @@
     null
    ]
   ],
-  "monitorModes": [
+  "compositeModes": ["mpx"],
+    "monitorModes": [
    "mpx"
   ],
   "rdsModes": [
@@ -538,6 +539,7 @@
    },
    {
     "enable": "hf_limiter_enabled",
+      "modes": ["mpx", "fm", "am"],
     "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter. Gain-riding, so no clipping distortion; on by default.",
     "id": "hfLimiter",
     "keys": [
@@ -1127,7 +1129,7 @@
    "step": 1,
    "unit": " Hz"
   },
-  "hf_limiter_attack_ms": {
+  "hf_limiter_attack_ms": { "modes": ["mpx", "fm", "am"],
    "decimals": 2,
    "kind": "slider",
    "label": "Attack",
@@ -1136,11 +1138,11 @@
    "step": 0.05,
    "unit": " ms"
   },
-  "hf_limiter_enabled": {
+  "hf_limiter_enabled": { "modes": ["mpx", "fm", "am"],
    "kind": "toggle",
    "label": "HF Limiter"
   },
-  "hf_limiter_max_reduction_db": {
+  "hf_limiter_max_reduction_db": { "modes": ["mpx", "fm", "am"],
    "decimals": 1,
    "kind": "slider",
    "label": "Max Reduction",
@@ -1149,7 +1151,7 @@
    "step": 0.5,
    "unit": " dB"
   },
-  "hf_limiter_release_ms": {
+  "hf_limiter_release_ms": { "modes": ["mpx", "fm", "am"],
    "decimals": 0,
    "kind": "slider",
    "label": "Release",
@@ -1158,7 +1160,7 @@
    "step": 1,
    "unit": " ms"
   },
-  "hf_limiter_threshold_db": {
+  "hf_limiter_threshold_db": { "modes": ["mpx", "fm", "am"],
    "decimals": 1,
    "kind": "slider",
    "label": "Threshold",
@@ -1270,11 +1272,11 @@
    "kind": "toggle",
    "label": "Monitor Output"
   },
-  "mono_bass_enabled": {
+  "mono_bass_enabled": { "modes": ["mpx", "fm", "hd"],
    "kind": "toggle",
    "label": "Mono Bass"
   },
-  "mono_bass_freq_hz": {
+  "mono_bass_freq_hz": { "modes": ["mpx", "fm", "hd"],
    "decimals": 0,
    "kind": "slider",
    "label": "Mono Bass Below",
@@ -1283,7 +1285,7 @@
    "step": 1,
    "unit": " Hz"
   },
-  "mono_mode": {
+  "mono_mode": { "modes": ["mpx", "fm", "hd"],
    "kind": "toggle",
    "label": "Mono Mode"
   },
@@ -1489,7 +1491,7 @@
    "step": 0.1,
    "unit": " dB"
   },
-  "multiband_link_strength": {
+  "multiband_link_strength": { "modes": ["mpx", "fm", "hd"],
    "decimals": 2,
    "kind": "slider",
    "label": "Link",

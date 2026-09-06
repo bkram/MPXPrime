@@ -178,13 +178,56 @@ struct ControlSchemaTests {
             "am_preemphasis_us": .amShaping,
             "am_lowpass_hz": .amShaping,
             "am_positive_peak_pct": .amShaping,
-            "monitor_enabled": .monitorPath
+            "monitor_enabled": .monitorPath,
+            "mono_mode": .stereoProgram,
+            "mono_bass_enabled": .stereoProgram,
+            "mono_bass_freq_hz": .stereoProgram,
+            "multiband_link_strength": .stereoProgram,
+            "hf_limiter_enabled": .hfLimiter,
+            "hf_limiter_threshold_db": .hfLimiter,
+            "hf_limiter_attack_ms": .hfLimiter,
+            "hf_limiter_release_ms": .hfLimiter,
+            "hf_limiter_max_reduction_db": .hfLimiter
         ]
         for (key, feature) in expected {
             let modes = schema.widgets[key]?["modes"] as? [String] ?? []
             #expect(modes == feature.modes,
                     "widget \(key) is gated to \(modes) but \(feature) applies in \(feature.modes)")
         }
+    }
+
+    @Test func modeGatedPagesMatchTheChainFeatureTable() throws {
+        // Page-level gating is the same contract as widget-level gating: the
+        // sidebar, the Overview grid and the Monitoring signal chain all read
+        // it, so a page that disagrees with the table shows a stage the mode
+        // does not run.
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let model = root["model"] as? [String: Any] ?? [:]
+        let stages = model["stages"] as? [[String: Any]] ?? []
+        let expected: [String: ChainFeature] = [
+            "stereoCoder": .stereoCoder,
+            "compositeClipper": .compositeClipper,
+            "bs412": .bs412,
+            "finalStage": .finalStage,
+            "hfLimiter": .hfLimiter
+        ]
+        for stage in stages {
+            let id = stage["id"] as? String ?? "?"
+            let modes = stage["modes"] as? [String] ?? []
+            if let feature = expected[id] {
+                #expect(modes == feature.modes,
+                        "stage page \(id) is gated to \(modes) but \(feature) applies in \(feature.modes)")
+            } else {
+                #expect(modes.isEmpty, "stage page \(id) carries modes \(modes) with no feature behind it")
+            }
+        }
+        // The model-level lists the page reads for whole sections.
+        #expect(model["rdsModes"] as? [String] == ChainFeature.rds.modes)
+        #expect(model["monitorModes"] as? [String] == ChainFeature.monitorPath.modes)
+        #expect(model["compositeModes"] as? [String] == ChainFeature.finalStage.modes)
     }
 
     @Test func everyWidgetHasAValidKindAndSliderBounds() throws {

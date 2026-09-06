@@ -58,7 +58,7 @@ struct ProcessingCoreTab: View {
             ))
             // AM Output is mono by construction (L+R are summed ahead of the
             // chain), so the toggle has nothing to switch there.
-            if model.config.operatingMode != .am {
+            if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
                 Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
                 Text(model.processedAudioOutputActive
                     ? "Mono Mode sums L+R to mono. The full DSP chain still runs; the processed output is identical on both channels."
@@ -212,17 +212,19 @@ struct ProcessingPrimeBassTab: View {
         }
         // Mono Bass moved here from the removed Stereo Widener tab (0.50):
         // both are post-multiband bass-domain image controls.
-        Card(title: "Mono Bass") {
-            Toggle("Mono Bass", isOn: model.configBinding(\.monoBassEnabled, runtimeDisposition: .live))
-                .help("Sums L and R to mono below the crossover. Sub-bass side energy eats deviation for no audible width and breaks mono compatibility on FM -- every shipped profile keeps this on.")
-            DoubleSliderRow(
-                title: "Bass Mono Freq",
-                value: model.configBinding(\.monoBassFreqHz, runtimeDisposition: .live),
-                range: 70...220,
-                format: "%.0f Hz",
-                tooltip: "Below this frequency, L and R side energy is summed to mono. 110-140 Hz is the usual range; profiles use 140 Hz (clean/speech/classical) and 115 Hz (loud)."
-            )
-            .disabled(!model.config.monoBassEnabled)
+        if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
+            Card(title: "Mono Bass") {
+                Toggle("Mono Bass", isOn: model.configBinding(\.monoBassEnabled, runtimeDisposition: .live))
+                    .help("Sums L and R to mono below the crossover. Sub-bass side energy eats deviation for no audible width and breaks mono compatibility on FM -- every shipped profile keeps this on.")
+                DoubleSliderRow(
+                    title: "Bass Mono Freq",
+                    value: model.configBinding(\.monoBassFreqHz, runtimeDisposition: .live),
+                    range: 70...220,
+                    format: "%.0f Hz",
+                    tooltip: "Below this frequency, L and R side energy is summed to mono. 110-140 Hz is the usual range; profiles use 140 Hz (clean/speech/classical) and 115 Hz (loud)."
+                )
+                .disabled(!model.config.monoBassEnabled)
+            }
         }
     }
 }
@@ -320,8 +322,10 @@ struct ProcessingMultibandTab: View {
                 tooltip: "Overall gain applied after multiband processing. Set to offset average level loss from compression; not a loudness control.")
             DoubleSliderRow(title: "Knee", value: model.configBinding(\.multibandKneeDB, runtimeDisposition: .live), range: 0...12, format: "%.1f dB",
                 tooltip: "Width of the soft transition around each band's threshold. Larger knee = gentler onset of compression.")
-            DoubleSliderRow(title: "Link", value: model.configBinding(\.multibandLinkStrength, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "How much gain reduction is shared across bands. 0 = independent (dense), 1 = linked (preserves spectral balance).")
+            if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
+                DoubleSliderRow(title: "Link", value: model.configBinding(\.multibandLinkStrength, runtimeDisposition: .live), range: 0...1, format: "%.2f",
+                    tooltip: "How much gain reduction is shared across bands. 0 = independent (dense), 1 = linked (preserves spectral balance).")
+            }
             Toggle("Program-dependent Release", isOn: model.configBinding(\.multibandReleaseProgramDependent, runtimeDisposition: .live))
             Toggle("Transient-aware Attack", isOn: model.configBinding(\.multibandTransientAwareAttackEnabled, runtimeDisposition: .live))
                 .help("Uses a peak/RMS hybrid detector and briefly slows attack on percussive fronts so kicks and snares are not over-squashed.")
@@ -601,18 +605,22 @@ struct ProcessingHFClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "HF Limiter") {
-            Toggle("Enable HF Limiter", isOn: model.configBinding(\.hfLimiterEnabled, runtimeDisposition: .live))
-                .help("Gain-riding HF control: rides only the pre-emphasis boost, so overshooting cymbals / hi-hats briefly lose part of their boost instead of being clipped (Optimod HF-limiter topology, Orban US 4,103,243, expired). Prefer this over the HF Clipper.")
-            let limiterDisabled = !model.config.hfLimiterEnabled
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfLimiterThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                tooltip: "Pre-emphasised L/R peak that starts the HF gain ride. Set at or a little below the Audio Limiter threshold so HF peaks are tamed before the broadband limiter has to act.").disabled(limiterDisabled)
-            DoubleSliderRow(title: "Attack", value: model.configBinding(\.hfLimiterAttackMS, runtimeDisposition: .live), range: 0.2...20, format: "%.2f ms",
-                tooltip: "How fast the boost is pulled down. 1-3 ms: the Audio Limiter's look-ahead catches what leaks during the attack.").disabled(limiterDisabled)
-            DoubleSliderRow(title: "Release", value: model.configBinding(\.hfLimiterReleaseMS, runtimeDisposition: .live), range: 5...500, format: "%.0f ms",
-                tooltip: "How fast full pre-emphasis returns. 10-50 ms keeps the HF dip brief; longer values trade sparkle for density.").disabled(limiterDisabled)
-            DoubleSliderRow(title: "Max Reduction", value: model.configBinding(\.hfLimiterMaxReductionDB, runtimeDisposition: .live), range: 1...24, format: "%.1f dB",
-                tooltip: "Cap on how much of the pre-emphasis boost may be removed. The stage can never cut HF below the flat (un-emphasised) program level.").disabled(limiterDisabled)
+        // The HF limiter rides the pre-emphasis BOOST, so with nothing to
+        // ride it is an identity whatever these say (`ChainFeature.hfLimiter`).
+        if ChainFeature.hfLimiter.applies(in: model.config.operatingMode) {
+            Card(title: "HF Limiter") {
+                Toggle("Enable HF Limiter", isOn: model.configBinding(\.hfLimiterEnabled, runtimeDisposition: .live))
+                    .help("Gain-riding HF control: rides only the pre-emphasis boost, so overshooting cymbals / hi-hats briefly lose part of their boost instead of being clipped (Optimod HF-limiter topology, Orban US 4,103,243, expired). Prefer this over the HF Clipper.")
+                let limiterDisabled = !model.config.hfLimiterEnabled
+                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfLimiterThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
+                    tooltip: "Pre-emphasised L/R peak that starts the HF gain ride. Set at or a little below the Audio Limiter threshold so HF peaks are tamed before the broadband limiter has to act.").disabled(limiterDisabled)
+                DoubleSliderRow(title: "Attack", value: model.configBinding(\.hfLimiterAttackMS, runtimeDisposition: .live), range: 0.2...20, format: "%.2f ms",
+                    tooltip: "How fast the boost is pulled down. 1-3 ms: the Audio Limiter's look-ahead catches what leaks during the attack.").disabled(limiterDisabled)
+                DoubleSliderRow(title: "Release", value: model.configBinding(\.hfLimiterReleaseMS, runtimeDisposition: .live), range: 5...500, format: "%.0f ms",
+                    tooltip: "How fast full pre-emphasis returns. 10-50 ms keeps the HF dip brief; longer values trade sparkle for density.").disabled(limiterDisabled)
+                DoubleSliderRow(title: "Max Reduction", value: model.configBinding(\.hfLimiterMaxReductionDB, runtimeDisposition: .live), range: 1...24, format: "%.1f dB",
+                    tooltip: "Cap on how much of the pre-emphasis boost may be removed. The stage can never cut HF below the flat (un-emphasised) program level.").disabled(limiterDisabled)
+            }
         }
         Card(title: "HF Clipper") {
             Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))

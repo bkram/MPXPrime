@@ -164,15 +164,62 @@ struct ModeGatingTests {
         }
     }
 
-    private func renderAudioOnly(cfg: AppConfig) -> [Float] {
+    @Test func hiddenControlsAreTheInertOnes() {
+        // The rule the operator set: a control is hidden because it does
+        // nothing here, not to tidy the page. So prove the "nothing": with the
+        // feature gated out of a mode, moving its keys must not change a
+        // sample. A control that FAILS this belongs on screen instead.
+        //
+        // These two are inert by construction rather than by a gate --
+        // `stereoProgram` because AM sums L+R ahead of the chain, `hfLimiter`
+        // because the stage rides the pre-emphasis boost and the digital
+        // target is flat -- which is exactly why they need a test: a chain
+        // change could quietly give them an effect again while both
+        // interfaces keep hiding them.
+        var stereoBase = AppConfig()
+        stereoBase.operatingMode = .am
+        stereoBase.sampleRate = 192_000.0
+        stereoBase.monoMode = false
+        stereoBase.monoBassEnabled = false
+        var stereoMoved = stereoBase
+        stereoMoved.monoMode = true
+        stereoMoved.monoBassEnabled = true
+        stereoMoved.monoBassFreqHz = 220.0
+        stereoMoved.multibandLinkStrength = 1.0 - stereoBase.multibandLinkStrength
+        #expect(!ChainFeature.stereoProgram.applies(in: .am))
+        #expect(renderAudioOnly(cfg: stereoBase, stereo: true) == renderAudioOnly(cfg: stereoMoved, stereo: true),
+                "AM output moved when a stereo-only control moved -- it is hidden but not inert")
+
+        var hfBase = AppConfig()
+        hfBase.operatingMode = .hd
+        hfBase.sampleRate = 192_000.0
+        hfBase.hfLimiterEnabled = false
+        var hfOn = hfBase
+        hfOn.hfLimiterEnabled = true
+        hfOn.hfLimiterThresholdDB = -12.0
+        hfOn.hfLimiterMaxReductionDB = 24.0
+        #expect(!ChainFeature.hfLimiter.applies(in: .hd))
+        #expect(renderAudioOnly(cfg: hfBase, stereo: true) == renderAudioOnly(cfg: hfOn, stereo: true),
+                "HD output moved when the HF limiter was enabled -- it is hidden but not inert")
+    }
+
+    private func renderAudioOnly(cfg: AppConfig, stereo: Bool = false) -> [Float] {
         let gen = MPXGenerator(config: cfg, sampleRate: cfg.sampleRate)
         gen.setAudioOutputOnly(true)
         var l = [Float](repeating: 0, count: 4_096)
+        var r = [Float](repeating: 0, count: 4_096)
         for i in 0..<l.count {
-            l[i] = Float(0.3 * sin(2.0 * .pi * 1_000.0 * Double(i) / cfg.sampleRate))
+            let t = Double(i) / cfg.sampleRate
+            // Bass + HF, and a different signal per channel when asked, so a
+            // stage that acts on the difference or on the pre-emphasis boost
+            // has something to act on.
+            let bass = 0.30 * sin(2.0 * .pi * 60.0 * t)
+            let high = 0.25 * sin(2.0 * .pi * 11_000.0 * t)
+            l[i] = Float(bass + high + 0.20 * sin(2.0 * .pi * 1_000.0 * t))
+            r[i] = stereo ? Float(-bass + 0.9 * high + 0.20 * sin(2.0 * .pi * 1_500.0 * t)) : l[i]
         }
         var left = l
-        var right = l
+        var right = r
         left.withUnsafeMutableBufferPointer { lb in
             right.withUnsafeMutableBufferPointer { rb in
                 // swiftlint:disable:next force_unwrapping

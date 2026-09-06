@@ -100,7 +100,11 @@ the engine and in both interfaces is derived from it through
 
 Outside `mpx` the RDS encoder does not run whatever `en_rds` says, the Now
 Playing script is not polled, and the SSB stereo option cannot reach the
-chain -- a control with no function is inert, not merely hidden.
+chain -- a control with no function is inert, not merely hidden. The same rule
+hides a few keys inside a mode: Mono Mode, Mono Bass and the multiband stereo
+Link disappear in `am` (the chain is mono before them), and the whole HF
+limiter disappears in `hd` (it rides the pre-emphasis boost, and `hd` is
+flat). They keep their stored values and come back with the mode.
 
 A pre-0.50 INI carrying `processed_audio_output` / `processed_audio_target` is
 migrated on load and rewritten to `operating_mode` on the next save. The REST

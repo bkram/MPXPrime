@@ -39,6 +39,16 @@ combination test suite. Newest first.
   use the rest. The same peak guard the HD ceiling uses does it, with separate
   ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
   checked against a modulation monitor on a real AM transmitter.
+- **Fixed: the MPX line output trim never reached the air on macOS.**
+  `mpx_line_output_dbfs` scaled the composite only on the test-tone path: the
+  block sat inside the render callback's tone branch, so a live-input
+  composite went to the converter untrimmed while the DAC Peak readout divided
+  by the trim as if it had applied, and the Linux engine applied it properly.
+  An operator who calibrated a rig with it on macOS was transmitting hotter
+  than the app claimed. Hoisted to run for both paths; the 0 dBFS default
+  still skips the scale, so every captured baseline stands. Only a
+  disposition test covered the key before, which is why nothing caught it --
+  `LineOutputCalibrationTests` now pins the arithmetic.
 - **Fixed: the web dashboard showed the wrong mode's pages, and switching the
   mode broke the page.** Three defects, all in the dashboard's own script.
   (1) `boot()` rendered the sidebar BEFORE reading the config, so every page

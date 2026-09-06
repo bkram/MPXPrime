@@ -129,6 +129,29 @@ final class AudioOutputEngine {
     private var forcedOutputRate: (deviceID: AudioDeviceID, priorRate: Double)?
     private let outputMode: AudioOutputMode
     private var targetDeviationKHz: Float
+    /// Apply the composite line-output trim in place: scale, and when the trim
+    /// is positive, clamp deterministically rather than leave the overshoot to
+    /// the converter. Pure and allocation-free so the render path can call it
+    /// and `LineOutputCalibrationTests` can pin it.
+    @inline(__always)
+    static func applyLineOutput(
+        scale: Float,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        guard frameCount > 0, scale != 1.0 else { return }
+        var s = scale
+        vDSP_vsmul(left, 1, &s, left, 1, vDSP_Length(frameCount))
+        vDSP_vsmul(right, 1, &s, right, 1, vDSP_Length(frameCount))
+        if s > 1.0 {
+            var lo: Float = -1.0
+            var hi: Float = 1.0
+            vDSP_vclip(left, 1, &lo, &hi, left, 1, vDSP_Length(frameCount))
+            vDSP_vclip(right, 1, &lo, &hi, right, 1, vDSP_Length(frameCount))
+        }
+    }
+
     /// Line output calibration: linear scale applied to the composite at the
     /// DAC write, after every meter/scope capture (those stay in the
     /// 0 dBFS = 100% modulation domain). Render-thread only after start.
@@ -604,25 +627,18 @@ final class AudioOutputEngine {
                         self.updateInputScopeSnapshot(
                             left: leftData, right: rightData, frameCount: frames)
                     }
-                    // Line output calibration: the LAST operation before the
-                    // DAC, after meters/scopes captured the composite-domain
-                    // signal. Exact 1.0 (the 0 dBFS default) is skipped, so
-                    // the historical path stays bit-identical.
-                    if self.outputMode == .mpxComposite, self.lineOutputScale != 1.0 {
-                        var scale = self.lineOutputScale
-                        vDSP_vsmul(leftData, 1, &scale, leftData, 1, vDSP_Length(frames))
-                        vDSP_vsmul(rightData, 1, &scale, rightData, 1, vDSP_Length(frames))
-                        if scale > 1.0 {
-                            // Positive line gain: anything within +X dB of
-                            // 100% modulation hits the converter ceiling --
-                            // clamp deterministically rather than leave it
-                            // to the DAC.
-                            var lo: Float = -1.0
-                            var hi: Float = 1.0
-                            vDSP_vclip(leftData, 1, &lo, &hi, leftData, 1, vDSP_Length(frames))
-                            vDSP_vclip(rightData, 1, &lo, &hi, rightData, 1, vDSP_Length(frames))
-                        }
-                    }
+                }
+                // Line output calibration: the LAST operation before the DAC,
+                // after meters/scopes captured the composite-domain signal,
+                // and for BOTH branches above -- it lived inside the tone
+                // branch until 0.50, so the operator's line trim was silently
+                // inert on air while the DAC Peak readout assumed it applied.
+                // Exact 1.0 (the 0 dBFS default) is skipped, so the historical
+                // path stays bit-identical.
+                if self.outputMode == .mpxComposite, self.lineOutputScale != 1.0 {
+                    Self.applyLineOutput(
+                        scale: self.lineOutputScale,
+                        left: leftData, right: rightData, frameCount: frames)
                 }
                 return noErr
             }

@@ -148,7 +148,9 @@ FM chain (see the roadmap).
 Audio I/O > Output > "Line Output", remembered per output device; also on the web dashboard) sets the
 ABSOLUTE converter level of 100% modulation: at `-12.0`, a 75 kHz-deviation
 composite peaks at -12 dBFS on the output interface. It is applied at the
-DAC write, after every processing stage and meter tap -- deviation readouts,
+DAC write, after every processing stage and meter tap -- on both the live
+input and the test tone since 0.50, where a bug that limited it to the tone
+was fixed -- so deviation readouts,
 the composite budget, and all internal levels keep the classic
 0 dBFS = 100% convention. Use it to match an exciter's input sensitivity
 once, in software: keep the operating system / interface output volume at

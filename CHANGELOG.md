@@ -39,6 +39,28 @@ combination test suite. Newest first.
   use the rest. The same peak guard the HD ceiling uses does it, with separate
   ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
   checked against a modulation monitor on a real AM transmitter.
+- **Fixed: the web dashboard showed the wrong mode's pages, and switching the
+  mode broke the page.** Three defects, all in the dashboard's own script.
+  (1) `boot()` rendered the sidebar BEFORE reading the config, so every page
+  was built against the default mode: an FM / HD / AM box kept showing the RDS
+  pages and the composite stages until the operator changed the mode by hand
+  (the operator's report). (2) A mode switch re-synced nothing, because
+  `patchKey` only re-rendered when the server answered `unchanged` -- the
+  clicked segment did not even light up. (3) The second click overflowed the
+  stack: `syncAll` committed the mode it had rendered AFTER re-rendering, and
+  every render ends by calling `syncAll`, so it re-entered itself forever;
+  the failed assignment then left the page repeating the overflow until it was
+  reloaded. Now the config arrives before the first render, `patchKey` always
+  re-syncs (and re-reads the config on a restart-class change, so the levels
+  the backend recalled for the new device or mode are visible), and `syncAll`
+  commits its render signature first and refuses to re-enter. Monitoring also
+  syncs like every other page, so a mode changed elsewhere reaches a dashboard
+  sitting on it.
+- **The dashboard is now driven, not just rendered, in CI.**
+  `scripts/check-webui.sh` boots the real page against a fake encoder in all
+  four modes and clicks through it: mode switches both ways, a device change,
+  a server-side clamp, and a mode changed behind the page's back. Each of the
+  four fixes above was re-broken to confirm the check reports it.
 - **Fixed: the web dashboard's Monitoring page threw in every mode.** The
   operating-mode work removed a helper and left two call sites behind, so the
   landing page raised a ReferenceError and the reader got a half-built page.

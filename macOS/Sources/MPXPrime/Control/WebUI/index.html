@@ -187,16 +187,34 @@ function toast(msg, bad) {
   clearTimeout(t._h);
   t._h = setTimeout(() => t.classList.remove("show"), 2400);
 }
+const DISPOSITION_TEXT = {
+  live: "applied live",
+  liveRDS: "applied live (RDS)",
+  restartRequired: "saved - restart to apply",
+  none: "saved",
+  unchanged: "unchanged"
+};
 async function patchKey(key, value, silent) {
   try {
     const r = await api("/api/config", { method:"PATCH", body:JSON.stringify({ [key]: value }) });
     const o = r.outcomes[0];
     if (o.effectiveValue != null) cfg[key] = o.effectiveValue;
-    if (!silent) {
-      const label = { live:"applied live", liveRDS:"applied live (RDS)", restartRequired:"saved - restart to apply", unchanged:"unchanged" }[o.disposition];
-      toast(SCHEMA[key]?.label || key.replace(/_/g," ") + "" ? (SCHEMA[key]?.label || key) + ": " + label : label);
+    // A restart-class change can move keys the response does not carry: both
+    // backends recall the new device's stored calibration (and run INI
+    // migrations) AFTER the outcomes are computed. Re-read rather than show
+    // the previous rig's levels.
+    if (o.disposition === "restartRequired") {
+      try { await loadConfig(); } catch (e) {}
     }
-    if (o.disposition === "unchanged") syncAll();
+    if (key.endsWith("_device_uid")) {
+      try { await loadDevices(); } catch (e) {}
+    }
+    if (!silent) {
+      toast((SCHEMA[key]?.label || key.replace(/_/g, " ")) + ": " + (DISPOSITION_TEXT[o.disposition] || o.disposition));
+    }
+    // ALWAYS re-sync: a mode switch, a server-side clamp and a recalled
+    // calibration are all invisible otherwise (they are not `unchanged`).
+    syncAll();
     updateTAButton();
     refreshSidebarDots();
     pollStatus();
@@ -420,18 +438,35 @@ function card(keys, extraEl) {
   if (extraEl) el.appendChild(extraEl);
   return el;
 }
-let lastOperatingMode = null;
+/* What a full re-render depends on. When this string changes, which pages and
+   which widgets exist has changed, so the sidebar and the current page have to
+   be rebuilt; when it does not, syncing values in place is enough. */
+function renderSignature() {
+  return currentMode();
+}
+let lastRenderSig = null;
+let rerendering = false;
 function syncAll() {
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el._sync && el.dataset.key in cfg) el._sync(cfg[el.dataset.key]);
   });
-  const mode = currentMode();
-  if (lastOperatingMode !== null && mode !== lastOperatingMode) {
-    renderSidebar();
-    if (pageHiddenInMode(currentPage)) showPage("monitoring");
-    else if (currentPage) showPage(currentPage);   // re-render: widget visibility follows the mode
+  const sig = renderSignature();
+  const changed = lastRenderSig !== null && sig !== lastRenderSig;
+  // COMMIT the signature before re-rendering. Every render function ends with
+  // syncAll(), so a nested call must see "unchanged" -- assigning after the
+  // re-render (as this did until 0.50) recursed until the stack overflowed,
+  // and because the assignment was then skipped by the throw, every later
+  // syncAll repeated it until the page was reloaded.
+  lastRenderSig = sig;
+  if (changed && !rerendering) {
+    rerendering = true;
+    try {
+      renderSidebar();
+      showPage(pageHiddenInMode(currentPage) ? "monitoring" : currentPage);
+    } finally {
+      rerendering = false;
+    }
   }
-  lastOperatingMode = mode;
   refreshSidebarDots();
   updateBypassButton();
 }
@@ -649,6 +684,9 @@ function renderMonitoring(c) {
   }
   c.appendChild(chain);
   pollMeters();
+  // Like every other render: without this, sitting on Monitoring while the
+  // mode changes elsewhere leaves the sidebar showing the old mode's pages.
+  syncAll();
 }
 function renderRDSStatus(c) {
   const grid = document.createElement("div");
@@ -855,7 +893,8 @@ function renderInterfaces(c, p) {
     '<div class="subtitle" style="margin-top:6px">Read-only here: changing the server you are talking through risks locking yourself out. Edit in the INI or the native GUI; applies at next launch.</div>';
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (read-only)" }));
   c.appendChild(rc);
-  loadDevices();
+  fillDeviceSelects();   // from cache: no empty pickers while the fetch runs
+  loadDevices();         // then refresh in the background
   syncAll();
 }
 function renderAdvanced(c) {
@@ -911,30 +950,44 @@ function deviceName(id, list) {
   const d = (deviceInfo[list] || []).find(x => x.id === id);
   return d ? d.name : id;
 }
+/* Split in two so a re-render can fill the pickers from the cached listing
+   synchronously (no empty-select flicker while the fetch is in flight) and
+   the fetch can be awaited where the caller needs fresh selections. */
+function fillDeviceSelects() {
+  if (!deviceInfo) return;
+  const fill = (sel, list, selected, key) => {
+    if (!sel) return;
+    sel.innerHTML = "";
+    sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"(system default)" }));
+    for (const dev of list) sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:dev.name }));
+    sel.value = selected || "";
+    sel.onchange = () => patchKey(key, sel.value);
+  };
+  fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid");
+  fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid");
+  fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid");
+  if ($("devNote")) $("devNote").textContent = deviceInfo.note || "";
+}
 async function loadDevices() {
   try {
     deviceInfo = await api("/api/devices");
-    const fill = (sel, list, selected, key) => {
-      if (!sel) return;
-      sel.innerHTML = "";
-      sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"(system default)" }));
-      for (const dev of list) sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:dev.name }));
-      sel.value = selected || "";
-      sel.onchange = () => patchKey(key, sel.value);
-    };
-    fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid");
-    fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid");
-    fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid");
-    if ($("devNote")) $("devNote").textContent = deviceInfo.note || "";
+    fillDeviceSelects();
   } catch (e) {}
 }
 const dbText = (v) => v == null ? "-" : (v <= 0.00001 ? "-inf" : (20*Math.log10(v)).toFixed(1));
 const dbPct = (v) => (v == null || v <= 0.00001) ? 0 : Math.max(0, Math.min(100, (20*Math.log10(v)+36)/36*100));
 const gr = (v, d=1) => v == null ? "-" : "-" + Math.abs(v).toFixed(d) + " dB";
+let recoveringConfig = false;
 async function pollStatus() {
   try {
     statusInfo = await api("/api/status");
     const s = statusInfo;
+    // Self-heal: the server was unreachable at boot, so the page rendered
+    // against an empty config (default mode). Pick the real one up now.
+    if (MODEL && !recoveringConfig && Object.keys(cfg).length === 0) {
+      recoveringConfig = true;
+      try { await loadConfig(); syncAll(); } catch (e) {} finally { recoveringConfig = false; }
+    }
     $("cDot").classList.toggle("on", s.running);
     $("cRun").textContent = s.running ? "RUNNING" : "STOPPED";
     $("cRun").parentElement.classList.toggle("green", s.running);
@@ -1069,12 +1122,18 @@ async function boot() {
     pollStatus();
     return;
   }
-  renderSidebar();
+  // The CONFIG decides which pages exist (the operating mode gates the
+  // sidebar), so it has to arrive BEFORE the first render. Rendering first
+  // built every page against the default mode, and the RDS pages and the
+  // composite stages then stayed on screen in fm/hd/am until the operator
+  // changed the mode by hand.
   try {
     presetLists = await api("/api/presets");
     await loadConfig();
     await loadDevices();
   } catch (e) {}
+  lastRenderSig = renderSignature();
+  renderSidebar();
   refreshSidebarDots();
   showPage(currentPage);
   pollStatus();

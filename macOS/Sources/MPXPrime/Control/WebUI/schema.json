@@ -742,8 +742,7 @@
       "sample_rate",
       "blocksize",
       "auto_start",
-      "fft_window_92khz",
-      "monitor_enabled"
+      "fft_window_92khz"
      ]
     },
     "special": "interfaces",

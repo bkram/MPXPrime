@@ -179,6 +179,29 @@ public func vDSP_vsmul(
     }
 }
 
+/// C = A clipped into [low, high] (Accelerate's `vDSP_vclip`).
+///
+/// Exact, so it cannot move Linux numerics away from macOS: a clip is a pair
+/// of comparisons, not arithmetic. NaN follows Accelerate's behaviour of
+/// leaving a value that compares false against both bounds untouched.
+public func vDSP_vclip(
+    _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,
+    _ low: UnsafePointer<Float>,
+    _ high: UnsafePointer<Float>,
+    _ c: UnsafeMutablePointer<Float>, _ ic: vDSP_Stride,
+    _ n: vDSP_Length
+) {
+    let lo = low.pointee
+    let hi = high.pointee
+    var pa = 0, pc = 0
+    for _ in 0..<Int(n) {
+        let v = a[pa]
+        c[pc] = v < lo ? lo : (v > hi ? hi : v)
+        pa += ia
+        pc += ic
+    }
+}
+
 /// C = A + scalar B.
 public func vDSP_vsadd(
     _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,

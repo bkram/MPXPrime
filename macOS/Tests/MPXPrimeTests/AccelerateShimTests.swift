@@ -220,6 +220,26 @@ struct AccelerateShimTests {
     }
 
     // SIMD dot: only summation-order rounding may differ from scalar.
+    @Test func clipHoldsBothBoundsAndPassesTheMiddle() {
+        // vDSP_vclip reached the shim late: MonitorConditioner was the first
+        // CROSS-PLATFORM caller (the other users sit in the macOS-only engine
+        // file), so the Linux build broke on a function nobody had needed
+        // there yet. Pin the arithmetic on both platforms -- on macOS this
+        // exercises Accelerate itself, which is what the shim has to match.
+        var input: [Float] = [-2.0, -1.0, -0.5, 0.0, 0.25, 1.0, 3.0]
+        var lo: Float = -1.0
+        var hi: Float = 1.0
+        var out = [Float](repeating: 0, count: input.count)
+        let n = vDSP_Length(input.count)
+        input.withUnsafeMutableBufferPointer { inBuf in
+            out.withUnsafeMutableBufferPointer { outBuf in
+                // swiftlint:disable:next force_unwrapping
+                vDSP_vclip(inBuf.baseAddress!, 1, &lo, &hi, outBuf.baseAddress!, 1, n)
+            }
+        }
+        #expect(out == [-1.0, -1.0, -0.5, 0.0, 0.25, 1.0, 1.0], "got \(out)")
+    }
+
     @Test func simdDotMatchesScalarReference() {
         var lcg = LCG()
         for count in [1, 7, 8, 9, 31, 32, 33, 129, 511] {

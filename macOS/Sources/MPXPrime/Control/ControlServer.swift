@@ -48,6 +48,7 @@ extension ControlStatus: ResponseEncodable {}
 extension ControlMeters: ResponseEncodable {}
 extension ControlRDS: ResponseEncodable {}
 extension ControlDevices: ResponseEncodable {}
+extension ControlMixer: ResponseEncodable {}
 extension ConfigApplyResult: ResponseEncodable {}
 extension ControlSnapshots: ResponseEncodable {}
 extension ControlTelemetry: ResponseEncodable {}
@@ -279,6 +280,22 @@ enum ControlServer {
                 throw HTTPError(.serviceUnavailable, message: "engine not running or no scope tap")
             }
             return t
+        }
+
+        // The sound card's own mixer (Linux). Read live and never stored by
+        // us: it is hardware state the operator otherwise cannot see on a
+        // headless box, and a slider below unity costs composite level that
+        // no meter in the app can show.
+        router.get("/api/mixer") { _, _ -> ControlMixer in
+            await backend.cardMixer()
+        }
+
+        router.patch("/api/mixer") { request, context -> ControlMixer in
+            let patch = try await request.decode(as: ControlMixerPatch.self, context: context)
+            guard await backend.setCardMixer(patch) else {
+                throw HTTPError(.badRequest, message: "could not set mixer control '\(patch.name)'")
+            }
+            return await backend.cardMixer()
         }
 
         // Operator preset slots. Load applies the slot as a full config

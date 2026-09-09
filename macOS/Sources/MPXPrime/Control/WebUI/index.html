@@ -582,6 +582,7 @@ function renderGeneric(c, p, isRDS) {
   if (p.special === "rdsStatus") return renderRDSStatus(c);
   if (p.special === "presets") return renderPresets(c);
   if (p.special === "advanced") return renderAdvanced(c);
+  if (p.special === "about") return renderAbout(c);
   if (p.special === "interfaces") { renderInterfaces(c, p); return; }
   if (p.cards) {
     const grid = document.createElement("div");
@@ -893,10 +894,102 @@ function renderInterfaces(c, p) {
     '<div class="subtitle" style="margin-top:6px">Read-only here: changing the server you are talking through risks locking yourself out. Edit in the INI or the native GUI; applies at next launch.</div>';
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (read-only)" }));
   c.appendChild(rc);
+  renderCardMixer(c);
   fillDeviceSelects();   // from cache: no empty pickers while the fetch runs
   loadDevices();         // then refresh in the background
   syncAll();
 }
+/* About: the same facts the native app's About panel shows, from the server
+   rather than baked in -- version and platform come from /api/status, so the
+   page cannot claim a version it is not talking to. The full intended-use
+   disclaimer lives in README.md and the licence terms in LICENSE: this
+   carries README's canonical key phrase plus links, and must not grow a
+   second copy of either. */
+function renderAbout(c) {
+  const s = statusInfo || {};
+  const card = document.createElement("div");
+  card.className = "card cardpad";
+  card.style.maxWidth = "640px";
+  card.innerHTML =
+    '<div style="font-size:19px;font-weight:600;margin-bottom:2px">MPX Prime Studio</div>' +
+    '<div class="subtitle" style="margin-bottom:10px">Professional FM stereo processing and RDS encoding - free and open source</div>' +
+    kv("Version", "aboutVersion", s.version || "-") +
+    kv("Platform", "aboutPlatform", s.platform || "-") +
+    kv("Engine rate", "aboutRate", s.sampleRateHz ? (s.sampleRateHz / 1000).toFixed(0) + " kHz" : "-") +
+    kv("Operating mode", "aboutMode", MODE_LABEL[s.outputMode] || String(s.outputMode || "-").toUpperCase()) +
+    kv("Licence", "aboutLicence", "GPL-3.0") +
+    '<div class="subtitle" style="margin-top:10px">' +
+      '<a href="https://github.com/bkram/MPXPrime" target="_blank" rel="noreferrer">View on GitHub</a> &middot; ' +
+      '<a href="https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md" target="_blank" rel="noreferrer">Operator Guide</a> &middot; ' +
+      '<a href="https://github.com/bkram/MPXPrime/blob/main/LICENSE" target="_blank" rel="noreferrer">License</a>' +
+    '</div>' +
+    '<div class="subtitle" style="margin-top:10px">Experimental and not certified - no conformity or compliance is promised. ' +
+      'See the README for intended use and the GPL-3.0 license for terms (provided without warranty).</div>';
+  c.appendChild(card);
+  pollStatus();
+  syncAll();
+}
+
+/* The SOUND CARD's own volume sliders (Linux). They sit between the encoder
+   and the exciter, and on a headless box nothing else shows them: a slider a
+   few percent below unity costs composite level that no meter in the app can
+   see. Read live from ALSA, never stored by us -- `alsactl store` is what
+   makes a level survive a reboot, and the caption says so. Absent on macOS,
+   where the endpoint answers "not available". */
+function renderCardMixer(host) {
+  const box = document.createElement("div");
+  host.appendChild(box);
+  (async () => {
+    let mixer;
+    try { mixer = await api("/api/mixer"); } catch (e) { return; }
+    if (!mixer || !mixer.available || !(mixer.controls || []).length) return;
+    box.appendChild(Object.assign(document.createElement("div"),
+      { className: "gtitle", textContent: "Sound Card Mixer" + (mixer.card ? " (" + mixer.card + ")" : "") }));
+    const card = document.createElement("div");
+    card.className = "card cardpad";
+    card.style.maxWidth = "640px";
+    for (const ctl of mixer.controls) {
+      for (const side of ["playback", "capture"]) {
+        const pct = ctl[side + "Percent"];
+        if (pct == null) continue;
+        const dB = ctl[side + "DB"];
+        const row = document.createElement("div");
+        row.className = "row";
+        const label = document.createElement("div");
+        label.className = "rlabel";
+        label.textContent = ctl.name + " " + (side === "playback" ? "out" : "in");
+        const input = document.createElement("input");
+        input.type = "range";
+        input.min = "0"; input.max = "100"; input.step = "1";
+        input.value = String(Math.round(pct));
+        const read = document.createElement("span");
+        read.className = "rval";
+        const show = (v) => {
+          read.textContent = Math.round(v) + " %" + (dB != null ? " (" + dB.toFixed(2) + " dB)" : "");
+        };
+        show(pct);
+        input.oninput = () => show(Number(input.value));
+        input.onchange = async () => {
+          const body = { name: ctl.name, index: ctl.index };
+          body[side + "Percent"] = Number(input.value);
+          try {
+            await api("/api/mixer", { method: "PATCH", body: JSON.stringify(body) });
+            toast(ctl.name + " " + side + ": " + input.value + " %");
+            showPage(currentPage);          // re-read: the card reports the level it actually took
+          } catch (e) { toast("mixer: " + e.message, true); }
+        };
+        row.appendChild(label); row.appendChild(input); row.appendChild(read);
+        card.appendChild(row);
+      }
+    }
+    box.appendChild(card);
+    box.appendChild(Object.assign(document.createElement("div"), {
+      className: "subtitle",
+      textContent: "The card's own levels, not the encoder's. Keep the output at 100 % (0 dB) and calibrate with MPX Output Level / Line Output above; a mixer below unity costs composite the meters cannot see. These are hardware settings: run 'sudo alsactl store' to keep them across a reboot."
+    }));
+  })();
+}
+
 function renderAdvanced(c) {
   const host = document.createElement("div");
   host.className = "card cardpad";
@@ -977,6 +1070,7 @@ async function loadDevices() {
 const dbText = (v) => v == null ? "-" : (v <= 0.00001 ? "-inf" : (20*Math.log10(v)).toFixed(1));
 const dbPct = (v) => (v == null || v <= 0.00001) ? 0 : Math.max(0, Math.min(100, (20*Math.log10(v)+36)/36*100));
 const gr = (v, d=1) => v == null ? "-" : "-" + Math.abs(v).toFixed(d) + " dB";
+const MODE_LABEL = { mpx: "MPX", fm: "FM", hd: "HD", am: "AM", monitor: "MONITOR" };
 let recoveringConfig = false;
 async function pollStatus() {
   try {
@@ -993,7 +1087,6 @@ async function pollStatus() {
     $("cRun").parentElement.classList.toggle("green", s.running);
     $("cSource").textContent = s.sourceMode === "tone" ? "Test Tone" : deviceName(deviceInfo?.selectedInput, "inputs");
     $("cRate").textContent = (s.sampleRateHz/1000).toFixed(0) + " kHz";
-    const MODE_LABEL = { mpx: "MPX", fm: "FM", hd: "HD", am: "AM", monitor: "MONITOR" };
     $("cMode").textContent = MODE_LABEL[s.outputMode] || String(s.outputMode || "").toUpperCase();
     // A stopped engine with a note (e.g. missing audio device) takes
     // priority in the warning cell -- it is why the operator is here.

@@ -48,6 +48,33 @@ struct ControlStatus: Codable, Sendable {
     var notes: [String]
 }
 
+/// GET /api/mixer payload: the SOUND CARD's own volume controls.
+///
+/// Linux only, and deliberately so: on that platform the card mixer sits
+/// between the encoder and the exciter with no GUI to inspect it, and a
+/// slider a few percent below unity silently costs composite level that no
+/// meter in the app can see (it cost this project 2 dB after a reboot).
+/// macOS answers `available: false`: CoreAudio device volume is a different
+/// animal and is not exposed here.
+struct ControlMixer: Codable, Sendable {
+    var available: Bool = false
+    /// The ALSA card the controls belong to, derived from the output device.
+    var card: String?
+    var controls: [ALSAMixerMath.Control] = []
+    /// Operator-facing explanation when there is nothing to show.
+    var note: String?
+}
+
+/// PATCH /api/mixer body. Only the fields present move.
+struct ControlMixerPatch: Codable, Sendable {
+    var name: String
+    var index: UInt32?
+    var playbackPercent: Double?
+    var capturePercent: Double?
+    var playbackMuted: Bool?
+    var captureMuted: Bool?
+}
+
 /// GET /api/meters payload. All fields optional: platforms report what they
 /// measure (full MeterSnapshot on macOS; peaks + xruns on the Linux ALSA
 /// engine in this milestone). Levels are linear 0..1 unless suffixed.
@@ -219,6 +246,12 @@ protocol ControlBackend: Sendable {
     func transport(_ action: TransportAction) async throws -> ControlStatus
     /// Live scopes + spectrum (nil = engine stopped or no tap on platform).
     func telemetry(windowMS: Double) async -> ControlTelemetry?
+
+    /// The sound card's own mixer, on platforms where the operator cannot
+    /// otherwise reach it (Linux). macOS answers "not available".
+    func cardMixer() async -> ControlMixer
+    /// Move one card mixer control; false when it could not be applied.
+    func setCardMixer(_ patch: ControlMixerPatch) async -> Bool
     // Operator preset slots (shared SnapshotStore; <config>.snapshots.json).
     func snapshots() async -> ControlSnapshots
     func snapshotSave(slot: Int, name: String) async throws -> ControlSnapshots

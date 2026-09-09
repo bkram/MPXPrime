@@ -83,6 +83,43 @@ actor HeadlessControlBackend: ControlBackend {
         engine?.controlTelemetry(windowMS: windowMS)
     }
 
+    /// The sound card's own mixer. Linux only: it is read live from ALSA and
+    /// never stored by us, because it is hardware state shared with whatever
+    /// else is on the box.
+    func cardMixer() -> ControlMixer {
+        #if os(Linux)
+        guard let uid = config.outputDeviceUID,
+              let card = ALSAMixerMath.cardName(fromDeviceUID: uid)
+        else {
+            return ControlMixer(
+                available: false, card: nil, controls: [],
+                note: "No card mixer: the output device is the ALSA default, not a specific card.")
+        }
+        let controls = ALSAMixer.controls(card: card)
+        return ControlMixer(
+            available: !controls.isEmpty, card: card, controls: controls,
+            note: controls.isEmpty ? "Card '\(card)' exposes no volume controls." : nil)
+        #else
+        return ControlMixer(
+            available: false, card: nil, controls: [],
+            note: "The card mixer is a Linux feature; on macOS use the system sound settings.")
+        #endif
+    }
+
+    func setCardMixer(_ patch: ControlMixerPatch) -> Bool {
+        #if os(Linux)
+        guard let uid = config.outputDeviceUID,
+              let card = ALSAMixerMath.cardName(fromDeviceUID: uid)
+        else { return false }
+        return ALSAMixer.set(
+            card: card, name: patch.name, index: patch.index ?? 0,
+            playbackPercent: patch.playbackPercent, capturePercent: patch.capturePercent,
+            playbackMuted: patch.playbackMuted, captureMuted: patch.captureMuted)
+        #else
+        return false
+        #endif
+    }
+
     func rds() -> ControlRDS {
         let live = engine?.rdsLiveSnapshotForControl
         return ControlRDS(

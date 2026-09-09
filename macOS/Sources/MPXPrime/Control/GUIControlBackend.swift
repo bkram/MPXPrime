@@ -76,6 +76,17 @@ struct GUIControlBackend: ControlBackend {
         try? await withVM { $0.remoteTelemetry(windowMS: windowMS) }
     }
 
+    /// macOS has no ALSA mixer, and CoreAudio device volume is deliberately
+    /// not exposed here: the app runs with a GUI where the system sound
+    /// settings are one click away.
+    func cardMixer() async -> ControlMixer {
+        ControlMixer(
+            available: false, card: nil, controls: [],
+            note: "The card mixer is a Linux feature; on macOS use the system sound settings.")
+    }
+
+    func setCardMixer(_ patch: ControlMixerPatch) async -> Bool { false }
+
     func snapshots() async -> ControlSnapshots {
         (try? await withVM { $0.remoteSnapshots() })
             ?? ControlSnapshots(slots: [])

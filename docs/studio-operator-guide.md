@@ -165,6 +165,20 @@ Relevant config sections:
 
 The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented four-way choice, `operating_mode`: MPX Output for a transmitter, FM Output for an external stereo coder, HD Output for streaming or digital radio, AM Output for an AM transmitter), the **Monitor** output, the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card.
 
+### Sound card mixer (Linux)
+
+On Linux the dashboard's `Audio I/O` page grows a **Sound Card Mixer** card
+listing the card's own sliders, in and out, with the card's dB reading beside
+each. It is there because that mixer sits between the encoder and the exciter
+and nothing else on a headless box shows it: a slider at 96 % quietly costs
+2 dB of composite that no meter in the app can see.
+
+Keep the output slider at 100 % (0 dB) and do the calibration in the encoder
+with `MPX Output Level` and `Line Output`. These are hardware settings rather
+than encoder settings, so run `sudo alsactl store` after changing them if you
+want them back after a reboot. The card does not appear on macOS, where the
+system sound settings own this.
+
 ### Monitor output
 
 The Monitor is a second audio device that plays what you are putting out, so

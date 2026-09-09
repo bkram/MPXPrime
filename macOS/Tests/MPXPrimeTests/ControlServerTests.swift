@@ -119,6 +119,29 @@ private actor MockBackend: ControlBackend {
 
     func telemetry(windowMS: Double) -> ControlTelemetry? { nil }
 
+    // The card mixer: a Linux-only surface, so the mock reports what macOS
+    // reports and the route test pins that shape.
+    var mixerPatches: [ControlMixerPatch] = []
+    var mixerAvailable = false
+    func enableMixer() { mixerAvailable = true }
+    func recordedMixerPatches() -> [ControlMixerPatch] { mixerPatches }
+    func cardMixer() -> ControlMixer {
+        ControlMixer(
+            available: mixerAvailable,
+            card: mixerAvailable ? "Device" : nil,
+            controls: mixerAvailable
+                ? [ALSAMixerMath.Control(
+                    name: "Headphone", index: 0, playbackPercent: 100,
+                    capturePercent: nil, playbackDB: 0, captureDB: nil,
+                    playbackMuted: false, captureMuted: nil)]
+                : [],
+            note: mixerAvailable ? nil : "The card mixer is a Linux feature; on macOS use the system sound settings.")
+    }
+    func setCardMixer(_ patch: ControlMixerPatch) -> Bool {
+        mixerPatches.append(patch)
+        return mixerAvailable
+    }
+
     func snapshots() -> ControlSnapshots { snapshotDTO() }
 
     func snapshotSave(slot: Int, name: String) throws -> ControlSnapshots {
@@ -267,6 +290,61 @@ struct ControlServerTests {
                 #expect(status.running == false)
             }
             try await client.execute(uri: "/api/transport/bogus", method: .post) { response in
+                #expect(response.status == .badRequest)
+            }
+        }
+    }
+
+    @Test func mixerRouteReportsUnavailableWithoutACardMixer() async throws {
+        // macOS (and any box whose output is the ALSA default) has nothing to
+        // show, and the dashboard hides the card on exactly this answer -- so
+        // "not available" has to be a normal 200, not an error.
+        let backend = MockBackend()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/api/mixer", method: .get) { response in
+                #expect(response.status == .ok)
+                let m = try JSONDecoder().decode(
+                    ControlMixer.self, from: Data(response.body.readableBytesView))
+                #expect(!m.available)
+                #expect(m.controls.isEmpty)
+                #expect(m.note != nil, "an empty mixer must say why")
+            }
+        }
+    }
+
+    @Test func mixerPatchMovesOneControlAndReportsWhatItTook() async throws {
+        let backend = MockBackend()
+        await backend.enableMixer()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            let body = ByteBuffer(string: #"{"name":"Headphone","index":0,"playbackPercent":100}"#)
+            try await client.execute(uri: "/api/mixer", method: .patch, body: body) { response in
+                #expect(response.status == .ok)
+                let m = try JSONDecoder().decode(
+                    ControlMixer.self, from: Data(response.body.readableBytesView))
+                #expect(m.available)
+                #expect(m.card == "Device")
+                // The response is a fresh READ, so the operator sees the level
+                // the card actually took rather than the one they asked for.
+                #expect(m.controls.first?.playbackPercent == 100)
+            }
+        }
+        let recorded = await backend.recordedMixerPatches()
+        #expect(recorded.count == 1)
+        #expect(recorded.first?.name == "Headphone")
+        #expect(recorded.first?.playbackPercent == 100)
+    }
+
+    @Test func mixerPatchOnAPlatformWithoutAMixerIsARequestError() async throws {
+        let backend = MockBackend()   // mixerAvailable stays false
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            let body = ByteBuffer(string: #"{"name":"Headphone","playbackPercent":50}"#)
+            try await client.execute(uri: "/api/mixer", method: .patch, body: body) { response in
                 #expect(response.status == .badRequest)
             }
         }

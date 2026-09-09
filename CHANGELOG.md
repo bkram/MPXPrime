@@ -39,6 +39,22 @@ combination test suite. Newest first.
   use the rest. The same peak guard the HD ceiling uses does it, with separate
   ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
   checked against a modulation monitor on a real AM transmitter.
+- **The dashboard has an About page.** Version, platform, engine rate and
+  operating mode, read from `/api/status` so the page cannot claim a version it
+  is not talking to, plus links to the repository, the Operator Guide and the
+  licence. It carries README's canonical key phrase about being experimental
+  and not certified, and deliberately not a second copy of the full
+  disclaimer.
+- **The dashboard can drive the sound card's own mixer (Linux).** New
+  `GET` / `PATCH /api/mixer` and a Sound Card Mixer card on the Audio I/O page,
+  listing the card's in and out sliders with its own dB readings. It exists
+  because on Linux that mixer sits between the encoder and the exciter with no
+  GUI to inspect it, and a slider a few percent below unity costs composite
+  level that no meter in the app can see -- measured on the test rig, where a
+  stored 0 dB came back as -2 dB after a reboot. The controls are read live and
+  never stored by us: they are hardware state, and `alsactl store` is what
+  makes them persist. Absent on macOS, where the endpoint answers "not
+  available" and the card is hidden.
 - **The Monitor is a second output now, and it works in every mode.** It used
   to be an output MODE that REPLACED the transmitter feed, so listening meant
   going off air, and it existed only under MPX Output. It is now a second audio

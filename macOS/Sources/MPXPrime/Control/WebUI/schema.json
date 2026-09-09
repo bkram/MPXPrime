@@ -769,6 +769,12 @@
     "special": "advanced",
     "sub": "Raw configuration",
     "title": "Advanced"
+   },
+   {
+    "id": "about",
+    "special": "about",
+    "sub": "Version, links and terms",
+    "title": "About"
    }
   ]
  },

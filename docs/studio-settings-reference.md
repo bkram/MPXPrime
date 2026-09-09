@@ -110,6 +110,30 @@ A pre-0.50 INI carrying `processed_audio_output` / `processed_audio_target` is
 migrated on load and rewritten to `operating_mode` on the next save. The REST
 API still accepts both old keys and resolves them onto the mode, in any order.
 
+### Sound card mixer (Linux, `GET` / `PATCH /api/mixer`)
+
+Not INI keys: these are the CARD's own volume controls, owned by ALSA and
+shared with anything else on the box, so the encoder reads them live and never
+stores them. They exist in the API because on Linux that mixer sits between
+the encoder and the exciter with no GUI to inspect it, and a slider a few
+percent under unity costs composite level that no meter in the app can show.
+
+`GET /api/mixer` answers `{available, card, controls[], note}`; each control
+carries `name`, `index`, and, per side, `playbackPercent` / `capturePercent`,
+the card's own `playbackDB` / `captureDB` when it reports them, and the mute
+state. On macOS, and when the output device is the plain ALSA `default` rather
+than a named card, `available` is false with a `note` explaining why -- that is
+a normal `200`, and the dashboard hides its Sound Card Mixer card on it.
+
+`PATCH /api/mixer` takes `{name, index?, playbackPercent?, capturePercent?,
+playbackMuted?, captureMuted?}` and moves only the fields present, then
+answers with a fresh READ so the operator sees the level the card actually
+took. A control the card does not have is a `400`.
+
+Keep the output control at 100 % (0 dB) and calibrate in the encoder with
+`output_gain_db` / `mpx_line_output_dbfs`. Levels set here are hardware state:
+`sudo alsactl store` is what makes them survive a reboot.
+
 ### Monitor output
 
 The Monitor is a SECOND output device that plays what the box is putting out,

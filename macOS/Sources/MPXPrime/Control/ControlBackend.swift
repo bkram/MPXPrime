@@ -38,6 +38,9 @@ struct ControlStatus: Codable, Sendable {
     var restartPending: Bool
     var sourceMode: String
     var outputMode: String
+    /// Is the operator's listening output playing? Defaulted so an older
+    /// client (or the Linux build, which has no monitor) decodes fine.
+    var monitorActive: Bool = false
     /// Operator-facing lines. Semantics differ by backend BY DESIGN: the
     /// headless backend reports engine-fault reasons (start failures, retry
     /// state); the GUI backend mirrors its human status line. Treat as
@@ -190,6 +193,13 @@ protocol ControlledEngine: AnyObject {
     /// engine without a scope tap (ALSA today) simply reports no telemetry
     /// and the route answers 503, same as /api/meters.
     func controlTelemetry(windowMS: Double) -> ControlTelemetry?
+    /// Is the second (listening) output running? Default false: an engine
+    /// without a monitor path -- ALSA today -- simply never reports one.
+    var monitorActiveForControl: Bool { get }
+}
+
+extension ControlledEngine {
+    var monitorActiveForControl: Bool { false }
 }
 
 extension ControlledEngine {

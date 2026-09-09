@@ -868,7 +868,7 @@ function renderInterfaces(c, p) {
   mon.style.maxWidth = "640px";
   mon.innerHTML =
     '<div class="row"><div class="rlabel">Monitor Device</div><select id="devMon" style="max-width:340px"></select></div>';
-  mon.appendChild(card(["monitor_enabled"]));
+  mon.appendChild(card(["monitor_enabled", "monitor_gain_db"]));
   if (inCurrentMode(MODEL.monitorModes)) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
     c.appendChild(mon);

@@ -194,12 +194,42 @@ When the engine renders the built-in test tone (`source_mode = tone`), `MPXGener
 
 `AppConfig.OperatingMode` (`operating_mode`, restart-class) has four cases --
 `mpx`, `fm`, `hd`, `am` -- and is the ONLY answer to "which mode are we in".
-`AppConfig.resolvedOutputMode(allowMonitor:)` adds the decoded monitor, which
-is a listening switch rather than an output shape: it exists only under `mpx`
-and only where the caller has a monitor path (the GUI passes allowMonitor:
-true, both headless mains false). `AudioOutputMode` (`AudioOutputEngine.swift`)
-is the engine-side mapping (composite / processed / monitor). The `/api/status`
-`outputMode` string reports the mode name, or `monitor`.
+`AudioOutputMode` (`AudioOutputEngine.swift`) is the engine-side mapping. The
+monitor is NOT one of these: since 0.50 it is a second output device running
+alongside whichever mode is selected (see "Monitor output" below), so it no
+longer competes with the mode for the one output.
+
+### Monitor output
+
+The monitor is a SECOND output device, playing alongside the transmitter feed
+in every operating mode, so an operator can listen without tuning a receiver to
+their own transmitter. Data flow per block, all on the render thread except the
+player:
+
+```text
+mpx      : renderFromInputInPlace(left/right = composite, monitor -> scratch)
+           the SAME pass demodulates each composite sample (MPXDecoder, with the
+           encoder's delay-aligned subcarrier reference), so the composite is
+           bit-identical whether or not anyone is listening
+fm/hd/am : renderAudioOnly* -> output buffers; the monitor takes a COPY
+all      : MonitorConditioner (de-emphasis where the chain emphasised, monitor
+           level, clamp) -> StereoInputRingBuffer.write
+           RingBufferPlayer drains it on the monitor device's own thread via
+           readAdaptive, because the two devices' clocks are independent
+```
+
+The ring is allocated at `start()` and sized against the PRODUCER's block
+(target `max(4 x blocksize, 40 ms)`, capacity `nextPow2(4 x target)`) -- the
+Meter's lesson that a target below the producer's burst drags the sawtooth
+through zero and clicks. `MonitorOutput.decide` holds the rules that protect
+the air feed: an empty monitor selection is off (never the system default,
+which may be the transmitter), the monitor refuses the transmitter's device, a
+device change restarts only the player, and a vanished device stops it until
+the same device returns. A monitor that cannot start is a routing note, never a
+failed engine start. `monitor_enabled` / `monitor_device_uid` /
+`monitor_gain_db` ride `RuntimeConfig` (like `mpx_line_output_dbfs`: carried
+there, consumed by the engine) so their live disposition stays DERIVED.
+macOS only, headless included; Linux has no second ALSA device.
 
 Which parts of the chain exist in which mode is ONE table,
 `ChainFeature` (`Control/StageApplicability.swift`), read by the engine, the
@@ -234,10 +264,10 @@ and the optional final clipper could never engage); the macOS engine's
   composite clipper, BS.412, pilot/RDS injection). Output device runs at the
   configured MPX rate (>=110 kHz required, 192 kHz standard so the 57 kHz RDS
   sideband is representable). This is the canonical FM-composite path.
-- **`monitorAudio`**: generates the composite internally and demodulates it back to
-  L/R via `MPXDecoder` for headphone monitoring on a second device. Low-latency
-  IIR filtering (Butterworth encoder lowpass, LR4 multiband). A listening aid, not
-  the on-air signal.
+- **`monitorAudio`** (legacy, being retired): generated the composite and
+  demodulated it back to L/R, REPLACING the transmitter feed on the monitor
+  device. The concurrent monitor below supersedes it -- listening no longer
+  costs the air feed.
 - **`processedAudio`** (0.33): emits the processed stereo L/R after the pre-encode
   limiter and **skips `processMPXDomain` entirely** -- no stereo encode, composite
   clipper, BS.412, pilot, or RDS. Render path `renderAudioOnly*` calls

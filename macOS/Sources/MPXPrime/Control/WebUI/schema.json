@@ -1,5 +1,14 @@
 {
  "model": {
+  "compositeModes": [
+   "mpx"
+  ],
+  "monitorModes": [
+   "mpx",
+   "fm",
+   "hd",
+   "am"
+  ],
   "overviewHelp": "Bird's-eye view of every processing stage with its current state and one telling metric. Click a card's chevron to jump into its detail tab.",
   "pills": [
    [
@@ -58,13 +67,6 @@
     "OUT",
     null
    ]
-  ],
-  "compositeModes": ["mpx"],
-    "monitorModes": [
-   "mpx"
-  ],
-  "rdsModes": [
-   "mpx"
   ],
   "rds": [
    {
@@ -254,6 +256,9 @@
     "title": "Subcarrier"
    }
   ],
+  "rdsModes": [
+   "mpx"
+  ],
   "stages": [
    {
     "help": "One picker that atomically wires multiband, final stage, PrimeBass, mono bass and composite-clipper settings to a coherent target for a programming format. Per-stage knobs stay editable afterwards; 'Custom' records that your settings are bespoke.",
@@ -289,7 +294,7 @@
    },
    {
     "enable": "phase_rotation_enabled",
-    "help": "4-pole allpass chain that reduces waveform asymmetry — especially on voice — by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages.",
+    "help": "4-pole allpass chain that reduces waveform asymmetry \u2014 especially on voice \u2014 by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages.",
     "id": "phaseRotator",
     "keys": [
      "phase_rotation_enabled",
@@ -427,7 +432,7 @@
    {
     "bypassedWhen": "advanced_dynamics_enabled",
     "enable": "downward_expander_enabled",
-    "help": "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
+    "help": "Per-band downward expander \u2014 pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
     "id": "expander",
     "keys": [
      "downward_expander_enabled",
@@ -467,7 +472,7 @@
    },
    {
     "enable": "primebass_enabled",
-    "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream. Mono Bass on the same page sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility.",
+    "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude \u2014 saves headroom downstream. Mono Bass on the same page sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility.",
     "id": "primeBass",
     "keys": [
      "primebass_enabled",
@@ -539,7 +544,6 @@
    },
    {
     "enable": "hf_limiter_enabled",
-      "modes": ["mpx", "fm", "am"],
     "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter. Gain-riding, so no clipping distortion; on by default.",
     "id": "hfLimiter",
     "keys": [
@@ -548,6 +552,11 @@
      "hf_limiter_attack_ms",
      "hf_limiter_release_ms",
      "hf_limiter_max_reduction_db"
+    ],
+    "modes": [
+     "mpx",
+     "fm",
+     "am"
     ],
     "pill": null,
     "sub": "Program-controlled pre-emphasis (gain-riding)",
@@ -579,7 +588,7 @@
    },
    {
     "enable": "pre_encode_limiter_enabled",
-    "help": "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis.",
+    "help": "Pre-encode L/R peak limiter \u2014 4x oversampled true-peak, stereo-linked \u2014 with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis.",
     "id": "limiter",
     "keys": [
      "pre_encode_limiter_enabled",
@@ -609,14 +618,14 @@
    {
     "enable": "mpx_ssb_stereo_enabled",
     "help": "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. The experimental SSB Stereo option leans the 38 kHz subcarrier toward single-sideband, keeping whichever sideband currently peaks lower to reclaim composite headroom ahead of the clipper. Independent of the Composite Clipper's enable; verify with --verify-ssb-stereo and a real receiver before regular use.",
-    "modes": [
-     "mpx"
-    ],
     "id": "stereoCoder",
     "keys": [
      "pilot_level",
      "mpx_ssb_stereo_enabled",
      "mpx_ssb_stereo_amount"
+    ],
+    "modes": [
+     "mpx"
     ],
     "pill": "Coder",
     "sub": "pilot-locked stereo encoder",
@@ -625,9 +634,6 @@
    {
     "enable": "mpx_clipper_enabled",
     "help": "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever.",
-    "modes": [
-     "mpx"
-    ],
     "id": "compositeClipper",
     "keys": [
      "mpx_clipper_enabled",
@@ -645,6 +651,9 @@
      ],
      "title": "Engine (restart)"
     },
+    "modes": [
+     "mpx"
+    ],
     "pill": "MPX-Clip",
     "sub": "Differential MPX clipper with guard bands",
     "summary": [
@@ -657,14 +666,14 @@
    {
     "enable": "bs412_enabled",
     "help": "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries.",
-    "modes": [
-     "mpx"
-    ],
     "id": "bs412",
     "keys": [
      "bs412_enabled",
      "bs412_threshold_db",
      "bs412_window_seconds"
+    ],
+    "modes": [
+     "mpx"
     ],
     "pill": "BS.412",
     "sub": "MPX power limiter",
@@ -677,9 +686,6 @@
    },
    {
     "help": "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry.",
-    "modes": [
-     "mpx"
-    ],
     "id": "finalStage",
     "keys": [
      "final_drive_db",
@@ -699,6 +705,9 @@
      ],
      "title": "Composite Internals (advanced)"
     },
+    "modes": [
+     "mpx"
+    ],
     "pill": "Final",
     "sub": "Output level, deviation, safety limiter",
     "title": "Final Stage"
@@ -737,13 +746,13 @@
      "processed_audio_ceiling_dbtp"
     ],
     "keys2": {
-     "title": "Engine",
      "keys": [
       "sample_rate",
       "blocksize",
       "auto_start",
       "fft_window_92khz"
-     ]
+     ],
+     "title": "Engine"
     },
     "special": "interfaces",
     "sub": "Devices, mode, levels, engine",
@@ -764,45 +773,6 @@
   ]
  },
  "schema": {
-  "am_lowpass_hz": {
-   "kind": "slider",
-   "label": "AM Bandwidth",
-   "max": 10000,
-   "min": 3000,
-   "modes": [
-    "am"
-   ],
-   "step": 100,
-   "unit": "Hz"
-  },
-  "am_positive_peak_pct": {
-   "kind": "slider",
-   "label": "Positive Peak Headroom",
-   "max": 125,
-   "min": 100,
-   "modes": [
-    "am"
-   ],
-   "step": 1,
-   "unit": "%"
-  },
-  "am_preemphasis_us": {
-   "kind": "seg",
-   "label": "AM Pre-emphasis",
-   "modes": [
-    "am"
-   ],
-   "options": [
-    [
-     "0",
-     "Off (flat)"
-    ],
-    [
-     "75",
-     "75 us (NRSC)"
-    ]
-   ]
-  },
   "advanced_dynamics_density": {
    "decimals": 2,
    "kind": "slider",
@@ -885,6 +855,45 @@
     [
      "B",
      "B"
+    ]
+   ]
+  },
+  "am_lowpass_hz": {
+   "kind": "slider",
+   "label": "AM Bandwidth",
+   "max": 10000,
+   "min": 3000,
+   "modes": [
+    "am"
+   ],
+   "step": 100,
+   "unit": "Hz"
+  },
+  "am_positive_peak_pct": {
+   "kind": "slider",
+   "label": "Positive Peak Headroom",
+   "max": 125,
+   "min": 100,
+   "modes": [
+    "am"
+   ],
+   "step": 1,
+   "unit": "%"
+  },
+  "am_preemphasis_us": {
+   "kind": "seg",
+   "label": "AM Pre-emphasis",
+   "modes": [
+    "am"
+   ],
+   "options": [
+    [
+     "0",
+     "Off (flat)"
+    ],
+    [
+     "75",
+     "75 us (NRSC)"
     ]
    ]
   },
@@ -1128,46 +1137,6 @@
    "step": 1,
    "unit": " Hz"
   },
-  "hf_limiter_attack_ms": { "modes": ["mpx", "fm", "am"],
-   "decimals": 2,
-   "kind": "slider",
-   "label": "Attack",
-   "max": 20.0,
-   "min": 0.2,
-   "step": 0.05,
-   "unit": " ms"
-  },
-  "hf_limiter_enabled": { "modes": ["mpx", "fm", "am"],
-   "kind": "toggle",
-   "label": "HF Limiter"
-  },
-  "hf_limiter_max_reduction_db": { "modes": ["mpx", "fm", "am"],
-   "decimals": 1,
-   "kind": "slider",
-   "label": "Max Reduction",
-   "max": 24.0,
-   "min": 1.0,
-   "step": 0.5,
-   "unit": " dB"
-  },
-  "hf_limiter_release_ms": { "modes": ["mpx", "fm", "am"],
-   "decimals": 0,
-   "kind": "slider",
-   "label": "Release",
-   "max": 500.0,
-   "min": 5.0,
-   "step": 1,
-   "unit": " ms"
-  },
-  "hf_limiter_threshold_db": { "modes": ["mpx", "fm", "am"],
-   "decimals": 1,
-   "kind": "slider",
-   "label": "Threshold",
-   "max": 0.0,
-   "min": -12.0,
-   "step": 0.1,
-   "unit": " dB"
-  },
   "hf_clipper_drive": {
    "decimals": 2,
    "kind": "slider",
@@ -1187,6 +1156,71 @@
    "label": "Threshold",
    "max": 0.0,
    "min": -12.0,
+   "step": 0.1,
+   "unit": " dB"
+  },
+  "hf_limiter_attack_ms": {
+   "decimals": 2,
+   "kind": "slider",
+   "label": "Attack",
+   "max": 20.0,
+   "min": 0.2,
+   "modes": [
+    "mpx",
+    "fm",
+    "am"
+   ],
+   "step": 0.05,
+   "unit": " ms"
+  },
+  "hf_limiter_enabled": {
+   "kind": "toggle",
+   "label": "HF Limiter",
+   "modes": [
+    "mpx",
+    "fm",
+    "am"
+   ]
+  },
+  "hf_limiter_max_reduction_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Max Reduction",
+   "max": 24.0,
+   "min": 1.0,
+   "modes": [
+    "mpx",
+    "fm",
+    "am"
+   ],
+   "step": 0.5,
+   "unit": " dB"
+  },
+  "hf_limiter_release_ms": {
+   "decimals": 0,
+   "kind": "slider",
+   "label": "Release",
+   "max": 500.0,
+   "min": 5.0,
+   "modes": [
+    "mpx",
+    "fm",
+    "am"
+   ],
+   "step": 1,
+   "unit": " ms"
+  },
+  "hf_limiter_threshold_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Threshold",
+   "max": 0.0,
+   "min": -12.0,
+   "modes": [
+    "mpx",
+    "fm",
+    "am"
+   ],
    "step": 0.1,
    "unit": " dB"
   },
@@ -1265,28 +1299,49 @@
    "label": "Append CR"
   },
   "monitor_enabled": {
-   "modes": [
-    "mpx"
-   ],
    "kind": "toggle",
    "label": "Monitor Output"
   },
-  "mono_bass_enabled": { "modes": ["mpx", "fm", "hd"],
-   "kind": "toggle",
-   "label": "Mono Bass"
+  "monitor_gain_db": {
+   "decimals": 1,
+   "kind": "slider",
+   "label": "Monitor Level",
+   "max": 6.0,
+   "min": -40.0,
+   "step": 0.5,
+   "unit": " dB"
   },
-  "mono_bass_freq_hz": { "modes": ["mpx", "fm", "hd"],
+  "mono_bass_enabled": {
+   "kind": "toggle",
+   "label": "Mono Bass",
+   "modes": [
+    "mpx",
+    "fm",
+    "hd"
+   ]
+  },
+  "mono_bass_freq_hz": {
    "decimals": 0,
    "kind": "slider",
    "label": "Mono Bass Below",
    "max": 250.0,
    "min": 60.0,
+   "modes": [
+    "mpx",
+    "fm",
+    "hd"
+   ],
    "step": 1,
    "unit": " Hz"
   },
-  "mono_mode": { "modes": ["mpx", "fm", "hd"],
+  "mono_mode": {
    "kind": "toggle",
-   "label": "Mono Mode"
+   "label": "Mono Mode",
+   "modes": [
+    "mpx",
+    "fm",
+    "hd"
+   ]
   },
   "mpx_clipper_cancel_audio": {
    "kind": "toggle",
@@ -1299,15 +1354,6 @@
   "mpx_clipper_cancel_rds": {
    "kind": "toggle",
    "label": "Protect RDS"
-  },
-  "mpx_clipper_stereo_guard": {
-   "decimals": 2,
-   "kind": "slider",
-   "label": "Protect Stereo Subcarrier",
-   "max": 1.0,
-   "min": 0.0,
-   "step": 0.05,
-   "unit": ""
   },
   "mpx_clipper_ceiling_db": {
    "decimals": 1,
@@ -1348,6 +1394,15 @@
      "32x"
     ]
    ]
+  },
+  "mpx_clipper_stereo_guard": {
+   "decimals": 2,
+   "kind": "slider",
+   "label": "Protect Stereo Subcarrier",
+   "max": 1.0,
+   "min": 0.0,
+   "step": 0.05,
+   "unit": ""
   },
   "mpx_clipper_threshold_db": {
    "decimals": 1,
@@ -1490,12 +1545,17 @@
    "step": 0.1,
    "unit": " dB"
   },
-  "multiband_link_strength": { "modes": ["mpx", "fm", "hd"],
+  "multiband_link_strength": {
    "decimals": 2,
    "kind": "slider",
    "label": "Link",
    "max": 1.0,
    "min": 0.0,
+   "modes": [
+    "mpx",
+    "fm",
+    "hd"
+   ],
    "step": 0.01,
    "unit": ""
   },
@@ -1672,6 +1732,28 @@
    "min": 0.2,
    "step": 0.1,
    "unit": " s"
+  },
+  "operating_mode": {
+   "kind": "seg",
+   "label": "Operating Mode",
+   "options": [
+    [
+     "mpx",
+     "MPX Output"
+    ],
+    [
+     "fm",
+     "FM Output"
+    ],
+    [
+     "hd",
+     "HD Output"
+    ],
+    [
+     "am",
+     "AM Output"
+    ]
+   ]
   },
   "output_gain_db": {
    "decimals": 1,
@@ -1889,12 +1971,12 @@
    "unit": ""
   },
   "preemphasis_us": {
+   "kind": "seg",
+   "label": "Pre-emphasis",
    "modes": [
     "mpx",
     "fm"
    ],
-   "kind": "seg",
-   "label": "Pre-emphasis",
    "options": [
     [
      "0",
@@ -1973,57 +2055,35 @@
    "label": "Subharmonics"
   },
   "processed_audio_ceiling_dbtp": {
-   "modes": [
-    "hd"
-   ],
    "decimals": 1,
    "kind": "slider",
    "label": "True-peak Ceiling",
    "max": 0.0,
    "min": -6.0,
+   "modes": [
+    "hd"
+   ],
    "step": 0.1,
    "unit": " dBTP"
   },
   "processed_audio_coder_has_clipper": {
+   "kind": "toggle",
+   "label": "External coder has its own clipper",
    "modes": [
     "fm"
-   ],
-   "kind": "toggle",
-   "label": "External coder has its own clipper"
+   ]
   },
   "processed_audio_final_clip_drive_db": {
-   "modes": [
-    "fm"
-   ],
    "decimals": 1,
    "kind": "slider",
    "label": "Final Clip Drive",
    "max": 12.0,
    "min": 0.0,
+   "modes": [
+    "fm"
+   ],
    "step": 0.1,
    "unit": " dB"
-  },
-  "operating_mode": {
-   "kind": "seg",
-   "label": "Operating Mode",
-   "options": [
-    [
-     "mpx",
-     "MPX Output"
-    ],
-    [
-     "fm",
-     "FM Output"
-    ],
-    [
-     "hd",
-     "HD Output"
-    ],
-    [
-     "am",
-     "AM Output"
-    ]
-   ]
   },
   "processing_bypass": {
    "kind": "toggle",

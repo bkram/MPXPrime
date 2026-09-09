@@ -168,9 +168,12 @@ depends on which you use:
 
   See the [Operator Guide](docs/studio-operator-guide.md#operating-modes).
 
-A separate, optional **Decoded Monitor** output (any sample rate) demodulates the
-internal composite back to L/R for headphone monitoring on a second device -- a
-listening aid, not the on-air signal.
+A separate, optional **Monitor** output (any sample rate) plays what you are
+putting out on a SECOND device, alongside the transmitter feed, in every mode:
+the composite demodulated like a receiver in MPX Output, and the processed
+programme (with any pre-emphasis taken back out) in the others. It lets you
+listen without tuning a receiver to your own transmitter -- a listening aid,
+not the on-air signal.
 
 ## Requirements
 

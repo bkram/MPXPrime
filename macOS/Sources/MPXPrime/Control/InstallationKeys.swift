@@ -24,7 +24,7 @@ extension AppConfig {
             "input_device_uid", "output_device_uid", "monitor_device_uid",
             "input_device_name", "output_device_name", "monitor_device_name",
             "sample_rate", "blocksize",
-            "operating_mode", "monitor_enabled"
+            "operating_mode", "monitor_enabled", "monitor_gain_db"
         ],
         "MPX": [
             "input_gain_db", "output_gain_db", "mpx_line_output_dbfs", "processed_audio_ceiling_dbtp"

@@ -62,11 +62,11 @@ final class MeterAudioEngine: @unchecked Sendable {
     // feeding an exciter or a hardware analyzer). Independent of the decoded
     // monitor. The flag is read on the analysis thread.
     private let mpxRing: StereoInputRingBuffer
-    private var mpxMonitor: MeterMonitor?
+    private var mpxMonitor: RingBufferPlayer?
     private let mpxPassOn = ManagedAtomic<Bool>(false)
     private var mpxOutDeviceID: AudioDeviceID?
     private var mpxOutPriorRate: Double?
-    private var monitor: MeterMonitor?
+    private var monitor: RingBufferPlayer?
 
     // WAV capture. `wavURL` is the CLI's record-on-start path (decoded stereo);
     // the GUI starts/stops dynamically via startRecording/stopRecording. The
@@ -208,7 +208,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
 
         if monitorEnabled {
-            let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
+            let mon = RingBufferPlayer(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
             try mon.start(outputDeviceID: monitorDeviceID)
             monitor = mon
         }
@@ -299,7 +299,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         // level into an analyzer/exciter -- at +6 dB, deviation above
         // 150/2 = 75 kHz clips the DAC, so keep a little headroom.
         let gain = Float(pow(10.0, gainDB / 20.0))
-        let mon = MeterMonitor(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
+        let mon = RingBufferPlayer(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
         do {
             try mon.start(outputDeviceID: deviceID)
             mpxMonitor = mon
@@ -324,7 +324,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         monitor?.stop()
         monitor = nil
         guard monitorEnabled else { return nil }
-        let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
+        let mon = RingBufferPlayer(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
         do {
             try mon.start(outputDeviceID: deviceID)
             monitor = mon

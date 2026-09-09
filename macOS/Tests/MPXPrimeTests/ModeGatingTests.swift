@@ -13,13 +13,58 @@ struct ModeGatingTests {
     // MARK: - The table itself
 
     @Test func compositeOnlyFeaturesExistOnlyInMPX() {
-        for feature in [ChainFeature.stereoCoder, .compositeClipper, .bs412, .finalStage,
-                        .rds, .monitorPath] {
+        for feature in [ChainFeature.stereoCoder, .compositeClipper, .bs412, .finalStage, .rds] {
             #expect(feature.applies(in: .mpx), "\(feature) must exist in MPX Output")
             for mode in [AppConfig.OperatingMode.fm, .hd, .am] {
                 #expect(!feature.applies(in: mode),
                         "\(feature) has no composite to act on in \(mode.title)")
             }
+        }
+    }
+
+    @Test func aPreZeroFiftyMonitorConfigDoesNotStartAnythingUnannounced() throws {
+        // Before 0.50, `monitor_enabled = True` meant the monitor REPLACED the
+        // transmitter feed: the output device sat idle. It now means a second
+        // device plays as well -- so inheriting the flag silently would start a
+        // composite on an output that used to be quiet. An INI written before
+        // the change has no `monitor_gain_db`, and that is the marker.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mpxprime-monitor-migration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("legacy.ini").path
+        try """
+        [INTERFACES]
+        operating_mode = mpx
+        monitor_enabled = True
+        monitor_device_uid = speakers
+        """.write(toFile: path, atomically: true, encoding: .utf8)
+
+        let legacy = try AppConfig.load(fromINI: path)
+        #expect(!legacy.monitorEnabled, "a pre-0.50 monitor config switched itself on")
+        #expect(legacy.monitorLegacyModeReset, "the operator is not told why it is off")
+        #expect(legacy.monitorDeviceUID == "speakers", "the device choice must survive")
+
+        // A config written by this version carries the level, so it is taken
+        // at face value.
+        try """
+        [INTERFACES]
+        operating_mode = mpx
+        monitor_enabled = True
+        monitor_gain_db = -6.0
+        """.write(toFile: path, atomically: true, encoding: .utf8)
+        let current = try AppConfig.load(fromINI: path)
+        #expect(current.monitorEnabled)
+        #expect(!current.monitorLegacyModeReset)
+    }
+
+    @Test func theMonitorExistsInEveryMode() {
+        // Listening is not a property of the output shape. The operator asked
+        // for exactly this: hear the programme without tuning a receiver to
+        // the transmitter, whatever the box is feeding.
+        for mode in AppConfig.OperatingMode.allCases {
+            #expect(ChainFeature.monitorPath.applies(in: mode),
+                    "no monitor in \(mode.title)")
         }
     }
 

@@ -258,6 +258,16 @@ final class AudioOutputEngine {
     private var preMPXSampleRate: Double = 0.0
     private var monitorMPXLeftScratch: [Float] = []
     private var monitorMPXRightScratch: [Float] = []
+    /// The concurrent listening output: its own device, its own engine, fed by
+    /// a lock-free ring this engine writes one block at a time. The
+    /// transmitter feed never depends on it.
+    /// The config the engine started with. Kept whole for the monitor, which
+    /// needs the OPERATING mode (fm / hd / am all arrive here as
+    /// `.processedAudio`) and the pre-emphasis the chain actually applied.
+    private let startConfig: AppConfig
+    private let monitorOutput = MonitorOutput()
+    private var monitorConditioner = MonitorConditioner()
+    private var monitorRing: StereoInputRingBuffer?
     private var postAGCLeftScratch: [Float] = []
     private var postAGCRightScratch: [Float] = []
     private var preMPXLeftScratch: [Float] = []
@@ -284,6 +294,7 @@ final class AudioOutputEngine {
         outputMode: AudioOutputMode = .mpxComposite
     ) {
         self.generator = generator
+        self.startConfig = config
         self.useInputSource = config.sourceMode.lowercased() == "input"
         self.requestedSampleRate = config.sampleRate
         self.requestedBlockSize = config.blockSize
@@ -303,8 +314,78 @@ final class AudioOutputEngine {
         self.multibandFIREnabled = config.multibandFIREnabled
     }
 
+    /// Bring up the listening output for this run. Never fails the start: a
+    /// monitor that cannot run is a note in the status line, not an
+    /// interruption of the air chain.
+    private func startMonitorOutput(renderRate: Double) {
+        guard outputMode != .monitorAudio else { return }
+        let ring = monitorOutput.prepare(sampleRate: renderRate, blockFrames: requestedBlockSize)
+        monitorRing = ring
+        monitorConditioner.configure(
+            shape: MonitorConditioner.shape(for: startConfig.operatingMode, config: startConfig),
+            sampleRate: Float(renderRate),
+            gainDB: startConfig.monitorGainDB)
+        monitorConditioner.reset()
+        monitorOutput.reconcile(
+            enabled: startConfig.monitorEnabled,
+            monitorUID: startConfig.monitorDeviceUID,
+            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID())
+        if let note = monitorOutput.note, startConfig.monitorEnabled {
+            appendRoutingNote(note)
+        }
+    }
+
+    /// Live-apply the monitor: level, device, on/off. Never restarts the
+    /// transmitter -- swapping the monitor device stops only its player.
+    func applyMonitorSettings(_ config: AppConfig) {
+        guard outputMode != .monitorAudio else { return }
+        monitorConditioner.gainLinear = powf(10.0, Float(config.monitorGainDB) / 20.0)
+        monitorOutput.reconcile(
+            enabled: config.monitorEnabled,
+            monitorUID: config.monitorDeviceUID,
+            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID())
+    }
+
+    /// The processed feed (fm / hd / am) is what leaves the output device, so
+    /// the monitor listens to a COPY of it -- conditioned, never touched in
+    /// place, or the transmitter would hear the de-emphasis too.
+    @inline(__always)
+    private func tapProcessedFeedToMonitor(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        monitorMPXLeftScratch.withUnsafeMutableBufferPointer { monL in
+            monitorMPXRightScratch.withUnsafeMutableBufferPointer { monR in
+                guard let ml = monL.baseAddress, let mr = monR.baseAddress else { return }
+                ml.update(from: left, count: frameCount)
+                mr.update(from: right, count: frameCount)
+                writeMonitorBlock(left: ml, right: mr, frameCount: frameCount)
+            }
+        }
+    }
+
+    /// Copy one rendered block into the monitor ring, conditioned for the mode.
+    /// `left`/`right` already hold what the operator should hear (decoded audio
+    /// in composite mode, the processed feed otherwise).
+    @inline(__always)
+    private func writeMonitorBlock(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        monitorConditioner.process(left: left, right: right, frameCount: frameCount)
+        monitorRing?.write(left: left, right: right, frameCount: frameCount)
+    }
+
     private let encoderFIREnabled: Bool
     private let multibandFIREnabled: Bool
+
+    /// Is the operator's listening output actually playing?
+    var monitorActive: Bool { monitorOutput.isRunning }
+    var monitorActiveForControl: Bool { monitorOutput.isRunning }
+    /// Why it is not, when it is not.
+    var monitorNote: String? { monitorOutput.note }
 
     func start() throws {
         isShuttingDown = false
@@ -355,6 +436,7 @@ final class AudioOutputEngine {
         generator.setMultibandFIREnabled(outputMode != .monitorAudio && multibandFIREnabled)
         configureScopeHistory(renderRate: renderRate, inputRate: configuredInputSampleRate)
         preAllocateBuffers(maxFrames: Int(max(renderRate, 192000.0) * 0.1))
+        startMonitorOutput(renderRate: renderRate)
 
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -444,6 +526,8 @@ final class AudioOutputEngine {
                     if missing >= frames || (missing > 0 && bufferedAfterRead <= rePrimeThreshold) {
                         self.inputPrimed = false
                     }
+                    let monitorOn = self.monitorOutput.isRunning
+                    if monitorOn { self.ensureMonitorScratchCapacity(frames: frames) }
                     self.withOptionalAnalysisBuffers(frames: frames, enabled: needsAnalysisBuffers) { analysis in
                         if self.outputMode == .processedAudio {
                             self.generator.renderAudioOnlyFromInputInPlace(
@@ -452,6 +536,7 @@ final class AudioOutputEngine {
                                 right: rightData,
                                 analysis: analysis
                             )
+                            if monitorOn { self.tapProcessedFeedToMonitor(left: leftData, right: rightData, frameCount: frames) }
                             if throttled {
                                 self.updateThrottledRenderAnalysis(
                                     outputLeft: leftData,
@@ -511,6 +596,35 @@ final class AudioOutputEngine {
                                     }
                                 }
                             }
+                        } else if monitorOn, self.outputMode == .mpxComposite {
+                            // Composite to the transmitter AND the decoded
+                            // audio to the monitor, in one pass. The decode
+                            // cannot move the composite.
+                            self.monitorMPXLeftScratch.withUnsafeMutableBufferPointer { monL in
+                                self.monitorMPXRightScratch.withUnsafeMutableBufferPointer { monR in
+                                    guard let ml = monL.baseAddress, let mr = monR.baseAddress else { return }
+                                    self.generator.renderFromInputInPlace(
+                                        frameCount: frames,
+                                        left: leftData,
+                                        right: rightData,
+                                        analysis: analysis,
+                                        monitorLeft: ml,
+                                        monitorRight: mr
+                                    )
+                                    self.writeMonitorBlock(left: ml, right: mr, frameCount: frames)
+                                }
+                            }
+                            if throttled {
+                                self.updateThrottledRenderAnalysis(
+                                    outputLeft: leftData,
+                                    outputRight: rightData,
+                                    frameCount: frames,
+                                    analysis: analysis,
+                                    captureOutputImageMetrics: captureOutputImageMetrics,
+                                    captureOutputHistory: captureOutputHistory,
+                                    capturePreMPXHistory: capturePreMPXHistory
+                                )
+                            }
                         } else {
                             self.generator.renderFromInputInPlace(
                                 frameCount: frames,
@@ -536,6 +650,8 @@ final class AudioOutputEngine {
                             left: leftData, right: rightData, frameCount: frames)
                     }
                 } else {
+                    let monitorOn = self.monitorOutput.isRunning
+                    if monitorOn { self.ensureMonitorScratchCapacity(frames: frames) }
                     self.withOptionalAnalysisBuffers(frames: frames, enabled: needsAnalysisBuffers) { analysis in
                         if self.outputMode == .processedAudio {
                             self.generator.renderAudioOnlyToneNonInterleaved(
@@ -544,6 +660,7 @@ final class AudioOutputEngine {
                                 right: rightData,
                                 analysis: analysis
                             )
+                            if monitorOn { self.tapProcessedFeedToMonitor(left: leftData, right: rightData, frameCount: frames) }
                             if throttled {
                                 self.updateThrottledRenderAnalysis(
                                     outputLeft: leftData,
@@ -602,6 +719,32 @@ final class AudioOutputEngine {
                                         }
                                     }
                                 }
+                            }
+                        } else if monitorOn, self.outputMode == .mpxComposite {
+                            self.monitorMPXLeftScratch.withUnsafeMutableBufferPointer { monL in
+                                self.monitorMPXRightScratch.withUnsafeMutableBufferPointer { monR in
+                                    guard let ml = monL.baseAddress, let mr = monR.baseAddress else { return }
+                                    self.generator.renderNonInterleaved(
+                                        frameCount: frames,
+                                        left: leftData,
+                                        right: rightData,
+                                        analysis: analysis,
+                                        monitorLeft: ml,
+                                        monitorRight: mr
+                                    )
+                                    self.writeMonitorBlock(left: ml, right: mr, frameCount: frames)
+                                }
+                            }
+                            if throttled {
+                                self.updateThrottledRenderAnalysis(
+                                    outputLeft: leftData,
+                                    outputRight: rightData,
+                                    frameCount: frames,
+                                    analysis: analysis,
+                                    captureOutputImageMetrics: captureOutputImageMetrics,
+                                    captureOutputHistory: captureOutputHistory,
+                                    capturePreMPXHistory: capturePreMPXHistory
+                                )
                             }
                         } else {
                             self.generator.renderNonInterleaved(
@@ -673,6 +816,10 @@ final class AudioOutputEngine {
         // next run's first few frames.
         isShuttingDown = true
         meteringEnabled = false
+        // The monitor goes first: its player holds the ring this engine's
+        // render callback writes into.
+        monitorOutput.shutdown()
+        monitorRing = nil
         inputRing = nil
         engine.stop()
         engine.reset()
@@ -1221,6 +1368,11 @@ final class AudioOutputEngine {
     }
 
     func applyRuntimeConfig(_ config: AppConfig) {
+        // The monitor first, and OUTSIDE the equality early-return below: its
+        // settings are not part of the DSP runtime config, and starting or
+        // stopping a second audio device is caller-thread work, never render
+        // work. The transmitter engine is untouched either way.
+        applyMonitorSettings(config)
         let runtime = MPXGenerator.makeRuntimeConfig(from: config)
         runtimeConfigLock.lock()
         if lastQueuedRuntimeConfig == runtime {

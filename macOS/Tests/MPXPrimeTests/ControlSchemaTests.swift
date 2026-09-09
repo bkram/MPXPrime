@@ -189,8 +189,13 @@ struct ControlSchemaTests {
             "hf_limiter_release_ms": .hfLimiter,
             "hf_limiter_max_reduction_db": .hfLimiter
         ]
+        let everyMode = AppConfig.OperatingMode.allCases.map(\.rawValue)
         for (key, feature) in expected {
-            let modes = schema.widgets[key]?["modes"] as? [String] ?? []
+            // An ABSENT `modes` list means "every mode" to the page, so that is
+            // what a feature applying everywhere must look like -- spelling all
+            // four out would be the same thing, but the page would then have to
+            // be edited whenever a mode is added.
+            let modes = schema.widgets[key]?["modes"] as? [String] ?? everyMode
             #expect(modes == feature.modes,
                     "widget \(key) is gated to \(modes) but \(feature) applies in \(feature.modes)")
         }

@@ -616,6 +616,22 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// Persist a monitor change and apply it LIVE.
+    ///
+    /// The monitor is a second output device with its own engine, so turning
+    /// it on, moving it or levelling it must never mark the transmitter as
+    /// needing a restart -- `persistBasicConfig` would, because it treats a
+    /// device change as restart-class (and for the TX device it is).
+    func persistMonitorSettings() {
+        config.monitorEnabled = monitorEnabled
+        config.monitorDeviceUID = selectedMonitorUID.isEmpty ? nil : selectedMonitorUID
+        if let d = outputDevices.first(where: { $0.uid == selectedMonitorUID }) {
+            config.monitorDeviceName = d.name
+        }
+        saveConfig(restartRequired: false)
+        applyLiveRuntimeConfigIfRunning()
+    }
+
     func persistBasicConfig() {
         let oldInputUID = config.inputDeviceUID
         let oldOutputUID = config.outputDeviceUID
@@ -1569,7 +1585,8 @@ final class MPXPrimeViewModel: ObservableObject {
             },
             restartPending: runtimeApplyPending,
             sourceMode: config.sourceMode,
-            outputMode: config.resolvedOutputMode(allowMonitor: true).statusString,
+            outputMode: config.operatingMode.rawValue,
+            monitorActive: runningEngine?.monitorActiveForControl ?? false,
             notes: statusText.isEmpty ? [] : [statusText]
         )
     }
@@ -1777,19 +1794,14 @@ final class MPXPrimeViewModel: ObservableObject {
             return inputDevices.first(where: { $0.uid == selectedInputUID })?.id
         }()
 
-        // Processed-audio output takes precedence over the decoded-MPX monitor
-        // (the monitor is meaningless when no composite is generated). It uses the
-        // main output device, not the monitor device. persistBasicConfig() ran
-        // above, so runConfig carries the synced monitor/processed booleans.
-        let resolved = runConfig.resolvedOutputMode(allowMonitor: true)
-        let useMonitor = resolved == .monitor
-        let selectedOutUID = useMonitor ? selectedMonitorUID : selectedOutputUID
+        // The transmitter feed always goes to the OUTPUT device. The monitor is
+        // a second device the engine drives alongside it (see MonitorOutput), so
+        // enabling it no longer diverts what is on air -- which is exactly what
+        // the pre-0.50 monitor MODE did.
+        let selectedOutUID = selectedOutputUID
         let outputID: AudioDeviceID? = outputDevices.first(where: { $0.uid == selectedOutUID })?.id
-        let outputMode: AudioOutputMode
-        switch resolved {
-        case .monitor: outputMode = .monitorAudio
-        case .output(let mode): outputMode = mode.isAudioOutput ? .processedAudio : .mpxComposite
-        }
+        let outputMode: AudioOutputMode =
+            runConfig.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite
 
         // REFUSE to start when a PREFERRED device is unplugged, instead of
         // silently streaming to whatever the OS default happens to be (a
@@ -1803,11 +1815,7 @@ final class MPXPrimeViewModel: ObservableObject {
             missingAtStart.append("input \"\(config.inputDeviceName ?? selectedInputUID)\"")
         }
         if !selectedOutUID.isEmpty, outputID == nil {
-            let roleName = useMonitor ? "monitor" : "output"
-            let name = useMonitor
-                ? (config.monitorDeviceName ?? selectedOutUID)
-                : (config.outputDeviceName ?? selectedOutUID)
-            missingAtStart.append("\(roleName) \"\(name)\"")
+            missingAtStart.append("output \"\(config.outputDeviceName ?? selectedOutUID)\"")
         }
         if !missingAtStart.isEmpty {
             let list = missingAtStart.joined(separator: ", ")
@@ -1858,9 +1866,10 @@ final class MPXPrimeViewModel: ObservableObject {
             }
             activeRuntimeSnapshot = captureRuntimeSnapshot()
             engineStartReference = Date().timeIntervalSinceReferenceDate
-            let mode = useMonitor ? "monitor" : runConfig.operatingMode.rawValue
+            let mode = runConfig.operatingMode.rawValue
             var line =
-                "Running source=\(runConfig.sourceMode) mode=\(mode) "
+                "Running source=\(runConfig.sourceMode) mode=\(mode)"
+                + (engine.monitorActive ? " +monitor" : "") + " "
                 + "render=\(Int(engine.renderSampleRate))Hz hw=\(Int(engine.hardwareSampleRate))Hz"
             if let note = engine.deviceRoutingNote {
                 line += " (\(note))"

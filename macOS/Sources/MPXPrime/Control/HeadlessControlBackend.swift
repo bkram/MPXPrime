@@ -69,7 +69,8 @@ actor HeadlessControlBackend: ControlBackend {
             uptimeSeconds: startedAt.map { Date().timeIntervalSince($0) },
             restartPending: restartPending,
             sourceMode: config.sourceMode,
-            outputMode: config.resolvedOutputMode(allowMonitor: false).statusString,
+            outputMode: config.operatingMode.rawValue,
+            monitorActive: engine?.monitorActiveForControl ?? false,
             notes: notes
         )
     }

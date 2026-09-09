@@ -22,10 +22,8 @@ struct AudioIOTab: View {
                 Card(title: "Output") {
                     AudioIOOutputCardContent(model: model)
                 }
-                if !model.processedAudioOutputActive {
-                    Card(title: "Monitor (Decoded MPX Simulation)") {
-                        AudioIOMonitorCardContent(model: model)
-                    }
+                Card(title: "Monitor") {
+                    AudioIOMonitorCardContent(model: model)
                 }
                 Card(title: "Engine") {
                     AudioIOEngineCardContent(model: model)
@@ -84,19 +82,6 @@ struct OperatingModeCardContent: View {
         Text(mode.subtitle)
             .font(.caption)
             .foregroundStyle(.secondary)
-
-        if ChainFeature.monitorPath.applies(in: mode) {
-            Toggle("Monitor: decode the composite back to audio",
-                   isOn: Binding(
-                    get: { model.monitorEnabled },
-                    set: { model.monitorEnabled = $0; model.persistBasicConfig() }))
-                .help("Auditioning switch, not an output shape: the transmitter feed is REPLACED by decoded audio on the monitor device, so you hear what an FM receiver would. Not for being on air.")
-            if model.monitorEnabled {
-                Text("The transmitter feed is REPLACED by decoded audio on the monitor device \u{2014} this mode is for auditioning the FM sound without a transmitter, not for being on air.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
 
         if ChainFeature.digitalCeiling.applies(in: mode) {
             Divider()
@@ -297,17 +282,41 @@ struct AudioIOOutputCardContent: View {
     }
 }
 
+/// The operator's listening output: a SECOND device, playing alongside the
+/// transmitter feed, in every operating mode. What it plays is conditioned to
+/// sound like the receiving end (`MonitorConditioner`), so it is a reference
+/// for the ear, never the signal on air.
 struct AudioIOMonitorCardContent: View {
     @ObservedObject var model: MPXPrimeViewModel
 
+    /// What the operator will hear in the current mode.
+    private var monitorDescription: String {
+        switch model.config.operatingMode {
+        case .mpx:
+            return "Plays the composite decoded back to audio, the way an FM receiver would -- pilot, stereo and de-emphasis included."
+        case .fm:
+            return model.config.preemphasisUS > 0
+                ? "Plays the processed feed with the pre-emphasis taken back out, so it sounds like the receiver end rather than the wire."
+                : "Plays the processed feed as it leaves the output."
+        case .hd:
+            return "Plays the processed feed as it leaves the output -- flat, full bandwidth, the way the encoder receives it."
+        case .am:
+            return "Plays the mono AM feed with the NRSC pre-emphasis taken back out, the way an AM receiver plays it."
+        }
+    }
+
     var body: some View {
+        Toggle("Monitor Output", isOn: Binding(
+            get: { model.monitorEnabled },
+            set: { model.monitorEnabled = $0; model.persistMonitorSettings() }))
+            .help("A separate listening output on its own device. It runs ALONGSIDE the transmitter feed -- turning it on never interrupts what is on air.")
         Picker(
             "Monitor Output Device",
             selection: Binding(
                 get: { model.selectedMonitorUID },
                 set: {
                     model.selectedMonitorUID = $0
-                    model.persistBasicConfig()
+                    model.persistMonitorSettings()
                 }
             )
         ) {
@@ -320,7 +329,19 @@ struct AudioIOMonitorCardContent: View {
             }
         }
         .pickerStyle(.menu)
-        Text("Used when the operating mode is Monitor: the composite is decoded back to audio on this device.")
+        .disabled(!model.monitorEnabled)
+        DoubleSliderRow(
+            title: "Monitor Level",
+            value: model.configBinding(\.monitorGainDB, runtimeDisposition: .live),
+            range: -40...6,
+            format: "%.1f dB",
+            tooltip: "Headphone / speaker level for the monitor only. It cannot change what is transmitted."
+        )
+        .disabled(!model.monitorEnabled)
+        Text(monitorDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        Text("A listening aid, a few tens of milliseconds behind the output, and never the on-air signal. Pick a device that is not the transmitter output.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }

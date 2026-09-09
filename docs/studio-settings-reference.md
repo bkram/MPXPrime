@@ -110,6 +110,27 @@ A pre-0.50 INI carrying `processed_audio_output` / `processed_audio_target` is
 migrated on load and rewritten to `operating_mode` on the next save. The REST
 API still accepts both old keys and resolves them onto the mode, in any order.
 
+### Monitor output
+
+The Monitor is a SECOND output device that plays what the box is putting out,
+running alongside the transmitter feed in every operating mode. See the
+Operator Guide for what it plays per mode.
+
+- `monitor_enabled` (`[INTERFACES]`, default `False`, live-apply): start or
+  stop it. Never interrupts the transmitter feed.
+- `monitor_device_uid` (`[INTERFACES]`, live-apply): which device it plays on.
+  Empty means the Monitor stays off -- it deliberately does NOT fall back to
+  the system default, because that default may be the transmitter output. It
+  also refuses to run on the same device as the MPX output.
+- `monitor_gain_db` (`[INTERFACES]`, default `0.0`, range -40..+6, live-apply):
+  its level. Affects nothing on air; boosts above 0 dB are clamped so a hot
+  monitor cannot fold over in the converter.
+
+All three apply live, including moving the Monitor to another device: only its
+own player restarts. The keys are remembered with the installation, so a
+snapshot never carries someone else's monitor rig. Linux ignores them (a
+second ALSA playback device is not implemented).
+
 ### AM output shaping
 
 Read only when `operating_mode = am`:

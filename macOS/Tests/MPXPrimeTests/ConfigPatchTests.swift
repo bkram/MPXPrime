@@ -81,6 +81,41 @@ struct ConfigPatchTests {
         #expect(plusThree.mpxLineOutputDBFS == 0.0)
     }
 
+    @Test func monitorKeysApplyLive() throws {
+        // Starting, moving or levelling the operator's listening output must
+        // never ask for a restart: the transmitter feed is a separate engine
+        // and has to keep running while the operator plugs in headphones.
+        var cfg = AppConfig()
+        cfg.monitorEnabled = false
+        cfg.monitorDeviceUID = "old-device"
+        cfg.monitorGainDB = 0
+
+        let (patched, outcomes, planes) = try ConfigPatch.apply([
+            "monitor_enabled": "True",
+            "monitor_device_uid": "headphones",
+            "monitor_gain_db": "-8.5"
+        ], to: cfg)
+        for outcome in outcomes {
+            #expect(outcome.disposition == .live,
+                    "\(outcome.key) reported \(outcome.disposition), not live")
+        }
+        #expect(!planes.restartRequired, "a monitor change asked for a restart")
+        #expect(patched.monitorEnabled)
+        #expect(patched.monitorDeviceUID == "headphones")
+        #expect(abs(patched.monitorGainDB + 8.5) < 0.001)
+    }
+
+    @Test func monitorGainIsClamped() throws {
+        // Enough attenuation for a sensitive headphone amp; only a little
+        // boost, because the feed is already near full scale.
+        var cfg = AppConfig()
+        let (loud, _, _) = try ConfigPatch.apply(["monitor_gain_db": "40"], to: cfg)
+        #expect(loud.monitorGainDB == 6.0, "got \(loud.monitorGainDB)")
+        cfg.monitorGainDB = 0
+        let (quiet, _, _) = try ConfigPatch.apply(["monitor_gain_db": "-99"], to: cfg)
+        #expect(quiet.monitorGainDB == -40.0, "got \(quiet.monitorGainDB)")
+    }
+
     @Test func deliveryTargetClassifiesRestartAndCeilingLive() throws {
         // The digital delivery target changes filtering and the make-up, so it
         // is restart-class like the operating mode; the true-peak ceiling only

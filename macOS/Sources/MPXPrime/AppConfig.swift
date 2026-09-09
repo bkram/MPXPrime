@@ -126,6 +126,14 @@ struct AppConfig: Equatable {
     var outputDeviceName: String?
     var monitorDeviceName: String?
     var monitorEnabled: Bool = false
+    /// Set by `load` when a pre-0.50 "monitor replaces the output" config was
+    /// turned off on the way in. Runtime-only (never stored); the runtimes read
+    /// it once to tell the operator why their monitor is off.
+    var monitorLegacyModeReset: Bool = false
+    /// Level of the operator's listening output, in dB. Rig-specific (it sets
+    /// headphone loudness, not anything on air), so it is remembered with the
+    /// installation and never carried by a snapshot or a preset.
+    var monitorGainDB: Double = 0.0
 
     /// What the output device carries, as ONE operator choice (0.50). Every
     /// stage's applicability is derived from it through `StageApplicability`,
@@ -209,38 +217,6 @@ struct AppConfig: Equatable {
     var processedAudioOutput: Bool {
         get { operatingMode.isAudioOutput }
         set { operatingMode = newValue ? (operatingMode.isAudioOutput ? operatingMode : .fm) : .mpx }
-    }
-
-    /// The effective output mode including the decoded-MPX monitor, which is
-    /// not a mode of its own: it is a listening switch that only exists under
-    /// `mpx`, and only where the caller has a monitor path (the macOS GUI --
-    /// headless runs and the Linux CLI pass allowMonitor: false).
-    enum ResolvedOutputMode: Equatable {
-        case output(OperatingMode)
-        case monitor
-
-        /// The `/api/status` `outputMode` vocabulary (see the endpoint table in
-        /// docs/studio-settings-reference.md).
-        var statusString: String {
-            switch self {
-            case .output(let mode): return mode.rawValue
-            case .monitor: return "monitor"
-            }
-        }
-
-        /// The mode whose stage applicability applies. The monitor decodes a
-        /// composite, so it is an `mpx` chain.
-        var mode: OperatingMode {
-            switch self {
-            case .output(let mode): return mode
-            case .monitor: return .mpx
-            }
-        }
-    }
-
-    func resolvedOutputMode(allowMonitor: Bool) -> ResolvedOutputMode {
-        if allowMonitor && monitorEnabled && !operatingMode.isAudioOutput { return .monitor }
-        return .output(operatingMode)
     }
 
     var processingBypass: Bool = false
@@ -740,6 +716,18 @@ struct AppConfig: Equatable {
         cfg.outputDeviceName = interfaces.optionalString("output_device_name")
         cfg.monitorDeviceName = interfaces.optionalString("monitor_device_name")
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
+        cfg.monitorGainDB = interfaces.double("monitor_gain_db", defaultValue: cfg.monitorGainDB)
+        // Pre-0.50, `monitor_enabled` meant "REPLACE the transmitter feed with
+        // decoded audio on the monitor device". It now means "play the
+        // programme on the monitor device AS WELL", which is a different thing
+        // to inherit silently: the output device that used to sit idle would
+        // start carrying a composite. An INI written before the change has no
+        // `monitor_gain_db`, and that is the marker -- turn the monitor off and
+        // let the operator switch it back on deliberately.
+        if cfg.monitorEnabled, interfaces["monitor_gain_db"] == nil {
+            cfg.monitorEnabled = false
+            cfg.monitorLegacyModeReset = true
+        }
         // Operating mode. `operating_mode` is the key; a pre-0.50 INI carries
         // the two booleans it replaced and is migrated here (and rewritten on
         // the next save). The legacy pair is only read when the new key is
@@ -1321,6 +1309,10 @@ struct AppConfig: Equatable {
         amPreemphasisUS = amPreemphasisUS == 0 ? 0 : 75
         amLowpassHz = max(3_000.0, min(10_000.0, amLowpassHz))
         amPositivePeakPct = max(100.0, min(125.0, amPositivePeakPct))
+        // Monitor level: enough attenuation to be usable on a sensitive
+        // headphone amp, only a little boost (the feed is already near full
+        // scale, and the conditioner clamps above unity).
+        monitorGainDB = max(-40.0, min(6.0, monitorGainDB))
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
@@ -1645,6 +1637,7 @@ struct AppConfig: Equatable {
             "[INTERFACES]",
             "source_mode = \(sourceMode)",
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
+            "monitor_gain_db = \(Self.formatFloat(monitorGainDB))",
             "operating_mode = \(operatingMode.rawValue)",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             // sample_rate was read but never written (a non-default rate

@@ -30,7 +30,7 @@ Everything in this guide applies to both platforms; where a control is GUI-only,
 | Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (the package enables it on all interfaces behind a generated API key -- see Usage) |
 | Audio backend and device keys | Core Audio; `*_device_uid` keys hold Core Audio UIDs, picked in the app | ALSA; `*_device_uid` keys hold PCM names (`default`, `hw:0,0`, `plughw:...`) |
 | Default config file | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` (source build); `/var/lib/mpxprime/MPXPrime.ini` (Debian package) |
-| Operating modes | MPX / FM / HD / AM Output, plus the decoded Monitor switch (GUI only, not in `--nogui`) | MPX / FM / HD / AM Output (no Monitor) |
+| Operating modes | MPX / FM / HD / AM Output, each with the concurrent Monitor output | MPX / FM / HD / AM Output (no Monitor: a second ALSA device is not implemented) |
 | Companion analyzer / SDR | MPX Prime Meter (Apple Silicon only) | none |
 | Offline gates | all `--verify*` modes, `--bench*`, the live smoke / A/B scripts (need BlackHole) | all `--verify*` modes and `--bench*` except `--verify-program-ab` (needs AVFoundation); no live scripts |
 
@@ -163,7 +163,35 @@ Relevant config sections:
 
 ## The Audio I/O section: devices, operating mode, level calibration
 
-The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented four-way choice, `operating_mode`: MPX Output for a transmitter, FM Output for an external stereo coder, HD Output for streaming or digital radio, AM Output for an AM transmitter -- plus the Monitor switch under MPX Output, which decodes the composite back to speakers so you can audition the FM sound with no transmitter), the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card. **Monitor is GUI-only**: headless runs (`--nogui` / `--web` on macOS, and the whole Linux build) offer all four operating modes, ignore `monitor_enabled = True`, and the ALSA engine has no monitor device.
+The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented four-way choice, `operating_mode`: MPX Output for a transmitter, FM Output for an external stereo coder, HD Output for streaming or digital radio, AM Output for an AM transmitter), the **Monitor** output, the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card.
+
+### Monitor output
+
+The Monitor is a second audio device that plays what you are putting out, so
+you can listen without tuning a receiver to your own transmitter. It runs
+ALONGSIDE the transmitter feed: switching it on, moving it to another device
+or changing its level never interrupts what is on air, and never needs a
+restart. It exists in every operating mode, and what it plays is conditioned
+to sound like the receiving end:
+
+| Mode | What the Monitor plays |
+| --- | --- |
+| MPX Output | the composite demodulated the way an FM receiver does it -- stereo, de-emphasis, pilot and all |
+| FM Output | the processed feed with the pre-emphasis taken back out (or as-is when you left pre-emphasis off) |
+| HD Output | the processed feed as the encoder receives it: flat, full bandwidth |
+| AM Output | the mono feed with the NRSC pre-emphasis taken back out |
+
+`Monitor Level` sets its loudness and cannot change anything on air. Two rules
+protect the transmitter: the Monitor never falls back to the system default
+device (that default may be the transmitter), and it refuses to run on the
+same device as the MPX output. If its device is unplugged it stops and stays
+stopped until that device returns, with a note in the status line -- the
+transmitter feed is untouched throughout. The Monitor is a listening aid, a
+few tens of milliseconds behind the output, and never the signal on air.
+
+Headless macOS runs (`--nogui` / `--web`) support the Monitor exactly as the
+app does. The Linux build does not: a second ALSA playback device is not
+implemented, so `monitor_enabled` is ignored there.
 
 Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound -- and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
 

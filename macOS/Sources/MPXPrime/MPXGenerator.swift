@@ -126,6 +126,14 @@ final class MPXGenerator {
         /// Line output calibration (dBFS at 100% modulation); consumed by
         /// the audio engines at the DAC write, not by the generator.
         let mpxLineOutputDBFS: Float
+        /// The operator's listening output. Consumed by the audio engine (it
+        /// owns the second device), not by the generator -- carried here for
+        /// the same reason as the line output above: it is what makes
+        /// `ConfigPatch` DERIVE a live disposition for these keys instead of
+        /// calling a monitor change restart-class.
+        let monitorEnabled: Bool
+        let monitorDeviceUID: String
+        let monitorGainDB: Float
         /// 19 kHz pilot injection as a fraction of full deviation (0.08 = 8%).
         /// Live-applied as a gain on the pilot oscillator; no restart needed.
         let pilotLevel: Float
@@ -267,6 +275,9 @@ final class MPXGenerator {
             inputGainDB: Float(config.inputGainDB),
             outputGainDB: Float(config.outputGainDB),
             mpxLineOutputDBFS: Float(config.mpxLineOutputDBFS),
+            monitorEnabled: config.monitorEnabled,
+            monitorDeviceUID: config.monitorDeviceUID ?? "",
+            monitorGainDB: Float(config.monitorGainDB),
             pilotLevel: Float(config.pilotLevel),
             finalDriveDB: Float(config.finalDriveDB),
             widebandAGCEnabled: config.widebandAGCEnabled,
@@ -2953,6 +2964,20 @@ final class MPXGenerator {
         right: UnsafeMutablePointer<Float>,
         analysis: AnalysisBuffers = .none
     ) {
+        renderNonInterleaved(
+            frameCount: frameCount, left: left, right: right, analysis: analysis,
+            monitorLeft: nil, monitorRight: nil)
+    }
+
+    /// Tone counterpart of the monitor-aware composite render (see above).
+    func renderNonInterleaved(
+        frameCount: Int,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        analysis: AnalysisBuffers,
+        monitorLeft: UnsafeMutablePointer<Float>?,
+        monitorRight: UnsafeMutablePointer<Float>?
+    ) {
         guard frameCount > 0 else { return }
         for i in 0..<frameCount {
             // Tone source: sine / pink / white via `nextToneRawSample`,
@@ -2983,6 +3008,11 @@ final class MPXGenerator {
             let mpx = detail.mpx
             left[i] = mpx
             right[i] = mpx
+            if let monL = monitorLeft, let monR = monitorRight {
+                let demod = demodulateMonitorFromMPXSample(mpx)
+                monL[i] = demod.0
+                monR[i] = demod.1
+            }
         }
     }
 
@@ -2997,13 +3027,51 @@ final class MPXGenerator {
         right: UnsafeMutablePointer<Float>,
         analysis: AnalysisBuffers = .none
     ) {
+        renderFromInputInPlace(
+            frameCount: frameCount, left: left, right: right, analysis: analysis,
+            monitorLeft: nil, monitorRight: nil)
+    }
+
+    /// Composite render that can ALSO hand back the decoded monitor audio.
+    ///
+    /// The transmitter feed is the composite, exactly as the four-argument
+    /// form produces it; when `monitorLeft`/`monitorRight` are non-nil the
+    /// same pass additionally demodulates each composite sample the way a
+    /// receiver would, so the operator can listen on a second device while
+    /// on air. The decode only reads the encoder's delay-aligned subcarrier
+    /// reference and its own decoder state -- it cannot move the composite,
+    /// which is what keeps the strict baselines valid.
+    ///
+    /// The two loops are selected ONCE per block rather than testing the
+    /// optionals per sample.
+    func renderFromInputInPlace(
+        frameCount: Int,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        analysis: AnalysisBuffers,
+        monitorLeft: UnsafeMutablePointer<Float>?,
+        monitorRight: UnsafeMutablePointer<Float>?
+    ) {
         guard frameCount > 0 else { return }
+        guard let monL = monitorLeft, let monR = monitorRight else {
+            for i in 0..<frameCount {
+                let detail = processSampleDetailed(leftIn: left[i], rightIn: right[i])
+                writeAnalysisSample(index: i, stereo: detail.analysisStereo, analysis: analysis)
+                let mpx = detail.mpx
+                left[i] = mpx
+                right[i] = mpx
+            }
+            return
+        }
         for i in 0..<frameCount {
             let detail = processSampleDetailed(leftIn: left[i], rightIn: right[i])
             writeAnalysisSample(index: i, stereo: detail.analysisStereo, analysis: analysis)
             let mpx = detail.mpx
+            let demod = demodulateMonitorFromMPXSample(mpx)
             left[i] = mpx
             right[i] = mpx
+            monL[i] = demod.0
+            monR[i] = demod.1
         }
     }
 

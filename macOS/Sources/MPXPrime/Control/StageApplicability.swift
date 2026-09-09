@@ -26,7 +26,10 @@ enum ChainFeature: String, CaseIterable, Sendable {
     case finalStage
     /// RDS: the encoder, every RDS control, and the Now Playing metadata poller.
     case rds
-    /// The decoded-MPX monitor (a listening switch, not an output mode).
+    /// The operator's listening output. A second device running alongside the
+    /// transmitter feed, in EVERY mode -- it plays the decoded composite under
+    /// `mpx` and the processed programme (de-emphasised where the chain
+    /// emphasised it) under the audio modes.
     case monitorPath
     /// Pre-emphasis as an operator choice (50 / 75 us).
     case preemphasis
@@ -50,10 +53,15 @@ enum ChainFeature: String, CaseIterable, Sendable {
     /// Does this part of the chain do anything in `mode`?
     func applies(in mode: AppConfig.OperatingMode) -> Bool {
         switch self {
-        case .stereoCoder, .compositeClipper, .bs412, .finalStage, .rds, .monitorPath:
+        case .stereoCoder, .compositeClipper, .bs412, .finalStage, .rds:
             // Everything downstream of stereo encoding exists only where a
             // composite is generated.
             return mode == .mpx
+        case .monitorPath:
+            // Listening is not a property of the output shape: an operator
+            // wants to hear the programme in every mode, without tuning a
+            // receiver to the transmitter.
+            return true
         case .preemphasis:
             // FM and AM both pre-emphasise (AM on the NRSC curve, fixed);
             // a codec must never be fed a pre-emphasised signal.

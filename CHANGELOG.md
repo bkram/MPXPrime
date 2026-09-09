@@ -39,6 +39,24 @@ combination test suite. Newest first.
   use the rest. The same peak guard the HD ceiling uses does it, with separate
   ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
   checked against a modulation monitor on a real AM transmitter.
+- **The Monitor is a second output now, and it works in every mode.** It used
+  to be an output MODE that REPLACED the transmitter feed, so listening meant
+  going off air, and it existed only under MPX Output. It is now a second audio
+  device playing alongside the transmitter feed, in all four modes, so an
+  operator can hear the programme without tuning a receiver to their own
+  transmitter (the operator's request). What it plays is conditioned to sound
+  like the receiving end: the composite demodulated like an FM receiver under
+  MPX Output, and the processed programme with any pre-emphasis taken back out
+  under FM / HD / AM. New `monitor_gain_db` sets its level and can touch
+  nothing on air. Switching it on, moving it to another device and changing its
+  level all apply live -- the transmitter engine is never restarted, and never
+  even told. Three rules protect the air feed, each pinned by a test: it never
+  falls back to the system default (that default may be the transmitter), it
+  refuses to share the transmitter's device, and a disconnected monitor device
+  stops it until that same device returns. The composite is bit-identical
+  whether or not anyone is listening (`MonitorRenderParityTests`), and all five
+  offline gates are zero-drift. macOS only, headless included; the Linux build
+  has no second ALSA device.
 - **Fixed: the MPX line output trim never reached the air on macOS.**
   `mpx_line_output_dbfs` scaled the composite only on the test-tone path: the
   block sat inside the render callback's tone branch, so a live-input

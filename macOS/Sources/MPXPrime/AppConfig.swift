@@ -537,7 +537,7 @@ struct AppConfig: Equatable {
     // On load, the legacy `ps_dynamic` key (if present and the new bank keys
     // are empty) migrates into bank A. The active bank's text is transmitted;
     // selecting an empty bank transmits 8 spaces.
-    var rdsPSA: String = "3s:Stereo- 3s:Fool 3s:MAC 3s:App 3s:FM 3s:MPX 3s:+RDS"
+    var rdsPSA: String = "3s:MPX 3s:Prime 3s:Studio 3s:FM 3s:+RDS"
     var rdsPSB: String = ""
     var rdsPSC: String = ""
     var rdsPSD: String = ""

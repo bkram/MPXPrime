@@ -62,6 +62,13 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **The default PS rotation is the product's own name.** `ps_dynamic`
+  shipped as `3s:Stereo- 3s:Fool 3s:MAC 3s:App 3s:FM 3s:MPX 3s:+RDS`, a
+  leftover from the project's origins; the default (code and sample INI) is
+  now `3s:MPX 3s:Prime 3s:Studio 3s:FM 3s:+RDS`. An existing INI keeps
+  whatever it has. `Verification.ini` keeps the old text on purpose: the RDS
+  bitstream is part of the strict baseline fingerprint, and changing it there
+  measured as drift.
 - **Linux: the DSP picks AVX2 kernels at start-up on CPUs that have them.**
   The shim's hot kernels (the FIR dot product behind `vDSP_dotpr` /
   `vDSP_conv`, and `vvtanhf`) moved from Swift SIMD8 -- which can only be

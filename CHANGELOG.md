@@ -9,7 +9,7 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## Unreleased
+## 0.50 -- 2026-09-10
 
 - **One operating mode with four values, and every stage gated on it.**
   `operating_mode` (`[INTERFACES]`, default `mpx`, restart-class) replaces the
@@ -26,7 +26,7 @@ combination test suite. Newest first.
   option cannot reach the chain. The applicability rules are ONE table
   (`ChainFeature`, `Control/StageApplicability.swift`) read by the engine, the
   GUI sidebar, the dashboard schema and the tests, replacing a per-stage flag
-  in the GUI, a copy of the same list in JavaScript and hand-written
+  in the GUI, a copy of the same list in JavaScript and handwritten
   `if !digital` checks in the Audio I/O tab. Widget-level gating means a
   control with no function in the mode is not rendered at all, in either
   interface.

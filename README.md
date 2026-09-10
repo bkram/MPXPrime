@@ -1,6 +1,6 @@
 # MPX Prime Studio
 
-Version: 0.44
+Version: 0.50
 
 MPX Prime Studio is an FM composite (MPX) generator written in Swift. It takes live audio input or a test tone, applies optional broadcast-style processing, generates stereo FM baseband with pilot and optional RDS, and sends the MPX (plus optional decoded monitor audio) to the sound hardware.
 
@@ -138,7 +138,7 @@ with live-apply where the engine supports it. Localhost needs no
 authentication; any wider bind requires an API key. See the
 [Operator Guide](docs/studio-operator-guide.md#operating-it-from-a-browser).
 
-This is a **MPX Prime Studio (encoder)** feature only -- on both macOS and
+This is an **MPX Prime Studio (encoder)** feature only -- on both macOS and
 Linux. The **MPX Prime Meter has no REST API or web interface** for now;
 it is operated from its own window (or its headless terminal modes).
 

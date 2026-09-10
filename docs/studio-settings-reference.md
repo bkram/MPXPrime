@@ -383,7 +383,7 @@ section. The endpoints below are what the dashboard itself uses.
 | PATCH | `/api/config` | `{"<ini_key>": "<value>", ...}` -- any key from this manual's tables |
 | GET | `/api/schema` | the dashboard's control schema: widget definitions (label/range/unit) + page model for every exposed INI key -- the single source the web UI renders from |
 | GET | `/api/config/defaults` | factory defaults, grouped like `/api/config` -- diff against it for "reset to defaults" |
-| GET | `/api/presets` | available preset ids by kind (primebass / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44; the widener kind left with its stage in 0.50) |
+| GET | `/api/presets` | available preset IDs by kind (primebass / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44; the widener kind left with its stage in 0.50) |
 | GET | `/api/telemetry` | live scope waveforms + MPX spectrum (display-decimated, ~6 KB; `?window_ms=` picks the scope timebase); 503 while stopped or on a platform without a scope tap |
 | GET | `/api/devices` | the machine's audio devices (CoreAudio / ALSA) with the selected input, output, AND monitor slots (`selectedMonitor` + `monitorEnabled` since 0.44) |
 | POST | `/api/nowplaying` | push the current track: `{"artist": ..., "title": ..., "display": ...}` -- feeds the RT / PS / RT+ templates (see "Now-playing push" below) |

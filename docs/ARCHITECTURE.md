@@ -229,6 +229,14 @@ the same device returns. A monitor that cannot start is a routing note, never a
 failed engine start. `monitor_enabled` / `monitor_device_uid` /
 `monitor_gain_db` ride `RuntimeConfig` (like `mpx_line_output_dbfs`: carried
 there, consumed by the engine) so their live disposition stays DERIVED.
+On Linux the DSP's SIMD kernels (the FIR dot product behind `vDSP_dotpr` /
+`vDSP_conv`, and `vvtanhf`) are C with per-CPU clones: an AVX2 variant and
+the SSE2 baseline, selected by the dynamic linker at load time, so the same
+package serves an old Celeron and an AVX2 machine. The clones are
+bit-identical to each other and to the shim's Swift references (same lane
+structure, same reduction order, no FMA), which is why one Linux strict
+baseline covers every CPU; `mpxprime --version` prints which variant runs.
+
 On Linux `ALSAMonitorOutput` plays the same ring on a second ALSA PCM from
 its own thread (`LinuxMonitorRules.decide` carries the same rules over ALSA
 device names). There the division of labour differs from macOS on purpose:

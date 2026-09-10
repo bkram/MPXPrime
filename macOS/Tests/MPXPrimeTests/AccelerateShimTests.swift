@@ -5,6 +5,7 @@ import Testing
 import Accelerate
 #else
 import MPXPrimeAcceleration
+import MPXPrimeNative
 #endif
 
 // Golden-fixture pinning for the MPXPrimeAcceleration shim.
@@ -254,6 +255,109 @@ struct AccelerateShimTests {
             let reference = zip(a, b).reduce(Double(0)) { $0 + Double($1.0) * Double($1.1) }
             #expect(abs(Double(out) - reference) < 1e-4 * max(1.0, abs(reference)),
                     "count \(count): \(out) vs \(reference)")
+        }
+    }
+
+    /// The C kernel (whichever clone this CPU selected) must equal the Swift
+    /// reference BIT FOR BIT: that equality is what keeps one Linux baseline
+    /// valid on the SSE2 rig and the AVX2 box alike. Every remainder shape.
+    @Test func cDotKernelIsBitIdenticalToTheSwiftReference() {
+        var lcg = LCG()
+        for count in Array(0...70) + [127, 128, 129, 511, 893, 2049] {
+            let a = (0..<count).map { _ in lcg.nextFloat() * 3.0 - 1.5 }
+            let b = (0..<count).map { _ in lcg.nextFloat() * 3.0 - 1.5 }
+            a.withUnsafeBufferPointer { pa in
+                b.withUnsafeBufferPointer { pb in
+                    // swiftlint:disable:next force_unwrapping
+                    let pA = pa.baseAddress ?? UnsafePointer(bitPattern: 16)!
+                    // swiftlint:disable:next force_unwrapping
+                    let pB = pb.baseAddress ?? UnsafePointer(bitPattern: 16)!
+                    var viaShim: Float = 0
+                    vDSP_dotpr(pA, 1, pB, 1, &viaShim, vDSP_Length(count))
+                    let reference = mpxReferenceDot(pA, pB, count)
+                    #expect(viaShim.bitPattern == reference.bitPattern,
+                            "count \(count): kernel \(viaShim) vs reference \(reference)")
+                }
+            }
+        }
+    }
+
+    #if arch(x86_64)
+    /// Both x86 variants by name, on this one machine: the SSE2 code that
+    /// runs on the Celeron and the AVX2 code that runs on the Ryzen and on
+    /// every CI runner must agree bit for bit with each other and with the
+    /// reference -- otherwise the ifunc would silently make the baseline
+    /// machine-dependent.
+    @Test func bothX86VariantsAgreeBitForBit() {
+        var lcg = LCG()
+        let hasAVX2 = mpx_simd_has_avx2() == 1
+        for count in Array(0...40) + [127, 128, 511, 893, 2049] {
+            let a = (0..<count).map { _ in lcg.nextFloat() * 3.0 - 1.5 }
+            let b = (0..<count).map { _ in lcg.nextFloat() * 3.0 - 1.5 }
+            a.withUnsafeBufferPointer { pa in
+                b.withUnsafeBufferPointer { pb in
+                    // swiftlint:disable:next force_unwrapping
+                    let pA = pa.baseAddress ?? UnsafePointer(bitPattern: 16)!
+                    // swiftlint:disable:next force_unwrapping
+                    let pB = pb.baseAddress ?? UnsafePointer(bitPattern: 16)!
+                    let reference = mpxReferenceDot(pA, pB, count)
+                    let sse2 = mpx_simd_dot_sse2(pA, pB, Int32(count))
+                    #expect(sse2.bitPattern == reference.bitPattern, "sse2 dot, count \(count)")
+                    if hasAVX2 {
+                        let avx2 = mpx_simd_dot_avx2(pA, pB, Int32(count))
+                        #expect(avx2.bitPattern == reference.bitPattern, "avx2 dot, count \(count)")
+                    }
+                }
+            }
+            let x = (0..<count).map { _ in (lcg.nextFloat() - 0.5) * 24.0 }
+            var n = Int32(count)
+            var reference = [Float](repeating: 0, count: count)
+            var sse2 = [Float](repeating: 0, count: count)
+            var avx2 = [Float](repeating: 0, count: count)
+            x.withUnsafeBufferPointer { px in
+                // swiftlint:disable:next force_unwrapping
+                let p = px.baseAddress ?? UnsafePointer(bitPattern: 16)!
+                // swiftlint:disable:next force_unwrapping
+                reference.withUnsafeMutableBufferPointer { mpxReferenceTanh($0.baseAddress ?? UnsafeMutablePointer(bitPattern: 16)!, p, &n) }
+                // swiftlint:disable:next force_unwrapping
+                sse2.withUnsafeMutableBufferPointer { mpx_simd_tanh_sse2($0.baseAddress ?? UnsafeMutablePointer(bitPattern: 16)!, p, n) }
+                if hasAVX2 {
+                    // swiftlint:disable:next force_unwrapping
+                    avx2.withUnsafeMutableBufferPointer { mpx_simd_tanh_avx2($0.baseAddress ?? UnsafeMutablePointer(bitPattern: 16)!, p, n) }
+                }
+            }
+            #expect(sse2.map(\.bitPattern) == reference.map(\.bitPattern), "sse2 tanh, count \(count)")
+            if hasAVX2 {
+                #expect(avx2.map(\.bitPattern) == reference.map(\.bitPattern), "avx2 tanh, count \(count)")
+            }
+        }
+    }
+    #endif
+
+    @Test func cTanhKernelIsBitIdenticalToTheSwiftReference() {
+        var lcg = LCG()
+        for count in Array(0...20) + [64, 65, 1000] {
+            var x = (0..<count).map { _ in (lcg.nextFloat() - 0.5) * 24.0 }   // -12 ... 12, past saturation
+            if count > 3 { x[0] = 0; x[1] = -0.0; x[2] = 1e-9; x[3] = 9.1 }
+            var kernel = [Float](repeating: 0, count: count)
+            var reference = [Float](repeating: 0, count: count)
+            var n = Int32(count)
+            x.withUnsafeBufferPointer { px in
+                // swiftlint:disable:next force_unwrapping
+                let p = px.baseAddress ?? UnsafePointer(bitPattern: 16)!
+                kernel.withUnsafeMutableBufferPointer { pk in
+                    // swiftlint:disable:next force_unwrapping
+                    vvtanhf(pk.baseAddress ?? UnsafeMutablePointer(bitPattern: 16)!, p, &n)
+                }
+                reference.withUnsafeMutableBufferPointer { pr in
+                    // swiftlint:disable:next force_unwrapping
+                    mpxReferenceTanh(pr.baseAddress ?? UnsafeMutablePointer(bitPattern: 16)!, p, &n)
+                }
+            }
+            for i in 0..<count {
+                #expect(kernel[i].bitPattern == reference[i].bitPattern,
+                        "count \(count) index \(i): kernel \(kernel[i]) vs reference \(reference[i]) for x = \(x[i])")
+            }
         }
     }
     #endif

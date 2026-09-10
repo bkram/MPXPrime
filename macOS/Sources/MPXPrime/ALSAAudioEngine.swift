@@ -646,6 +646,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
         } else {
             realtimeSchedulingNote = nil
             fputs("[ALSA] render thread SCHED_FIFO 70\n", stderr)
+            fputs("[ALSA] DSP kernels: \(String(cString: mpx_simd_kernel_variant()))\n", stderr)
         }
 
         let frames = out.periodFrames

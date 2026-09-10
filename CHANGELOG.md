@@ -62,6 +62,21 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **Linux: the DSP picks AVX2 kernels at start-up on CPUs that have them.**
+  The shim's hot kernels (the FIR dot product behind `vDSP_dotpr` /
+  `vDSP_conv`, and `vvtanhf`) moved from Swift SIMD8 -- which can only be
+  compiled for the build's baseline ISA, SSE2 -- to C with clang
+  `target_clones`: an AVX2 clone and the SSE2 default in the same binary,
+  chosen per CPU by the dynamic linker. Bit-identical to the old numerics on
+  both clones (same lane order, no FMA; `AccelerateShimTests` pins the C
+  kernels to the Swift references exactly, and the Linux strict baseline is
+  zero-drift on the AVX2 box), so nothing was recaptured. `mpxprime --version`
+  and the ALSA start log print the selected variant (`avx2` / `sse2`; `neon`
+  on Apple Silicon). Measured with `--bench` on the Ryzen 5 PRO 2400GE: the
+  full chain went from 36.6 % to 26-27 % of real-time, the composite clipper
+  from 12.7 % to 6 %; live, the Mac's own configuration (Music - Loud with
+  SSB Stereo) went from 45 % to 29 % render load on that box. The Celeron,
+  which has no AVX2, is unchanged.
 - **The status line says when the chain does not fit the CPU.** Two
   consecutive 5 s ticks at or over 98 % render load raise a note in
   `/api/status` (and the dashboard), cleared once the load is back under

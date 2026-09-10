@@ -9,6 +9,7 @@ import Glibc
 #endif
 import Foundation
 import MPXPrimeCore
+import MPXPrimeNative
 
 #if !canImport(Darwin)
 // Glibc imports C's `stderr` as a mutable global, which Swift 6 strict
@@ -133,7 +134,7 @@ func parseCLI() -> CLIOptions {
             // `mpxprime --version` launched a full encoder -- two of them were
             // found holding the sound card and the control port on the Linux
             // rig. Exit before anything else can start.
-            print("MPX Prime Studio \(AppConfig.appVersion)")
+            print("MPX Prime Studio \(AppConfig.appVersion) (DSP kernels: \(String(cString: mpx_simd_kernel_variant())))")
             exit(0)
         case "--gui":
             options.gui = true

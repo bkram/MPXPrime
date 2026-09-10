@@ -226,6 +226,13 @@ what carries over.
 | Wideband AGC (`wideband_agc_enabled`) | ~0 % | keep it |
 | Encoder FIR (`encoder_fir_enabled`) | -- | never for CPU reasons: it is the transmitter's 15 kHz band limit |
 
+The build uses AVX2 automatically on CPUs that have it (any Ryzen, Intel
+N100 / Core, not the Celeron J-series); `mpxprime --version` shows `DSP
+kernels: avx2` or `sse2`. It does not change the sound -- the two variants
+compute bit-identical results -- only the cost: on a Ryzen 5 PRO 2400GE the
+full Music - Loud chain with SSB Stereo reads 29 % with AVX2 against 45 %
+without, so that class of machine runs everything with room to spare.
+
 Recipe for a box that reads over 90 % with programme: SSB Stereo off; then
 `blocksize = 4096` (buys tolerance, not CPU); then the composite clipper at 8x
 or the multiband on IIR crossovers, whichever your ears prefer -- the rig

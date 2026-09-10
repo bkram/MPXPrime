@@ -191,12 +191,15 @@ Internals: the `MPXPrimeAcceleration` target supplies same-name implementations
 of the small vDSP/vForce surface the encoder uses (plus an
 `OSAllocatedUnfairLock` polyfill) on platforms without Accelerate -- on macOS it
 compiles to an empty module and the real Accelerate is used, so macOS numerics
-are untouched. The hot paths (`vDSP_dotpr`/`vDSP_conv`/`vvtanhf`) are
-vectorized with portable Swift SIMD (SSE2 on x86-64 baseline; no AVX
-required) -- this is what lets the full chain (FIR multiband crossovers +
-16x composite clipper) run in real time on small CPUs like the Celeron
-J4105 (~92% of a core at 192 kHz, zero xruns; the scalar versions were
-~102% and starved). The shim is pinned against real Accelerate by a golden
+are untouched. The hot paths (`vDSP_dotpr`/`vDSP_conv`/`vvtanhf`) are C
+SIMD kernels in `MPXPrimeNative/MPXPrimeSIMD.c`, built on Linux/x86_64 as an
+SSE2 and an AVX2 variant behind a glibc ifunc that picks per CPU at load
+(bit-identical numerics, no FMA; `mpxprime --version` prints the variant) --
+this is what lets the full chain (FIR multiband crossovers + 16x composite
+clipper) run in real time on small CPUs like the Celeron J4105 (~94% of a
+core at 192 kHz on SSE2, zero xruns with a quiet input; the scalar versions
+were ~102% and starved) and at ~26% on an AVX2 Ryzen. The shim is pinned
+against real Accelerate by a golden
 fixture plus SIMD accuracy tests (`AccelerateShimTests`; regenerate the
 fixture on macOS with `MPXPRIME_CAPTURE_GOLDEN=1`). The ALSA engine lives
 in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.

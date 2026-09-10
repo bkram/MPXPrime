@@ -825,6 +825,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
     // MARK: - Capture loop (input pacing)
 
     private func captureLoop() {
+        // FTZ + DAZ per thread, as the render loop does at its top: MXCSR is
+        // per thread, and this one runs the input peak math on x86 too.
+        mpx_enable_flush_to_zero()
         guard let inp = input, let ring = inputRing else { return }
         applyRealtimeThreadPriority(69)
 

@@ -62,6 +62,16 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **The status line says when the chain does not fit the CPU.** Two
+  consecutive 5 s ticks at or over 98 % render load raise a note in
+  `/api/status` (and the dashboard), cleared once the load is back under
+  90 % (`RenderLoadWatch`, hysteresis pinned by tests). The rig ran 43 xruns
+  a second for eight hours with nothing but a climbing counter to show for
+  it: SSB Stereo had come over with a Mac profile and cost the 8 % the
+  Celeron did not have. The operator guide gains a CPU budget table (every
+  stage's cost measured on that rig) and the order to switch things off in.
+- **Linux: FTZ/DAZ on the capture and monitor threads too.** The render
+  loop set it; the other two threads did not, and both run IIR math on x86.
 - **Dashboard meters move at the engine's rate.** New `GET /api/meters/stream`
   pushes the meters as NDJSON at up to 30 Hz (default 20) for as long as the
   page reads it; the bars used to run off a 300 ms poll while the engine

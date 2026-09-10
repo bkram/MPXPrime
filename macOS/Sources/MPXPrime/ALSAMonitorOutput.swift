@@ -29,6 +29,7 @@ enum LinuxMonitorRules {
 #if os(Linux)
 import Atomics
 import CAlsa
+import MPXPrimeNative
 
 /// The second output on Linux: plays the conditioned monitor feed from a ring
 /// on its own ALSA device and its own thread, alongside the transmitter feed
@@ -164,6 +165,8 @@ final class ALSAMonitorOutput: @unchecked Sendable {
 
     private func loop() {
         guard let out = pcm, let ring else { return }
+        // The decoder and de-emphasis are IIR: denormals on x86 without FTZ/DAZ.
+        mpx_enable_flush_to_zero()
         let frames = out.periodFrames
         let ch = out.channels
         while running.load(ordering: .acquiring) {

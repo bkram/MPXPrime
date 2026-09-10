@@ -374,7 +374,7 @@ section. The endpoints below are what the dashboard itself uses.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending; `outputMode` is the operating mode (`mpx` / `fm` / `hd` / `am`); `monitorActive` says whether the Monitor output is playing |
+| GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending; `outputMode` is the operating mode (`mpx` / `fm` / `hd` / `am`); `monitorActive` says whether the Monitor output is playing; `notes` carries routing and health notes, including "Render load at or over 98 %..." when the chain does not fit the CPU (see the operator guide's CPU budget section) |
 | GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation (modulation-domain: output/line trims divided back out) + `dacPeakDBFS` (electrical: post-trims at the converter), budget margin, Advanced Dynamics leveler gains when active, (macOS input source) input-ring health, and on Linux `renderXruns` / `captureXruns` plus `renderLoadPercent` -- the worst share of one period the render thread needed in the last ~43 ms; near 100 % xruns follow |
 | GET | `/api/meters/stream` | the same object pushed as one JSON line per frame (NDJSON, `application/x-ndjson`) at `?hz=` 5..30 (default 20) for as long as the client reads; `&frames=N` ends it after N lines (`curl -N -H "X-API-Key: ..." "http://host:8737/api/meters/stream?hz=10&frames=5"`). The dashboard's meters read this and fall back to polling `/api/meters` every 300 ms when it is unavailable |
 | GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |

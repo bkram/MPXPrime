@@ -252,6 +252,7 @@ actor HeadlessControlBackend: ControlBackend {
     /// so this never fights a deliberate stop.
     func reconcile() {
         assertCardMixerIfConfigured()
+        updateRenderLoadNote()
         guard desiredRunning, engine == nil else { return }
         retries += 1
         startEngineTolerant()
@@ -467,6 +468,21 @@ actor HeadlessControlBackend: ControlBackend {
     private func recordSchedulingNote() {
         guard let note = engine?.schedulingNoteForControl, !notes.contains(note) else { return }
         notes.append(note)
+    }
+
+    /// The chain not fitting the CPU is the one fault that shows up only as
+    /// xruns -- the rig ran 43 a second with SSB Stereo switched on before
+    /// anyone knew why. Two consecutive 5 s ticks at or over 98 % render load
+    /// raise the note; it clears once the load is back under 90 %.
+    static let renderOverloadNote = "Render load at or over 98 %: the processing chain does not fit this CPU "
+        + "and dropouts follow. Turn off the heaviest optional stages first (SSB Stereo, then the "
+        + "multiband) -- see the operator guide's CPU budget section."
+    private var overloadWatch = RenderLoadWatch()
+    private func updateRenderLoadNote() {
+        let raise = overloadWatch.observe(engine?.controlMeters?.renderLoadPercent)
+        let has = notes.contains(Self.renderOverloadNote)
+        if raise, !has { notes.append(Self.renderOverloadNote) }
+        if !raise, has { notes.removeAll { $0 == Self.renderOverloadNote } }
     }
 
     func startEngineTolerant() -> Bool {
@@ -690,3 +706,32 @@ extension ALSAAudioEngine: ControlledEngine {
     }
 }
 #endif
+
+/// Hysteresis for the render-overload note, kept pure so it is unit-tested:
+/// two consecutive observations at or over `raiseAt` raise it, one under
+/// `clearBelow` (or no reading at all) clears it, and the band between holds
+/// whatever state it is in -- a load that hovers at 95 % must not flap.
+struct RenderLoadWatch {
+    var raiseAt: Float = 98
+    var clearBelow: Float = 90
+    private(set) var ticksOver = 0
+    private(set) var raised = false
+
+    /// Feed one reading (nil = engine stopped or platform without the
+    /// measurement); returns whether the note should be shown now.
+    mutating func observe(_ loadPercent: Float?) -> Bool {
+        guard let load = loadPercent else {
+            ticksOver = 0
+            raised = false
+            return false
+        }
+        if load >= raiseAt {
+            ticksOver += 1
+            if ticksOver >= 2 { raised = true }
+        } else if load < clearBelow {
+            ticksOver = 0
+            raised = false
+        }
+        return raised
+    }
+}

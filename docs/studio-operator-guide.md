@@ -199,6 +199,41 @@ dropped an occasional burst with the Monitor on and 4096 (170 ms) dropped
 none, so on a CPU reading over 90 % use 4096. The Monitor's own decoding runs
 on a separate thread and adds nothing to this figure.
 
+### CPU budget: what to turn off first
+
+The processing chain is the same on every machine, so on a small CPU it is
+the operator who decides what fits. **Render Load** is the figure to watch:
+at 95 % with live programme the rig already dropped about one buffer a
+second (a quiet input reads lower and drops nothing -- test with programme),
+and from 98 % the status line says so ("Render load at or over 98 %: the
+processing chain does not fit this CPU"). A single reading far above 100 %
+right after a start or restart is the first period priming, not the chain.
+Every figure below was measured on the reference Linux rig -- an Intel
+Celeron J4105 at 192 kHz, one core carrying the whole chain -- with live
+programme; a faster CPU scales everything down together, so the ORDER is
+what carries over.
+
+| Stage (INI key) | Cost on the rig | Turn off? |
+| --- | --- | --- |
+| Everything else -- input, pre-emphasis, limiter, stereo encoder, composite clipper at 16x, RDS | 69 % | this is the floor |
+| Multiband compressor, FIR crossovers (`multiband_enabled`, `multiband_fir_enabled`) | +26 % | first candidate: 3 dB of loudness against a quarter of the CPU. `multiband_fir_enabled = False` keeps the compressor on the low-latency IIR crossovers for +11 % instead (restart) |
+| Advanced Dynamics instead of AGC + multiband (`advanced_dynamics_enabled`) | +19 % | the cheaper of the two levelers by about 6 %; experimental |
+| SSB Stereo (`mpx_ssb_stereo_enabled`) | +8 % | **yes** -- experimental, and no measured benefit on any programme so far. On the rig this one stage took a 94 % chain to 103 % and 43 dropouts a second |
+| Composite clipper oversampling (`mpx_clipper_oversampling`) | 8x: -15 %; 32x: +33 % | 16x is the default for a reason; 8x is the safe way down on a small CPU (restart), 32x does not fit this class of machine at all |
+| Monitor output (`monitor_enabled`) | +3 % on the render thread (its decoding runs on its own thread) | only when the chain already sits at the edge |
+| PrimeBass (`primebass_enabled`) | +2 % | rarely worth it |
+| HF limiter (`hf_limiter_enabled`) | +1 % | keep it |
+| Wideband AGC (`wideband_agc_enabled`) | ~0 % | keep it |
+| Encoder FIR (`encoder_fir_enabled`) | -- | never for CPU reasons: it is the transmitter's 15 kHz band limit |
+
+Recipe for a box that reads over 90 % with programme: SSB Stereo off; then
+`blocksize = 4096` (buys tolerance, not CPU); then the composite clipper at 8x
+or the multiband on IIR crossovers, whichever your ears prefer -- the rig
+runs the clipper at 8x (79 %, no dropouts in a minute of programme). Format
+Profiles do not change this budget by themselves -- they set levels and
+thresholds, not which stages run -- except that a profile copied from a
+faster machine may bring SSB Stereo along, as happened to the rig.
+
 ### Why the Linux box is "not loud enough"
 
 The digital path is at full scale: the composite leaves the card at 0 dBFS

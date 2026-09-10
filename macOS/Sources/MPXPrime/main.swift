@@ -127,6 +127,14 @@ func parseCLI() -> CLIOptions {
                 options.runSeconds = sec
                 i += 1
             }
+        case "--version":
+            // Print and leave. Until 0.50 this was an unrecognised argument,
+            // and on the old builds that IGNORED unknown arguments the probe
+            // `mpxprime --version` launched a full encoder -- two of them were
+            // found holding the sound card and the control port on the Linux
+            // rig. Exit before anything else can start.
+            print("MPX Prime Studio \(AppConfig.appVersion)")
+            exit(0)
         case "--gui":
             options.gui = true
         case "--nogui":
@@ -235,6 +243,7 @@ func printUsage() {
         MPX Prime
 
         Usage:
+          MPXPrime --version
           MPXPrime [--config <path>] [--seconds 30] [--gui|--nogui]
           MPXPrime [--config <path>] --verify [--seconds 5]
           MPXPrime [--config <path>] --verify-presets [--seconds 5]
@@ -253,6 +262,7 @@ func printUsage() {
         Options:
           --config   Path to the INI config (default: ~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini; Linux: ~/.local/share/MPX Prime Studio/MPX Prime Studio.ini)
           --seconds  Auto-stop after N seconds (GUI or headless)
+          --version  Print the version and exit
           --gui      Launch native SwiftUI macOS window (default)
           --nogui    Run headless
           --verify   Run the offline MPX verification harness

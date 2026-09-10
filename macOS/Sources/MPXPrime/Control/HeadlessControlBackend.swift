@@ -111,12 +111,56 @@ actor HeadlessControlBackend: ControlBackend {
         guard let uid = config.outputDeviceUID,
               let card = ALSAMixerMath.cardName(fromDeviceUID: uid)
         else { return false }
-        return ALSAMixer.set(
+        let applied = ALSAMixer.set(
             card: card, name: patch.name, index: patch.index ?? 0,
             playbackPercent: patch.playbackPercent, capturePercent: patch.capturePercent,
             playbackMuted: patch.playbackMuted, captureMuted: patch.captureMuted)
+        guard applied else { return false }
+        // Remember the level the card actually took, as dB, on the control
+        // the encoder uses -- from here on the engine ASSERTS it, which is
+        // what beats the card's own knob (see AppConfig.alsaPlaybackVolumeDB).
+        let primary = ALSAMixer.primaryControls(card: card)
+        var changed = false
+        if patch.playbackPercent != nil, let pb = primary.playback,
+           pb.name == patch.name, pb.index == (patch.index ?? 0), let dB = pb.playbackDB {
+            config.alsaPlaybackVolumeDB = dB; changed = true
+        }
+        if patch.capturePercent != nil, let cp = primary.capture,
+           cp.name == patch.name, cp.index == (patch.index ?? 0), let dB = cp.captureDB {
+            config.alsaCaptureVolumeDB = dB; changed = true
+        }
+        if changed { persist() }
+        return true
         #else
         return false
+        #endif
+    }
+
+    /// Put the card's primary controls where the config says, when it says.
+    /// Runs on the actor (never the render thread) at engine start and from
+    /// the 5 s reconcile tick: the rig's USB card has a hardware knob, and a
+    /// level that is merely STORED comes back 2 dB down after a reboot.
+    func assertCardMixerIfConfigured() {
+        #if os(Linux)
+        guard config.alsaPlaybackVolumeDB != nil || config.alsaCaptureVolumeDB != nil,
+              let uid = config.outputDeviceUID,
+              let card = ALSAMixerMath.cardName(fromDeviceUID: uid)
+        else { return }
+        let primary = ALSAMixer.primaryControls(card: card)
+        if let want = config.alsaPlaybackVolumeDB, let pb = primary.playback,
+           let have = pb.playbackDB, abs(have - want) > 0.25 {
+            if ALSAMixer.setDB(card: card, name: pb.name, index: pb.index, playbackDB: want, captureDB: nil) {
+                FileHandle.standardError.write(Data(
+                    "[ALSA] card mixer '\(pb.name)' was \(have) dB, re-asserted \(want) dB\n".utf8))
+            }
+        }
+        if let want = config.alsaCaptureVolumeDB, let cp = primary.capture,
+           let have = cp.captureDB, abs(have - want) > 0.25 {
+            if ALSAMixer.setDB(card: card, name: cp.name, index: cp.index, playbackDB: nil, captureDB: want) {
+                FileHandle.standardError.write(Data(
+                    "[ALSA] card mixer '\(cp.name)' capture was \(have) dB, re-asserted \(want) dB\n".utf8))
+            }
+        }
         #endif
     }
 
@@ -172,6 +216,9 @@ actor HeadlessControlBackend: ControlBackend {
             if planes.rdsLive { engine.applyRDSRuntimeConfig(newConfig) }
             if planes.restartRequired { restartPending = true }
         }
+        // The card mixer keys are the backend's own: act on them now rather
+        // than at the next reconcile tick.
+        if !ConfigPatch.backendOwnedKeys.isDisjoint(with: patch.keys) { assertCardMixerIfConfigured() }
         persist()
         markActiveSnapshotModified()
         onConfigChange?(newConfig)
@@ -204,6 +251,7 @@ actor HeadlessControlBackend: ControlBackend {
     /// soon as the device is available. A user Stop clears `desiredRunning`,
     /// so this never fights a deliberate stop.
     func reconcile() {
+        assertCardMixerIfConfigured()
         guard desiredRunning, engine == nil else { return }
         retries += 1
         startEngineTolerant()
@@ -393,6 +441,14 @@ actor HeadlessControlBackend: ControlBackend {
             startedAt = Date()
             restartPending = false
             notes = []
+            assertCardMixerIfConfigured()
+            // The render thread reports its scheduling once it is running;
+            // give it a period to do so, then surface a refusal in the status
+            // line rather than letting xruns be the only symptom.
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(400))
+                await self?.recordSchedulingNote()
+            }
         } catch {
             // Record the reason so GET /api/status (and the dashboard) explain
             // why the engine is stopped -- typically a missing/renamed audio
@@ -408,6 +464,11 @@ actor HeadlessControlBackend: ControlBackend {
     /// but never throws, so a missing device leaves the process (and the
     /// control server) alive for remote recovery. Returns whether it started.
     @discardableResult
+    private func recordSchedulingNote() {
+        guard let note = engine?.schedulingNoteForControl, !notes.contains(note) else { return }
+        notes.append(note)
+    }
+
     func startEngineTolerant() -> Bool {
         do {
             try startEngine()
@@ -619,7 +680,8 @@ extension ALSAAudioEngine: ControlledEngine {
             compositeOverBudget: state.overBudget,
             stereoCorrelation: nil,
             renderXruns: xruns.render,
-            captureXruns: xruns.capture
+            captureXruns: xruns.capture,
+            renderLoadPercent: state.renderLoadPct
         )
     }
 

@@ -110,7 +110,7 @@ A pre-0.50 INI carrying `processed_audio_output` / `processed_audio_target` is
 migrated on load and rewritten to `operating_mode` on the next save. The REST
 API still accepts both old keys and resolves them onto the mode, in any order.
 
-### Sound card mixer (Linux, `GET` / `PATCH /api/mixer`)
+### Sound card mixer (Linux, `GET` / `PATCH /api/mixer`, `alsa_*_volume_db`)
 
 Not INI keys: these are the CARD's own volume controls, owned by ALSA and
 shared with anything else on the box, so the encoder reads them live and never
@@ -130,9 +130,24 @@ playbackMuted?, captureMuted?}` and moves only the fields present, then
 answers with a fresh READ so the operator sees the level the card actually
 took. A control the card does not have is a `400`.
 
-Keep the output control at 100 % (0 dB) and calibrate in the encoder with
-`output_gain_db` / `mpx_line_output_dbfs`. Levels set here are hardware state:
-`sudo alsactl store` is what makes them survive a reboot.
+Keep the output control at 0 dB and calibrate in the encoder with
+`output_gain_db` / `mpx_line_output_dbfs`.
+
+A `PATCH` also RECORDS the level the card took, in dB, on the card's first
+playback (resp. capture) volume control, as `alsa_playback_volume_db` /
+`alsa_capture_volume_db` (`[INTERFACES]`, empty = unmanaged, remembered with
+the installation, never a dashboard widget of their own). The engine then
+ASSERTS those levels at start and on every 5 s reconcile tick, logging a
+correction when something moved them. That is deliberate: the USB card on the
+test rig has a hardware volume knob, and a level that was only stored with
+`alsactl store` came back 2 dB down after a reboot. To hand the card back to
+ALSA, blank the two keys.
+
+Related Linux facts: `blocksize` is the ALSA period on this platform (the
+buffer keeps at least 8 periods and 8192 frames); the render thread runs
+`SCHED_FIFO 70` and `/api/status` `notes` carries the reason when it could
+not (the unit grants `LimitRTPRIO=70` + `CAP_SYS_NICE`); and
+`mpxprime --version` prints the version and exits.
 
 ### Monitor output
 
@@ -152,8 +167,10 @@ Operator Guide for what it plays per mode.
 
 All three apply live, including moving the Monitor to another device: only its
 own player restarts. The keys are remembered with the installation, so a
-snapshot never carries someone else's monitor rig. Linux ignores them (a
-second ALSA playback device is not implemented).
+snapshot never carries someone else's monitor rig. On Linux
+`monitor_device_uid` is an ALSA PCM name (`hw:CARD=Loopback,DEV=0`, as the
+dashboard's device list shows it) and the same rules apply; `default` is
+refused whenever the transmitter is on `default` too.
 
 ### AM output shaping
 
@@ -358,7 +375,7 @@ section. The endpoints below are what the dashboard itself uses.
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/status` | running state, platform, version, sample rate, uptime, restart-pending; `outputMode` is the operating mode (`mpx` / `fm` / `hd` / `am`), or `monitor` while the decoded monitor is active |
-| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation (modulation-domain: output/line trims divided back out) + `dacPeakDBFS` (electrical: post-trims at the converter), budget margin, Advanced Dynamics leveler gains when active, and (macOS input source) input-ring health (subset on Linux) |
+| GET | `/api/meters` | levels, gain reduction, pilot/RDS injection %, deviation (modulation-domain: output/line trims divided back out) + `dacPeakDBFS` (electrical: post-trims at the converter), budget margin, Advanced Dynamics leveler gains when active, (macOS input source) input-ring health, and on Linux `renderXruns` / `captureXruns` plus `renderLoadPercent` -- the worst share of one period the render thread needed in the last ~43 ms; near 100 % xruns follow |
 | GET | `/api/rds` | on-air PS/RT snapshot + PI/PTY/TA/TP and configured text |
 | PUT | `/api/rds` | curated update: `{"ps": ..., "rt": ..., "ta": true, "pty": 8, "pi": "83E1", "tp": ..., "enabled": ...}` -- applies live; `ps` writes bank A |
 | GET | `/api/config` | every INI setting, grouped by section |
@@ -380,8 +397,10 @@ section. The endpoints below are what the dashboard itself uses.
 `PATCH /api/config` responds with a per-key **disposition**: `live` /
 `liveRDS` (hot-applied to the running engine, no restart), `restartRequired`
 (saved; takes effect at the next start -- e.g. `rds_level`,
-`sample_rate`, devices), or `unchanged` (value identical after
-clamping/parsing, or unknown key). The classification is derived from the
+`sample_rate`, devices), `none` (saved and acted on by the backend itself
+without a restart -- the Linux card mixer keys `alsa_playback_volume_db` /
+`alsa_capture_volume_db`, asserted on the card at once), or `unchanged`
+(value identical after clamping/parsing, or unknown key). The classification is derived from the
 same runtime structures the engine hot-applies, so it always matches what
 the engine actually does. Every change is saved to the INI immediately.
 Values follow INI text conventions (booleans `True`/`False`; no `;` in

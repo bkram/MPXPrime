@@ -109,6 +109,10 @@ struct ControlMeters: Codable, Sendable {
     var stereoCorrelation: Float?
     var renderXruns: Int?
     var captureXruns: Int?
+    /// Worst render-thread busy share of one period in the last ~43 ms, in
+    /// percent of the period (Linux ALSA engine). 100 means a period took as
+    /// long to render as it lasts -- xruns follow. Nil where not measured.
+    var renderLoadPercent: Float?
     // Input capture->render ring transport diagnostics (macOS input source).
     // The definitive signal for clock-drift faults between a virtual input
     // (e.g. BlackHole) and a hardware output: `overflows` climbs when the
@@ -223,10 +227,14 @@ protocol ControlledEngine: AnyObject {
     /// Is the second (listening) output running? Default false: an engine
     /// without a monitor path -- ALSA today -- simply never reports one.
     var monitorActiveForControl: Bool { get }
+    /// Why the render thread is NOT real-time, when it is not (Linux); nil
+    /// when it is or when the platform's audio engine owns scheduling itself.
+    var schedulingNoteForControl: String? { get }
 }
 
 extension ControlledEngine {
     var monitorActiveForControl: Bool { false }
+    var schedulingNoteForControl: String? { nil }
 }
 
 extension ControlledEngine {

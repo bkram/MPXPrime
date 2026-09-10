@@ -229,7 +229,16 @@ the same device returns. A monitor that cannot start is a routing note, never a
 failed engine start. `monitor_enabled` / `monitor_device_uid` /
 `monitor_gain_db` ride `RuntimeConfig` (like `mpx_line_output_dbfs`: carried
 there, consumed by the engine) so their live disposition stays DERIVED.
-macOS only, headless included; Linux has no second ALSA device.
+On Linux `ALSAMonitorOutput` plays the same ring on a second ALSA PCM from
+its own thread (`LinuxMonitorRules.decide` carries the same rules over ALSA
+device names). There the division of labour differs from macOS on purpose:
+the render thread writes the RAW feed (the composite in MPX Output) and the
+monitor thread demodulates it with a standalone `MPXDecoder` on its own PLL
+(the verifier's receiver model) and runs the `MonitorConditioner`. The rig's
+render thread needs 95 % of its period for the chain alone (`renderLoadPercent`
+in `/api/meters`), and decoding there cost 34 xruns per 20 s; with the
+decode on the monitor thread the rig read 16 then 0 xruns per minute at
+`blocksize` 2048 and 0 at 4096, whose 170 ms buffer rides out the bursts.
 
 Which parts of the chain exist in which mode is ONE table,
 `ChainFeature` (`Control/StageApplicability.swift`), read by the engine, the

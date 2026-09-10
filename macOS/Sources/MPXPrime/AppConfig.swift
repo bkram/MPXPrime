@@ -134,6 +134,16 @@ struct AppConfig: Equatable {
     /// headphone loudness, not anything on air), so it is remembered with the
     /// installation and never carried by a snapshot or a preset.
     var monitorGainDB: Double = 0.0
+    /// The SOUND CARD's own volume controls, asserted by the encoder (Linux).
+    /// nil = unmanaged: the card keeps whatever ALSA / its knob left. When
+    /// set, the engine puts the card's first playback (resp. capture) volume
+    /// control at this level at start and re-asserts it when something moves
+    /// it -- the USB card on the test rig has a hardware knob that quietly
+    /// took the composite 2 dB down, and `alsactl store` cannot beat a knob.
+    /// Written by the mixer API, not by direct config patches; remembered with
+    /// the installation.
+    var alsaPlaybackVolumeDB: Double?
+    var alsaCaptureVolumeDB: Double?
 
     /// What the output device carries, as ONE operator choice (0.50). Every
     /// stage's applicability is derived from it through `StageApplicability`,
@@ -717,6 +727,8 @@ struct AppConfig: Equatable {
         cfg.monitorDeviceName = interfaces.optionalString("monitor_device_name")
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
         cfg.monitorGainDB = interfaces.double("monitor_gain_db", defaultValue: cfg.monitorGainDB)
+        cfg.alsaPlaybackVolumeDB = interfaces.optionalString("alsa_playback_volume_db").flatMap(Double.init)
+        cfg.alsaCaptureVolumeDB = interfaces.optionalString("alsa_capture_volume_db").flatMap(Double.init)
         // Pre-0.50, `monitor_enabled` meant "REPLACE the transmitter feed with
         // decoded audio on the monitor device". It now means "play the
         // programme on the monitor device AS WELL", which is a different thing
@@ -1313,6 +1325,10 @@ struct AppConfig: Equatable {
         // headphone amp, only a little boost (the feed is already near full
         // scale, and the conditioner clamps above unity).
         monitorGainDB = max(-40.0, min(6.0, monitorGainDB))
+        // Card mixer targets: wide enough for any USB feature unit; the card
+        // clamps to its own range when applied.
+        alsaPlaybackVolumeDB = alsaPlaybackVolumeDB.map { max(-60.0, min(30.0, $0)) }
+        alsaCaptureVolumeDB = alsaCaptureVolumeDB.map { max(-60.0, min(40.0, $0)) }
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
@@ -1638,6 +1654,8 @@ struct AppConfig: Equatable {
             "source_mode = \(sourceMode)",
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
             "monitor_gain_db = \(Self.formatFloat(monitorGainDB))",
+            "alsa_playback_volume_db = \(alsaPlaybackVolumeDB.map(Self.formatFloat) ?? "")",
+            "alsa_capture_volume_db = \(alsaCaptureVolumeDB.map(Self.formatFloat) ?? "")",
             "operating_mode = \(operatingMode.rawValue)",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             // sample_rate was read but never written (a non-default rate

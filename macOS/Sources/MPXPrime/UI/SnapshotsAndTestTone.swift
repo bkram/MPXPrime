@@ -13,12 +13,12 @@ import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Test Tone tab — a first-class sidebar stage that drives the
+/// Test Tone tab -- a first-class sidebar stage that drives the
 /// engine's tone source. Enable replaces the audio input live; the
 /// rest of the chain (AGC, multiband, clippers, encoder, BS.412)
 /// processes the tone normally so operators can observe response at
 /// calibrated input levels (default -20 dBFS, broadcast line
-/// reference). Three signal types — sine for level / separation /
+/// reference). Three signal types -- sine for level / separation /
 /// encoder-bandwidth tests, pink and white noise for broadband
 /// response checks. Stereo modes cover the operator's diagnostic
 /// needs (mono / L=-R / L-only / R-only).
@@ -90,7 +90,7 @@ struct SnapshotsView: View {
                     }
                 }
 
-                TabHelpBox(text: "Eight named presets capturing the full configuration. Save the current setup into a slot, load it back later — survives app restart. Heavier than Format Profiles: a preset captures every per-stage setting and RDS field, not just the DSP bundle.")
+                TabHelpBox(text: "Eight named presets capturing the full configuration. Save the current setup into a slot, load it back later -- survives app restart. Heavier than Format Profiles: a preset captures every per-stage setting and RDS field, not just the DSP bundle.")
             }
             .padding(20)
             .frame(maxWidth: 1120, alignment: .topLeading)
@@ -110,86 +110,97 @@ struct SnapshotSlotRow: View {
     /// This slot holds the snapshot whose config is currently live.
     private var isActive: Bool { snapshot != nil && snapshot?.id == model.activeSnapshotID }
 
+    private var slotNumber: some View {
+        Text("\(slot + 1).")
+            .font(.system(.callout, design: .monospaced))
+            .fontWeight(isActive ? .bold : .regular)
+            .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+            .frame(width: 22, alignment: .trailing)
+    }
+
+    private var nameColumn: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            TextField("Preset \(slot + 1)", text: $draftName)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .frame(maxWidth: 260)
+                .focused($nameFieldFocused)
+                // Enter commits (creates an empty slot or renames a saved
+                // one); losing focus commits a rename so a typed name is
+                // never silently lost.
+                .onSubmit { commitName(allowCreate: true) }
+                .onChange(of: nameFieldFocused) { _, focused in
+                    if !focused { commitName(allowCreate: false) }
+                }
+
+            HStack(spacing: 6) {
+                if isActive {
+                    Label(
+                        model.activeSnapshotModified ? "Loaded - edited" : "Loaded",
+                        systemImage: model.activeSnapshotModified
+                            ? "pencil.circle.fill" : "checkmark.circle.fill"
+                    )
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(model.activeSnapshotModified ? Color.orange : Color.accentColor)
+                }
+                if let snap = snapshot {
+                    Text("saved \(Self.relativeDateString(snap.savedAt))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("empty")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 8) {
+            Button("Save") {
+                // Capture the current full config into this slot under the
+                // field's name (saveSnapshot trims + defaults when empty).
+                // Do NOT clear draftName -- the name stays visible, and the
+                // onChange(of: snapshot?.name) sync keeps the field correct.
+                model.saveSnapshot(slot: slot, name: draftName)
+            }
+            .help("Capture the current full configuration into this slot. Overwrites any existing preset here.")
+
+            Button("Import...") {
+                importPreset()
+            }
+            .help("Load a preset from an MPX Prime Studio .ini file into this slot (overwrites). Does not apply it -- use Load for that.")
+
+            Button("Load") {
+                model.loadSnapshot(slot: slot)
+            }
+            .disabled(snapshot == nil)
+            .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
+
+            Button("Export...") {
+                exportPreset()
+            }
+            .disabled(snapshot == nil)
+            .help("Save this preset to a file (a standard MPX Prime Studio .ini you can share or load with --config).")
+
+            Button("Clear", role: .destructive) {
+                confirmingClear = true
+            }
+            .disabled(snapshot == nil)
+            .help("Delete this slot. Cannot be undone.")
+        }
+        .controlSize(.small)
+    }
+
+    // Split into three subviews: one expression for the whole row made the
+    // Swift 6.4 type checker give up in release builds (Xcode 27 CLT).
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text("\(slot + 1).")
-                .font(.system(.callout, design: .monospaced))
-                .fontWeight(isActive ? .bold : .regular)
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                .frame(width: 22, alignment: .trailing)
-
-            VStack(alignment: .leading, spacing: 2) {
-                TextField("Preset \(slot + 1)", text: $draftName)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-                    .frame(maxWidth: 260)
-                    .focused($nameFieldFocused)
-                    // Enter commits (creates an empty slot or renames a saved
-                    // one); losing focus commits a rename so a typed name is
-                    // never silently lost.
-                    .onSubmit { commitName(allowCreate: true) }
-                    .onChange(of: nameFieldFocused) { _, focused in
-                        if !focused { commitName(allowCreate: false) }
-                    }
-
-                HStack(spacing: 6) {
-                    if isActive {
-                        Label(
-                            model.activeSnapshotModified ? "Loaded - edited" : "Loaded",
-                            systemImage: model.activeSnapshotModified
-                                ? "pencil.circle.fill" : "checkmark.circle.fill"
-                        )
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(model.activeSnapshotModified ? Color.orange : Color.accentColor)
-                    }
-                    if let snap = snapshot {
-                        Text("saved \(Self.relativeDateString(snap.savedAt))")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("empty")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-
+            slotNumber
+            nameColumn
             Spacer()
-
-            HStack(spacing: 8) {
-                Button("Save") {
-                    // Capture the current full config into this slot under the
-                    // field's name (saveSnapshot trims + defaults when empty).
-                    // Do NOT clear draftName -- the name stays visible, and the
-                    // onChange(of: snapshot?.name) sync keeps the field correct.
-                    model.saveSnapshot(slot: slot, name: draftName)
-                }
-                .help("Capture the current full configuration into this slot. Overwrites any existing preset here.")
-
-                Button("Import...") {
-                    importPreset()
-                }
-                .help("Load a preset from an MPX Prime Studio .ini file into this slot (overwrites). Does not apply it -- use Load for that.")
-
-                Button("Load") {
-                    model.loadSnapshot(slot: slot)
-                }
-                .disabled(snapshot == nil)
-                .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
-
-                Button("Export...") {
-                    exportPreset()
-                }
-                .disabled(snapshot == nil)
-                .help("Save this preset to a file (a standard MPX Prime Studio .ini you can share or load with --config).")
-
-                Button("Clear", role: .destructive) {
-                    confirmingClear = true
-                }
-                .disabled(snapshot == nil)
-                .help("Delete this slot. Cannot be undone.")
-            }
-            .controlSize(.small)
+            actionButtons
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 6)

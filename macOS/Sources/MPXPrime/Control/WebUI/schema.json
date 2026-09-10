@@ -728,6 +728,7 @@
      }
     ],
     "id": "testTone",
+    "reset": true,
     "sub": "Line-up generator",
     "title": "Test Tone"
    },

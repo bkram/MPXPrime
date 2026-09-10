@@ -66,14 +66,14 @@ enum ALSAEngineError: Error, CustomStringConvertible {
     }
 }
 
-private func alsaErrorString(_ code: Int32) -> String {
+func alsaErrorString(_ code: Int32) -> String {
     guard let c = snd_strerror(code) else { return "error \(code)" }
     return String(cString: c)
 }
 
 /// One configured PCM direction: the device handle plus its negotiated
 /// format and preallocated interleave/convert buffers.
-private final class ALSAPCM {
+final class ALSAPCM {
     let pcm: OpaquePointer
     let device: String
     let format: snd_pcm_format_t
@@ -197,13 +197,20 @@ private final class ALSAPCM {
     }
 }
 
-/// Best-effort SCHED_FIFO for the audio threads. Needs an rtprio rlimit
-/// (ulimit -r / limits.d); silently degrades to the default scheduler --
-/// the xrun counters make starvation visible either way.
-private func applyRealtimeThreadPriority(_ priority: Int32) {
+/// SCHED_FIFO for the audio threads. Needs an rtprio rlimit (the systemd unit
+/// grants LimitRTPRIO=70 + CAP_SYS_NICE) and REPORTS whether it got it: until
+/// 0.50 the result was discarded, and the Linux rig ran every thread at
+/// normal priority for weeks -- xrun storms on a loaded CPU, with nothing in
+/// the log or the status to say why. Returns nil on success, else the reason.
+@discardableResult
+private func applyRealtimeThreadPriority(_ priority: Int32) -> String? {
     var param = sched_param()
     param.sched_priority = priority
-    _ = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param)
+    let rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param)
+    guard rc != 0 else { return nil }
+    // pthread_* return the error directly rather than through errno.
+    let reason = String(cString: strerror(rc))
+    return "SCHED_FIFO \(priority) refused: \(reason) (\(rc))"
 }
 
 /// Snapshot of the Linux engine's meters for the control API.
@@ -229,6 +236,8 @@ struct ALSAMeterState {
     var deviationKHzPeak: Float = 0
     /// Peak presented to the converter (post output gain + line output).
     var dacPeak: Float = 0
+    /// Worst render-thread busy share of a period in the last publish window, percent.
+    var renderLoadPct: Float = 0
 }
 
 final class ALSAAudioEngine: @unchecked Sendable {
@@ -277,6 +286,24 @@ final class ALSAAudioEngine: @unchecked Sendable {
     /// Line output calibration (dBFS at 100% modulation -> linear), applied
     /// during the interleave/convert step after peak metering. Render-thread
     /// only after start; updated via the pending-config hand-off.
+    /// nil when the render thread runs SCHED_FIFO; otherwise the operator-facing
+    /// reason it does not, surfaced through /api/status notes.
+    private(set) var realtimeSchedulingNote: String?
+    var schedulingNoteForControl: String? { realtimeSchedulingNote }
+    /// The second (listening) output: its own PCM and thread, fed one period
+    /// at a time from the render loop through a lock-free ring. Parity with
+    /// the macOS engine's MonitorOutput; see ALSAMonitorOutput.swift.
+    private let monitor = ALSAMonitorOutput()
+    private var monitorRing: StereoInputRingBuffer?
+    private let startConfig: AppConfig
+    /// Render-thread busy share of the period, peak over the publish window.
+    /// The number that says how close this CPU is to the edge -- on the rig it
+    /// reads 95% with nothing else wrong, which is why every extra per-sample
+    /// job on this thread shows up as xruns.
+    private var renderLoadWindowPeak: Float = 0
+    private var periodSeconds: Double = 1
+    var monitorActiveForControl: Bool { monitor.isRunning }
+    var monitorNote: String? { monitor.note }
     private var lineOutputScale: Float
     private var modulationReferenceScale: Float
 
@@ -313,7 +340,19 @@ final class ALSAAudioEngine: @unchecked Sendable {
         let outputUID = config.outputDeviceUID ?? ""
         self.inputDeviceName = inputUID.isEmpty ? "default" : inputUID
         self.outputDeviceName = outputUID.isEmpty ? "default" : outputUID
+        self.startConfig = config
+        // `blocksize` IS the ALSA period here. Until 0.50 the engine opened
+        // with a hard-coded 2048 x 8 whatever the operator set, so the one
+        // latency-vs-safety knob the GUI and dashboard offer did nothing on
+        // Linux. The buffer keeps >= 8 periods and >= 8192 frames (~43 ms at
+        // 192 kHz): the 2026-07 bench found 512 x 4 (10.7 ms) xrun-stormed on
+        // this class of CPU while 2048 x 8 (85 ms) held.
+        self.periodFrames = max(256, config.blockSize)
+        self.periodsPerBuffer = max(8, (8192 + periodFrames - 1) / periodFrames)
     }
+
+    private let periodFrames: Int
+    private let periodsPerBuffer: Int
 
     func start() throws {
         let rate = Int(sampleRate)
@@ -324,7 +363,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
         // scheduling); 2048x8 = ~85 ms of scheduling slack.
         let out = try ALSAPCM(
             device: outputDeviceName, stream: SND_PCM_STREAM_PLAYBACK,
-            rate: rate, wantChannels: 2, wantPeriod: 2048, wantPeriods: 8)
+            rate: rate, wantChannels: 2, wantPeriod: periodFrames, wantPeriods: periodsPerBuffer)
         output = out
         fputs(
             "[ALSA] output '\(out.device)': \(out.formatName) \(out.channels)ch "
@@ -338,11 +377,23 @@ final class ALSAAudioEngine: @unchecked Sendable {
 
         renderLeft = [Float](repeating: 0, count: out.periodFrames)
         renderRight = [Float](repeating: 0, count: out.periodFrames)
+        periodSeconds = Double(out.periodFrames) / Double(rate)
+        monitorRing = monitor.prepare(
+            sampleRate: rate, periodFrames: out.periodFrames,
+            shape: MonitorConditioner.shape(for: startConfig.operatingMode, config: startConfig),
+            preemphasisUS: startConfig.preemphasisUS, gainDB: startConfig.monitorGainDB)
+        monitor.reconcile(
+            enabled: startConfig.monitorEnabled,
+            monitorDevice: startConfig.monitorDeviceUID,
+            outputDevice: outputDeviceName)
+        if let note = monitor.note, startConfig.monitorEnabled {
+            fputs("[ALSA] monitor: \(note)\n", stderr)
+        }
 
         if useInputSource {
             let inp = try ALSAPCM(
                 device: inputDeviceName, stream: SND_PCM_STREAM_CAPTURE,
-                rate: rate, wantChannels: 2, wantPeriod: 2048, wantPeriods: 8)
+                rate: rate, wantChannels: 2, wantPeriod: periodFrames, wantPeriods: periodsPerBuffer)
             input = inp
             fputs(
                 "[ALSA] input '\(inp.device)': \(inp.formatName) \(inp.channels)ch "
@@ -386,6 +437,8 @@ final class ALSAAudioEngine: @unchecked Sendable {
     }
 
     func stop() {
+        // The monitor first: it drains the ring the render loop writes.
+        monitor.shutdown()
         running.store(false, ordering: .releasing)
         // The loops exit at their next period boundary; blocking readi/writei
         // return within one period. Spin-wait briefly for both to finish.
@@ -403,6 +456,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
             inp.close()
             input = nil
         }
+        monitorRing = nil
         let xr = renderXruns.load(ordering: .relaxed)
         let xc = captureXruns.load(ordering: .relaxed)
         fputs("[ALSA] stopped. xruns: render \(xr), capture \(xc)\n", stderr)
@@ -412,6 +466,13 @@ final class ALSAAudioEngine: @unchecked Sendable {
 
     /// Thread-safe producer; the render thread applies within ~one period.
     func applyRuntimeConfig(_ config: AppConfig) {
+        // The monitor is caller-thread work (opening a PCM), never render work,
+        // and its keys are not part of the DSP runtime config's equality.
+        monitor.setGain(dB: config.monitorGainDB)
+        monitor.reconcile(
+            enabled: config.monitorEnabled,
+            monitorDevice: config.monitorDeviceUID,
+            outputDevice: outputDeviceName)
         let runtime = MPXGenerator.makeRuntimeConfig(from: config)
         runtimeConfigLock.lock()
         if lastQueuedRuntimeConfig == runtime {
@@ -538,6 +599,8 @@ final class ALSAAudioEngine: @unchecked Sendable {
         state.rdsPercent = cal.rdsPercent
         state.budgetMarginDB = cal.budgetMarginDB
         state.overBudget = cal.overBudget
+        state.renderLoadPct = renderLoadWindowPeak
+        renderLoadWindowPeak = 0
         if meterLock.lockIfAvailable() {
             state.deviationKHzPeak = meterOutputPeak * targetDeviationKHz * modulationReferenceScale
             state.dacPeak = meterOutputPeak
@@ -576,10 +639,18 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private func renderLoop() {
         guard let out = output else { return }
         mpx_enable_flush_to_zero()
-        applyRealtimeThreadPriority(70)
+        if let refused = applyRealtimeThreadPriority(70) {
+            realtimeSchedulingNote = "Real-time scheduling not active on the render thread -- "
+                + refused + ". Expect xruns under load; see BUILDING.md (Linux)."
+            fputs("[ALSA] \(refused)\n", stderr)
+        } else {
+            realtimeSchedulingNote = nil
+            fputs("[ALSA] render thread SCHED_FIFO 70\n", stderr)
+        }
 
         let frames = out.periodFrames
         while running.load(ordering: .acquiring) {
+            let periodStart = ProcessInfo.processInfo.systemUptime
             applyPendingRuntimeConfigIfNeeded()
             renderLeft.withUnsafeMutableBufferPointer { lBuf in
                 renderRight.withUnsafeMutableBufferPointer { rBuf in
@@ -621,17 +692,13 @@ final class ALSAAudioEngine: @unchecked Sendable {
                         }
                         renderProcessed(left: left, right: right, frames: frames)
                     } else {
-                        if outputMode == .processedAudio {
-                            generator.renderAudioOnlyToneNonInterleaved(
-                                frameCount: frames, left: left, right: right)
-                        } else {
-                            generator.renderNonInterleaved(
-                                frameCount: frames, left: left, right: right)
-                        }
+                        renderTone(left: left, right: right, frames: frames)
                     }
                 }
             }
             publishPeaks(frames: frames)
+            let busy = Float((ProcessInfo.processInfo.systemUptime - periodStart) / periodSeconds * 100.0)
+            if busy > renderLoadWindowPeak { renderLoadWindowPeak = busy }
             publishGeneratorMetersIfDue()
             if !writePeriod(out) { break }
         }
@@ -648,6 +715,30 @@ final class ALSAAudioEngine: @unchecked Sendable {
             generator.renderFromInputInPlace(
                 frameCount: frames, left: left, right: right)
         }
+        tapForMonitor(left: left, right: right, frames: frames)
+    }
+
+    /// Tone path counterpart of `renderProcessed`.
+    private func renderTone(
+        left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int
+    ) {
+        if outputMode == .processedAudio {
+            generator.renderAudioOnlyToneNonInterleaved(frameCount: frames, left: left, right: right)
+        } else {
+            generator.renderNonInterleaved(frameCount: frames, left: left, right: right)
+        }
+        tapForMonitor(left: left, right: right, frames: frames)
+    }
+
+    /// The monitor's copy of the feed, RAW: one ring write per period and no
+    /// DSP on this thread (see `ALSAMonitorOutput`). In composite mode both
+    /// channels carry the composite and the monitor thread decodes it.
+    @inline(__always)
+    private func tapForMonitor(
+        left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int
+    ) {
+        guard monitor.isRunning else { return }
+        monitorRing?.write(left: left, right: right, frameCount: frames)
     }
 
     /// Interleave/convert the rendered period and write it; snd_pcm_recover

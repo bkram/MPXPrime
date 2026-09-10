@@ -236,13 +236,24 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         }
     }
 
+    /// The two idle states are re-derived on EVERY config apply (a slider move
+    /// on the dashboard is enough), and each used to print a status line --
+    /// the Linux journal was a wall of "no local script". Say it when it
+    /// changes, not every time it is confirmed.
+    private var lastIdleStatus: String?
+    private func reportIdleStateOnce(_ line: String) {
+        guard lastIdleStatus != line else { return }
+        lastIdleStatus = line
+        statusHandler(line)
+    }
+
     private func reconfigureTimer() {
         timer?.cancel()
         timer = nil
 
         guard settings.enabled else {
             state.clear()
-            statusHandler("Now Playing: off")
+            reportIdleStateOnce("Now Playing: off")
             return
         }
 
@@ -252,9 +263,10 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
             // wiped API-pushed tracks on every config change (onConfigChange ->
             // updateConfig -> here). Only the disabled case (above) and a real
             // script failure wipe the state.
-            statusHandler("Now Playing: no local script (API push may feed it)")
+            reportIdleStateOnce("Now Playing: no local script (API push may feed it)")
             return
         }
+        lastIdleStatus = nil
 
         let newTimer = DispatchSource.makeTimerSource(queue: queue)
         newTimer.schedule(deadline: .now(), repeating: settings.pollSeconds)

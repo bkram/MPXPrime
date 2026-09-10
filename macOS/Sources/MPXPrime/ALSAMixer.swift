@@ -130,6 +130,39 @@ enum ALSAMixer {
         } ?? []
     }
 
+    /// The first control carrying a playback volume and the first carrying a
+    /// capture volume: on a USB card these are the output and input paths the
+    /// encoder actually uses ("Headphone" / "Mic" on the rig's C-Media card,
+    /// "PCM" / "Capture" on others). The asserted dB keys apply to these.
+    static func primaryControls(card: String) -> (playback: ALSAMixerMath.Control?, capture: ALSAMixerMath.Control?) {
+        let all = controls(card: card)
+        return (all.first { $0.playbackPercent != nil }, all.first { $0.capturePercent != nil })
+    }
+
+    /// Set a control by dB, the unit the operator reasons in and the card
+    /// reports. ALSA rounds to the nearest step the control has; the caller
+    /// reads back what it took. Returns false when the control is missing or
+    /// has no dB scale.
+    static func setDB(card: String, name: String, index: UInt32, playbackDB: Double?, captureDB: Double?) -> Bool {
+        withMixer(card: card) { mixer -> Bool in
+            var sid: OpaquePointer?
+            snd_mixer_selem_id_malloc(&sid)
+            guard let selemID = sid else { return false }
+            defer { snd_mixer_selem_id_free(selemID) }
+            snd_mixer_selem_id_set_index(selemID, index)
+            snd_mixer_selem_id_set_name(selemID, name)
+            guard let elem = snd_mixer_find_selem(mixer, selemID) else { return false }
+            var ok = true
+            if let dB = playbackDB, snd_mixer_selem_has_playback_volume(elem) == 1 {
+                ok = snd_mixer_selem_set_playback_dB_all(elem, Int(lround(dB * 100.0)), 0) >= 0 && ok
+            }
+            if let dB = captureDB, snd_mixer_selem_has_capture_volume(elem) == 1 {
+                ok = snd_mixer_selem_set_capture_dB_all(elem, Int(lround(dB * 100.0)), 0) >= 0 && ok
+            }
+            return ok
+        } ?? false
+    }
+
     /// Set one control. Every field is optional: only what is supplied moves.
     /// Returns false when the card or the control could not be opened.
     static func set(

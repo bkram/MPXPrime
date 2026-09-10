@@ -32,6 +32,7 @@ struct ConfigKeyOutcome: Codable, Equatable {
         case live            // hot-applied to the DSP plane
         case liveRDS         // hot-applied to the RDS plane
         case restartRequired // stored; takes effect on next engine start
+        case none            // stored and acted on by the backend itself (side channel), no restart
         case unchanged       // value identical, or unknown key (no effect)
     }
     var key: String
@@ -64,6 +65,13 @@ enum ConfigPatch {
         }
         return INIParser.parse(ini)
     }
+
+    /// Keys the ENGINE never sees: the backend consumes them itself (the sound
+    /// card's mixer, asserted on the reconcile tick). Their disposition cannot
+    /// be derived by diffing the engine's runtime structs -- they are in none
+    /// of them -- so this is the one place they are named; a key here must
+    /// have a backend that acts on it without a restart.
+    static let backendOwnedKeys: Set<String> = ["alsa_playback_volume_db", "alsa_capture_volume_db"]
 
     /// Apply `patch` (INI key -> raw string value) to `config`. Returns the
     /// patched config plus per-key outcomes. Keys the schema does not read
@@ -102,6 +110,8 @@ enum ConfigPatch {
                 != MPXGenerator.RDSRuntimeConfig.make(from: config) {
                 disposition = .liveRDS
                 planes.rdsLive = true
+            } else if backendOwnedKeys.contains(key) {
+                disposition = .none
             } else {
                 disposition = .restartRequired
                 planes.restartRequired = true

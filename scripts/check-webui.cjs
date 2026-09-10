@@ -157,7 +157,7 @@ function makeServer(mode) {
       });
     }
     if (path === "/api/meters") {
-      return json({ inputLeftPeak: 0.5, inputRightPeak: 0.25, outputPeak: 0.8, dacPeakDBFS: -3.2 });
+      return json({ inputLeftPeak: 0.5, inputRightPeak: 0.25, outputPeak: 0.8, dacPeakDBFS: -3.2, renderXruns: 0, captureXruns: 0, renderLoadPercent: 42 });
     }
     if (path === "/api/presets") return json({});
     if (path === "/api/rds") return json({ ps: "TEST", rt: "" });

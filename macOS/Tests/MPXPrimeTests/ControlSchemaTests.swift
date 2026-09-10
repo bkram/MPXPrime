@@ -25,6 +25,11 @@ struct ControlSchemaTests {
     private static let deliberatelyUnexposed: [String: String] = [
         // RDS physical layer the native GUI also hides (docs call them
         // INI-only; restart-required modulator internals).
+        // Written by the card-mixer API (PATCH /api/mixer records the level
+        // the card took), asserted by the engine; a direct config patch of a
+        // dB the card cannot represent would be worse than no control.
+        "alsa_playback_volume_db": "set through PATCH /api/mixer, not as a widget",
+        "alsa_capture_volume_db": "set through PATCH /api/mixer, not as a widget",
         "rds_gaussian_enabled": "GUI hides it too; modulator internal",
         "rds_gaussian_bw_hz": "GUI hides it too; modulator internal",
         "rds_gaussian_taps": "GUI hides it too; modulator internal",

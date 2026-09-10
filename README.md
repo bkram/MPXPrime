@@ -212,7 +212,8 @@ interface -- at `http://<host>:8737/` on all interfaces, behind a random API
 key the installer generates and prints (stored in
 `/var/lib/mpxprime/MPXPrime.ini` as `control_api_key`; the
 [Operator Guide](docs/studio-operator-guide.md#installing-and-starting) walks through it). This is the
-CLI encoder only -- no GUI, no Meter, no Monitor operating mode. See
+CLI encoder only -- no GUI, no Meter; the Monitor plays on a second ALSA
+device. See
 [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
 
 ### First-launch security note

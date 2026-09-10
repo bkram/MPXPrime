@@ -82,8 +82,8 @@ an audio device (`--device`) or a composite on stdin (`--stdin`). See the
 
 The encoder also builds and runs on Linux as a **command-line-only** port
 (experimental; dev-tested on Ubuntu 24.04 x86_64). The GUI, the MPX Prime
-Meter, the SDR tuner and the Monitor operating mode remain macOS-only, and the
-web dashboard / REST API is the only operator interface (the package enables
+Meter and the SDR tuner remain macOS-only (the Monitor output plays on a
+second ALSA device), and the web dashboard / REST API is the only operator interface (the package enables
 it on all interfaces behind a generated API key; a hand-run build passes
 `--web`). Everything
 the headless encoder offers works: `--nogui` live encoding into an ALSA

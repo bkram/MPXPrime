@@ -12,6 +12,24 @@ struct ConfigPatchTests {
         AppConfig()
     }
 
+    @Test func cardMixerKeysAreStoredWithoutARestart() throws {
+        // The mixer keys never reach the engine: the backend asserts them on
+        // the card itself. Reporting them restart-class would light the
+        // dashboard's restart badge for a level that is already in effect.
+        let cfg = AppConfig()
+        for key in ["alsa_playback_volume_db", "alsa_capture_volume_db"] {
+            let (patched, outcomes, planes) = try ConfigPatch.apply([key: "-3"], to: cfg)
+            #expect(outcomes[0].disposition == .none, "\(key) reported \(outcomes[0].disposition)")
+            #expect(!planes.restartRequired && !planes.dspLive && !planes.rdsLive)
+            #expect(outcomes[0].effectiveValue == "-3.0")
+            let (_, cleared, _) = try ConfigPatch.apply([key: ""], to: patched)
+            #expect(cleared[0].disposition == .none, "clearing \(key) reported \(cleared[0].disposition)")
+        }
+        #expect(MPXGenerator.makeRuntimeConfig(from: cfg)
+            == MPXGenerator.makeRuntimeConfig(from: try ConfigPatch.apply(["alsa_playback_volume_db": "0"], to: cfg).config),
+            "a mixer key moved the DSP runtime config")
+    }
+
     @Test func roundTripIsStable() throws {
         // The whole mechanism rests on captureAsINIString/loadFromINIString
         // being a fixed point; a drifting round-trip would make every

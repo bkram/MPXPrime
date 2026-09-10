@@ -39,6 +39,61 @@ combination test suite. Newest first.
   use the rest. The same peak guard the HD ceiling uses does it, with separate
   ceilings per polarity and no clipping. Measured by `AMOutputTests`; not yet
   checked against a modulation monitor on a real AM transmitter.
+- **Linux: the render thread is now measurably real-time, and says so when it
+  is not.** `pthread_setschedparam(SCHED_FIFO)` was called and its result
+  thrown away; the test rig ran every thread at normal priority and xruns
+  climbed from 19 to 210 in minutes. The engine now logs "render thread
+  SCHED_FIFO 70" or the refusal with its errno, and a refusal reaches
+  `/api/status` `notes`. Measured on the rig after the change: FIFO 70 on the
+  render thread, 69 on capture, and zero xruns in 60 s on the same heavy
+  profile.
+- **Linux: render load is a readout, and the monitor costs the transmitter
+  nothing.** `GET /api/meters` gains `renderLoadPercent` (the worst share of
+  a period the render thread needed in the last ~43 ms) and the dashboard's
+  Stream Health card shows it with the xrun counters (`Xruns R/C`, `Render
+  Load`, red from 90 %). Measured on the rig it reads 95 % with nothing else
+  wrong -- the full chain at 192 kHz nearly fills a Celeron core -- which is
+  why the first Linux monitor build produced 34 xruns per 20 s: it decoded
+  the composite on the render thread, as macOS does. On Linux the render
+  thread now only copies the raw feed into the monitor ring; the monitor's
+  own thread demodulates (a standalone `MPXDecoder` on its own PLL, the
+  verifier's receiver model) and de-emphasises. Measured with the Monitor
+  on: 16 xruns in one minute and 0 in the next at `blocksize` 2048 (85 ms of
+  buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
+  buffer is the remedy on a CPU this full. Stopping the monitor also no
+  longer aborts the process (a double `snd_pcm_close`).
+- **Build: the preset slot row compiles under Swift 6.4.** Xcode 27's
+  command-line tools gave up type-checking `SnapshotSlotRow.body` as one
+  expression in release builds; the row is now three subviews. No behaviour
+  change.
+- **PATCHing the card mixer keys reports `none`, not `restartRequired`.**
+  `alsa_playback_volume_db` / `alsa_capture_volume_db` never reach the
+  engine: the backend asserts them on the card at once and on every reconcile
+  tick, so the dashboard used to light the restart badge for a level that was
+  already in effect. `ConfigPatch.backendOwnedKeys` names the two keys (they
+  are in no runtime struct, so this cannot be derived) and the headless
+  backend asserts the mixer immediately after such a PATCH.
+- **Linux: `blocksize` is the ALSA period.** The engine opened with a
+  hard-coded 2048 x 8 whatever the operator set, so the one latency-vs-safety
+  knob the GUI and dashboard offer did nothing on this platform. The buffer
+  keeps at least 8 periods and 8192 frames.
+- **Linux: the card mixer is remembered and ASSERTED, and its sliders sit with
+  their devices.** Card Input Level under the input device, Card Output Level
+  under the output device, in the card's own dB, updated in place. Moving one
+  records the level (`alsa_playback_volume_db` / `alsa_capture_volume_db`,
+  installation-preserved) and the engine puts it back at start and on every
+  reconcile tick when something else moves it -- the rig's USB card has a
+  hardware knob, and an `alsactl store` level came back 2 dB down after a
+  reboot. Empty keys leave the card to ALSA.
+- **`--version` prints the version and exits.** It was an unrecognised
+  argument; on the old builds that ignored unknown arguments the probe
+  launched a full encoder, and two of them were found holding the sound card
+  and the control port on the rig.
+- **Now Playing logs its idle state on change only**, instead of once per
+  config apply (a slider move on the dashboard was one log line).
+- **Test Tone gets a reset button on the dashboard**, matching the stage and
+  RDS pages. Audio I/O deliberately still has none: devices and level
+  calibration are the rig's plumbing.
 - **The dashboard has an About page.** Version, platform, engine rate and
   operating mode, read from `/api/status` so the page cannot claim a version it
   is not talking to, plus links to the repository, the Operator Guide and the
@@ -71,8 +126,9 @@ combination test suite. Newest first.
   refuses to share the transmitter's device, and a disconnected monitor device
   stops it until that same device returns. The composite is bit-identical
   whether or not anyone is listening (`MonitorRenderParityTests`), and all five
-  offline gates are zero-drift. macOS only, headless included; the Linux build
-  has no second ALSA device.
+  offline gates are zero-drift. Linux plays the same monitor on a second ALSA
+  device (`ALSAMonitorOutput`, own thread, snd-aloop works as a test device);
+  the same rules apply there over ALSA device names.
 - **Fixed: the MPX line output trim never reached the air on macOS.**
   `mpx_line_output_dbfs` scaled the composite only on the test-tone path: the
   block sat inside the render callback's tone branch, so a live-input

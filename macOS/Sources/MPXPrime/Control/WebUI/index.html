@@ -596,7 +596,10 @@ function renderGeneric(c, p, isRDS) {
     }
     c.appendChild(grid);
     const cardKeys = p.cards.flatMap(fc => fc.keys);
-    if (isRDS && cardKeys.length) c.appendChild(resetTabButton(cardKeys, p.title));
+    // RDS pages always offer a reset; a tools page opts in with `reset: true`
+    // (Test Tone). Audio I/O deliberately never does: devices and level
+    // calibration are the rig's plumbing, not something a tab button resets.
+    if ((isRDS || p.reset) && cardKeys.length) c.appendChild(resetTabButton(cardKeys, p.title));
   } else {
     c.appendChild(card(p.keys || []));
     if (p.keys2) {
@@ -667,7 +670,7 @@ function renderMonitoring(c) {
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
       kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>` : "") +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stream Health</div>` +
-      kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + `</div>`;
+      kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + kv("Xruns R/C", "monXruns") + kv("Render Load", "monLoad") + `</div>`;
   c.appendChild(grid);
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Signal Chain" }));
   const chain = document.createElement("div");
@@ -859,7 +862,9 @@ function renderInterfaces(c, p) {
   dev.style.maxWidth = "640px";
   dev.innerHTML =
     '<div class="row"><div class="rlabel">Input Device</div><select id="devIn" style="max-width:340px"></select></div>' +
+    '<div id="mixIn"></div>' +
     '<div class="row"><div class="rlabel">Output Device</div><select id="devOut" style="max-width:340px"></select></div>' +
+    '<div id="mixOut"></div>' +
     '<div class="subtitle" id="devNote" style="margin-top:8px"></div>' +
     '<div class="subtitle">Devices and sample rate are restart-class: choose, then press Restart.</div>';
   c.appendChild(dev);
@@ -894,7 +899,7 @@ function renderInterfaces(c, p) {
     '<div class="subtitle" style="margin-top:6px">Read-only here: changing the server you are talking through risks locking yourself out. Edit in the INI or the native GUI; applies at next launch.</div>';
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (read-only)" }));
   c.appendChild(rc);
-  renderCardMixer(c);
+  renderCardMixer();
   fillDeviceSelects();   // from cache: no empty pickers while the fetch runs
   loadDevices();         // then refresh in the background
   syncAll();
@@ -930,64 +935,64 @@ function renderAbout(c) {
   syncAll();
 }
 
-/* The SOUND CARD's own volume sliders (Linux). They sit between the encoder
-   and the exciter, and on a headless box nothing else shows them: a slider a
-   few percent below unity costs composite level that no meter in the app can
-   see. Read live from ALSA, never stored by us -- `alsactl store` is what
-   makes a level survive a reboot, and the caption says so. Absent on macOS,
-   where the endpoint answers "not available". */
-function renderCardMixer(host) {
-  const box = document.createElement("div");
-  host.appendChild(box);
+/* The SOUND CARD's own volume sliders (Linux), placed WITH the device they
+   belong to: the capture control under the input picker, the playback control
+   under the output picker. They sit between the encoder and the exciter, and
+   on a headless box nothing else shows them: the rig came back 2 dB down after
+   a reboot because the card has a knob. Read live from ALSA. Moving one also
+   records the level in the config (alsa_*_volume_db), which the engine then
+   ASSERTS at start and on every reconcile tick -- that is what beats the knob.
+   Absent where /api/mixer says "not available" (macOS). */
+function renderCardMixer() {
+  const inHost = $("mixIn"), outHost = $("mixOut");
+  if (!inHost || !outHost) return;
   (async () => {
     let mixer;
     try { mixer = await api("/api/mixer"); } catch (e) { return; }
-    if (!mixer || !mixer.available || !(mixer.controls || []).length) return;
-    box.appendChild(Object.assign(document.createElement("div"),
-      { className: "gtitle", textContent: "Sound Card Mixer" + (mixer.card ? " (" + mixer.card + ")" : "") }));
-    const card = document.createElement("div");
-    card.className = "card cardpad";
-    card.style.maxWidth = "640px";
-    for (const ctl of mixer.controls) {
-      for (const side of ["playback", "capture"]) {
-        const pct = ctl[side + "Percent"];
-        if (pct == null) continue;
-        const dB = ctl[side + "DB"];
-        const row = document.createElement("div");
-        row.className = "row";
-        const label = document.createElement("div");
-        label.className = "rlabel";
-        label.textContent = ctl.name + " " + (side === "playback" ? "out" : "in");
-        const input = document.createElement("input");
-        input.type = "range";
-        input.min = "0"; input.max = "100"; input.step = "1";
-        input.value = String(Math.round(pct));
-        const read = document.createElement("span");
-        read.className = "rval";
-        const show = (v) => {
-          read.textContent = Math.round(v) + " %" + (dB != null ? " (" + dB.toFixed(2) + " dB)" : "");
-        };
-        show(pct);
-        input.oninput = () => show(Number(input.value));
-        input.onchange = async () => {
-          const body = { name: ctl.name, index: ctl.index };
-          body[side + "Percent"] = Number(input.value);
-          try {
-            await api("/api/mixer", { method: "PATCH", body: JSON.stringify(body) });
-            toast(ctl.name + " " + side + ": " + input.value + " %");
-            showPage(currentPage);          // re-read: the card reports the level it actually took
-          } catch (e) { toast("mixer: " + e.message, true); }
-        };
-        row.appendChild(label); row.appendChild(input); row.appendChild(read);
-        card.appendChild(row);
-      }
+    if (!mixer || !mixer.available) return;
+    const playback = (mixer.controls || []).find(c => c.playbackPercent != null);
+    const capture = (mixer.controls || []).find(c => c.capturePercent != null);
+    if (capture) inHost.appendChild(mixerRow(capture, "capture", "Card Input Level"));
+    if (playback) outHost.appendChild(mixerRow(playback, "playback", "Card Output Level"));
+    if (playback || capture) {
+      outHost.insertAdjacentHTML("beforeend",
+        '<div class="subtitle">The sound card\'s own levels, remembered and re-asserted by the encoder. Keep the output at 0 dB and calibrate with the encoder\'s levels below; a card below unity costs composite the meters cannot see.</div>');
     }
-    box.appendChild(card);
-    box.appendChild(Object.assign(document.createElement("div"), {
-      className: "subtitle",
-      textContent: "The card's own levels, not the encoder's. Keep the output at 100 % (0 dB) and calibrate with MPX Output Level / Line Output above; a mixer below unity costs composite the meters cannot see. These are hardware settings: run 'sudo alsactl store' to keep them across a reboot."
-    }));
   })();
+}
+function mixerRow(ctl, side, title) {
+  const pct = ctl[side + "Percent"];
+  let dB = ctl[side + "DB"];
+  const row = document.createElement("div");
+  row.className = "row";
+  const label = document.createElement("div");
+  label.className = "rlabel";
+  label.textContent = title;
+  label.title = ctl.name + " (" + side + ")";
+  const input = document.createElement("input");
+  input.type = "range"; input.min = "0"; input.max = "100"; input.step = "1";
+  input.value = String(Math.round(pct));
+  const read = document.createElement("span");
+  read.className = "rval";
+  const show = (p, d) => { read.textContent = (d != null ? d.toFixed(1) + " dB" : "") + " (" + Math.round(p) + " %)"; };
+  show(pct, dB);
+  input.oninput = () => show(Number(input.value), null);
+  input.onchange = async () => {
+    const body = { name: ctl.name, index: ctl.index };
+    body[side + "Percent"] = Number(input.value);
+    try {
+      const fresh = await api("/api/mixer", { method: "PATCH", body: JSON.stringify(body) });
+      // In place: the card reports what it actually took, and the page keeps
+      // its scroll and focus instead of being rebuilt.
+      const now = (fresh.controls || []).find(c => c.name === ctl.name && c.index === ctl.index) || ctl;
+      dB = now[side + "DB"];
+      input.value = String(Math.round(now[side + "Percent"] ?? Number(input.value)));
+      show(Number(input.value), dB);
+      toast(title + ": " + (dB != null ? dB.toFixed(1) + " dB" : input.value + " %") + " (remembered)");
+    } catch (e) { toast("card mixer: " + e.message, true); }
+  };
+  row.appendChild(label); row.appendChild(input); row.appendChild(read);
+  return row;
 }
 
 function renderAdvanced(c) {
@@ -1150,6 +1155,14 @@ async function pollMeters() {
   set("monUp", up != null ? (up >= 3600 ? (up/3600).toFixed(1) + " h" : Math.round(up/60) + " min") : "-");
   set("monRing", m?.inputRingBufferedFrames != null ? m.inputRingBufferedFrames + " frames" : "-");
   set("monDrops", m?.inputRingOverflows != null ? (m.inputRingOverflows + " / " + (m.inputRingUnderflows ?? 0)) : "-");
+  // Linux ALSA engine: xruns since start, and how much of each period the
+  // render thread needs (peak). Near 100 % every extra job costs xruns.
+  set("monXruns", m?.renderXruns != null ? m.renderXruns + " / " + (m.captureXruns ?? 0) : "-");
+  const loadEl = $("monLoad");
+  if (loadEl) {
+    loadEl.textContent = m?.renderLoadPercent != null ? m.renderLoadPercent.toFixed(0) + " %" : "-";
+    loadEl.style.color = m?.renderLoadPercent != null && m.renderLoadPercent >= 90 ? "var(--red)" : "";
+  }
   set("monResample", m?.inputResampleMode != null
     ? m.inputResampleMode + (m.inputRatioTrim != null ? " (" + ((m.inputRatioTrim - 1) * 1e6).toFixed(0) + " ppm)" : "")
     : "-");

@@ -30,7 +30,7 @@ Everything in this guide applies to both platforms; where a control is GUI-only,
 | Operator interface | GUI app (`MPX Prime Studio.app`); optional web dashboard | **Web dashboard / REST API only** (the package enables it on all interfaces behind a generated API key -- see Usage) |
 | Audio backend and device keys | Core Audio; `*_device_uid` keys hold Core Audio UIDs, picked in the app | ALSA; `*_device_uid` keys hold PCM names (`default`, `hw:0,0`, `plughw:...`) |
 | Default config file | `~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` | `~/.local/share/MPX Prime Studio/MPX Prime Studio.ini` (source build); `/var/lib/mpxprime/MPXPrime.ini` (Debian package) |
-| Operating modes | MPX / FM / HD / AM Output, each with the concurrent Monitor output | MPX / FM / HD / AM Output (no Monitor: a second ALSA device is not implemented) |
+| Operating modes | MPX / FM / HD / AM Output, each with the concurrent Monitor output | the same four, with the Monitor on a second ALSA device |
 | Companion analyzer / SDR | MPX Prime Meter (Apple Silicon only) | none |
 | Offline gates | all `--verify*` modes, `--bench*`, the live smoke / A/B scripts (need BlackHole) | all `--verify*` modes and `--bench*` except `--verify-program-ab` (needs AVFoundation); no live scripts |
 
@@ -78,8 +78,8 @@ it with a TLS reverse proxy (see
 instead of as a service: `mpxprime --web --config /path/to/MPXPrime.ini`
 (`--web` implies `--nogui` and forces the server on; bind, port and key still
 come from the INI). Devices are ALSA PCM names (`default`, `hw:0,0`,
-`plughw:...`), not Core Audio devices; the Monitor operating mode does not
-exist on Linux.
+`plughw:...`), not Core Audio devices; the Monitor plays on a second ALSA
+device (see Monitor output below).
 
 To build, run, verify, test, or package from source, see
 [docs/BUILDING.md](BUILDING.md).
@@ -167,17 +167,50 @@ The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O**
 
 ### Sound card mixer (Linux)
 
-On Linux the dashboard's `Audio I/O` page grows a **Sound Card Mixer** card
-listing the card's own sliders, in and out, with the card's dB reading beside
-each. It is there because that mixer sits between the encoder and the exciter
-and nothing else on a headless box shows it: a slider at 96 % quietly costs
-2 dB of composite that no meter in the app can see.
+On Linux the dashboard's `Audio I/O` page shows the sound card's own level
+controls next to the devices they belong to: **Card Input Level** under the
+input device and **Card Output Level** under the output device, in dB as the
+card reports it. They are there because that mixer sits between the encoder
+and the exciter and nothing else on a headless box shows it: the test rig came
+back from a reboot at 96 %, 2 dB down, because its USB card has a hardware
+volume knob.
 
-Keep the output slider at 100 % (0 dB) and do the calibration in the encoder
-with `MPX Output Level` and `Line Output`. These are hardware settings rather
-than encoder settings, so run `sudo alsactl store` after changing them if you
-want them back after a reboot. The card does not appear on macOS, where the
-system sound settings own this.
+Keep the output at 0 dB and do the calibration in the encoder with `MPX Output
+Level` and `Line Output`. Moving a card slider from the dashboard also makes the
+encoder remember it and put it back whenever something else (the knob, a
+reboot) moves it, so you do not need `alsactl store`. The card's capture side
+often carries analog gain of its own -- the rig's showed +6 dB -- which is why
+an input calibrated on macOS lands at a different level here; set the card
+input to 0 dB and calibrate with `Input Gain`. The controls do not appear on
+macOS, where the system sound settings own this.
+
+### Render load (Linux)
+
+The dashboard's Stream Health card shows **Xruns R/C** (render / capture
+dropouts since the engine started) and **Render Load**: the worst share of
+one buffer period the encoder's real-time thread needed recently. It turns
+red from 90 %. A small CPU running the full chain at 192 kHz can sit in the
+nineties with no dropouts at all -- the rig's Celeron reads 95 % -- but it
+has no headroom left: anything else that lands on that thread shows up as
+xruns. If the counter climbs, check Render Load first; a longer `blocksize`
+buys safety at the cost of latency -- on the rig, 2048 (85 ms of buffer)
+dropped an occasional burst with the Monitor on and 4096 (170 ms) dropped
+none, so on a CPU reading over 90 % use 4096. The Monitor's own decoding runs
+on a separate thread and adds nothing to this figure.
+
+### Why the Linux box is "not loud enough"
+
+The digital path is at full scale: the composite leaves the card at 0 dBFS
+minus `MPX Output Level`, and the card's own output is at 0 dB. Two things
+changed in 0.50 that make a rig upgraded from an older build quieter:
+`MPX Output Level` is attenuation-only in MPX Output (a positive value used to
+be accepted and pushed pilot and RDS above their set injection; it is clamped
+to 0 now, the same on both platforms), and the card mixer is now watched, so a
+knob at -2 dB no longer goes unnoticed. Beyond that the card is at its
+maximum: more drive has to come from the exciter's input sensitivity, exactly
+what `scripts/calibrate-tx.sh` tells you on macOS. To compare the two hosts
+honestly, run the built-in Test Tone at 0 dBFS (100 % modulation by
+definition) with the card at 0 dB on each and measure the same jack.
 
 ### Monitor output
 
@@ -203,9 +236,12 @@ stopped until that device returns, with a note in the status line -- the
 transmitter feed is untouched throughout. The Monitor is a listening aid, a
 few tens of milliseconds behind the output, and never the signal on air.
 
-Headless macOS runs (`--nogui` / `--web`) support the Monitor exactly as the
-app does. The Linux build does not: a second ALSA playback device is not
-implemented, so `monitor_enabled` is ignored there.
+Headless runs (`--nogui` / `--web`) support the Monitor exactly as the app
+does, on Linux too: pick a second ALSA device on the dashboard's Audio I/O
+page (the onboard codec, a second USB card, or the `Loopback` card from
+`snd-aloop` when something else on the box should pick the feed up). The
+same rules hold there: it refuses the transmitter's own card, and an empty
+selection is off rather than ALSA's `default`.
 
 Calibration is deliberately separated from the DSP tabs because it belongs to the RIG, not the sound -- and it is **remembered per device** (`<config>.devicecal.json` next to the INI): switch the output from one exciter to another and each device's own MPX Output Level / Line Output come back automatically (input devices remember their Input Gain; output levels are kept per operating mode). A device that was re-plugged into a different USB port is matched by name. Format Profiles, presets, and per-tab resets never touch these values, and loading a preset keeps this installation's devices, mode, calibration, and control-server settings (see Presets below).
 
@@ -590,7 +626,7 @@ INI keys: `operating_mode`, `preemphasis_us`,
 The DSP status card's **Safety GR** is the final look-ahead MPX limiter's gain reduction (about 1 dB on dense program is normal: it rides the composite clipper's guard-band overshoot; since 0.45 it reports the true amount it removes). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/meters` and "Safety Clip" on the dashboard.
 
 - `Audio I/O` -> `Output` is the composite/baseband output device
-- `Audio I/O` -> `Monitor (Decoded MPX Simulation)` is the device the Monitor operating mode plays the decoded composite to
+- `Audio I/O` -> `Monitor` is the second device the Monitor output plays on, alongside the transmitter feed
 - The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input
 - `Mono Mode` now transmits true mono composite and suppresses pilot, stereo subcarrier, and RDS while enabled
 - If a remembered input / output / monitor device is not connected, **Start is refused** with an alert rather than silently streaming to the OS default -- reconnect the device or pick another in `Audio I/O`. (Devices are remembered by UID and name, so moving an interface to another USB port keeps the selection.)

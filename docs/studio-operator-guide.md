@@ -72,7 +72,8 @@ Everything else -- devices, operating mode, levels, processing, RDS -- is set on
 the dashboard and persists in that INI. To rotate the key, edit
 `control_api_key` in the INI and restart the service; to keep the dashboard
 local only, set `control_bind = 127.0.0.1`. An existing INI is never touched
-by an upgrade. The server speaks plain HTTP; on an untrusted network front
+by an upgrade, and a running service is started again once the new files are
+in place. The server speaks plain HTTP; on an untrusted network front
 it with a TLS reverse proxy (see
 [Remote control](#operating-it-from-a-browser)). To run by hand
 instead of as a service: `mpxprime --web --config /path/to/MPXPrime.ini`

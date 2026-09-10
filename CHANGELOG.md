@@ -62,6 +62,10 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **Linux package: an upgrade restarts the service it stopped.** `dpkg -i`
+  over a running install left mpxprime inactive with only a "start it with"
+  hint on the console -- off air until someone logged in. prerm now records
+  that the service was running and postinst starts it again.
 - **Build: the preset slot row compiles under Swift 6.4.** Xcode 27's
   command-line tools gave up type-checking `SnapshotSlotRow.body` as one
   expression in release builds; the row is now three subviews. No behaviour

@@ -161,6 +161,18 @@ if [ ! -f "$INI" ]; then
 fi
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
+    # An upgrade must not leave the appliance off air (the first 0.50-dev
+    # upgrade on the rig sat inactive until someone logged in). dpkg runs the
+    # OLD package's prerm on an upgrade, so the marker below exists only from
+    # the second upgrade on; until then "upgrade of an enabled unit" is the
+    # signal -- enabled means wanted running on an appliance.
+    if [ -f /run/mpxprime.restart-after-upgrade ] \
+        || { [ "$1" = "configure" ] && [ -n "$2" ] && systemctl is-enabled --quiet mpxprime 2>/dev/null; }; then
+        rm -f /run/mpxprime.restart-after-upgrade
+        systemctl start mpxprime >/dev/null 2>&1 || true
+        echo "mpxprime upgraded and restarted."
+        exit 0
+    fi
 fi
 echo "mpxprime installed. Start it with: systemctl enable --now mpxprime"
 echo "Then open http://<this-host>:8737/ and paste the API key when the dashboard asks."
@@ -172,6 +184,12 @@ cat > "$STAGE/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
 if [ -d /run/systemd/system ]; then
+    # Remember whether it was running so postinst can bring it back on an
+    # upgrade; a plain remove has no postinst of ours and the marker is
+    # harmless in /run.
+    if [ "$1" = "upgrade" ] && systemctl is-active --quiet mpxprime; then
+        touch /run/mpxprime.restart-after-upgrade
+    fi
     systemctl stop mpxprime >/dev/null 2>&1 || true
 fi
 exit 0

@@ -171,7 +171,8 @@ user in the `audio` group, config at `/var/lib/mpxprime/MPXPrime.ini`;
 postinst seeds `/var/lib/mpxprime/MPXPrime.ini` from the sample INI with
 `control_enabled = True`, `control_bind = 0.0.0.0` and a random 32-character
 `control_api_key` from `/dev/urandom` (printed once; an existing INI is never
-touched, so upgrades keep the operator's key and settings), and the unit runs
+touched, so upgrades keep the operator's key and settings, and postinst
+restarts a service the upgrade stopped), and the unit runs
 `mpxprime --nogui --web --config /var/lib/mpxprime/MPXPrime.ini` -- `--web`
 forces the control server on while bind, port and key come from `[CONTROL]`
 -- so the dashboard is reachable from another machine from `systemctl enable

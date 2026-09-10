@@ -1117,9 +1117,52 @@ async function pollStatus() {
     $("cDot").classList.remove("on");
   }
 }
+// Meters arrive two ways: a push stream (NDJSON at ~20 Hz, the engine's own
+// publish rate) when the server offers it, and the 300 ms poll otherwise --
+// the poll keeps running as the fallback and steps aside while the stream is
+// alive. Both end in applyMeters, so the bars never depend on which one won.
+let meterStreamAlive = false;
 async function pollMeters() {
+  if (meterStreamAlive) return;
   let m = null;
   try { m = await api("/api/meters"); } catch (e) {}
+  applyMeters(m);
+}
+async function streamMeters() {
+  let res;
+  try {
+    res = await fetch("/api/meters/stream?hz=20", { headers: headers(false) });
+    if (!res.ok || !res.body || typeof res.body.getReader !== "function") throw new Error("no stream");
+  } catch (e) {
+    meterStreamAlive = false;
+    setTimeout(streamMeters, 5000);
+    return;
+  }
+  meterStreamAlive = true;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (!line) continue;
+        let m = null;
+        try { m = JSON.parse(line); } catch (e) { continue; }
+        applyMeters(m && m.error ? null : m);
+      }
+    }
+  } catch (e) {}
+  // Stream ended (server restart, network): back to polling, retry the stream.
+  meterStreamAlive = false;
+  setTimeout(streamMeters, 2000);
+}
+function applyMeters(m) {
   const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
   const setw = (id, pct) => { const el = $(id); if (el) el.style.width = pct + "%"; };
   set("monInLv", dbText(m?.inputLeftPeak) + " dBFS"); setw("monInL", dbPct(m?.inputLeftPeak));
@@ -1246,6 +1289,7 @@ async function boot() {
   pollMeters();
 }
 boot();
+streamMeters();
 setInterval(pollStatus, 2000);
 setInterval(pollMeters, 300);
 setInterval(() => pollRDS(false), 1000);

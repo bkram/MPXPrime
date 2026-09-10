@@ -43,6 +43,7 @@ const MODES = ["mpx", "fm", "hd", "am"];
 // itself is kept and awaited, because its ORDER is one of the things at stake.
 const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>"))
   .replace(/^boot\(\);$/m, "")
+  .replace(/^streamMeters\(\);$/m, "")
   .replace(/^setInterval\(.*$/gm, "");
 
 // The page is strict-mode, so its declarations stay inside the eval that runs
@@ -50,7 +51,7 @@ const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scri
 // eval, rather than re-evaluating snippets against a scope that cannot see them.
 const bridge = `
 window.__page = {
-  boot, showPage, syncAll, loadConfig, currentMode, pageHiddenInMode,
+  boot, showPage, syncAll, loadConfig, currentMode, pageHiddenInMode, streamMeters,
   configKeyCount: () => Object.keys(cfg).length
 };
 `;
@@ -156,8 +157,18 @@ function makeServer(mode) {
         outputMode: state.cfg.operating_mode, notes: []
       });
     }
-    if (path === "/api/meters") {
-      return json({ inputLeftPeak: 0.5, inputRightPeak: 0.25, outputPeak: 0.8, dacPeakDBFS: -3.2, renderXruns: 0, captureXruns: 0, renderLoadPercent: 42 });
+    const meters = { inputLeftPeak: 0.5, inputRightPeak: 0.25, outputPeak: 0.8, dacPeakDBFS: -3.2, renderXruns: 0, captureXruns: 0, renderLoadPercent: 42 };
+    if (path === "/api/meters") return json(meters);
+    if (path.startsWith("/api/meters/stream")) {
+      // Two NDJSON lines split across chunks, then end -- the page must parse
+      // them, apply both, and fall back to polling when the stream closes.
+      const enc = new TextEncoder();
+      const second = JSON.stringify({ ...meters, outputPeak: 0.4 }) + "\n";
+      const chunks = [enc.encode(JSON.stringify(meters) + "\n" + second.slice(0, 10)), enc.encode(second.slice(10))];
+      let i = 0;
+      const body = { getReader: () => ({ read: async () => i < chunks.length ? { value: chunks[i++], done: false } : { value: undefined, done: true } }) };
+      state.streamReads = (state.streamReads || 0) + 1;
+      return { ok: true, status: 200, statusText: "", body, json: async () => ({}) };
     }
     if (path === "/api/presets") return json({});
     if (path === "/api/rds") return json({ ps: "TEST", rt: "" });
@@ -186,6 +197,10 @@ async function runModeUnguarded(mode) {
   });
   const win = dom.window;
   win.fetch = (url, opts) => server.fetchImpl(url, opts);
+  // Browsers have these on window; jsdom does not. The meters stream decodes
+  // its chunks with TextDecoder.
+  win.TextDecoder = TextDecoder;
+  win.TextEncoder = TextEncoder;
   win.EventSource = class { close() {} };
   const errors = [];
   win.addEventListener("error", (e) => errors.push(e.error?.message || e.message));
@@ -206,6 +221,15 @@ async function runModeUnguarded(mode) {
   await page.boot();
   await settle();
   drainErrors("boot");
+
+  // (1b) the meters stream: two NDJSON lines split across chunks must both be
+  // parsed and the last one must reach the bars (outputPeak 0.4 = -8.0 dBFS).
+  await page.streamMeters();
+  await settle();
+  drainErrors("meters stream");
+  if (!server.state.streamReads) fail(mode, "meters stream", "the stream was never requested");
+  const outText = $("monOut") ? $("monOut").textContent : "";
+  if (!outText.includes("-8.0")) fail(mode, "meters stream", `streamed meters did not reach the bars (Output reads "${outText}")`);
 
   if (!page.configKeyCount()) fail(mode, "boot", "config was never loaded");
   if (page.currentMode() !== mode) {

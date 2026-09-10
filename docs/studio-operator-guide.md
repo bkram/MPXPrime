@@ -653,7 +653,9 @@ triggers a layout pass:
 
 The encoder embeds an HTTP control server for remote and automation use --
 on macOS (GUI or `--nogui`) and on the Linux CLI build. It is **disabled by
-default**.
+default**. The dashboard's meters follow the engine at up to 20 updates a
+second (a push stream from the server; behind a proxy that buffers, or on an
+older server, they fall back to a 300 ms poll).
 
 Enable it in the INI (`[CONTROL]` section; on macOS also editable in the
 GUI's Settings window, where changes take effect at the next app launch). On

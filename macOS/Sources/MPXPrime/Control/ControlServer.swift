@@ -174,6 +174,45 @@ enum ControlServer {
             return meters
         }
 
+        // The same meters as a push: one JSON object per line (NDJSON) at
+        // `hz` (5...30, default 20) for as long as the client keeps reading.
+        // The dashboard's bars ran off a 300 ms poll before -- the engine
+        // publishes every ~43 ms, so the poll was the limit. `frames=N` ends
+        // the stream after N lines (curl, tests); a closed connection ends it
+        // through the writer's error. Read it with fetch + ReadableStream so
+        // the API-key header still applies; EventSource cannot send one.
+        router.get("/api/meters/stream") { request, _ -> Response in
+            let hz = min(30.0, max(5.0, request.uri.queryParameters.get("hz").flatMap(Double.init) ?? 20.0))
+            let frames = request.uri.queryParameters.get("frames").flatMap(Int.init)
+            let interval = UInt64(1_000_000_000.0 / hz)
+            var headers = HTTPFields()
+            headers[.contentType] = "application/x-ndjson"
+            headers[.cacheControl] = "no-store"
+            let body = ResponseBody { writer in
+                let encoder = JSONEncoder()
+                var sent = 0
+                // One hour at most: a client that never closes still ends.
+                let deadline = ContinuousClock.now + .seconds(3600)
+                while ContinuousClock.now < deadline, !Task.isCancelled {
+                    let line: Data
+                    if let meters = await backend.meters() {
+                        line = try encoder.encode(meters)
+                    } else {
+                        line = Data("{\"error\":\"engine not running\"}".utf8)
+                    }
+                    var buffer = ByteBuffer()
+                    buffer.writeBytes(line)
+                    buffer.writeString("\n")
+                    try await writer.write(buffer)
+                    sent += 1
+                    if let frames, sent >= frames { break }
+                    try await Task.sleep(nanoseconds: interval)
+                }
+                try await writer.finish(nil)
+            }
+            return Response(status: .ok, headers: headers, body: body)
+        }
+
         router.get("/api/rds") { _, _ in
             await backend.rds()
         }

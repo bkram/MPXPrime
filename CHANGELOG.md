@@ -62,6 +62,14 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **Dashboard meters move at the engine's rate.** New `GET /api/meters/stream`
+  pushes the meters as NDJSON at up to 30 Hz (default 20) for as long as the
+  page reads it; the bars used to run off a 300 ms poll while the engine
+  published every ~43 ms, so the poll was the limit. The page reads it with
+  `fetch` + `ReadableStream` (the API-key header still applies -- EventSource
+  cannot send one) and falls back to the 300 ms poll whenever the stream is
+  not there, so an older server or a proxy that buffers still shows meters.
+  `frames=N` gives curl and the tests a finite body. No new dependency.
 - **Linux package: an upgrade restarts the service it stopped.** `dpkg -i`
   over a running install left mpxprime inactive with only a "start it with"
   hint on the console -- off air until someone logged in. prerm now records

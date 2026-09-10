@@ -239,6 +239,28 @@ struct ControlServerTests {
         }
     }
 
+    @Test func metersStreamPushesOneJSONObjectPerLine() async throws {
+        // The dashboard's bars read this instead of polling. `frames` ends
+        // the stream so the test (and curl) get a finite body; each line must
+        // decode on its own.
+        let backend = MockBackend()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/api/meters/stream?hz=30&frames=3", method: .get) { response in
+                #expect(response.status == .ok)
+                #expect(response.headers[.contentType] == "application/x-ndjson")
+                let text = String(decoding: response.body.readableBytesView, as: UTF8.self)
+                let lines = text.split(separator: "\n").filter { !$0.isEmpty }
+                #expect(lines.count == 3, "got \(lines.count) lines: \(text)")
+                for line in lines {
+                    let meters = try JSONDecoder().decode(ControlMeters.self, from: Data(line.utf8))
+                    #expect(meters.pilotInjectionPercent == 9.0)
+                }
+            }
+        }
+    }
+
     @Test func configPatchAppliesAndReportsDispositions() async throws {
         let backend = MockBackend()
         let app = Application(

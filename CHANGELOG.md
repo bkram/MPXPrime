@@ -19,7 +19,13 @@ combination test suite. Newest first.
   System** -- from one Swift table that the dashboard's `schema.json` mirrors
   and a test holds equal. Dashboard sections collapse and remember it, every
   page shows its breadcrumb, the GUI's Go menu is Cmd-1..5 in sidebar order.
-  No stage was renamed and no setting moved; that is the plan's next phase.
+  No setting moved.
+- **Three engine names left the labels (phase 2 of the taxonomy plan).**
+  `Core` is **Basics** (bypass, mono, gains, filters, pre-emphasis), `MB
+  Limiter` is **Band Limiter**, `Final Stage` is **Loudness and Output** --
+  in the GUI, the dashboard, the signal-chain strip and the manuals. INI keys
+  are unchanged; established broadcast terms (AGC, Parametric EQ, BS.412,
+  Composite Clipper, Pre-emphasis) stay.
 
 ## 0.50 -- 2026-09-11
 

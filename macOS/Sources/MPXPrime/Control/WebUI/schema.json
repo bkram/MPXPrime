@@ -119,7 +119,7 @@
         null
       ],
       [
-        "Core",
+        "Basics",
         "core"
       ],
       [
@@ -391,9 +391,9 @@
           ],
           "title": "Engine - Filters"
         },
-        "pill": "Core",
-        "sub": "Bypass, mono, gains, HPF, LPF, HF trim",
-        "title": "Core"
+        "pill": "Basics",
+        "sub": "Bypass, mono, gains, filters, pre-emphasis",
+        "title": "Basics"
       },
       {
         "enable": "phase_rotation_enabled",
@@ -571,7 +571,7 @@
             "Thr {multiband_limiter_threshold_db} dB - atk {multiband_limiter_attack_ms} ms"
           ]
         ],
-        "title": "MB Limiter"
+        "title": "Band Limiter"
       },
       {
         "enable": "primebass_enabled",
@@ -813,7 +813,7 @@
         ],
         "pill": "Final",
         "sub": "Output level, deviation, safety limiter",
-        "title": "Final Stage"
+        "title": "Loudness and Output"
       }
     ],
     "tools": [

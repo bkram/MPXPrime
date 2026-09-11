@@ -45,14 +45,14 @@ enum AppSection: String, CaseIterable, Identifiable {
 enum ProcessingTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case formatProfile = "Profile"
-    case core = "Core"
+    case core = "Basics"
     case phaseRotator = "Phase Rot"
     case agc = "AGC"
     case parametricEQ = "PEQ"
     case multiband = "Multiband"
     case advancedDynamics = "Adv Dyn"
     case expander = "Expander"
-    case mbLimiter = "MB Limiter"
+    case mbLimiter = "Band Limiter"
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "Audio Clip"
@@ -61,7 +61,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case stereoCoder = "Stereo Coder"
     case compositeClipper = "Comp Clip"
     case bs412 = "BS.412"
-    case finalStage = "Final Stage"
+    case finalStage = "Loudness and Output"
 
     /// Inverse of `Stage.legacyProcessingTab`. Cards in the
     /// Processing Overview grid use this to jump the unified
@@ -161,7 +161,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .advancedDynamics:
             return "Reset Advanced Dynamics Tab"
         case .mbLimiter:
-            return "Reset MB Limiter Tab"
+            return "Reset Band Limiter Tab"
         case .expander:
             return "Reset Expander Tab"
         case .bassClipper:
@@ -179,7 +179,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .compositeClipper:
             return "Reset Composite Clipper Tab"
         case .finalStage:
-            return "Reset Final Stage Tab"
+            return "Reset Loudness and Output Tab"
         }
     }
 
@@ -222,7 +222,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .compositeClipper:
             return "Reset composite clipper tab to defaults"
         case .finalStage:
-            return "Reset Final Stage tab to defaults"
+            return "Reset Loudness and Output tab to defaults"
         }
     }
 }
@@ -437,14 +437,14 @@ enum Stage: String, CaseIterable, Identifiable {
         case .audioIO: return "Audio I/O"
         case .processingOverview: return "Overview"
         case .processingFormatProfile: return "Format Profile"
-        case .processingCore: return "Core"
+        case .processingCore: return "Basics"
         case .processingAGC: return "AGC"
         case .processingPhaseRotator: return "Phase Rotator"
         case .processingParametricEQ: return "Parametric EQ"
         case .processingPrimeBass: return "PrimeBass"
         case .processingMultiband: return "Multiband"
         case .processingAdvancedDynamics: return "Advanced Dynamics"
-        case .processingMBLimiter: return "MB Limiter"
+        case .processingMBLimiter: return "Band Limiter"
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "Audio Clipper"
@@ -453,7 +453,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingBS412: return "BS.412"
         case .processingStereoCoder: return "Stereo Coder"
         case .processingCompositeClipper: return "Composite Clipper"
-        case .processingFinalStage: return "Final Stage"
+        case .processingFinalStage: return "Loudness and Output"
         case .rdsControl: return "Status"
         case .rdsProgram: return "Identity"
         case .rdsRadiotext: return "Radiotext"

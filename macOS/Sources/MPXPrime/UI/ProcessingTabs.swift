@@ -51,7 +51,7 @@ struct ProcessingCoreTab: View {
 
     var body: some View {
       VStack(alignment: .leading, spacing: 16) {
-        Card(title: "Core Processing") {
+        Card(title: "Basics") {
             Toggle("Bypass Processing", isOn: Binding(
                 get: { model.processingBypass },
                 set: { _ in model.toggleBypass() }
@@ -414,7 +414,7 @@ struct ProcessingFinalStageTab: View {
 
     var body: some View {
       VStack(alignment: .leading, spacing: 16) {
-        Card(title: "Final Stage") {
+        Card(title: "Loudness and Output") {
             Picker("Broadcast Preset", selection: Binding(
                 get: { self.model.config.finalStagePresetID },
                 set: { newValue in

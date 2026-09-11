@@ -304,7 +304,7 @@ and the optional final clipper could never engage); the macOS engine's
   (`processed_audio_coder_has_clipper = false`) -- the one-clipper rule, mirroring
   pre-emphasis ownership. Config: `operating_mode = fm` (restart-required). The
   UI hides every composite/RDS surface in this mode (RDS section, Stereo Coder /
-  Composite Clipper / BS.412 / Final Stage tabs, pilot level,
+  Composite Clipper / BS.412 / Loudness and Output tabs, pilot level,
   deviation/modulation meters, MPX Spectrum + Scopes windows, composite
   signal-flow pills).
 

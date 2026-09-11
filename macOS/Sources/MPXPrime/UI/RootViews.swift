@@ -190,7 +190,7 @@ struct StageSidebar: View {
 /// dot on the trailing edge -- matches Mail's unread-count / Slack's
 /// online-status idiom: filled when on, nothing when off, no badge at
 /// all for stages with no enable concept (Monitoring, Overview, Core,
-/// Final Stage, RDS sub-tabs, Snapshots).
+/// Loudness and Output, RDS sub-tabs, Snapshots).
 struct StageSidebarRow: View {
     @ObservedObject var model: MPXPrimeViewModel
     let stage: Stage

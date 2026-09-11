@@ -231,7 +231,7 @@ If your output device is BlackHole or a virtual loopback, the same rules apply -
 - **USA / Canada / South Korea**: 75 us
 - **Everywhere else (EU, ROW)**: 50 us (current default)
 
-Open `Processing` -> `Core` and change `Pre-emphasis` to `75` if you are in a 75 us region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). The curve itself is matched to the analog network within 0.05 dB up to 15 kHz, and since 0.45 the whole chain's receiver-side response follows it within 0.5 dB to 14 kHz -- earlier builds were 1-3.5 dB low above 10 kHz at the receiver (a limiter decimation filter and the digital pre-emphasis approximation both rolled off the top of the band), so a station that added treble EQ to compensate should re-check that EQ after upgrading. EU operators required to comply with ITU-R BS.412 should also enable `Processing` -> `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
+Open `Sound` -> `Basics` and change `Pre-emphasis` to `75` if you are in a 75 us region. Wrong pre-emphasis will sound either dull (50 into 75 deemph) or shrill / over-modulated (75 into 50 deemph). The curve itself is matched to the analog network within 0.05 dB up to 15 kHz, and since 0.45 the whole chain's receiver-side response follows it within 0.5 dB to 14 kHz -- earlier builds were 1-3.5 dB low above 10 kHz at the receiver (a limiter decimation filter and the digital pre-emphasis approximation both rolled off the top of the band), so a station that added treble EQ to compensate should re-check that EQ after upgrading. EU operators required to comply with ITU-R BS.412 should also enable `Sound` -> `BS.412`. Every setting referenced in this guide is also reachable from the GUI; the INI is written automatically and is mainly there for inspection or out-of-band edits.
 
 **3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in the sidebar's `Audio I/O` section, then press `Start` (Cmd-Return) on the toolbar. The status bar at the top of the window shows live IN L/R, MPX peak, deviation in kHz, modulation as a percentage of the configured deviation target (MOD), gain reduction, safety-limiter GR, composite budget, and pilot/RDS injection -- if those move with your audio, the chain is processing.
 
@@ -241,11 +241,11 @@ Open `Processing` -> `Core` and change `Pre-emphasis` to `75` if you are in a 75
 - **Tight**: near 100% modulation, fine for normal broadcast
 - **Risk**: peaks exceeding 100% -- back off `MPX Output Level` on the `Audio I/O` Output card
 
-`Final Drive` (on the `Final Stage` tab) controls perceived loudness; `MPX Output Level` (on the `Audio I/O` Output card, remembered per device) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
+`Final Drive` (on the `Loudness and Output` tab) controls perceived loudness; `MPX Output Level` (on the `Audio I/O` Output card, remembered per device) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
 
 **5. Verify on a receiver.** Tune a real FM radio or RTL-SDR to your transmitter's frequency. You should hear stereo audio with a steady stereo-pilot indicator, see RDS PS and Radiotext on the radio's display (if your radio supports RDS), and the audio should sound louder and more present than the same source through `mpxgen` / PiFmRds.
 
-If you cannot hear anything, check `Audio I/O` -> output device routing, that the engine is started, and that `Processing` -> `Core` -> `Bypass Processing` is **off** (the default).
+If you cannot hear anything, check `Audio I/O` -> output device routing, that the engine is started, and that `Sound` -> `Basics` -> `Bypass Processing` is **off** (the default).
 
 ### Choosing a block size
 
@@ -324,7 +324,7 @@ source -> IN meter -> AGC -> [DSP] -> Final Drive -> composite clipper -> MPX Ou
 
 The level adjustment lives upstream of MPX Prime Studio -- in your studio mixer, DAW, OS audio output, or BlackHole loopback source's gain. There's also `Audio I/O` -> `Input` -> `Input Gain` (+/-24 dB) inside MPX Prime Studio, but use that only to trim -- the further upstream you fix the level, the less you stack noise floors. The trim is remembered per input device.
 
-**2. Let AGC do the level-evening.** Open `Processing` -> `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
+**2. Let AGC do the level-evening.** Open `Sound` -> `AGC`. The AGC's job is to ride out the long-term level differences between songs / shows / sources so the chain downstream sees a roughly constant program level. The two knobs that matter:
 
 - `Platform Target` -- the level the AGC drives the program *toward*. **Default -14 dBFS** (`wideband_agc_target_db`) is a good starting point and matches what Orban / Omnia / Stereo Tool ship by default. Lower target = AGC pulls more, denser sound; higher = lighter touch.
 - `Enable Wideband AGC` -- leave on. Even amateur source material (mixed-era MP3s, podcasts, vinyl rips) needs level-evening; without AGC, single-band peak limiting downstream pumps on bass-heavy program. Keep `Attack` at 100 ms or slower (default 150 ms, profiles 100-200 ms): the AGC is a gain rider, and a fast attack turns every drum hit into a level dip that the release then drags out -- peaks are the Audio Limiter's and composite clipper's job. `--verify` flags an attack below 50 ms.
@@ -338,7 +338,7 @@ Watch the `AGC GR` field in `DSP Overview` (or the AGC card itself). Healthy ope
 
 Don't use AGC `Platform Target` as a loudness knob. It tunes the chain's working point, not perceived broadcast loudness.
 
-**3. Set Final Drive for the loudness you want.** `Processing` -> `Final Stage` -> `Final Drive` is the primary loudness lever. It drives the audio composite into the composite clipper -- higher drive = harder clipping = louder, denser, but also harsher. Range 0..12 dB.
+**3. Set Final Drive for the loudness you want.** `Sound` -> `Loudness and Output` -> `Final Drive` is the primary loudness lever. It drives the audio composite into the composite clipper -- higher drive = harder clipping = louder, denser, but also harsher. Range 0..12 dB.
 
 - Pick the `Broadcast Preset` matching your content (Balanced Music / CHR-Dance / Punchy / Speech-Talk) -- that sets a sensible Final Drive starting point along with matched AGC tuning.
 - Nudge from there. Watch the **composite clipper `GR`** in `Monitoring`:
@@ -388,7 +388,7 @@ Pick once, tune as needed. The selected profile is stored as `format_profile_id`
 
 ## Loudness and the final stage
 
-The `Processing` -> `Final Stage` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms -- restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
+The `Sound` -> `Loudness and Output` tab contains the workflow-level loudness controls (Broadcast Preset, Final Drive, Composite Deviation) and the **Final-MPX Safety Limiter** card (Enable, Threshold, Look-Ahead enable + ms -- restart-required). The `Audio Limiter` tab handles the pre-encode peak limiter on its own.
 
 - `Broadcast Preset`: loads a matched AGC + final-stage starting point
 - `Final Drive`: drives the composite clipper harder or softer
@@ -429,8 +429,8 @@ Monitoring also shows composite calibration status:
 
 Both stages are loudness / regulatory tools and both visibly cost stereo image and high-frequency detail when engaged. If you do not need them, leave them off -- the chain still produces a fully compliant FM composite.
 
-- `BS.412` (`Processing` -> `BS.412`): only required if you operate under EU power-limiting rules (rolling 60-second MPX power cap). Outside that regulatory context, leave `Enable BS.412` off -- it actively pulls level back over long windows and dulls dynamics.
-- `Composite Clipper` (`Processing` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band protection toggles let you choose what to keep clean:
+- `BS.412` (`Sound` -> `BS.412`): only required if you operate under EU power-limiting rules (rolling 60-second MPX power cap). Outside that regulatory context, leave `Enable BS.412` off -- it actively pulls level back over long windows and dulls dynamics.
+- `Composite Clipper` (`Sound` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the per-band protection toggles let you choose what to keep clean:
   - `Protect Stereo Pilot`, `Protect RDS` -- leave on (defaults). These keep the 19 kHz pilot and 57 kHz RDS regions clean of clip IM.
   - `Protect Stereo Subcarrier` (`mpx_clipper_stereo_guard`, 0.00-1.00; since 0.45 a share instead of an on/off toggle, the old `mpx_clipper_cancel_stereo = True/False` is read as 1.00/0.00) -- how much of the clipper's distortion is kept out of the 22-53 kHz stereo (L-R) subcarrier. At 1.00 the subcarrier passes exactly as it went in, so HF stereo separation is preserved but the clipper only ever removes the mono share of a peak and the Final-MPX Safety Limiter rides whatever overshoot that leaves. At 0.00 the clipper clips the whole composite the way Orban, Omnia and Stereo Tool do: the most loudness per dB of drive and the least HF separation on dense program. Values in between blend. The shipped default (1.00) is picked from the `--verify-stereo-guard` sweep (see Verification), which prints clipper and Final-MPX limiter duty, peak, deviation, 10 / 14 kHz separation, the encoder-side M/S balance at 14 kHz and the hi-hat / ride HF SINAD for every share: on Music - Loud the share makes no measurable difference, and on a hot chain 1.00 buys about 3 dB of decoded hi-hat cleanliness for about 5 dB of 14 kHz tone separation. Run the sweep on your own INI before moving the slider.
   - `Protect Audio Highs` -- off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
@@ -439,7 +439,7 @@ All of these are exposed in the GUI; no INI editing is required.
 
 ## Bass and stereo image
 
-Mono Bass lives on the `Processing` -> `PrimeBass` tab (its own card below the PrimeBass controls -- both are post-multiband bass-domain image controls): it collapses low-frequency side energy below a configurable crossover, protecting deviation and FM mono compatibility. Every shipped Format Profile keeps it on (140 Hz for Clean / Speech / Classical, 115 Hz for Loud). The stereo widener that used to share a tab with it was **removed in 0.50** -- measured on air as adding nothing beneficial; the always-on stereo-image protection stage (which used to scale with the widener's Width) keeps its former default behaviour. An INI that still carries `stereo_widen_*` keys loads fine; they are ignored.
+Mono Bass lives on the `Sound` -> `PrimeBass` tab (its own card below the PrimeBass controls -- both are post-multiband bass-domain image controls): it collapses low-frequency side energy below a configurable crossover, protecting deviation and FM mono compatibility. Every shipped Format Profile keeps it on (140 Hz for Clean / Speech / Classical, 115 Hz for Loud). The stereo widener that used to share a tab with it was **removed in 0.50** -- measured on air as adding nothing beneficial; the always-on stereo-image protection stage (which used to scale with the widener's Width) keeps its former default behaviour. An INI that still carries `stereo_widen_*` keys loads fine; they are ignored.
 
 Recommended starting point:
 
@@ -480,7 +480,7 @@ In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced D
 
 While the stage is active, the Monitoring dashboard's Signal Chain "AGC" pill switches identity to **Adv Dyn** and reads the leveler's density plus its five per-band gains (low to high, dB); the web dashboard's Headroom card gains the matching "Adv Dynamics" row. The AGC readouts honestly report the AGC as Off (gain 0.0) while it is bypassed -- the leveler replaces it, so a moving "AGC gain" would be stale telemetry. Over the API the same values are `advancedDynamicsActive`, `advancedDynamicsBandGainsDB` (5 floats, low to high), and `advancedDynamicsDensityDB` in `GET /api/meters` (null while the stage is off).
 
-While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and MB Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
+While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and Band Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
 
 ## Saving setups: the eight preset slots
 
@@ -571,7 +571,7 @@ because the modes differ in render rate, device format and filtering).
 Everything that has no function in the selected mode is switched off and
 hidden, in the app and on the dashboard alike: outside MPX Output there is no
 composite, so the RDS section, the Stereo Coder / Composite Clipper / BS.412 /
-Final Stage tabs, the pilot level, the MOD (deviation) meter, the MPX Spectrum
+Loudness and Output tabs, the pilot level, the MOD (deviation) meter, the MPX Spectrum
 and Scopes windows and the decoded monitor all disappear, RDS stops being
 generated and the Now Playing script stops being polled. The status bar shows
 the mode.
@@ -852,7 +852,7 @@ Start here before changing the processing.
 
 - **No audio at all on air.** Check that the engine is started, that
   `Audio I/O` -> `Output` points at the device actually wired to the exciter,
-  and that `Processing` -> `Core` -> `Bypass Processing` is off (the default).
+  and that `Sound` -> `Basics` -> `Bypass Processing` is off (the default).
   A remembered device that is no longer connected refuses to start rather than
   silently falling back to the built-in speakers.
 - **Stereo works but there is no RDS.** The output device is not running at

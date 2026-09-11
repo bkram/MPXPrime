@@ -163,7 +163,7 @@ AGC, BS.412, Composite Clipper stay).
    groups (GUI), parity test + `check-webui` taxonomy assertions. The
    remote-access page stays with phase 4 (it needs a decision on exposing
    `[CONTROL]` over the API it configures).
-2. **Labels** -- the rename table, help texts, manuals, screenshots.
+2. **Labels** -- DONE 2026-09-11: Core -> Basics, MB Limiter -> Band Limiter, Final Stage -> Loudness and Output, in GUI + dashboard + strip + manuals (no screenshots in the docs to update).
 3. **Disclosure** -- `advanced` flags, collapsed Advanced cards, GUI
    `DisclosureGroup`s aligned, parity test.
 4. **Aids** -- search, task shortcuts, phone layout, chain strip as the Sound

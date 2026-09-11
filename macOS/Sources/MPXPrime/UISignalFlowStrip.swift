@@ -46,7 +46,7 @@ struct SignalFlowStrip: View {
     /// Compact label for each stage in the chip — chain order is
     /// dense; full-length labels won't fit at typical window widths.
     private static let chipLabels: [Stage: String] = [
-        .processingCore: "Core",
+        .processingCore: "Basics",
         .processingPhaseRotator: "PhaseRot",
         .processingAGC: "AGC",
         .processingParametricEQ: "PEQ",

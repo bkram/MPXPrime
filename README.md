@@ -240,6 +240,7 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 - [docs/meter-operator-guide.md](docs/meter-operator-guide.md) -- **MPX Prime Meter Operator Guide**: SDR / audio input, the measurement readouts, WAV recording, calibration and measurement notes
 - [docs/rds-country-and-pty-tables.md](docs/rds-country-and-pty-tables.md) -- **RDS country codes and programme types**: the PI / ECC and PTY lookup tables both apps use
 - [docs/BUILDING.md](docs/BUILDING.md) -- build, run, verify, test, and package from source
+- [docs/performance.md](docs/performance.md) -- what the chain costs on every machine it has been measured on (Apple Silicon, Intel Mac, Ryzen and Celeron Linux boxes), and what that means when choosing a box
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- detailed DSP chain and stage descriptions
 - [`AGENTS.md`](AGENTS.md) -- contributor / agent workflow guidance and release checklist
 - [docs/project-roadmap.md](docs/project-roadmap.md) -- project roadmap: open work and the anti-rework guardrails

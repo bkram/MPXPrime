@@ -62,6 +62,11 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **`docs/performance.md`.** The chain's measured cost on every machine it
+  has run on -- M1 Pro, i7-9750H, Ryzen 5 PRO 2400GE (AVX2 and SSE2 kernels),
+  Celeron J4105 -- as `--bench` chain cost, per-stage cost, clipper
+  oversampling and block-size sweeps, live render load on Linux, and what
+  that means when choosing a box.
 - **Intel review (x86_64 macOS, headless `--web`).** The whole control
   path works on an i7 MacBook Pro -- status, devices, meters, the 20 Hz
   stream, live and restart-class PATCHes, transport restart, the dashboard --

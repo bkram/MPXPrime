@@ -211,7 +211,9 @@ right after a start or restart is the first period priming, not the chain.
 Every figure below was measured on the reference Linux rig -- an Intel
 Celeron J4105 at 192 kHz, one core carrying the whole chain -- with live
 programme; a faster CPU scales everything down together, so the ORDER is
-what carries over.
+what carries over. [docs/performance.md](performance.md) has the same
+measurements for every machine the encoder has run on, Apple Silicon and
+Intel Macs included.
 
 | Stage (INI key) | Cost on the rig | Turn off? |
 | --- | --- | --- |

@@ -200,7 +200,7 @@ out of the tree).
 | P0-4 | NaN / Inf are not sanitised at the encoder and Meter ingress | Confirmed, and worse than claimed -- **FIXED 2026-09-11** | No `isFinite` on the generator's input path (`renderFromInputInPlace`, the input ring); `AudioOutputEngine` guards only the meter snapshot values; `MeterAnalysis.processBlock` feeds raw samples to the DC tracker, FIR history and detectors. `MPXDecoder` guards itself (0.36). | **High, measured**: a 64-sample Inf burst leaves the composite 8.2 dB down and processed audio 12 dB down PERMANENTLY (8.2 dB at 0.5 s, still 8.2 dB at 7.5 s), output still finite and nothing logged -- it reads as "the station went quiet" with no cause. The Meter's own readouts (pilot, max deviation, MPX power) recovered on their own in the same probe, so its exposure is containment and visibility, not a reproduced sticky fault. |
 | P0-5 | Unsynchronised cross-thread state | Confirmed for three of four -- **FIXED 2026-09-11** | `monitorConditioner.gainLinear` written on the main actor (`applyMonitorSettings`), read in `writeMonitorBlock` on the render thread; `ALSAMonitorOutput.setGain` vs its monitor thread; `meteringEnabled` plain Bool written by start/stop/UI, read in the render callback; `MonitorOutput.note` String written by the `.main` device observer. | **Medium**: the conditioner is a STRUCT the render thread mutates every block, so the control-side write was a race on a multi-field value, not just an unsynchronised Float. The note is the sharp one and it is NOT main-actor-only as first thought: on Linux the monitor THREAD writes it on device loss and the headless actor reads it, and a refcounted String read while being replaced can crash. `runningDevice` is refuted -- the monitor thread never touches it, every access is on the control thread. |
 | P0-6 | The BS.412 limiter does not implement the labelled standard | Confirmed | `BS412PowerLimiter`: threshold `10^(dB/10)` against the normalised mean square where 1.0 is the configured deviation, so 0 dBr (a 19 kHz sine, `(19/75)^2 / 2 = -14.9 dB`) is not where the scale says; the default "-10 dB" limits at about **+4.9 dBr**. It observes `audioComposite` BEFORE pilot / RDS injection (the pilot alone is -9 dBr of the budget), the window is operator-selectable 30-90 s, history advances only while enabled, `configure()` keeps the gain state. | **Medium**: off by default, off in Verification.ini, enabled by no profile -- but the label promises a compliance the stage cannot deliver. `MeterAnalysis` already defines dBr correctly (uniform 60 s window, 19 kHz sine reference): a ready-made oracle. |
-| P0-7 | AM "NRSC" uses the FM 75 us curve | Confirmed | `MPXGenerator` routes `am_preemphasis_us = 75` through the FM `PreemphasisFilter` (the analog `abs(1 + j w tau)` fit). NRSC-1 is the MODIFIED 75 us curve: zero at 2122 Hz, pole at 8700 Hz, +10 dB at 10 kHz. `AMOutputTests.nrscPreemphasisRisesWithFrequency` pins the plain curve at 1 dB (its 7.5 kHz point is +9.6 dB; NRSC-1 gives about +8.0). The monitor de-emphasises with the FM inverse. | **Medium**: AM Output only; no MPX baseline moves. |
+| P0-7 | AM "NRSC" uses the FM 75 us curve | Confirmed, and it reached three places not two -- **FIXED 2026-09-11** | `MPXGenerator` routes `am_preemphasis_us = 75` through the FM `PreemphasisFilter` (the analog `abs(1 + j w tau)` fit). NRSC-1 is the MODIFIED 75 us curve: zero at 2122 Hz, pole at 8700 Hz, +10 dB at 10 kHz. `AMOutputTests.nrscPreemphasisRisesWithFrequency` pins the plain curve at 1 dB (its 7.5 kHz point is +9.6 dB; NRSC-1 gives about +8.0). The monitor de-emphasises with the FM inverse. | **Medium**: AM Output only, no MPX baseline moves -- but the wrong curve reached the encoder filters, the monitor's inverse AND the calibration tone's pre-emphasis compensation, which the audit did not list. Error +3.66 dB at 10 kHz, +2.36 dB at 7.5 kHz relative to 1 kHz. |
 | P1-1 | Live-apply does allocation-heavy rebuilds on the render thread | Confirmed | Both engines call `generator.applyRuntimeConfig` from the render thread after the try-lock mailbox. Inside: the BS.412 ring is reallocated on a window change, the multiband / Advanced Dynamics FIR splitters are redesigned on a crossover or enable change (four Kaiser kernels; the code comment calls it a "rare-operator-action allocation"), the composite clipper reconfigures, strings are lowercased. | **Medium, unmeasured**: accepted so far as rare. Measure before designing: PATCH a crossover on the Ryzen box while sampling xruns and Render Load. |
 | P1-2 | RDS group generation takes locks, allocates and touches the clock on the audio thread | Confirmed | `buildGroup2`: `currentRTFrame` builds a String plus bytes, `writeSnapshot(rt:)` takes `snapshotLock` (blocking `withLock`) on every 2A group, `currentNowPlayingSnapshot` takes the Now Playing `NSLock`, every `buildGroup*` returns a fresh `[UInt8]`. `Date()` survives only in the CT cache refresh (background queue) and the RT `{time}` macro (justified, documented). | **Low to medium in practice**: one group every 87.7 ms, and zero xruns in every soak so far, including a Linux rig at 95 % render load. Real-time-correctness debt, not an observed fault. |
 
@@ -293,14 +293,25 @@ real-time items.
    contract. Recapture all four macOS baselines and the Linux one (Ryzen box,
    `~/mpx-tools`) in the same commit. ARCHITECTURE + settings reference
    describe the curve.
-6. **F6 -- P0-7, NRSC-1.** `NRSCPreemphasisFilter` / `NRSCDeemphasisFilter` in
-   `MPXPrimeCore` next to `PreemphasisDesign` (one zero at 2122 Hz, one pole at
-   8700 Hz, fitted the same least-squares way), used by the AM path and by the
-   `MonitorConditioner` `.am` case. Table-driven test against the NRSC-1
-   magnitude table at 0.5 dB, inverse-cascade flatness, 48 / 96 / 192 kHz
-   equivalence; rewrite the existing test's description. Docs: the AM section
-   of the operator guide, `am_preemphasis_us` in the settings reference,
-   ARCHITECTURE. No MPX baseline moves; AM has no baseline of its own today.
+6. **F6 -- P0-7, NRSC-1. DONE 2026-09-11.** `PreemphasisDesign.nrsc(
+   sampleRate:)` fits the modified 75 us curve (zero 2122 Hz, pole 8700 Hz)
+   the same least-squares way the FM design is fitted -- a pre-warped
+   bilinear was 1.06 dB off at 10 kHz on a 48 kHz domain, measured, so the
+   fit is not optional. Rather than two more filter TYPES as the audit
+   proposed, the standard is named at the call site through
+   `PreemphasisCurve` (`.fm(tauUS:)` / `.nrsc` / `.none`): the failure mode
+   was a silent integer argument, not a shared biquad body, and three call
+   sites had it wrong -- the encoder filters, the monitor's inverse and the
+   calibration tone's compensation, which the audit missed. `NRSCPreemphasis
+   Tests` (7) hold the design to the standard's table at every rate, pin the
+   inverse cascade flat, prove the curve is NOT the FM one, and pin FM's own
+   path bit-identical. `AMOutputTests.nrscPreemphasisRisesWithFrequency`
+   asserted the FM figures and called them NRSC; it now asserts the standard
+   and fails if AM goes back to the FM curve.
+   `MonitorConditionerTests.amMonitorRemovesTheNRSCCurve` applied and removed
+   the SAME curve, so it was flat whatever happened; it now applies NRSC and
+   has a guard proving the FM inverse would not be flat. Full suite 780
+   green, strict baseline unchanged, swiftlint clean.
 7. **F7 -- P0-6, BS.412.** A `BS412MultiplexPower` meter (uniform 60 s,
    sample-time, running whenever the mode is `mpx`) separate from a slow
    controller that rides the AUDIO gain only. It observes the prospective

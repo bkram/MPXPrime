@@ -177,7 +177,11 @@ refused whenever the transmitter is on `default` too.
 Read only when `operating_mode = am`:
 
 - `am_preemphasis_us` (`[MPX]`, default `75`, values 0 or 75, restart-class):
-  NRSC-1 pre-emphasis, or flat when the transmitter already applies it.
+  NRSC-1 pre-emphasis, or flat when the transmitter already applies it. The
+  `75` names the standard, not the FM time constant: NRSC-1-C is the
+  MODIFIED 75 us curve, with a pole at 8700 Hz as well as the zero at
+  2122 Hz, so it reaches +10.00 dB at 10 kHz instead of the FM curve's
+  +13.66 dB. The Monitor removes this curve, not the FM one.
 - `am_lowpass_hz` (`[MPX]`, default `10000`, range 3000-10000, restart-class):
   audio bandwidth of the AM feed. NRSC-1 specifies 10 kHz.
 - `am_positive_peak_pct` (`[MPX]`, default `125`, range 100-125, live-apply):

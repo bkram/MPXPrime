@@ -295,6 +295,50 @@ public struct BiquadCascade6 {
     }
 }
 
+/// WHICH pre-emphasis standard a stage is on. Passing a bare microsecond
+/// figure is what let AM ride the FM curve unnoticed until 0.60: 75 is a
+/// legal FM tau AND the NRSC nominal, so the wrong network looked right at
+/// every call site. Name the standard instead; the microseconds live inside.
+///
+/// (The 0.60 audit asked for dedicated NRSC filter TYPES. This says the same
+/// thing at every call site without a third copy of the same biquad body --
+/// the failure mode was a silent argument, not a shared implementation.)
+public enum PreemphasisCurve: Equatable, Sendable {
+    /// No network at all.
+    case none
+    /// FM: the analog network |1 + j omega tau|, 50 or 75 us.
+    case fm(tauUS: Int)
+    /// AM: NRSC-1-C, the MODIFIED 75 us curve (zero 2122 Hz, pole 8700 Hz).
+    case nrsc
+
+    /// The design for this curve, or nil when there is no network.
+    public func design(sampleRate: Float) -> PreemphasisDesign? {
+        let fs = Double(max(8_000.0, sampleRate))
+        switch self {
+        case .none:
+            return nil
+        case .fm(let tauUS):
+            guard tauUS > 0 else { return nil }
+            return PreemphasisDesign.fit(tau: Double(tauUS) * 1e-6, sampleRate: fs)
+        case .nrsc:
+            return PreemphasisDesign.nrsc(sampleRate: fs)
+        }
+    }
+
+    /// The analog magnitude this curve is fitted to, in dB. The oracle for
+    /// tests and the reference for the monitor's inverse.
+    public func analogGainDB(frequencyHz: Double) -> Double {
+        switch self {
+        case .none: return 0.0
+        case .fm(let tauUS):
+            guard tauUS > 0 else { return 0.0 }
+            return PreemphasisDesign.analogGainDB(frequencyHz: frequencyHz, tau: Double(tauUS) * 1e-6)
+        case .nrsc:
+            return PreemphasisDesign.nrscGainDB(frequencyHz: frequencyHz)
+        }
+    }
+}
+
 /// Receiver-side FM de-emphasis: the exact inverse of `PreemphasisDesign.fit`
 /// (numerator and denominator swapped), so it sits on the analog
 /// 1 / |1 + j omega tau| curve within the fit's residual and the encoder's
@@ -314,15 +358,20 @@ public struct DeemphasisFilter {
 
     public init() {}
 
+    /// FM de-emphasis. Shorthand for `configure(curve: .fm(tauUS:), ...)`.
     public mutating func configure(tauUS: Int, sampleRate: Float) {
-        guard tauUS > 0 else {
+        configure(curve: .fm(tauUS: tauUS), sampleRate: sampleRate)
+    }
+
+    /// The exact inverse of whichever pre-emphasis curve the encoder applied.
+    public mutating func configure(curve: PreemphasisCurve, sampleRate: Float) {
+        guard let pre = curve.design(sampleRate: sampleRate) else {
             enabled = false
             b0 = 1.0; b1 = 0.0; b2 = 0.0; a1 = 0.0; a2 = 0.0
             reset()
             return
         }
         enabled = true
-        let pre = PreemphasisDesign.fit(tau: Double(tauUS) * 1e-6, sampleRate: Double(max(8_000.0, sampleRate)))
         let inv = 1.0 / pre.b0
         b0 = Float(inv)
         b1 = Float(pre.a1 * inv)
@@ -388,8 +437,13 @@ public struct PreemphasisDesign {
     public static func fit(tau: Double, sampleRate: Double) -> PreemphasisDesign {
         let fs = max(8_000.0, sampleRate)
         let fallback = matchedZ(tau: tau, sampleRate: fs)
-        let grid = designGrid(tau: tau, sampleRate: fs)
+        return solve(grid: designGrid(tau: tau, sampleRate: fs), fallback: fallback)
+    }
 
+    /// Levenberg-Marquardt on the log-magnitude, starting from `fallback` and
+    /// keeping it if the fit is worse, unstable or not minimum-phase. Shared
+    /// by the FM and NRSC designs -- identical arithmetic, different target.
+    private static func solve(grid: Grid, fallback: PreemphasisDesign) -> PreemphasisDesign {
         var p = fallback.parameters
         var r = residuals(p, grid: grid)
         var err = sumSquares(r)
@@ -447,6 +501,54 @@ public struct PreemphasisDesign {
         return fitted
     }
 
+    // MARK: - NRSC-1 (AM)
+
+    /// NRSC-1-C audio transmission pre-emphasis: the MODIFIED 75 us curve,
+    /// one zero at 1 / (2 pi 75 us) = 2122.07 Hz and one pole at 8700 Hz.
+    /// The pole is the whole point -- it stops the boost running away above
+    /// the AM channel's useful band, where the plain FM 75 us curve keeps
+    /// climbing at 6 dB/octave toward a 20 dB lift. The standard's table
+    /// reaches exactly +10.00 dB at 10 kHz, which this expression gives.
+    public static let nrscZeroHz: Double = 2_122.0654
+    public static let nrscPoleHz: Double = 8_700.0
+
+    /// The analog NRSC-1 network gain in dB, the oracle every test compares
+    /// against.
+    public static func nrscGainDB(frequencyHz: Double) -> Double {
+        let z = frequencyHz / nrscZeroHz
+        let p = frequencyHz / nrscPoleHz
+        return 10.0 * log10((1.0 + (z * z)) / (1.0 + (p * p)))
+    }
+
+    /// Fit a biquad to the NRSC-1 curve at `sampleRate`, the same way the FM
+    /// design fits the analog FM network. A bilinear transform with both
+    /// corners pre-warped is NOT good enough here (1.06 dB off at 10 kHz on
+    /// a 48 kHz domain, measured); the least-squares fit holds the standard's
+    /// table to well under 0.01 dB at every supported rate.
+    public static func nrsc(sampleRate: Double) -> PreemphasisDesign {
+        let fs = max(8_000.0, sampleRate)
+        let fMax = min(10_500.0, 0.45 * fs)
+        let grid = designGrid(fMinHz: 50.0, fMaxHz: fMax, sampleRate: fs) { nrscGainDB(frequencyHz: $0) }
+        // Start from the pre-warped bilinear first-order shelf, DC-normalised.
+        let t = 1.0 / fs
+        let k = 2.0 / t
+        let wz = k * tan(Double.pi * nrscZeroHz * t)
+        let wp = k * tan(Double.pi * nrscPoleHz * t)
+        let n0 = 1.0 + (k / wz)
+        let n1 = 1.0 - (k / wz)
+        let d0 = 1.0 + (k / wp)
+        let d1 = 1.0 - (k / wp)
+        let a1 = d1 / d0
+        var b0 = n0 / d0
+        var b1 = n1 / d0
+        let dc = (b0 + b1) / (1.0 + a1)
+        b0 /= dc
+        b1 /= dc
+        var start = PreemphasisDesign(b0: b0, b1: b1, b2: 0.0, a1: a1, a2: 0.0, maxErrorDB: 0.0)
+        start.maxErrorDB = maxAbs(residuals(start.parameters, grid: grid))
+        return solve(grid: grid, fallback: start)
+    }
+
     // MARK: - Internals
 
     /// Free parameters [b1, b2, a1, a2]; b0 follows from unity DC gain.
@@ -468,14 +570,24 @@ public struct PreemphasisDesign {
     }
 
     private static func designGrid(tau: Double, sampleRate: Double) -> Grid {
+        designGrid(fMinHz: 100.0, fMaxHz: min(15_500.0, 0.45 * sampleRate),
+                   sampleRate: sampleRate) { analogGainDB(frequencyHz: $0, tau: tau) }
+    }
+
+    /// 96 points, linearly spaced, target supplied by the caller. The FM
+    /// entry point above passes exactly the range and target it always has,
+    /// so its fit is unchanged.
+    private static func designGrid(
+        fMinHz: Double, fMaxHz: Double, sampleRate: Double,
+        targetDB: (Double) -> Double
+    ) -> Grid {
         let count = 96
-        let fMax = min(15_500.0, 0.45 * sampleRate)
         var omegas = [Double](repeating: 0.0, count: count)
         var targets = [Double](repeating: 0.0, count: count)
         for i in 0..<count {
-            let f = 100.0 + ((fMax - 100.0) * Double(i) / Double(count - 1))
+            let f = fMinHz + ((fMaxHz - fMinHz) * Double(i) / Double(count - 1))
             omegas[i] = 2.0 * Double.pi * f / sampleRate
-            targets[i] = analogGainDB(frequencyHz: f, tau: tau)
+            targets[i] = targetDB(f)
         }
         return Grid(omegas: omegas, targetsDB: targets)
     }

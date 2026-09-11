@@ -134,15 +134,21 @@ struct PreemphasisFilter {
     private var y1: Float = 0.0
     private var y2: Float = 0.0
 
+    /// FM pre-emphasis. Shorthand for `configure(curve: .fm(tauUS:), ...)`.
     mutating func configure(tauUS: Int, sampleRate: Float) {
-        guard tauUS > 0 else {
+        configure(curve: .fm(tauUS: tauUS), sampleRate: sampleRate)
+    }
+
+    /// Apply a named standard. AM must pass `.nrsc`, never `.fm(tauUS: 75)`:
+    /// the two curves differ by 3.6 dB at 10 kHz and keep diverging above it.
+    mutating func configure(curve: PreemphasisCurve, sampleRate: Float) {
+        guard let design = curve.design(sampleRate: sampleRate) else {
             enabled = false
             b0 = 1.0; b1 = 0.0; b2 = 0.0; a1 = 0.0; a2 = 0.0
             reset()
             return
         }
         enabled = true
-        let design = PreemphasisDesign.fit(tau: Double(tauUS) * 1e-6, sampleRate: Double(max(8_000.0, sampleRate)))
         b0 = Float(design.b0); b1 = Float(design.b1); b2 = Float(design.b2)
         a1 = Float(design.a1); a2 = Float(design.a2)
         reset()

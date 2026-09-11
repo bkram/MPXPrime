@@ -394,7 +394,7 @@ by this feature:
 | --- | --- | --- | --- |
 | Program + encoder lowpass | FM caps (15.3 / 14.9 kHz emphasised, 16 kHz flat) via `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz` | the configured `program_lowpass_hz`, up to 20 kHz | `am_lowpass_hz` (3-10 kHz), applied by seeding `programLowpassHz` |
 | Pre-encode limiter decimator passband | 15 kHz (it doubles as the emphasised-domain band limit) | the program bandwidth, via the `passbandHz` parameter | 15 kHz (the AM band limit is far below it) |
-| Pre-emphasis + encoder HF guard | as configured | forced off (the guard disables itself at 0 us) | `am_preemphasis_us` (NRSC 75 us or flat); guard off |
+| Pre-emphasis + encoder HF guard | as configured (the analog FM network) | forced off (the guard disables itself at 0 us) | `am_preemphasis_us` selects the NRSC-1-C curve or flat -- a DIFFERENT network from FM's, zero at 2122 Hz AND pole at 8700 Hz, so it reaches exactly +10.00 dB at 10 kHz where the FM 75 us curve would be 3.66 dB hotter and still climbing; guard off |
 | Stereo-image protection | on | bypassed (no deviation or multipath to protect) | bypassed (the feed is mono) |
 | Final loudness clipper | optional, when the coder has none | never | never (the peak guard owns the peaks) |
 | Output make-up | limiter ceiling normalised to full scale | limiter ceiling mapped onto `processed_audio_ceiling_dbtp`, less a 0.1 dB margin | limiter ceiling normalised to full scale (the POSITIVE bound) |
@@ -413,7 +413,9 @@ the negative bound instead would cap both halves there and the asymmetry could
 never be used, because the pre-encode limiter bounds |x| symmetrically. So
 symmetric program lands symmetric and only positive-heavy program (speech, most
 single-instrument material) uses the extra room. `AMOutputTests` pins the mono
-sum, the NRSC curve, the band limit and both peak cases.
+sum, the NRSC-1 curve (checked against the standard's table, and against
+the FM curve so the two cannot be confused again), the band limit and both
+peak cases.
 
 The guard exists because the limiter alone is not a true-peak bound on hard
 transients: it clips in its 4x domain and then decimates, and the decimation

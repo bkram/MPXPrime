@@ -539,6 +539,9 @@ final class MPXGenerator {
 
     private var sampleRate: Float
     private let preemphasisUS: Int
+    /// WHICH standard's network the audio rides. AM is NRSC-1, which is
+    /// not the FM 75 us curve however similar the key looks.
+    private let preemphasisCurve: PreemphasisCurve
     /// Processed-audio DIGITAL delivery (stream / DAB+ encoder ahead of us).
     /// False for every composite render, so the FM chain is untouched by
     /// construction. Seeded at init like `audioOutputOnly`; restart-class.
@@ -1093,6 +1096,14 @@ final class MPXGenerator {
         // AM rides the NRSC curve (75 us or flat), chosen by its own key: the
         // FM pre-emphasis picker has no function on an AM feed.
         self.preemphasisUS = digital ? 0 : (am ? config.amPreemphasisUS : config.preemphasisUS)
+        // AM rides NRSC-1 (zero 2122 Hz, pole 8700 Hz), NOT the FM curve:
+        // until 0.60 `am_preemphasis_us = 75` was handed to the FM network,
+        // which keeps climbing where NRSC-1's pole flattens it -- 3.6 dB
+        // too much at 10 kHz and worse above.
+        self.preemphasisCurve = digital
+            ? .none
+            : (am ? (config.amPreemphasisUS > 0 ? .nrsc : PreemphasisCurve.none)
+                  : (config.preemphasisUS > 0 ? .fm(tauUS: config.preemphasisUS) : .none))
         self.encoderHFGuardEnabled = !digital && !am && config.preemphasisUS > 0
         self.toneFreq = Float(config.testToneFreq)
         self.toneMode = config.testToneMode.lowercased()
@@ -1300,8 +1311,8 @@ final class MPXGenerator {
         // grid. Helpers like configureMultibandFilters() etc. read the
         // property directly.
         let audioRate = audioDomainSampleRate
-        preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
-        preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
+        preL.configure(curve: preemphasisCurve, sampleRate: audioRate)
+        preR.configure(curve: preemphasisCurve, sampleRate: audioRate)
         // Transmit-grade filters are the generator's DEFAULT: the linear-phase
         // encoder FIR and FIR multiband crossovers follow the config flags from
         // construction, so the offline verifier, the Linux ALSA engine and the
@@ -1737,8 +1748,8 @@ final class MPXGenerator {
     /// a sample-rate change and whenever the boundary itself is switched.
     private func reconfigureStagesForCurrentRates() {
         let audioRate = audioDomainSampleRate
-        preL.configure(tauUS: preemphasisUS, sampleRate: audioRate)
-        preR.configure(tauUS: preemphasisUS, sampleRate: audioRate)
+        preL.configure(curve: preemphasisCurve, sampleRate: audioRate)
+        preR.configure(curve: preemphasisCurve, sampleRate: audioRate)
         applyEncoderComplianceConfiguration(sampleRate: sampleRate)
         widebandAGC.configure(
             sampleRate: audioRate,
@@ -2310,11 +2321,13 @@ final class MPXGenerator {
     /// the configured level at any frequency. Noise types are left as-is.
     private func updateToneGain() {
         var compensation: Float = 1.0
-        if toneType == "sine", preemphasisUS > 0 {
+        if toneType == "sine", preemphasisCurve != .none {
             // The pre-emphasis filter is fitted to the analog curve, so the
-            // analog magnitude is the compensation.
-            let wt = twoPi * toneFreq * Float(preemphasisUS) * 1e-6
-            let magnitude = sqrtf(1.0 + (wt * wt))
+            // analog magnitude is the compensation -- of WHICHEVER curve this
+            // mode rides. Computing the FM magnitude on an AM feed put the
+            // calibration tone out by up to 3.6 dB (0.60 audit, P0-7).
+            let gainDB = preemphasisCurve.analogGainDB(frequencyHz: Double(toneFreq))
+            let magnitude = Float(pow(10.0, gainDB / 20.0))
             compensation = 1.0 / max(1e-6, magnitude)
         }
         toneGain = toneLevel * compensation

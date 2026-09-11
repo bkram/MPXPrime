@@ -605,9 +605,12 @@ every stage levels and limits the signal that actually goes on air, and both
 output channels carry it.
 
 - **AM Pre-emphasis** (`am_preemphasis_us`, restart-class): 75 us is the NRSC-1
-  curve an NRSC receiver de-emphasises. Switch it off only when the
-  transmitter or an outboard box already applies it -- the same one-stage rule
-  as on FM.
+  curve an NRSC receiver de-emphasises. It is not the same curve as FM's 75 us
+  even though both are named for the same time constant -- the AM one levels
+  off above about 8.7 kHz, which is what keeps the top of the band from being
+  over-emphasised into a channel that cannot carry it. Switch it off only when
+  the transmitter or an outboard box already applies it -- the same one-stage
+  rule as on FM.
 - **AM Bandwidth** (`am_lowpass_hz`, restart-class, 3-10 kHz): NRSC-1 specifies
   10 kHz; many stations run 4.5-6 kHz to fit the channel and the receivers.
 - **Positive Peak Headroom** (`am_positive_peak_pct`, live, 100-125 %):

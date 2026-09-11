@@ -93,6 +93,18 @@ combination test suite. Newest first.
   unsynchronised read of a string being replaced can crash rather than merely
   read something stale. None of this touches the transmitter feed.
 
+- **Fixed: AM Output used the FM pre-emphasis curve, not the AM one.** The
+  two standards are both named for 75 microseconds, so the wrong one looked
+  right everywhere: NRSC-1 for AM levels off above about 8.7 kHz, while the
+  FM curve keeps rising. AM was going out 3.7 dB too bright at 10 kHz and
+  worse above that, the Monitor took the wrong curve back out, and the
+  calibration tone was compensated with it too. Which standard a stage is on
+  is now named in the code rather than inferred from a number, so AM cannot
+  silently ride the FM network again. The test that was meant to cover this
+  asserted the FM figures and called them NRSC; it now checks the standard's
+  own table and fails if the curves are ever confused. FM is untouched, bit
+  for bit.
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

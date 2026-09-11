@@ -126,10 +126,13 @@ struct AMOutputTests {
     }
 
     @Test func nrscPreemphasisRisesWithFrequency() {
-        // NRSC-1 pre-emphasis is the 75 us curve: +2.4 dB at 2 kHz, +9.6 dB at
-        // 7.5 kHz relative to 1 kHz on the analog curve. The chain's limiter
-        // rides the boosted peaks, so this checks the SHAPE at a level low
-        // enough that nothing is limiting.
+        // NRSC-1-C is the MODIFIED 75 us curve: a zero at 2122 Hz AND a pole
+        // at 8700 Hz, so the boost levels off where the plain FM 75 us curve
+        // keeps climbing. Relative to 1 kHz the standard gives +1.72 dB at
+        // 2 kHz, +6.11 dB at 5 kHz and +8.07 dB at 7.5 kHz; the FM curve this
+        // test used to assert gives +1.89, +7.29 and +10.43. The chain's
+        // limiter rides the boosted peaks, so this checks the SHAPE at a
+        // level low enough that nothing is limiting.
         let sr = 48_000.0
         var cfg = amConfig(sampleRate: sr)
         cfg.preEncodeAudioLimiterEnabled = false
@@ -144,11 +147,17 @@ struct AMOutputTests {
         flat.amPreemphasisUS = 0
         cfg.amPreemphasisUS = 75
         let reference = level(cfg, 1_000.0) - level(flat, 1_000.0)
-        for (f, expected) in [(2_000.0, 2.4), (5_000.0, 7.0), (7_500.0, 9.6)] {
+        for (f, expected) in [(2_000.0, 1.72), (5_000.0, 6.11), (7_500.0, 8.07)] {
             let boost = (level(cfg, f) - level(flat, f)) - reference
-            #expect(abs(boost - expected) < 1.0,
-                    "75 us NRSC boost at \(Int(f)) Hz is \(boost) dB, expected about \(expected) dB")
+            #expect(abs(boost - expected) < 0.5,
+                    "NRSC-1 boost at \(Int(f)) Hz is \(boost) dB, the standard says \(expected) dB")
         }
+        // And the discriminating half: the FM 75 us curve would read 2.4 dB
+        // higher at 7.5 kHz, which is what shipped until 0.60.
+        let fmWouldBe = 10.43
+        let actual = (level(cfg, 7_500.0) - level(flat, 7_500.0)) - reference
+        #expect(abs(actual - fmWouldBe) > 1.5,
+                "AM is still riding the FM curve at 7.5 kHz (\(actual) dB)")
     }
 
     @Test func negativePeaksHoldTheModulationCeilingWhilePositivePeaksRideHigher() {

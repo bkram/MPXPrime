@@ -17,7 +17,7 @@ import MPXPrimeCore
 /// | `mpx` | FM composite | the composite demodulated like a receiver (done in `MPXGenerator`; nothing to do here) |
 /// | `fm` | processed L/R, pre-emphasised if the operator chose to apply it | the same, with pre-emphasis REMOVED -- a coder feeds a transmitter whose receivers de-emphasise |
 /// | `hd` | flat, full-bandwidth L/R | the same; nothing to undo |
-/// | `am` | mono, NRSC pre-emphasised | the same, with the NRSC curve removed |
+/// | `am` | mono, NRSC-1 pre-emphasised | the same, with the NRSC-1 curve removed (its exact inverse, not the FM one) |
 ///
 /// `DeemphasisFilter` is the exact algebraic inverse of the encoder's
 /// pre-emphasis network (`PreemphasisDesign`), so the un-emphasis is correct
@@ -30,8 +30,10 @@ struct MonitorConditioner {
     enum Shape: Equatable {
         /// The generator already produced decoded audio (MPX Output).
         case decodedComposite
-        /// Remove a pre-emphasis curve of `tauUS` microseconds.
-        case deemphasised(tauUS: Int)
+        /// Remove whichever pre-emphasis curve the encoder applied. AM is
+        /// `.nrsc`, not `.fm(tauUS: 75)` -- the two differ by 3.6 dB at
+        /// 10 kHz, so the wrong inverse leaves the monitor bright.
+        case deemphasised(PreemphasisCurve)
         /// Pass through unchanged.
         case flat
     }
@@ -63,9 +65,9 @@ struct MonitorConditioner {
     static func shape(for mode: AppConfig.OperatingMode, config: AppConfig) -> Shape {
         switch mode {
         case .mpx: return .decodedComposite
-        case .fm: return config.preemphasisUS > 0 ? .deemphasised(tauUS: config.preemphasisUS) : .flat
+        case .fm: return config.preemphasisUS > 0 ? .deemphasised(.fm(tauUS: config.preemphasisUS)) : .flat
         case .hd: return .flat
-        case .am: return config.amPreemphasisUS > 0 ? .deemphasised(tauUS: config.amPreemphasisUS) : .flat
+        case .am: return config.amPreemphasisUS > 0 ? .deemphasised(.nrsc) : .flat
         }
     }
 
@@ -78,12 +80,12 @@ struct MonitorConditioner {
         rampStep = 0.0
         rampLength = max(1, Int((sampleRate * 0.010).rounded()))
         switch shape {
-        case .deemphasised(let tauUS):
-            deemphL.configure(tauUS: tauUS, sampleRate: sampleRate)
-            deemphR.configure(tauUS: tauUS, sampleRate: sampleRate)
+        case .deemphasised(let curve):
+            deemphL.configure(curve: curve, sampleRate: sampleRate)
+            deemphR.configure(curve: curve, sampleRate: sampleRate)
         case .decodedComposite, .flat:
-            deemphL.configure(tauUS: 0, sampleRate: sampleRate)
-            deemphR.configure(tauUS: 0, sampleRate: sampleRate)
+            deemphL.configure(curve: .none, sampleRate: sampleRate)
+            deemphR.configure(curve: .none, sampleRate: sampleRate)
         }
     }
 

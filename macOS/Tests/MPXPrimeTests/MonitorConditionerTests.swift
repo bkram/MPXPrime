@@ -1,6 +1,7 @@
 import Testing
 import Atomics
 import Foundation
+import MPXPrimeCore
 @testable import MPXPrime
 
 /// The monitor conditioner: what the operator HEARS in each operating mode.
@@ -21,7 +22,9 @@ struct MonitorConditionerTests {
     /// The tone is snapped to an exact analysis bin: de-emphasis shifts phase,
     /// and an off-bin Goertzel leaks by an amount that depends on phase, which
     /// would show up here as a response error that is not there.
-    private func conditionedResponseDB(tauUS: Int, freq: Double, shape: MonitorConditioner.Shape) -> Double {
+    private func conditionedResponseDB(
+        curve: PreemphasisCurve, freq: Double, shape: MonitorConditioner.Shape
+    ) -> Double {
         let frames = 24_000
         let skip = 4_000
         let span = Double(frames - skip)
@@ -29,8 +32,8 @@ struct MonitorConditionerTests {
         let tone = bin * Double(sampleRate) / span
         var preL = PreemphasisFilter()
         var preR = PreemphasisFilter()
-        preL.configure(tauUS: tauUS, sampleRate: sampleRate)
-        preR.configure(tauUS: tauUS, sampleRate: sampleRate)
+        preL.configure(curve: curve, sampleRate: sampleRate)
+        preR.configure(curve: curve, sampleRate: sampleRate)
         var left = [Float](repeating: 0, count: frames)
         var right = [Float](repeating: 0, count: frames)
         var source = [Float](repeating: 0, count: frames)
@@ -75,7 +78,7 @@ struct MonitorConditionerTests {
         // what a receiver plays, i.e. the curve taken back out.
         for tau in [50, 75] {
             for f in [1_000.0, 5_000.0, 10_000.0, 15_000.0] {
-                let delta = conditionedResponseDB(tauUS: tau, freq: f, shape: .deemphasised(tauUS: tau))
+                let delta = conditionedResponseDB(curve: .fm(tauUS: tau), freq: f, shape: .deemphasised(.fm(tauUS: tau)))
                 #expect(abs(delta) < 0.1,
                         "\(tau) us monitor at \(Int(f)) Hz is \(String(format: "%+.2f", delta)) dB off the programme it started from")
             }
@@ -83,10 +86,22 @@ struct MonitorConditionerTests {
     }
 
     @Test func amMonitorRemovesTheNRSCCurve() {
-        for f in [500.0, 2_000.0, 5_000.0] {
-            let delta = conditionedResponseDB(tauUS: 75, freq: f, shape: .deemphasised(tauUS: 75))
+        // Until 0.60 this applied the FM curve and removed the FM curve, so
+        // it was flat whatever NRSC did -- it could not have caught the wrong
+        // network. Now it applies NRSC-1 and asks the monitor to undo it.
+        for f in [500.0, 2_000.0, 5_000.0, 9_000.0] {
+            let delta = conditionedResponseDB(curve: .nrsc, freq: f, shape: .deemphasised(.nrsc))
             #expect(abs(delta) < 0.1, "NRSC monitor at \(Int(f)) Hz is \(delta) dB off flat")
         }
+    }
+
+    @Test func theAMMonitorWouldNotBeFlatWithTheFMInverse() {
+        // The guard that makes the test above mean something: removing the
+        // FM 75 us curve from an NRSC-1 feed leaves a large error, so
+        // "flat" really does pin the right network.
+        let delta = conditionedResponseDB(curve: .nrsc, freq: 9_000.0, shape: .deemphasised(.fm(tauUS: 75)))
+        #expect(abs(delta) > 2.0,
+                "the FM inverse on an NRSC feed is only \(delta) dB off -- the curves are not distinguishable here")
     }
 
     @Test func flatAndDecodedShapesDoNotTouchTheSamples() {
@@ -115,11 +130,12 @@ struct MonitorConditionerTests {
         cfg.preemphasisUS = 50
         cfg.amPreemphasisUS = 75
         #expect(MonitorConditioner.shape(for: .mpx, config: cfg) == .decodedComposite)
-        #expect(MonitorConditioner.shape(for: .fm, config: cfg) == .deemphasised(tauUS: 50))
+        #expect(MonitorConditioner.shape(for: .fm, config: cfg) == .deemphasised(.fm(tauUS: 50)))
         // hd forces pre-emphasis OFF in the chain, so the monitor must stay
         // flat no matter what the INI still says.
         #expect(MonitorConditioner.shape(for: .hd, config: cfg) == .flat)
-        #expect(MonitorConditioner.shape(for: .am, config: cfg) == .deemphasised(tauUS: 75))
+        // AM is the NRSC curve, NOT .fm(tauUS: 75).
+        #expect(MonitorConditioner.shape(for: .am, config: cfg) == .deemphasised(.nrsc))
 
         cfg.preemphasisUS = 0
         cfg.amPreemphasisUS = 0

@@ -110,6 +110,54 @@ struct ControlSchemaTests {
         return Set(sections.values.flatMap { $0.keys })
     }
 
+    /// The dashboard's sections and Sound groups are the Swift tables
+    /// (`NavigationSection`, `StageGroup`) written out -- same ids, titles,
+    /// order and page lists -- so the two sidebars can never drift apart, and
+    /// every page the model knows has exactly one home.
+    @Test func sectionsMirrorTheSharedNavigationTable() throws {
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let model = root["model"] as? [String: Any] ?? [:]
+        let sections = model["sections"] as? [[String: Any]] ?? []
+        #expect(sections.map { $0["id"] as? String } == NavigationSection.allCases.map(\.rawValue))
+        #expect(sections.map { $0["title"] as? String } == NavigationSection.allCases.map(\.title))
+
+        let sound = sections.first { $0["id"] as? String == "sound" } ?? [:]
+        #expect(sound["pages"] as? [String] == StageGroup.soundLandingPageIDs)
+        let groups = sound["groups"] as? [[String: Any]] ?? []
+        #expect(groups.map { $0["id"] as? String } == StageGroup.allCases.map(\.rawValue))
+        #expect(groups.map { $0["title"] as? String } == StageGroup.allCases.map(\.title))
+        #expect(groups.map { $0["pages"] as? [String] ?? [] } == StageGroup.allCases.map(\.pageIDs))
+
+        var homes: [String: Int] = [:]
+        for sec in sections {
+            for id in sec["pages"] as? [String] ?? [] { homes[id, default: 0] += 1 }
+            for g in sec["groups"] as? [[String: Any]] ?? [] {
+                for id in g["pages"] as? [String] ?? [] { homes[id, default: 0] += 1 }
+            }
+        }
+        var known = ["monitoring", "overview"]
+        for list in ["stages", "rds", "tools"] {
+            known += (model[list] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        }
+        for id in known {
+            #expect(homes[id] == 1, "page \(id) sits in \(homes[id] ?? 0) sections/groups")
+        }
+        for id in homes.keys where !known.contains(id) {
+            Issue.record("sections name an unknown page \(id)")
+        }
+        // Every stage page is in a Sound group and every group id names a stage page.
+        let stageIDs = Set((model["stages"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+        let grouped = Set(StageGroup.allCases.flatMap(\.pageIDs)).union(StageGroup.soundLandingPageIDs)
+        #expect(stageIDs.isSubset(of: grouped), "stages without a group: \(stageIDs.subtracting(grouped).sorted())")
+        // And the GUI can reach every one of them.
+        for id in StageGroup.allCases.flatMap(\.pageIDs) {
+            #expect(Stage.stage(forSchemaPage: id) != nil, "no GUI stage for dashboard page \(id)")
+        }
+    }
+
     @Test func everyINIKeyHasASchemaDecision() throws {
         let schema = try loadSchema()
         let vocabulary = try iniVocabulary()

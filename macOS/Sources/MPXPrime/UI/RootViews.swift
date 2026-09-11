@@ -126,18 +126,27 @@ struct RootView: View {
 /// working unchanged.
 struct StageSidebar: View {
     @ObservedObject var model: MPXPrimeViewModel
+    /// Which Sound groups are folded shut; all open by default, remembered
+    /// for the session. Two levels at most (section > group), per the
+    /// taxonomy plan -- never a third.
+    @State private var collapsedGroups: Set<StageGroup> = []
 
     var body: some View {
         List(selection: $model.selectedStage) {
             ForEach(Stage.Group.allCases, id: \.rawValue) { group in
-                // Processed-audio output hides the RDS group and the
-                // composite-domain Processing stages (composite clipper, BS.412).
-                let stages = Stage.allCases.filter { $0.group == group && model.isStageVisible($0) }
-                if !stages.isEmpty {
-                    Section(group.rawValue) {
-                        ForEach(stages) { stage in
-                            StageSidebarRow(model: model, stage: stage)
-                                .tag(stage)
+                // A mode hides whole stages (the composite-domain ones outside
+                // MPX Output, every RDS page); a section or group left empty
+                // by that is not drawn at all.
+                if group == .sound {
+                    soundSection
+                } else {
+                    let stages = Stage.allCases.filter { $0.group == group && model.isStageVisible($0) }
+                    if !stages.isEmpty {
+                        Section(group.title) {
+                            ForEach(stages) { stage in
+                                StageSidebarRow(model: model, stage: stage)
+                                    .tag(stage)
+                            }
                         }
                     }
                 }
@@ -145,11 +154,40 @@ struct StageSidebar: View {
         }
         .listStyle(.sidebar)
     }
+
+    /// Sound: the landing pages, then the stages grouped by what they do to
+    /// the signal, in signal order -- the same `StageGroup` table the
+    /// dashboard renders, so the two sidebars read alike.
+    @ViewBuilder private var soundSection: some View {
+        Section(Stage.Group.sound.title) {
+            ForEach(Stage.soundLandingStages.filter { model.isStageVisible($0) }) { stage in
+                StageSidebarRow(model: model, stage: stage).tag(stage)
+            }
+            ForEach(Stage.soundGroups, id: \.group) { entry in
+                let stages = entry.stages.filter { model.isStageVisible($0) }
+                if !stages.isEmpty {
+                    DisclosureGroup(
+                        isExpanded: Binding(
+                            get: { !collapsedGroups.contains(entry.group) },
+                            set: { open in if open { collapsedGroups.remove(entry.group) } else { collapsedGroups.insert(entry.group) } })
+                    ) {
+                        ForEach(stages) { stage in
+                            StageSidebarRow(model: model, stage: stage).tag(stage)
+                        }
+                    } label: {
+                        Text(entry.group.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// One sidebar row. Renders the existing Label (icon + text) and, when
 /// the stage has an enable toggle that is currently on, a small accent
-/// dot on the trailing edge — matches Mail's unread-count / Slack's
+/// dot on the trailing edge -- matches Mail's unread-count / Slack's
 /// online-status idiom: filled when on, nothing when off, no badge at
 /// all for stages with no enable concept (Monitoring, Overview, Core,
 /// Final Stage, RDS sub-tabs, Snapshots).
@@ -162,11 +200,11 @@ struct StageSidebarRow: View {
             Label {
                 Text(stage.label)
             } icon: {
-                // Decorative — the adjacent Text(stage.label)
+                // Decorative -- the adjacent Text(stage.label)
                 // already conveys the row identity to VoiceOver.
                 Image(systemName: stage.icon)
                     .accessibilityHidden(true)
-                    // Explicit `.tint` foreground on the *icon only* —
+                    // Explicit `.tint` foreground on the *icon only* --
                     // keeps text in the default sidebar foreground
                     // (white in dark mode) while icons pick up the
                     // system accent. Hierarchical layering gives the
@@ -240,7 +278,7 @@ struct StageContentView: View {
 
 /// Content for a Processing stage selection. Hosts the existing per-tab
 /// view plus the per-tab reset button. The legacy segmented Picker is
-/// gone — sidebar selection drives `selectedProcessingTab` via the
+/// gone -- sidebar selection drives `selectedProcessingTab` via the
 /// `selectedStage.didSet` sync. A read-only signal-flow chip strip sits
 /// at the top as alternate navigation (Wheatstone-style block-diagram
 /// hint without the editor cost).
@@ -310,7 +348,7 @@ struct StageProcessingContent: View {
                         }
 
                         // Tab help text as a footer block below the
-                        // controls and the Reset action — matches
+                        // controls and the Reset action -- matches
                         // System Settings / Xcode "explanation under
                         // the controls" idiom rather than competing
                         // with the controls visually at the top of
@@ -357,7 +395,7 @@ struct StageRDSContent: View {
                     .buttonStyle(.bordered)
                 }
 
-                // Footer help block — same pattern as Processing tabs.
+                // Footer help block -- same pattern as Processing tabs.
                 // Sits below the controls and the Reset action so it
                 // reads as explanatory text rather than competing with
                 // the controls at the top of the view.
@@ -370,11 +408,11 @@ struct StageRDSContent: View {
 }
 
 enum CardStyle {
-    /// Standard broadcast panel — used for parameter controls, general
+    /// Standard broadcast panel -- used for parameter controls, general
     /// status blocks, RDS config. Uses the window control-background
     /// surface.
     case standard
-    /// Meter / readout plate — slightly darker surface so heat-mapped
+    /// Meter / readout plate -- slightly darker surface so heat-mapped
     /// bars and LED dots pop. Used for metering cards and RDS live
     /// snapshots where the content is dense numeric readout.
     case meter

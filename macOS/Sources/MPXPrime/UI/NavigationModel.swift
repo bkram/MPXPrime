@@ -335,30 +335,82 @@ enum Stage: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Sidebar group this stage belongs to.
+    /// Sidebar section this stage belongs to -- the operator-facing taxonomy
+    /// shared with the web dashboard (`NavigationSection` in
+    /// Control/StageApplicability.swift is the one table; this enum is its
+    /// GUI face and `title` reads from it).
     enum Group: String, CaseIterable {
-        case monitoring = "Monitoring"
-        case audioIO = "Audio I/O"
-        case processing = "Processing"
-        case rds = "RDS"
-        case tools = "Tools"
+        case onAir, setup, sound, rds, system
+
+        var section: NavigationSection {
+            switch self {
+            case .onAir: return .onAir
+            case .setup: return .setup
+            case .sound: return .sound
+            case .rds: return .rds
+            case .system: return .system
+            }
+        }
+
+        var title: String { section.title }
     }
 
     var group: Group {
         switch self {
         case .monitoring:
-            return .monitoring
-        case .audioIO:
-            return .audioIO
+            return .onAir
+        case .audioIO, .testTone:
+            return .setup
         case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
              .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
-        case .testTone, .snapshots:
-            return .tools
+        case .snapshots:
+            return .system
         default:
-            return .processing
+            return .sound
         }
     }
+
+    /// The dashboard's page id for this stage, so the sidebar can lay the
+    /// Sound section out from `StageGroup.pageIDs` -- the same order the
+    /// dashboard shows. The GUI's one HF page answers to both `hfLimiter` and
+    /// `hfClipper`; the mapping below points both at it.
+    static func stage(forSchemaPage id: String) -> Stage? {
+        switch id {
+        case "overview": return .processingOverview
+        case "profile": return .processingFormatProfile
+        case "core": return .processingCore
+        case "phaseRotator": return .processingPhaseRotator
+        case "agc": return .processingAGC
+        case "parametricEQ": return .processingParametricEQ
+        case "multiband": return .processingMultiband
+        case "advanced_dynamics": return .processingAdvancedDynamics
+        case "expander": return .processingExpander
+        case "mbLimiter": return .processingMBLimiter
+        case "primeBass": return .processingPrimeBass
+        case "bassClipper": return .processingBassClipper
+        case "dcClipper": return .processingDCClipper
+        case "hfLimiter", "hfClipper": return .processingHFClipper
+        case "limiter": return .processingLimiter
+        case "stereoCoder": return .processingStereoCoder
+        case "compositeClipper": return .processingCompositeClipper
+        case "bs412": return .processingBS412
+        case "finalStage": return .processingFinalStage
+        default: return nil
+        }
+    }
+
+    /// The Sound section's rows in dashboard order: landing pages, then each
+    /// `StageGroup` with its stages (de-duplicated where two dashboard pages
+    /// share one GUI page).
+    static var soundGroups: [(group: StageGroup, stages: [Stage])] {
+        StageGroup.allCases.map { g in
+            var seen: Set<Stage> = []
+            let stages = g.pageIDs.compactMap(stage(forSchemaPage:)).filter { seen.insert($0).inserted }
+            return (g, stages)
+        }
+    }
+    static var soundLandingStages: [Stage] { StageGroup.soundLandingPageIDs.compactMap(stage(forSchemaPage:)) }
 
     /// The part of the chain this sidebar stage configures, or nil when the
     /// stage applies in every operating mode. The applicability rules live in
@@ -495,17 +547,13 @@ enum Stage: String, CaseIterable, Identifiable {
     /// audio-thread side is decoupled.
     var legacySection: AppSection {
         switch group {
-        case .monitoring: return .monitoring
-        // Audio I/O shows live input meters, so the legacy section gate keeps
-        // metering/analysis capture engaged, same as Test Tone below.
-        case .audioIO: return .monitoring
-        case .processing: return .processing
+        case .onAir: return .monitoring
+        // Setup (Audio I/O, Test Tone) shows live input meters and the tone
+        // moving through the chain, so the legacy section gate keeps
+        // metering / analysis capture engaged; so does Presets and System.
+        case .setup, .system: return .monitoring
+        case .sound: return .processing
         case .rds: return .rds
-        // Test Tone reads as Monitoring for the legacy section gate so
-        // scope / spectrum analysis capture stays engaged while the
-        // operator tunes a tone — the use case is observation of the
-        // tone moving through the chain.
-        case .tools: return .monitoring
         }
     }
 

@@ -124,10 +124,11 @@ final class MPXPrimeViewModel: ObservableObject {
     /// group home. Seeded with each group's landing stage so a first
     /// jump lands somewhere sensible.
     private var lastStageInGroup: [Stage.Group: Stage] = [
-        .monitoring: .monitoring,
-        .processing: .processingOverview,
+        .onAir: .monitoring,
+        .setup: .audioIO,
+        .sound: .processingOverview,
         .rds: .rdsControl,
-        .tools: .testTone
+        .system: .snapshots
     ]
     /// Whether a given sidebar stage has a "currently active" concept and,
     /// if so, whether it is on. Returns nil for stages with no single
@@ -176,11 +177,11 @@ final class MPXPrimeViewModel: ObservableObject {
     func goToGroup(_ group: Stage.Group) {
         let target = lastStageInGroup[group] ?? {
             switch group {
-            case .monitoring: return .monitoring
-            case .audioIO: return .audioIO
-            case .processing: return .processingOverview
+            case .onAir: return .monitoring
+            case .setup: return .audioIO
+            case .sound: return .processingOverview
             case .rds: return .rdsControl
-            case .tools: return .testTone
+            case .system: return .snapshots
             }
         }()
         if selectedStage != target {

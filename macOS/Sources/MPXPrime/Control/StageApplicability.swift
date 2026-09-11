@@ -15,6 +15,59 @@ import Foundation
 ///
 /// A feature absent from a mode must be BOTH invisible in the interfaces and
 /// inert in the engine. `ModeGatingTests` pins that pairing.
+/// The dashboard's and the GUI sidebar's top-level sections, in order --
+/// named for what the operator is DOING, not for how the engine is built
+/// (roadmap "Web dashboard taxonomy and navigation", 0.60). `schema.json`
+/// `model.sections` mirrors this table and `ControlSchemaTests` holds the two
+/// together; the GUI's `Stage.Group` maps onto it.
+enum NavigationSection: String, CaseIterable, Sendable {
+    case onAir, setup, sound, rds, system
+
+    var title: String {
+        switch self {
+        case .onAir: return "On Air"
+        case .setup: return "Setup"
+        case .sound: return "Sound"
+        case .rds: return "RDS"
+        case .system: return "Presets and System"
+        }
+    }
+}
+
+/// How the Sound section groups the stage pages: by what the stage does to
+/// the signal, in signal order. `pageIDs` are the dashboard's stage page ids
+/// (the GUI maps them to `Stage` cases; its combined HF page answers to both
+/// `hfLimiter` and `hfClipper`). One stage id appears in exactly one group.
+enum StageGroup: String, CaseIterable, Sendable {
+    case input, levelling, tone, dynamics, peakControl, transmission
+
+    var title: String {
+        switch self {
+        case .input: return "Input"
+        case .levelling: return "Levelling"
+        case .tone: return "Tone"
+        case .dynamics: return "Dynamics"
+        case .peakControl: return "Peak control"
+        case .transmission: return "Transmission"
+        }
+    }
+
+    var pageIDs: [String] {
+        switch self {
+        case .input: return ["core", "phaseRotator", "expander"]
+        case .levelling: return ["agc", "advanced_dynamics"]
+        case .tone: return ["parametricEQ", "primeBass"]
+        case .dynamics: return ["multiband", "mbLimiter"]
+        case .peakControl: return ["bassClipper", "dcClipper", "hfLimiter", "hfClipper", "limiter"]
+        case .transmission: return ["stereoCoder", "compositeClipper", "bs412", "finalStage"]
+        }
+    }
+
+    /// The Sound section's own pages ahead of the groups: the landing grid and
+    /// the Format Profile ("start here").
+    static let soundLandingPageIDs = ["overview", "profile"]
+}
+
 enum ChainFeature: String, CaseIterable, Sendable {
     /// Stereo encoding itself: pilot, 38 kHz subcarrier, SSB leaning, mono mode.
     case stereoCoder

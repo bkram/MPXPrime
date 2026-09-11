@@ -11,7 +11,15 @@ combination test suite. Newest first.
 
 ## Unreleased
 
-- (nothing yet)
+- **The sidebar is organised by what you are doing, not by how the engine is
+  built (phase 1 of the taxonomy plan).** Five sections in both front ends --
+  **On Air**, **Setup** (Audio I/O and Test Tone moved here from "Tools"),
+  **Sound** (the stages grouped Input / Levelling / Tone / Dynamics / Peak
+  control / Transmission, in signal order, foldable), **RDS**, **Presets and
+  System** -- from one Swift table that the dashboard's `schema.json` mirrors
+  and a test holds equal. Dashboard sections collapse and remember it, every
+  page shows its breadcrumb, the GUI's Go menu is Cmd-1..5 in sidebar order.
+  No stage was renamed and no setting moved; that is the plan's next phase.
 
 ## 0.50 -- 2026-09-11
 

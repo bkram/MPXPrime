@@ -8,7 +8,7 @@ import Foundation
 // The Processing Overview grid's chevron-card buttons need to set
 // `selectedStage` to the right unified-enum case so the sidebar lights
 // up and the per-stage content view picks the right detail tab. This
-// suite pins the ProcessingTab → Stage mapping (and its inverse via
+// suite pins the ProcessingTab -> Stage mapping (and its inverse via
 // Stage.legacyProcessingTab) so a rename or a missing case is caught
 // at test time instead of as a silent "click does nothing" UI bug.
 
@@ -21,15 +21,15 @@ struct ProcessingTabStageMappingTests {
             let stage = tab.stage
             let backToTab = stage.legacyProcessingTab
             #expect(backToTab == tab,
-                "ProcessingTab.\(tab) → Stage.\(stage) but Stage.legacyProcessingTab = \(String(describing: backToTab))")
+                "ProcessingTab.\(tab) -> Stage.\(stage) but Stage.legacyProcessingTab = \(String(describing: backToTab))")
         }
     }
 
     @Test func everyProcessingStageMapsBackToATab() {
-        let processingStages: [Stage] = Stage.allCases.filter { $0.group == .processing }
+        let processingStages: [Stage] = Stage.allCases.filter { $0.group == .sound }
         for stage in processingStages {
             #expect(stage.legacyProcessingTab != nil,
-                "Stage.\(stage) in the .processing group must have a legacyProcessingTab")
+                "Stage.\(stage) in the Sound section must have a legacyProcessingTab")
         }
     }
 

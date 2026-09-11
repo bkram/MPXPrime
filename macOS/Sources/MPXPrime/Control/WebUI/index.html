@@ -36,7 +36,13 @@
   /* ---- layout ---- */
   #main { display:flex; flex:1; min-height:0; }
   #sidebar { width:196px; background:var(--side); border-right:1px solid var(--line); overflow-y:auto; padding:10px 8px 20px; flex-shrink:0; }
-  .shead { font-size:11px; color:var(--dim); font-weight:600; padding:12px 10px 4px; }
+  .shead { font-size:11px; color:var(--dim); font-weight:600; padding:12px 10px 4px; cursor:pointer; user-select:none; display:flex; align-items:center; gap:6px; }
+  .shead .chev { display:inline-block; width:0; height:0; border-left:4px solid var(--dim); border-top:3px solid transparent; border-bottom:3px solid transparent; transition:transform .12s; }
+  .ssec.collapsed .shead .chev { transform:rotate(-90deg); }
+  .ssec.collapsed .sbody { display:none; }
+  .sgroup { font-size:11px; color:var(--dim); padding:8px 10px 2px 14px; letter-spacing:.02em; }
+  .sgroup + .nav, .sgroup ~ .nav.grp { padding-left:18px; }
+  .crumb { font-size:11px; color:var(--dim); margin-bottom:2px; }
   .nav { display:flex; align-items:center; gap:7px; padding:5px 10px; border-radius:6px; cursor:pointer; color:var(--text); font-size:13px; user-select:none; }
   .nav:hover { background:rgba(255,255,255,0.05); }
   .nav.active { background:var(--blue); color:#fff; }
@@ -315,25 +321,71 @@ function navItem(id, title, enableKey, bypassKey) {
   el.onclick = () => showPage(id);
   return el;
 }
+/* The sidebar is built from MODEL.sections -- the one taxonomy the GUI
+   sidebar reads too (StageApplicability.swift: NavigationSection /
+   StageGroup; ControlSchemaTests keeps them equal). Sections collapse and
+   remember it per browser; a page hidden in the current mode is skipped, and
+   a group or section left empty by that is not drawn at all. */
+const COLLAPSED_KEY = "mpxprime_nav_collapsed";
+function collapsedSections() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "[]")); } catch (e) { return new Set(); }
+}
+function pageDef(id) {
+  if (id === "monitoring") return { id, title: "Monitoring" };
+  if (id === "overview") return { id, title: "Overview" };
+  return MODEL.stages.find(p => p.id === id) || MODEL.rds.find(p => p.id === id) || MODEL.tools.find(p => p.id === id) || null;
+}
+function pageVisible(id) { return !!pageDef(id) && !pageHiddenInMode(id); }
+function navFor(id, grouped) {
+  const p = pageDef(id);
+  const enable = MODEL.stages.includes(p) ? p.enable : (id === "rdsStatus" ? "en_rds" : null);
+  const el = navItem(id, p.title, enable, p.bypassedWhen);
+  if (grouped) el.classList.add("grp");
+  return el;
+}
+/* Section and group titles for the breadcrumb above a page title. */
+function pagePath(id) {
+  for (const sec of MODEL.sections) {
+    if ((sec.pages || []).includes(id)) return [sec.title];
+    for (const g of sec.groups || []) if (g.pages.includes(id)) return [sec.title, g.title];
+  }
+  return [];
+}
 function renderSidebar() {
   const nav = $("sidebar");
   nav.innerHTML = "";
-  const add = (html) => nav.insertAdjacentHTML("beforeend", html);
-  add('<div class="shead">Monitoring</div>');
-  nav.appendChild(navItem("monitoring", "Monitoring"));
-  add('<div class="shead">Processing</div>');
-  nav.appendChild(navItem("overview", "Overview"));
-  for (const s of MODEL.stages) {
-    if (!inCurrentMode(s.modes)) continue;
-    nav.appendChild(navItem(s.id, s.title, s.enable, s.bypassedWhen));
+  const collapsed = collapsedSections();
+  for (const sec of MODEL.sections) {
+    const pages = (sec.pages || []).filter(pageVisible);
+    const groups = (sec.groups || []).map(g => ({ ...g, pages: g.pages.filter(pageVisible) })).filter(g => g.pages.length);
+    if (!pages.length && !groups.length) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "ssec" + (collapsed.has(sec.id) ? " collapsed" : "");
+    wrap.dataset.section = sec.id;
+    const head = document.createElement("div");
+    head.className = "shead";
+    head.innerHTML = '<span class="chev"></span>' + sec.title;
+    head.onclick = () => {
+      wrap.classList.toggle("collapsed");
+      const now = collapsedSections();
+      if (wrap.classList.contains("collapsed")) now.add(sec.id); else now.delete(sec.id);
+      try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...now])); } catch (e) {}
+    };
+    wrap.appendChild(head);
+    const body = document.createElement("div");
+    body.className = "sbody";
+    for (const id of pages) body.appendChild(navFor(id, false));
+    for (const g of groups) {
+      const gh = document.createElement("div");
+      gh.className = "sgroup";
+      gh.dataset.group = g.id;
+      gh.textContent = g.title;
+      body.appendChild(gh);
+      for (const id of g.pages) body.appendChild(navFor(id, true));
+    }
+    wrap.appendChild(body);
+    nav.appendChild(wrap);
   }
-  const rdsPages = MODEL.rds.filter(p => inCurrentMode(p.modes || MODEL.rdsModes));
-  if (rdsPages.length) {
-    add('<div class="shead">RDS</div>');
-    for (const p of rdsPages) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
-  }
-  add('<div class="shead">Tools</div>');
-  for (const p of MODEL.tools) nav.appendChild(navItem(p.id, p.title));
 }
 function refreshSidebarDots() {
   document.querySelectorAll("#sidebar .nav").forEach(n => {
@@ -524,6 +576,8 @@ function presetPicker(kind) {
 
 /* ---------------- pages ---------------- */
 function pageHeader(c, title, sub) {
+  const path = pagePath(currentPage);
+  if (path.length) c.appendChild(Object.assign(document.createElement("div"), { className:"crumb", textContent: path.join(" > ") }));
   c.appendChild(Object.assign(document.createElement("h1"), { textContent: title }));
   c.appendChild(Object.assign(document.createElement("div"), { className:"subtitle", textContent: sub }));
 }

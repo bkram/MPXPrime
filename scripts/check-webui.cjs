@@ -232,6 +232,31 @@ async function runModeUnguarded(mode) {
   if (!outText.includes("-8.0")) fail(mode, "meters stream", `streamed meters did not reach the bars (Output reads "${outText}")`);
 
   if (!page.configKeyCount()) fail(mode, "boot", "config was never loaded");
+
+  // (1c) the taxonomy: every page the model knows sits in exactly one section
+  // or group, and the sidebar never shows a section or group header with
+  // nothing under it; the current page carries its breadcrumb.
+  {
+    const placed = new Map();
+    for (const sec of schema.model.sections) {
+      for (const id of sec.pages || []) placed.set(id, (placed.get(id) || 0) + 1);
+      for (const g of sec.groups || []) for (const id of g.pages) placed.set(id, (placed.get(id) || 0) + 1);
+    }
+    const allPages = ["monitoring", "overview"]
+      .concat(schema.model.stages.map(s => s.id), schema.model.rds.map(p => p.id), schema.model.tools.map(p => p.id));
+    for (const id of allPages) {
+      if ((placed.get(id) || 0) !== 1) fail(mode, "taxonomy", `page "${id}" is in ${placed.get(id) || 0} sections/groups (must be exactly 1)`);
+    }
+    for (const id of placed.keys()) if (!allPages.includes(id)) fail(mode, "taxonomy", `sections name an unknown page "${id}"`);
+    for (const sec of win.document.querySelectorAll("#sidebar .ssec")) {
+      if (!sec.querySelectorAll(".nav").length) fail(mode, "taxonomy", `section "${sec.dataset.section}" is drawn empty`);
+    }
+    for (const gh of win.document.querySelectorAll("#sidebar .sgroup")) {
+      const next = gh.nextElementSibling;
+      if (!next || !next.classList.contains("nav")) fail(mode, "taxonomy", `group "${gh.dataset.group}" is drawn with no page under it`);
+    }
+    if (!content().querySelector(".crumb")) fail(mode, "taxonomy", "the landing page has no breadcrumb");
+  }
   if (page.currentMode() !== mode) {
     fail(mode, "boot", `page thinks the mode is ${page.currentMode()}`);
   }

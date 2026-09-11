@@ -17,7 +17,7 @@ Pruned 2026-09-05: every DONE item removed, open remainders kept.
 
 # Open work
 
-## Web dashboard taxonomy and navigation -- PLAN (2026-09-11, target 0.60)
+## Web dashboard taxonomy and navigation -- PLAN (2026-09-11, target 0.60; phase 1 landed 2026-09-11)
 
 The dashboard (and, by the parity rule, the GUI sidebar) groups functions the
 way the ENGINE is built, not the way an operator works. This is the plan to
@@ -157,9 +157,12 @@ AGC, BS.412, Composite Clipper stay).
 
 ### Phasing (each phase ships on its own, both front ends together)
 
-1. **Structure** -- sections and groups in schema + Swift table, the Setup
-   section (Audio I/O, Test Tone, engine, remote access move there),
-   breadcrumbs, collapsible sidebar. No renames yet.
+1. **Structure** -- DONE 2026-09-11: `NavigationSection` / `StageGroup` in
+   `StageApplicability.swift`, `schema.json` `model.sections`, both sidebars,
+   Go menu Cmd-1..5, breadcrumbs, collapsible sections (dashboard) and
+   groups (GUI), parity test + `check-webui` taxonomy assertions. The
+   remote-access page stays with phase 4 (it needs a decision on exposing
+   `[CONTROL]` over the API it configures).
 2. **Labels** -- the rename table, help texts, manuals, screenshots.
 3. **Disclosure** -- `advanced` flags, collapsed Advanced cards, GUI
    `DisclosureGroup`s aligned, parity test.

@@ -22,14 +22,14 @@ struct SectionNavigationTests {
     @Test func goToMonitoringFromProcessingLandsOnMonitoringStage() {
         let model = makeViewModel()
         model.selectedStage = .processingMultiband
-        model.goToGroup(.monitoring)
+        model.goToGroup(.onAir)
         #expect(model.selectedStage == .monitoring)
     }
 
     @Test func goToProcessingFromMonitoringLandsOnOverview() {
         let model = makeViewModel()
         #expect(model.selectedStage == .monitoring)
-        model.goToGroup(.processing)
+        model.goToGroup(.sound)
         #expect(model.selectedStage == .processingOverview)
     }
 
@@ -39,9 +39,23 @@ struct SectionNavigationTests {
         #expect(model.selectedStage == .rdsControl)
     }
 
-    @Test func goToToolsFromMonitoringLandsOnTestTone() {
+    @Test func goToSetupFromMonitoringLandsOnAudioIO() {
         let model = makeViewModel()
-        model.goToGroup(.tools)
+        model.goToGroup(.setup)
+        #expect(model.selectedStage == .audioIO)
+    }
+
+    @Test func goToSystemFromMonitoringLandsOnPresets() {
+        let model = makeViewModel()
+        model.goToGroup(.system)
+        #expect(model.selectedStage == .snapshots)
+    }
+
+    @Test func goToSetupRemembersTestToneIfThatsWhereTheUserWas() {
+        let model = makeViewModel()
+        model.selectedStage = .testTone
+        model.goToGroup(.onAir)
+        model.goToGroup(.setup)
         #expect(model.selectedStage == .testTone)
     }
 
@@ -51,7 +65,7 @@ struct SectionNavigationTests {
         model.selectedStage = .processingCompositeClipper
         model.goToGroup(.rds)
         #expect(model.selectedStage == .rdsControl)
-        model.goToGroup(.processing)
+        model.goToGroup(.sound)
         #expect(model.selectedStage == .processingCompositeClipper,
             "⌘2 should restore the last Processing sub-tab visited, not snap to Overview")
     }
@@ -59,17 +73,19 @@ struct SectionNavigationTests {
     @Test func goToRDSRemembersLastSubTab() {
         let model = makeViewModel()
         model.selectedStage = .rdsRadiotext
-        model.goToGroup(.monitoring)
+        model.goToGroup(.onAir)
         model.goToGroup(.rds)
         #expect(model.selectedStage == .rdsRadiotext)
     }
 
-    @Test func goToToolsRemembersSnapshotsIfThatsWhereTheUserWas() {
-        let model = makeViewModel()
-        model.selectedStage = .snapshots
-        model.goToGroup(.monitoring)
-        model.goToGroup(.tools)
-        #expect(model.selectedStage == .snapshots)
+    @Test func everyStageHasASectionAndEverySoundGroupIsReachable() {
+        // The sidebar draws Sound from the shared StageGroup table; a stage the
+        // table forgets would silently vanish from the GUI.
+        let listed = Set(Stage.soundLandingStages + Stage.soundGroups.flatMap(\.stages))
+        for stage in Stage.allCases where stage.group == .sound {
+            #expect(listed.contains(stage), "\(stage) is in the Sound section but no group lists it")
+        }
+        #expect(Set(Stage.Group.allCases.map(\.section)) == Set(NavigationSection.allCases))
     }
 
     @Test func goToCurrentGroupIsANoOp() {
@@ -78,7 +94,7 @@ struct SectionNavigationTests {
         // an unnecessary @Published broadcast).
         let model = makeViewModel()
         model.selectedStage = .processingMultiband
-        model.goToGroup(.processing)
+        model.goToGroup(.sound)
         #expect(model.selectedStage == .processingMultiband)
     }
 

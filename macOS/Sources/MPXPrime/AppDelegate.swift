@@ -212,14 +212,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         }
         if let action = menuItem.action,
-           action == #selector(goToMonitoring) || action == #selector(goToProcessing)
+           action == #selector(goToMonitoring) || action == #selector(goToSetup)
+               || action == #selector(goToProcessing)
                || action == #selector(goToRDS) || action == #selector(goToTools) {
             let targetGroup: Stage.Group
             switch action {
-            case #selector(goToMonitoring): targetGroup = .monitoring
-            case #selector(goToProcessing): targetGroup = .processing
+            case #selector(goToMonitoring): targetGroup = .onAir
+            case #selector(goToSetup): targetGroup = .setup
+            case #selector(goToProcessing): targetGroup = .sound
             case #selector(goToRDS): targetGroup = .rds
-            default: targetGroup = .tools
+            default: targetGroup = .system
             }
             menuItem.state = (model?.selectedStage.group == targetGroup) ? .on : .off
             return true
@@ -344,25 +346,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // sub-tab the operator was last editing.
         let goItem = NSMenuItem(title: "Go", action: nil, keyEquivalent: "")
         let goMenu = NSMenu(title: "Go")
+        // One item per sidebar section, Cmd-1..5 in sidebar order.
         let goMonitoring = goMenu.addItem(
-            withTitle: "Monitoring",
+            withTitle: NavigationSection.onAir.title,
             action: #selector(goToMonitoring),
             keyEquivalent: "1")
         goMonitoring.target = self
-        let goProcessing = goMenu.addItem(
-            withTitle: "Processing",
-            action: #selector(goToProcessing),
+        let goSetup = goMenu.addItem(
+            withTitle: NavigationSection.setup.title,
+            action: #selector(goToSetup),
             keyEquivalent: "2")
+        goSetup.target = self
+        let goProcessing = goMenu.addItem(
+            withTitle: NavigationSection.sound.title,
+            action: #selector(goToProcessing),
+            keyEquivalent: "3")
         goProcessing.target = self
         let goRDS = goMenu.addItem(
-            withTitle: "RDS",
+            withTitle: NavigationSection.rds.title,
             action: #selector(goToRDS),
-            keyEquivalent: "3")
+            keyEquivalent: "4")
         goRDS.target = self
         let goTools = goMenu.addItem(
-            withTitle: "Tools",
+            withTitle: NavigationSection.system.title,
             action: #selector(goToTools),
-            keyEquivalent: "4")
+            keyEquivalent: "5")
         goTools.target = self
         goItem.submenu = goMenu
         mainMenu.addItem(goItem)
@@ -544,10 +552,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         model?.resetPeaks()
     }
 
-    @objc private func goToMonitoring() { model?.goToGroup(.monitoring) }
-    @objc private func goToProcessing() { model?.goToGroup(.processing) }
+    @objc private func goToMonitoring() { model?.goToGroup(.onAir) }
+    @objc private func goToSetup() { model?.goToGroup(.setup) }
+    @objc private func goToProcessing() { model?.goToGroup(.sound) }
     @objc private func goToRDS() { model?.goToGroup(.rds) }
-    @objc private func goToTools() { model?.goToGroup(.tools) }
+    @objc private func goToTools() { model?.goToGroup(.system) }
 
     @objc private func saveConfig() {
         model?.saveCurrentConfig()

@@ -515,7 +515,7 @@ are not part of a preset's identity.
 
 ## Test Tone
 
-`Tools` -> `Test Tone` (`source_mode = tone`, `test_tone_*`) replaces the audio input with a sine, pink or white source, live. Since 0.45 it is a **calibration source, not program**: the tone bypasses every gain-changing stage -- input gain, AGC, EQ, multiband / Advanced Dynamics, enhancers, bass / HF / audio clippers, HF and Audio Limiters, Final Drive, the composite clipper, BS.412 and the final limiter -- while the delay-bearing stages stay in the path so pilot and RDS remain aligned. **0 dBFS = 100% of the audio modulation** left after the pilot/RDS reservation, and the scale is linear in dB, so the composite audio deviation is exactly `mpx_deviation_khz x budget x 10^(level/20)` (budget ~0.85 with 8% pilot and 2 kHz RDS at 75 kHz: -20 dBFS gives ~6.4 kHz of audio deviation plus ~8 kHz of pilot/RDS). A sine is pre-compensated for the pre-emphasis curve, so it reads the same deviation at 400 Hz, 1 kHz or 10 kHz; pink / white noise are peak-normalised and not compensated. The Test Tone card shows the expected audio and total deviation for the current level, pilot and RDS settings -- compare it with the Meter or a modulation monitor to calibrate the exciter. Before 0.45 the tone ran through the whole processing chain, so any level was lifted by the AGC into the clipper and produced full, clipped deviation ("way too loud, and the level slider does nothing"); `TestToneGeneratorTests` now pins level-in / deviation-out. The `Left` / `Right` routing modes double as a **channel-assignment check** on a real receiver: a left-routed tone must come out of the receiver's left speaker. Until 0.45 the encoder sent the stereo difference with the opposite sign to 47 CFR 73.322 / ITU-R BS.450-3, so every real receiver played L and R swapped (the built-in monitor and MPX Prime Meter compensated silently and could not show it); if you calibrated channel assignment against that behaviour, re-check it after upgrading.
+`Setup` -> `Test Tone` (`source_mode = tone`, `test_tone_*`) replaces the audio input with a sine, pink or white source, live. Since 0.45 it is a **calibration source, not program**: the tone bypasses every gain-changing stage -- input gain, AGC, EQ, multiband / Advanced Dynamics, enhancers, bass / HF / audio clippers, HF and Audio Limiters, Final Drive, the composite clipper, BS.412 and the final limiter -- while the delay-bearing stages stay in the path so pilot and RDS remain aligned. **0 dBFS = 100% of the audio modulation** left after the pilot/RDS reservation, and the scale is linear in dB, so the composite audio deviation is exactly `mpx_deviation_khz x budget x 10^(level/20)` (budget ~0.85 with 8% pilot and 2 kHz RDS at 75 kHz: -20 dBFS gives ~6.4 kHz of audio deviation plus ~8 kHz of pilot/RDS). A sine is pre-compensated for the pre-emphasis curve, so it reads the same deviation at 400 Hz, 1 kHz or 10 kHz; pink / white noise are peak-normalised and not compensated. The Test Tone card shows the expected audio and total deviation for the current level, pilot and RDS settings -- compare it with the Meter or a modulation monitor to calibrate the exciter. Before 0.45 the tone ran through the whole processing chain, so any level was lifted by the AGC into the clipper and produced full, clipped deviation ("way too loud, and the level slider does nothing"); `TestToneGeneratorTests` now pins level-in / deviation-out. The `Left` / `Right` routing modes double as a **channel-assignment check** on a real receiver: a left-routed tone must come out of the receiver's left speaker. Until 0.45 the encoder sent the stereo difference with the opposite sign to 47 CFR 73.322 / ITU-R BS.450-3, so every real receiver played L and R swapped (the built-in monitor and MPX Prime Meter compensated silently and could not show it); if you calibrated channel assignment against that behaviour, re-check it after upgrading.
 
 ## Getting RDS on air
 
@@ -759,35 +759,40 @@ mirrors the Studio GUI page-for-page: a pinned broadcast status bar
 (transport Start/Stop/Restart plus the transport-level **Bypass** button,
 IN/MPX level bars, AGC/limiter/clipper gain-reduction meters, deviation /
 pilot / RDS injection / budget-margin readouts, restart-pending badge)
-above four sidebar sections (the native GUI's Audio I/O section is the
-dashboard's Audio I/O page under Tools):
+above five sidebar sections -- the same five, in the same order, as the
+native GUI's sidebar, named for what you are doing rather than for how the
+engine is built. Sections fold and remember it; a page's breadcrumb (for
+example "Sound > Dynamics") says where you are:
 
-- **Monitoring** -- source/output devices, input meters, MPX deviation /
-  modulation, per-stage gain-reduction readouts, subcarrier injection +
-  budget margin, and stream health (uptime, ring-buffer fill, OVR/UND
-  drop counters, resample trim), plus a signal-chain card grid.
-- **Processing** -- the GUI's tab set one page each: Overview (stage grid
-  with enable switches), Profile (station-format picker), Core, Phase
-  Rotator, AGC, Parametric EQ, Multiband (incl. crossovers X1-X4),
-  Advanced Dynamics, Expander, MB Limiter, PrimeBass (+ Mono Bass),
-  Bass Clipper, Audio Clipper, HF Limiter (incl. the HF clipper), Audio
-  Limiter, Stereo Coder, Composite Clipper (incl. look-ahead +
-  oversampling), BS.412, Final Stage. Real
-  switches and sliders with the GUI's control vocabulary, applied live on
-  release; each page has the GUI's "Reset This Tab" button.
+- **On Air** -- Monitoring: source/output devices, input meters, MPX
+  deviation / modulation, per-stage gain-reduction readouts, subcarrier
+  injection + budget margin, and stream health (uptime, ring-buffer fill,
+  OVR/UND drop counters, resample trim; on Linux xruns and render load),
+  plus a signal-chain card grid.
+- **Setup** -- everything done once per rig: Audio I/O (input / output /
+  monitor device pickers -- selecting one is a restart-class change; the
+  Operating Mode; the level calibration sliders Input Gain, Output Level,
+  Line Output, remembered per device like the native GUI; the engine
+  format: sample rate, block size, auto start, spectrum window, monitor;
+  the card mixer on Linux; and the read-only Remote Control card showing the
+  server's own settings, which stay INI/GUI-only by design), and Test Tone.
+- **Sound** -- Overview (stage grid with enable switches) and Profile (the
+  station-format picker, start here), then the stages grouped by what they
+  do to the signal, in signal order: **Input** (Core, Phase Rotator,
+  Expander), **Levelling** (AGC, Advanced Dynamics), **Tone** (Parametric EQ,
+  PrimeBass + Mono Bass), **Dynamics** (Multiband incl. crossovers X1-X4, MB
+  Limiter), **Peak control** (Bass Clipper, Audio Clipper, HF Limiter, HF
+  Clipper, Audio Limiter) and, in MPX Output only, **Transmission** (Stereo
+  Coder, Composite Clipper incl. look-ahead + oversampling, BS.412, Final
+  Stage). Real switches and sliders with the GUI's control vocabulary,
+  applied live on release; each page has the GUI's "Reset This Tab" button.
 - **RDS** -- Status (on-air PS/RT/PTYN/Long PS), Identity, Radiotext
   (mode, rotation, the 4 manual buffers, RT+ formats, Now Playing
   configuration), Long PS, Alt. Frequencies (list + method), Schedule
   (group sequence, scheduler toggles, CT/TZ), Subcarrier.
-- **Tools** -- Test Tone, Audio I/O (input / output / monitor device
-  pickers -- selecting one is a restart-class change; the Operating Mode
-  toggle; the level calibration sliders Input Gain, Output Level, Line
-  Output, remembered per device like the native GUI; the engine format:
-  sample rate, block size, auto start, spectrum window, monitor enable;
-  and the read-only Remote Control card showing the server's own settings,
-  which stay INI/GUI-only by design), Presets (per-stage preset pickers plus the 8 operator
-  preset slots: name, Save/Load/Export/Clear, Import into empty slots),
-  and an Advanced page holding the raw all-settings editor.
+- **Presets and System** -- Presets (per-stage preset pickers plus the 8
+  operator preset slots: name, Save/Load/Export/Clear, Import into empty
+  slots), an Advanced page holding the raw all-settings editor, and About.
 
 Every change reports back live / live-RDS / needs-restart. The Bypass
 button mirrors the GUI's Cmd-B exactly: it flips `processing_bypass`

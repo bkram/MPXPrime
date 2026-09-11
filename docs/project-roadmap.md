@@ -8,15 +8,168 @@ Active work list + anti-rework guardrails. **Not** a readme: positioning, archit
 
 ## Status
 
-Released through **0.44** (2026-08-03). **Active branch: `develop/v.050`**; 0.50 is
-the Unreleased target (the 0.45 cycle was folded into it unreleased; see
-`CHANGELOG.md` for the accumulated content). Shipped-feature history lives in
+Released through **0.50** (2026-09-11, tag `v0.50`, AGPL-3.0). **Active branch:
+`develop/v.060`**; 0.60 is the next target. Shipped-feature history lives in
 CHANGELOG -- this file tracks only pending work and the anti-rework guardrails.
 Pruned 2026-09-05: every DONE item removed, open remainders kept.
 
 ---
 
 # Open work
+
+## Web dashboard taxonomy and navigation -- PLAN (2026-09-11, target 0.60)
+
+The dashboard (and, by the parity rule, the GUI sidebar) groups functions the
+way the ENGINE is built, not the way an operator works. This is the plan to
+fix that; nothing here changes an INI key or an API route -- it is
+presentation, shared by both front ends.
+
+### The problem, measured
+
+- Four sidebar groups -- Monitoring, Processing, RDS, Tools -- over **31 pages
+  and 222 controls** (109 sliders, 74 toggles, 19 text fields, 14 segmented,
+  6 numbers).
+- **Processing is a flat list of 19 stage pages in engine order** with
+  engine names: Core, Phase Rotator, AGC, Parametric EQ, Multiband, Advanced
+  Dynamics, Expander, MB Limiter, PrimeBass, Bass Clipper, Audio Clipper, HF
+  Limiter, HF Clipper, Audio Limiter, Stereo Coder, Composite Clipper, BS.412,
+  Final Stage. Nothing says which of these a music station touches (three)
+  and which are set once and left (the rest). Multiband alone shows 20
+  controls on one page.
+- **Tools is a drawer of unrelated things**: Test Tone (a signal source),
+  Audio I/O (devices, mode, level calibration -- the first thing a new rig
+  needs), Presets (whole-config slots), Advanced, About. An operator looking
+  for "where do I set my output level" has no reason to open Tools.
+- **No basic / advanced split** on any page, **no search**, no task entry
+  points ("get on air", "set my levels", "change the station text").
+- The GUI has the same shape (`AppSection` Monitoring / Processing / RDS,
+  `ProcessingTab` 19 cases, Settings window), so this is a taxonomy change
+  for both, driven from one table -- not a web-only re-skin.
+
+### What comparable products and the IA literature do
+
+- **Omnia.9** (Telos): a Home menu of Input / Undo / Processing / System /
+  Client Audio; processing pages in signal order (expander, input AGC,
+  wideband AGC, bass, EQ, stereo enhancer, multiband, band mix, output);
+  **adjustment levels** that reveal more controls (basic to expert, the same
+  page); breadcrumb "tree" or "tabbed" navigation; presets first-class with
+  compare and protect
+  ([Omnia.9 processing setup](https://docs.telosalliance.com/docs/omnia9-processing-setup)).
+- **Omnia Forza**: the whole processor on one page behind a few "smart
+  controls" that move many parameters at once -- the far end of hiding
+  engine structure ([Telos Alliance](https://www.telosalliance.com/radio-processing/radio-processors/omnia9),
+  [Forza manual](https://manuals.plus/m/351cc452ee69fd0a32b06a209f56ca96f045de7d6ee46fcb4c33328bdd430126)).
+- **Orban PC Remote**: menus named after tasks -- File, Manage, Preset,
+  Modify, Setup, Help ([Optimod 8600 manual](https://www.manualslib.com/manual/1267434/Orban-Optimod-Fm-8600.html?page=120)).
+- **Progressive disclosure** (Nielsen Norman Group): at most **two** levels;
+  the primary view holds what is used often; the disclosure control needs a
+  label with a strong "information scent"; the grouping is found by card
+  sorting and tested with real tasks, not decided at a desk
+  ([NN/g](https://www.nngroup.com/articles/progressive-disclosure/),
+  [nested tabs guidance](https://www.designmonks.co/blog/nested-tab-ui)).
+- **Task-based navigation** for tools people use to get a job done: group by
+  what the user is trying to do, keep the primary choices few, put frequent
+  actions where they are seen, add search once the setting count is large
+  ([task-based navigation](https://medium.com/@marketingtd64/what-is-task-based-navigation-and-when-should-you-use-it-e73bd7f2eed6),
+  [navigation patterns](https://www.eleken.co/blog-posts/ux-navigation-design),
+  [Baymard](https://baymard.com/blog/ecommerce-navigation-best-practice)).
+
+### Proposed taxonomy (one table, read by the GUI sidebar and the dashboard)
+
+Five top-level sections named for what the operator is doing, in the order
+a new rig meets them:
+
+| Section | What lives there | Notes |
+| --- | --- | --- |
+| **On Air** | status + transport, meters and the signal-chain strip, what RDS is showing right now, health notes (render load, xruns, device rate), task shortcuts | the landing page; today's Monitoring plus the shortcuts |
+| **Setup** | Audio devices and operating mode; Levels and calibration (input gain, output level, line output, DAC peak, the Linux card mixer); Engine (sample rate, block size); Remote access (control server, key); Test Tone | everything done once per rig; today spread over Tools / Audio I/O / the GUI Settings window |
+| **Sound** | Format Profile ("start here"), then the stages **grouped by function in signal order**: Input (Core, Phase Rotator, Expander) -- Levelling (AGC, Advanced Dynamics) -- Tone (Parametric EQ, PrimeBass + Mono Bass) -- Dynamics (Multiband, MB Limiter) -- Peak control (Bass Clipper, Audio Clipper, HF Limiter, HF Clipper, Audio Limiter) -- Transmission, MPX Output only (Stereo Coder, Composite Clipper, BS.412, Final Stage) | today's flat Processing list, with headers; the Overview becomes the section's landing page with the clickable chain strip |
+| **RDS** | On-air text (what listeners see, editable) -- Identity -- Radiotext -- Long PS -- Alternative frequencies -- Schedule -- Subcarrier (expert) | same pages, ordered by how often they are touched |
+| **Presets and System** | the eight preset slots (save / load / import / export), About and version, diagnostics (stream health detail, telemetry, logs) | today's Presets, Advanced, About |
+
+Rules the tree follows: at most two disclosure levels (section > page, and a
+collapsed **Advanced** card inside a page); mode gating removes whole groups
+(outside MPX Output the Transmission group and the RDS section vanish, as
+they do now); labels use outcome language and keep established broadcast
+terms (a rename table decides the few engine names that remain: Core ->
+Input, Final Stage -> Loudness and Output, MB Limiter -> Band Limiter; PEQ,
+AGC, BS.412, Composite Clipper stay).
+
+### Inside a page
+
+- Top: the enable toggle, a one-line "what this does for the sound", the
+  reset button, and the stage's one telling meter (already on the Overview).
+- The controls an operator actually moves, first (Multiband: the five band
+  thresholds and the drive; Composite Clipper: ceiling and the guards).
+- **Advanced** (collapsed): time constants, topology choices, restart-class
+  engine options. One flag per widget in `schema.json` (`"advanced": true`);
+  the GUI's `DisclosureGroup`s read the same list, so both front ends fold
+  the same controls.
+
+### Navigation aids
+
+- **Search / filter** over the schema (label, INI key, help text): 222
+  entries is exactly the size where search beats browsing; typing "pilot"
+  lists Pilot Level, Protect Stereo Pilot, and jumps to the control
+  (`data-key` anchors already exist).
+- **Breadcrumb / page title** "Sound > Dynamics > Multiband", and the
+  section headers in the sidebar collapsible, remembering their state.
+- **Task shortcuts on On Air**: "Set my levels", "Change the station text",
+  "Load a preset", "Switch operating mode".
+- **Phone layout**: the sidebar becomes a drawer, meters first, sliders get
+  a numeric field (a slider on a 390 px screen is unusable for a 0.1 dB
+  trim). `check-webui` renders at 390 px as well as desktop.
+- **Signal-chain strip as the map**: the pills already exist on Monitoring;
+  they become the Sound landing page, coloured by state, one click to the
+  stage.
+
+### How it maps onto the code
+
+- `schema.json` `model` gains `sections` and `groups` (id, title, modes,
+  pages); `index.html` renders sidebar from them; `check-webui` asserts every
+  page sits in exactly one group, that gating never leaves an empty group,
+  that every `advanced` widget is inside a collapsed card, and that the 390
+  px render has no horizontal overflow.
+- One Swift table next to `ChainFeature` in `Control/StageApplicability.swift`
+  (`StageGroup`) drives `AppSection` / `ProcessingTab` ordering and the
+  sidebar headers in `UI/RootViews.swift`; `ControlSchemaTests` gains a
+  parity check that the schema's groups and the Swift table list the same
+  stages in the same order.
+- The rename table is applied in one commit to schema titles, `ProcessingTab`
+  raw values, the inspector, and the manuals (the guide quotes labels
+  verbatim -- `scripts/check-doc-anchors.py` catches broken headings).
+- `[CONTROL]` keys reach the dashboard's Setup > Remote access page (today
+  GUI Settings only); `ControlSchemaTests.deliberatelyUnexposed` shrinks.
+- INI keys, REST routes and dispositions are untouched: a saved config or a
+  script written against 0.50 keeps working.
+
+### How we will know it is better
+
+- Before coding: a card sort with two or three operators (index cards with
+  the 31 page names; ask them to group and name the piles) and a think-aloud
+  run of ten task cards on the proposed tree ("make the station louder",
+  "change the PS text", "calibrate the exciter", "switch to FM Output", "why
+  is Render Load red", "load last week's setup"). Adjust the tree from that,
+  not from taste.
+- After: clicks-to-complete for the same ten tasks, before vs after;
+  `check-webui` green in all four modes and both viewports; the guide's
+  table of contents mirrors the taxonomy.
+
+### Phasing (each phase ships on its own, both front ends together)
+
+1. **Structure** -- sections and groups in schema + Swift table, the Setup
+   section (Audio I/O, Test Tone, engine, remote access move there),
+   breadcrumbs, collapsible sidebar. No renames yet.
+2. **Labels** -- the rename table, help texts, manuals, screenshots.
+3. **Disclosure** -- `advanced` flags, collapsed Advanced cards, GUI
+   `DisclosureGroup`s aligned, parity test.
+4. **Aids** -- search, task shortcuts, phone layout, chain strip as the Sound
+   landing page.
+5. **Operator round** -- the ten-task test on the result; fix what it finds.
+
+Roughly one to two days each. Risk to watch: the parity rule (every change
+lands in the GUI and the dashboard in the same commit) and label churn in the
+manuals -- hence labels as their own phase, once, with the anchor checker.
 
 ## HF transients (hi-hats / cymbals) -- open remainders of the 2026-08-29 campaign
 

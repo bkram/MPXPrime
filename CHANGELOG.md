@@ -65,8 +65,10 @@ combination test suite. Newest first.
 - **`docs/performance.md`.** The chain's measured cost on every machine it
   has run on -- M1 Pro, i7-9750H, Ryzen 5 PRO 2400GE (AVX2 and SSE2 kernels)
   -- as `--bench` chain cost, per-stage cost, clipper
-  oversampling and block-size sweeps, live render load on Linux, and what
-  that means when choosing a box.
+  oversampling and block-size sweeps, live render load on Linux, and a
+  minimum / recommended CPU baseline stated as what `--bench` must read
+  (under 40 % usable, under 30 % recommended), repeated in the README's
+  requirements and the guide's install section.
 - **Intel review (x86_64 macOS, headless `--web`).** The whole control
   path works on an i7 MacBook Pro -- status, devices, meters, the 20 Hz
   stream, live and restart-class PATCHes, transport restart, the dashboard --

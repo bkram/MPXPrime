@@ -182,6 +182,19 @@ not the on-air signal.
   no GUI, no Meter) builds from the same source tree -- see
   [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only).
 - **Platform support tiers:** **Apple Silicon (arm64) is Tier 1** -- the primary, fully-supported target. **Intel (x86_64) is Tier 2, best-effort** -- the universal binary runs and the audio chain is identical, but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first; Intel gets lighter-weight fallbacks where they help but is not the optimization priority.
+- **CPU -- minimum and recommended.** The encoder is single-thread-bound: one
+  core carries the whole 192 kHz chain, so per-core speed is what counts and
+  core count past two buys nothing. The yardstick is `MPXPrime --bench`
+  (release build, idle machine): its "chain cost" must read **under 40 %** of
+  real-time for the machine to be usable and **under 30 %** to be recommended
+  (live load runs 10-20 points above the offline figure, and an appliance
+  should sit around 50-60 % on air). In practice: any Apple Silicon Mac
+  (M1 Pro: 17 %) or an Intel Mac from 2018 on (i7-9750H: 22 %); on Linux an
+  x86_64 CPU **with AVX2** of Zen 1 / Intel 8th-gen or newer class -- an
+  Intel N100 is the floor, an N305, a Core i3 or the measured Ryzen 5 PRO
+  2400GE (26 %) comfortable. CPUs without AVX2 run the SSE2 kernels at ~1.4x
+  the cost and older low-power parts do not fit the full chain; see
+  [docs/performance.md](docs/performance.md) for every measurement.
 - Xcode command line tools / Swift 6 toolchain (only needed for building from source -- download the DMG below if you just want to run it)
 - **Audio output device -- depends on the output mode (see above):**
   - *MPX Composite with RDS:* an external USB / Thunderbolt interface that runs

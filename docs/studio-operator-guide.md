@@ -38,6 +38,15 @@ The same INI keys, presets, RDS features and verifier thresholds apply on both; 
 
 ## Installing and starting
 
+**Hardware.** One core carries the whole chain, so the CPU's per-core speed
+decides whether a machine fits; nothing else about it matters much (2 GB of
+RAM is plenty). Minimum: `MPXPrime --bench` reads under 40 % of real-time on
+it; recommended: under 30 %. Every Apple Silicon Mac and every Intel Mac from
+2018 on qualifies; on Linux use an x86_64 CPU with AVX2 -- Intel N100 class
+at the least, N305 / Core i3 / Ryzen 5 comfortable. Measured figures for the
+machines this has run on are in [docs/performance.md](performance.md); the
+"CPU budget" section below says what to switch off when a box is close.
+
 **macOS.** Launch MPX Prime Studio from `/Applications` (or wherever you copied it). On first run,
 grant input access when macOS prompts -- this is required to capture audio. Then
 pick your input and MPX output devices in the app and start the engine.

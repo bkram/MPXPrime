@@ -5,6 +5,23 @@ be chosen (or ruled out) before it is wired to a transmitter. Every figure
 here comes from the same release build of 0.50 and the same two probes; when
 a number is missing, it has not been measured -- nothing is extrapolated.
 
+## Minimum and recommended CPU
+
+The yardstick is the offline chain cost from `MPXPrime --bench` on a release
+build, on an idle machine:
+
+| | `--bench` chain cost | Live render load to expect | Examples measured |
+| --- | ---: | ---: | --- |
+| **Recommended** | under 30 % | 30-45 % | Apple M1 Pro (17 %), Intel i7-9750H (22 %), AMD Ryzen 5 PRO 2400GE with AVX2 (26 %) |
+| **Minimum** | under 40 % | 50-60 % | the Ryzen above on the SSE2 kernels (37 %) -- what a CPU without AVX2 gets |
+| Does not fit | over 40 % | dropouts with programme | older low-power x86 parts without AVX2 |
+
+Practical translation: any Apple Silicon Mac; any Intel Mac from 2018 on
+(8th-generation Core or newer); on Linux an x86_64 CPU with AVX2 of Zen 1 /
+Intel 8th-gen class or newer -- Intel N100 is the floor, N305 / Core i3 /
+Ryzen 5 comfortable. RAM and storage are irrelevant (the process stays well
+under 200 MB), and core count past two buys nothing.
+
 ## How the numbers are taken
 
 - **Offline chain cost** -- `MPXPrime --bench` on a release build, from the

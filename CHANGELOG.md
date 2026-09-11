@@ -68,6 +68,19 @@ combination test suite. Newest first.
   every finite value through untouched, hot ones included. Costs nothing
   measurable (chain cost unchanged at 17.2 % on the reference machine).
 
+- **Fixed: the multiband's transient-aware attack was stuck at maximum.**
+  The detector holds a "how percussive was that" value for 10 ms after a
+  transient so the attack stays stretched across it, but the value it held
+  was the largest one ever seen rather than the one belonging to the
+  transient in hand -- and because the loudness detector starts from zero,
+  that maximum saturates within a few samples of the engine starting,
+  whatever is playing. Every hold since then opened at the ceiling, so the
+  stage stopped following the music. The hold now decays, like the one in
+  Advanced Dynamics always has, and is expressed as a time constant so it
+  behaves the same at every engine rate. Affects
+  `multiband_transient_aware_attack_enabled`, which is off by default, so
+  nothing on air changes unless you had turned it on.
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

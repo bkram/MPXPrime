@@ -345,7 +345,19 @@ struct MonoCompressor {
     var makeupDB: Float = 0.0
     var kneeDB: Float = 0.0
     var detector = EnvelopeFollower()
+    /// Diagnostic ONLY: the largest hold value seen since `configure`.
+    /// Processing must never read this. Seeding the hold window from this
+    /// lifetime maximum is the 0.60 audit's P0-3 -- it never decreased, so
+    /// every later transient inherited the drive of the loudest one the
+    /// band had ever seen, minutes earlier.
     var transientDriveObserved: Float = 0.0
+    /// The CURRENT hold value, which decays while the window is open.
+    /// `AdvancedDynamicsLeveler` has always used this shape.
+    private var heldDrive: Float = 0.0
+
+    /// The live hold value, for tests and diagnosis. Expires to 0 once the
+    /// hold window closes and the programme stops producing transients.
+    var transientHoldValue: Float { heldDrive }
     private(set) var lastGainReductionDB: Float = 0.0
     private var transientAwareAttackEnabled: Bool = false
     private var rmsPower: Float = 0.0
@@ -354,6 +366,9 @@ struct MonoCompressor {
     private var transientAttackCoeff: Float = 0.0
     private var transientHoldSamples: Int = 0
     private var transientHoldCounter: Int = 0
+    private var transientHoldDecayCoeff: Float = 0.0
+    /// 0.94 per sample at 48 kHz, expressed as a time constant.
+    private static let transientHoldDecaySeconds: Float = 0.000_336_7
 
     // Program-dependent (dual-slope) release, 0.45 chain review B2. Every
     // broadcast multiband has one (Orban WP: "multiple time constant release
@@ -412,7 +427,13 @@ struct MonoCompressor {
         rmsReleaseCoeff = expf(-1.0 / (0.090 * sr))
         transientAttackCoeff = expf(-1.0 / ((attack * 3.2 * 0.001) * sr))
         transientHoldSamples = max(1, Int((sr * 0.010).rounded()))
+        // The hold decays on a time constant, not on a fixed per-sample
+        // factor: the old 0.94 meant 0.34 ms at the 48 kHz audio domain
+        // but 0.08 ms with the dual-rate boundary off. 0.337 ms IS 0.94
+        // per sample at 48 kHz, so the production domain is unchanged.
+        transientHoldDecayCoeff = expf(-1.0 / (Self.transientHoldDecaySeconds * sr))
         transientHoldCounter = 0
+        heldDrive = 0.0
         transientDriveObserved = 0.0
         lastGainReductionDB = 0.0
         rmsPower = 0.0
@@ -477,7 +498,9 @@ struct MonoCompressor {
         } else if transientHoldCounter > 0 {
             transientHoldCounter -= 1
         }
-        let heldDrive = transientHoldCounter > 0 ? max(transientDriveObserved * 0.94, transientDrive) : transientDrive
+        heldDrive = transientHoldCounter > 0
+            ? max(heldDrive * transientHoldDecayCoeff, transientDrive)
+            : transientDrive
         transientDriveObserved = max(transientDriveObserved, heldDrive)
 
         let peakWeight = lerpf(0.58, 0.18, heldDrive)

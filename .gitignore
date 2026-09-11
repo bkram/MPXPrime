@@ -251,6 +251,7 @@ standards/R-REC-BS.450-4-201910-I!!PDF-E.pdf
 standards/trev_307-radiotext.pdf
 standards/rds-docs-unlocked.pdf
 standards/nrsc-1-c-2024.pdf
+standards/R-REC-BS.412-9-199812-I!!PDF-E.pdf
 captures/**
 
 # Third-party FM-SDR-Tuner binary (build artifact, not ours) -- see bin/README.md

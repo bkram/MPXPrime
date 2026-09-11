@@ -107,14 +107,12 @@ struct AppConfigDefaultsTests {
     }
 
     @Test func coloringStagesDefaultOff() {
-        // Stereo widener and PrimeBass color the signal and degrade
+        // PrimeBass colors the signal and degrades
         // fringe-listener SNR on low-power TX. DC clipper is too
         // aggressive for default. BS.412 only EU stations need it.
         let cfg = AppConfig()
         #expect(cfg.primeBassEnabled == false,
             "PrimeBass must be off by default — coloring stage")
-        #expect(cfg.stereoWidenEnabled == false,
-            "Stereo widener must be off by default — degrades fringe SNR")
         #expect(cfg.dcClipperEnabled == false,
             "DC clipper must be off by default — too aggressive")
         #expect(cfg.bs412Enabled == false,
@@ -134,8 +132,8 @@ struct AppConfigDefaultsTests {
             "Ceiling must be -0.3 dB; got \(cfg.compositeClipperCeilingDB)")
         #expect(cfg.compositeClipperCancelAudio == false,
             "Audio cancellation must be OFF by default — audio band is where peak reduction comes from")
-        #expect(cfg.compositeClipperCancelStereo == true,
-            "Stereo cancellation must be on — preserves (L-R) subcarrier integrity")
+        #expect(cfg.compositeClipperStereoGuard >= 0.0 && cfg.compositeClipperStereoGuard <= 1.0,
+            "Stereo guard is a 0...1 share (default picked from --verify-stereo-guard)")
         #expect(cfg.compositeClipperCancelPilot == true,
             "Pilot guard cancellation must be on — keeps 19 kHz region clean for post-stage pilot injection")
         #expect(cfg.compositeClipperCancelRDS == true,
@@ -144,12 +142,14 @@ struct AppConfigDefaultsTests {
 
     @Test func agcDefaultsMatchPopMediumTuning() {
         // Pop Medium per Orban 8500/8700i: -14 LUFS target, 20 dB range,
-        // 6 ms attack, 1.5 s release.
+        // 1.5 s release; attack 150 ms since 0.45 (a gain RIDER -- the 6 ms
+        // it shipped with was limiter-fast and ducked program on drum hits,
+        // see AGCDetectorTests.burstDoesNotDuckTheProgram).
         let cfg = AppConfig()
         #expect(abs(cfg.widebandAGCTargetDB - (-14.0)) < 0.01,
             "AGC target must be -14 dB; got \(cfg.widebandAGCTargetDB)")
-        #expect(abs(cfg.widebandAGCAttackMS - 6.0) < 0.01,
-            "AGC attack must be 6 ms; got \(cfg.widebandAGCAttackMS)")
+        #expect(abs(cfg.widebandAGCAttackMS - 150.0) < 0.01,
+            "AGC attack must be 150 ms; got \(cfg.widebandAGCAttackMS)")
         #expect(abs(cfg.widebandAGCReleaseMS - 1500.0) < 0.01,
             "AGC release must be 1500 ms; got \(cfg.widebandAGCReleaseMS)")
         #expect(abs(cfg.widebandAGCMaxGainDB - 10.0) < 0.01,
@@ -240,8 +240,8 @@ struct SampleINIRoundTripTests {
             "Sample INI must enable composite clipper")
         #expect(cfg.compositeClipperCancelAudio == false,
             "Sample INI must keep audio-band clipping engaged (cancelAudio = False) so the clipper actually delivers loudness lift")
-        #expect(cfg.compositeClipperCancelStereo == true,
-            "Sample INI must enable stereo subcarrier cancellation to preserve (L-R) sideband integrity")
+        #expect(cfg.compositeClipperStereoGuard == AppConfig().compositeClipperStereoGuard,
+            "Sample INI must carry the shipped stereo guard share")
     }
 
     @Test func sampleINISurvivesRoundTrip() throws {
@@ -267,7 +267,7 @@ struct SampleINIRoundTripTests {
         #expect(reloaded.bassClipperEnabled == original.bassClipperEnabled)
         #expect(reloaded.compositeClipperEnabled == original.compositeClipperEnabled)
         #expect(reloaded.compositeClipperCancelAudio == original.compositeClipperCancelAudio)
-        #expect(reloaded.compositeClipperCancelStereo == original.compositeClipperCancelStereo)
+        #expect(abs(reloaded.compositeClipperStereoGuard - original.compositeClipperStereoGuard) < 0.001)
         #expect(abs(reloaded.compositeClipperThresholdDB - original.compositeClipperThresholdDB) < 0.01)
         #expect(abs(reloaded.compositeClipperCeilingDB - original.compositeClipperCeilingDB) < 0.01)
         #expect(reloaded.preemphasisUS == original.preemphasisUS)

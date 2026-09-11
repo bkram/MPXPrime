@@ -343,7 +343,16 @@ public final class InputAUHAL {
         // output (actual filled). Leaving it at the worst-case
         // capacity occasionally short-fills in release builds.
         let bytesPerFrame = MemoryLayout<Float>.size
-        let neededBytes = UInt32(frames * bytesPerFrame)
+        // Clamp to what was actually ALLOCATED (maxFramesPerSlice frames). The
+        // size we publish here is the capacity the AU is allowed to write, so
+        // advertising more than the allocation would invite AudioUnitRender to
+        // overrun the buffer -- and the AU can legitimately ask for more frames
+        // than the MaxFramesPerSlice we set if the property did not take
+        // (audit B22). AudioUnitRender then returns
+        // kAudioUnitErr_TooManyFramesToProcess (-10874), which the error path
+        // below already handles, instead of corrupting the heap.
+        let capacityBytes = maxFramesPerSlice * bytesPerFrame
+        let neededBytes = UInt32(min(frames * bytesPerFrame, capacityBytes))
         bufferList[0].mDataByteSize = neededBytes
         bufferList[1].mDataByteSize = neededBytes
 

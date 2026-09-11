@@ -87,8 +87,11 @@ struct MeterDeviationTests {
         let unmodFactor = RDSSubcarrierLevelMeter.shapedBiphasePeakOverRMSSqrt2
         #expect(abs(s.rdsDevKHz - 2.0 * unmodFactor) < 0.15)
         // Nothing exceeds 77 kHz: the SM.1268 statistic must be exactly 0.
-        #expect(s.exceedanceValid)
+        // (It is not yet VALID -- one sample in a million needs a full minute
+        // of samples to resolve; see exceedanceValidityRequiresAFullMinute.)
         #expect(s.exceedancePct == 0.0)
+        #expect(!s.exceedanceValid)
+        #expect(s.exceedanceBoundPct > 0.0)
     }
 
     @Test func pilotReferencedModeMatchesAbsolute() {
@@ -175,10 +178,71 @@ struct MeterDeviationTests {
         feed(a, seconds: 4.0) { t in tone * cosf(twoPi(1_000, t)) }
         let s = a.snapshot()
         let expected = Float(acos(77.0 / 80.0) / (Double.pi / 2.0) * 100.0)
-        #expect(s.exceedanceValid)
         #expect(abs(s.exceedancePct - expected) < 1.0)
         // And the windowed peak reads the true 80 kHz.
         #expect(abs(s.posPeakDevKHz - 80.0) < 1.0)
+    }
+
+    /// SM.1268-5 sec 4 judges a transmitter at 1e-4 % of samples -- one in a
+    /// million. A short window cannot resolve that (1 s at 192 kHz resolves
+    /// 5.2e-4 %, 520x too coarse, so a single transient read as a violation),
+    /// so the statistic only becomes VALID after a full minute; before that the
+    /// snapshot publishes the upper bound the counted samples support (0.45,
+    /// audit M6).
+    @Test func exceedanceStaysInvalidUntilTheWindowIsLongEnough() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let tone = amp(80.0)
+        feed(a, seconds: 4.0) { t in tone * cosf(twoPi(1_000, t)) }
+        let early = a.snapshot()
+        #expect(!early.exceedanceValid)
+        // The published bound is exactly one sample's worth of the counted
+        // total (100 / count %), which also pins the sample accounting: 4 s at
+        // 192 kHz minus the ~1 s warm-up.
+        #expect(early.exceedanceBoundPct > 0.0)
+        let counted = Double(100.0 / early.exceedanceBoundPct)
+        #expect(counted > 0.55e6 && counted < 0.79e6)
+        // The percentage itself is already measured (see the analytic test);
+        // only its VALIDITY waits for the minute. The crossing is pinned by
+        // the deep-suite test below, which needs a real minute of samples.
+    }
+
+    /// Losing the deviation scale must invalidate the peaks rather than leave
+    /// the last station's kHz on the snapshot (the struct is reused across
+    /// blocks, and the view tinted those numbers red as live over-deviation --
+    /// 0.45, audit M7 / C2 / C14).
+    @Test func lostDeviationScaleInvalidatesPeaks() {
+        // Pilot-referenced (no absolute scale): a composite WITH a pilot
+        // establishes the scale, then pilot-free noise must drop it.
+        let a = MeterAnalysis(sampleRate: sr)
+        feed(a, seconds: 2.0) { t in
+            (0.5 * cosf(twoPi(1_000, t))) + (0.09 * sinf(twoPi(19_000, t)))
+        }
+        let withPilot = a.snapshot()
+        #expect(withPilot.devScaleValid)
+        #expect(withPilot.peakValid)
+        #expect(withPilot.posPeakDevKHz > 0.0)
+        // Pilot gone (the station dropped stereo / reception lost): after the
+        // hold window the kHz readouts must stop being measurements.
+        feed(a, seconds: 2.0) { t in 0.5 * cosf(twoPi(1_000, t)) }
+        let noPilot = a.snapshot()
+        #expect(!noPilot.devScaleValid)
+        #expect(!noPilot.peakValid)
+        #expect(noPilot.posPeakDevKHz == 0.0)
+        #expect(noPilot.negPeakDevKHz == 0.0)
+    }
+
+    /// A block longer than the configured `maxBlock` is split, not indexed past
+    /// the scratch buffers (0.45, audit M15 -- it used to trap).
+    @Test func oversizedBlockIsSplitInsteadOfTrapping() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale, maxBlock: 512)
+        // Past the ~1 s warm-up, in one 1.5 s call -- 3x the scratch capacity.
+        let big = (0..<Int(1.5 * sr)).map { i in
+            amp(50.0) * cosf(twoPi(1_000, Float(i) / sr))
+        }
+        big.withUnsafeBufferPointer { a.process($0) }
+        let s = a.snapshot()
+        #expect(s.hasSignal)
+        #expect(abs(s.maxDevKHz - 50.0) < 1.0)
     }
 }
 
@@ -432,15 +496,16 @@ struct MeterQualityMetricsTests {
         let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
         let l: Float = 0.20
         let r: Float = 0.20 * powf(10.0, -6.0 / 20.0)
-        // MPXGenerator convention: M = (L+R)/2, S = (R-L)/2, composite =
-        // M + S*sin(2pi*38k*t), with the pilot as sin(2pi*19k*t) so the
-        // subcarrier is its true second harmonic -- a cosine pilot against a
-        // cosine subcarrier is 90 deg out and decodes as no side at all.
+        // Standard composite (47 CFR 73.322 / BS.450-3): M = (L+R)/2,
+        // S = (L-R)/2, composite = M + S*sin(2pi*38k*t), with the pilot as
+        // sin(2pi*19k*t) so the subcarrier is its true second harmonic -- a
+        // cosine pilot against a cosine subcarrier is 90 deg out and decodes
+        // as no side at all. A real station with left hotter must read +dB.
         feed(a, seconds: 8.0) { t in
             let audioL = l * cosf(twoPi(1_000, t))
             let audioR = r * cosf(twoPi(1_000, t))
             let mid = (audioL + audioR) * 0.5
-            let side = (audioR - audioL) * 0.5
+            let side = (audioL - audioR) * 0.5
             return mid + side * sinf(twoPi(38_000, t))
                 + amp(6.75) * sinf(twoPi(19_000, t))
         }
@@ -666,6 +731,51 @@ struct MeterRDSPhaseTests {
         }
     }
 
+    /// The coherence ratio primes at EXACTLY 1.0 (|zr^2| == |zr|^2 for a
+    /// single sample) and only decays on the ~2 s EMA, so before 0.45 the
+    /// phase readout was "valid" for the whole settling time on ANYTHING after
+    /// a retune -- and the folded angle of noise has expectation 45 deg, which
+    /// is where the phantom "45.4 deg" readings came from (audit M4).
+    @Test func noiseDoesNotReadAsAValidPhaseWhileTheAverageIsPriming() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        // Pilot present (so the pilot gate passes) plus broadband noise where
+        // the subcarrier would be -- no coherent 57 kHz component at all.
+        var seed: UInt64 = 0x5DEECE66D
+        let pilotAmp = amp(6.75)
+        feed(a, seconds: 0.4) { t in
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            let r = Float(Int32(truncatingIfNeeded: seed >> 32)) / 2.147483648e9
+            return (pilotAmp * sinf(twoPi(19_000, t))) + (0.15 * r)
+        }
+        #expect(!a.snapshot().pilotRDSPhaseValid)
+    }
+
+    /// Coherence is scale-free and says nothing about whether the angle is
+    /// STANDING STILL. A free-running RDS carrier (not locked to the pilot)
+    /// walks the angle through the whole range at sub-Hz rate with coherence
+    /// high the entire time, and the readout used to label the sweep
+    /// in-spec / out-of-spec as it passed (audit M5).
+    @Test func aDriftingSubcarrierPhaseIsNotPublishedAsAMeasurement() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        // 57 kHz + 0.02 Hz: only 7.2 deg/s of phase walk, deliberately SLOW
+        // enough that the 2 s coherence average stays high -- so this pins the
+        // stability gate specifically, not the coherence floor.
+        let pilotAmp = amp(6.75)
+        let rdsAmp = amp(2.0)
+        feed(a, seconds: 4.0) { t in
+            (pilotAmp * sinf(twoPi(19_000, t)))
+                + (rdsAmp * sinf(twoPi(57_000.02, t)))
+        }
+        let s = a.snapshot()
+        #expect(s.pilotRDSPhaseCoherence > 0.8)  // coherence would have passed
+        #expect(!s.pilotRDSPhaseValid)           // stability gate rejects it
+        // A locked subcarrier at the same level and duration IS published --
+        // i.e. the gate rejects drift, not RDS.
+        let b = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        phaseComposite(b, seconds: 4.0, phaseDeg: 30.0)
+        #expect(b.snapshot().pilotRDSPhaseValid)
+    }
+
     @Test func complianceWindowsMatchTheStandard() {
         // EN 50067 sec 1.2: either convention, +/- 10 deg.
         #expect(RDSPhaseCompliance(degrees: 0.0) == .inPhase)
@@ -837,5 +947,84 @@ struct MeterRDSGateTests {
         }
         let s = a.snapshot()
         #expect(!s.rdsGated)
+    }
+}
+
+/// A full minute of samples is expensive in a debug build (~25 s), so the
+/// actual validity CROSSING lives in the opt-in deep suite; the default suite
+/// pins the invalid-and-bounded state (0.45, audit M6).
+@Suite("Meter exceedance validity (deep)",
+       .enabled(if: ProcessInfo.processInfo.environment["MPXPRIME_DEEP"] != nil))
+struct MeterExceedanceValidityDeepTests {
+    @Test func exceedanceBecomesValidAfterAFullMinute() {
+        let a = MeterAnalysis(sampleRate: sr, fullScaleKHz: fullScale)
+        let tone = amp(80.0)
+        feed(a, seconds: 4.0) { t in tone * cosf(twoPi(1_000, t)) }
+        #expect(!a.snapshot().exceedanceValid)
+        feed(a, seconds: 58.0) { t in tone * cosf(twoPi(1_000, t)) }
+        let late = a.snapshot()
+        #expect(late.exceedanceValid)
+        let expected = Float(acos(77.0 / 80.0) / (Double.pi / 2.0) * 100.0)
+        #expect(abs(late.exceedancePct - expected) < 1.0)
+    }
+}
+
+/// The decode path's receiver de-emphasis was hard-wired to 50 us with nothing
+/// able to reach it, so in 75 us markets (the Americas, Japan, Korea) the
+/// monitor audio, stereo recordings, decoded L/R levels and audio spectrum all
+/// ran bright at the top end (0.45, audit C3 / M9).
+@Suite("Meter de-emphasis standard")
+struct MeterDeemphasisTests {
+    /// Analog de-emphasis attenuation at `hz` for time constant `us`:
+    /// -20 log10 |1 + j w tau|.
+    private func analogDeemphasisDB(hz: Double, us: Double) -> Double {
+        let wTau = 2.0 * Double.pi * hz * us * 1e-6
+        return -10.0 * log10(1.0 + (wTau * wTau))
+    }
+
+    private func decodedLevelDBFS(preemphasisUS: Int, toneHz: Float) -> Float {
+        let a = MeterAnalysis(sampleRate: sr, preemphasisUS: preemphasisUS,
+                             fullScaleKHz: fullScale)
+        let pilotAmp = amp(6.75)
+        feed(a, seconds: 2.0) { t in
+            (0.5 * sinf(twoPi(toneHz, t))) + (pilotAmp * sinf(twoPi(19_000, t)))
+        }
+        return a.snapshot().leftRMSDBFS
+    }
+
+    @Test func the75MicrosecondSettingChangesTheDecodedTopEnd() {
+        let at50 = decodedLevelDBFS(preemphasisUS: 50, toneHz: 10_000)
+        let at75 = decodedLevelDBFS(preemphasisUS: 75, toneHz: 10_000)
+        // Expected difference is the difference of the two analog curves at
+        // 10 kHz: 13.66 dB - 10.36 dB = 3.30 dB more attenuation at 75 us.
+        let expected = analogDeemphasisDB(hz: 10_000, us: 50.0)
+            - analogDeemphasisDB(hz: 10_000, us: 75.0)
+        #expect(abs(Double(at50 - at75) - expected) < 0.5)
+        #expect(at75 < at50)
+    }
+
+    @Test func lowFrequenciesAreUnaffectedByTheStandard() {
+        // Both curves are flat well below the corner (50 us = 3.18 kHz,
+        // 75 us = 2.12 kHz), so a 100 Hz tone must read the same either way.
+        let at50 = decodedLevelDBFS(preemphasisUS: 50, toneHz: 100)
+        let at75 = decodedLevelDBFS(preemphasisUS: 75, toneHz: 100)
+        #expect(abs(at50 - at75) < 0.2)
+    }
+
+    @Test func theStandardCanBeSwitchedLive() {
+        let a = MeterAnalysis(sampleRate: sr, preemphasisUS: 50,
+                             fullScaleKHz: fullScale)
+        let pilotAmp = amp(6.75)
+        let tone: (Float) -> Float = { t in
+            (0.5 * sinf(twoPi(10_000, t))) + (pilotAmp * sinf(twoPi(19_000, t)))
+        }
+        feed(a, seconds: 2.0, tone)
+        #expect(a.preemphasisUS == 50)
+        let before = a.snapshot().leftRMSDBFS
+        a.setPreemphasisUS(75)
+        feed(a, seconds: 2.0, tone)
+        #expect(a.preemphasisUS == 75)
+        let after = a.snapshot().leftRMSDBFS
+        #expect(after < before - 2.0)
     }
 }

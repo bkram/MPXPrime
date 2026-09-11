@@ -174,7 +174,14 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         var timeoutSeconds: Double
 
         init(config: AppConfig) {
+            // RDS metadata has no consumer outside MPX Output: there is no
+            // composite to carry it. Polling an external script every few
+            // seconds for a feed nobody transmits is exactly the kind of
+            // "still running in a mode where it has no function" the 0.50
+            // mode gating removes -- so the poller follows the mode, not just
+            // its own enable flag.
             enabled = config.rdsNowPlayingEnabled
+                && ChainFeature.rds.applies(in: config.operatingMode)
             // An empty/whitespace script means "no local script" -- keep it
             // empty. normalizeScriptPath("") would otherwise resolve to the
             // working directory (a non-empty path), which made the poller try
@@ -229,13 +236,24 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         }
     }
 
+    /// The two idle states are re-derived on EVERY config apply (a slider move
+    /// on the dashboard is enough), and each used to print a status line --
+    /// the Linux journal was a wall of "no local script". Say it when it
+    /// changes, not every time it is confirmed.
+    private var lastIdleStatus: String?
+    private func reportIdleStateOnce(_ line: String) {
+        guard lastIdleStatus != line else { return }
+        lastIdleStatus = line
+        statusHandler(line)
+    }
+
     private func reconfigureTimer() {
         timer?.cancel()
         timer = nil
 
         guard settings.enabled else {
             state.clear()
-            statusHandler("Now Playing: off")
+            reportIdleStateOnce("Now Playing: off")
             return
         }
 
@@ -245,9 +263,10 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
             // wiped API-pushed tracks on every config change (onConfigChange ->
             // updateConfig -> here). Only the disabled case (above) and a real
             // script failure wipe the state.
-            statusHandler("Now Playing: no local script (API push may feed it)")
+            reportIdleStateOnce("Now Playing: no local script (API push may feed it)")
             return
         }
+        lastIdleStatus = nil
 
         let newTimer = DispatchSource.makeTimerSource(queue: queue)
         newTimer.schedule(deadline: .now(), repeating: settings.pollSeconds)

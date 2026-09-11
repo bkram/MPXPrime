@@ -16,8 +16,12 @@
 #   /usr/share/doc/mpxprime/             manual, README, changelog
 # The service runs as the dedicated `mpxprime` system user (created on
 # install, member of `audio`) with its config at
-# /var/lib/mpxprime/MPXPrime.ini (created with defaults on first run; the
-# REST API persists changes there).
+# /var/lib/mpxprime/MPXPrime.ini. On a FRESH install postinst seeds that INI
+# from the sample (code defaults) with [CONTROL] control_enabled = True,
+# control_bind = 0.0.0.0 and a freshly generated random control_api_key
+# (printed once at install, readable from the INI later); an existing INI is
+# never touched. The unit passes --web as belt-and-braces, so the dashboard
+# is the interface from the first start: http://<host>:8737/ + the key.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -47,20 +51,25 @@ else
     echo "warning: resource bundle not found; dashboard will serve the stub" >&2
 fi
 install -m 0644 macOS/MPXPrime.ini "$STAGE/usr/share/mpxprime/MPXPrime.sample.ini"
-install -m 0644 docs/manual.md README.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
+install -m 0644 docs/studio-operator-guide.md docs/studio-settings-reference.md docs/rds-country-and-pty-tables.md README.md CONTRIBUTORS.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
 install -m 0644 LICENSE "$STAGE/usr/share/doc/mpxprime/copyright"
 
 cat > "$STAGE/lib/systemd/system/mpxprime.service" <<'EOF'
 [Unit]
 Description=MPX Prime Studio FM composite encoder (headless)
-Documentation=file:/usr/share/doc/mpxprime/manual.md
+Documentation=file:/usr/share/doc/mpxprime/studio-operator-guide.md
 After=sound.target network.target
 
 [Service]
 Type=exec
 User=mpxprime
 Group=audio
-ExecStart=/usr/bin/mpxprime --nogui --config /var/lib/mpxprime/MPXPrime.ini
+# --web: the dashboard is the ONLY operator interface on Linux, so the service
+# always serves it. The flag only forces the server on; bind address, port
+# and API key still come from [CONTROL] in the INI (default 127.0.0.1:8737,
+# a non-loopback bind requires control_api_key or the server refuses to
+# start while the encoder keeps running).
+ExecStart=/usr/bin/mpxprime --nogui --web --config /var/lib/mpxprime/MPXPrime.ini
 Restart=on-failure
 RestartSec=3
 # Real-time-friendly scheduling for the audio threads. LimitRTPRIO lets the
@@ -121,11 +130,52 @@ fi
 adduser mpxprime audio >/dev/null 2>&1 || true
 mkdir -p /var/lib/mpxprime
 chown mpxprime:mpxprime /var/lib/mpxprime
+# Fresh install only (an existing INI is the operator's and is never touched,
+# also on upgrade): seed the config from the sample INI (code defaults) with
+# the dashboard reachable from another machine -- a headless box has no
+# local browser -- behind a freshly generated random API key. The key lives
+# in the INI ([CONTROL] control_api_key); it is printed once here.
+INI=/var/lib/mpxprime/MPXPrime.ini
+SAMPLE=/usr/share/mpxprime/MPXPrime.sample.ini
+if [ ! -f "$INI" ]; then
+    # LC_ALL=C: tr must see raw bytes, not a UTF-8 decode of them. Hex
+    # fallback if the alphanumeric filter ever yields too little.
+    KEY=$(head -c 2048 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c 32)
+    if [ "${#KEY}" -lt 32 ]; then
+        KEY=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+    fi
+    if [ -f "$SAMPLE" ]; then
+        sed -e 's/^control_enabled *=.*/control_enabled = True/' \
+            -e 's/^control_bind *=.*/control_bind = 0.0.0.0/' \
+            -e "s/^control_api_key *=.*/control_api_key = $KEY/" \
+            "$SAMPLE" > "$INI"
+    else
+        printf '[CONTROL]\ncontrol_enabled = True\ncontrol_bind = 0.0.0.0\ncontrol_port = 8737\ncontrol_api_key = %s\n' "$KEY" > "$INI"
+    fi
+    chown mpxprime:mpxprime "$INI"
+    chmod 0640 "$INI"
+    echo "mpxprime: created $INI with the web dashboard enabled on all interfaces."
+    echo "mpxprime: web dashboard API key: $KEY"
+    echo "mpxprime: (stored in $INI as control_api_key; read it back with"
+    echo "mpxprime:  sudo grep control_api_key $INI)"
+fi
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
+    # An upgrade must not leave the appliance off air (the first 0.50-dev
+    # upgrade on the rig sat inactive until someone logged in). dpkg runs the
+    # OLD package's prerm on an upgrade, so the marker below exists only from
+    # the second upgrade on; until then "upgrade of an enabled unit" is the
+    # signal -- enabled means wanted running on an appliance.
+    if [ -f /run/mpxprime.restart-after-upgrade ] \
+        || { [ "$1" = "configure" ] && [ -n "$2" ] && systemctl is-enabled --quiet mpxprime 2>/dev/null; }; then
+        rm -f /run/mpxprime.restart-after-upgrade
+        systemctl start mpxprime >/dev/null 2>&1 || true
+        echo "mpxprime upgraded and restarted."
+        exit 0
+    fi
 fi
-echo "mpxprime installed. Configure /var/lib/mpxprime/MPXPrime.ini (created"
-echo "with defaults on first run), then: systemctl enable --now mpxprime"
+echo "mpxprime installed. Start it with: systemctl enable --now mpxprime"
+echo "Then open http://<this-host>:8737/ and paste the API key when the dashboard asks."
 exit 0
 EOF
 chmod 0755 "$STAGE/DEBIAN/postinst"
@@ -134,6 +184,12 @@ cat > "$STAGE/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
 if [ -d /run/systemd/system ]; then
+    # Remember whether it was running so postinst can bring it back on an
+    # upgrade; a plain remove has no postinst of ours and the marker is
+    # harmless in /run.
+    if [ "$1" = "upgrade" ] && systemctl is-active --quiet mpxprime; then
+        touch /run/mpxprime.restart-after-upgrade
+    fi
     systemctl stop mpxprime >/dev/null 2>&1 || true
 fi
 exit 0

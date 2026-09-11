@@ -239,7 +239,7 @@ void FMDemod::demodulateComplex(const std::complex<float> *iq, float *audio,
   for (size_t i = 0; i < len; i++) {
     const float iRaw = iq[i].real();
     const float qRaw = iq[i].imag();
-    if (std::abs(iRaw) >= 0.995f || std::abs(qRaw) >= 0.995f) {
+    if (fm_tuner::dsp::isIqSampleSaturated(iRaw, qRaw)) {
       clipCount++;
     }
 

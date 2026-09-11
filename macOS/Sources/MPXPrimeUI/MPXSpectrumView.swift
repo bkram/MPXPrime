@@ -25,8 +25,13 @@ public struct MPXSpectrumView: View {
     private static let compositeBands: [(lo: Double, hi: Double, top: String, bottom: String)] = [
         (500, 15_000, "Mono", "L+R"),
         (18_000, 20_000, "19 kHz", "Pilot"),
-        (23_000, 37_000, "Stereo", "L-R"),
-        (39_000, 53_000, "Stereo", "L-R"),
+        // The stereo subcarrier is DSB-SC around 38 kHz: the SAME L-R signal
+        // occupies both regions, mirrored -- lower sideband below 38 kHz,
+        // upper above. Labeled distinctly so the duplication reads as
+        // deliberate (and so SSB Stereo's one-sideband suppression is
+        // recognizable at a glance).
+        (23_000, 37_000, "Stereo L-R", "lower SB"),
+        (39_000, 53_000, "Stereo L-R", "upper SB"),
         (55_000, 59_000, "57 kHz", "RDS"),
         (64_000, 71_000, "67.65 kHz", "Direct Band"),
         (88_000, 96_000, "92 kHz", "SCA")

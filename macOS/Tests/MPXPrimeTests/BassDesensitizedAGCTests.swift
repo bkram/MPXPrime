@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import MPXPrime
 
-// Bass-desensitised wideband AGC (plan.md P4 + P5). P4 clips LF transient peaks out
+// Bass-desensitised wideband AGC (docs/project-roadmap.md P4 + P5). P4 clips LF transient peaks out
 // of the AGC sidechain; P5 recovers fast from brief reductions. Together they keep
 // a kick / heavy bass line from pumping the whole chain. The deterministic gate
 // below feeds a sustained mid tone with periodic low-frequency "kick" bursts and

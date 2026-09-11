@@ -14,8 +14,8 @@ struct PreEncodeBandlimitedResidualLimiterTests {
         #expect(runtime.preEncodeBandlimitedResidualCutoffFraction == Float(cfg.preEncodeBandlimitedResidualCutoffFraction))
     }
 
-    @Test func singleChannelLimiterEnablesBandlimitedResidualCeiling() {
-        var limiter = OversampledPeakLimiter()
+    @Test func monoInputLimiterEnablesBandlimitedResidualCeiling() {
+        var limiter = StereoLinkedOversampledPeakLimiter()
         limiter.configure(
             sampleRate: 48_000,
             threshold: 0.82,
@@ -28,9 +28,9 @@ struct PreEncodeBandlimitedResidualLimiterTests {
         var peak: Float = 0.0
         for i in 0..<8_192 {
             let sample = Float(sinf(2.0 * .pi * 997.0 * Float(i) / 48_000.0)) * 1.6
-            let y = limiter.process(sample)
+            let (l, r) = limiter.process(left: sample, right: sample)
             if i > 512 {
-                peak = max(peak, abs(y))
+                peak = max(peak, abs(l), abs(r))
             }
         }
 
@@ -447,7 +447,7 @@ struct PreEncodeBandlimitedResidualLimiterTests {
         cfg.compositeClipperThresholdDB = -1.5
         cfg.compositeClipperCeilingDB = -0.3
         cfg.compositeClipperCancelAudio = false
-        cfg.compositeClipperCancelStereo = true
+        cfg.compositeClipperStereoGuard = 1.0
         cfg.compositeClipperCancelPilot = true
         cfg.compositeClipperCancelRDS = true
         cfg.widebandAGCEnabled = false
@@ -455,7 +455,6 @@ struct PreEncodeBandlimitedResidualLimiterTests {
         cfg.multibandLimiterEnabled = false
         cfg.downwardExpanderEnabled = false
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false

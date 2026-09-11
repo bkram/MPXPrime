@@ -1,6 +1,6 @@
 import Foundation
 
-// Sub-effect preset catalog: PrimeBass / stereo widener / multiband tables
+// Sub-effect preset catalog: PrimeBass / multiband / final-stage / format-profile tables
 // and their pure apply-to-config logic. Extracted from the GUI view model
 // (SwiftUIControlApp.swift) so the remote-control API can apply presets on
 // the headless runtimes (macOS --nogui and the Linux CLI) with the exact
@@ -21,17 +21,6 @@ struct PrimeBassPreset {
     let density: Double
     let subharmonicsEnabled: Bool
     let subharmonicsAmount: Double
-}
-
-struct WidenerPreset {
-    let id: String
-    let title: String
-    let stereoWidenEnabled: Bool
-    let monoBassEnabled: Bool
-    let monoBassFreqHz: Double
-    let width: Double
-    let center: Double
-    let mix: Double
 }
 
 struct MultibandPreset {
@@ -126,39 +115,6 @@ enum PresetCatalog {
         .init(
             id: "talk", title: "Talk", enabled: true, amount: 0.08, freqHz: 120, harmonics: 0.04,
             drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0)
-    ]
-
-    static let widenerPresets: [WidenerPreset] = [
-        .init(
-            id: "safe_fm",
-            title: "Safe FM",
-            stereoWidenEnabled: false,
-            monoBassEnabled: true,
-            monoBassFreqHz: 140.0,
-            width: 0.30,
-            center: 0.50,
-            mix: 0.60
-        ),
-        .init(
-            id: "open_music",
-            title: "Open Music",
-            stereoWidenEnabled: true,
-            monoBassEnabled: true,
-            monoBassFreqHz: 125.0,
-            width: 0.46,
-            center: 0.50,
-            mix: 0.76
-        ),
-        .init(
-            id: "wide_chr",
-            title: "Wide CHR",
-            stereoWidenEnabled: true,
-            monoBassEnabled: true,
-            monoBassFreqHz: 115.0,
-            width: 0.46,
-            center: 0.50,
-            mix: 0.76
-        )
     ]
 
     static let multibandPresets: [MultibandPreset] = [
@@ -340,33 +296,6 @@ enum PresetCatalog {
     }
 
     @discardableResult
-    static func applyWidener(id: String, to config: inout AppConfig) -> String? {
-        guard let preset = widenerPresets.first(where: { $0.id == id }) else { return nil }
-        config.stereoWidenEnabled = preset.stereoWidenEnabled
-        config.monoBassEnabled = preset.monoBassEnabled
-        config.monoBassFreqHz = preset.monoBassFreqHz
-        config.stereoWidenWidth = preset.width
-        config.stereoWidenCenter = preset.center
-        config.stereoWidenMix = preset.mix
-        return preset.title
-    }
-
-    /// The widener preset matching the current config, or "custom".
-    static func currentWidenerPresetID(of config: AppConfig) -> String {
-        guard let preset = widenerPresets.first(where: {
-            $0.stereoWidenEnabled == config.stereoWidenEnabled
-                && $0.monoBassEnabled == config.monoBassEnabled
-                && approxEqual($0.monoBassFreqHz, config.monoBassFreqHz)
-                && approxEqual($0.width, config.stereoWidenWidth)
-                && approxEqual($0.center, config.stereoWidenCenter)
-                && approxEqual($0.mix, config.stereoWidenMix)
-        }) else {
-            return "custom"
-        }
-        return preset.id
-    }
-
-    @discardableResult
     static func applyMultiband(
         id: String, intensity: MultibandPresetIntensity, to config: inout AppConfig
     ) -> String? {
@@ -439,21 +368,24 @@ enum PresetCatalog {
         let preEncodeAudioLimiterEnabled: Bool
     }
 
+    // AGC attack 100-200 ms (0.45, chain review B1): the wideband AGC is a
+    // gain rider; peaks belong to the limiter. The 45-80 ms values it had
+    // ducked whole-program level on drum hits (Orban WP "hole punching").
     static let finalStagePresets: [FinalStagePreset] = [
         .init(id: "balanced", title: "Balanced Music",
-              agcEnabled: true, agcTargetDB: -16.0, agcAttackMS: 80.0,
+              agcEnabled: true, agcTargetDB: -16.0, agcAttackMS: 200.0,
               agcReleaseMS: 1200.0, agcMaxGainDB: 12.0, agcMinGainDB: -12.0,
               finalDriveDB: 6.0, preEncodeAudioLimiterEnabled: true),
         .init(id: "chr", title: "CHR / Dance",
-              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 55.0,
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 150.0,
               agcReleaseMS: 900.0, agcMaxGainDB: 10.0, agcMinGainDB: -9.0,
               finalDriveDB: 8.0, preEncodeAudioLimiterEnabled: true),
         .init(id: "punchy", title: "Punchy Music",
-              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 60.0,
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 150.0,
               agcReleaseMS: 1000.0, agcMaxGainDB: 11.0, agcMinGainDB: -10.0,
               finalDriveDB: 7.5, preEncodeAudioLimiterEnabled: true),
         .init(id: "speech", title: "Speech / Talk",
-              agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 45.0,
+              agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 100.0,
               agcReleaseMS: 750.0, agcMaxGainDB: 10.0, agcMinGainDB: -8.0,
               finalDriveDB: 4.5, preEncodeAudioLimiterEnabled: true)
     ]
@@ -474,7 +406,7 @@ enum PresetCatalog {
 
     // MARK: - Format profiles (top-level "Station Format" bundle)
 
-    /// Atomically wires multiband / final-stage / PrimeBass / widener /
+    /// Atomically wires multiband / final-stage / PrimeBass / mono bass /
     /// composite-clipper settings to one programming format, as a wrapper
     /// over the per-stage preset tables above. Moved here from the view
     /// model so BOTH backends serve preset kind "format_profile" -- before
@@ -488,10 +420,26 @@ enum PresetCatalog {
         let finalStagePresetID: String
         let primeBassEnabled: Bool
         let primeBassPresetID: String      // recorded even when disabled
-        let widenerPresetID: String
+        /// Mono-bass crossover for the profile's image policy. Mono bass is
+        /// on in every shipped profile; the stereo widener was removed in 0.50.
+        let monoBassFreqHz: Double
         let compositeClipperThresholdDB: Double
         let compositeClipperCeilingDB: Double
         let finalDriveDB: Double
+        // Gain structure -- a profile owns the FULL chain state so one click
+        // is a guaranteed-sane sound (2026-08 rework: the old 8 profiles only
+        // set the "color" and left broken level structures broken).
+        let agcEnabled: Bool
+        let agcTargetDB: Double
+        let preEncodeLimiterEnabled: Bool
+        let preEncodeThreshold: Double
+        let limitMPX: Bool
+        let compositeClipperEnabled: Bool
+        let compositeClipperLookaheadMS: Double
+        let hfClipperEnabled: Bool
+        let hfLimiterEnabled: Bool
+        let bassClipperEnabled: Bool
+        let phaseRotationEnabled: Bool
     }
 
     static let formatProfiles: [FormatProfile] = [
@@ -501,65 +449,67 @@ enum PresetCatalog {
               summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
+              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 6.0),
-        .init(id: "community_radio", title: "Community Radio",
-              summary: "Conservative LPFM / community-radio default — clean output, low loudness, broad source compatibility.",
-              multibandPresetID: "5_ac", multibandIntensity: .light,
-              finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
-              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 4.0),
-        .init(id: "pop_ac", title: "Pop / Adult Contemporary",
-              summary: "Mainstream music — balanced multiband, gentle PrimeBass, open widener, moderate drive.",
+              finalDriveDB: 6.0,
+              agcEnabled: true, agcTargetDB: -16.0,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
+              phaseRotationEnabled: false),
+        .init(id: "music_clean", title: "Music — Clean",
+              summary: "The default: transparent leveling, honest peaks, low clipper work. For stations that value fidelity over loudness.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
-              finalStagePresetID: "balanced", primeBassEnabled: true,
-              primeBassPresetID: "ac", widenerPresetID: "open_music",
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 6.0),
-        .init(id: "chr_top40", title: "CHR / Top 40",
-              summary: "Modern hits — bright multiband, hot drive, wide stereo image, competitive loudness.",
+              finalDriveDB: 4.0,
+              agcEnabled: true, agcTargetDB: -16.0,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.90,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
+              phaseRotationEnabled: false),
+        .init(id: "music_loud", title: "Music — Loud",
+              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, mono bass at 115 Hz.",
               multibandPresetID: "5_chr", multibandIntensity: .normal,
               finalStagePresetID: "chr", primeBassEnabled: true,
-              primeBassPresetID: "chr", widenerPresetID: "wide_chr",
+              primeBassPresetID: "chr", monoBassFreqHz: 115.0,
               compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
-              finalDriveDB: 8.0),
-        .init(id: "rock", title: "Rock",
-              summary: "Punchy multiband, rock-tuned PrimeBass, open widener — preserves transient impact.",
-              multibandPresetID: "5_rock", multibandIntensity: .normal,
-              finalStagePresetID: "punchy", primeBassEnabled: true,
-              primeBassPresetID: "rock", widenerPresetID: "open_music",
-              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 7.0),
-        .init(id: "edm_dance", title: "EDM / Dance",
-              summary: "Heavy multiband, hot drive, deep bass, wide image — peak loudness for dance formats.",
-              multibandPresetID: "5_dance", multibandIntensity: .heavy,
-              finalStagePresetID: "chr", primeBassEnabled: true,
-              primeBassPresetID: "chr", widenerPresetID: "wide_chr",
-              compositeClipperThresholdDB: -0.7, compositeClipperCeilingDB: -0.2,
-              finalDriveDB: 9.0),
-        .init(id: "urban_hiphop", title: "Urban / Hip-Hop",
-              summary: "Deep low end, urban-tuned PrimeBass, hot drive — bass-forward urban contemporary.",
-              multibandPresetID: "5_urban", multibandIntensity: .normal,
-              finalStagePresetID: "chr", primeBassEnabled: true,
-              primeBassPresetID: "urban", widenerPresetID: "open_music",
-              compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
-              finalDriveDB: 8.0),
-        .init(id: "jazz_classical", title: "Jazz / Classical",
-              summary: "Dynamic-preserving — light multiband, no PrimeBass, safe widener, conservative drive.",
-              multibandPresetID: "5_classic", multibandIntensity: .light,
-              finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", widenerPresetID: "safe_fm",
-              compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
-              finalDriveDB: 3.0),
-        .init(id: "news_talk", title: "News / Talk",
-              summary: "Speech-optimized multiband + final-stage, no PrimeBass, safe widener, low drive.",
+              finalDriveDB: 8.0,
+              agcEnabled: true, agcTargetDB: -15.0,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: true,
+              phaseRotationEnabled: false),
+        .init(id: "speech", title: "Speech / Talk",
+              summary: "Voice-optimized: phase rotator for waveform symmetry, speech multiband + final stage, conservative drive.",
               multibandPresetID: "5_talk", multibandIntensity: .light,
               finalStagePresetID: "speech", primeBassEnabled: false,
-              primeBassPresetID: "talk", widenerPresetID: "safe_fm",
+              primeBassPresetID: "talk", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 4.5)
+              finalDriveDB: 4.5,
+              agcEnabled: true, agcTargetDB: -16.0,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
+              phaseRotationEnabled: true),
+        .init(id: "classical_wide", title: "Classical / Wide Dynamics",
+              summary: "Dynamic-preserving: gentle slow AGC, light multiband, minimal clipper work, no enhancement.",
+              multibandPresetID: "5_classic", multibandIntensity: .light,
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
+              compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
+              finalDriveDB: 3.0,
+              agcEnabled: true, agcTargetDB: -18.0,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.92,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
+              phaseRotationEnabled: false)
     ]
 
     static func formatProfile(forID id: String) -> FormatProfile? {
@@ -588,11 +538,26 @@ enum PresetCatalog {
             config.primeBassPresetID = profile.primeBassPresetID
         }
 
-        _ = applyWidener(id: profile.widenerPresetID, to: &config)
+        config.monoBassEnabled = true
+        config.monoBassFreqHz = profile.monoBassFreqHz
 
         config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
         config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
         config.finalDriveDB = profile.finalDriveDB
+        // Gain structure (2026-08 rework): the profile owns the full chain
+        // state so a profile pick can never leave the safety soft-clips as
+        // the de-facto peak controller.
+        config.widebandAGCEnabled = profile.agcEnabled
+        config.widebandAGCTargetDB = profile.agcTargetDB
+        config.preEncodeAudioLimiterEnabled = profile.preEncodeLimiterEnabled
+        config.preEncodeThreshold = profile.preEncodeThreshold
+        config.limitMPX = profile.limitMPX
+        config.compositeClipperEnabled = profile.compositeClipperEnabled
+        config.compositeClipperLookaheadMS = profile.compositeClipperLookaheadMS
+        config.hfClipperEnabled = profile.hfClipperEnabled
+        config.hfLimiterEnabled = profile.hfLimiterEnabled
+        config.bassClipperEnabled = profile.bassClipperEnabled
+        config.phaseRotationEnabled = profile.phaseRotationEnabled
         return profile.title
     }
 }

@@ -47,16 +47,25 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         w.setContentSize(NSSize(
             width: min(1480, visible.width - 80),
             height: min(1100, visible.height - 60)))
-        w.contentMinSize = NSSize(width: 1020, height: 700)
+        // 1260 is the dashboard's own content minimum (RootMeterView sizes its
+        // rows so the worst-case metric strings never truncate at that width).
+        // The window used to allow 1020, i.e. 240 pt narrower than the content
+        // it holds: the vertical-only ScrollView then clipped the right-hand
+        // RDS panel with no way to reach it, and the input bar overflowed
+        // (audit C8).
+        w.contentMinSize = NSSize(width: 1260, height: 700)
         w.setFrameAutosaveName("MeterMainWindow")
         if w.frame.origin == .zero { w.center() }
         // Status line lives in the native window subtitle (HIG) rather than a
         // content-area status bar; statusText changes only on start/stop/error.
         w.subtitle = vm.statusText
-        subtitleCancellable = vm.$statusText.sink { [weak w] text in
+        subtitleCancellable = vm.statusPublisher.sink { [weak w] text in
             w?.subtitle = text
         }
         window = w
+        // The view model gates its 20 Hz GUI pushes on THIS window's occlusion
+        // (audit C13) -- never on an arbitrary NSApp window.
+        vm.mainWindow = w
 
         applyAppIcon()
         setupMainMenu()
@@ -67,7 +76,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         // selected) on launch -- start with no focused field.
         DispatchQueue.main.async { [weak w] in w?.makeFirstResponder(nil) }
 
-        // Launched via run-meter-sdr.sh --gui: pre-tune the SDR and start.
+        // Launched via scripts/run-meter.sh --gui: pre-tune the SDR and start.
         if let freq = autoStartSDRFreqMHz, vm.sdrAvailable {
             vm.inputKind = .sdr
             vm.frequencyMHz = freq
@@ -150,7 +159,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - About / Help / icon
 
     private static let projectURL = URL(string: "https://github.com/bkram/MPXPrime")!
-    private static let manualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/manual-meter.md")!
+    private static let manualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/meter-operator-guide.md")!
     private static let licenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 
     private var appVersion: String {
@@ -163,7 +172,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
 
     /// A proper About: the native panel with a description, clickable links, and
     /// the README's canonical disclaimer key phrase (single source of truth --
-    /// the full disclaimer lives in README, GPL-3.0 terms in LICENSE).
+    /// the full disclaimer lives in README, AGPL-3.0 terms in LICENSE).
     @objc private func showAboutPanel() {
         let credits = NSMutableAttributedString()
         let body: [NSAttributedString.Key: Any] = [
@@ -188,7 +197,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         credits.append(NSAttributedString(
             string: "\n\nExperimental and not certified -- no conformity or "
                 + "compliance is promised. See the README for intended use and "
-                + "the GPL-3.0 license (provided without warranty).",
+                + "the AGPL-3.0 license (provided without warranty).",
             attributes: body))
 
         let para = NSMutableParagraphStyle()
@@ -199,7 +208,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "MPX Prime Meter",
             .applicationVersion: appVersion,
-            .version: "GPL-3.0",
+            .version: "AGPL-3.0",
             .credits: credits
         ])
         NSApp.activate(ignoringOtherApps: true)

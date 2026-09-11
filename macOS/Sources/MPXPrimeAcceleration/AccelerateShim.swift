@@ -15,18 +15,23 @@
 // the golden fixture in AccelerateShimTests (captured on macOS from Accelerate
 // itself; the Linux build must reproduce it).
 //
-// dotpr/conv/vvtanhf are SIMD (portable Swift SIMD8 -> SSE2 on x86-64
-// baseline; NO AVX flags -- Goldmont Plus class CPUs have none). Measured on
-// a J4105 @ 192 kHz with the full chain: scalar was 102% of a core (constant
-// xruns); SIMD is what lets FIR multiband + the 16x composite clipper fit,
-// mirroring macOS where vDSP_dotpr/vvtanhf are documented as required for
-// the real-time budget. The Linux strict baseline is captured WITH these
-// implementations; changing their numerics requires a recapture.
+// dotpr/conv/vvtanhf are SIMD. Since 0.50 the hot kernels live in C
+// (MPXPrimeNative/MPXPrimeSIMD.c) so they can carry an AVX2 clone next to the
+// SSE2 baseline and let the dynamic linker pick per CPU -- Swift SIMD8 can
+// only ever be lowered to the build's baseline ISA, and AVX cannot be
+// assumed on every x86 box. The portable Swift versions stay here as `mpxReference*`, the
+// exact-equality references AccelerateShimTests holds the C kernels to.
+// Measured on a low-end x86 box @ 192 kHz with the full chain: scalar was
+// 102% of a core (constant xruns); SIMD is what lets FIR multiband + the 16x
+// composite clipper fit, mirroring macOS where vDSP_dotpr/vvtanhf are documented as
+// required for the real-time budget. The Linux strict baseline is captured
+// WITH these numerics; the C kernels reproduce them bit for bit (no FMA).
 #if !canImport(Accelerate)
 
 #if canImport(Glibc)
 import Glibc
 #endif
+import MPXPrimeNative
 
 // vDSP_Length/vDSP_Stride must match Accelerate's exact type names so call
 // sites compile unchanged on Linux.
@@ -61,9 +66,9 @@ public struct DSPSplitComplex {
 ///
 /// Unit-stride (the FIR-convolution hot path: multiband crossovers,
 /// encoder FIR, decimators) runs 4x-unrolled SIMD8 -- the scalar loop left
-/// the J4105-class CPU ~2% over real-time budget at 192 kHz; this is the
-/// Linux counterpart of macOS's vDSP_dotpr (SSE2 codegen; no AVX, Goldmont
-/// Plus has none). Strided calls keep the scalar path.
+/// a low-end x86 CPU ~2% over real-time budget at 192 kHz; this is the
+/// Linux counterpart of macOS's vDSP_dotpr (SSE2 baseline; AVX2 through the
+/// per-CPU C kernels). Strided calls keep the scalar path.
 public func vDSP_dotpr(
     _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,
     _ b: UnsafePointer<Float>, _ ib: vDSP_Stride,
@@ -71,7 +76,7 @@ public func vDSP_dotpr(
 ) {
     let count = Int(n)
     if ia == 1 && ib == 1 {
-        c.pointee = simdDot(a, b, count)
+        c.pointee = mpx_simd_dot(a, b, Int32(count))
         return
     }
     var acc: Float = 0
@@ -84,8 +89,10 @@ public func vDSP_dotpr(
     c.pointee = acc
 }
 
-@inline(__always)
-func simdDot(_ a: UnsafePointer<Float>, _ b: UnsafePointer<Float>, _ count: Int) -> Float {
+/// Portable Swift reference for `mpx_simd_dot`: the numerics the Linux
+/// baseline was captured with. Tests hold the C kernel to it exactly; not
+/// on the hot path.
+public func mpxReferenceDot(_ a: UnsafePointer<Float>, _ b: UnsafePointer<Float>, _ count: Int) -> Float {
     var acc0 = SIMD8<Float>()
     var acc1 = SIMD8<Float>()
     var acc2 = SIMD8<Float>()
@@ -179,6 +186,29 @@ public func vDSP_vsmul(
     }
 }
 
+/// C = A clipped into [low, high] (Accelerate's `vDSP_vclip`).
+///
+/// Exact, so it cannot move Linux numerics away from macOS: a clip is a pair
+/// of comparisons, not arithmetic. NaN follows Accelerate's behaviour of
+/// leaving a value that compares false against both bounds untouched.
+public func vDSP_vclip(
+    _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,
+    _ low: UnsafePointer<Float>,
+    _ high: UnsafePointer<Float>,
+    _ c: UnsafeMutablePointer<Float>, _ ic: vDSP_Stride,
+    _ n: vDSP_Length
+) {
+    let lo = low.pointee
+    let hi = high.pointee
+    var pa = 0, pc = 0
+    for _ in 0..<Int(n) {
+        let v = a[pa]
+        c[pc] = v < lo ? lo : (v > hi ? hi : v)
+        pa += ia
+        pc += ic
+    }
+}
+
 /// C = A + scalar B.
 public func vDSP_vsadd(
     _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,
@@ -224,7 +254,7 @@ public func vDSP_conv(
     let taps = Int(p)
     if ia == 1 && ifStride == 1 {
         for i in 0..<Int(n) {
-            c[i * ic] = simdDot(a + i, f, taps)
+            c[i * ic] = mpx_simd_dot(a + i, f, Int32(taps))
         }
         return
     }
@@ -316,6 +346,13 @@ public func vDSP_zvmags(
 /// implementation. The remainder goes through a padded SIMD lane so every
 /// element takes the identical code path regardless of batch length.
 public func vvtanhf(
+    _ y: UnsafeMutablePointer<Float>, _ x: UnsafePointer<Float>, _ n: UnsafePointer<Int32>
+) {
+    mpx_simd_tanh(y, x, n.pointee)
+}
+
+/// Portable Swift reference for `mpx_simd_tanh` (see `mpxReferenceDot`).
+public func mpxReferenceTanh(
     _ y: UnsafeMutablePointer<Float>, _ x: UnsafePointer<Float>, _ n: UnsafePointer<Int32>
 ) {
     let count = Int(n.pointee)

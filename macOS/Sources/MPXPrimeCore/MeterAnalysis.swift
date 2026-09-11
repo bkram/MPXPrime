@@ -40,6 +40,15 @@ public struct MeterSnapshot {
     /// Highest deviation in the trailing 1 s window (max of 50 ms peak-hold
     /// slots, the SM.1268-5 sec 5 display convention / Pira "MAX" reading).
     public var maxDevKHz: Float = 0.0
+    /// Monitor-ballistics deviation (0.5 ms integrating detector,
+    /// `MonitorDeviationMeter`): the display convention of hardware
+    /// modulation monitors, shown alongside -- never instead of -- the
+    /// SM.1268 readouts. `monitorDevKHz` is the live block max of window
+    /// means; `monitorMaxDevKHz` holds until a peak reset.
+    public var monitorDevKHz: Float = 0.0
+    public var monitorMaxDevKHz: Float = 0.0
+    /// Same gate as `devScaleValid`: no kHz claim without a scale.
+    public var monitorDevValid = false
     /// Mean and lowest of the same trailing-1 s array of 50 ms peak-hold
     /// slots (the Pira "AVE" / "MIN" readings). AVE next to MAX says how hard
     /// the transmitter is driven on average, not just at its loudest instant;
@@ -53,13 +62,31 @@ public struct MeterSnapshot {
     // receivers display peak deviation. negPeakDevKHz is signed (<= 0).
     public var posPeakDevKHz: Float = 0.0
     public var negPeakDevKHz: Float = 0.0
+    /// False when no deviation scale is established, i.e. the two peaks above
+    /// are not measurements and must render as "--" (0.45, audit M7 / C2).
+    public var peakValid = false
+
+    /// False when no kHz-per-unit deviation scale exists (uncalibrated input
+    /// with no pilot lock): every kHz readout -- pilot, RDS, MAX / AVE / MIN,
+    /// the peaks, MPX power -- is meaningless and must show "--" rather than a
+    /// confident 0.00 (0.45, audit C14).
+    public var devScaleValid = false
 
     /// ITU-R SM.1268-5 sec 4 compliance statistic: the percentage of measured
     /// deviation samples exceeding 77 kHz (75 kHz + the 2 kHz measurement
     /// tolerance) since the last peak reset. The recommendation treats a
     /// transmitter as violating the deviation limit above 10^-4 % (1e-6).
+    /// Valid only once a full minute of samples has been counted: the
+    /// criterion is one sample in a million, which a shorter window cannot
+    /// resolve (a 1 s window at 192 kHz resolves 5.2e-4 %, 520x too coarse,
+    /// so a single transient read as a violation).
     public var exceedancePct: Float = 0.0
     public var exceedanceValid = false
+    /// While `exceedanceValid` is false: the statistical upper bound on the
+    /// exceedance rate from the samples counted so far (100 / count %). Lets
+    /// the readout say "< 0.002 %" instead of publishing a number whose
+    /// resolution is coarser than the limit it is compared against.
+    public var exceedanceBoundPct: Float = 0.0
 
     /// Deviation histogram since the last peak reset: counts of 50 ms
     /// peak-hold slots per 1 kHz bin. Index i counts slots whose peak
@@ -117,6 +144,14 @@ public struct MeterSnapshot {
     public var sideRMSDBFS: Float = -120.0
     /// Decoded L/R correlation: ~+1 mono, lower for wide stereo.
     public var stereoCorrelation: Float = 0.0
+    /// False when neither decoded channel carries enough programme for the
+    /// correlation to mean anything (silence, noise floor) -- the readout must
+    /// show "--" instead of a confident +0.00 (0.45, audit C7).
+    public var stereoCorrelationValid = false
+    /// True while the decoder's pilot lock is strong enough for stereo decode;
+    /// false = the decoded L/R (and side / correlation / balance) are M-only,
+    /// not a measurement of the stereo image (0.45, audit M1).
+    public var stereoDecodeActive = false
     /// Decoded L/R level balance in dB (positive = left louder), smoothed and
     /// only valid while both channels carry signal. 0 dB is the target; a
     /// standing offset means the stereo encoder or the audio chain feeding it
@@ -204,6 +239,21 @@ public final class MeterAnalysis {
     /// SM.1268-5 deviation exceedance threshold (75 kHz + 2 kHz tolerance).
     public static let exceedanceThresholdKHz: Float = 77.0
 
+    /// Blocks the pilot-referenced deviation scale survives a pilot-lock dip
+    /// before the kHz readouts go invalid. At ~23 blocks/s this is ~0.4 s --
+    /// long enough to ride out a fade, short enough that a lost station stops
+    /// producing numbers promptly.
+    private static let devScaleHoldBlockCount = 10
+
+    /// Minimum per-channel decoded RMS (mean-removed) for the phase
+    /// correlation readout to be a measurement rather than a ratio of noise.
+    /// -80 dBFS: well below any programme, well above a dithered idle channel.
+    private static let correlationMinRMS: Float = 1e-4
+
+    /// Blocks without an admitted balance measurement before the standing
+    /// L/R offset expires (~2 s at 23 blocks/s).
+    private static let balanceExpiryBlockCount = 46
+
     /// Deviation histogram geometry: 1 kHz bins covering 0..120 kHz, plus one
     /// overflow bin. 120 kHz is well past any legitimate transmission, so the
     /// overflow bin only fills on interference or a broken chain.
@@ -239,6 +289,10 @@ public final class MeterAnalysis {
     private var decoder = MPXDecoder()
     private let rds: RDSSubcarrierDecoder
     private var snap = MeterSnapshot()
+    // Optional monitor-ballistics deviation readout (0.5 ms integrating
+    // detector); fed from the same measurement path as the slot ring so the
+    // two conventions differ ONLY in detector ballistics, never in scale.
+    private var monitorMeter: MonitorDeviationMeter
 
     // Deviation/MPX-power measurement path: sub-Hz DC tracker (SDR demod
     // carrier-offset DC otherwise adds to one deviation polarity and biases
@@ -260,6 +314,16 @@ public final class MeterAnalysis {
     // its own always-on tracker (above); composite scope/IN stay raw.
     private var decodeDC: DCTracker
     private let dcBlockOn = ManagedAtomic<Bool>(true)
+
+    // Receiver de-emphasis time constant for the decode path (50 us in ITU
+    // Region 1 / most of the world, 75 us in the Americas, Japan and Korea).
+    // Live-settable: reconfiguring the decoder resets its filter state and
+    // pilot lock, so it is applied only when the value actually CHANGES.
+    // Before 0.45 this was hard-wired to 50 and nothing could reach it, so in
+    // 75 us markets the decoded monitor, stereo recordings, L-R strips and
+    // audio spectrum all ran ~3.5 dB bright at 15 kHz (audit C3 / M9).
+    private let preemphasisUSAtomic: ManagedAtomic<Int>
+    private var activePreemphasisUS: Int
 
     // RDS reception-quality gate: the stream decoder syncs on a single
     // accidental syndrome match and accepts PI/PTY from any single
@@ -342,6 +406,21 @@ public final class MeterAnalysis {
     // Stereo balance: EMA of the per-block L/R RMS ratio, gated on level.
     private var balanceDB: Float = 0.0
     private var balancePrimed = false
+    // Blocks since the balance gate last admitted a measurement. Once the
+    // programme stops feeding it (silence, a lost stereo decode) the standing
+    // offset is history, not a reading -- so it expires (audit M11: the flag
+    // could only ever go true, so the last value stayed on screen forever).
+    private var balanceIdleBlocks = 0
+
+    // Deviation scale hold. The pilot-referenced scale needs a pilot, and a
+    // momentary lock dip must not flap every kHz readout to "--" and back.
+    // The last good scale is reused for a few blocks, then the readouts go
+    // invalid (audit M8: the scale used to be accepted from pilot amplitude
+    // 1e-5, 200x below the pilot-present threshold, so lock-in noise on a dead
+    // frequency produced a huge scale factor -- a vast fake max deviation with
+    // effectively every sample counting as over 77 kHz).
+    private var heldDevScaleKHz: Float?
+    private var devScaleHoldBlocks = 0
 
     // Best observed stereo separation (dB) since reset.
     private var bestSepDB: Float = 0.0
@@ -397,6 +476,8 @@ public final class MeterAnalysis {
         self.pilotRefBits = ManagedAtomic<UInt32>(pilotRefKHz.bitPattern)
         self.fullScaleKHz = fullScaleKHz
         self.fullScaleBits = ManagedAtomic<UInt32>((fullScaleKHz ?? Float.nan).bitPattern)
+        preemphasisUSAtomic = ManagedAtomic<Int>(preemphasisUS)
+        activePreemphasisUS = preemphasisUS
         pilot.configure(sampleRate: sampleRate)
         decoder.configure(sampleRate: sampleRate, preemphasisUS: preemphasisUS)
         rds = RDSSubcarrierDecoder(sampleRate: sampleRate)
@@ -407,6 +488,7 @@ public final class MeterAnalysis {
         // of an SDR carrier offset lands in the peak windows.
         dcTracker = DCTracker(cutoffHz: 5.0, sampleRate: sampleRate)
         decodeDC = DCTracker(cutoffHz: 2.0, sampleRate: sampleRate)
+        monitorMeter = MonitorDeviationMeter(sampleRate: sampleRate)
         // Clamp below Nyquist for low-rate captures (no RDS there anyway).
         let cutoff = min(60_000.0, 0.45 * sampleRate)
         let transition = min(8_000.0, 0.5 * sampleRate - cutoff - 1.0)
@@ -448,6 +530,17 @@ public final class MeterAnalysis {
     /// Enable/disable the decode-path DC blocker (live; default on).
     public func setDCBlock(_ on: Bool) { dcBlockOn.store(on, ordering: .relaxed) }
 
+    /// Set the receiver de-emphasis time constant in microseconds (50 or 75).
+    /// Safe from any thread; picked up at the top of the next `process`, and
+    /// only acted on when it differs from the active one (reconfiguring the
+    /// decoder clears its filter state and pilot lock).
+    public func setPreemphasisUS(_ us: Int) {
+        preemphasisUSAtomic.store(us == 75 ? 75 : 50, ordering: .relaxed)
+    }
+
+    /// The de-emphasis time constant currently in effect (us).
+    public var preemphasisUS: Int { activePreemphasisUS }
+
     /// Bypass the RDS reception-quality gate (live; default off): publish the
     /// raw decoder state even when reception is too poor to trust.
     public func setForceRDS(_ on: Bool) { forceRDSOn.store(on, ordering: .relaxed) }
@@ -463,6 +556,7 @@ public final class MeterAnalysis {
     }
 
     private func resetPeakAccumulators() {
+        monitorMeter.resetPeaks()
         for i in posSlots.indices { posSlots[i] = 0.0 }
         for i in negSlots.indices { negSlots[i] = 0.0 }
         slotWrite = 0
@@ -489,8 +583,33 @@ public final class MeterAnalysis {
         mpxSampleCount = 0
     }
 
+    /// Analyze one capture block. Blocks longer than the `maxBlock` this
+    /// instance was configured for are split and analyzed in sequence: the
+    /// scratch buffers are sized to `maxBlock`, and a longer block used to
+    /// index straight past them (audit M15 -- a trap on a public API, reachable
+    /// from any caller whose device hands over a bigger slice than expected).
     public func process(_ samples: UnsafeBufferPointer<Float>) {
         guard !samples.isEmpty else { return }
+        let cap = dcBlock.count
+        guard samples.count > cap, let base = samples.baseAddress else {
+            processBlock(samples)
+            return
+        }
+        var offset = 0
+        while offset < samples.count {
+            let n = min(cap, samples.count - offset)
+            processBlock(UnsafeBufferPointer(start: base + offset, count: n))
+            offset += n
+        }
+    }
+
+    private func processBlock(_ samples: UnsafeBufferPointer<Float>) {
+        let wantedPreemphasisUS = preemphasisUSAtomic.load(ordering: .relaxed)
+        if wantedPreemphasisUS != activePreemphasisUS {
+            activePreemphasisUS = wantedPreemphasisUS
+            decoder.configure(sampleRate: sampleRate,
+                              preemphasisUS: wantedPreemphasisUS)
+        }
         pilotRefKHz = Float(bitPattern: pilotRefBits.load(ordering: .relaxed))
         let fs = Float(bitPattern: fullScaleBits.load(ordering: .relaxed))
         fullScaleKHz = fs.isNaN ? nil : fs
@@ -512,12 +631,25 @@ public final class MeterAnalysis {
             dcTracker.reset()
             dcTracker.setCutoff(5.0, sampleRate: sampleRate)  // re-acquire
             measurementFIR.reset()
+            monitorMeter.reset()
             for i in devHistory.indices { devHistory[i] = 0.0 }
             for i in powerHistory.indices { powerHistory[i] = -30.0 }
             warmupRemaining = Int(sampleRate)  // ~1 s -- skip the relock transient
             rds.reset()
             rdsGateOpen = false
             rdsGateClosedSamples = 0
+            // Decode chain + its DC blocker + the scale hold: the prior
+            // station's pilot lock, de-emphasis / notch state and deviation
+            // scale must not colour the first blocks of the new one (audit
+            // M12 -- these four were missing, so a retune carried the old
+            // lock and one block of the old scale into the new station).
+            decoder.configure(sampleRate: sampleRate, preemphasisUS: activePreemphasisUS)
+            pilot.configure(sampleRate: sampleRate)
+            decodeDC.reset()
+            histogramScaleKHz = 0.0
+            heldDevScaleKHz = nil
+            devScaleHoldBlocks = 0
+            balanceIdleBlocks = 0
         }
         if doFullReset || resetRequested.exchange(false, ordering: .relaxed) {
             resetPeakAccumulators()
@@ -573,6 +705,13 @@ public final class MeterAnalysis {
         var lSq: Float = 0.0
         var rSq: Float = 0.0
         var lr: Float = 0.0
+        // Means, for a true (mean-removed) correlation coefficient. Without
+        // them a residual DC offset -- an off-centre SDR carrier with the
+        // decode-path DC blocker switched off, or an interface's own offset --
+        // dominates the products and drags the reading to +1.00 whatever the
+        // programme does (audit M13).
+        var lSum: Float = 0.0
+        var rSum: Float = 0.0
         var mSq: Float = 0.0
         var sSq: Float = 0.0
         var over77 = 0
@@ -587,6 +726,8 @@ public final class MeterAnalysis {
 
             let m = measBlock[i]
             if !inWarmup {
+                // Monitor-ballistics detector rides the same measurement path.
+                monitorMeter.process(m)
                 // 50 ms peak-hold slot accumulation (feeds MAX DEV + PEAK +/-).
                 if m > curPos { curPos = m }
                 if m < curNeg { curNeg = m }
@@ -637,6 +778,8 @@ public final class MeterAnalysis {
             lSq += l * l
             rSq += r * r
             lr += l * r
+            lSum += l
+            rSum += r
             let mid = (l + r) * 0.5
             let side = (l - r) * 0.5
             mSq += mid * mid
@@ -661,7 +804,20 @@ public final class MeterAnalysis {
         // Peak deviation amplitude of the 57 kHz subcarrier (the injection
         // level the encoder was set to -- encoders peak-normalize).
         let rdsEquivAmp = rdsMeter.peakAmplitude
-        let corr: Float = (lSq > 1e-12 && rSq > 1e-12) ? (lr / sqrtf(lSq * rSq)) : 0.0
+        // Mean-removed Pearson correlation over the block, gated on both
+        // channels actually carrying programme: on silence the ratio is
+        // arbitrary, and the readout used to sit at a confident +0.00 (amber)
+        // or wander into red on noise alone (audit C7 / M13).
+        let lMean = lSum / n
+        let rMean = rSum / n
+        let lVar = max(0.0, lSq - (lSum * lMean))
+        let rVar = max(0.0, rSq - (rSum * rMean))
+        let cov = lr - (lSum * rMean)
+        let corrGate = Self.correlationMinRMS * Self.correlationMinRMS * n
+        let corrValid = lVar > corrGate && rVar > corrGate
+        let corr: Float = corrValid
+            ? max(-1.0, min(1.0, cov / sqrtf(lVar * rVar)))
+            : 0.0
 
         snap.hasSignal = peak > 1e-4
         snap.inputPeakDBFS = Self.dbfs(peak)
@@ -715,9 +871,27 @@ public final class MeterAnalysis {
             snap.aveDevKHz = ave1s * fullScale
             snap.minDevKHz = low1s * fullScale
             devScaleKHz = fullScale
-        } else if pilotAmp > 1e-5 {
-            let scale = pilotRefKHz / pilotAmp
-            snap.pilotDevKHz = pilotRefKHz
+            heldDevScaleKHz = nil
+            devScaleHoldBlocks = 0
+        } else if snap.pilotPresent || devScaleHoldBlocks > 0 {
+            // Pilot-referenced. The scale requires the SAME pilot-presence
+            // threshold the PILOT readout uses; a brief dip below it reuses
+            // the last scale for up to `devScaleHoldBlocks` blocks so the
+            // readouts do not flap (audit M8).
+            let scale: Float
+            if snap.pilotPresent {
+                scale = pilotRefKHz / pilotAmp
+                heldDevScaleKHz = scale
+                devScaleHoldBlocks = Self.devScaleHoldBlockCount
+                // By definition of the pilot reference.
+                snap.pilotDevKHz = pilotRefKHz
+            } else {
+                scale = heldDevScaleKHz ?? 0.0
+                devScaleHoldBlocks -= 1
+                // Holding: report the pilot that is actually there, so the
+                // dip is visible instead of being papered over.
+                snap.pilotDevKHz = pilotAmp * scale
+            }
             // RDS equivalent-subcarrier amplitude referenced to the pilot
             // amplitude -- the basis measuring receivers use, so it matches
             // an SFP-style RDS readout.
@@ -725,7 +899,7 @@ public final class MeterAnalysis {
             snap.maxDevKHz = max1s * scale
             snap.aveDevKHz = ave1s * scale
             snap.minDevKHz = low1s * scale
-            devScaleKHz = scale
+            devScaleKHz = scale > 0.0 ? scale : nil
         } else {
             snap.pilotDevKHz = 0.0
             snap.rdsDevKHz = 0.0
@@ -733,6 +907,24 @@ public final class MeterAnalysis {
             snap.aveDevKHz = 0.0
             snap.minDevKHz = 0.0
             devScaleKHz = nil
+            heldDevScaleKHz = nil
+            devScaleHoldBlocks = 0
+        }
+        // One flag for "the kHz readouts mean something": without a scale a
+        // deviation strip must read "--", not a confident 0.00 (audit C14).
+        snap.devScaleValid = devScaleKHz != nil
+
+        // Monitor-ballistics deviation: same scale as everything above, so
+        // the two conventions differ only in detector, never in calibration.
+        let monitorLive = monitorMeter.takeBlockMax()
+        if let devScaleKHz {
+            snap.monitorDevKHz = monitorLive * devScaleKHz
+            snap.monitorMaxDevKHz = monitorMeter.maxHoldValue * devScaleKHz
+            snap.monitorDevValid = true
+        } else {
+            snap.monitorDevKHz = 0.0
+            snap.monitorMaxDevKHz = 0.0
+            snap.monitorDevValid = false
         }
 
         // Carrier / DC offset and baseband noise, both in kHz of deviation.
@@ -772,25 +964,44 @@ public final class MeterAnalysis {
         // ~0.01 kHz of leakage unless a real subcarrier is required.
         snap.pilotRDSPhaseDeg = phaseMeter.phaseDegrees
         snap.pilotRDSPhaseCoherence = phaseMeter.coherence
-        snap.pilotRDSPhaseValid = phaseMeter.valid && snap.pilotPresent
+        // `!inWarmup` belongs here with the rest: the meter's own gates cover
+        // priming and stability, but the first second after a retune is
+        // transient by definition (audit M4).
+        snap.pilotRDSPhaseValid = phaseMeter.valid && !inWarmup && snap.pilotPresent
             && devScaleKHz != nil && snap.rdsDevKHz >= Self.rdsGateMinLevelKHz
 
         // Total-deviation +/- windowed peaks (kHz) + exceedance statistic.
         if let devScaleKHz {
             snap.posPeakDevKHz = posMax * devScaleKHz
             snap.negPeakDevKHz = negMin * devScaleKHz
+            snap.peakValid = true
             exceedanceThreshAmp = Self.exceedanceThresholdKHz / devScaleKHz
         } else {
+            // Without a scale these two carry the LAST station's kHz -- the
+            // struct is reused across blocks, and the view rendered (and
+            // red-tinted) them unconditionally, so a lost pilot froze a
+            // confident over-deviation figure on screen (audit M7 / C2).
+            snap.posPeakDevKHz = 0.0
+            snap.negPeakDevKHz = 0.0
+            snap.peakValid = false
             exceedanceThreshAmp = 0.0
         }
         if exceedanceTotal > 0 {
             snap.exceedancePct =
                 Float((Double(exceedanceOver) / Double(exceedanceTotal)) * 100.0)
-            // Meaningful once at least ~1 s of samples has been counted.
-            snap.exceedanceValid = exceedanceTotal >= UInt64(secLen)
+            // SM.1268-5's criterion is a violation above 1e-4 % of samples,
+            // i.e. one sample in a million. A 1 s window at 192 kHz resolves
+            // 5.2e-4 % -- 520x too coarse, so ONE transient read as a
+            // violation. Require a full minute (audit M6); until then publish
+            // the statistical upper bound instead of a number that cannot
+            // mean what it says.
+            snap.exceedanceValid = exceedanceTotal >= UInt64(secLen) * 60
+            snap.exceedanceBoundPct =
+                Float((1.0 / Double(exceedanceTotal)) * 100.0)
         } else {
             snap.exceedancePct = 0.0
             snap.exceedanceValid = false
+            snap.exceedanceBoundPct = 0.0
         }
 
         // MPX power (ITU-R BS.412): uniform mean over the sliding window in
@@ -849,7 +1060,7 @@ public final class MeterAnalysis {
         let rRMS = sqrtf(rSq / n)
         let hi = max(lRMS, rRMS)
         let lo = min(lRMS, rRMS)
-        if !inWarmup, hi > 0.05, lo > 1e-4 {
+        if !inWarmup, decoder.stereoDecodeActive, hi > 0.05, lo > 1e-4 {
             let sep = min(60.0, 20.0 * log10f(hi / lo))
             if sep > bestSepDB { bestSepDB = sep; sepValid = true }
         }
@@ -859,14 +1070,27 @@ public final class MeterAnalysis {
         // Stereo balance (dB, + = left louder). Smoothed hard (~3 s at 23
         // blocks/s) because real programme pans constantly -- the useful
         // reading is the standing offset, not the instantaneous one. Gated on
-        // both channels carrying signal so silence cannot pin it.
-        if !inWarmup, lRMS > 1e-3, rRMS > 1e-3 {
+        // both channels carrying signal so silence cannot pin it, and on an
+        // active stereo decode -- an M-only decode has L == R exactly, so it
+        // would otherwise pin a confident +0.0 dB "balance" (audit M1).
+        if !inWarmup, decoder.stereoDecodeActive, lRMS > 1e-3, rRMS > 1e-3 {
             let instant = 20.0 * log10f(lRMS / rRMS)
             if balancePrimed {
                 balanceDB += 0.015 * (instant - balanceDB)
             } else {
                 balanceDB = instant
                 balancePrimed = true
+            }
+            balanceIdleBlocks = 0
+        } else if balancePrimed {
+            // Expire: the standing offset describes programme that is no
+            // longer arriving (audit M11 -- the flag could only go true, so a
+            // stale offset stayed on screen indefinitely).
+            balanceIdleBlocks += 1
+            if balanceIdleBlocks > Self.balanceExpiryBlockCount {
+                balancePrimed = false
+                balanceDB = 0.0
+                balanceIdleBlocks = 0
             }
         }
         snap.stereoBalanceDB = balanceDB
@@ -895,6 +1119,8 @@ public final class MeterAnalysis {
         snap.midRMSDBFS = Self.dbfs(sqrtf(mSq / n))
         snap.sideRMSDBFS = Self.dbfs(sqrtf(sSq / n))
         snap.stereoCorrelation = corr
+        snap.stereoCorrelationValid = corrValid && !inWarmup
+        snap.stereoDecodeActive = decoder.stereoDecodeActive
         // Windowed BER from the LIVE decoder state (must keep measuring even
         // while the gate blanks the published readout).
         let rdsLive = rds.state

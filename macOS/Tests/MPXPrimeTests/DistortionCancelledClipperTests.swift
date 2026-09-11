@@ -31,7 +31,7 @@ struct DistortionCancelledClipperTests {
     /// ideal -75 dBFS is bounded by the 5th harmonic of 5111 Hz landing
     /// at 25555 Hz (only 7% above native Nyquist) — Butterworth decimation
     /// can't suppress that close to its cutoff. A sharper FIR brick-wall
-    /// (Phase 7.5 in plan.md) would clear the full target.
+    /// (Phase 7.5 in docs/project-roadmap.md) would clear the full target.
     static let aliasingThresholdDBFS: Float = -38.0
 
     /// The 5 aliased-product frequencies for testFreq=5111 at sr=48000.

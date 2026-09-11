@@ -16,6 +16,15 @@ protocol MPXInputSource: AnyObject {
     var frameSink: ((_ left: UnsafePointer<Float>, _ right: UnsafePointer<Float>, _ frames: Int) -> Void)? { get set }
     var isRunning: Bool { get }
 
+    /// Optional back-pressure, set by the engine: returns false while the
+    /// consumer is too far behind for more frames to be accepted without
+    /// overwriting unread ones. Only a source that can legitimately WAIT
+    /// consults it -- a real-time device callback must never block, so the
+    /// AUHAL and SDR sources ignore it and rely on the ring's drop counters
+    /// instead. It exists for the stdin/file path, which can outrun the
+    /// analysis thread without limit (a redirected file never blocks on read).
+    var canAcceptFrames: (() -> Bool)? { get set }
+
     @discardableResult
     func start() throws -> (sampleRate: Double, channels: Int)
     func stop()
@@ -38,6 +47,11 @@ final class AUHALInputSource: MPXInputSource {
     }
 
     var isRunning: Bool { au.isRunning }
+
+    /// Deliberately unused: a Core Audio render callback must never wait. The
+    /// ring's overflow counter (surfaced as the SAMPLES DROPPED badge) is the
+    /// reporting mechanism on this path.
+    var canAcceptFrames: (() -> Bool)?
 
     @discardableResult
     func start() throws -> (sampleRate: Double, channels: Int) {
@@ -66,6 +80,12 @@ final class StdinInputSource: MPXInputSource, @unchecked Sendable {
     private let fifoPath: String?
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
+
+    /// Back-pressure from the engine (see the protocol). This is the one source
+    /// that honours it: reading a redirected file never blocks, so without it
+    /// the reader outruns the analysis thread and the ring drops nearly
+    /// everything.
+    var canAcceptFrames: (() -> Bool)?
 
     // Cross-thread flags (read on the CLI/main thread, written on the reader
     // thread): atomic to avoid a data race on the shared Bool.
@@ -134,6 +154,23 @@ final class StdinInputSource: MPXInputSource, @unchecked Sendable {
         var sawData = false
 
         while runningFlag.load(ordering: .relaxed) {
+            // Back-pressure BEFORE reading more. A live pipe is paced by its
+            // writer, but a redirected FILE (replaying a recorded composite)
+            // never blocks, so the reader used to outrun the analysis thread
+            // and the ring overwrote unread samples -- on a 90 s recording,
+            // ~18 M frames dropped, which left every accumulated reading
+            // (MAX DEV, MPX power, the distribution, the SM.1268 count)
+            // invalid while the panel still printed numbers. Waiting here
+            // costs a live source nothing (its ring never fills) and lets a
+            // replay run as fast as the analyzer can actually consume.
+            if let canAccept = canAcceptFrames {
+                var waited = 0
+                while !canAccept(), runningFlag.load(ordering: .relaxed), waited < 5_000 {
+                    usleep(1_000)
+                    waited += 1
+                }
+                if !runningFlag.load(ordering: .relaxed) { break }
+            }
             let got: Int
             if ownsFD {
                 var pfd = pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)

@@ -2,7 +2,7 @@ import Foundation
 
 // Config patching for the remote-control API.
 //
-// The INI vocabulary is the public config language (docs/manual.md documents
+// The INI vocabulary is the public config language (docs/studio-settings-reference.md documents
 // every key), so the API patches configs BY INI KEY with zero per-key mapping
 // code: serialize the current AppConfig to INI text (captureAsINIString),
 // inject the patched keys into every section, and reload through the
@@ -32,6 +32,7 @@ struct ConfigKeyOutcome: Codable, Equatable {
         case live            // hot-applied to the DSP plane
         case liveRDS         // hot-applied to the RDS plane
         case restartRequired // stored; takes effect on next engine start
+        case none            // stored and acted on by the backend itself (side channel), no restart
         case unchanged       // value identical, or unknown key (no effect)
     }
     var key: String
@@ -65,6 +66,13 @@ enum ConfigPatch {
         return INIParser.parse(ini)
     }
 
+    /// Keys the ENGINE never sees: the backend consumes them itself (the sound
+    /// card's mixer, asserted on the reconcile tick). Their disposition cannot
+    /// be derived by diffing the engine's runtime structs -- they are in none
+    /// of them -- so this is the one place they are named; a key here must
+    /// have a backend that acts on it without a restart.
+    static let backendOwnedKeys: Set<String> = ["alsa_playback_volume_db", "alsa_capture_volume_db"]
+
     /// Apply `patch` (INI key -> raw string value) to `config`. Returns the
     /// patched config plus per-key outcomes. Keys the schema does not read
     /// come back `.unchanged` with a nil effective value.
@@ -78,7 +86,7 @@ enum ConfigPatch {
             throw ConfigPatchError.serializationFailed(String(describing: error))
         }
 
-        let patched = try reload(baseINI: baseINI, overlay: patch)
+        let patched = try reload(baseINI: baseINI, overlay: resolvedOverlay(patch, base: config))
 
         var outcomes: [ConfigKeyOutcome] = []
         var planes = ConfigChangePlanes()
@@ -88,7 +96,9 @@ enum ConfigPatch {
         for key in patch.keys.sorted() {
             let effective = effectiveValue(forKey: key, in: patchedSections)
             // Classify by flipping ONLY this key against the ORIGINAL config.
-            let solo = try reload(baseINI: baseINI, overlay: [key: patch[key] ?? ""])
+            let solo = try reload(
+                baseINI: baseINI,
+                overlay: resolvedOverlay([key: patch[key] ?? ""], base: config))
             let disposition: ConfigKeyOutcome.Disposition
             if solo == config {
                 disposition = .unchanged
@@ -100,6 +110,8 @@ enum ConfigPatch {
                 != MPXGenerator.RDSRuntimeConfig.make(from: config) {
                 disposition = .liveRDS
                 planes.rdsLive = true
+            } else if backendOwnedKeys.contains(key) {
+                disposition = .none
             } else {
                 disposition = .restartRequired
                 planes.restartRequired = true
@@ -124,6 +136,31 @@ enum ConfigPatch {
 
     /// Rebuild an AppConfig from `baseINI` with `overlay` keys appended to
     /// every section (last-wins within a section in INIParser).
+    /// The pre-0.50 mode keys stay accepted by the API; they are resolved onto
+    /// `operating_mode` HERE, at the boundary, so configuration storage keeps
+    /// exactly one spelling of the mode. A patch carrying either alias (in any
+    /// order, with or without the other) lands on the mode the pair describes.
+    static let operatingModeAliases = ["processed_audio_output", "processed_audio_target"]
+
+    private static func resolvedOverlay(
+        _ patch: [String: String], base: AppConfig
+    ) -> [String: String] {
+        guard patch.keys.contains(where: { operatingModeAliases.contains($0) }) else { return patch }
+        var overlay = patch
+        let audioOutput: Bool
+        if let raw = patch["processed_audio_output"] {
+            audioOutput = ["true", "yes", "1", "on"].contains(
+                raw.trimmingCharacters(in: .whitespaces).lowercased())
+        } else {
+            audioOutput = base.operatingMode.isAudioOutput
+        }
+        let target = patch["processed_audio_target"]
+            ?? AppConfig.legacyProcessedAudioTarget(for: base.operatingMode)
+        overlay["operating_mode"] = AppConfig.migratedOperatingMode(
+            processedAudioOutput: audioOutput, processedAudioTarget: target).rawValue
+        return overlay
+    }
+
     private static func reload(baseINI: String, overlay: [String: String]) throws -> AppConfig {
         var sections = INIParser.parse(baseINI)
         for (section, var bucket) in sections {

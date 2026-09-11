@@ -25,6 +25,11 @@ struct ControlSchemaTests {
     private static let deliberatelyUnexposed: [String: String] = [
         // RDS physical layer the native GUI also hides (docs call them
         // INI-only; restart-required modulator internals).
+        // Written by the card-mixer API (PATCH /api/mixer records the level
+        // the card took), asserted by the engine; a direct config patch of a
+        // dB the card cannot represent would be worse than no control.
+        "alsa_playback_volume_db": "set through PATCH /api/mixer, not as a widget",
+        "alsa_capture_volume_db": "set through PATCH /api/mixer, not as a widget",
         "rds_gaussian_enabled": "GUI hides it too; modulator internal",
         "rds_gaussian_bw_hz": "GUI hides it too; modulator internal",
         "rds_gaussian_taps": "GUI hides it too; modulator internal",
@@ -133,6 +138,106 @@ struct ControlSchemaTests {
         let dropped = schema.modelKeys.subtracting(schema.widgets.keys).sorted()
         #expect(dropped.isEmpty,
                 "page keys without a widget (would render as nothing): \(dropped)")
+    }
+
+    @Test func everyModesListUsesTheOperatingModeVocabulary() throws {
+        // A typo in a `modes` list hides a control forever, silently, in one
+        // mode only -- the kind of defect nobody finds by clicking around.
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let valid = Set(AppConfig.OperatingMode.allCases.map(\.rawValue))
+        var checked = 0
+
+        func check(_ modes: Any?, _ owner: String) {
+            guard let modes = modes as? [String] else { return }
+            checked += 1
+            #expect(!modes.isEmpty, "\(owner) carries an empty modes list, so it can never be shown")
+            let unknown = Set(modes).subtracting(valid).sorted()
+            #expect(unknown.isEmpty, "\(owner) lists unknown operating modes: \(unknown)")
+        }
+
+        let model = root["model"] as? [String: Any] ?? [:]
+        check(model["rdsModes"], "model.rdsModes")
+        check(model["monitorModes"], "model.monitorModes")
+        for page in (model["stages"] as? [[String: Any]] ?? []) {
+            check(page["modes"], "stage \(page["id"] ?? "?")")
+        }
+        for (key, widget) in (root["schema"] as? [String: [String: Any]] ?? [:]) {
+            check(widget["modes"], "widget \(key)")
+        }
+        #expect(checked > 5, "expected the mode gating to be present in the schema; checked \(checked)")
+    }
+
+    @Test func modeGatedWidgetsMatchTheChainFeatureTable() throws {
+        // The dashboard and the native GUI must hide the same things: the
+        // schema's `modes` lists are the web copy of `ChainFeature`, so they
+        // are compared against it rather than maintained by eye.
+        let schema = try loadSchema()
+        let expected: [String: ChainFeature] = [
+            "preemphasis_us": .preemphasis,
+            "processed_audio_ceiling_dbtp": .digitalCeiling,
+            "processed_audio_coder_has_clipper": .coderFinalClipper,
+            "processed_audio_final_clip_drive_db": .coderFinalClipper,
+            "am_preemphasis_us": .amShaping,
+            "am_lowpass_hz": .amShaping,
+            "am_positive_peak_pct": .amShaping,
+            "monitor_enabled": .monitorPath,
+            "mono_mode": .stereoProgram,
+            "mono_bass_enabled": .stereoProgram,
+            "mono_bass_freq_hz": .stereoProgram,
+            "multiband_link_strength": .stereoProgram,
+            "hf_limiter_enabled": .hfLimiter,
+            "hf_limiter_threshold_db": .hfLimiter,
+            "hf_limiter_attack_ms": .hfLimiter,
+            "hf_limiter_release_ms": .hfLimiter,
+            "hf_limiter_max_reduction_db": .hfLimiter
+        ]
+        let everyMode = AppConfig.OperatingMode.allCases.map(\.rawValue)
+        for (key, feature) in expected {
+            // An ABSENT `modes` list means "every mode" to the page, so that is
+            // what a feature applying everywhere must look like -- spelling all
+            // four out would be the same thing, but the page would then have to
+            // be edited whenever a mode is added.
+            let modes = schema.widgets[key]?["modes"] as? [String] ?? everyMode
+            #expect(modes == feature.modes,
+                    "widget \(key) is gated to \(modes) but \(feature) applies in \(feature.modes)")
+        }
+    }
+
+    @Test func modeGatedPagesMatchTheChainFeatureTable() throws {
+        // Page-level gating is the same contract as widget-level gating: the
+        // sidebar, the Overview grid and the Monitoring signal chain all read
+        // it, so a page that disagrees with the table shows a stage the mode
+        // does not run.
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let model = root["model"] as? [String: Any] ?? [:]
+        let stages = model["stages"] as? [[String: Any]] ?? []
+        let expected: [String: ChainFeature] = [
+            "stereoCoder": .stereoCoder,
+            "compositeClipper": .compositeClipper,
+            "bs412": .bs412,
+            "finalStage": .finalStage,
+            "hfLimiter": .hfLimiter
+        ]
+        for stage in stages {
+            let id = stage["id"] as? String ?? "?"
+            let modes = stage["modes"] as? [String] ?? []
+            if let feature = expected[id] {
+                #expect(modes == feature.modes,
+                        "stage page \(id) is gated to \(modes) but \(feature) applies in \(feature.modes)")
+            } else {
+                #expect(modes.isEmpty, "stage page \(id) carries modes \(modes) with no feature behind it")
+            }
+        }
+        // The model-level lists the page reads for whole sections.
+        #expect(model["rdsModes"] as? [String] == ChainFeature.rds.modes)
+        #expect(model["monitorModes"] as? [String] == ChainFeature.monitorPath.modes)
+        #expect(model["compositeModes"] as? [String] == ChainFeature.finalStage.modes)
     }
 
     @Test func everyWidgetHasAValidKindAndSliderBounds() throws {

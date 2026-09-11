@@ -21,14 +21,33 @@ enum MeterChannel: String {
 /// configured `sampleRate` matches the device format (192 kHz for a real
 /// composite — RDS at 57 kHz needs Nyquist > 57 kHz, so >= 128 kHz).
 final class MeterAudioEngine: @unchecked Sendable {
-    private static let maxSliceFrames = 4096
+    /// Callers constructing an `AUHALInputSource` must pass this as its
+    /// `maxFramesPerSlice` -- the `.mix` scratch is sized from it, and a larger
+    /// AUHAL slice would silently truncate frames.
+    static let maxSliceFrames = 4096
+
+    /// The capture rate could not support composite measurement.
+    struct UnsupportedRateError: LocalizedError {
+        let rate: Double
+        var errorDescription: String? {
+            String(format: "capture rate %.0f Hz is too low for composite measurement "
+                   + "(needs >= 128 kHz: the measurement band is 0-60 kHz and RDS sits at 57 kHz) "
+                   + "-- set the device to 192 kHz in Audio MIDI Setup", rate)
+        }
+    }
 
     private let input: MPXInputSource
     private let ring: StereoInputRingBuffer
-    private let analysis: MeterAnalysis
+    // Rebuilt in start() when the device's ACTUAL rate differs from the
+    // predicted one -- see start().
+    private var analysis: MeterAnalysis
     private let blockFrames: Int
     private let channel: MeterChannel
-    private let sampleRate: Float
+    private var sampleRate: Float
+    // Calibration the analyzer was built with, kept so a rate rebuild
+    // preserves it.
+    private let initialPilotRefKHz: Float
+    private let initialFullScaleKHz: Float?
     // Pre-allocated scratch for the .mix sum so the capture-thread sink never
     // allocates.
     private let mixScratch: UnsafeMutablePointer<Float>
@@ -43,11 +62,11 @@ final class MeterAudioEngine: @unchecked Sendable {
     // feeding an exciter or a hardware analyzer). Independent of the decoded
     // monitor. The flag is read on the analysis thread.
     private let mpxRing: StereoInputRingBuffer
-    private var mpxMonitor: MeterMonitor?
+    private var mpxMonitor: RingBufferPlayer?
     private let mpxPassOn = ManagedAtomic<Bool>(false)
     private var mpxOutDeviceID: AudioDeviceID?
     private var mpxOutPriorRate: Double?
-    private var monitor: MeterMonitor?
+    private var monitor: RingBufferPlayer?
 
     // WAV capture. `wavURL` is the CLI's record-on-start path (decoded stereo);
     // the GUI starts/stops dynamically via startRecording/stopRecording. The
@@ -57,6 +76,13 @@ final class MeterAudioEngine: @unchecked Sendable {
     private let recordLock = NSLock()
     private var recorder: MeterRecorder?
     private var recordMPX = false
+
+    // Uptime nanoseconds of the last non-empty frame delivery from the input
+    // (capture thread). 0 = nothing delivered yet. The liveness watchdog: a
+    // wedged device (USB power-save, SDR stream stall) keeps `isRunning` true
+    // while delivering nothing, and the panel would show frozen readings that
+    // look live.
+    private let lastDeliveryNS = ManagedAtomic<UInt64>(0)
 
     private var consumer: Thread?
     private let runningFlag = ManagedAtomic<Bool>(false)
@@ -71,16 +97,20 @@ final class MeterAudioEngine: @unchecked Sendable {
         monitorGain: Float = 1.0,
         pilotRefKHz: Float = 6.75,
         fullScaleKHz: Float? = nil,
+        preemphasisUS: Int = 50,
         wavURL: URL? = nil,
         input: MPXInputSource
     ) {
         self.input = input
         self.ring = StereoInputRingBuffer(capacityFrames: 1 << 16)
         self.analysis = MeterAnalysis(
-            sampleRate: sampleRate, pilotRefKHz: pilotRefKHz, fullScaleKHz: fullScaleKHz)
+            sampleRate: sampleRate, preemphasisUS: preemphasisUS,
+            pilotRefKHz: pilotRefKHz, fullScaleKHz: fullScaleKHz)
         self.blockFrames = 8192
         self.channel = channel
         self.sampleRate = sampleRate
+        self.initialPilotRefKHz = pilotRefKHz
+        self.initialFullScaleKHz = fullScaleKHz
         self.mixScratchCap = Self.maxSliceFrames
         self.mixScratch = UnsafeMutablePointer<Float>.allocate(capacity: Self.maxSliceFrames)
         self.mixScratch.initialize(repeating: 0.0, count: Self.maxSliceFrames)
@@ -92,6 +122,17 @@ final class MeterAudioEngine: @unchecked Sendable {
     }
 
     deinit {
+        // Stop the input BEFORE freeing the scratch buffer the frame sink
+        // writes into. An engine released without an explicit stop() (an early
+        // return on a start failure, a view model replacing it) otherwise let
+        // the still-running capture callback write into freed memory (audit
+        // B9). `stop()` is idempotent, and both it and `input.stop()` are safe
+        // to call on an engine that never started.
+        if runningFlag.load(ordering: .relaxed) {
+            stop()
+        } else {
+            input.stop()
+        }
         mixScratch.deinitialize(count: mixScratchCap)
         mixScratch.deallocate()
     }
@@ -101,6 +142,10 @@ final class MeterAudioEngine: @unchecked Sendable {
 
     /// Decode-path DC blocker (live).
     func setDCBlock(_ on: Bool) { analysis.setDCBlock(on) }
+
+    /// Receiver de-emphasis time constant in us (50 = Region 1, 75 = the
+    /// Americas / Japan / Korea). Live; only reconfigures on a real change.
+    func setPreemphasisUS(_ us: Int) { analysis.setPreemphasisUS(us) }
 
     /// Bypass the RDS reception-quality gate (live).
     func setForceRDS(_ on: Bool) { analysis.setForceRDS(on) }
@@ -115,7 +160,20 @@ final class MeterAudioEngine: @unchecked Sendable {
         let channel = self.channel
         let scratch = self.mixScratch
         let scratchCap = self.mixScratchCap
+        let lastDeliveryNS = self.lastDeliveryNS
+        // Back-pressure for sources that can wait (the stdin/file replay path):
+        // hold off once the ring is more than half full, so a file read cannot
+        // overwrite samples the analysis thread has not consumed. Real-time
+        // sources ignore this.
+        let backPressureLimit = ring.capacityFrames / 2
+        input.canAcceptFrames = { [weak ring] in
+            guard let ring else { return true }
+            return ring.bufferedFrames() < backPressureLimit
+        }
         input.frameSink = { left, right, frames in
+            if frames > 0 {
+                lastDeliveryNS.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+            }
             switch channel {
             case .left:
                 ring.writeMono(mono: left, frameCount: frames)
@@ -129,8 +187,28 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
         let fmt = try input.start()
 
+        // The analyzer (and everything downstream: monitor, recorder, WAV
+        // header) must run at the rate the device ACTUALLY opened at, not the
+        // one predicted before opening -- prepareInputRate's 1.5 s
+        // setNominalSampleRate timeout can fire on a slow USB rate switch and
+        // the device then finishes switching after AUHAL opens. Before 0.45
+        // the analyzer kept the predicted rate: 48 kHz math on a 192 kHz
+        // stream (pilot PLL, RDS mixer, FIR, spectrum axis all 4x off) while
+        // the GUI displayed the correct rate it wasn't using.
+        if fmt.sampleRate < 128_000 {
+            input.stop()
+            throw UnsupportedRateError(rate: fmt.sampleRate)
+        }
+        if abs(fmt.sampleRate - Double(sampleRate)) > 0.5 {
+            sampleRate = Float(fmt.sampleRate)
+            analysis = MeterAnalysis(
+                sampleRate: sampleRate, preemphasisUS: analysis.preemphasisUS,
+                pilotRefKHz: initialPilotRefKHz,
+                fullScaleKHz: initialFullScaleKHz)
+        }
+
         if monitorEnabled {
-            let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
+            let mon = RingBufferPlayer(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
             try mon.start(outputDeviceID: monitorDeviceID)
             monitor = mon
         }
@@ -190,7 +268,11 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// device would low-pass away the pilot/subcarriers in SRC), so the
     /// device's nominal rate is forced to the capture rate and restored when
     /// the pass-through stops (the Studio MPX-output convention).
-    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?, gainDB: Double = 0) {
+    /// Returns a human-readable reason when the pass-through could not start
+    /// (audit C12: it used to fail silently with the toggle still lit).
+    @discardableResult
+    func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?,
+                           gainDB: Double = 0) -> String? {
         // Tear down the current player + restore the prior device rate.
         mpxPassOn.store(false, ordering: .relaxed)
         mpxMonitor?.stop()
@@ -200,7 +282,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         }
         mpxOutDeviceID = nil
         mpxOutPriorRate = nil
-        guard enabled else { return }
+        guard enabled else { return nil }
         if let dev = deviceID {
             let prior = AudioDevices.currentNominalSampleRate(deviceID: dev)
             let got = AudioDevices.setNominalSampleRate(deviceID: dev, Double(sampleRate))
@@ -217,30 +299,38 @@ final class MeterAudioEngine: @unchecked Sendable {
         // level into an analyzer/exciter -- at +6 dB, deviation above
         // 150/2 = 75 kHz clips the DAC, so keep a little headroom.
         let gain = Float(pow(10.0, gainDB / 20.0))
-        let mon = MeterMonitor(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
-        if (try? mon.start(outputDeviceID: deviceID)) != nil {
+        let mon = RingBufferPlayer(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
+        do {
+            try mon.start(outputDeviceID: deviceID)
             mpxMonitor = mon
             mpxPassOn.store(true, ordering: .relaxed)
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 
     /// Swap the monitor output device live: only the monitor restarts; the
-    /// input source, ring, analysis thread, and recorder are untouched.
-    func setMonitorDevice(_ deviceID: AudioDeviceID?) {
+    /// input source, ring, analysis thread, recorder -- and the MPX
+    /// pass-through, which is an independent player on its own device -- are
+    /// untouched. It used to tear the pass-through down here and never restore
+    /// it, so changing the monitor device silently killed the composite feed
+    /// while its toggle stayed lit (audit B18).
+    ///
+    /// Returns a human-readable reason when the new device could not be
+    /// started, so the caller can say so instead of going quiet (audit C12).
+    @discardableResult
+    func setMonitorDevice(_ deviceID: AudioDeviceID?) -> String? {
         monitor?.stop()
         monitor = nil
-        mpxPassOn.store(false, ordering: .relaxed)
-        mpxMonitor?.stop()
-        mpxMonitor = nil
-        if let dev = mpxOutDeviceID, let prior = mpxOutPriorRate {
-            _ = AudioDevices.setNominalSampleRate(deviceID: dev, prior)
-        }
-        mpxOutDeviceID = nil
-        mpxOutPriorRate = nil
-        guard monitorEnabled else { return }
-        let mon = MeterMonitor(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
-        if (try? mon.start(outputDeviceID: deviceID)) != nil {
+        guard monitorEnabled else { return nil }
+        let mon = RingBufferPlayer(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
+        do {
+            try mon.start(outputDeviceID: deviceID)
             monitor = mon
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 
@@ -258,19 +348,60 @@ final class MeterAudioEngine: @unchecked Sendable {
         let rec = try MeterRecorder(
             url: url, sampleRate: Double(sampleRate), channels: mpx ? 1 : 2)
         recordLock.lock()
+        let replaced = recorder
         recorder = rec
         recordMPX = mpx
         recordLock.unlock()
+        finalizeOffThread(replaced)
     }
 
     /// Stop recording and finalize the WAV header.
     func stopRecording() {
-        recordLock.lock(); recorder = nil; recordLock.unlock()
+        recordLock.lock()
+        let rec = recorder
+        recorder = nil
+        recordLock.unlock()
+        finalizeOffThread(rec)
+    }
+
+    /// `finish()` blocks on a full flush of the pending disk queue, and the
+    /// analysis thread takes `recordLock` on every block -- finalizing while
+    /// holding the lock on the MAIN thread stalled analysis long enough on a
+    /// slow disk for the input ring to overflow (the click class this recorder
+    /// exists to prevent). Swap out under the lock, finalize detached.
+    private func finalizeOffThread(_ rec: MeterRecorder?) {
+        guard let rec else { return }
+        DispatchQueue.global(qos: .utility).async { rec.finish() }
     }
 
     var isRecording: Bool {
         recordLock.lock(); defer { recordLock.unlock() }
         return recorder != nil
+    }
+
+    /// Non-nil once the active recording has stopped writing (disk error, the
+    /// 4 GB WAV limit, misuse). The view model polls this each tick.
+    var recordingFailureReason: String? {
+        recordLock.lock(); defer { recordLock.unlock() }
+        return recorder?.failureReason
+    }
+
+    /// Input-ring transport counters (overflows = the analysis thread fell
+    /// behind and samples were DROPPED; torn reads = a concurrent-read race
+    /// was detected). The view model polls the deltas each tick and raises the
+    /// "samples dropped" badge -- a peak-hold instrument must not silently
+    /// keep a number it computed across a gap.
+    var inputTransport: StereoInputRingBuffer.TransportSnapshot {
+        ring.transportSnapshot()
+    }
+
+    /// Seconds since the input last delivered frames; nil before the first
+    /// delivery. > ~1 s while `running` means the device wedged without
+    /// signalling failure.
+    var secondsSinceLastDelivery: Double? {
+        let ns = lastDeliveryNS.load(ordering: .relaxed)
+        guard ns > 0 else { return nil }
+        return Double(DispatchTime.now().uptimeNanoseconds &- ns) / 1_000_000_000.0
     }
 
     /// Reset the deviation peak-hold + best-separation accumulators.

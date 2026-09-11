@@ -88,6 +88,12 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
 
     var frameSink: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
 
+    /// Deliberately unused: the tuner's capture thread must not stall (its IQ
+    /// ring would overflow one layer down instead, and that gap is what
+    /// `mpxtuner_iq_drops()` reports). The composite ring's own overflow
+    /// counter covers this path.
+    var canAcceptFrames: (() -> Bool)?
+
     private let config: Config
     private let assumedRate: Double
     private var handle: OpaquePointer?
@@ -118,6 +124,26 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
         guard let handle else { return nil }
         let g = mpxtuner_system_gain_db(handle)
         return g <= -999.0 ? nil : g
+    }
+
+    /// IQ samples the tuner lost since it opened, because the demod thread
+    /// fell behind and the IQ ring overwrote unread data. Monotonic; deliberate
+    /// retune flushes are not counted. Non-zero means a gap is baked into the
+    /// accumulated measurements, which is why the Meter raises SAMPLES DROPPED
+    /// on it (before 0.45 the SDRplay ring counted nothing and RTL's counter
+    /// was a function-local static nothing could read).
+    var droppedIQSamples: UInt64 {
+        guard let handle else { return 0 }
+        return mpxtuner_iq_drops(handle)
+    }
+
+    /// Share (0..1) of IQ samples in the tuner's latest demodulated block that
+    /// sat on the converter rails. Elevated = the front end is clipping and
+    /// every level-derived reading carries clipping products; the view model
+    /// feeds it through `RFOverloadGate` into the RF OVERLOAD badge.
+    var iqOverloadRatio: Double {
+        guard let handle else { return 0 }
+        return mpxtuner_iq_overload(handle)
     }
 
     /// IQ capture rate actually in use (Hz) -- may differ from the requested
@@ -237,6 +263,14 @@ final class SDRLibraryInputSource: MPXInputSource, @unchecked Sendable {
             mpxtuner_close(handle)  // joins the capture thread; no callback after this
             self.handle = nil
         }
+    }
+
+    deinit {
+        // The tuner callback holds an UNRETAINED pointer to this object, so a
+        // source released without an explicit stop() -- a failed start, a view
+        // model dropping it -- left the capture thread calling into freed
+        // memory. `stop()` is idempotent and joins that thread (audit B15).
+        stop()
     }
 
     /// Termination-time variant: skips the register-writing RTL device close

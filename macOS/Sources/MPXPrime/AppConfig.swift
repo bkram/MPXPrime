@@ -4,7 +4,7 @@ import Foundation
 // change detector (see Control/ConfigPatch.swift); must live on the
 // declaration for synthesis.
 struct AppConfig: Equatable {
-    static let appVersion: String = "0.44"
+    static let appVersion: String = "0.50"
 
     // Remote-control server ([CONTROL] section; server ships disabled).
     // control_bind other than 127.0.0.1 REQUIRES control_api_key
@@ -48,12 +48,12 @@ struct AppConfig: Equatable {
     //   widebandAGCEnabled/Target/Attack/Release/MaxGain/MinGain,
     //   primeBassEnabled/Amount/FreqHz/Harmonics/Drive/Density/Subharmonics*,
     //   monoBassEnabled/FreqHz,
-    //   stereoWidenEnabled/Width/Center/Mix,
     //   multiband Enabled/Mode/X1-X4Hz/Thresholds/Ratios/Attack/Release/
     //     KneeDB/LinkStrength/MakeupDB/ReleaseProgramDependent/
     //     TransientAwareAttack/InterBandCoupling,
     //   advancedDynamics Enabled/TargetDB/Low-Mid-HighOffsetDB/MaxGainDB/
     //     Density/Speed (single-stage leveler; replaces AGC+multiband when on),
+    //   ssbStereo Enabled/SSBAmount (SSB-leaning stereo encoder),
     //   phaseRotationEnabled/FreqHz, parametricEQEnabled/B1-B4(Freq/Gain/Q),
     //   multibandLimiterEnabled/ThresholdDB/AttackMS/ReleaseMS,
     //   downwardExpanderEnabled/ThresholdDB/Ratio/AttackMS/ReleaseMS,
@@ -81,15 +81,14 @@ struct AppConfig: Equatable {
     //   monoMode, preemphasisUS, pilotLevel, sumLevel, diffLevel,
     //   programLowpassHz, limitMPX/Threshold/Lookahead*, processingBypass,
     //   hpfHz, hfTrimDB/Hz,
-    //   audioCompositeSoftClipEnabled, audioCompositeSmootherEnabled,
-    //   finalMPXSoftClipEnabled,
+    //   audioCompositeSoftClipEnabled,
     //   RDS physical-layer: rdsLevel (injection kHz),
     //                       rdsGaussianEnabled/BWHZ/Taps (modulator FIR)
 
     var sampleRate: Double = 192_000.0
     var fftWindow96kHz: Bool = true
     var blockSize: Int = 1024
-    // Dual-rate audio chain (plan.md "Next up" #1, Phase 2 LANDED 0.30).
+    // Dual-rate audio chain (docs/project-roadmap.md "Next up" #1, Phase 2 LANDED 0.30).
     //
     // When enabled, the entire audio domain (program stereo, multiband,
     // AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs
@@ -127,13 +126,109 @@ struct AppConfig: Equatable {
     var outputDeviceName: String?
     var monitorDeviceName: String?
     var monitorEnabled: Bool = false
-    // Output mode. When true, the MPX output device emits processed stereo L/R
-    // audio (post pre-encode limiter) instead of the FM composite — for feeding
-    // an external stereo coder / RDS encoder. No pilot / subcarrier / RDS /
-    // composite clipper / BS.412 in this mode. Restart-required (changes render
-    // rate, device format, and FIR plumbing). Takes precedence over
-    // `monitorEnabled` (the decoded-MPX monitor is meaningless without a composite).
-    var processedAudioOutput: Bool = false
+    /// Set by `load` when a pre-0.50 "monitor replaces the output" config was
+    /// turned off on the way in. Runtime-only (never stored); the runtimes read
+    /// it once to tell the operator why their monitor is off.
+    var monitorLegacyModeReset: Bool = false
+    /// Level of the operator's listening output, in dB. Rig-specific (it sets
+    /// headphone loudness, not anything on air), so it is remembered with the
+    /// installation and never carried by a snapshot or a preset.
+    var monitorGainDB: Double = 0.0
+    /// The SOUND CARD's own volume controls, asserted by the encoder (Linux).
+    /// nil = unmanaged: the card keeps whatever ALSA / its knob left. When
+    /// set, the engine puts the card's first playback (resp. capture) volume
+    /// control at this level at start and re-asserts it when something moves
+    /// it -- the USB card on the test rig has a hardware knob that quietly
+    /// took the composite 2 dB down, and `alsactl store` cannot beat a knob.
+    /// Written by the mixer API, not by direct config patches; remembered with
+    /// the installation.
+    var alsaPlaybackVolumeDB: Double?
+    var alsaCaptureVolumeDB: Double?
+
+    /// What the output device carries, as ONE operator choice (0.50). Every
+    /// stage's applicability is derived from it through `StageApplicability`,
+    /// and every mode-conditional branch in the engine, both front ends and
+    /// the REST API reads this and nothing else -- there is no second
+    /// spelling of "which mode are we in".
+    ///
+    /// Restart-class: the modes differ in render rate, device format and FIR
+    /// plumbing. The `am` and `hd` modes emit processed L/R on the output
+    /// device; `fm` does too but keeps the FM shape an external stereo coder
+    /// expects; only `mpx` emits a composite (and only there is the decoded
+    /// monitor, the pilot, the stereo subcarrier and RDS meaningful).
+    enum OperatingMode: String, CaseIterable, Sendable {
+        /// Stereo multiplex: FM processing + stereo coder + pilot + RDS.
+        case mpx
+        /// FM processing as L/R for an external stereo coder / RDS encoder.
+        case fm
+        /// Streaming or digital broadcasting (DAB+, AAC): flat, full bandwidth,
+        /// true-peak ceiling. ("HD" in the operator's vocabulary.)
+        case hd
+        /// AM transmitter feed: mono, NRSC pre-emphasis and band limit,
+        /// asymmetric positive-peak headroom.
+        case am
+
+        /// Operator-facing name, identical in the GUI, the dashboard and the docs.
+        var title: String {
+            switch self {
+            case .mpx: return "MPX Output"
+            case .fm: return "FM Output"
+            case .hd: return "HD Output"
+            case .am: return "AM Output"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .mpx: return "Stereo multiplex with pilot and RDS, for an exciter"
+            case .fm: return "FM processing as L/R, for an external stereo coder"
+            case .hd: return "Processing for streaming or digital radio (DAB+, AAC)"
+            case .am: return "Mono processing for an AM transmitter"
+            }
+        }
+
+        /// True when the output device carries processed L/R audio rather than
+        /// the FM composite. The composite path exists only in `mpx`.
+        var isAudioOutput: Bool { self != .mpx }
+    }
+
+    var operatingMode: OperatingMode = .mpx
+
+    /// Pre-0.50 storage (`processed_audio_output` + `processed_audio_target`)
+    /// mapped onto the mode. Also the resolution rule for the REST API's
+    /// aliases, so an old client and an old INI agree.
+    static func migratedOperatingMode(
+        processedAudioOutput: Bool, processedAudioTarget: String
+    ) -> OperatingMode {
+        guard processedAudioOutput else { return .mpx }
+        switch processedAudioTarget.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "digital", "hd": return .hd
+        case "am": return .am
+        default: return .fm
+        }
+    }
+
+    /// The legacy `processed_audio_target` spelling of a mode, for the API alias.
+    static func legacyProcessedAudioTarget(for mode: OperatingMode) -> String {
+        switch mode {
+        case .mpx, .fm: return "fm_coder"
+        case .hd: return "digital"
+        case .am: return "am"
+        }
+    }
+
+    /// The ONE expression every digital bypass in `MPXGenerator` is gated on,
+    /// so the composite path cannot be reached by this feature by construction.
+    var processedAudioDigitalDelivery: Bool { operatingMode == .hd }
+
+    /// Legacy spelling of the mode, kept as an API alias (see
+    /// `ConfigPatch.operatingModeAliases`) and used where "is this an audio
+    /// output" is the only question being asked.
+    var processedAudioOutput: Bool {
+        get { operatingMode.isAudioOutput }
+        set { operatingMode = newValue ? (operatingMode.isAudioOutput ? operatingMode : .fm) : .mpx }
+    }
+
     var processingBypass: Bool = false
     var testToneMode: String = "mono"
     var testToneFreq: Double = 1000.0
@@ -154,12 +249,12 @@ struct AppConfig: Equatable {
     var finalDriveDB: Double = 6.0
     var finalStagePresetID: String = "balanced"
     // Top-level "Station Format" profile that atomically applies a coherent
-    // bundle of multiband / final-stage / PrimeBass / widener / composite-
+    // bundle of multiband / final-stage / PrimeBass / mono-bass / composite-
     // clipper settings per music format (Pop, Rock, CHR, EDM, Urban,
     // Jazz/Classical, News/Talk, Community Radio). Cosmetic label only —
     // the actual chain state is determined by the individual per-stage IDs
     // set when the profile is applied. INI key: `format_profile_id`.
-    var formatProfileID: String = "community_radio"
+    var formatProfileID: String = "music_clean"
     var preemphasisUS: Int = 50
     var hpfHz: Double = 30.0
     var hfTrimDB: Double = 0.0
@@ -200,8 +295,6 @@ struct AppConfig: Equatable {
     // sideband enough to limit 10/14 kHz receiver separation. Keep it
     // available as an opt-in compatibility cleanup stage, but default the
     // normal chain to the cleaner softclip-only path.
-    var audioCompositeSmootherEnabled: Bool = false
-    var finalMPXSoftClipEnabled: Bool = true
     var mpxDeviationKHz: Double = 75.0
     var enRDS: Bool = true
     // AGC defaults: research-grounded "Pop Medium" tuning. AGC ON because
@@ -212,7 +305,12 @@ struct AppConfig: Equatable {
     // ranges; widened release cap supplied by 0.10 program-dependent path.
     var widebandAGCEnabled: Bool = true
     var widebandAGCTargetDB: Double = -14.0
-    var widebandAGCAttackMS: Double = 6.0
+    // 150 ms: a gain RIDER, not a peak controller. 6 ms (pre-0.45) was
+    // limiter-fast on an RMS detector -- a 30 ms drum hit ducked the whole
+    // program by several dB and held it there for the release (Orban WP
+    // "hole punching"; Omnia.11: peaks belong to the limiter). Profiles use
+    // 100-200 ms; `AGCDetectorTests.burstDoesNotDuckTheProgram` pins it.
+    var widebandAGCAttackMS: Double = 150.0
     var widebandAGCReleaseMS: Double = 1500.0
     var widebandAGCMaxGainDB: Double = 10.0
     var widebandAGCMinGainDB: Double = -10.0
@@ -239,12 +337,8 @@ struct AppConfig: Equatable {
     var primeBassDensity: Double = 0.45
     var primeBassSubharmonicsEnabled: Bool = false
     var primeBassSubharmonicsAmount: Double = 0.20
-    var stereoWidenEnabled: Bool = false
     var monoBassEnabled: Bool = true
     var monoBassFreqHz: Double = 125.0
-    var stereoWidenWidth: Double = 0.5
-    var stereoWidenCenter: Double = 0.5
-    var stereoWidenMix: Double = 1.0
     // Multiband defaults: 5-band AC/Pop preset at "Normal" intensity. ON
     // because no commercial processor ships multiband disabled — amateur
     // source mix needs band-aware compression to keep speech and music
@@ -289,7 +383,7 @@ struct AppConfig: Equatable {
     var advancedDynamicsLowOffsetDB: Double = 0.0
     var advancedDynamicsMidOffsetDB: Double = -3.0
     var advancedDynamicsHighOffsetDB: Double = -9.0
-    var advancedDynamicsMaxGainDB: Double = 18.0
+    var advancedDynamicsMaxGainDB: Double = 12.0
     var advancedDynamicsDensity: Double = 0.5
     var advancedDynamicsSpeed: Double = 1.0
     var phaseRotationEnabled: Bool = false
@@ -332,6 +426,15 @@ struct AppConfig: Equatable {
     var hfClipperCrossoverHz: Double = 5_000.0
     var hfClipperThresholdDB: Double = -3.0
     var hfClipperDrive: Double = 1.2
+    // HF limiter: program-controlled pre-emphasis (rides only the boost
+    // component), the gain-riding alternative to the HF clipper. Threshold is
+    // the pre-emphasised L/R peak that triggers it; Max Reduction caps how much
+    // of the boost may be removed (the boost itself bounds the action).
+    var hfLimiterEnabled: Bool = true
+    var hfLimiterThresholdDB: Double = -2.0
+    var hfLimiterAttackMS: Double = 1.5
+    var hfLimiterReleaseMS: Double = 20.0
+    var hfLimiterMaxReductionDB: Double = 12.0
     var dcClipperEnabled: Bool = false
     var dcClipperCeilingDB: Double = -1.0
     var dcClipperCancelFreqHz: Double = 2000.0
@@ -342,6 +445,27 @@ struct AppConfig: Equatable {
     // add density. Only active in processed-audio output mode.
     var processedAudioCoderHasClipper: Bool = true
     var processedAudioFinalClipDriveDB: Double = 6.0
+
+    // True-peak ceiling for the digital delivery target, in dBTP. -1.0 is the
+    // shared recommendation of EBU R128, AES TD1008 and the streaming
+    // platforms; use -2.0 when the next box is a data-reduction codec (DAB+,
+    // AAC), because lossy encoding pushes inter-sample peaks up. Read only
+    // while the digital target is active.
+    var processedAudioCeilingDBTP: Double = -1.0
+
+    // AM Output shaping (0.50). Only read in the `am` operating mode.
+    // `am_preemphasis_us`: NRSC-1 pre-emphasis (75 us) or flat. Restart-class
+    // (reconfigures the pre-emphasis network at the audio-domain rate).
+    var amPreemphasisUS: Int = 75
+    // Audio bandwidth of the AM feed. NRSC-1 specifies 10 kHz; narrower is
+    // common practice to fit the channel and the receiver. Restart-class
+    // (the band-limit FIRs are designed at configure time).
+    var amLowpassHz: Double = 10_000.0
+    // Asymmetric modulation: 47 CFR 73.1570 allows positive peaks to 125 %
+    // while negative peaks stay at 100 %. The negative side is held at
+    // 100/pct of full scale so the positive side can use the rest; calibrate
+    // the transmitter so the NEGATIVE peak reads 100 % modulation.
+    var amPositivePeakPct: Double = 125.0
     var bs412Enabled: Bool = false
     var bs412ThresholdDB: Double = -10.0
     var bs412WindowSeconds: Double = 60.0
@@ -352,8 +476,13 @@ struct AppConfig: Equatable {
     // Cancellation toggles subtract bandpass-filtered clip residual from
     // protected bands of the output. Defaults:
     //   cancelAudio  = false → audio band keeps full clipping (peak control)
-    //   cancelStereo = true  → 23–53 kHz (L-R) subcarrier rides through
-    //                          clean → stereo separation preserved
+    //   stereoGuard  = 0..1  → share of the 22–53 kHz (L-R) subcarrier
+    //                          residual restored (1 = subcarrier rides
+    //                          through untouched; 0 = full composite
+    //                          clipping as Orban / Omnia / Stereo Tool do;
+    //                          `mpx_clipper_stereo_guard`, replaced the
+    //                          `mpx_clipper_cancel_stereo` toggle in 0.45 --
+    //                          default picked from `--verify-stereo-guard`)
     //   cancelPilot  = true  → 17–21 kHz pilot guard kept clean for the
     //                          post-stage 19 kHz pilot injection
     //   cancelRDS    = true  → 55–59 kHz RDS guard kept clean for the
@@ -362,13 +491,13 @@ struct AppConfig: Equatable {
     var compositeClipperThresholdDB: Double = -1.0
     var compositeClipperCeilingDB: Double = -0.3
     var compositeClipperCancelAudio: Bool = false
-    var compositeClipperCancelStereo: Bool = true
+    var compositeClipperStereoGuard: Double = 1.0
     var compositeClipperCancelPilot: Bool = true
     var compositeClipperCancelRDS: Bool = true
     // Look-ahead composite peak control (0.0 disables; recommended preset: 2.0 ms).
     // Sliding-window-max detector + half-cosine attack + 200 Hz smoothed gain
     // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
-    // See plan.md "Enterprise-parity status" / 0.26 release plan.
+    // See docs/project-roadmap.md "Enterprise-parity status" / 0.26 release plan.
     var compositeClipperLookaheadMS: Double = 0.0
     // Composite clipper oversampling factor. 16 (default) matches Optimod
     // 8X00 / Omnia.11 / Stereotool industry practice. 8 trades some
@@ -379,7 +508,12 @@ struct AppConfig: Equatable {
     // count, the Lagrange interpolator step count, and the per-host batch
     // buffer sizes.
     var compositeClipperOversampling: Int = 16
-    var compositeMultibandClipperEnabled: Bool = false
+    // SSB Stereo: experimental SSB-leaning stereo encoder (default off).
+    // Opportunistically suppresses one 38 kHz sideband (toward SSB) to
+    // reclaim composite headroom; hard-gated by --verify-ssb-stereo +
+    // --verify-receiver before preset use.
+    var ssbStereoEnabled: Bool = false
+    var ssbStereoAmount: Double = 0.7
     var rdsLevel: Double = 2.0
     var rdsPI: String = "82FF"
     var rdsPTY: Int = 8
@@ -403,7 +537,7 @@ struct AppConfig: Equatable {
     // On load, the legacy `ps_dynamic` key (if present and the new bank keys
     // are empty) migrates into bank A. The active bank's text is transmitted;
     // selecting an empty bank transmits 8 spaces.
-    var rdsPSA: String = "3s:Stereo- 3s:Fool 3s:MAC 3s:App 3s:FM 3s:MPX 3s:+RDS"
+    var rdsPSA: String = "3s:MPX 3s:Prime 3s:Studio 3s:FM 3s:+RDS"
     var rdsPSB: String = ""
     var rdsPSC: String = ""
     var rdsPSD: String = ""
@@ -489,10 +623,93 @@ struct AppConfig: Equatable {
     var rdsGaussianBWHZ: Double = 2400.0
     var rdsGaussianTaps: Int = 81
 
-    static func load(fromINI path: String) throws -> AppConfig {
-        let resolvedPath = resolveINIPath(path, forWrite: false)
-        let parsed = try INIParser.parseFile(resolvedPath)
+    /// Pre-0.45 Format Profile ids mapped onto the four 0.45 profiles. The
+    /// old ids were deleted without migration in 71cdf78; a station that
+    /// upgraded kept an unknown label AND the old, unowned gain structure
+    /// (field finding 2026-08-29: no peak controller enabled, the safety
+    /// soft-clips doing the clipping). The label alone is migrated here so
+    /// the picker shows a real profile; the operator re-applies it to adopt
+    /// the 0.45 gain structure (see the startup warning in main.swift).
+    static let legacyFormatProfileIDs: [String: String] = [
+        "community_radio": "music_clean",
+        "pop_ac": "music_clean",
+        "chr_top40": "music_loud",
+        "rock": "music_loud",
+        "edm_dance": "music_loud",
+        "urban_hiphop": "music_loud",
+        "jazz_classical": "classical_wide",
+        "news_talk": "speech"
+    ]
 
+    static func migratedFormatProfileID(_ id: String) -> String {
+        legacyFormatProfileIDs[id] ?? id
+    }
+
+    /// True when nothing upstream of the always-on safety soft-clips can
+    /// control composite peaks: with neither the pre-encode limiter nor the
+    /// composite clipper enabled, `softClipSafety` (1x rate, no guard-band
+    /// cancellation, ~hard knee) is the de-facto peak controller -- the
+    /// audible-distortion configuration the 0.45 profiles were reworked to
+    /// prevent. Surfaced as a warning at startup and in the verifier.
+    var safetyClipsAreThePeakController: Bool {
+        !preEncodeAudioLimiterEnabled && !compositeClipperEnabled && !processingBypass
+    }
+
+    static func load(fromINI path: String) throws -> AppConfig {
+        try loadReportingMigration(fromINI: path).config
+    }
+
+    /// `[MPX]` keys that describe the station's hardware calibration rather
+    /// than its processing; a legacy-profile reset keeps them.
+    /// `input_gain_db` joined in 0.50 when the levels became per-device
+    /// calibration (Audio I/O) -- it is operator source staging, and its
+    /// omission was an oversight.
+    static let legacyResetPreservedMPXKeys: [String] = [
+        "pilot_level", "mpx_deviation_khz", "mpx_line_output_dbfs", "output_gain_db",
+        "input_gain_db",
+        "preemphasis_us", "mono_mode", "source_mode",
+        "test_tone_mode", "test_tone_freq", "test_tone_level_db", "test_tone_type"
+    ]
+
+    /// Load, and when the INI carries a pre-0.45 Format Profile id, RESET its
+    /// processing to the migrated profile: the `[MPX]` section is rebuilt from
+    /// defaults + that profile (only the calibration keys above survive), while
+    /// `[RDS]`, `[INTERFACES]` and `[CONTROL]` are kept verbatim. A pre-0.45
+    /// config typically had every peak controller off with the safety soft
+    /// clips doing the clipping (field finding 2026-08-29); carrying that
+    /// gain structure forward under a new label would keep the station
+    /// distorting. `legacyProfileID` is the id that triggered the reset so the
+    /// caller can log it and persist the reset config.
+    static func loadReportingMigration(fromINI path: String) throws
+        -> (config: AppConfig, legacyProfileID: String?) {
+        let resolvedPath = resolveINIPath(path, forWrite: false)
+        var parsed = try INIParser.parseFile(resolvedPath)
+        var legacyProfileID: String?
+        if let raw = parsed["MPX"]?["format_profile_id"], let migrated = legacyFormatProfileIDs[raw] {
+            legacyProfileID = raw
+            parsed = resetProcessingSections(parsed, toProfile: migrated)
+        }
+        return (make(fromParsed: parsed), legacyProfileID)
+    }
+
+    static func resetProcessingSections(
+        _ parsed: [String: [String: String]], toProfile profileID: String
+    ) -> [String: [String: String]] {
+        var fresh = AppConfig()
+        _ = PresetCatalog.applyFormatProfile(id: profileID, to: &fresh)
+        var merged = INIParser.parse(fresh.iniText())
+        for section in ["RDS", "INTERFACES", "CONTROL"] {
+            if let kept = parsed[section] { merged[section] = kept }
+        }
+        var mpx = merged["MPX"] ?? [:]
+        for key in legacyResetPreservedMPXKeys {
+            if let value = parsed["MPX"]?[key] { mpx[key] = value }
+        }
+        merged["MPX"] = mpx
+        return merged
+    }
+
+    static func make(fromParsed parsed: [String: [String: String]]) -> AppConfig {
         let mpx = parsed["MPX"] ?? [:]
         let interfaces = parsed["INTERFACES"] ?? [:]
         let rds = parsed["RDS"] ?? [:]
@@ -509,8 +726,33 @@ struct AppConfig: Equatable {
         cfg.outputDeviceName = interfaces.optionalString("output_device_name")
         cfg.monitorDeviceName = interfaces.optionalString("monitor_device_name")
         cfg.monitorEnabled = interfaces.bool("monitor_enabled", defaultValue: cfg.monitorEnabled)
-        cfg.processedAudioOutput = interfaces.bool(
-            "processed_audio_output", defaultValue: cfg.processedAudioOutput)
+        cfg.monitorGainDB = interfaces.double("monitor_gain_db", defaultValue: cfg.monitorGainDB)
+        cfg.alsaPlaybackVolumeDB = interfaces.optionalString("alsa_playback_volume_db").flatMap(Double.init)
+        cfg.alsaCaptureVolumeDB = interfaces.optionalString("alsa_capture_volume_db").flatMap(Double.init)
+        // Pre-0.50, `monitor_enabled` meant "REPLACE the transmitter feed with
+        // decoded audio on the monitor device". It now means "play the
+        // programme on the monitor device AS WELL", which is a different thing
+        // to inherit silently: the output device that used to sit idle would
+        // start carrying a composite. An INI written before the change has no
+        // `monitor_gain_db`, and that is the marker -- turn the monitor off and
+        // let the operator switch it back on deliberately.
+        if cfg.monitorEnabled, interfaces["monitor_gain_db"] == nil {
+            cfg.monitorEnabled = false
+            cfg.monitorLegacyModeReset = true
+        }
+        // Operating mode. `operating_mode` is the key; a pre-0.50 INI carries
+        // the two booleans it replaced and is migrated here (and rewritten on
+        // the next save). The legacy pair is only read when the new key is
+        // absent, so a patch of `operating_mode` cannot be overridden by a
+        // stale mirror -- the REST API's aliases are resolved in ConfigPatch.
+        if let raw = interfaces.optionalString("operating_mode"),
+           let mode = OperatingMode(rawValue: raw.trimmingCharacters(in: .whitespaces).lowercased()) {
+            cfg.operatingMode = mode
+        } else {
+            cfg.operatingMode = Self.migratedOperatingMode(
+                processedAudioOutput: interfaces.bool("processed_audio_output", defaultValue: false),
+                processedAudioTarget: interfaces.string("processed_audio_target", defaultValue: "fm_coder"))
+        }
         cfg.processingBypass = mpx.bool("processing_bypass", defaultValue: cfg.processingBypass)
         cfg.testToneMode = mpx.string("test_tone_mode", defaultValue: cfg.testToneMode)
         cfg.testToneFreq = mpx.double("test_tone_freq", defaultValue: cfg.testToneFreq)
@@ -528,7 +770,8 @@ struct AppConfig: Equatable {
             min(0.0, mpx.double("mpx_line_output_dbfs", defaultValue: cfg.mpxLineOutputDBFS)))
         cfg.finalDriveDB = mpx.double("final_drive_db", defaultValue: cfg.finalDriveDB)
         cfg.finalStagePresetID = mpx.string("final_stage_preset_id", defaultValue: cfg.finalStagePresetID)
-        cfg.formatProfileID = mpx.string("format_profile_id", defaultValue: cfg.formatProfileID)
+        cfg.formatProfileID = Self.migratedFormatProfileID(
+            mpx.string("format_profile_id", defaultValue: cfg.formatProfileID))
         cfg.preemphasisUS = mpx.int("preemphasis_us", defaultValue: cfg.preemphasisUS)
         cfg.hpfHz = mpx.double("hpf_hz", defaultValue: cfg.hpfHz)
         cfg.hfTrimDB = mpx.double("hf_trim_db", defaultValue: cfg.hfTrimDB)
@@ -576,14 +819,6 @@ struct AppConfig: Equatable {
         cfg.audioCompositeSoftClipEnabled = mpx.bool(
             "audio_composite_softclip_enabled",
             defaultValue: cfg.audioCompositeSoftClipEnabled
-        )
-        cfg.audioCompositeSmootherEnabled = mpx.bool(
-            "audio_composite_smoother_enabled",
-            defaultValue: cfg.audioCompositeSmootherEnabled
-        )
-        cfg.finalMPXSoftClipEnabled = mpx.bool(
-            "final_mpx_softclip_enabled",
-            defaultValue: cfg.finalMPXSoftClipEnabled
         )
         cfg.mpxDeviationKHz = mpx.double("mpx_deviation_khz", defaultValue: cfg.mpxDeviationKHz)
         cfg.enRDS = mpx.bool("en_rds", defaultValue: rds.bool("en_rds", defaultValue: cfg.enRDS))
@@ -642,14 +877,8 @@ struct AppConfig: Equatable {
             defaultValue: mpx.double(
                 "orbass_subharmonics_amount",
                 defaultValue: cfg.primeBassSubharmonicsAmount))
-        cfg.stereoWidenEnabled = mpx.bool(
-            "stereo_widen_enabled", defaultValue: cfg.stereoWidenEnabled)
         cfg.monoBassEnabled = mpx.bool("mono_bass_enabled", defaultValue: cfg.monoBassEnabled)
         cfg.monoBassFreqHz = mpx.double("mono_bass_freq_hz", defaultValue: cfg.monoBassFreqHz)
-        cfg.stereoWidenWidth = mpx.double("stereo_widen_width", defaultValue: cfg.stereoWidenWidth)
-        cfg.stereoWidenCenter = mpx.double(
-            "stereo_widen_center", defaultValue: cfg.stereoWidenCenter)
-        cfg.stereoWidenMix = mpx.double("stereo_widen_mix", defaultValue: cfg.stereoWidenMix)
         cfg.multibandEnabled = mpx.bool("multiband_enabled", defaultValue: cfg.multibandEnabled)
         cfg.multibandMode = mpx.int("multiband_mode", defaultValue: cfg.multibandMode)
         cfg.multibandPresetID = mpx.string("multiband_preset_id", defaultValue: cfg.multibandPresetID)
@@ -764,6 +993,16 @@ struct AppConfig: Equatable {
             "hf_clipper_threshold_db", defaultValue: cfg.hfClipperThresholdDB)
         cfg.hfClipperDrive = mpx.double(
             "hf_clipper_drive", defaultValue: cfg.hfClipperDrive)
+        cfg.hfLimiterEnabled = mpx.bool(
+            "hf_limiter_enabled", defaultValue: cfg.hfLimiterEnabled)
+        cfg.hfLimiterThresholdDB = mpx.double(
+            "hf_limiter_threshold_db", defaultValue: cfg.hfLimiterThresholdDB)
+        cfg.hfLimiterAttackMS = mpx.double(
+            "hf_limiter_attack_ms", defaultValue: cfg.hfLimiterAttackMS)
+        cfg.hfLimiterReleaseMS = mpx.double(
+            "hf_limiter_release_ms", defaultValue: cfg.hfLimiterReleaseMS)
+        cfg.hfLimiterMaxReductionDB = mpx.double(
+            "hf_limiter_max_reduction_db", defaultValue: cfg.hfLimiterMaxReductionDB)
         cfg.dcClipperEnabled = mpx.bool(
             "dc_clipper_enabled", defaultValue: cfg.dcClipperEnabled)
         cfg.dcClipperCeilingDB = mpx.double(
@@ -774,6 +1013,12 @@ struct AppConfig: Equatable {
             "processed_audio_coder_has_clipper", defaultValue: cfg.processedAudioCoderHasClipper)
         cfg.processedAudioFinalClipDriveDB = mpx.double(
             "processed_audio_final_clip_drive_db", defaultValue: cfg.processedAudioFinalClipDriveDB)
+        cfg.processedAudioCeilingDBTP = mpx.double(
+            "processed_audio_ceiling_dbtp", defaultValue: cfg.processedAudioCeilingDBTP)
+        cfg.amPreemphasisUS = mpx.int("am_preemphasis_us", defaultValue: cfg.amPreemphasisUS)
+        cfg.amLowpassHz = mpx.double("am_lowpass_hz", defaultValue: cfg.amLowpassHz)
+        cfg.amPositivePeakPct = mpx.double(
+            "am_positive_peak_pct", defaultValue: cfg.amPositivePeakPct)
         cfg.bs412Enabled = mpx.bool("bs412_enabled", defaultValue: cfg.bs412Enabled)
         cfg.bs412ThresholdDB = mpx.double(
             "bs412_threshold_db", defaultValue: cfg.bs412ThresholdDB)
@@ -787,8 +1032,14 @@ struct AppConfig: Equatable {
             "mpx_clipper_ceiling_db", defaultValue: cfg.compositeClipperCeilingDB)
         cfg.compositeClipperCancelAudio = mpx.bool(
             "mpx_clipper_cancel_audio", defaultValue: cfg.compositeClipperCancelAudio)
-        cfg.compositeClipperCancelStereo = mpx.bool(
-            "mpx_clipper_cancel_stereo", defaultValue: cfg.compositeClipperCancelStereo)
+        // 0.45: the 0...1 `mpx_clipper_stereo_guard` replaced the
+        // `mpx_clipper_cancel_stereo` toggle. An INI that still carries only
+        // the toggle maps True -> 1.0 / False -> 0.0 so its behaviour is kept.
+        let legacyStereoGuard: Double? = mpx["mpx_clipper_cancel_stereo"] == nil
+            ? nil
+            : (mpx.bool("mpx_clipper_cancel_stereo", defaultValue: true) ? 1.0 : 0.0)
+        cfg.compositeClipperStereoGuard = mpx.double(
+            "mpx_clipper_stereo_guard", defaultValue: legacyStereoGuard ?? cfg.compositeClipperStereoGuard)
         cfg.compositeClipperCancelPilot = mpx.bool(
             "mpx_clipper_cancel_pilot", defaultValue: cfg.compositeClipperCancelPilot)
         cfg.compositeClipperCancelRDS = mpx.bool(
@@ -797,10 +1048,10 @@ struct AppConfig: Equatable {
             "mpx_clipper_lookahead_ms", defaultValue: cfg.compositeClipperLookaheadMS)
         cfg.compositeClipperOversampling = mpx.int(
             "mpx_clipper_oversampling", defaultValue: cfg.compositeClipperOversampling)
-        cfg.compositeMultibandClipperEnabled = mpx.bool(
-            "mpx_multiband_clipper_enabled",
-            defaultValue: cfg.compositeMultibandClipperEnabled
-        )
+        cfg.ssbStereoEnabled = mpx.bool(
+            "mpx_ssb_stereo_enabled", defaultValue: cfg.ssbStereoEnabled)
+        cfg.ssbStereoAmount = mpx.double(
+            "mpx_ssb_stereo_amount", defaultValue: cfg.ssbStereoAmount)
         cfg.rdsLevel = rds.double("rds_level", defaultValue: cfg.rdsLevel)
         cfg.rdsPI = rds.string("pi", defaultValue: cfg.rdsPI)
         cfg.rdsPTY = rds.int("pty", defaultValue: cfg.rdsPTY)
@@ -906,7 +1157,17 @@ struct AppConfig: Equatable {
         // Gain parameters — powf(10, x/20) overflows Float beyond ~±680 dB;
         // sane broadcast range is much smaller.
         inputGainDB = max(-40.0, min(40.0, inputGainDB))
-        outputGainDB = max(-40.0, min(40.0, outputGainDB))
+        // Composite (MPX) output: positive output gain can only hurt. The budget
+        // governor divides the whole composite budget by it, so +3 dB squeezes
+        // the audio budget (the same Final Drive then clips ~3 dB deeper) and
+        // puts pilot/RDS on air above their configured injection -- while the
+        // governor still caps the composite at 0.98, so nothing gets louder
+        // (field finding 2026-08-29). Exciter drive belongs to
+        // `mpx_line_output_dbfs`. The processed-audio (L/R) output keeps the
+        // full range: there the trim is a plain feed level.
+        outputGainDB = processedAudioOutput
+            ? max(-40.0, min(40.0, outputGainDB))
+            : max(-40.0, min(0.0, outputGainDB))
         finalDriveDB = max(-20.0, min(20.0, finalDriveDB))
 
         // Pilot / sum / diff levels
@@ -933,7 +1194,11 @@ struct AppConfig: Equatable {
         hpfHz = max(10.0, min(200.0, hpfHz))
         hfTrimDB = max(-12.0, min(0.0, hfTrimDB))
         hfTrimHz = max(500.0, min(12_000.0, hfTrimHz))
-        programLowpassHz = max(8_000.0, min(16_000.0, programLowpassHz))
+        // 20 kHz is the DIGITAL delivery ceiling (a stream or DAB+ carries it).
+        // The composite and FM-coder paths never see more than 16 kHz whatever
+        // is stored here: `effectiveProgramLowpassHz` / `effectiveEncoderLowpassHz`
+        // apply that cap, so widening this clamp cannot move the FM chain.
+        programLowpassHz = max(8_000.0, min(20_000.0, programLowpassHz))
 
         // Limiter
         limitThreshold = max(0.5, min(0.999, limitThreshold))
@@ -974,10 +1239,7 @@ struct AppConfig: Equatable {
         primeBassDensity = max(0.0, min(1.0, primeBassDensity))
         primeBassSubharmonicsAmount = max(0.0, min(1.0, primeBassSubharmonicsAmount))
 
-        // Stereo widener
-        stereoWidenWidth = max(0.0, min(1.0, stereoWidenWidth))
-        stereoWidenCenter = max(0.0, min(1.0, stereoWidenCenter))
-        stereoWidenMix = max(0.0, min(1.0, stereoWidenMix))
+        // Mono bass
         monoBassFreqHz = max(60.0, min(250.0, monoBassFreqHz))
 
         // Multiband
@@ -1046,11 +1308,27 @@ struct AppConfig: Equatable {
         hfClipperCrossoverHz = max(3_000.0, min(8_000.0, hfClipperCrossoverHz))
         hfClipperThresholdDB = max(-12.0, min(0.0, hfClipperThresholdDB))
         hfClipperDrive = max(0.5, min(3.0, hfClipperDrive))
+        hfLimiterThresholdDB = max(-12.0, min(0.0, hfLimiterThresholdDB))
+        hfLimiterAttackMS = max(0.2, min(20.0, hfLimiterAttackMS))
+        hfLimiterReleaseMS = max(5.0, min(500.0, hfLimiterReleaseMS))
+        hfLimiterMaxReductionDB = max(1.0, min(24.0, hfLimiterMaxReductionDB))
 
         // Distortion-cancelled clipper
         dcClipperCeilingDB = max(-6.0, min(0.0, dcClipperCeilingDB))
         dcClipperCancelFreqHz = max(500.0, min(4000.0, dcClipperCancelFreqHz))
         processedAudioFinalClipDriveDB = max(0.0, min(12.0, processedAudioFinalClipDriveDB))
+        processedAudioCeilingDBTP = max(-6.0, min(0.0, processedAudioCeilingDBTP))
+        amPreemphasisUS = amPreemphasisUS == 0 ? 0 : 75
+        amLowpassHz = max(3_000.0, min(10_000.0, amLowpassHz))
+        amPositivePeakPct = max(100.0, min(125.0, amPositivePeakPct))
+        // Monitor level: enough attenuation to be usable on a sensitive
+        // headphone amp, only a little boost (the feed is already near full
+        // scale, and the conditioner clamps above unity).
+        monitorGainDB = max(-40.0, min(6.0, monitorGainDB))
+        // Card mixer targets: wide enough for any USB feature unit; the card
+        // clamps to its own range when applied.
+        alsaPlaybackVolumeDB = alsaPlaybackVolumeDB.map { max(-60.0, min(30.0, $0)) }
+        alsaCaptureVolumeDB = alsaCaptureVolumeDB.map { max(-60.0, min(40.0, $0)) }
 
         // BS.412
         bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
@@ -1060,6 +1338,8 @@ struct AppConfig: Equatable {
         bs412WindowSeconds = max(30.0, min(90.0, bs412WindowSeconds))
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
+        compositeClipperStereoGuard = max(0.0, min(1.0, compositeClipperStereoGuard))
+        ssbStereoAmount = max(0.0, min(1.0, ssbStereoAmount))
         if compositeClipperCeilingDB <= compositeClipperThresholdDB + 0.2 {
             compositeClipperCeilingDB = min(0.0, compositeClipperThresholdDB + 0.5)
         }
@@ -1083,7 +1363,7 @@ struct AppConfig: Equatable {
         // 512-sample minimum: throughput-validated by `DSPThroughputTests`.
         // Lower than 512 hits AVAudioEngine HAL limits on most macOS devices
         // and pushes per-callback overhead past the per-sample DSP work.
-        blockSize = max(512, min(8192, blockSize))
+        blockSize = max(256, min(8192, blockSize))
 
         // RDS
         rdsPI = Self.sanitizedPICode(rdsPI)
@@ -1137,7 +1417,8 @@ struct AppConfig: Equatable {
         return try AppConfig.load(fromINI: tempURL.path)
     }
 
-    func save(toINI path: String) throws {
+    /// The full INI rendering of this config (what `save(toINI:)` writes).
+    func iniText() -> String {
         let mpxLines: [String] = [
             "[MPX]",
             "pilot_level = \(Self.formatFloat(pilotLevel))",
@@ -1172,8 +1453,6 @@ struct AppConfig: Equatable {
             "encoder_fir_enabled = \(Self.boolString(encoderFIREnabled))",
             "multiband_fir_enabled = \(Self.boolString(multibandFIREnabled))",
             "audio_composite_softclip_enabled = \(Self.boolString(audioCompositeSoftClipEnabled))",
-            "audio_composite_smoother_enabled = \(Self.boolString(audioCompositeSmootherEnabled))",
-            "final_mpx_softclip_enabled = \(Self.boolString(finalMPXSoftClipEnabled))",
             "mpx_deviation_khz = \(Self.formatFloat(mpxDeviationKHz))",
             "en_rds = \(Self.boolString(enRDS))",
             "wideband_agc_enabled = \(Self.boolString(widebandAGCEnabled))",
@@ -1194,12 +1473,8 @@ struct AppConfig: Equatable {
             "primebass_density = \(Self.formatFloat(primeBassDensity))",
             "primebass_subharmonics_enabled = \(Self.boolString(primeBassSubharmonicsEnabled))",
             "primebass_subharmonics_amount = \(Self.formatFloat(primeBassSubharmonicsAmount))",
-            "stereo_widen_enabled = \(Self.boolString(stereoWidenEnabled))",
             "mono_bass_enabled = \(Self.boolString(monoBassEnabled))",
             "mono_bass_freq_hz = \(Self.formatFloat(monoBassFreqHz))",
-            "stereo_widen_width = \(Self.formatFloat(stereoWidenWidth))",
-            "stereo_widen_center = \(Self.formatFloat(stereoWidenCenter))",
-            "stereo_widen_mix = \(Self.formatFloat(stereoWidenMix))",
             "multiband_enabled = \(Self.boolString(multibandEnabled))",
             "multiband_mode = \(multibandMode)",
             "multiband_preset_id = \(multibandPresetID)",
@@ -1266,11 +1541,20 @@ struct AppConfig: Equatable {
             "hf_clipper_crossover_hz = \(Self.formatFloat(hfClipperCrossoverHz))",
             "hf_clipper_threshold_db = \(Self.formatFloat(hfClipperThresholdDB))",
             "hf_clipper_drive = \(Self.formatFloat(hfClipperDrive))",
+            "hf_limiter_enabled = \(Self.boolString(hfLimiterEnabled))",
+            "hf_limiter_threshold_db = \(Self.formatFloat(hfLimiterThresholdDB))",
+            "hf_limiter_attack_ms = \(Self.formatFloat(hfLimiterAttackMS))",
+            "hf_limiter_release_ms = \(Self.formatFloat(hfLimiterReleaseMS))",
+            "hf_limiter_max_reduction_db = \(Self.formatFloat(hfLimiterMaxReductionDB))",
             "dc_clipper_enabled = \(Self.boolString(dcClipperEnabled))",
             "dc_clipper_ceiling_db = \(Self.formatFloat(dcClipperCeilingDB))",
             "dc_clipper_cancel_freq_hz = \(Self.formatFloat(dcClipperCancelFreqHz))",
             "processed_audio_coder_has_clipper = \(Self.boolString(processedAudioCoderHasClipper))",
             "processed_audio_final_clip_drive_db = \(Self.formatFloat(processedAudioFinalClipDriveDB))",
+            "processed_audio_ceiling_dbtp = \(Self.formatFloat(processedAudioCeilingDBTP))",
+            "am_preemphasis_us = \(amPreemphasisUS)",
+            "am_lowpass_hz = \(Self.formatFloat(amLowpassHz))",
+            "am_positive_peak_pct = \(Self.formatFloat(amPositivePeakPct))",
             "bs412_enabled = \(Self.boolString(bs412Enabled))",
             "bs412_threshold_db = \(Self.formatFloat(bs412ThresholdDB))",
             "bs412_window_seconds = \(Self.formatFloat(bs412WindowSeconds))",
@@ -1278,12 +1562,13 @@ struct AppConfig: Equatable {
             "mpx_clipper_threshold_db = \(Self.formatFloat(compositeClipperThresholdDB))",
             "mpx_clipper_ceiling_db = \(Self.formatFloat(compositeClipperCeilingDB))",
             "mpx_clipper_cancel_audio = \(Self.boolString(compositeClipperCancelAudio))",
-            "mpx_clipper_cancel_stereo = \(Self.boolString(compositeClipperCancelStereo))",
+            "mpx_clipper_stereo_guard = \(Self.formatFloat(compositeClipperStereoGuard))",
             "mpx_clipper_cancel_pilot = \(Self.boolString(compositeClipperCancelPilot))",
             "mpx_clipper_cancel_rds = \(Self.boolString(compositeClipperCancelRDS))",
             "mpx_clipper_lookahead_ms = \(Self.formatFloat(compositeClipperLookaheadMS))",
             "mpx_clipper_oversampling = \(compositeClipperOversampling)",
-            "mpx_multiband_clipper_enabled = \(Self.boolString(compositeMultibandClipperEnabled))",
+            "mpx_ssb_stereo_enabled = \(Self.boolString(ssbStereoEnabled))",
+            "mpx_ssb_stereo_amount = \(Self.formatFloat(ssbStereoAmount))",
             "test_tone_mode = \(testToneMode)",
             "test_tone_freq = \(Self.formatFloat(testToneFreq))",
             "test_tone_level_db = \(Self.formatFloat(testToneLevelDB))",
@@ -1368,7 +1653,10 @@ struct AppConfig: Equatable {
             "[INTERFACES]",
             "source_mode = \(sourceMode)",
             "monitor_enabled = \(Self.boolString(monitorEnabled))",
-            "processed_audio_output = \(Self.boolString(processedAudioOutput))",
+            "monitor_gain_db = \(Self.formatFloat(monitorGainDB))",
+            "alsa_playback_volume_db = \(alsaPlaybackVolumeDB.map(Self.formatFloat) ?? "")",
+            "alsa_capture_volume_db = \(alsaCaptureVolumeDB.map(Self.formatFloat) ?? "")",
+            "operating_mode = \(operatingMode.rawValue)",
             "monitor_rate_hz = \(Self.formatFloat(sampleRate))",
             // sample_rate was read but never written (a non-default rate
             // vanished on the first autosave); persisted since the remote
@@ -1392,8 +1680,12 @@ struct AppConfig: Equatable {
             "control_port = \(controlPort)",
             "control_api_key = \(controlAPIKey)"
         ]
-        let text = (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""] + controlLines + [""]).joined(
+        return (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""] + controlLines + [""]).joined(
             separator: "\n")
+    }
+
+    func save(toINI path: String) throws {
+        let text = iniText()
         let resolvedPath = Self.resolveINIPath(path, forWrite: true)
         let fileManager = FileManager.default
         let parentDirectory = URL(fileURLWithPath: resolvedPath).deletingLastPathComponent().path

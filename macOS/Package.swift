@@ -95,6 +95,7 @@ var targets: [Target] = [
     // OSAllocatedUnfairLock polyfill, so call sites need zero diffs.
     .target(
         name: "MPXPrimeAcceleration",
+        dependencies: ["MPXPrimeNative"],   // the C SIMD kernels with per-CPU clones
         path: "Sources/MPXPrimeAcceleration"
     ),
     // Shared DSP library: foundational filter primitives (Biquad,

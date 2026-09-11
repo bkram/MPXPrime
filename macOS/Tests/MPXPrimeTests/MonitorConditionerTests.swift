@@ -1,0 +1,156 @@
+import Testing
+import Foundation
+@testable import MPXPrime
+
+/// The monitor conditioner: what the operator HEARS in each operating mode.
+///
+/// The contract is "sounds like the receiving end", so the interesting
+/// assertion is that a pre-emphasised feed comes back FLAT -- if this drifts,
+/// the monitor lies about the tonal balance and an operator would EQ against
+/// a curve that is not on air.
+@Suite("Monitor conditioner")
+struct MonitorConditionerTests {
+
+    private let sampleRate: Float = 48_000
+
+    /// Level of `freq` in the conditioned output, relative to the level of the
+    /// ORIGINAL programme before pre-emphasis, in dB. 0 means the monitor plays
+    /// what went into the chain -- which is what a receiver plays.
+    ///
+    /// The tone is snapped to an exact analysis bin: de-emphasis shifts phase,
+    /// and an off-bin Goertzel leaks by an amount that depends on phase, which
+    /// would show up here as a response error that is not there.
+    private func conditionedResponseDB(tauUS: Int, freq: Double, shape: MonitorConditioner.Shape) -> Double {
+        let frames = 24_000
+        let skip = 4_000
+        let span = Double(frames - skip)
+        let bin = max(1.0, (span * freq / Double(sampleRate)).rounded())
+        let tone = bin * Double(sampleRate) / span
+        var preL = PreemphasisFilter()
+        var preR = PreemphasisFilter()
+        preL.configure(tauUS: tauUS, sampleRate: sampleRate)
+        preR.configure(tauUS: tauUS, sampleRate: sampleRate)
+        var left = [Float](repeating: 0, count: frames)
+        var right = [Float](repeating: 0, count: frames)
+        var source = [Float](repeating: 0, count: frames)
+        for i in 0..<frames {
+            let s = Float(0.05 * sin(2.0 * .pi * tone * Double(i) / Double(sampleRate)))
+            source[i] = s
+            left[i] = preL.process(s)
+            right[i] = preR.process(s)
+        }
+        let inputLevel = goertzel(source, freqHz: tone, startFrame: skip)
+
+        var cond = MonitorConditioner()
+        cond.configure(shape: shape, sampleRate: sampleRate, gainDB: 0)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: frames)
+            }
+        }
+        let outputLevel = goertzel(left, freqHz: tone, startFrame: skip)
+        return 20.0 * log10(max(1e-12, outputLevel / max(1e-12, inputLevel)))
+    }
+
+    private func goertzel(_ buf: [Float], freqHz: Double, startFrame: Int) -> Double {
+        let span = buf.count - startFrame
+        let k = (Double(span) * freqHz / Double(sampleRate)).rounded()
+        let omega = 2.0 * .pi * k / Double(span)
+        let coeff = 2.0 * cos(omega)
+        var s1 = 0.0, s2 = 0.0
+        for i in 0..<span {
+            let s0 = coeff * s1 - s2 + Double(buf[startFrame + i])
+            s2 = s1
+            s1 = s0
+        }
+        let real = s1 - s2 * cos(omega)
+        let imag = s2 * sin(omega)
+        return sqrt(real * real + imag * imag) / Double(span) * 2.0
+    }
+
+    @Test func fmMonitorRemovesThePreemphasisCurve() {
+        // The FM feed carries the operator's pre-emphasis; a listener wants
+        // what a receiver plays, i.e. the curve taken back out.
+        for tau in [50, 75] {
+            for f in [1_000.0, 5_000.0, 10_000.0, 15_000.0] {
+                let delta = conditionedResponseDB(tauUS: tau, freq: f, shape: .deemphasised(tauUS: tau))
+                #expect(abs(delta) < 0.1,
+                        "\(tau) us monitor at \(Int(f)) Hz is \(String(format: "%+.2f", delta)) dB off the programme it started from")
+            }
+        }
+    }
+
+    @Test func amMonitorRemovesTheNRSCCurve() {
+        for f in [500.0, 2_000.0, 5_000.0] {
+            let delta = conditionedResponseDB(tauUS: 75, freq: f, shape: .deemphasised(tauUS: 75))
+            #expect(abs(delta) < 0.1, "NRSC monitor at \(Int(f)) Hz is \(delta) dB off flat")
+        }
+    }
+
+    @Test func flatAndDecodedShapesDoNotTouchTheSamples() {
+        // hd is flat on the wire, and mpx arrives already decoded: the
+        // conditioner must be a pass-through for both, or it would colour a
+        // feed that is already right.
+        for shape in [MonitorConditioner.Shape.flat, .decodedComposite] {
+            var cond = MonitorConditioner()
+            cond.configure(shape: shape, sampleRate: sampleRate, gainDB: 0)
+            var left: [Float] = [0.1, -0.2, 0.9, -0.95, 0.33]
+            var right: [Float] = [-0.1, 0.2, -0.9, 0.95, -0.33]
+            let inL = left, inR = right
+            left.withUnsafeMutableBufferPointer { l in
+                right.withUnsafeMutableBufferPointer { r in
+                    // swiftlint:disable:next force_unwrapping
+                    cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: inL.count)
+                }
+            }
+            #expect(left == inL, "\(shape) changed the left channel")
+            #expect(right == inR, "\(shape) changed the right channel")
+        }
+    }
+
+    @Test func shapePerModeFollowsWhatTheChainActuallyDid() {
+        var cfg = AppConfig()
+        cfg.preemphasisUS = 50
+        cfg.amPreemphasisUS = 75
+        #expect(MonitorConditioner.shape(for: .mpx, config: cfg) == .decodedComposite)
+        #expect(MonitorConditioner.shape(for: .fm, config: cfg) == .deemphasised(tauUS: 50))
+        // hd forces pre-emphasis OFF in the chain, so the monitor must stay
+        // flat no matter what the INI still says.
+        #expect(MonitorConditioner.shape(for: .hd, config: cfg) == .flat)
+        #expect(MonitorConditioner.shape(for: .am, config: cfg) == .deemphasised(tauUS: 75))
+
+        cfg.preemphasisUS = 0
+        cfg.amPreemphasisUS = 0
+        #expect(MonitorConditioner.shape(for: .fm, config: cfg) == .flat,
+                "a flat FM feed has nothing to de-emphasise")
+        #expect(MonitorConditioner.shape(for: .am, config: cfg) == .flat)
+    }
+
+    @Test func monitorLevelScalesAndClampsWithoutTouchingTheFeed() {
+        var cond = MonitorConditioner()
+        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: -6.0)
+        var left: [Float] = [0.5, -0.5]
+        var right: [Float] = [0.5, -0.5]
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: 2)
+            }
+        }
+        let half = 0.5 * powf(10.0, -6.0 / 20.0)
+        #expect(abs(left[0] - half) < 1e-6, "got \(left[0])")
+
+        var hot = MonitorConditioner()
+        hot.configure(shape: .flat, sampleRate: sampleRate, gainDB: 6.0)
+        var l2: [Float] = [0.9, -0.9]
+        var r2: [Float] = [0.9, -0.9]
+        l2.withUnsafeMutableBufferPointer { l in
+            r2.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                hot.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: 2)
+            }
+        }
+        #expect(l2[0] == 1.0 && l2[1] == -1.0, "a boosted monitor must clamp, got \(l2)")
+    }
+}

@@ -43,6 +43,12 @@ public:
   /// Tuner chip name (e.g. "R820T", "E4000"); valid after connect().
   const char *tunerName() const { return m_tunerName.c_str(); }
 
+  /// IQ samples lost since start (ring overwrite + low-latency skip-to-newest).
+  /// Non-zero means a gap is baked into every accumulated measurement.
+  uint64_t droppedIQSamples() const {
+    return m_droppedIQSamples.load(std::memory_order_relaxed);
+  }
+
 private:
   static void asyncCallback(unsigned char *buf, uint32_t len, void *ctx);
   void asyncReadLoop();
@@ -67,6 +73,11 @@ private:
   bool m_ringFull;
   std::atomic<bool> m_lowLatencyMode;
   std::atomic<uint32_t> m_lowLatencyDropEvents;
+  // IQ samples lost since start: ring overwrite (the demod thread fell behind)
+  // plus the deliberate low-latency skip-to-newest. Reported through
+  // mpxtuner_iq_drops() so the Meter can invalidate accumulated readings --
+  // this used to be a function-local static that nothing could read.
+  std::atomic<uint64_t> m_droppedIQSamples{0};
   std::atomic<uint32_t> m_lowLatencyDeadlineEvents;
   std::atomic<uint32_t> m_lowLatencyShortReads;
 };

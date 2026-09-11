@@ -7,6 +7,8 @@
 
 #include "mpx_tuner_capi.h"
 
+#include "dsp/iq_saturation.h"
+
 #include "dsp/liquid_primitives.h"
 #include "fm_demod.h"
 #include "rtl_sdr_device.h"
@@ -22,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -32,6 +35,12 @@
 namespace {
 constexpr int kRtlDemodRate = 256000;   // rate the RTL FM demod chain runs at
 constexpr int kSDRplayDemodRate = 250000;  // ditto for the SDRplay backend
+
+// Highest IQ rate the RTL-SDR's USB bulk pipe reliably sustains. Above it the
+// dongle drops samples SILENTLY (no error from librtlsdr, the ring simply
+// starves and gaps appear), which would corrupt every accumulated Meter
+// statistic without anything to show for the wider spectrum span.
+constexpr int kRtlMaxCaptureRate = 2400000;
 
 // RF spectrum: FFT size and how often a frame is produced. The capture thread
 // is not the audio render thread (it already allocates), but there is no point
@@ -87,6 +96,16 @@ struct MpxTuner {
   std::atomic<bool> running{false};
   std::atomic<bool> alive{false};
   std::atomic<double> signalDbfs{-120.0};
+  // Share of RAW IQ samples in the latest capture block that sat on the
+  // converter rails, measured BEFORE any decimation (raw bytes on the RTL
+  // paths, the shared amplitude threshold on SDRplay floats) -- the wide
+  // path's decimating low-pass rounds clipped flat-tops off, so a
+  // post-decimation check goes blind exactly when the capture is wide. The
+  // Meter reads it through mpxtuner_iq_overload() to warn that a railing
+  // front end inflates every level-derived reading -- measured 2026-08-31: an
+  // auto-gain capture of a strong local read baseband noise 4.1 kHz where a
+  // correctly-set manual gain read 1.15 kHz on the same station.
+  std::atomic<float> iqOverload{0.0f};
 
   std::mutex cmdMutex;
   std::vector<Cmd> cmds;
@@ -249,9 +268,20 @@ struct MpxTuner {
         break;
       }
       size_t n = 0;       // demod-rate sample count
+      // Share of RAW capture samples on the converter rails, this block.
+      // Measured before any decimation: the wide path's 70 dB Kaiser
+      // low-pass rounds clipped flat-tops off, so a post-decimation check
+      // (the demod's own) is desensitized exactly when the capture is wide
+      // -- the case the RF OVERLOAD warning exists for.
+      float overloadShare = 0.0f;
       if (sp) {
         const size_t got = sdrplay.readIQ(iqWide.data(), kBlock);
         if (got == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue; }
+        size_t railed = 0;
+        for (size_t k = 0; k < got; k++) {
+          if (fm_tuner::dsp::isIqSampleSaturated(iqWide[k].real(), iqWide[k].imag())) railed++;
+        }
+        overloadShare = static_cast<float>(railed) / static_cast<float>(got);
         feedSpectrum(iqWide.data(), got);
         n = iqDecim.executeComplexIn(iqWide.data(), got, iqNarrow.data(), iqNarrow.size());
         if (n == 0) continue;
@@ -273,14 +303,22 @@ struct MpxTuner {
           feedSpectrum(iqWide.data(), got);
           n = got;
           demod->processSplit(iq.data(), mpx.data(), nullptr, n);
+          // Factor 1: the demod's own detector already counts the raw bytes.
+          overloadShare = demod->getClippingRatio();
         } else {
           // Wide capture: unpack once and reuse for both the spectrum and the
           // decimation (the packed-uint8 decimator would unpack a second time).
+          size_t railed = 0;
           for (size_t k = 0; k < got; k++) {
+            if (fm_tuner::dsp::isRtlSdrIqByteSaturated(iq[k * 2]) ||
+                fm_tuner::dsp::isRtlSdrIqByteSaturated(iq[k * 2 + 1])) {
+              railed++;
+            }
             iqWide[k] = std::complex<float>(
                 (static_cast<float>(iq[k * 2]) - 127.5f) / 127.5f,
                 (static_cast<float>(iq[k * 2 + 1]) - 127.5f) / 127.5f);
           }
+          overloadShare = static_cast<float>(railed) / static_cast<float>(got);
           feedSpectrum(iqWide.data(), got);
           n = iqDecim.executeComplexIn(iqWide.data(), got, iqNarrow.data(), iqNarrow.size());
           if (n == 0) continue;
@@ -288,6 +326,7 @@ struct MpxTuner {
         }
       }
       signalDbfs.store(demod->getFilteredChannelPowerDbfs(), std::memory_order_relaxed);
+      iqOverload.store(overloadShare, std::memory_order_relaxed);
       out.clear();
       for (size_t i = 0; i < n; i++) {
         const std::uint32_t produced = resampler.execute(mpx[i] * mpxGain, tmp);
@@ -298,6 +337,53 @@ struct MpxTuner {
     alive.store(false, std::memory_order_relaxed);
   }
 };
+
+namespace {
+// Deadlines for the capture-thread stop handshake. A healthy thread acks in
+// well under 100 ms (readIQ blocks at most 35 ms plus one block of demod), so
+// the deadline only ever matters when a backend call is wedged: a dead USB
+// handle inside librtlsdr, or an SDRplay API call that never returns.
+// Termination gets a shorter one so quitting is not held up by a dead dongle.
+constexpr int kStopAckMsClose = 2000;
+constexpr int kStopAckMsTerminate = 750;
+
+/// Stop the capture thread and wait for it to acknowledge. Returns true ONLY
+/// when the thread has actually finished, i.e. when it can no longer
+/// dereference anything owned by `t`.
+///
+/// `alive` is cleared as the capture thread's last act (on the clean exit and
+/// on the device-failure break alike), so it IS the ack; the join() below then
+/// returns immediately. Waiting on it with a deadline -- rather than blocking
+/// in join() forever -- is what makes a wedged backend visible and, more
+/// importantly, keeps the caller from freeing state the thread still uses.
+bool stopCaptureThread(MpxTuner *t, int timeoutMs) {
+  t->running.store(false, std::memory_order_relaxed);
+  if (!t->thread.joinable()) return true;
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  while (t->alive.load(std::memory_order_relaxed) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  if (t->alive.load(std::memory_order_relaxed)) {
+    // Handshake timed out: the capture thread is STILL running and still holds
+    // pointers into `t` -- the device backends, the demod, the resampler, the
+    // IQ and spectrum buffers, and the host's sample callback. Deleting `t`
+    // (or closing the device under it) would hand it freed memory: a crash or
+    // silent corruption on its next IQ block. So detach and LEAK the tuner
+    // deliberately -- the leak is one tuner bounded by the process lifetime,
+    // a use-after-free is neither bounded nor recoverable.
+    t->thread.detach();
+    std::fprintf(stderr,
+                 "[SDR] capture thread did not stop within %d ms; leaking the "
+                 "tuner instead of freeing state it may still touch\n",
+                 timeoutMs);
+    return false;
+  }
+  t->thread.join();
+  return true;
+}
+}  // namespace
 
 extern "C" {
 
@@ -399,8 +485,20 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
     // be an integer multiple of the demod rate so one decimator bridges them.
     t->captureRate = kRtlDemodRate;
     if (cfg->iq_rate_khz > 0) {
-      const int mult = std::max(1, static_cast<int>(std::lround(
+      int mult = std::max(1, static_cast<int>(std::lround(
           static_cast<double>(cfg->iq_rate_khz) * 1000.0 / kRtlDemodRate)));
+      // Clamp the MULTIPLIER (not the rate) so the capture rate stays an exact
+      // integer multiple of the demod rate -- the single `iqDecim` below
+      // bridges the two and its factor must divide out exactly.
+      const int maxMult = std::max(1, kRtlMaxCaptureRate / kRtlDemodRate);
+      if (mult > maxMult) {
+        std::fprintf(stderr,
+                     "[SDR] requested IQ rate %u kHz exceeds the %d Hz the RTL "
+                     "USB pipe sustains; using %d Hz\n",
+                     cfg->iq_rate_khz, kRtlMaxCaptureRate,
+                     kRtlDemodRate * maxMult);
+        mult = maxMult;
+      }
       t->captureRate = kRtlDemodRate * mult;
     }
     if (!t->rtl.setSampleRate(static_cast<uint32_t>(t->captureRate))) {
@@ -459,8 +557,7 @@ MpxTuner *mpxtuner_open(const MpxTunerConfig *cfg, MpxTunerSampleCallback cb,
 
 void mpxtuner_close(MpxTuner *t) {
   if (!t) return;
-  t->running.store(false, std::memory_order_relaxed);
-  if (t->thread.joinable()) t->thread.join();
+  if (!stopCaptureThread(t, kStopAckMsClose)) return;  // leaked deliberately
   if (t->backend == BackendSDRplay) t->sdrplay.disconnect();
   else t->rtl.disconnect();
   delete t;
@@ -468,8 +565,7 @@ void mpxtuner_close(MpxTuner *t) {
 
 void mpxtuner_close_fast(MpxTuner *t) {
   if (!t) return;
-  t->running.store(false, std::memory_order_relaxed);
-  if (t->thread.joinable()) t->thread.join();
+  if (!stopCaptureThread(t, kStopAckMsTerminate)) return;  // leaked deliberately
   if (t->backend == BackendSDRplay) t->sdrplay.disconnect();
   else t->rtl.disconnect(true /*skipDeviceClose*/);
   delete t;
@@ -499,6 +595,17 @@ double mpxtuner_system_gain_db(const MpxTuner *t) {
   if (!t) return -1000.0;
   if (t->backend == BackendSDRplay) return t->sdrplay.systemGainDb();
   return t->rtl.currentGainDb();
+}
+
+uint64_t mpxtuner_iq_drops(const MpxTuner *t) {
+  if (!t) return 0;
+  if (t->backend == BackendSDRplay) return t->sdrplay.droppedIQSamples();
+  return t->rtl.droppedIQSamples();
+}
+
+double mpxtuner_iq_overload(const MpxTuner *t) {
+  if (!t) return 0.0;
+  return static_cast<double>(t->iqOverload.load(std::memory_order_relaxed));
 }
 
 int mpxtuner_backend(const MpxTuner *t) {

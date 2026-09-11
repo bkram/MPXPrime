@@ -177,7 +177,15 @@ public:
   ComplexDecimator(ComplexDecimator &&) = delete;
   ComplexDecimator &operator=(ComplexDecimator &&) = delete;
 
-  void init(std::uint32_t factor, std::uint32_t tapsPerPhase = 12,
+  // 32 taps/phase, not the liquid-typical 12: this filter is the DOMINANT
+  // channel filter on the wide-capture path, and an FM broadcast signal
+  // occupies about +/-90 kHz (Carson, 75 kHz deviation + 15 kHz audio). At 12
+  // taps/phase and factor 4 the Kaiser transition is wide enough to reach
+  // into that band, attenuating exactly the deviation peaks the Meter
+  // measures; 32 taps/phase keeps the passband flat past +/-105 kHz so the
+  // "a wider IQ capture cannot move an MPX measurement" claim holds on the
+  // path that actually runs.
+  void init(std::uint32_t factor, std::uint32_t tapsPerPhase = 32,
             float stopBandAtten = 70.0f);
   void reset();
   std::size_t execute(const uint8_t *iqIn, std::size_t inSamples,
@@ -197,7 +205,7 @@ public:
 private:
   firdecim_crcf m_object = nullptr;
   std::uint32_t m_factor = 1;
-  std::uint32_t m_tapsPerPhase = 12;
+  std::uint32_t m_tapsPerPhase = 32;
   float m_stopBandAtten = 70.0f;
   std::vector<float> m_taps{};
   mutable std::vector<std::complex<float>> m_block{};

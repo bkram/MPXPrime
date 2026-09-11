@@ -9,6 +9,7 @@ import Glibc
 #endif
 import Foundation
 import MPXPrimeCore
+import MPXPrimeNative
 
 #if !canImport(Darwin)
 // Glibc imports C's `stderr` as a mutable global, which Swift 6 strict
@@ -49,12 +50,20 @@ struct CLIOptions {
     var verifyPresets: Bool = false
     var verifyLong: Bool = false
     var verifyReceiver: Bool = false
-    var verifyCompositeMultibandClipper: Bool = false
     var verifyMultibandCoupling: Bool = false
     var verifyAdvancedDynamics: Bool = false
+    var verifySSBStereo: Bool = false
+    var verifyHFTransients: Bool = false
+    var verifyStereoGuard: Bool = false
+    var verifyFinalRide: Bool = false
+    var verifyProgramAB: Bool = false
+    var programABPath: String = ""
+    var programABProfile: String = "music_clean"
+    var programABCSV: String?
     var captureBaseline: Bool = false
     var strictBaseline: Bool = false
     var bench: Bool = false
+    var benchBlocksOnly: Bool = false
     // Remote-control server overrides (headless runs). nil = use the INI's
     // [CONTROL] settings; --control enables with INI/default bind+port;
     // --control-port N enables on that port.
@@ -119,6 +128,21 @@ func parseCLI() -> CLIOptions {
                 options.runSeconds = sec
                 i += 1
             }
+        case "--version":
+            // Print and leave. Until 0.50 this was an unrecognised argument,
+            // and on the old builds that IGNORED unknown arguments the probe
+            // `mpxprime --version` launched a full encoder -- two of them were
+            // found holding the sound card and the control port on the Linux
+            // rig. Exit before anything else can start.
+            // On macOS the DSP runs on Apple's Accelerate; the per-CPU C kernels are
+            // the Linux shim's, so naming them here would mislead (an Intel Mac
+            // would read "sse2" while running vDSP).
+            #if canImport(Accelerate)
+            print("MPX Prime Studio \(AppConfig.appVersion) (DSP: Accelerate)")
+            #else
+            print("MPX Prime Studio \(AppConfig.appVersion) (DSP kernels: \(String(cString: mpx_simd_kernel_variant())))")
+            #endif
+            exit(0)
         case "--gui":
             options.gui = true
         case "--nogui":
@@ -138,10 +162,6 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyReceiver = true
             options.gui = false
-        case "--verify-composite-multiband":
-            options.verify = true
-            options.verifyCompositeMultibandClipper = true
-            options.gui = false
         case "--verify-multiband-coupling":
             options.verify = true
             options.verifyMultibandCoupling = true
@@ -150,6 +170,40 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyAdvancedDynamics = true
             options.gui = false
+        case "--verify-ssb-stereo":
+            options.verify = true
+            options.verifySSBStereo = true
+            options.gui = false
+        case "--verify-hf-transients":
+            options.verify = true
+            options.verifyHFTransients = true
+            options.gui = false
+        case "--verify-stereo-guard":
+            options.verify = true
+            options.verifyStereoGuard = true
+            options.gui = false
+        case "--verify-final-ride":
+            options.verify = true
+            options.verifyFinalRide = true
+            options.gui = false
+        case "--verify-program-ab":
+            if i + 1 < args.count {
+                options.verify = true
+                options.verifyProgramAB = true
+                options.programABPath = normalizeConfigPath(args[i + 1])
+                options.gui = false
+                i += 1
+            }
+        case "--ab-profile":
+            if i + 1 < args.count {
+                options.programABProfile = args[i + 1]
+                i += 1
+            }
+        case "--ab-csv":
+            if i + 1 < args.count {
+                options.programABCSV = normalizeConfigPath(args[i + 1])
+                i += 1
+            }
         case "--capture-baseline":
             options.verify = true
             options.captureBaseline = true
@@ -158,6 +212,10 @@ func parseCLI() -> CLIOptions {
             options.strictBaseline = true
         case "--bench":
             options.bench = true
+            options.gui = false
+        case "--bench-blocks":
+            options.bench = true
+            options.benchBlocksOnly = true
             options.gui = false
         case "--control", "--web":
             // Control flags describe a headless run: MPXPrime --web serves
@@ -172,7 +230,16 @@ func parseCLI() -> CLIOptions {
                 i += 1
             }
         default:
-            break
+            // An UNRECOGNISED argument is a usage error, never something to
+            // ignore. Ignoring it is how `MPXPrime "--verify --seconds 5"`
+            // (one quoted argument -- a shell that does not word-split, e.g.
+            // zsh passing an unsplit variable) silently launched the LIVE GUI
+            // ENCODER instead of the offline verifier: a debug build then
+            // pegs a core, grabs the audio devices and fails on buffers,
+            // while the caller reports a passing "gate". Fail loudly instead.
+            fputs("MPX Prime: unrecognised argument: \(arg)\n", stderr)
+            printUsage()
+            exit(64)  // EX_USAGE
         }
         i += 1
     }
@@ -184,19 +251,26 @@ func printUsage() {
         MPX Prime
 
         Usage:
+          MPXPrime --version
           MPXPrime [--config <path>] [--seconds 30] [--gui|--nogui]
           MPXPrime [--config <path>] --verify [--seconds 5]
           MPXPrime [--config <path>] --verify-presets [--seconds 5]
           MPXPrime [--config <path>] --verify-long [--seconds 30]
           MPXPrime [--config <path>] --verify-receiver [--seconds 5]
-          MPXPrime [--config <path>] --verify-composite-multiband [--seconds 5]
           MPXPrime [--config <path>] --verify-multiband-coupling [--seconds 5]
           MPXPrime [--config <path>] --verify-advanced-dynamics [--seconds 5]
+          MPXPrime [--config <path>] --verify-ssb-stereo [--seconds 5]
+          MPXPrime [--config <path>] --verify-hf-transients [--seconds 5]
+          MPXPrime [--config <path>] --verify-stereo-guard [--seconds 5]
+          MPXPrime [--config <path>] --verify-final-ride [--seconds 4]
+          MPXPrime --verify-program-ab <file-or-dir> [--ab-profile music_clean] [--ab-csv out.csv] [--seconds 30]
           MPXPrime --bench
+          MPXPrime --bench-blocks
 
         Options:
-          --config   Path to macOS INI config (default: ~/Library/Application Support/MPX Prime/MPX Prime.ini)
+          --config   Path to the INI config (default: ~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini; Linux: ~/.local/share/MPX Prime Studio/MPX Prime Studio.ini)
           --seconds  Auto-stop after N seconds (GUI or headless)
+          --version  Print the version and exit
           --gui      Launch native SwiftUI macOS window (default)
           --nogui    Run headless
           --verify   Run the offline MPX verification harness
@@ -207,9 +281,29 @@ func printUsage() {
           --verify-presets  Sweep key multiband presets through the offline verification harness
           --verify-long  Run the longer focused compliance/regression verifier
           --verify-receiver  Run offline receiver-model decode checks
-          --verify-composite-multiband  A/B the experimental composite multiband clipper toggle
           --verify-multiband-coupling  A/B the experimental multiband inter-band coupling toggle
           --verify-advanced-dynamics  A/B the experimental single-stage Advanced Dynamics leveler
+          --verify-ssb-stereo  A/B the experimental SSB Stereo encoder (SSB-leaning stereo encoding)
+          --verify-hf-transients  Hi-hat / cymbal distortion gate: receiver-side HF SINAD, HF crest,
+                     15-23 kHz composite spill per chain variant (field chain, every Format Profile,
+                     per-stage isolation)
+          --verify-stereo-guard  Sweep the composite clipper's stereo guard share (0, 0.25, 0.5, 0.75, 1)
+                     on the Music - Loud profile: clipper / final-limiter duty, peak, deviation,
+                     14 kHz separation, hard-panned S/M, hat / ride HF SINAD -- the table the
+                     shipped `mpx_clipper_stereo_guard` default is picked from
+          --verify-final-ride  Attribute the Final-MPX limiter's duty: one composite-clipper candidate
+                     switched off per row (pilot / RDS / stereo guard, oversampling, knee, look-ahead,
+                     limiter, shaper) on a hot chain and on Music - Loud, every peak controller's duty printed
+          --verify-program-ab <file-or-dir>  Real-music A/B: render each audio file through the shipped
+                     Format Profile with AGC+multiband (A) vs Advanced Dynamics (B), measured with the
+                     Meter engine (BS.412 power, deviation, exceedance) plus decoded crest / image /
+                     band-balance / pumping deltas. macOS only (AVFoundation decode).
+                     --ab-profile <id>  Format Profile for both chains (default music_clean)
+                     --ab-csv <path>    Also write one CSV row per track x chain
+                     --seconds N        Excerpt length per track (default 30; excerpts cap at the
+                                        track length, so a large N measures full tracks)
+          --bench-blocks  Only the block (buffer) size sweep: worst-block cost vs block duration,
+                     I/O latency, bit-identity across sizes, device HAL buffer range (~15 s).
           --bench    Run the DSP benchmark (rate sweep / OS sweep / dual-rate sweep / per-stage A/B);
                      prints a markdown report to stdout. Use a release build for valid numbers.
           --control, --web  Run headless with the remote-control REST API + web
@@ -273,7 +367,24 @@ func startControlServerIfEnabled(
 /// does not exist stays a hard error (probably a typo).
 func loadOrCreateHeadlessConfig(path: String, explicit: Bool) throws -> AppConfig {
     if FileManager.default.fileExists(atPath: path) {
-        return try AppConfig.load(fromINI: path)
+        let loaded = try AppConfig.loadReportingMigration(fromINI: path)
+        let config = loaded.config
+        if let legacy = loaded.legacyProfileID {
+            fputs(
+                "MPX Prime: pre-0.45 config (profile '\(legacy)') -- processing reset to the "
+                    + "'\(config.formatProfileID)' Format Profile; RDS, interfaces, control server and "
+                    + "calibration (pilot, deviation, output level, pre-emphasis) kept. Saved.\n",
+                stderr)
+            try? config.save(toINI: path)
+        }
+        if config.safetyClipsAreThePeakController {
+            fputs(
+                "MPX Prime: WARNING pre-encode limiter and composite clipper are both OFF -- "
+                    + "the safety soft-clips are the only peak controller (audible distortion on "
+                    + "loud/bright program). Re-apply a Format Profile or enable the composite clipper.\n",
+                stderr)
+        }
+        return config
     }
     if explicit {
         throw INIParserError.unreadableFile(path)
@@ -302,12 +413,14 @@ let configPath = options.configPathExplicit
 
 do {
     if options.bench {
-        let report = BenchmarkRunner().run()
+        var runner = BenchmarkRunner()
+        runner.blockSweepOnly = options.benchBlocksOnly
+        let report = runner.run()
         print(report)
         exit(0)
     }
     if options.verify {
-        let defaultDuration = options.verifyLong ? 30.0 : 5.0
+        let defaultDuration = (options.verifyLong || options.verifyProgramAB) ? 30.0 : 5.0
         let duration = max(1.0, options.runSeconds ?? defaultDuration)
         exit(
             try runVerificationHarness(
@@ -316,9 +429,16 @@ do {
                 presetSweep: options.verifyPresets,
                 longRun: options.verifyLong,
                 receiverModel: options.verifyReceiver,
-                compositeMultibandClipperComparison: options.verifyCompositeMultibandClipper,
                 multibandCouplingComparison: options.verifyMultibandCoupling,
                 advancedDynamicsComparison: options.verifyAdvancedDynamics,
+                ssbStereoComparison: options.verifySSBStereo,
+                hfTransientsComparison: options.verifyHFTransients,
+                stereoGuardSweep: options.verifyStereoGuard,
+                finalRideIsolation: options.verifyFinalRide,
+                programAB: options.verifyProgramAB,
+                programABPath: options.programABPath,
+                programABProfile: options.programABProfile,
+                programABCSV: options.programABCSV,
                 captureBaseline: options.captureBaseline,
                 strictBaseline: options.strictBaseline
             )
@@ -371,7 +491,7 @@ do {
             config: cfg,
             inputDeviceID: inputID,
             outputDeviceID: outputID,
-            outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
+            outputMode: cfg.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite
         )
     }
 
@@ -450,7 +570,7 @@ do {
         return ALSAAudioEngine(
             generator: generator,
             config: cfg,
-            outputMode: cfg.processedAudioOutput ? .processedAudio : .mpxComposite
+            outputMode: cfg.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite
         )
     }
     // Build the backend WITHOUT a pre-started engine, bring the control

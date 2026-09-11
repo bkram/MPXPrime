@@ -33,7 +33,7 @@ struct CompositeClipperLookaheadTests {
             thresholdDB: thresholdDB,
             ceilingDB: ceilingDB,
             cancelAudio: false,
-            cancelStereo: true,
+            stereoGuard: 1.0,
             cancelPilot: true,
             cancelRDS: true,
             lookaheadMS: lookaheadMS

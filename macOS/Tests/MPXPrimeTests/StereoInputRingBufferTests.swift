@@ -542,3 +542,38 @@ struct StereoInputRingBufferTests {
             "After drift→matched-rate transition, depth must converge to within 1×deadband of target; ended at \(final), target \(target), deadband \(deadband)")
     }
 }
+
+/// The back-pressure accessor the Meter's stdin/file replay path depends on
+/// (0.45): a producer that can WAIT must be able to see how full the ring is,
+/// because a redirected file never blocks on read. Before this, replaying a
+/// 90 s recorded composite dropped ~18 M frames -- every accumulated reading
+/// (MAX DEV, MPX power, the distribution, the SM.1268 exceedance count) was a
+/// gap artefact while the panel still printed numbers.
+@Suite("Ring back-pressure accessor")
+struct RingBackPressureTests {
+    @Test func capacityIsTheRoundedPowerOfTwoAndBoundsTheFill() {
+        let ring = StereoInputRingBuffer(capacityFrames: 3_000)
+        #expect(ring.capacityFrames == 4_096)  // rounded up
+        #expect(ring.bufferedFrames() == 0)
+
+        // Fill past the half-full mark the engine gates on, and confirm the
+        // gate would have closed BEFORE the ring could overwrite anything.
+        let block = [Float](repeating: 0.25, count: 1_024)
+        var wrote = 0
+        var gateClosedAt: Int?
+        for _ in 0..<3 {
+            block.withUnsafeBufferPointer { bp in
+                ring.writeMono(mono: bp.baseAddress!, frameCount: bp.count)
+            }
+            wrote += block.count
+            if gateClosedAt == nil, ring.bufferedFrames() >= ring.capacityFrames / 2 {
+                gateClosedAt = wrote
+            }
+        }
+        #expect(ring.bufferedFrames() == wrote)
+        #expect(gateClosedAt != nil)
+        // The gate closes with room to spare, so no overflow can occur.
+        #expect(gateClosedAt! < ring.capacityFrames)
+        #expect(ring.stats().overflows == 0)
+    }
+}

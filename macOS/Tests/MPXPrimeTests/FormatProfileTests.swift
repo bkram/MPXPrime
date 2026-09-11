@@ -6,7 +6,7 @@ import Foundation
 @testable import MPXPrime
 
 // Format Profile is the top-level "Station Format" picker — one selection
-// atomically applies multiband + final-stage + PrimeBass + stereo widener
+// atomically applies multiband + final-stage + PrimeBass + mono bass
 // + composite-clipper settings appropriate to the chosen format. These
 // tests pin the contract: each profile resolves to a known per-stage
 // preset ID, the apply path actually mutates the expected config fields,
@@ -29,7 +29,7 @@ struct FormatProfileTests {
     private func makeViewModel() -> MPXPrimeViewModel {
         let tempPath = NSTemporaryDirectory()
             + "MPXPrime-FormatProfileTests-\(UUID().uuidString).ini"
-        return MPXPrimeViewModel(configPath: tempPath)
+        return MPXPrimeViewModel(configPath: tempPath, deviceLister: { [] })
     }
 
     // MARK: - Catalogue integrity
@@ -61,7 +61,6 @@ struct FormatProfileTests {
         ]
         let knownFinalStage: Set<String> = ["balanced", "chr", "punchy", "speech"]
         let knownPrimeBass: Set<String> = ["chr", "urban", "rock", "ac", "talk"]
-        let knownWidener: Set<String> = ["safe_fm", "open_music", "wide_chr"]
 
         for profile in MPXPrimeViewModel.formatProfiles {
             #expect(knownMultiband.contains(profile.multibandPresetID),
@@ -70,69 +69,92 @@ struct FormatProfileTests {
                 "profile `\(profile.id)` references unknown final-stage preset `\(profile.finalStagePresetID)`")
             #expect(knownPrimeBass.contains(profile.primeBassPresetID),
                 "profile `\(profile.id)` references unknown PrimeBass preset `\(profile.primeBassPresetID)`")
-            #expect(knownWidener.contains(profile.widenerPresetID),
-                "profile `\(profile.id)` references unknown widener preset `\(profile.widenerPresetID)`")
+            #expect((60.0...250.0).contains(profile.monoBassFreqHz),
+                "profile `\(profile.id)` mono-bass crossover \(profile.monoBassFreqHz) Hz is outside the clamp")
         }
     }
 
     // MARK: - Apply path
 
-    @Test func applyPopAcProfileSetsExpectedFields() {
+    @Test func applyMusicLoudProfileSetsExpectedFields() {
         let model = makeViewModel()
-        model.applyFormatProfile("pop_ac")
+        model.applyFormatProfile("music_loud")
 
-        #expect(model.config.formatProfileID == "pop_ac")
-        #expect(model.config.multibandPresetID == "5_ac")
+        #expect(model.config.formatProfileID == "music_loud")
+        #expect(model.config.multibandPresetID == "5_chr")
         #expect(model.config.multibandIntensity == "normal")
-        #expect(model.config.finalStagePresetID == "balanced")
-        #expect(model.config.primeBassEnabled == true)
-        #expect(model.config.primeBassPresetID == "ac")
-        #expect(model.config.stereoWidenEnabled == true)  // open_music has stereoWidenEnabled = true
-        #expect(abs(model.config.compositeClipperThresholdDB - (-1.0)) < 1e-6)
-        #expect(abs(model.config.compositeClipperCeilingDB - (-0.3)) < 1e-6)
-        #expect(abs(model.config.finalDriveDB - 6.0) < 1e-6)
-    }
-
-    @Test func applyEdmDanceProfileSetsHeavyMultibandAndHotDrive() {
-        let model = makeViewModel()
-        model.applyFormatProfile("edm_dance")
-
-        #expect(model.config.formatProfileID == "edm_dance")
-        #expect(model.config.multibandPresetID == "5_dance")
-        #expect(model.config.multibandIntensity == "heavy")
         #expect(model.config.finalStagePresetID == "chr")
         #expect(model.config.primeBassEnabled == true)
-        #expect(abs(model.config.compositeClipperThresholdDB - (-0.7)) < 1e-6)
-        #expect(abs(model.config.finalDriveDB - 9.0) < 1e-6)
+        #expect(model.config.primeBassPresetID == "chr")
+        #expect(model.config.monoBassEnabled == true)
+        #expect(abs(model.config.monoBassFreqHz - 115.0) < 1e-6)  // loud profile: mono below 115 Hz
+        #expect(abs(model.config.compositeClipperThresholdDB - (-0.8)) < 1e-6)
+        #expect(abs(model.config.compositeClipperCeilingDB - (-0.2)) < 1e-6)
+        #expect(abs(model.config.finalDriveDB - 8.0) < 1e-6)
+        // HF control is the gain-riding HF limiter, not the HF clipper: the
+        // clipper cost 17 dB of decoded HF SINAD on hats (--verify-hf-transients).
+        #expect(model.config.hfLimiterEnabled == true)
+        #expect(model.config.hfClipperEnabled == false)
     }
 
-    @Test func applyNewsTalkProfileDisablesPrimeBassAndUsesSpeechFinalStage() {
+    @Test func profilesOwnTheFullGainStructure() {
+        // The 2026-08 rework contract: NO profile may leave the safety
+        // soft-clips as the de-facto peak controller. Every profile turns
+        // the AGC, the pre-encode limiter, the composite clipper, and the
+        // final safety limiter on -- from any prior state.
+        let model = makeViewModel()
+        for id in ["music_clean", "music_loud", "speech", "classical_wide"] {
+            model.config.widebandAGCEnabled = false
+            model.config.preEncodeAudioLimiterEnabled = false
+            model.config.limitMPX = false
+            model.config.compositeClipperEnabled = false
+            model.applyFormatProfile(id)
+            #expect(model.config.widebandAGCEnabled, "\(id): AGC must be on")
+            #expect(model.config.preEncodeAudioLimiterEnabled, "\(id): limiter must be on")
+            #expect(model.config.limitMPX, "\(id): safety limiter must be on")
+            #expect(model.config.compositeClipperEnabled, "\(id): composite clipper must be on")
+            #expect(model.config.compositeClipperLookaheadMS > 1.0, "\(id): clipper look-ahead expected")
+        }
+    }
+
+    @Test func applyClassicalWideProfilePreservesDynamics() {
+        let model = makeViewModel()
+        model.applyFormatProfile("classical_wide")
+
+        #expect(model.config.formatProfileID == "classical_wide")
+        #expect(model.config.multibandPresetID == "5_classic")
+        #expect(model.config.multibandIntensity == "light")
+        #expect(model.config.primeBassEnabled == false)
+        #expect(abs(model.config.widebandAGCTargetDB - (-18.0)) < 1e-6)
+        #expect(abs(model.config.finalDriveDB - 3.0) < 1e-6)
+    }
+
+    @Test func applySpeechProfileDisablesPrimeBassAndUsesSpeechFinalStage() {
         let model = makeViewModel()
         // Pre-condition: turn PrimeBass on first so we can prove the
         // profile turned it off.
         model.config.primeBassEnabled = true
-        model.applyFormatProfile("news_talk")
+        model.applyFormatProfile("speech")
 
-        #expect(model.config.formatProfileID == "news_talk")
+        #expect(model.config.formatProfileID == "speech")
+        #expect(model.config.phaseRotationEnabled == true, "speech profile enables the phase rotator")
         #expect(model.config.multibandPresetID == "5_talk")
         #expect(model.config.multibandIntensity == "light")
         #expect(model.config.finalStagePresetID == "speech")
         #expect(model.config.primeBassEnabled == false,
-            "news_talk profile must disable PrimeBass")
-        #expect(model.config.stereoWidenEnabled == false)  // safe_fm has stereoWidenEnabled = false
+            "speech profile must disable PrimeBass")
+        #expect(abs(model.config.monoBassFreqHz - 140.0) < 1e-6)  // speech: mono below 140 Hz
         #expect(abs(model.config.finalDriveDB - 4.5) < 1e-6)
     }
 
-    // MARK: - Default profile (community_radio) preserves shipping defaults
+    // MARK: - Default profile (music_clean)
 
     @Test func defaultProfileMatchesShippingDefaults() {
-        // The community_radio profile should produce a chain state in
-        // the same ballpark as a fresh `AppConfig` — i.e. renaming this
-        // set to "Community Radio" is not a behavioural change at first
-        // install for the headline knobs.
+        // The music_clean profile should produce a chain state in the
+        // same ballpark as a fresh `AppConfig` for the headline knobs.
         let fresh = AppConfig()
         let model = makeViewModel()
-        model.applyFormatProfile("community_radio")
+        model.applyFormatProfile("music_clean")
 
         #expect(model.config.multibandPresetID == fresh.multibandPresetID,
             "default profile multiband ID drifted from AppConfig default")
@@ -147,14 +169,14 @@ struct FormatProfileTests {
 
     @Test func customProfileDoesNotChangePerStageSettings() {
         let model = makeViewModel()
-        // Apply Pop / AC first so we have a known non-default state.
-        model.applyFormatProfile("pop_ac")
+        // Apply Music - Loud first so we have a known non-default state.
+        model.applyFormatProfile("music_loud")
         let snapshotMultiband = model.config.multibandPresetID
         let snapshotIntensity = model.config.multibandIntensity
         let snapshotFinalStage = model.config.finalStagePresetID
         let snapshotPrimeBassEnabled = model.config.primeBassEnabled
         let snapshotPrimeBassID = model.config.primeBassPresetID
-        let snapshotWidenEnabled = model.config.stereoWidenEnabled
+        let snapshotMonoBassFreq = model.config.monoBassFreqHz
         let snapshotClipperThreshold = model.config.compositeClipperThresholdDB
         let snapshotClipperCeiling = model.config.compositeClipperCeilingDB
         let snapshotFinalDrive = model.config.finalDriveDB
@@ -169,7 +191,7 @@ struct FormatProfileTests {
         #expect(model.config.finalStagePresetID == snapshotFinalStage)
         #expect(model.config.primeBassEnabled == snapshotPrimeBassEnabled)
         #expect(model.config.primeBassPresetID == snapshotPrimeBassID)
-        #expect(model.config.stereoWidenEnabled == snapshotWidenEnabled)
+        #expect(abs(model.config.monoBassFreqHz - snapshotMonoBassFreq) < 1e-9)
         #expect(abs(model.config.compositeClipperThresholdDB - snapshotClipperThreshold) < 1e-9)
         #expect(abs(model.config.compositeClipperCeilingDB - snapshotClipperCeiling) < 1e-9)
         #expect(abs(model.config.finalDriveDB - snapshotFinalDrive) < 1e-9)
@@ -207,19 +229,19 @@ struct FormatProfileTests {
         defer { try? FileManager.default.removeItem(atPath: tempPath) }
 
         var cfg = AppConfig()
-        cfg.formatProfileID = "chr_top40"
+        cfg.formatProfileID = "music_loud"
         try cfg.save(toINI: tempPath)
 
         let loaded = try AppConfig.load(fromINI: tempPath)
-        #expect(loaded.formatProfileID == "chr_top40")
+        #expect(loaded.formatProfileID == "music_loud")
     }
 
     // MARK: - Summary helper
 
     @Test func currentFormatProfileSummaryMatchesSelection() {
         let model = makeViewModel()
-        model.applyFormatProfile("rock")
-        let expected = MPXPrimeViewModel.formatProfile(forID: "rock")!.summary
+        model.applyFormatProfile("speech")
+        let expected = MPXPrimeViewModel.formatProfile(forID: "speech")!.summary
         #expect(model.currentFormatProfileSummary == expected)
     }
 

@@ -59,6 +59,10 @@ final class AudioOutputEngine {
         var outputRMS: Float
         var outputPeak: Float
         var deviationKHzPeak: Float
+        /// Peak actually presented to the converter: post `output_gain_db`
+        /// AND post `mpx_line_output_dbfs` (composite mode). The electrical
+        /// headroom readout, complementing the modulation-domain deviation.
+        var dacPeak: Float
         var liveInputPeak: Float
         var liveInputLeftPeak: Float
         var liveInputRightPeak: Float
@@ -69,10 +73,20 @@ final class AudioOutputEngine {
         var agcDetectorDB: Float
         var agcGainDB: Float
         var agcGateActive: Bool
+        var advancedDynamicsActive: Bool
+        var advancedDynamicsDensityDB: Float
+        /// Per-band leveler gains, low to high; fixed scalars because this
+        /// struct is written on the render thread (no arrays).
+        var adBandGain1DB: Float
+        var adBandGain2DB: Float
+        var adBandGain3DB: Float
+        var adBandGain4DB: Float
+        var adBandGain5DB: Float
         var compositeClipperGainReductionDB: Float
         var compositeClipperLookaheadGainReductionDB: Float
         var preEncodeAudioLimiterGainReductionDB: Float
         var mpxSafetyLimiterGainReductionDB: Float
+        var mpxSafetyClipDB: Float
         var pilotInjectionPercent: Float
         var rdsInjectionPercent: Float
         var audioCompositePeak: Float
@@ -115,10 +129,37 @@ final class AudioOutputEngine {
     private var forcedOutputRate: (deviceID: AudioDeviceID, priorRate: Double)?
     private let outputMode: AudioOutputMode
     private var targetDeviationKHz: Float
+    /// Apply the composite line-output trim in place: scale, and when the trim
+    /// is positive, clamp deterministically rather than leave the overshoot to
+    /// the converter. Pure and allocation-free so the render path can call it
+    /// and `LineOutputCalibrationTests` can pin it.
+    @inline(__always)
+    static func applyLineOutput(
+        scale: Float,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        guard frameCount > 0, scale != 1.0 else { return }
+        var s = scale
+        vDSP_vsmul(left, 1, &s, left, 1, vDSP_Length(frameCount))
+        vDSP_vsmul(right, 1, &s, right, 1, vDSP_Length(frameCount))
+        if s > 1.0 {
+            var lo: Float = -1.0
+            var hi: Float = 1.0
+            vDSP_vclip(left, 1, &lo, &hi, left, 1, vDSP_Length(frameCount))
+            vDSP_vclip(right, 1, &lo, &hi, right, 1, vDSP_Length(frameCount))
+        }
+    }
+
     /// Line output calibration: linear scale applied to the composite at the
     /// DAC write, after every meter/scope capture (those stay in the
     /// 0 dBFS = 100% modulation domain). Render-thread only after start.
     private var lineOutputScale: Float
+    /// Divides `output_gain_db` back out of the metered composite so the
+    /// deviation readout stays in the modulation domain (composite mode; 1.0
+    /// otherwise). Updated with the runtime config on the render thread.
+    private var modulationReferenceScale: Float
     private var configuredRenderSampleRate: Double = 0.0
     private var inputRing: StereoInputRingBuffer?
     private var configuredInputSampleRate: Double?
@@ -162,6 +203,7 @@ final class AudioOutputEngine {
         outputRMS: 0.0,
         outputPeak: 0.0,
         deviationKHzPeak: 0.0,
+        dacPeak: 0.0,
         liveInputPeak: 0.0,
         liveInputLeftPeak: 0.0,
         liveInputRightPeak: 0.0,
@@ -172,10 +214,18 @@ final class AudioOutputEngine {
         agcDetectorDB: -120.0,
         agcGainDB: 0.0,
         agcGateActive: false,
+        advancedDynamicsActive: false,
+        advancedDynamicsDensityDB: 0.0,
+        adBandGain1DB: 0.0,
+        adBandGain2DB: 0.0,
+        adBandGain3DB: 0.0,
+        adBandGain4DB: 0.0,
+        adBandGain5DB: 0.0,
         compositeClipperGainReductionDB: 0.0,
         compositeClipperLookaheadGainReductionDB: 0.0,
         preEncodeAudioLimiterGainReductionDB: 0.0,
         mpxSafetyLimiterGainReductionDB: 0.0,
+        mpxSafetyClipDB: 0.0,
         pilotInjectionPercent: 0.0,
         rdsInjectionPercent: 0.0,
         audioCompositePeak: 0.0,
@@ -208,6 +258,16 @@ final class AudioOutputEngine {
     private var preMPXSampleRate: Double = 0.0
     private var monitorMPXLeftScratch: [Float] = []
     private var monitorMPXRightScratch: [Float] = []
+    /// The concurrent listening output: its own device, its own engine, fed by
+    /// a lock-free ring this engine writes one block at a time. The
+    /// transmitter feed never depends on it.
+    /// The config the engine started with. Kept whole for the monitor, which
+    /// needs the OPERATING mode (fm / hd / am all arrive here as
+    /// `.processedAudio`) and the pre-emphasis the chain actually applied.
+    private let startConfig: AppConfig
+    private let monitorOutput = MonitorOutput()
+    private var monitorConditioner = MonitorConditioner()
+    private var monitorRing: StereoInputRingBuffer?
     private var postAGCLeftScratch: [Float] = []
     private var postAGCRightScratch: [Float] = []
     private var preMPXLeftScratch: [Float] = []
@@ -234,6 +294,7 @@ final class AudioOutputEngine {
         outputMode: AudioOutputMode = .mpxComposite
     ) {
         self.generator = generator
+        self.startConfig = config
         self.useInputSource = config.sourceMode.lowercased() == "input"
         self.requestedSampleRate = config.sampleRate
         self.requestedBlockSize = config.blockSize
@@ -242,12 +303,89 @@ final class AudioOutputEngine {
         self.outputMode = outputMode
         self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
         self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
+        // Deviation is a MODULATION-domain readout: the composite is metered
+        // post-`output_gain_db`, so divide the trim back out or the meter
+        // under-reads by exactly that trim (field-measured 30.2 kHz displayed
+        // vs ~75 on air at -7.89 dB). Composite mode only -- processed audio
+        // has no deviation semantics.
+        self.modulationReferenceScale = outputMode == .mpxComposite
+            ? powf(10.0, -Float(config.outputGainDB) / 20.0) : 1.0
         self.encoderFIREnabled = config.encoderFIREnabled
         self.multibandFIREnabled = config.multibandFIREnabled
     }
 
+    /// Bring up the listening output for this run. Never fails the start: a
+    /// monitor that cannot run is a note in the status line, not an
+    /// interruption of the air chain.
+    private func startMonitorOutput(renderRate: Double) {
+        guard outputMode != .monitorAudio else { return }
+        let ring = monitorOutput.prepare(sampleRate: renderRate, blockFrames: requestedBlockSize)
+        monitorRing = ring
+        monitorConditioner.configure(
+            shape: MonitorConditioner.shape(for: startConfig.operatingMode, config: startConfig),
+            sampleRate: Float(renderRate),
+            gainDB: startConfig.monitorGainDB)
+        monitorConditioner.reset()
+        monitorOutput.reconcile(
+            enabled: startConfig.monitorEnabled,
+            monitorUID: startConfig.monitorDeviceUID,
+            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID())
+        if let note = monitorOutput.note, startConfig.monitorEnabled {
+            appendRoutingNote(note)
+        }
+    }
+
+    /// Live-apply the monitor: level, device, on/off. Never restarts the
+    /// transmitter -- swapping the monitor device stops only its player.
+    func applyMonitorSettings(_ config: AppConfig) {
+        guard outputMode != .monitorAudio else { return }
+        monitorConditioner.gainLinear = powf(10.0, Float(config.monitorGainDB) / 20.0)
+        monitorOutput.reconcile(
+            enabled: config.monitorEnabled,
+            monitorUID: config.monitorDeviceUID,
+            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID())
+    }
+
+    /// The processed feed (fm / hd / am) is what leaves the output device, so
+    /// the monitor listens to a COPY of it -- conditioned, never touched in
+    /// place, or the transmitter would hear the de-emphasis too.
+    @inline(__always)
+    private func tapProcessedFeedToMonitor(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        monitorMPXLeftScratch.withUnsafeMutableBufferPointer { monL in
+            monitorMPXRightScratch.withUnsafeMutableBufferPointer { monR in
+                guard let ml = monL.baseAddress, let mr = monR.baseAddress else { return }
+                ml.update(from: left, count: frameCount)
+                mr.update(from: right, count: frameCount)
+                writeMonitorBlock(left: ml, right: mr, frameCount: frameCount)
+            }
+        }
+    }
+
+    /// Copy one rendered block into the monitor ring, conditioned for the mode.
+    /// `left`/`right` already hold what the operator should hear (decoded audio
+    /// in composite mode, the processed feed otherwise).
+    @inline(__always)
+    private func writeMonitorBlock(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        monitorConditioner.process(left: left, right: right, frameCount: frameCount)
+        monitorRing?.write(left: left, right: right, frameCount: frameCount)
+    }
+
     private let encoderFIREnabled: Bool
     private let multibandFIREnabled: Bool
+
+    /// Is the operator's listening output actually playing?
+    var monitorActive: Bool { monitorOutput.isRunning }
+    var monitorActiveForControl: Bool { monitorOutput.isRunning }
+    /// Why it is not, when it is not.
+    var monitorNote: String? { monitorOutput.note }
 
     func start() throws {
         isShuttingDown = false
@@ -298,6 +436,7 @@ final class AudioOutputEngine {
         generator.setMultibandFIREnabled(outputMode != .monitorAudio && multibandFIREnabled)
         configureScopeHistory(renderRate: renderRate, inputRate: configuredInputSampleRate)
         preAllocateBuffers(maxFrames: Int(max(renderRate, 192000.0) * 0.1))
+        startMonitorOutput(renderRate: renderRate)
 
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -387,6 +526,8 @@ final class AudioOutputEngine {
                     if missing >= frames || (missing > 0 && bufferedAfterRead <= rePrimeThreshold) {
                         self.inputPrimed = false
                     }
+                    let monitorOn = self.monitorOutput.isRunning
+                    if monitorOn { self.ensureMonitorScratchCapacity(frames: frames) }
                     self.withOptionalAnalysisBuffers(frames: frames, enabled: needsAnalysisBuffers) { analysis in
                         if self.outputMode == .processedAudio {
                             self.generator.renderAudioOnlyFromInputInPlace(
@@ -395,6 +536,7 @@ final class AudioOutputEngine {
                                 right: rightData,
                                 analysis: analysis
                             )
+                            if monitorOn { self.tapProcessedFeedToMonitor(left: leftData, right: rightData, frameCount: frames) }
                             if throttled {
                                 self.updateThrottledRenderAnalysis(
                                     outputLeft: leftData,
@@ -454,6 +596,35 @@ final class AudioOutputEngine {
                                     }
                                 }
                             }
+                        } else if monitorOn, self.outputMode == .mpxComposite {
+                            // Composite to the transmitter AND the decoded
+                            // audio to the monitor, in one pass. The decode
+                            // cannot move the composite.
+                            self.monitorMPXLeftScratch.withUnsafeMutableBufferPointer { monL in
+                                self.monitorMPXRightScratch.withUnsafeMutableBufferPointer { monR in
+                                    guard let ml = monL.baseAddress, let mr = monR.baseAddress else { return }
+                                    self.generator.renderFromInputInPlace(
+                                        frameCount: frames,
+                                        left: leftData,
+                                        right: rightData,
+                                        analysis: analysis,
+                                        monitorLeft: ml,
+                                        monitorRight: mr
+                                    )
+                                    self.writeMonitorBlock(left: ml, right: mr, frameCount: frames)
+                                }
+                            }
+                            if throttled {
+                                self.updateThrottledRenderAnalysis(
+                                    outputLeft: leftData,
+                                    outputRight: rightData,
+                                    frameCount: frames,
+                                    analysis: analysis,
+                                    captureOutputImageMetrics: captureOutputImageMetrics,
+                                    captureOutputHistory: captureOutputHistory,
+                                    capturePreMPXHistory: capturePreMPXHistory
+                                )
+                            }
                         } else {
                             self.generator.renderFromInputInPlace(
                                 frameCount: frames,
@@ -479,6 +650,8 @@ final class AudioOutputEngine {
                             left: leftData, right: rightData, frameCount: frames)
                     }
                 } else {
+                    let monitorOn = self.monitorOutput.isRunning
+                    if monitorOn { self.ensureMonitorScratchCapacity(frames: frames) }
                     self.withOptionalAnalysisBuffers(frames: frames, enabled: needsAnalysisBuffers) { analysis in
                         if self.outputMode == .processedAudio {
                             self.generator.renderAudioOnlyToneNonInterleaved(
@@ -487,6 +660,7 @@ final class AudioOutputEngine {
                                 right: rightData,
                                 analysis: analysis
                             )
+                            if monitorOn { self.tapProcessedFeedToMonitor(left: leftData, right: rightData, frameCount: frames) }
                             if throttled {
                                 self.updateThrottledRenderAnalysis(
                                     outputLeft: leftData,
@@ -546,6 +720,32 @@ final class AudioOutputEngine {
                                     }
                                 }
                             }
+                        } else if monitorOn, self.outputMode == .mpxComposite {
+                            self.monitorMPXLeftScratch.withUnsafeMutableBufferPointer { monL in
+                                self.monitorMPXRightScratch.withUnsafeMutableBufferPointer { monR in
+                                    guard let ml = monL.baseAddress, let mr = monR.baseAddress else { return }
+                                    self.generator.renderNonInterleaved(
+                                        frameCount: frames,
+                                        left: leftData,
+                                        right: rightData,
+                                        analysis: analysis,
+                                        monitorLeft: ml,
+                                        monitorRight: mr
+                                    )
+                                    self.writeMonitorBlock(left: ml, right: mr, frameCount: frames)
+                                }
+                            }
+                            if throttled {
+                                self.updateThrottledRenderAnalysis(
+                                    outputLeft: leftData,
+                                    outputRight: rightData,
+                                    frameCount: frames,
+                                    analysis: analysis,
+                                    captureOutputImageMetrics: captureOutputImageMetrics,
+                                    captureOutputHistory: captureOutputHistory,
+                                    capturePreMPXHistory: capturePreMPXHistory
+                                )
+                            }
                         } else {
                             self.generator.renderNonInterleaved(
                                 frameCount: frames,
@@ -570,25 +770,18 @@ final class AudioOutputEngine {
                         self.updateInputScopeSnapshot(
                             left: leftData, right: rightData, frameCount: frames)
                     }
-                    // Line output calibration: the LAST operation before the
-                    // DAC, after meters/scopes captured the composite-domain
-                    // signal. Exact 1.0 (the 0 dBFS default) is skipped, so
-                    // the historical path stays bit-identical.
-                    if self.outputMode == .mpxComposite, self.lineOutputScale != 1.0 {
-                        var scale = self.lineOutputScale
-                        vDSP_vsmul(leftData, 1, &scale, leftData, 1, vDSP_Length(frames))
-                        vDSP_vsmul(rightData, 1, &scale, rightData, 1, vDSP_Length(frames))
-                        if scale > 1.0 {
-                            // Positive line gain: anything within +X dB of
-                            // 100% modulation hits the converter ceiling --
-                            // clamp deterministically rather than leave it
-                            // to the DAC.
-                            var lo: Float = -1.0
-                            var hi: Float = 1.0
-                            vDSP_vclip(leftData, 1, &lo, &hi, leftData, 1, vDSP_Length(frames))
-                            vDSP_vclip(rightData, 1, &lo, &hi, rightData, 1, vDSP_Length(frames))
-                        }
-                    }
+                }
+                // Line output calibration: the LAST operation before the DAC,
+                // after meters/scopes captured the composite-domain signal,
+                // and for BOTH branches above -- it lived inside the tone
+                // branch until 0.50, so the operator's line trim was silently
+                // inert on air while the DAC Peak readout assumed it applied.
+                // Exact 1.0 (the 0 dBFS default) is skipped, so the historical
+                // path stays bit-identical.
+                if self.outputMode == .mpxComposite, self.lineOutputScale != 1.0 {
+                    Self.applyLineOutput(
+                        scale: self.lineOutputScale,
+                        left: leftData, right: rightData, frameCount: frames)
                 }
                 return noErr
             }
@@ -623,6 +816,10 @@ final class AudioOutputEngine {
         // next run's first few frames.
         isShuttingDown = true
         meteringEnabled = false
+        // The monitor goes first: its player holds the ring this engine's
+        // render callback writes into.
+        monitorOutput.shutdown()
+        monitorRing = nil
         inputRing = nil
         engine.stop()
         engine.reset()
@@ -669,13 +866,22 @@ final class AudioOutputEngine {
         meterSnapshot.outputRMS = 0.0
         meterSnapshot.outputPeak = 0.0
         meterSnapshot.deviationKHzPeak = 0.0
+        meterSnapshot.dacPeak = 0.0
         meterSnapshot.agcDetectorDB = -120.0
         meterSnapshot.agcGainDB = 0.0
         meterSnapshot.agcGateActive = false
+        meterSnapshot.advancedDynamicsActive = false
+        meterSnapshot.advancedDynamicsDensityDB = 0.0
+        meterSnapshot.adBandGain1DB = 0.0
+        meterSnapshot.adBandGain2DB = 0.0
+        meterSnapshot.adBandGain3DB = 0.0
+        meterSnapshot.adBandGain4DB = 0.0
+        meterSnapshot.adBandGain5DB = 0.0
         meterSnapshot.compositeClipperGainReductionDB = 0.0
         meterSnapshot.compositeClipperLookaheadGainReductionDB = 0.0
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = 0.0
         meterSnapshot.mpxSafetyLimiterGainReductionDB = 0.0
+        meterSnapshot.mpxSafetyClipDB = 0.0
         meterSnapshot.pilotInjectionPercent = 0.0
         meterSnapshot.rdsInjectionPercent = 0.0
         meterSnapshot.audioCompositePeak = 0.0
@@ -1162,6 +1368,11 @@ final class AudioOutputEngine {
     }
 
     func applyRuntimeConfig(_ config: AppConfig) {
+        // The monitor first, and OUTSIDE the equality early-return below: its
+        // settings are not part of the DSP runtime config, and starting or
+        // stopping a second audio device is caller-thread work, never render
+        // work. The transmitter engine is untouched either way.
+        applyMonitorSettings(config)
         let runtime = MPXGenerator.makeRuntimeConfig(from: config)
         runtimeConfigLock.lock()
         if lastQueuedRuntimeConfig == runtime {
@@ -1195,7 +1406,13 @@ final class AudioOutputEngine {
     var meters: MeterSnapshot {
         meterLock.lock()
         let nowUptime = ProcessInfo.processInfo.systemUptime
-        let dt = max(0.0, min(1.0, nowUptime - (lastMeterReadUptime ?? (nowUptime - 0.2))))
+        // Elapsed time since the last read, so the hold decays by wall clock
+        // whatever the caller's rate. The old 1 s clamp made a client polling
+        // every 15 s see the held peak fall 6.6 dB PER POLL -- a tone that
+        // had stepped from -24 to -60 dBFS read -31, -38, -44 over 45 s on
+        // the Intel box. A long gap now decays the hold to nothing, which is
+        // what a peak hold means after 15 s.
+        let dt = max(0.0, min(60.0, nowUptime - (lastMeterReadUptime ?? (nowUptime - 0.2))))
         lastMeterReadUptime = nowUptime
         // Keep peak hold decay stable regardless of UI polling frequency.
         let decayPerSecond: Float = 0.47
@@ -1250,14 +1467,16 @@ final class AudioOutputEngine {
         meterSnapshot.postAGCLeftPeak = postAGCLeftPeak
         meterSnapshot.postAGCRightPeak = postAGCRightPeak
         meterSnapshot.outputPeak = outputPeak
-        meterSnapshot.deviationKHzPeak = outputPeak * targetDeviationKHz
+        meterSnapshot.deviationKHzPeak = outputPeak * targetDeviationKHz * modulationReferenceScale
+        meterSnapshot.dacPeak = outputPeak
+            * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
         meterSnapshot.liveInputPeak = pendingInput
         meterSnapshot.liveInputLeftPeak = pendingInputLeft
         meterSnapshot.liveInputRightPeak = pendingInputRight
         meterSnapshot.livePostAGCLeftPeak = pendingPostAGCLeft
         meterSnapshot.livePostAGCRightPeak = pendingPostAGCRight
         meterSnapshot.liveOutputPeak = pendingOutput
-        meterSnapshot.liveDeviationKHzPeak = pendingOutput * targetDeviationKHz
+        meterSnapshot.liveDeviationKHzPeak = pendingOutput * targetDeviationKHz * modulationReferenceScale
         pendingInputPeak = 0.0
         pendingInputLeftPeak = 0.0
         pendingInputRightPeak = 0.0
@@ -1504,10 +1723,19 @@ final class AudioOutputEngine {
         meterSnapshot.agcDetectorDB = agc.detectorDB
         meterSnapshot.agcGainDB = agc.gainDB
         meterSnapshot.agcGateActive = agc.gateActive
+        let advDyn = generator.advancedDynamicsStatus
+        meterSnapshot.advancedDynamicsActive = advDyn.enabled
+        meterSnapshot.advancedDynamicsDensityDB = advDyn.densityDB
+        meterSnapshot.adBandGain1DB = advDyn.bandGainsDB.0
+        meterSnapshot.adBandGain2DB = advDyn.bandGainsDB.1
+        meterSnapshot.adBandGain3DB = advDyn.bandGainsDB.2
+        meterSnapshot.adBandGain4DB = advDyn.bandGainsDB.3
+        meterSnapshot.adBandGain5DB = advDyn.bandGainsDB.4
         meterSnapshot.compositeClipperGainReductionDB = limiter.gainReductionDB
         meterSnapshot.compositeClipperLookaheadGainReductionDB = limiter.compositeLookaheadGainReductionDB
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = limiter.preEncodeGainReductionDB
         meterSnapshot.mpxSafetyLimiterGainReductionDB = limiter.safetyGainReductionDB
+        meterSnapshot.mpxSafetyClipDB = limiter.safetyClipDB
         meterSnapshot.pilotInjectionPercent = calibration.pilotPercent
         meterSnapshot.rdsInjectionPercent = calibration.rdsPercent
         meterSnapshot.audioCompositePeak = calibration.audioPeak
@@ -1537,6 +1765,8 @@ final class AudioOutputEngine {
             generator.applyRuntimeConfig(runtime)
             targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
             lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
+            modulationReferenceScale = outputMode == .mpxComposite
+                ? powf(10.0, -runtime.outputGainDB / 20.0) : 1.0
             // Flip the source-mode branch live. The render callback
             // reads `useInputSource` at the start of each block; this
             // write lands within ~one block of the toggle on the GUI.

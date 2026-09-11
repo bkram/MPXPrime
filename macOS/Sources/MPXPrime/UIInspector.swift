@@ -84,11 +84,12 @@ private struct CompositeClipperInspector: View {
             )
             .help("Removes clipper distortion under the cleanly-injected 19 kHz pilot (17-21 kHz). Required for reliable stereo decoding — leave on.")
 
-            Toggle(
-                "Protect Stereo Subcarrier",
-                isOn: model.configBinding(\.compositeClipperCancelStereo, runtimeDisposition: .live)
+            DoubleSliderRow(
+                title: "Protect Stereo Subcarrier",
+                value: model.configBinding(\.compositeClipperStereoGuard, runtimeDisposition: .live),
+                range: 0...1, format: "%.2f",
+                tooltip: "Share of the clipper's distortion kept out of the 22-53 kHz stereo (L-R) subcarrier. 1.00 = subcarrier untouched (best HF separation, the Final-MPX limiter rides the overshoot); 0.00 = full composite clipping (industry practice, most loudness)."
             )
-            .help("Keeps clipper distortion out of the 22-53 kHz stereo (L-R) subcarrier region that would otherwise cause stereo breathing.")
 
             Toggle(
                 "Protect RDS",

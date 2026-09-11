@@ -31,17 +31,27 @@ struct AdvancedDynamicsTests {
         return leveler
     }
 
-    /// Steady-state output RMS (dB) for a mono 1 kHz tone at `amplitude`,
-    /// measured over the last second of `seconds` of processing.
+    /// One tone per band, at the band centres of the crossovers above. A
+    /// leveler's job is program with energy in every band; a single tone on
+    /// a crossover skirt would measure the neighbouring band lifting the
+    /// crossover's leak by its full range, not the leveler (the 0.45
+    /// crossovers are deliberately no longer brick walls).
+    private static let bandCentreHz: [Float] = [60.0, 190.0, 760.0, 3_150.0, 9_000.0]
+
+    /// Steady-state output RMS (dB) for the five-tone program at the RMS a
+    /// single sine of `amplitude` would have, measured over the last second
+    /// of `seconds` of processing.
     private func steadyStateOutputDB(amplitude: Float, seconds: Float = 8.0) -> Float {
         var leveler = makeLeveler()
         let frames = Int(sampleRate * seconds)
         let measureStart = frames - Int(sampleRate)
         var sumSq: Double = 0.0
         var count = 0
+        let perTone = amplitude / sqrtf(Float(Self.bandCentreHz.count))
         for i in 0..<frames {
             let t = Float(i) / sampleRate
-            let x = amplitude * sinf(2.0 * Float.pi * 1_000.0 * t)
+            var x: Float = 0.0
+            for f in Self.bandCentreHz { x += perTone * sinf(2.0 * Float.pi * f * t) }
             let (l, _) = leveler.process(left: x, right: x)
             if i >= measureStart {
                 sumSq += Double(l * l)
@@ -99,12 +109,14 @@ struct AdvancedDynamicsTests {
     }
 
     @Test func quietAndLoudProgramConvergeTowardTarget() {
-        // The whole point of a leveler: a 23 dB input difference collapses
+        // The whole point of a leveler: a 16 dB input difference collapses
         // to a small output difference once each has settled at target.
-        // (The quiet level is chosen to need less lift than maxGainDB=18,
-        // so the clamp is not the limiting factor.)
-        let quietDB = steadyStateOutputDB(amplitude: 0.045)  // ~-27 dBFS
+        // (The quiet level is chosen so each of the five bands -- 7 dB below
+        // the total -- needs less lift than maxGainDB=18, so the clamp is
+        // not the limiting factor.)
+        let quietDB = steadyStateOutputDB(amplitude: 0.1)    // ~-20 dBFS total, ~-27 per band
         let loudDB = steadyStateOutputDB(amplitude: 0.63)    // ~-4 dBFS
+        print(String(format: "Advanced Dynamics convergence: quiet -> %.1f dB, loud -> %.1f dB", quietDB, loudDB))
         #expect(abs(loudDB - quietDB) < 6.0,
             "leveler failed to converge: quiet settled at \(quietDB) dB, loud at \(loudDB) dB")
         // And both should sit in the neighbourhood of the target, not at
@@ -167,6 +179,44 @@ struct AdvancedDynamicsTests {
             "transient not caught: peak \(latePeak) vs step \(stepAmp)")
     }
 
+    @Test func naturalDecayIsNotChasedByLift() {
+        // Regression: a solo bell synth "rang" on air -- the leveler saw the
+        // bell's natural fade fall below target and rode gain UP through the
+        // decay (up to max boost), flattening/extending the fade, which the
+        // ear reads as added ringing/sustain. The decay guard must HOLD the
+        // lift while a band's envelope is actively falling.
+        var leveler = makeLeveler()
+        // Settle on a moderate program bed first so gains are realistic.
+        for i in 0..<Int(sampleRate * 4.0) {
+            let t = Float(i) / sampleRate
+            let x = 0.2 * sinf(2.0 * Float.pi * 1_000.0 * t)
+                + 0.1 * sinf(2.0 * Float.pi * 4_000.0 * t)
+            _ = leveler.process(left: x, right: x)
+        }
+        // Strike: inharmonic bell partials with a 0.4 s decay constant.
+        var gainsAtStrike: [Float] = []
+        var maxRise: Float = 0.0
+        let bellFrames = Int(sampleRate * 2.2)
+        for i in 0..<bellFrames {
+            let t = Float(i) / sampleRate
+            let envl = expf(-t / 0.4)
+            let x = envl * (0.5 * sinf(2.0 * Float.pi * 2_100.0 * t)
+                + 0.35 * sinf(2.0 * Float.pi * 5_600.0 * t)
+                + 0.2 * sinf(2.0 * Float.pi * 9_200.0 * t))
+            _ = leveler.process(left: x, right: x)
+            if i == Int(sampleRate * 0.15) {
+                gainsAtStrike = leveler.bandGainsDB
+            }
+            if i > Int(sampleRate * 0.15), i % 480 == 0 {
+                for (g, g0) in zip(leveler.bandGainsDB, gainsAtStrike) {
+                    maxRise = max(maxRise, g - g0)
+                }
+            }
+        }
+        #expect(maxRise < 3.0,
+            "leveler lifted \(maxRise) dB into a naturally decaying bell -- the decay guard must hold the fade")
+    }
+
     @Test func silenceIsNotLiftedByTheGate() {
         var leveler = makeLeveler()
         // Settle on program so gains ride up...
@@ -226,6 +276,10 @@ struct AdvancedDynamicsTests {
         var base = AppConfig()
         base.sampleRate = 192_000.0
         base.sourceMode = "input"
+        // RDS OFF: the text scheduler paces by WALL CLOCK, so two generators
+        // rendered in the same loop can emit different bits on a busy machine
+        // (the documented offline-comparison rule in AGENTS.md).
+        base.enRDS = false
 
         var tweaked = base
         tweaked.advancedDynamicsEnabled = false
@@ -256,6 +310,10 @@ struct AdvancedDynamicsTests {
         var loud = AppConfig()
         loud.sampleRate = 192_000.0
         loud.sourceMode = "input"
+        // RDS OFF: the text scheduler paces by WALL CLOCK, so two generators
+        // rendered in the same loop can emit different bits on a busy machine
+        // (the documented offline-comparison rule in AGENTS.md).
+        loud.enRDS = false
         loud.advancedDynamicsEnabled = true
         loud.widebandAGCEnabled = true
         loud.widebandAGCTargetDB = -30.0        // extreme: would crush audio
@@ -284,6 +342,78 @@ struct AdvancedDynamicsTests {
             #expect(a == b)
             if a != b { break }
         }
+    }
+
+    // The chain-level decay/trajectory/pumping gates live in
+    // --verify-advanced-dynamics (AdvancedDynamicsGate.swift); the unit
+    // suite covers the leveler in isolation.
+
+    @Test func statusReportsLevelerOwningTheDynamics() {
+        // With Advanced Dynamics ON the AGC is bypassed, so agcStatus must
+        // report it inactive with neutral gain (stale telemetry must never
+        // reach a meter), and advancedDynamicsStatus must be live with
+        // band gains that actually move on program.
+        var config = AppConfig()
+        config.sampleRate = 192_000.0
+        config.sourceMode = "input"
+        config.advancedDynamicsEnabled = true
+        config.widebandAGCEnabled = true
+
+        let generator = MPXGenerator(config: config, sampleRate: 192_000.0)
+        for i in 0..<96_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.7 * sinf(2.0 * Float.pi * 300.0 * t)
+                + 0.3 * sinf(2.0 * Float.pi * 4_000.0 * t)
+            _ = generator.renderSingleSample(leftIn: l, rightIn: l * 0.9)
+        }
+        let agc = generator.agcStatus
+        #expect(agc.enabled == false)
+        #expect(agc.gainDB == 0.0)
+        #expect(agc.gateActive == false)
+        let advDyn = generator.advancedDynamicsStatus
+        #expect(advDyn.enabled)
+        let gains = [advDyn.bandGainsDB.0, advDyn.bandGainsDB.1, advDyn.bandGainsDB.2,
+                     advDyn.bandGainsDB.3, advDyn.bandGainsDB.4]
+        #expect(gains.allSatisfy { $0.isFinite })
+        #expect(gains.contains { fabsf($0) > 0.1 })
+    }
+
+    @Test func statusIsNeutralWhenDisabled() {
+        var config = AppConfig()
+        config.sampleRate = 192_000.0
+        config.sourceMode = "input"
+        config.advancedDynamicsEnabled = false
+        config.widebandAGCEnabled = true
+
+        let generator = MPXGenerator(config: config, sampleRate: 192_000.0)
+        for i in 0..<24_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.6 * sinf(2.0 * Float.pi * 500.0 * t)
+            _ = generator.renderSingleSample(leftIn: l, rightIn: l)
+        }
+        #expect(generator.agcStatus.enabled)
+        let advDyn = generator.advancedDynamicsStatus
+        #expect(advDyn.enabled == false)
+        #expect(advDyn.bandGainsDB == (0, 0, 0, 0, 0))
+        #expect(advDyn.densityDB == 0.0)
+    }
+
+    @Test func processingBypassDisablesBothStatuses() {
+        var config = AppConfig()
+        config.sampleRate = 192_000.0
+        config.sourceMode = "input"
+        config.advancedDynamicsEnabled = true
+        config.widebandAGCEnabled = true
+        config.processingBypass = true
+
+        let generator = MPXGenerator(config: config, sampleRate: 192_000.0)
+        for i in 0..<24_000 {
+            let t = Float(i) / 192_000.0
+            let l = 0.6 * sinf(2.0 * Float.pi * 500.0 * t)
+            _ = generator.renderSingleSample(leftIn: l, rightIn: l)
+        }
+        #expect(generator.agcStatus.enabled == false)
+        #expect(generator.advancedDynamicsStatus.enabled == false)
     }
 
     @Test func enabledChainRendersFiniteBoundedComposite() {

@@ -12,6 +12,24 @@ struct ConfigPatchTests {
         AppConfig()
     }
 
+    @Test func cardMixerKeysAreStoredWithoutARestart() throws {
+        // The mixer keys never reach the engine: the backend asserts them on
+        // the card itself. Reporting them restart-class would light the
+        // dashboard's restart badge for a level that is already in effect.
+        let cfg = AppConfig()
+        for key in ["alsa_playback_volume_db", "alsa_capture_volume_db"] {
+            let (patched, outcomes, planes) = try ConfigPatch.apply([key: "-3"], to: cfg)
+            #expect(outcomes[0].disposition == .none, "\(key) reported \(outcomes[0].disposition)")
+            #expect(!planes.restartRequired && !planes.dspLive && !planes.rdsLive)
+            #expect(outcomes[0].effectiveValue == "-3.0")
+            let (_, cleared, _) = try ConfigPatch.apply([key: ""], to: patched)
+            #expect(cleared[0].disposition == .none, "clearing \(key) reported \(cleared[0].disposition)")
+        }
+        #expect(MPXGenerator.makeRuntimeConfig(from: cfg)
+            == MPXGenerator.makeRuntimeConfig(from: try ConfigPatch.apply(["alsa_playback_volume_db": "0"], to: cfg).config),
+            "a mixer key moved the DSP runtime config")
+    }
+
     @Test func roundTripIsStable() throws {
         // The whole mechanism rests on captureAsINIString/loadFromINIString
         // being a fixed point; a drifting round-trip would make every
@@ -23,7 +41,7 @@ struct ConfigPatchTests {
 
     @Test func dspKeyClassifiesLive() throws {
         let cfg = baseConfig()
-        let target = cfg.outputGainDB + 1.5
+        let target = cfg.outputGainDB - 1.5   // composite mode is attenuation-only (0.45)
         let (patched, outcomes, planes) = try ConfigPatch.apply(
             ["output_gain_db": String(target)], to: cfg)
         #expect(abs(patched.outputGainDB - target) < 1e-9)
@@ -81,6 +99,88 @@ struct ConfigPatchTests {
         #expect(plusThree.mpxLineOutputDBFS == 0.0)
     }
 
+    @Test func monitorKeysApplyLive() throws {
+        // Starting, moving or levelling the operator's listening output must
+        // never ask for a restart: the transmitter feed is a separate engine
+        // and has to keep running while the operator plugs in headphones.
+        var cfg = AppConfig()
+        cfg.monitorEnabled = false
+        cfg.monitorDeviceUID = "old-device"
+        cfg.monitorGainDB = 0
+
+        let (patched, outcomes, planes) = try ConfigPatch.apply([
+            "monitor_enabled": "True",
+            "monitor_device_uid": "headphones",
+            "monitor_gain_db": "-8.5"
+        ], to: cfg)
+        for outcome in outcomes {
+            #expect(outcome.disposition == .live,
+                    "\(outcome.key) reported \(outcome.disposition), not live")
+        }
+        #expect(!planes.restartRequired, "a monitor change asked for a restart")
+        #expect(patched.monitorEnabled)
+        #expect(patched.monitorDeviceUID == "headphones")
+        #expect(abs(patched.monitorGainDB + 8.5) < 0.001)
+    }
+
+    @Test func monitorGainIsClamped() throws {
+        // Enough attenuation for a sensitive headphone amp; only a little
+        // boost, because the feed is already near full scale.
+        var cfg = AppConfig()
+        let (loud, _, _) = try ConfigPatch.apply(["monitor_gain_db": "40"], to: cfg)
+        #expect(loud.monitorGainDB == 6.0, "got \(loud.monitorGainDB)")
+        cfg.monitorGainDB = 0
+        let (quiet, _, _) = try ConfigPatch.apply(["monitor_gain_db": "-99"], to: cfg)
+        #expect(quiet.monitorGainDB == -40.0, "got \(quiet.monitorGainDB)")
+    }
+
+    @Test func deliveryTargetClassifiesRestartAndCeilingLive() throws {
+        // The digital delivery target changes filtering and the make-up, so it
+        // is restart-class like the operating mode; the true-peak ceiling only
+        // rescales the make-up and must hot-apply.
+        var cfg = AppConfig()
+        cfg.operatingMode = .fm
+        let (target, targetOutcomes, planesA) = try ConfigPatch.apply(
+            ["operating_mode": "hd"], to: cfg)
+        #expect(targetOutcomes[0].disposition == .restartRequired)
+        #expect(planesA.restartRequired)
+        #expect(target.operatingMode == .hd)
+        let (ceiling, ceilingOutcomes, planesB) = try ConfigPatch.apply(
+            ["processed_audio_ceiling_dbtp": "-2.0"], to: cfg)
+        #expect(ceilingOutcomes[0].disposition == .live)
+        #expect(planesB.dspLive && !planesB.restartRequired)
+        #expect(abs(ceiling.processedAudioCeilingDBTP - (-2.0)) < 1e-9)
+        // Out-of-range values clamp; an unknown mode word falls back to MPX.
+        let (clamped, _, _) = try ConfigPatch.apply(["processed_audio_ceiling_dbtp": "-9.0"], to: cfg)
+        #expect(abs(clamped.processedAudioCeilingDBTP - (-6.0)) < 1e-9)
+        let (bogus, _, _) = try ConfigPatch.apply(["operating_mode": "hd-radio"], to: cfg)
+        #expect(bogus.operatingMode == .mpx)
+    }
+
+    @Test func preZeroFiftyModeKeysStillPatch() throws {
+        // The REST API keeps accepting the two keys `operating_mode` replaced,
+        // in either order and with or without the other, so an old client and
+        // an old script keep working.
+        let cfg = AppConfig()
+        let (fm, fmOutcomes, _) = try ConfigPatch.apply(
+            ["processed_audio_output": "True"], to: cfg)
+        #expect(fm.operatingMode == .fm)
+        #expect(fmOutcomes[0].key == "processed_audio_output")
+        #expect(fmOutcomes[0].disposition == .restartRequired)
+
+        let (hd, _, _) = try ConfigPatch.apply(
+            ["processed_audio_output": "True", "processed_audio_target": "digital"], to: cfg)
+        #expect(hd.operatingMode == .hd, "a combined legacy patch must land on HD whatever the key order")
+
+        var fmCfg = cfg
+        fmCfg.operatingMode = .fm
+        let (hd2, _, _) = try ConfigPatch.apply(["processed_audio_target": "digital"], to: fmCfg)
+        #expect(hd2.operatingMode == .hd, "the target alone must move an already-processed mode")
+
+        let (back, _, _) = try ConfigPatch.apply(["processed_audio_output": "False"], to: fmCfg)
+        #expect(back.operatingMode == .mpx)
+    }
+
     @Test func sampleRateClassifiesRestart() throws {
         let cfg = baseConfig()
         let (patched, outcomes, planes) = try ConfigPatch.apply(
@@ -112,7 +212,7 @@ struct ConfigPatchTests {
         let cfg = baseConfig()
         let (patched, outcomes, planes) = try ConfigPatch.apply(
             [
-                "output_gain_db": String(cfg.outputGainDB + 2.0),
+                "output_gain_db": String(cfg.outputGainDB - 2.0),
                 "ps_a": "WEBCTRL",
                 "sample_rate": "96000",
             ], to: cfg)

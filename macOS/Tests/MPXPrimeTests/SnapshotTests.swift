@@ -25,7 +25,127 @@ struct SnapshotTests {
 
     private func makeViewModel(at path: String? = nil) -> MPXPrimeViewModel {
         let configPath = path ?? makeTempConfigPath()
-        return MPXPrimeViewModel(configPath: configPath)
+        return MPXPrimeViewModel(configPath: configPath, deviceLister: { [] })
+    }
+
+    // MARK: - Active/modified state tracking
+    //
+    // Regression coverage for the false "edited since loaded" flags: the
+    // modified flip must be an EXACT config comparison against the active
+    // snapshot's baseline, never a side effect of binding churn rewriting
+    // identical values after a load/save.
+
+    // MARK: - Installation keys preserved on load (0.50)
+    //
+    // Snapshots restore the SOUND, not the wiring: devices, engine format,
+    // operating mode, level calibration, and control-server keys stay from
+    // the live config on load (AppConfig.installationPreservedKeysBySection);
+    // save and export remain full-config.
+
+    @Test func loadPreservesInstallationKeysFromLiveConfig() {
+        let model = makeViewModel()
+        model.config.pilotLevel = 0.09
+        model.saveSnapshot(slot: 0, name: "Sound")
+        // The installation moves after the save...
+        model.config.outputDeviceUID = "rig-b"
+        model.config.outputGainDB = -9.0
+        model.config.pilotLevel = 0.10
+        model.loadSnapshot(slot: 0)
+        // ...device + calibration kept from live, the sound restored.
+        #expect(model.config.outputDeviceUID == "rig-b")
+        #expect(model.config.outputGainDB == -9.0)
+        #expect(abs(model.config.pilotLevel - 0.09) < 1e-9)
+        #expect(model.activeSnapshotModified == false)
+    }
+
+    @Test func installationChangesAfterLoadDoNotFlipModified() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Sound")
+        model.loadSnapshot(slot: 0)
+        // Calibration/installation churn is not a preset edit...
+        model.setInputGainLive(-2.0)
+        #expect(model.activeSnapshotModified == false)
+        // ...a sound change is.
+        model.configBinding(\.pilotLevel).wrappedValue = 0.10
+        #expect(model.activeSnapshotModified == true)
+    }
+
+    @Test func snapshotContentAndExportStayFullConfig() {
+        let model = makeViewModel()
+        model.config.outputGainDB = -6.0
+        model.saveSnapshot(slot: 0, name: "Full")
+        let ini = model.snapshots[0]?.configINIText ?? ""
+        #expect(ini.contains("output_gain_db"))
+        #expect(ini.contains("[CONTROL]"))
+    }
+
+    @Test func saveAndLoadLeaveModifiedFalse() {
+        let model = makeViewModel()
+        model.config.pilotLevel = 0.09
+        model.saveSnapshot(slot: 0, name: "State")
+        #expect(model.activeSnapshotID != nil)
+        #expect(model.activeSnapshotModified == false)
+
+        model.loadSnapshot(slot: 0)
+        #expect(model.activeSnapshotModified == false)
+        #expect(model.statusText.contains("Loaded"))
+    }
+
+    @Test func identicalValueChurnDoesNotFlipModified() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Churn")
+        // Simulate the post-load binding churn: rewrite an existing value
+        // with the SAME value through the canonical binding path.
+        let binding = model.configBinding(\.finalDriveDB, runtimeDisposition: .live)
+        binding.wrappedValue = model.config.finalDriveDB
+        #expect(model.activeSnapshotModified == false,
+            "identical-value write must not read as an edit")
+    }
+
+    @Test func genuineEditFlipsModifiedOnce() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Edit")
+        let binding = model.configBinding(\.finalDriveDB, runtimeDisposition: .live)
+        binding.wrappedValue = model.config.finalDriveDB + 1.5
+        #expect(model.activeSnapshotModified == true,
+            "a real config change must mark the preset edited")
+    }
+
+    @Test func reloadingSameSnapshotReportsNoChanges() {
+        let model = makeViewModel()
+        model.saveSnapshot(slot: 0, name: "Same")
+        model.loadSnapshot(slot: 0)
+        model.loadSnapshot(slot: 0)
+        #expect(model.statusText.contains("no changes"),
+            "re-loading the active unedited preset must not claim changes; got: \(model.statusText)")
+        #expect(model.pendingRuntimeApply == false)
+    }
+
+    @Test func loadingStoppedEngineNeverArmsRestartPending() {
+        let model = makeViewModel()
+        model.config.finalDriveDB = 3.0
+        model.saveSnapshot(slot: 0, name: "A")
+        model.config.finalDriveDB = 9.0
+        model.saveSnapshot(slot: 1, name: "B")
+        model.loadSnapshot(slot: 0)
+        #expect(model.pendingRuntimeApply == false,
+            "engine is stopped; a preset load must not arm Apply Restart")
+        #expect(model.activeSnapshotModified == false)
+    }
+
+    @Test func modifiedStateSurvivesRelaunch() {
+        let path = makeTempConfigPath()
+        do {
+            let model = makeViewModel(at: path)
+            model.saveSnapshot(slot: 0, name: "Persist")
+            let binding = model.configBinding(\.finalDriveDB, runtimeDisposition: .live)
+            binding.wrappedValue = model.config.finalDriveDB + 2.0
+            #expect(model.activeSnapshotModified == true)
+        }
+        let reborn = makeViewModel(at: path)
+        #expect(reborn.activeSnapshotModified == true,
+            "the edited-since-loaded marker must survive relaunch")
+        #expect(reborn.activeSnapshotID != nil)
     }
 
     @Test func initialStateHasEightEmptySlots() {

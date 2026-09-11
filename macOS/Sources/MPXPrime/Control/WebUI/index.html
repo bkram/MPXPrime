@@ -187,16 +187,34 @@ function toast(msg, bad) {
   clearTimeout(t._h);
   t._h = setTimeout(() => t.classList.remove("show"), 2400);
 }
+const DISPOSITION_TEXT = {
+  live: "applied live",
+  liveRDS: "applied live (RDS)",
+  restartRequired: "saved - restart to apply",
+  none: "saved",
+  unchanged: "unchanged"
+};
 async function patchKey(key, value, silent) {
   try {
     const r = await api("/api/config", { method:"PATCH", body:JSON.stringify({ [key]: value }) });
     const o = r.outcomes[0];
     if (o.effectiveValue != null) cfg[key] = o.effectiveValue;
-    if (!silent) {
-      const label = { live:"applied live", liveRDS:"applied live (RDS)", restartRequired:"saved - restart to apply", unchanged:"unchanged" }[o.disposition];
-      toast(SCHEMA[key]?.label || key.replace(/_/g," ") + "" ? (SCHEMA[key]?.label || key) + ": " + label : label);
+    // A restart-class change can move keys the response does not carry: both
+    // backends recall the new device's stored calibration (and run INI
+    // migrations) AFTER the outcomes are computed. Re-read rather than show
+    // the previous rig's levels.
+    if (o.disposition === "restartRequired") {
+      try { await loadConfig(); } catch (e) {}
     }
-    if (o.disposition === "unchanged") syncAll();
+    if (key.endsWith("_device_uid")) {
+      try { await loadDevices(); } catch (e) {}
+    }
+    if (!silent) {
+      toast((SCHEMA[key]?.label || key.replace(/_/g, " ")) + ": " + (DISPOSITION_TEXT[o.disposition] || o.disposition));
+    }
+    // ALWAYS re-sync: a mode switch, a server-side clamp and a recalled
+    // calibration are all invisible otherwise (they are not `unchanged`).
+    syncAll();
     updateTAButton();
     refreshSidebarDots();
     pollStatus();
@@ -241,17 +259,42 @@ async function loadConfig() {
   for (const sec of Object.values(sections)) Object.assign(cfg, sec);
 }
 
-/* Processed-audio output mode: no composite is generated, so composite-only
-   pages (RDS, Composite Clipper, BS.412, Final Stage) hide -- mirroring the
-   GUI's hiddenInProcessedAudio. Driven by the CONFIG flag (intent), matching
-   the GUI's sidebar behavior. */
-const isProcessedAudio = () => isTrue(cfg.processed_audio_output);
+/* Operating mode gating. Nothing is shown that has no function in the
+   selected mode: pages and individual widgets carry a `modes` list in the
+   schema (absent = every mode), generated from the SAME ChainFeature table
+   the native GUI and the engine read. Driven by the CONFIG value (intent),
+   so the dashboard follows a mode change before the restart. */
+const currentMode = () => (cfg.operating_mode || "mpx");
+const inCurrentMode = (modes) => !modes || modes.indexOf(currentMode()) >= 0;
+/* Does a composite exist at all in this mode? Sourced from the schema's
+   `compositeModes` (ChainFeature.finalStage), never spelled out in JS. */
+const compositeMode = () => inCurrentMode(MODEL.compositeModes);
 const pageHiddenInMode = (id) => {
-  if (!isProcessedAudio()) return false;
-  if (MODEL.rds.some(p => p.id === id)) return true;
+  const rds = MODEL.rds.find(p => p.id === id);
+  if (rds) return !inCurrentMode(rds.modes || MODEL.rdsModes);
   const st = MODEL.stages.find(x => x.id === id);
-  return !!(st && st.hiddenInProcessedAudio);
+  return !!(st && !inCurrentMode(st.modes));
 };
+
+/* What the output card is called, and the one number that says where peaks
+   land, per mode. Composite modes get the MPX card above instead. */
+const OUTPUT_CARD_TITLE = {
+  fm: "Output (processed audio)",
+  hd: "Output (digital)",
+  am: "Output (AM)"
+};
+function outputTargetRow() {
+  const mode = currentMode();
+  if (mode === "hd") {
+    const c = cfg.processed_audio_ceiling_dbtp;
+    return `<div class="kvrow"><span class="k">True-Peak Ceiling</span><span class="v">${c != null ? (+c).toFixed(1) + " dBTP" : "-"}</span></div>`;
+  }
+  if (mode === "am") {
+    const p = cfg.am_positive_peak_pct;
+    return `<div class="kvrow"><span class="k">Positive Peaks</span><span class="v">${p != null ? (+p).toFixed(0) + " %" : "-"}</span></div>`;
+  }
+  return "";
+}
 
 /* ---------------- sidebar ---------------- */
 /* A stage whose schema entry carries `bypassedWhen: <key>` is out of the
@@ -281,12 +324,13 @@ function renderSidebar() {
   add('<div class="shead">Processing</div>');
   nav.appendChild(navItem("overview", "Overview"));
   for (const s of MODEL.stages) {
-    if (isProcessedAudio() && s.hiddenInProcessedAudio) continue;
+    if (!inCurrentMode(s.modes)) continue;
     nav.appendChild(navItem(s.id, s.title, s.enable, s.bypassedWhen));
   }
-  if (!isProcessedAudio()) {
+  const rdsPages = MODEL.rds.filter(p => inCurrentMode(p.modes || MODEL.rdsModes));
+  if (rdsPages.length) {
     add('<div class="shead">RDS</div>');
-    for (const p of MODEL.rds) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
+    for (const p of rdsPages) nav.appendChild(navItem(p.id, p.title, p.id === "rdsStatus" ? "en_rds" : null));
   }
   add('<div class="shead">Tools</div>');
   for (const p of MODEL.tools) nav.appendChild(navItem(p.id, p.title));
@@ -375,6 +419,10 @@ function textRow(key) {
 function controlFor(key) {
   const def = SCHEMA[key];
   if (!def) return null;
+  /* One choke point for widget-level mode gating: a control with no function
+     in this mode is not rendered anywhere (stage pages, Audio I/O cards,
+     preset panels all come through here). */
+  if (!inCurrentMode(def.modes)) return null;
   if (def.kind === "toggle") return checkRow(key);
   if (def.kind === "slider") return sliderRow(key);
   if (def.kind === "seg") return segRow(key);
@@ -390,17 +438,35 @@ function card(keys, extraEl) {
   if (extraEl) el.appendChild(extraEl);
   return el;
 }
-let lastProcessedAudioMode = null;
+/* What a full re-render depends on. When this string changes, which pages and
+   which widgets exist has changed, so the sidebar and the current page have to
+   be rebuilt; when it does not, syncing values in place is enough. */
+function renderSignature() {
+  return currentMode();
+}
+let lastRenderSig = null;
+let rerendering = false;
 function syncAll() {
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el._sync && el.dataset.key in cfg) el._sync(cfg[el.dataset.key]);
   });
-  const mode = isProcessedAudio();
-  if (lastProcessedAudioMode !== null && mode !== lastProcessedAudioMode) {
-    renderSidebar();
-    if (pageHiddenInMode(currentPage)) showPage("monitoring");
+  const sig = renderSignature();
+  const changed = lastRenderSig !== null && sig !== lastRenderSig;
+  // COMMIT the signature before re-rendering. Every render function ends with
+  // syncAll(), so a nested call must see "unchanged" -- assigning after the
+  // re-render (as this did until 0.50) recursed until the stack overflowed,
+  // and because the assignment was then skipped by the throw, every later
+  // syncAll repeated it until the page was reloaded.
+  lastRenderSig = sig;
+  if (changed && !rerendering) {
+    rerendering = true;
+    try {
+      renderSidebar();
+      showPage(pageHiddenInMode(currentPage) ? "monitoring" : currentPage);
+    } finally {
+      rerendering = false;
+    }
   }
-  lastProcessedAudioMode = mode;
   refreshSidebarDots();
   updateBypassButton();
 }
@@ -516,6 +582,7 @@ function renderGeneric(c, p, isRDS) {
   if (p.special === "rdsStatus") return renderRDSStatus(c);
   if (p.special === "presets") return renderPresets(c);
   if (p.special === "advanced") return renderAdvanced(c);
+  if (p.special === "about") return renderAbout(c);
   if (p.special === "interfaces") { renderInterfaces(c, p); return; }
   if (p.cards) {
     const grid = document.createElement("div");
@@ -529,7 +596,10 @@ function renderGeneric(c, p, isRDS) {
     }
     c.appendChild(grid);
     const cardKeys = p.cards.flatMap(fc => fc.keys);
-    if (isRDS && cardKeys.length) c.appendChild(resetTabButton(cardKeys, p.title));
+    // RDS pages always offer a reset; a tools page opts in with `reset: true`
+    // (Test Tone). Audio I/O deliberately never does: devices and level
+    // calibration are the rig's plumbing, not something a tab button resets.
+    if ((isRDS || p.reset) && cardKeys.length) c.appendChild(resetTabButton(cardKeys, p.title));
   } else {
     c.appendChild(card(p.keys || []));
     if (p.keys2) {
@@ -544,7 +614,7 @@ function renderOverview(c) {
   const grid = document.createElement("div");
   grid.className = "ovgrid";
   for (const s of MODEL.stages) {
-    if (!s.enable) continue;
+    if (!s.enable || !inCurrentMode(s.modes)) continue;
     const el = document.createElement("div");
     el.className = "ovcard";
     const bypassed = stageBypassed(s);
@@ -587,24 +657,26 @@ function renderMonitoring(c) {
       `<div class="kvrow"><span class="k">Output</span><span class="v">${outName()}</span></div>` +
       `<div class="hmeter"><div class="lab"><span>INPUT L</span><span id="monInLv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInL"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div>` +
       `<div class="hmeter"><div class="lab"><span>INPUT R</span><span id="monInRv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInR"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div></div>` +
-    (isProcessedAudio()
-      ? `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Output (processed audio)</div>` +
-          kv("Output", "monOut") + `</div>`
-      : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
-          kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`) +
+    (compositeMode()
+      ? `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
+          kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`
+      : `<div class="card cardpad"><div class="gtitle" style="margin-top:0">${OUTPUT_CARD_TITLE[currentMode()] || "Output"}</div>` +
+          kv("Output", "monOut") + (outputTargetRow() || "") + `</div>`) +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
-      kv("Pre-Encode GR", "monPre") + kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("AGC Gain", "monAGC") + `</div>` +
-    (isProcessedAudio() ? "" :
+      kv("Pre-Encode GR", "monPre") +
+      (compositeMode() ? kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") : "") +
+      kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
+    (compositeMode() ?
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
-      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>`) +
+      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>` : "") +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stream Health</div>` +
-      kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + `</div>`;
+      kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + kv("Xruns R/C", "monXruns") + kv("Render Load", "monLoad") + `</div>`;
   c.appendChild(grid);
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Signal Chain" }));
   const chain = document.createElement("div");
   chain.className = "ovgrid";
   for (const s of MODEL.stages) {
-    if (!s.summary) continue;
+    if (!s.summary || !inCurrentMode(s.modes)) continue;
     const bypassed = stageBypassed(s);
     const on = (!s.enable || isTrue(cfg[s.enable])) && !bypassed;
     const el = document.createElement("div");
@@ -616,6 +688,9 @@ function renderMonitoring(c) {
   }
   c.appendChild(chain);
   pollMeters();
+  // Like every other render: without this, sitting on Monitoring while the
+  // mode changes elsewhere leaves the sidebar showing the old mode's pages.
+  syncAll();
 }
 function renderRDSStatus(c) {
   const grid = document.createElement("div");
@@ -787,7 +862,9 @@ function renderInterfaces(c, p) {
   dev.style.maxWidth = "640px";
   dev.innerHTML =
     '<div class="row"><div class="rlabel">Input Device</div><select id="devIn" style="max-width:340px"></select></div>' +
+    '<div id="mixIn"></div>' +
     '<div class="row"><div class="rlabel">Output Device</div><select id="devOut" style="max-width:340px"></select></div>' +
+    '<div id="mixOut"></div>' +
     '<div class="subtitle" id="devNote" style="margin-top:8px"></div>' +
     '<div class="subtitle">Devices and sample rate are restart-class: choose, then press Restart.</div>';
   c.appendChild(dev);
@@ -797,11 +874,15 @@ function renderInterfaces(c, p) {
   mon.style.maxWidth = "640px";
   mon.innerHTML =
     '<div class="row"><div class="rlabel">Monitor Device</div><select id="devMon" style="max-width:340px"></select></div>';
-  mon.appendChild(card(["monitor_enabled"]));
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
-  c.appendChild(mon);
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Format" }));
+  mon.appendChild(card(["monitor_enabled", "monitor_gain_db"]));
+  if (inCurrentMode(MODEL.monitorModes)) {
+    c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
+    c.appendChild(mon);
+  }
+  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Mode & Levels" }));
   c.appendChild(card(p.keys));
+  c.appendChild(Object.assign(document.createElement("div"),
+    { className:"subtitle", textContent:"Input Gain / Output Level / Line Output are rig calibration, remembered per device." }));
   if (p.keys2 && p.keys2.keys.length) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:p.keys2.title }));
     c.appendChild(card(p.keys2.keys));
@@ -818,16 +899,118 @@ function renderInterfaces(c, p) {
     '<div class="subtitle" style="margin-top:6px">Read-only here: changing the server you are talking through risks locking yourself out. Edit in the INI or the native GUI; applies at next launch.</div>';
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (read-only)" }));
   c.appendChild(rc);
-  loadDevices();
+  renderCardMixer();
+  fillDeviceSelects();   // from cache: no empty pickers while the fetch runs
+  loadDevices();         // then refresh in the background
   syncAll();
 }
+/* About: the same facts the native app's About panel shows, from the server
+   rather than baked in -- version and platform come from /api/status, so the
+   page cannot claim a version it is not talking to. The full intended-use
+   disclaimer lives in README.md and the licence terms in LICENSE: this
+   carries README's canonical key phrase plus links, and must not grow a
+   second copy of either. */
+function renderAbout(c) {
+  const s = statusInfo || {};
+  const card = document.createElement("div");
+  card.className = "card cardpad";
+  card.style.maxWidth = "640px";
+  card.innerHTML =
+    '<div style="font-size:19px;font-weight:600;margin-bottom:2px">MPX Prime Studio</div>' +
+    '<div class="subtitle" style="margin-bottom:10px">Professional FM stereo processing and RDS encoding - free and open source</div>' +
+    kv("Version", "aboutVersion", s.version || "-") +
+    kv("Platform", "aboutPlatform", s.platform || "-") +
+    kv("Engine rate", "aboutRate", s.sampleRateHz ? (s.sampleRateHz / 1000).toFixed(0) + " kHz" : "-") +
+    kv("Operating mode", "aboutMode", MODE_LABEL[s.outputMode] || String(s.outputMode || "-").toUpperCase()) +
+    kv("Licence", "aboutLicence", "AGPL-3.0") +
+    '<div class="subtitle" style="margin-top:10px">' +
+      '<a href="https://github.com/bkram/MPXPrime" target="_blank" rel="noreferrer">View on GitHub</a> &middot; ' +
+      '<a href="https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md" target="_blank" rel="noreferrer">Operator Guide</a> &middot; ' +
+      '<a href="https://github.com/bkram/MPXPrime/blob/main/LICENSE" target="_blank" rel="noreferrer">License</a>' +
+    '</div>' +
+    '<div class="subtitle" style="margin-top:10px">Experimental and not certified - no conformity or compliance is promised. ' +
+      'See the README for intended use and the AGPL-3.0 license for terms (provided without warranty).</div>';
+  c.appendChild(card);
+  pollStatus();
+  syncAll();
+}
+
+/* The SOUND CARD's own volume sliders (Linux), placed WITH the device they
+   belong to: the capture control under the input picker, the playback control
+   under the output picker. They sit between the encoder and the exciter, and
+   on a headless box nothing else shows them: the rig came back 2 dB down after
+   a reboot because the card has a knob. Read live from ALSA. Moving one also
+   records the level in the config (alsa_*_volume_db), which the engine then
+   ASSERTS at start and on every reconcile tick -- that is what beats the knob.
+   Absent where /api/mixer says "not available" (macOS). */
+function renderCardMixer() {
+  const inHost = $("mixIn"), outHost = $("mixOut");
+  if (!inHost || !outHost) return;
+  (async () => {
+    let mixer;
+    try { mixer = await api("/api/mixer"); } catch (e) { return; }
+    if (!mixer || !mixer.available) return;
+    const playback = (mixer.controls || []).find(c => c.playbackPercent != null);
+    const capture = (mixer.controls || []).find(c => c.capturePercent != null);
+    if (capture) inHost.appendChild(mixerRow(capture, "capture", "Card Input Level"));
+    if (playback) outHost.appendChild(mixerRow(playback, "playback", "Card Output Level"));
+    if (playback || capture) {
+      outHost.insertAdjacentHTML("beforeend",
+        '<div class="subtitle">The sound card\'s own levels, remembered and re-asserted by the encoder. Keep the output at 0 dB and calibrate with the encoder\'s levels below; a card below unity costs composite the meters cannot see.</div>');
+    }
+  })();
+}
+function mixerRow(ctl, side, title) {
+  const pct = ctl[side + "Percent"];
+  let dB = ctl[side + "DB"];
+  const row = document.createElement("div");
+  row.className = "row";
+  const label = document.createElement("div");
+  label.className = "rlabel";
+  label.textContent = title;
+  label.title = ctl.name + " (" + side + ")";
+  const input = document.createElement("input");
+  input.type = "range"; input.min = "0"; input.max = "100"; input.step = "1";
+  input.value = String(Math.round(pct));
+  const read = document.createElement("span");
+  read.className = "rval";
+  const show = (p, d) => { read.textContent = (d != null ? d.toFixed(1) + " dB" : "") + " (" + Math.round(p) + " %)"; };
+  show(pct, dB);
+  input.oninput = () => show(Number(input.value), null);
+  input.onchange = async () => {
+    const body = { name: ctl.name, index: ctl.index };
+    body[side + "Percent"] = Number(input.value);
+    try {
+      const fresh = await api("/api/mixer", { method: "PATCH", body: JSON.stringify(body) });
+      // In place: the card reports what it actually took, and the page keeps
+      // its scroll and focus instead of being rebuilt.
+      const now = (fresh.controls || []).find(c => c.name === ctl.name && c.index === ctl.index) || ctl;
+      dB = now[side + "DB"];
+      input.value = String(Math.round(now[side + "Percent"] ?? Number(input.value)));
+      show(Number(input.value), dB);
+      toast(title + ": " + (dB != null ? dB.toFixed(1) + " dB" : input.value + " %") + " (remembered)");
+    } catch (e) { toast("card mixer: " + e.message, true); }
+  };
+  row.appendChild(label); row.appendChild(input); row.appendChild(read);
+  return row;
+}
+
 function renderAdvanced(c) {
   const host = document.createElement("div");
   host.className = "card cardpad";
   host.id = "configTables";
   c.appendChild(host);
   (async () => {
-    const sections = await api("/api/config");
+    let sections;
+    // Every other page reports a failed call instead of leaving the reader
+    // with an empty box and an unhandled rejection in the console.
+    try {
+      sections = await api("/api/config");
+    } catch (e) {
+      host.insertAdjacentHTML("beforeend",
+        `<div class="subtitle">GET /api/config failed: ${e.message}. Reload once the encoder is reachable.</div>`);
+      return;
+    }
     for (const sec of Object.keys(sections).sort()) {
       const keys = Object.keys(sections[sec]).sort();
       if (!keys.length) continue;
@@ -865,40 +1048,55 @@ function deviceName(id, list) {
   const d = (deviceInfo[list] || []).find(x => x.id === id);
   return d ? d.name : id;
 }
+/* Split in two so a re-render can fill the pickers from the cached listing
+   synchronously (no empty-select flicker while the fetch is in flight) and
+   the fetch can be awaited where the caller needs fresh selections. */
+function fillDeviceSelects() {
+  if (!deviceInfo) return;
+  const fill = (sel, list, selected, key) => {
+    if (!sel) return;
+    sel.innerHTML = "";
+    sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"(system default)" }));
+    for (const dev of list) sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:dev.name }));
+    sel.value = selected || "";
+    sel.onchange = () => patchKey(key, sel.value);
+  };
+  fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid");
+  fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid");
+  fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid");
+  if ($("devNote")) $("devNote").textContent = deviceInfo.note || "";
+}
 async function loadDevices() {
   try {
     deviceInfo = await api("/api/devices");
-    const fill = (sel, list, selected, key) => {
-      if (!sel) return;
-      sel.innerHTML = "";
-      sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"(system default)" }));
-      for (const dev of list) sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:dev.name }));
-      sel.value = selected || "";
-      sel.onchange = () => patchKey(key, sel.value);
-    };
-    fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid");
-    fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid");
-    fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid");
-    if ($("devNote")) $("devNote").textContent = deviceInfo.note || "";
+    fillDeviceSelects();
   } catch (e) {}
 }
 const dbText = (v) => v == null ? "-" : (v <= 0.00001 ? "-inf" : (20*Math.log10(v)).toFixed(1));
 const dbPct = (v) => (v == null || v <= 0.00001) ? 0 : Math.max(0, Math.min(100, (20*Math.log10(v)+36)/36*100));
 const gr = (v, d=1) => v == null ? "-" : "-" + Math.abs(v).toFixed(d) + " dB";
+const MODE_LABEL = { mpx: "MPX", fm: "FM", hd: "HD", am: "AM", monitor: "MONITOR" };
+let recoveringConfig = false;
 async function pollStatus() {
   try {
     statusInfo = await api("/api/status");
     const s = statusInfo;
+    // Self-heal: the server was unreachable at boot, so the page rendered
+    // against an empty config (default mode). Pick the real one up now.
+    if (MODEL && !recoveringConfig && Object.keys(cfg).length === 0) {
+      recoveringConfig = true;
+      try { await loadConfig(); syncAll(); } catch (e) {} finally { recoveringConfig = false; }
+    }
     $("cDot").classList.toggle("on", s.running);
     $("cRun").textContent = s.running ? "RUNNING" : "STOPPED";
     $("cRun").parentElement.classList.toggle("green", s.running);
     $("cSource").textContent = s.sourceMode === "tone" ? "Test Tone" : deviceName(deviceInfo?.selectedInput, "inputs");
     $("cRate").textContent = (s.sampleRateHz/1000).toFixed(0) + " kHz";
-    $("cMode").textContent = s.outputMode === "processedAudio" ? "AUDIO" : "COMPOSITE";
+    $("cMode").textContent = MODE_LABEL[s.outputMode] || String(s.outputMode || "").toUpperCase();
     // A stopped engine with a note (e.g. missing audio device) takes
     // priority in the warning cell -- it is why the operator is here.
     const note = (!s.running && s.notes && s.notes.length) ? s.notes[0] : null;
-    const rateWarn = isTrue(cfg.en_rds) && s.sampleRateHz < 192000 && s.outputMode !== "processedAudio";
+    const rateWarn = isTrue(cfg.en_rds) && s.sampleRateHz < 192000 && s.outputMode === "mpx";
     if (note) {
       $("cWarnCell").hidden = false;
       $("cWarnCell").querySelector(".k").textContent = "Engine";
@@ -919,9 +1117,52 @@ async function pollStatus() {
     $("cDot").classList.remove("on");
   }
 }
+// Meters arrive two ways: a push stream (NDJSON at ~20 Hz, the engine's own
+// publish rate) when the server offers it, and the 300 ms poll otherwise --
+// the poll keeps running as the fallback and steps aside while the stream is
+// alive. Both end in applyMeters, so the bars never depend on which one won.
+let meterStreamAlive = false;
 async function pollMeters() {
+  if (meterStreamAlive) return;
   let m = null;
   try { m = await api("/api/meters"); } catch (e) {}
+  applyMeters(m);
+}
+async function streamMeters() {
+  let res;
+  try {
+    res = await fetch("/api/meters/stream?hz=20", { headers: headers(false) });
+    if (!res.ok || !res.body || typeof res.body.getReader !== "function") throw new Error("no stream");
+  } catch (e) {
+    meterStreamAlive = false;
+    setTimeout(streamMeters, 5000);
+    return;
+  }
+  meterStreamAlive = true;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (!line) continue;
+        let m = null;
+        try { m = JSON.parse(line); } catch (e) { continue; }
+        applyMeters(m && m.error ? null : m);
+      }
+    }
+  } catch (e) {}
+  // Stream ended (server restart, network): back to polling, retry the stream.
+  meterStreamAlive = false;
+  setTimeout(streamMeters, 2000);
+}
+function applyMeters(m) {
   const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
   const setw = (id, pct) => { const el = $(id); if (el) el.style.width = pct + "%"; };
   set("monInLv", dbText(m?.inputLeftPeak) + " dBFS"); setw("monInL", dbPct(m?.inputLeftPeak));
@@ -932,7 +1173,16 @@ async function pollMeters() {
   set("monPre", gr(m?.preEncodeLimiterGainReductionDB));
   set("monClip", gr(m?.compositeClipperGainReductionDB));
   set("monSafe", gr(m?.safetyLimiterGainReductionDB));
+  set("monSafeClip", gr(m?.safetyClipDB));
   set("monAGC", m?.agcGainDB != null ? m.agcGainDB.toFixed(1) + " dB" : "-");
+  // Electrical headroom at the converter (post output gain + line output);
+  // the deviation trace stays in the modulation domain.
+  set("monDAC", m?.dacPeakDBFS != null && m.dacPeakDBFS > -119 ? m.dacPeakDBFS.toFixed(1) + " dBFS" : "-");
+  // Advanced Dynamics replaces the AGC; per-band gains low->high plus density.
+  set("monAdvDyn", (m?.advancedDynamicsActive && m?.advancedDynamicsBandGainsDB)
+    ? m.advancedDynamicsBandGainsDB.map(g => g.toFixed(1)).join("/") + " dB (density " +
+      (m?.advancedDynamicsDensityDB != null ? m.advancedDynamicsDensityDB.toFixed(1) : "-") + " dB)"
+    : "-");
   set("monPilot", m?.pilotInjectionPercent != null ? m.pilotInjectionPercent.toFixed(1) + " %" : "-");
   set("monRDS", m?.rdsInjectionPercent != null ? m.rdsInjectionPercent.toFixed(1) + " %" : "-");
   const marginEl = $("monMargin");
@@ -948,6 +1198,14 @@ async function pollMeters() {
   set("monUp", up != null ? (up >= 3600 ? (up/3600).toFixed(1) + " h" : Math.round(up/60) + " min") : "-");
   set("monRing", m?.inputRingBufferedFrames != null ? m.inputRingBufferedFrames + " frames" : "-");
   set("monDrops", m?.inputRingOverflows != null ? (m.inputRingOverflows + " / " + (m.inputRingUnderflows ?? 0)) : "-");
+  // Linux ALSA engine: xruns since start, and how much of each period the
+  // render thread needs (peak). Near 100 % every extra job costs xruns.
+  set("monXruns", m?.renderXruns != null ? m.renderXruns + " / " + (m.captureXruns ?? 0) : "-");
+  const loadEl = $("monLoad");
+  if (loadEl) {
+    loadEl.textContent = m?.renderLoadPercent != null ? m.renderLoadPercent.toFixed(0) + " %" : "-";
+    loadEl.style.color = m?.renderLoadPercent != null && m.renderLoadPercent >= 90 ? "var(--red)" : "";
+  }
   set("monResample", m?.inputResampleMode != null
     ? m.inputResampleMode + (m.inputRatioTrim != null ? " (" + ((m.inputRatioTrim - 1) * 1e6).toFixed(0) + " ppm)" : "")
     : "-");
@@ -983,9 +1241,10 @@ function updateBypassButton() {
   b.className = on ? "red" : "";
 }
 $("btnBypass").onclick = async () => {
+  /* No confirmation: bypass is a deliberate engineer's action, the button
+     turns red and the status bar shows BYPASS. (Operator ruling 2026-09-05:
+     "just do it, trust the engineer".) */
   const on = isTrue(cfg.processing_bypass);
-  if (!on && statusInfo?.running &&
-      !confirm("Bypass ALL processing? Unprocessed audio goes to air after the engine restarts.")) return;
   await patchKey("processing_bypass", on ? "False" : "True", true);
   updateBypassButton();
   if (statusInfo?.running) {
@@ -1012,18 +1271,25 @@ async function boot() {
     pollStatus();
     return;
   }
-  renderSidebar();
+  // The CONFIG decides which pages exist (the operating mode gates the
+  // sidebar), so it has to arrive BEFORE the first render. Rendering first
+  // built every page against the default mode, and the RDS pages and the
+  // composite stages then stayed on screen in fm/hd/am until the operator
+  // changed the mode by hand.
   try {
     presetLists = await api("/api/presets");
     await loadConfig();
     await loadDevices();
   } catch (e) {}
+  lastRenderSig = renderSignature();
+  renderSidebar();
   refreshSidebarDots();
   showPage(currentPage);
   pollStatus();
   pollMeters();
 }
 boot();
+streamMeters();
 setInterval(pollStatus, 2000);
 setInterval(pollMeters, 300);
 setInterval(() => pollRDS(false), 1000);

@@ -30,6 +30,9 @@ final class MeterTelemetry {
     var sideText = "-inf"
     var correlation: Double = 1
     var correlationText = "+1.00"
+    /// False when neither channel carries enough programme for the phase
+    /// correlation to mean anything, or when the decode is mono (0.45).
+    var correlationValid = false
 
     // Deviation: normalized 0..1 (0..100 kHz for the modulation meter) + text.
     // Idle defaults are unitless to match the live format (the kHz unit is shown
@@ -44,6 +47,9 @@ final class MeterTelemetry {
     /// "58.2 / 41.0" -- the AVE and MIN of the same trailing-second slot array
     /// MAX comes from. Shown under the deviation strips.
     var aveMinDevText = "--"
+    /// Monitor-ballistics (integrating) deviation readout; "--" until the
+    /// deviation scale is valid. Shown only when the option is on.
+    var monitorDevText = "--"
 
     // Modulation analysis: MPX power (BS.412), +/- peak-hold deviation, best
     // stereo separation. Text "--" when not yet valid.
@@ -55,6 +61,9 @@ final class MeterTelemetry {
     var negPeakText = "0.0"
     var posPeakKHz: Double = 0        // raw +peak for over-limit coloring
     var negPeakKHz: Double = 0        // raw -peak (signed) for coloring
+    /// False when the deviation scale is lost: the peaks are not measurements
+    /// and must neither be shown nor tinted as over-limit (0.45).
+    var peakValid = false
     // ITU-R SM.1268-5 exceedance: % of deviation samples > 77 kHz since reset.
     var exceedanceText = "--"
     var exceedancePct: Double = 0     // raw value for over-limit coloring
@@ -71,6 +80,10 @@ final class MeterTelemetry {
     // per-quantity readouts that go with it.
     var qualityText = "--"
     var qualityLevel = 0             // 0..4, for tinting
+    /// True once the quality scale has data. Level 0 alone is ambiguous -- it
+    /// is both "no data" and a measured Unusable, and the card painted its own
+    /// warm-up red (0.45, audit C6).
+    var qualityValid = false
     var carrierOffsetText = "--"
     var carrierOffsetKHz: Double = 0  // raw, for over-limit tinting
     var carrierOffsetValid = false
@@ -135,6 +148,81 @@ final class MeterTelemetry {
     // fftshifted by the tuner, plus the span they cover.
     var rfSpectrumDB: [Float] = []
     var rfSpanHz: Double = 0
+    /// The span as the header chip displays it. Pre-formatted here, and
+    /// written through the change guard, because the chip lives in the spectrum
+    /// card header OUTSIDE any LiveObservationView: reading `rfSpanHz` there
+    /// made the ROOT body (and with it the window toolbar) a dependency of a
+    /// per-tick value, which re-triggered the 0.34 SwiftUI-on-macOS toolbar
+    /// relayout leak at 20 Hz in RF-spectrum mode and rebuilt every isolated
+    /// leaf closure -- i.e. it cancelled the telemetry isolation (audit C1).
+    var rfSpanText = "--"
     var audioSpectrumMaxHz: Double = 20_000
     var audioSpectrumNyquistHz: Double = 0
+
+    // Measurement integrity (0.45, audit P1.2). `dropWarningText` is non-nil
+    // once input samples were dropped since the last peak reset -- the
+    // peak-hold / histogram / BS.412 / exceedance accumulators then contain a
+    // gap artefact and the badge stays up until Reset Peaks. `inputStalled`
+    // is the liveness watchdog: the input stopped delivering while capture
+    // still claims to run.
+    var dropWarningText: String?
+    var inputStalled = false
+    /// True while the SDR front end is clipping (railed IQ samples, held ~2 s
+    /// past the last hot block by `RFOverloadGate`): every level-derived
+    /// reading carries clipping products, so the dashboard warns and the
+    /// SIGNAL QUALITY grade steps aside instead of blaming reception.
+    var rfOverloadActive = false
+    /// True while a signal is present but the decoder's pilot lock is too weak
+    /// for stereo decode: the decoded L/R are M-only, so separation / balance /
+    /// phase correlation are not measurements of the stereo image and the
+    /// dashboard says so instead of showing them (0.45, audit M1).
+    var monoDecode = false
+
+    /// Restore every readout to its declared idle default -- called on stop()
+    /// and device loss so the dashboard never shows the last captured frame
+    /// as if it were live (audit C5).
+    func reset() {
+        inputNorm = 0; inputText = "-inf"
+        leftNorm = 0; leftText = "-inf"
+        rightNorm = 0; rightText = "-inf"
+        midNorm = 0; midText = "-inf"
+        sideNorm = 0; sideText = "-inf"
+        correlation = 1; correlationText = "+1.00"
+        pilotNorm = 0; pilotText = "0.00"
+        rdsNorm = 0; rdsText = "0.00"
+        maxDevNorm = 0; maxDevText = "0.0"
+        aveMinDevText = "--"
+        monitorDevText = "--"
+        mpxPowerText = "--"; mpxPowerNorm = 0; mpxPowerDBr = -120; mpxPowerValid = false
+        posPeakText = "0.0"; negPeakText = "0.0"; posPeakKHz = 0; negPeakKHz = 0
+        exceedanceText = "--"; exceedancePct = 0; exceedanceValid = false
+        mpxPowerMaxText = "--"; mpxPowerMaxDBr = -120; mpxPowerMaxValid = false
+        separationText = "--"
+        qualityText = "--"; qualityLevel = 0
+        carrierOffsetText = "--"; carrierOffsetKHz = 0; carrierOffsetValid = false
+        balanceText = "--"
+        devHistogram = []; devHistogramSamples = 0; distributionSummaryText = "--"
+        rssiText = "--"; rssiNorm = 0; rssiValid = false
+        systemGainText = "--"
+        rdsStatusText = "--"
+        rdsPhaseText = "--"; rdsPhaseOutOfSpec = false
+        ptyText = "--"; ptynText = "--"; eccText = "--"
+        psText = "--"; rtText = "--"; rtPlusText = "--"
+        longPSText = "--"; ctText = "--"; afText = "--"
+        groupText = "--"; groupOrderText = "--"
+        vectorZoom = 1
+        devHistoryKHz = []; mpxPowerHistoryDBr = []
+        compositeScope = []; decodedLScope = []; decodedRScope = []
+        spectrumDB = []; spectrumMaxHz = 100_000; spectrumNyquistHz = 0
+        decodedLSpectrumDB = []; decodedRSpectrumDB = []
+        rfSpectrumDB = []; rfSpanHz = 0; rfSpanText = "--"
+        audioSpectrumMaxHz = 20_000; audioSpectrumNyquistHz = 0
+        dropWarningText = nil
+        inputStalled = false
+        rfOverloadActive = false
+        monoDecode = false
+        correlationValid = false
+        peakValid = false
+        qualityValid = false
+    }
 }

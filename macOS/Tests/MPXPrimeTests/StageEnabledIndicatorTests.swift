@@ -18,7 +18,7 @@ struct StageEnabledIndicatorTests {
     private func makeViewModel() -> MPXPrimeViewModel {
         let tempPath = NSTemporaryDirectory()
             + "MPXPrime-StageEnabledTests-\(UUID().uuidString).ini"
-        return MPXPrimeViewModel(configPath: tempPath)
+        return MPXPrimeViewModel(configPath: tempPath, deviceLister: { [] })
     }
 
     @Test func stagesWithoutEnableConceptReturnNil() {

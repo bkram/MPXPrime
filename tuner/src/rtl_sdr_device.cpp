@@ -337,6 +337,7 @@ size_t RTLSDRDevice::readIQ(uint8_t *buffer, size_t maxSamples) {
       m_ringReadPos = (m_ringReadPos + drop) % m_iqRing.size();
       m_ringFull = false;
       available = availableBytesLocked();
+      m_droppedIQSamples.fetch_add(drop / 2, std::memory_order_relaxed);
       const uint32_t count =
           m_lowLatencyDropEvents.fetch_add(1, std::memory_order_relaxed) + 1;
       if (count <= 5 || (count % 100) == 0) {
@@ -389,6 +390,7 @@ void RTLSDRDevice::asyncCallback(unsigned char *buf, uint32_t len, void *ctx) {
   std::lock_guard<std::mutex> lock(self->m_bufferMutex);
   static std::atomic<uint32_t> overflowCount{0};
   const size_t ringSize = self->m_iqRing.size();
+  uint64_t overwrittenBytes = 0;
   for (uint32_t i = 0; i < len; i++) {
     self->m_iqRing[self->m_ringWritePos] = buf[i];
     self->m_ringWritePos++;
@@ -400,12 +402,18 @@ void RTLSDRDevice::asyncCallback(unsigned char *buf, uint32_t len, void *ctx) {
       if (self->m_ringReadPos >= ringSize) {
         self->m_ringReadPos = 0;
       }
+      overwrittenBytes++;
       const uint32_t count = ++overflowCount;
       if (count <= 5 || (count % 1000) == 0) {
         std::cerr << "[SDR] IQ ring overflow (" << count << ")\n";
       }
     }
     self->m_ringFull = (self->m_ringWritePos == self->m_ringReadPos);
+  }
+  if (overwrittenBytes > 0) {
+    // Two bytes per IQ sample (interleaved uint8 I/Q).
+    self->m_droppedIQSamples.fetch_add(overwrittenBytes / 2,
+                                       std::memory_order_relaxed);
   }
   self->m_bufferCv.notify_one();
 #else

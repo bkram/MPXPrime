@@ -112,7 +112,27 @@ final class MeterViewModel: ObservableObject {
     @Published var audioAbsoluteCal = false
     @Published var audioFullScaleKHz: Double = 150.0
     @Published var running = false
-    @Published var statusText = "Stopped"
+    /// Status line, shown in the native window subtitle. Deliberately NOT
+    /// @Published: no SwiftUI body reads it, but a @Published write on this
+    /// view model re-evaluates the whole window body INCLUDING the toolbar --
+    /// the documented SwiftUI-on-macOS toolbar relayout leak (CHANGELOG 0.34),
+    /// and this string changes on every retune (audit C17). It is published
+    /// through a Combine subject the app delegate subscribes to instead.
+    var statusText: String {
+        get { statusSubject.value }
+        set { statusSubject.value = newValue }
+    }
+    private let statusSubject = CurrentValueSubject<String, Never>("Stopped")
+    var statusPublisher: AnyPublisher<String, Never> {
+        statusSubject.eraseToAnyPublisher()
+    }
+
+    /// The dashboard window, handed over by the app delegate. Used only to ask
+    /// whether it is occluded: the tick used to gate on
+    /// `NSApp.windows.first(where: visible || miniaturized)`, which can be a
+    /// popover, a sheet or a save panel -- one of those being off-screen could
+    /// silently freeze the whole display (audit C13).
+    weak var mainWindow: NSWindow?
     /// WAV recording: format (false = decoded stereo, true = MPX composite) and
     /// live state.
     @Published var recordMPX = false
@@ -123,10 +143,25 @@ final class MeterViewModel: ObservableObject {
     /// Which spectrum the big card shows: the demodulated MPX baseband, or the
     /// RF band around the tuned carrier (SDR only).
     @Published var spectrumShowsRF = false
-    /// SDR IQ capture rate in kHz -- the RF spectrum's span. 0 = the narrow
-    /// default. RESTART-REQUIRED: the device is reconfigured at open. The demod
-    /// chain runs at its own rate behind a decimator, so this cannot move the
-    /// MPX measurements.
+    /// SDR IQ capture rate in kHz -- the RF spectrum's span. 0 = narrow (the
+    /// demod rate itself). RESTART-REQUIRED: the device is reconfigured at
+    /// open. The demod chain runs at its own rate behind a decimator, so this
+    /// cannot move the MPX measurements.
+    ///
+    /// STAYS at 1000. The 0.45 audit (B12) reasoned from the code that the
+    /// default should be 0, so that the RTL backend takes its original
+    /// packed-uint8 path -- the byte-exact one the conventions were validated
+    /// against. An RTL-SDR bench A/B on 2026-08-31 REFUTED that: on 105.9 MHz,
+    /// three 75 s captures minutes apart (0 IQ drops each) read
+    ///   narrow, bandwidth auto : pilot 7.31  RDS 6.72  MAX 101.9  noise 6.46
+    ///   wide (factor 4), auto  : pilot 6.97  RDS 4.59  MAX  80.2  noise 4.27
+    ///   narrow + 200 kHz BW    : pilot 6.94  RDS 4.66  MAX  81.0  noise 4.18
+    /// i.e. at factor 1 with `bandwidth_khz = 0` the channel filtering ahead of
+    /// the FM demod is insufficient, and every peak-sensitive reading inflates
+    /// (+21 kHz of peak deviation, +46% RDS level, +50% baseband noise, and an
+    /// unstable pilot/RDS phase). At factor 4 the ComplexDecimator's filter
+    /// supplies that band-limiting as a side effect. Until the demod's default
+    /// bandwidth is fixed (docs/project-roadmap.md), the wide default is the accurate one.
     @Published var sdrIQRateKHz: Int = 1000
     /// Unit for the SIGNAL readout, and the calibration offset that makes the
     /// absolute units absolute (see `SignalUnit`). Both persist.
@@ -135,9 +170,20 @@ final class MeterViewModel: ObservableObject {
     /// Decode-path DC blocker: removes demod carrier-offset DC from the
     /// decoded audio (vectorscope centering, clean monitor/recordings).
     @Published var dcBlockEnabled = true
+    /// Receiver de-emphasis time constant in microseconds: 50 (ITU Region 1 --
+    /// Europe, Africa, most of Asia and Oceania) or 75 (the Americas, Japan,
+    /// Korea). It shapes only the DECODE path: the monitor audio, stereo
+    /// recordings, the decoded L/R strips and the audio spectrum. Persisted;
+    /// live-applied. Before 0.45 it was hard-wired to 50, so a 75 us market
+    /// heard and recorded ~3.4 dB too much 15 kHz.
+    @Published var preemphasisUS: Int = 50
     /// Bypass the RDS reception-quality gate: show the raw decoder output
     /// even when reception is too poor to trust (expect garbage on noise).
     @Published var forceRDS = false
+    /// Show the monitor-ballistics (integrating) deviation readout alongside
+    /// the SM.1268 MAX -- for comparing against hardware modulation monitors,
+    /// whose RC-smoothed detectors read below true peak on dense program.
+    @Published var monitorBallistics = false
 
     // RDS readout (changes per second; updated only when it actually changes).
     // RDS display strings live on MeterTelemetry (@Observable), NOT here:
@@ -265,7 +311,9 @@ final class MeterViewModel: ObservableObject {
         static let mpxPassUID = "meter.mpxPassOutputUID"
         static let mpxPassGain = "meter.mpxPassGainDB"
         static let dcBlock = "meter.dcBlockEnabled"
+        static let preemphasisUS = "meter.preemphasisUS"
         static let forceRDS = "meter.forceRDS"
+        static let monitorBallistics = "meter.monitorBallistics"
     }
 
     /// Load the last-used settings. Devices are matched by their stable UID (the
@@ -315,7 +363,13 @@ final class MeterViewModel: ObservableObject {
         if d.object(forKey: Keys.mpxPass) != nil { mpxPassEnabled = d.bool(forKey: Keys.mpxPass) }
         if d.object(forKey: Keys.mpxPassGain) != nil { mpxPassGainDB = d.double(forKey: Keys.mpxPassGain) }
         if d.object(forKey: Keys.dcBlock) != nil { dcBlockEnabled = d.bool(forKey: Keys.dcBlock) }
+        if d.object(forKey: Keys.preemphasisUS) != nil {
+            preemphasisUS = d.integer(forKey: Keys.preemphasisUS) == 75 ? 75 : 50
+        }
         if d.object(forKey: Keys.forceRDS) != nil { forceRDS = d.bool(forKey: Keys.forceRDS) }
+        if d.object(forKey: Keys.monitorBallistics) != nil {
+            monitorBallistics = d.bool(forKey: Keys.monitorBallistics)
+        }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
             selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
         }
@@ -362,7 +416,9 @@ final class MeterViewModel: ObservableObject {
         d.set(mpxPassEnabled, forKey: Keys.mpxPass)
         d.set(mpxPassGainDB, forKey: Keys.mpxPassGain)
         d.set(dcBlockEnabled, forKey: Keys.dcBlock)
+        d.set(preemphasisUS, forKey: Keys.preemphasisUS)
         d.set(forceRDS, forKey: Keys.forceRDS)
+        d.set(monitorBallistics, forKey: Keys.monitorBallistics)
         if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
             d.set(dev.uid, forKey: Keys.mpxPassUID)
         } else {
@@ -393,7 +449,9 @@ final class MeterViewModel: ObservableObject {
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz),
             fullScaleKHz: audioAbsoluteCal ? Float(audioFullScaleKHz) : nil,
-            input: AUHALInputSource(deviceID: id))
+            preemphasisUS: preemphasisUS,
+            input: AUHALInputSource(deviceID: id,
+                                    maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
         do {
             let fmt = try eng.start(monitorDeviceID: selectedOutputID)
             captureRate = fmt.sampleRate
@@ -409,7 +467,7 @@ final class MeterViewModel: ObservableObject {
             if forceRDS { eng.setForceRDS(true) }
             startTimer()
         } catch {
-            statusText = "Start failed: \(error)"
+            statusText = "Start failed: \(error.localizedDescription)"
             MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate)
             engine = nil
         }
@@ -452,6 +510,7 @@ final class MeterViewModel: ObservableObject {
             sampleRate: 192_000, channel: channel,
             monitorEnabled: monitorEnabled, monitorGain: gainLinear,
             pilotRefKHz: Float(pilotRefKHz), fullScaleKHz: 150,
+            preemphasisUS: preemphasisUS,
             input: source)
         do {
             _ = try eng.start(monitorDeviceID: selectedOutputID)
@@ -490,6 +549,11 @@ final class MeterViewModel: ObservableObject {
         if let id = deviceID { MeterAudioEngine.restoreInputRate(deviceID: id, to: priorDeviceRate) }
         running = false
         statusText = "Stopped"
+        lastDropEvents = 0
+        overloadGate.reset()
+        // Blank the dashboard: a stopped meter must not keep showing the last
+        // captured frame as if it were live (audit C5).
+        telemetry.reset()
         // Devices are all free now: refresh the picker with a full scan.
         refreshSDRDevices()
     }
@@ -507,6 +571,14 @@ final class MeterViewModel: ObservableObject {
         engine?.setDCBlock(dcBlockEnabled)
     }
 
+    /// De-emphasis standard changed (50 / 75 us): applies live to the decode
+    /// path. The analyzer reconfigures its decoder, which re-acquires the
+    /// pilot lock over the next fraction of a second.
+    func applyPreemphasisChange() {
+        saveSettings()
+        engine?.setPreemphasisUS(preemphasisUS)
+    }
+
     /// Force-RDS toggled: applies live (bypasses the reception-quality gate).
     func applyForceRDSChange() {
         saveSettings()
@@ -516,16 +588,24 @@ final class MeterViewModel: ObservableObject {
     /// MPX pass-through toggled or its device changed: applies live.
     func applyMPXPassChange() {
         saveSettings()
-        engine?.setMPXPassThrough(
+        let failure = engine?.setMPXPassThrough(
             enabled: mpxPassEnabled, deviceID: selectedMPXOutID,
             gainDB: mpxPassGainDB)
+        if let failure {
+            // Do not leave the toggle lit over a dead player (audit C12).
+            mpxPassEnabled = false
+            statusText = "MPX pass-through failed: \(failure)"
+            saveSettings()
+        }
     }
 
     /// Monitor output device changed: swap just the monitor, live -- the
     /// capture, analysis, and recording are untouched.
     func applyOutputDeviceChange() {
         saveSettings()
-        engine?.setMonitorDevice(selectedOutputID)
+        if let failure = engine?.setMonitorDevice(selectedOutputID) {
+            statusText = "Monitor output failed: \(failure)"
+        }
     }
 
     /// Apply a control change (device/channel/monitor/ref) by restarting.
@@ -553,6 +633,12 @@ final class MeterViewModel: ObservableObject {
     /// without a restart. (The SDR path is absolutely calibrated and ignores it.)
     func applyPilotRefChange() {
         engine?.setPilotRefKHz(Float(pilotRefKHz))
+        // Every accumulated reading was measured at the OLD kHz-per-unit
+        // scale: peak-hold, the exceedance count, the distribution and the
+        // BS.412 max would otherwise blend two calibrations into one number
+        // (a retune already resets them; a calibration change did not --
+        // audit C4).
+        resetPeaks()
     }
 
     /// Audio-path calibration changed (mode or absolute full-scale): live-apply.
@@ -560,6 +646,7 @@ final class MeterViewModel: ObservableObject {
     /// nil so the analyzer falls back to the pilot reference.
     func applyCalibrationChange() {
         engine?.setFullScaleKHz(audioAbsoluteCal ? Float(audioFullScaleKHz) : nil)
+        resetPeaks()  // same rescale-invalidates-accumulators rule as above (C4)
     }
 
     /// Gain / auto-gain changed: live-apply to the running tuner (no restart).
@@ -606,6 +693,12 @@ final class MeterViewModel: ObservableObject {
 
     // MARK: - Polling
 
+    /// Cumulative ring drop events (overflows + torn reads) already reported
+    /// through the badge, so each tick only reacts to NEW drops.
+    private var lastDropEvents: UInt64 = 0
+    /// Debounce for the tuner's railed-IQ share -> the RF OVERLOAD badge.
+    private var overloadGate = RFOverloadGate()
+
     private func startTimer() {
         let t = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -626,11 +719,60 @@ final class MeterViewModel: ObservableObject {
                 + "reusing it (its USB claim is held until replug or app restart)"
             return
         }
-        // Skip GUI pushes while the window is minimized / fully covered --
-        // capture, analysis, and recording continue untouched (same gating
-        // Studio applies to its monitoring windows).
-        if let w = NSApp.windows.first(where: { $0.isVisible || $0.isMiniaturized }),
-           !w.occlusionState.contains(.visible) {
+        // Recording health -- BEFORE the occlusion gate, because recording
+        // continues while the window is covered. A writer that stopped (disk
+        // full, the 4 GB WAV limit) must not keep the red light on.
+        if isRecording, let reason = engine?.recordingFailureReason {
+            engine?.stopRecording()
+            isRecording = false
+            statusText = "Recording stopped: \(reason)"
+        }
+        // Measurement integrity -- also before the occlusion gate. Dropped
+        // input samples poison every peak-hold / accumulated reading (MAX DEV,
+        // histogram, BS.412 max, the SM.1268 exceedance count) with a gap
+        // artefact; the badge stays until Reset Peaks. Before 0.45 the only
+        // report was a stderr line at stop, which a .app sends nowhere.
+        if running, let eng = engine {
+            let t = eng.inputTransport
+            // Drops happen at two layers and both poison the same
+            // accumulators: the composite ring between capture and analysis,
+            // and (SDR only) the tuner's own IQ ring between the USB/API
+            // callback and the demod thread. Counting only the first would
+            // miss a demod thread that cannot keep up with the capture rate.
+            let dropEvents = t.overflows &+ t.tornReads
+                &+ (sdrSource?.droppedIQSamples ?? 0)
+            if dropEvents > lastDropEvents {
+                lastDropEvents = dropEvents
+                telemetry.dropWarningText =
+                    "SAMPLES DROPPED -- peak / accumulated readings invalid; Reset Peaks to clear"
+            }
+            // Liveness watchdog: a device that wedged without signalling
+            // failure delivers nothing while `running` stays true; the panel
+            // must say so instead of showing frozen readings that look live.
+            let stalled = (eng.secondsSinceLastDelivery ?? 0) > 1.0
+            if stalled != telemetry.inputStalled { telemetry.inputStalled = stalled }
+        }
+        // RF overload -- a railing front end (auto gain parked on a strong
+        // local) inflates every level-derived reading with clipping products.
+        // Measured 2026-08-31: baseband noise 4.1 kHz / "Unusable" on an
+        // auto-gain capture vs 1.15 kHz / "Poor" at a correct manual gain,
+        // same station, same dongle -- which is why the grade must not blame
+        // reception while this is up. Runs before the occlusion gate so the
+        // latch keeps time while the window is covered.
+        if running, inputKind == .sdr, let source = sdrSource {
+            let active = overloadGate.update(
+                ratio: source.iqOverloadRatio,
+                now: ProcessInfo.processInfo.systemUptime)
+            if active != telemetry.rfOverloadActive { telemetry.rfOverloadActive = active }
+        }
+        // Skip GUI pushes while the DASHBOARD window is minimized / fully
+        // covered -- capture, analysis, and recording continue untouched (same
+        // gating Studio applies to its monitoring windows). Gate on the real
+        // window only: any other NSWindow in the app (a popover, a sheet, a
+        // save panel) reports its own occlusion, and treating one of those as
+        // the dashboard could freeze the display while it is plainly visible
+        // (audit C13). With no window yet, do not gate.
+        if let w = mainWindow, !w.occlusionState.contains(.visible) {
             return
         }
         guard let s = engine?.snapshot() else { return }
@@ -668,11 +810,19 @@ final class MeterViewModel: ObservableObject {
 
     /// Copy the tuner's latest RF spectrum frame into telemetry -- only while
     /// the card is actually showing it, so the copy costs nothing otherwise.
+    /// "1.00 MHz" / "256 kHz" / "--" -- the RF span as the header chip shows it.
+    static func rfSpanLabel(hz: Double) -> String {
+        guard hz > 0 else { return "--" }
+        return hz >= 1e6 ? String(format: "%.2f MHz", hz / 1e6)
+                         : String(format: "%.0f kHz", hz / 1e3)
+    }
+
     private func pushRFSpectrum() {
         guard inputKind == .sdr, spectrumShowsRF, let source = sdrSource else {
             if !telemetry.rfSpectrumDB.isEmpty {
                 telemetry.rfSpectrumDB = []
                 telemetry.rfSpanHz = 0
+                put(\.rfSpanText, "--")
             }
             return
         }
@@ -683,6 +833,9 @@ final class MeterViewModel: ObservableObject {
         guard count > 0 else { return }
         telemetry.rfSpectrumDB = Array(rfSpectrumScratch[0..<count])
         telemetry.rfSpanHz = span
+        // Formatted here and written through the change guard: the header chip
+        // that shows it is outside the isolation wrapper (audit C1).
+        put(\.rfSpanText, Self.rfSpanLabel(hz: span))
     }
 
     // Change-guarded telemetry writes: with @Observable, every write fires the
@@ -733,19 +886,40 @@ final class MeterViewModel: ObservableObject {
         put(\.midText, Self.dbText(s.midRMSDBFS))
         put(\.sideNorm, Self.qNorm(Self.dbNorm(s.sideRMSDBFS)))
         put(\.sideText, Self.dbText(s.sideRMSDBFS))
-        put(\.correlation, Double((s.stereoCorrelation * 100).rounded() / 100))
-        put(\.correlationText, String(format: "%+.2f", s.stereoCorrelation))
+        // An M-only decode has L == R exactly, so correlation is +1.00 by
+        // construction -- report the decode state instead of that number
+        // (audit M1). Separation and balance are gated in MeterAnalysis.
+        let monoDecode = s.hasSignal && !s.stereoDecodeActive
+        put(\.monoDecode, monoDecode)
+        let corrValid = s.stereoCorrelationValid && !monoDecode
+        put(\.correlationValid, corrValid)
+        put(\.correlation, corrValid ? Double((s.stereoCorrelation * 100).rounded() / 100) : 0.0)
+        put(\.correlationText, corrValid
+            ? String(format: "%+.2f", s.stereoCorrelation) : "--")
 
         // Unitless values so they render at full size in the narrow scale-less
         // strips; the kHz unit is shown once in the group header.
+        // Without a kHz-per-unit scale (uncalibrated input, no pilot lock)
+        // these are not measurements -- they used to read a confident 0.00
+        // (audit C14).
+        let devText: (Float, String) -> String = { value, format in
+            s.devScaleValid ? String(format: format, value) : "--"
+        }
         put(\.pilotNorm, Self.qNorm(Double(s.pilotDevKHz) / MeterScale.pilotFullKHz))
-        put(\.pilotText, String(format: "%.2f", s.pilotDevKHz))
+        put(\.pilotText, devText(s.pilotDevKHz, "%.2f"))
         put(\.rdsNorm, Self.qNorm(Double(s.rdsDevKHz) / MeterScale.rdsFullKHz))
-        put(\.rdsText, String(format: "%.2f", s.rdsDevKHz))
+        put(\.rdsText, devText(s.rdsDevKHz, "%.2f"))
         put(\.maxDevNorm, Self.qNorm(Double(s.maxDevKHz) / MeterScale.maxFullKHz))
-        put(\.maxDevText, String(format: "%.1f", s.maxDevKHz))
-        put(\.aveMinDevText,
-            String(format: "%.1f / %.1f", s.aveDevKHz, s.minDevKHz))
+        put(\.maxDevText, devText(s.maxDevKHz, "%.1f"))
+        put(\.aveMinDevText, s.devScaleValid
+            ? String(format: "%.1f / %.1f", s.aveDevKHz, s.minDevKHz) : "-- / --")
+        // Monitor-ballistics readout: pushed only while the option shows it
+        // (the string write is change-guarded either way, so this is cheap).
+        if monitorBallistics {
+            put(\.monitorDevText, s.monitorDevValid
+                ? String(format: "%.1f  (max %.1f) kHz", s.monitorDevKHz, s.monitorMaxDevKHz)
+                : "--")
+        }
 
         // EN 50067 sec 1.2 subcarrier phase. Whole degrees: that is the
         // resolution the +/- 10 deg tolerance is judged at, and a decimal
@@ -771,8 +945,12 @@ final class MeterViewModel: ObservableObject {
         }
         put(\.mpxPowerDBr, Double((s.mpxPowerDBr * 10).rounded() / 10))
         put(\.mpxPowerValid, s.mpxPowerValid)
-        put(\.posPeakText, String(format: "%+.1f", s.posPeakDevKHz))
-        put(\.negPeakText, String(format: "%+.1f", s.negPeakDevKHz))
+        // peakValid is false when the deviation scale was lost: the peaks then
+        // carry the LAST station's kHz and the view tinted them red as if they
+        // were live over-deviation (audit M7 / C2).
+        put(\.posPeakText, s.peakValid ? String(format: "%+.1f", s.posPeakDevKHz) : "--")
+        put(\.negPeakText, s.peakValid ? String(format: "%+.1f", s.negPeakDevKHz) : "--")
+        put(\.peakValid, s.peakValid)
         put(\.posPeakKHz, Double((s.posPeakDevKHz * 10).rounded() / 10))
         put(\.negPeakKHz, Double((s.negPeakDevKHz * 10).rounded() / 10))
         // SM.1268-5 exceedance readout: the compliance criterion is 1e-4 %,
@@ -781,6 +959,12 @@ final class MeterViewModel: ObservableObject {
         if s.exceedanceValid {
             put(\.exceedanceText, s.exceedancePct <= 0.0
                 ? "0 %" : String(format: "%.5f %%", s.exceedancePct))
+        } else if s.exceedanceBoundPct > 0.0 {
+            // Under a minute of samples the criterion (one sample in a
+            // million) is finer than the window resolves, so publish the
+            // upper bound the counted samples support instead of a figure
+            // that cannot mean what it says (audit M6).
+            put(\.exceedanceText, String(format: "< %.5f %%", s.exceedanceBoundPct))
         } else {
             put(\.exceedanceText, "--")
         }
@@ -790,23 +974,38 @@ final class MeterViewModel: ObservableObject {
             ? String(format: "%+.1f dBr", s.mpxPowerMaxDBr) : "--")
         put(\.mpxPowerMaxDBr, Double((s.mpxPowerMaxDBr * 10).rounded() / 10))
         put(\.mpxPowerMaxValid, s.mpxPowerMaxValid)
-        put(\.separationText, s.separationValid
+        // Both describe the stereo image, so an M-only decode must not keep
+        // showing the last stereo-era value (audit M1; the peak-hold and the
+        // balance smoother hold their state across a lock loss).
+        let monoDecodeNow = s.hasSignal && !s.stereoDecodeActive
+        put(\.separationText, s.separationValid && !monoDecodeNow
             ? String(format: "%.0f dB", s.bestSeparationDB) : "--")
 
-        // Reception / chain quality.
-        if s.basebandNoiseValid, s.hasSignal {
+        // Reception / chain quality. `qualityValid` separates "no data yet"
+        // from a measured Unusable -- both were level 0, so the card painted
+        // its own warm-up red (audit C6).
+        if s.basebandNoiseValid, s.hasSignal, telemetry.rfOverloadActive {
+            // The noise figure is a real measurement -- of the front end's
+            // clipping products, not of reception. Show the number, withhold
+            // the grade (validity invariant: no verdict without data for it).
+            put(\.qualityLevel, 0)
+            put(\.qualityValid, false)
+            put(\.qualityText, String(format: "RF Overload  %.2f kHz", s.basebandNoiseKHz))
+        } else if s.basebandNoiseValid, s.hasSignal {
             put(\.qualityLevel, s.signalQuality)
+            put(\.qualityValid, true)
             put(\.qualityText, String(format: "%@  %.2f kHz",
                                       Self.qualityWord(s.signalQuality), s.basebandNoiseKHz))
         } else {
             put(\.qualityLevel, 0)
+            put(\.qualityValid, false)
             put(\.qualityText, "--")
         }
         put(\.carrierOffsetValid, s.carrierOffsetValid)
         put(\.carrierOffsetKHz, Double((s.carrierOffsetKHz * 10).rounded() / 10))
         put(\.carrierOffsetText, s.carrierOffsetValid
             ? String(format: "%+.1f kHz", s.carrierOffsetKHz) : "--")
-        put(\.balanceText, s.stereoBalanceValid
+        put(\.balanceText, s.stereoBalanceValid && !monoDecodeNow
             ? String(format: "%+.1f dB", s.stereoBalanceDB) : "--")
 
         // Deviation distribution: the curve plus the two figures that read off
@@ -864,8 +1063,16 @@ final class MeterViewModel: ObservableObject {
         put(\.audioSpectrumNyquistHz, s.audioSpectrumNyquistHz)
     }
 
-    /// Reset the deviation peak-hold + best-separation readouts.
-    func resetPeaks() { engine?.resetPeaks() }
+    /// Reset the deviation peak-hold + best-separation readouts. Also clears
+    /// the samples-dropped badge: the accumulators start clean again.
+    func resetPeaks() {
+        engine?.resetPeaks()
+        telemetry.dropWarningText = nil
+        lastDropEvents = 0
+        // With no engine (stopped) there is nothing to reset but the display,
+        // which is the point of allowing the button there (audit C16).
+        if !running { telemetry.reset() }
+    }
 
     /// Start (with a Save panel) or stop recording. `recordMPX` selects the
     /// format: decoded stereo audio, or the raw MPX composite (mono).

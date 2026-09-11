@@ -69,12 +69,20 @@ final class LiveTelemetry {
     var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
     var preEncodeLimiterGainReductionDBValue: Float = 0.0
     var safetyLimiterGainReductionDBValue: Float = 0.0
+    /// dB the 1x safety soft clip had to absorb (decaying peak); 0.0 = idle, as designed.
+    var safetyClipDBValue: Float = 0.0
     var stereoImageText: String = "Corr +1.00 • Side 0.00x"
+    /// Peak presented to the converter (post output gain + line output),
+    /// shown on the Audio I/O Output card. "--" while stopped.
+    var dacPeakText: String = "--"
     var agcStateText: String = "Off"
     var agcDetailText: String = "Detector -inf dB • Gain 0.0 dB"
+    /// Advanced Dynamics leveler: when active it REPLACES the AGC (and the
+    /// dashboard's AGC pill switches identity to it).
+    var advancedDynamicsActive: Bool = false
+    var advancedDynamicsDetailText: String = "Density 0.0 dB • Gain 0.0/0.0/0.0/0.0/0.0 dB"
     var multibandStateText: String = "Off"
     var primeBassStateText: String = "Off"
-    var widenerStateText: String = "Off"
 
     var rdsPS: String = "-"
     var rdsPI: String = "-"

@@ -16,7 +16,7 @@ struct SectionNavigationTests {
     private func makeViewModel() -> MPXPrimeViewModel {
         let tempPath = NSTemporaryDirectory()
             + "MPXPrime-SectionNavTests-\(UUID().uuidString).ini"
-        return MPXPrimeViewModel(configPath: tempPath)
+        return MPXPrimeViewModel(configPath: tempPath, deviceLister: { [] })
     }
 
     @Test func goToMonitoringFromProcessingLandsOnMonitoringStage() {

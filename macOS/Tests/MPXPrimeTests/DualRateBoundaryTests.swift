@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import MPXPrime
 
-// Phase 1 of the dual-rate audio chain refactor (plan.md "Next up" #1):
+// Phase 1 of the dual-rate audio chain refactor (docs/project-roadmap.md "Next up" #1):
 // resampler primitive plumbed into MPXGenerator as a NO-OP boundary.
 // Audio stages still run at MPX rate; the boundary just downsamples
 // input to `dual_rate_audio_domain_rate_hz` and immediately upsamples
@@ -48,7 +48,6 @@ struct DualRateBoundaryTests {
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = true
         cfg.primeBassEnabled = false
-        cfg.stereoWidenEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = true
         cfg.multibandMode = 5
@@ -132,6 +131,12 @@ struct DualRateBoundaryTests {
         cfgA.dualRateAudioDomainEnabled = false
         var cfgB = makeBaseConfig()
         cfgB.dualRateAudioDomainEnabled = false
+        // Bit-identity across two renders requires RDS OFF: the RDS text
+        // scheduler paces PS/RT by wall clock, so two renders that take
+        // different real time can emit different bits (this exact class
+        // reddened CompositeShaperOrderingTests on a contended CI runner).
+        cfgA.enRDS = false
+        cfgB.enRDS = false
 
         let frames = 8_192
         let outA = render(config: cfgA, frames: frames)

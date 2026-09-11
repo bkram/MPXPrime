@@ -95,13 +95,6 @@ struct ProcessingOverviewGrid: View {
                     bypassedByAdvancedDynamics: model.config.advancedDynamicsEnabled
                 )
                 stageCard(
-                    .widener,
-                    title: "Stereo Widener",
-                    subtitle: widenerSubtitle,
-                    enabledPath: \.stereoWidenEnabled,
-                    liveReadout: { $0.widenerStateText }
-                )
-                stageCard(
                     .primeBass,
                     title: "PrimeBass",
                     subtitle: primeBassSubtitle,
@@ -279,17 +272,11 @@ struct ProcessingOverviewGrid: View {
     }
 
     private var primeBassSubtitle: String {
-        String(format: "Amt %.2f · f %.0f Hz · drv %.2f",
+        let bass = model.config.monoBassEnabled
+            ? String(format: "Mono<%.0f", model.config.monoBassFreqHz) : "Mono off"
+        return String(format: "Amt %.2f · f %.0f Hz · %@",
             model.config.primeBassAmount,
             model.config.primeBassFreqHz,
-            model.config.primeBassDrive)
-    }
-
-    private var widenerSubtitle: String {
-        let bass = model.config.monoBassEnabled ? String(format: "Mono<%.0f", model.config.monoBassFreqHz) : "Mono off"
-        return String(format: "W %.2f · C %.2f · %@",
-            model.config.stereoWidenWidth,
-            model.config.stereoWidenCenter,
             bass)
     }
 

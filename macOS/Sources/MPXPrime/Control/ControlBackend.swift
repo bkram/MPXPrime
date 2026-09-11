@@ -38,11 +38,41 @@ struct ControlStatus: Codable, Sendable {
     var restartPending: Bool
     var sourceMode: String
     var outputMode: String
+    /// Is the operator's listening output playing? Defaulted so an older
+    /// client (or the Linux build, which has no monitor) decodes fine.
+    var monitorActive: Bool = false
     /// Operator-facing lines. Semantics differ by backend BY DESIGN: the
     /// headless backend reports engine-fault reasons (start failures, retry
     /// state); the GUI backend mirrors its human status line. Treat as
     /// display text, never parse.
     var notes: [String]
+}
+
+/// GET /api/mixer payload: the SOUND CARD's own volume controls.
+///
+/// Linux only, and deliberately so: on that platform the card mixer sits
+/// between the encoder and the exciter with no GUI to inspect it, and a
+/// slider a few percent below unity silently costs composite level that no
+/// meter in the app can see (it cost this project 2 dB after a reboot).
+/// macOS answers `available: false`: CoreAudio device volume is a different
+/// animal and is not exposed here.
+struct ControlMixer: Codable, Sendable {
+    var available: Bool = false
+    /// The ALSA card the controls belong to, derived from the output device.
+    var card: String?
+    var controls: [ALSAMixerMath.Control] = []
+    /// Operator-facing explanation when there is nothing to show.
+    var note: String?
+}
+
+/// PATCH /api/mixer body. Only the fields present move.
+struct ControlMixerPatch: Codable, Sendable {
+    var name: String
+    var index: UInt32?
+    var playbackPercent: Double?
+    var capturePercent: Double?
+    var playbackMuted: Bool?
+    var captureMuted: Bool?
 }
 
 /// GET /api/meters payload. All fields optional: platforms report what they
@@ -53,10 +83,25 @@ struct ControlMeters: Codable, Sendable {
     var inputRightPeak: Float?
     var outputPeak: Float?
     var deviationKHzPeak: Float?
+    /// Peak actually presented to the converter in dBFS: post `output_gain_db`
+    /// and post `mpx_line_output_dbfs` (composite mode). The electrical
+    /// headroom readout; `deviationKHzPeak` is the modulation-domain one
+    /// (output/line trims divided back out).
+    var dacPeakDBFS: Float?
     var agcGainDB: Float?
+    /// Advanced Dynamics leveler telemetry. All nil while the stage is off
+    /// (agcGainDB is the dynamics readout then); when active, agcGainDB
+    /// reads 0 because the leveler REPLACES the AGC.
+    var advancedDynamicsActive: Bool?
+    /// Per-band leveler gains in dB, low to high (5 bands).
+    var advancedDynamicsBandGainsDB: [Float]?
+    var advancedDynamicsDensityDB: Float?
     var compositeClipperGainReductionDB: Float?
     var preEncodeLimiterGainReductionDB: Float?
     var safetyLimiterGainReductionDB: Float?
+    /// dB the safety soft clip absorbed (decaying peak). 0 = idle, as designed; > 0 means the
+    /// clipper/limiter are not controlling peaks (profile or gain structure needs attention).
+    var safetyClipDB: Float?
     var pilotInjectionPercent: Float?
     var rdsInjectionPercent: Float?
     var compositeBudgetMarginDB: Float?
@@ -64,6 +109,10 @@ struct ControlMeters: Codable, Sendable {
     var stereoCorrelation: Float?
     var renderXruns: Int?
     var captureXruns: Int?
+    /// Worst render-thread busy share of one period in the last ~43 ms, in
+    /// percent of the period (Linux ALSA engine). 100 means a period took as
+    /// long to render as it lasts -- xruns follow. Nil where not measured.
+    var renderLoadPercent: Float?
     // Input capture->render ring transport diagnostics (macOS input source).
     // The definitive signal for clock-drift faults between a virtual input
     // (e.g. BlackHole) and a hardware output: `overflows` climbs when the
@@ -175,6 +224,23 @@ protocol ControlledEngine: AnyObject {
     /// engine without a scope tap (ALSA today) simply reports no telemetry
     /// and the route answers 503, same as /api/meters.
     func controlTelemetry(windowMS: Double) -> ControlTelemetry?
+    /// Is the second (listening) output running? Default false: an engine
+    /// without a monitor path -- ALSA today -- simply never reports one.
+    var monitorActiveForControl: Bool { get }
+    /// Why the render thread is NOT real-time, when it is not (Linux); nil
+    /// when it is or when the platform's audio engine owns scheduling itself.
+    var schedulingNoteForControl: String? { get }
+    /// The rate the engine ACTUALLY renders at, when it can differ from the
+    /// configured one: CoreAudio follows the device (a built-in output that
+    /// tops out at 96 kHz renders at 96 kHz whatever `sample_rate` says).
+    /// Nil where the engine opens the configured rate exactly (ALSA).
+    var renderSampleRateForControl: Double? { get }
+}
+
+extension ControlledEngine {
+    var renderSampleRateForControl: Double? { nil }
+    var monitorActiveForControl: Bool { false }
+    var schedulingNoteForControl: String? { nil }
 }
 
 extension ControlledEngine {
@@ -194,6 +260,12 @@ protocol ControlBackend: Sendable {
     func transport(_ action: TransportAction) async throws -> ControlStatus
     /// Live scopes + spectrum (nil = engine stopped or no tap on platform).
     func telemetry(windowMS: Double) async -> ControlTelemetry?
+
+    /// The sound card's own mixer, on platforms where the operator cannot
+    /// otherwise reach it (Linux). macOS answers "not available".
+    func cardMixer() async -> ControlMixer
+    /// Move one card mixer control; false when it could not be applied.
+    func setCardMixer(_ patch: ControlMixerPatch) async -> Bool
     // Operator preset slots (shared SnapshotStore; <config>.snapshots.json).
     func snapshots() async -> ControlSnapshots
     func snapshotSave(slot: Int, name: String) async throws -> ControlSnapshots
@@ -204,7 +276,7 @@ protocol ControlBackend: Sendable {
     func snapshotExport(slot: Int) async -> String?
     /// Validate + normalize + store INI text into the slot (does not load it).
     func snapshotImport(slot: Int, name: String?, iniText: String) async throws -> ControlSnapshots
-    /// Available preset ids by kind (primebass / widener / multiband /
+    /// Available preset ids by kind (primebass / multiband / finalstage /
     /// format_profile) -- and application thereof.
     func presets() async -> [String: [String]]
     func applyPreset(kind: String, id: String, intensity: Double?) async throws -> ConfigApplyResult

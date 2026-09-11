@@ -28,7 +28,18 @@ struct RootMeterView: View {
         // below the content minimum -- on a normal screen nothing scrolls.
         GeometryReader { geo in
             VStack(spacing: 0) {
-                inputConfigBar
+                // The bar is dense (an SDR adds device / freq / gain / bandwidth
+                // / ppm / AGC on top of the shared controls), so at the window's
+                // minimum width it can want more room than it has. ViewThatFits
+                // keeps the normal spaced layout whenever it fits and falls back
+                // to a horizontally scrollable one only when it does not, so no
+                // control becomes unreachable (audit C8).
+                ViewThatFits(in: .horizontal) {
+                    inputConfigBar
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        inputConfigBar
+                    }
+                }
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top, spacing: 12) {
@@ -130,6 +141,7 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: $vm.audioFullScaleKHz,
                                                range: 50.0...300.0, step: 1.0, decimals: 0)
                             .frame(width: 50)
+                            .accessibilityLabel("Absolute calibration: kHz of deviation at 0 dBFS")
                         Text("kHz").foregroundStyle(.secondary)
                             .fixedSize()
                         Stepper("Full scale", value: $vm.audioFullScaleKHz,
@@ -146,6 +158,7 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: $vm.pilotRefKHz,
                                                range: 4.0...9.0, step: 0.05, decimals: 2)
                             .frame(width: 48)
+                            .accessibilityLabel("Pilot reference deviation in kHz")
                         Text("kHz").foregroundStyle(.secondary)
                             .fixedSize()
                         Stepper("Pilot Ref", value: $vm.pilotRefKHz, in: 4.0...9.0, step: 0.05)
@@ -206,6 +219,7 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: $vm.sdrGainDB,
                                                range: 0.0...50.0, step: 1.0, decimals: 1)
                             .frame(width: 52)
+                            .accessibilityLabel("Tuner gain in dB")
                         Text(vm.sdrIsSDRplay ? "IF" : "dB").foregroundStyle(.secondary)
                             .fixedSize()
                         Stepper("Gain", value: $vm.sdrGainDB, in: 0.0...50.0, step: 1.0)
@@ -223,6 +237,7 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: Self.intBinding($vm.sdrLnaState),
                                                range: 0...27, step: 1, decimals: 0)
                             .frame(width: 34)
+                            .accessibilityLabel("SDRplay LNA state")
                         Stepper("LNA", value: $vm.sdrLnaState, in: 0...27, step: 1)
                             .labelsHidden()
                     }
@@ -243,6 +258,7 @@ struct RootMeterView: View {
                                            : [311, 254, 200, 168, 133, 114, 84, 56])
                             .map { (label: "\($0) kHz", tag: $0) },
                     selection: $vm.sdrBandwidthKHz)
+                .accessibilityLabel("IF channel bandwidth in kHz")
                     .fixedSize()
                     .help(vm.sdrIsSDRplay
                     ? "SDRplay analog IF bandwidth. Narrower rejects adjacent-station "
@@ -275,6 +291,7 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: Self.intBinding($vm.sdrPPM),
                                                range: -200...200, step: 1, decimals: 0)
                             .frame(width: 44)
+                            .accessibilityLabel("Frequency correction in ppm")
                         Stepper("PPM", value: $vm.sdrPPM, in: -200...200, step: 1)
                             .labelsHidden()
                     }
@@ -298,6 +315,7 @@ struct RootMeterView: View {
                         ScrollableNumericField(value: $vm.signalCalibrationDB,
                                                range: -60.0...60.0, step: 0.5, decimals: 1)
                             .frame(width: 52)
+                            .accessibilityLabel("Signal level calibration offset in dB")
                         Text("cal").foregroundStyle(.secondary).fixedSize()
                     }
                 }
@@ -337,6 +355,8 @@ struct RootMeterView: View {
                 }
             }
             Spacer()
+
+            deemphasisPicker
 
             dcBlockToggle
 
@@ -452,9 +472,10 @@ struct RootMeterView: View {
                         // when negative (out of phase = mono-compatibility risk).
                         Text(t.correlationText).font(BroadcastStyle.heroReadout)
                             .foregroundColor(
-                                t.correlation < 0 ? BroadcastStyle.overRed
-                                    : (t.correlation < 0.3 ? BroadcastStyle.tightAmber
-                                        : BroadcastStyle.readoutPrimary))
+                                !t.correlationValid ? BroadcastStyle.readoutPrimary
+                                    : (t.correlation < 0 ? BroadcastStyle.overRed
+                                        : (t.correlation < 0.3 ? BroadcastStyle.tightAmber
+                                            : BroadcastStyle.readoutPrimary)))
                         Spacer(minLength: 0)
                     }
                     .frame(width: 74)
@@ -511,12 +532,18 @@ struct RootMeterView: View {
                 HStack(spacing: 10) {
                     strip("PILOT", t.pilotText, t.pilotNorm,
                           .modulationKHz(fullScale: MeterScale.pilotFullKHz, limit: MeterScale.pilotLimitKHz),
-                          "19 kHz stereo pilot deviation. Safe range ~6.75-7.5 kHz (8-10% of "
-                            + "75 kHz); too low loses stereo lock, too high steals modulation.")
+                          "19 kHz stereo pilot deviation. Safe range ~6.75-7.5 kHz (9-10% of "
+                            + "75 kHz; 6.75 kHz is the 9% nominal); too low loses stereo "
+                            + "lock, too high steals modulation.")
                     strip("RDS", t.rdsText, t.rdsNorm,
                           .modulationKHz(fullScale: MeterScale.rdsFullKHz, limit: nil),
-                          "57 kHz RDS subcarrier deviation. Typical 2-4 kHz (~3-5%); below ~1.5 "
-                            + "kHz decodes poorly, above ~7.5 kHz wastes deviation.")
+                          "57 kHz RDS subcarrier PEAK deviation -- the injection level an "
+                            + "encoder is set to (EN 50067 sec 1.3 states +/-1.0 to +/-7.5 kHz "
+                            + "as a peak range, and this reading is derived from the coherent "
+                            + "in-band RMS times the spec's shaped-biphase form factor, so it "
+                            + "is steady under data modulation). Typical 2-4 kHz (~3-5%); "
+                            + "below ~1.5 kHz decodes poorly, 7.5 kHz is the spec ceiling. An "
+                            + "unmodulated bench carrier reads 32% high by design.")
                     strip("MAX", t.maxDevText, t.maxDevNorm,
                           .modulationKHz(fullScale: MeterScale.maxFullKHz, limit: MeterScale.maxLimitKHz),
                           "Peak total deviation: the highest excursion in the last second "
@@ -539,6 +566,31 @@ struct RootMeterView: View {
                         + "peaky, lightly-processed signal; MAX close to AVE means "
                         + "a densely-processed one running near its ceiling "
                         + "continuously.")
+                if vm.monitorBallistics {
+                    Text("MONITOR  \(t.monitorDevText)")
+                        .font(BroadcastStyle.chipLabel)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .help("Integrating-detector deviation (0.5 ms window) -- "
+                            + "the display convention of hardware modulation "
+                            + "monitors, whose RC-smoothed detectors cannot see "
+                            + "the sub-millisecond peaks of dense processing. Use "
+                            + "it to compare against such an instrument's "
+                            + "deviation display; MAX above stays the calibrated "
+                            + "ITU-R SM.1268 true-peak figure, and all compliance "
+                            + "statistics derive from it, never from this readout. "
+                            + "On test tones an integrating detector genuinely "
+                            + "reads below true deviation -- expect agreement on "
+                            + "dense program, not on sines.")
+                }
+                Toggle("Monitor ballistics", isOn: $vm.monitorBallistics)
+                    .toggleStyle(.checkbox)
+                    .font(BroadcastStyle.chipLabel)
+                    .help("Add an integrating-detector deviation readout "
+                        + "(0.5 ms window) for comparing against hardware "
+                        + "modulation monitors. Does not change MAX or any "
+                        + "compliance statistic.")
                 }
                 .padding(6)
             }
@@ -551,8 +603,54 @@ struct RootMeterView: View {
         GroupBox("Quality") {
             LiveObservationView(telemetry: vm.telemetry) { t in
                 VStack(alignment: .leading, spacing: 12) {
+                    if t.inputStalled {
+                        Text("NO INPUT")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.overRed)
+                            .help("The input device stopped delivering samples while "
+                                + "capture is still running (USB power-save, a stalled "
+                                + "SDR stream). The readings below are frozen, not live.")
+                            .accessibilityLabel("No input: the device stopped delivering samples")
+                    }
+                    if let warning = t.dropWarningText {
+                        Text("SAMPLES DROPPED")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.overRed)
+                            .help(warning)
+                            .accessibilityLabel(warning)
+                    }
+                    if t.rfOverloadActive {
+                        Text("RF OVERLOAD")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.tightAmber)
+                            .help("The tuner front end is clipping (IQ samples on the "
+                                + "converter rails). Lower the RF gain -- or stop "
+                                + "relying on auto gain, which parks too hot on strong "
+                                + "locals. While this shows, every level-derived "
+                                + "reading (baseband noise, signal quality, deviation "
+                                + "peaks, RDS level) is inflated by clipping products, "
+                                + "so the quality grade is withheld.")
+                            .accessibilityLabel("RF overload: front end clipping, "
+                                + "lower the RF gain; level readings unreliable")
+                    }
+                    if t.monoDecode {
+                        Text("MONO DECODE")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.tightAmber)
+                            .help("A signal is present but the 19 kHz pilot is too weak "
+                                + "to recover the stereo subcarrier, so the decoded "
+                                + "audio is mono (M only). Deviation, pilot and MPX "
+                                + "power stay valid; separation, balance and phase "
+                                + "correlation read '--' because they would only "
+                                + "describe the mono decode, not the broadcast. A "
+                                + "genuinely mono station reads this too.")
+                            .accessibilityLabel("Mono decode: pilot too weak for stereo, "
+                                + "stereo readouts unavailable")
+                    }
                     readout("SIGNAL QUALITY", t.qualityText,
-                            valueTint: Self.qualityTint(t.qualityLevel),
+                            valueTint: t.qualityValid
+                                ? Self.qualityTint(t.qualityLevel)
+                                : BroadcastStyle.readoutPrimary,
                             help: "How much energy sits ABOVE the modulated baseband "
                                 + "(over 60 kHz), where nothing is legitimately "
                                 + "transmitted -- so it is demod noise and "
@@ -630,6 +728,7 @@ struct RootMeterView: View {
             ScrollableNumericField(value: $vm.frequencyMHz,
                                    range: tuneRangeMHz, step: 0.1, decimals: 3)
                 .frame(width: 76)
+                .accessibilityLabel("Tuned frequency in MHz")
             Text("MHz").foregroundStyle(.secondary)
                 .fixedSize()
             Stepper("Frequency", value: $vm.frequencyMHz,
@@ -646,6 +745,34 @@ struct RootMeterView: View {
         + "the monitor/recordings; common on wireless audio links. Broadcast "
         + "FM has no legitimate DC, so leave it on. Deviation measurements "
         + "are always DC-tracked separately. Applies live."
+
+    private static let deemphasisHelp = "Receiver de-emphasis time constant: "
+        + "50 us in ITU Region 1 (Europe, Africa, most of Asia and Oceania), "
+        + "75 us in the Americas, Japan and Korea. It shapes the DECODED "
+        + "audio only -- the monitor, stereo recordings, the L/R levels and "
+        + "the audio spectrum. Deviation, pilot, RDS and MPX power are "
+        + "measured before it and do not change. Set wrong, the decoded top "
+        + "end is about 3.4 dB off at 15 kHz. Applies live."
+
+    // Receiver de-emphasis standard. Decode-path only (monitor audio, stereo
+    // recordings, decoded L/R strips, audio spectrum) -- deviation, pilot, RDS
+    // and MPX power are measured ahead of it and do not move.
+    private var deemphasisPicker: some View {
+        HStack(spacing: 4) {
+            Text("De-emph").foregroundStyle(.secondary)
+            Picker("De-emphasis", selection: $vm.preemphasisUS) {
+                Text("50").tag(50)
+                Text("75").tag(75)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .labelsHidden()
+            Text("us").foregroundStyle(.secondary).fixedSize()
+        }
+        .help(Self.deemphasisHelp)
+        .accessibilityLabel("De-emphasis time constant in microseconds")
+        .onChange(of: vm.preemphasisUS) { _, _ in vm.applyPreemphasisChange() }
+    }
 
     private var dcBlockToggle: some View {
         Toggle("DC block", isOn: $vm.dcBlockEnabled)
@@ -701,6 +828,7 @@ struct RootMeterView: View {
                     ScrollableNumericField(value: $vm.mpxPassGainDB,
                                            range: 0.0...12.0, step: 0.5, decimals: 1)
                         .frame(width: 48)
+                        .accessibilityLabel("MPX pass-through output gain in dB")
                     Text("dB").foregroundStyle(.secondary).fixedSize()
                     Stepper("MPX gain", value: $vm.mpxPassGainDB,
                             in: 0.0...12.0, step: 0.5)
@@ -773,8 +901,10 @@ struct RootMeterView: View {
                                         + "power of a +/-19 kHz sine; the regulatory limit is "
                                         + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
                             readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
-                                    valueTint: limitTint(max(t.posPeakKHz, -t.negPeakKHz),
-                                                         limit: 75.0, warn: 71.0),
+                                    valueTint: t.peakValid
+                                        ? limitTint(max(t.posPeakKHz, -t.negPeakKHz),
+                                                    limit: 75.0, warn: 71.0)
+                                        : BroadcastStyle.readoutPrimary,
                                     help: "Highest positive / negative deviation in the last "
                                         + "60 s (50 ms peak-hold slots, measuring-receiver "
                                         + "style; a single impulse ages out instead of pinning "
@@ -820,9 +950,17 @@ struct RootMeterView: View {
                             }
                         }
                         GridRow {
+                            // Enabled while stopped too: that is exactly when
+                            // held values are on screen and the operator wants
+                            // them gone (audit C16). resetPeaks() clears the
+                            // telemetry as well as the engine accumulators.
                             Button("Reset Peaks") { vm.resetPeaks() }
                                 .buttonStyle(.bordered)
-                                .disabled(!vm.running)
+                                .help("Clear the held readings: PEAK +/-, MPX POWER max, "
+                                    + "OVER 77 kHz, the deviation distribution, best "
+                                    + "separation, and the SAMPLES DROPPED badge. "
+                                    + "Available while stopped, since that is when held "
+                                    + "values are still on screen.")
                                 .gridColumnAlignment(.leading)
                         }
                     }
@@ -891,7 +1029,21 @@ struct RootMeterView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
+        // One accessibility element per readout, with the state colour alone
+        // used to convey folded into the VALUE -- over-limit was red text and
+        // nothing else, which a screen reader and a colour-blind operator both
+        // miss (audit C10). VerticalMeterStrip is the in-repo template.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(Self.accessibilityValue(value, tint: valueTint))
         .help(help)
+    }
+
+    /// The spoken value: the reading, plus the limit state the tint encodes.
+    private static func accessibilityValue(_ value: String, tint: Color) -> String {
+        if tint == BroadcastStyle.overRed { return "\(value), over limit" }
+        if tint == BroadcastStyle.tightAmber { return "\(value), near limit" }
+        return value
     }
 
     /// Color a numeric readout by how close it is to a ceiling: red at/over the
@@ -923,25 +1075,47 @@ struct RootMeterView: View {
                     }
                     .frame(maxWidth: .infinity)
                     labeled(decodedLSpectrum ? "Decoded L (spectrum)" : "Decoded L") {
-                        decodedView(spectrum: decodedLSpectrum, wave: t.decodedLScope,
-                                    spectrumDB: t.decodedLSpectrumDB,
-                                    maxHz: t.audioSpectrumMaxHz, nyquistHz: t.audioSpectrumNyquistHz,
-                                    channel: "left")
-                            .contentShape(Rectangle())
-                            .onTapGesture { decodedLSpectrum.toggle() }
-                            .accessibilityAddTraits(.isButton)
-                            .help("Click to toggle between waveform and audio spectrum (0-20 kHz).")
+                        // A real Button, not a tap gesture with an
+                        // `.isButton` TRAIT bolted on: the trait made a
+                        // non-element container merely CLAIM to be a button,
+                        // so VoiceOver could neither focus it nor activate it
+                        // and the control was mouse-only (audit C9).
+                        Button {
+                            decodedLSpectrum.toggle()
+                        } label: {
+                            decodedView(spectrum: decodedLSpectrum, wave: t.decodedLScope,
+                                        spectrumDB: t.decodedLSpectrumDB,
+                                        maxHz: t.audioSpectrumMaxHz,
+                                        nyquistHz: t.audioSpectrumNyquistHz,
+                                        channel: "left")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Decoded left display: "
+                            + (decodedLSpectrum ? "audio spectrum" : "waveform"))
+                        .accessibilityHint("Switches between waveform and audio spectrum")
+                        .help("Click to toggle between waveform and audio spectrum (0-20 kHz).")
                     }
                     .frame(maxWidth: .infinity)
                     labeled(decodedRSpectrum ? "Decoded R (spectrum)" : "Decoded R") {
-                        decodedView(spectrum: decodedRSpectrum, wave: t.decodedRScope,
-                                    spectrumDB: t.decodedRSpectrumDB,
-                                    maxHz: t.audioSpectrumMaxHz, nyquistHz: t.audioSpectrumNyquistHz,
-                                    channel: "right")
-                            .contentShape(Rectangle())
-                            .onTapGesture { decodedRSpectrum.toggle() }
-                            .accessibilityAddTraits(.isButton)
-                            .help("Click to toggle between waveform and audio spectrum (0-20 kHz).")
+                        // A real Button, not a tap gesture with an
+                        // `.isButton` TRAIT bolted on: the trait made a
+                        // non-element container merely CLAIM to be a button,
+                        // so VoiceOver could neither focus it nor activate it
+                        // and the control was mouse-only (audit C9).
+                        Button {
+                            decodedRSpectrum.toggle()
+                        } label: {
+                            decodedView(spectrum: decodedRSpectrum, wave: t.decodedRScope,
+                                        spectrumDB: t.decodedRSpectrumDB,
+                                        maxHz: t.audioSpectrumMaxHz,
+                                        nyquistHz: t.audioSpectrumNyquistHz,
+                                        channel: "right")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Decoded right display: "
+                            + (decodedRSpectrum ? "audio spectrum" : "waveform"))
+                        .accessibilityHint("Switches between waveform and audio spectrum")
+                        .help("Click to toggle between waveform and audio spectrum (0-20 kHz).")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -1036,10 +1210,16 @@ struct RootMeterView: View {
                         + "RF: the band around the tuned carrier, from the IQ.")
                 }
                 if showRFSpectrum {
-                    Text("span \(rfSpanLabel)")
-                        .font(BroadcastStyle.chipLabel)
-                        .foregroundStyle(.secondary)
-                        .help(Self.rfSpectrumHelp)
+                    // Inside the isolation wrapper: this is a per-tick value in
+                    // the card HEADER, and reading it directly in this body
+                    // made the whole root (toolbar included) invalidate at
+                    // 20 Hz -- the 0.34 leak, re-entered (audit C1).
+                    LiveObservationView(telemetry: vm.telemetry) { t in
+                        Text("span \(t.rfSpanText)")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundStyle(.secondary)
+                            .help(Self.rfSpectrumHelp)
+                    }
                 } else {
                     Picker("Span", selection: $vm.spectrumSpanKHz) {
                         Text("60 kHz").tag(60)
@@ -1056,13 +1236,6 @@ struct RootMeterView: View {
     }
 
     private var showRFSpectrum: Bool { vm.inputKind == .sdr && vm.spectrumShowsRF }
-
-    private var rfSpanLabel: String {
-        let hz = vm.telemetry.rfSpanHz
-        guard hz > 0 else { return "--" }
-        return hz >= 1e6 ? String(format: "%.2f MHz", hz / 1e6)
-                         : String(format: "%.0f kHz", hz / 1e3)
-    }
 
     // MARK: - RDS
 

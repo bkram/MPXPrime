@@ -167,7 +167,7 @@ and platform APIs for comparison.
 The names **MPX Prime**, **MPX Prime Studio** and **MPX Prime Meter** identify
 this project. They may not be used in any **commercial offering** -- a product,
 a service, a hosted instance, a bundle, or its marketing -- without the prior
-written approval of the project maintainer (ask via the
+written approval or a license from the project maintainer (ask via the
 [GitHub repository](https://github.com/bkram/MPXPrime)). This is a trademark
 condition, not a software-license condition: the code stays AGPL-3.0 and may be
 used, modified and sold under that license, but a commercial fork or service

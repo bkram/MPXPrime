@@ -344,6 +344,10 @@ public final class MeterAnalysis {
     private let measurementFIR: BlockFIRFilter
     private var dcBlock: [Float]
     private var measBlock: [Float]
+    /// Repair buffer for the non-finite ingress guard (audit P0-4). Only
+    /// written when a block actually carries NaN or Inf.
+    private var ingressBlock: [Float]
+    private var nonFiniteSamples: UInt64 = 0
 
     // Coherent RDS subcarrier level meter (see MeteringPrimitives.swift).
     private let rdsMeter: RDSSubcarrierLevelMeter
@@ -498,6 +502,7 @@ public final class MeterAnalysis {
         measurementFIR = BlockFIRFilter(taps: measTaps, maxBlock: maxBlock)
         dcBlock = [Float](repeating: 0.0, count: maxBlock)
         measBlock = [Float](repeating: 0.0, count: maxBlock)
+        ingressBlock = [Float](repeating: 0.0, count: maxBlock)
         // Ring of exactly D = (taps-1)/2 samples: reading then writing the
         // same index yields a delay of one full lap, i.e. the FIR's group
         // delay. (Sized from the local taps -- `self` is not fully
@@ -603,7 +608,37 @@ public final class MeterAnalysis {
         }
     }
 
+    /// How many non-finite input samples the guard below has replaced with
+    /// silence since this analyser was created. Non-zero means the capture
+    /// source handed the Meter NaN or Inf.
+    public var nonFiniteInputSampleCount: UInt64 { nonFiniteSamples }
+
+    /// DSP ingress guard (0.60, audit P0-4). The decoder sanitises its own
+    /// input, but the DC tracker, the measurement FIR, the power
+    /// accumulators and the RDS / pilot phase detectors all saw the raw
+    /// block first, so one non-finite sample poisoned every statistic on
+    /// this analyser permanently -- a sliding window never flushes a NaN.
+    /// Policy matches the encoder: non-finite becomes silence, finite
+    /// values pass untouched. The clean path only reads.
     private func processBlock(_ samples: UnsafeBufferPointer<Float>) {
+        var faults = 0
+        for v in samples where !v.isFinite { faults += 1 }
+        guard faults > 0 else {
+            processSanitizedBlock(samples)
+            return
+        }
+        nonFiniteSamples &+= UInt64(faults)
+        let n = min(samples.count, ingressBlock.count)
+        for i in 0..<n {
+            let v = samples[i]
+            ingressBlock[i] = v.isFinite ? v : 0.0
+        }
+        ingressBlock.withUnsafeBufferPointer { buf in
+            processSanitizedBlock(UnsafeBufferPointer(start: buf.baseAddress, count: n))
+        }
+    }
+
+    private func processSanitizedBlock(_ samples: UnsafeBufferPointer<Float>) {
         let wantedPreemphasisUS = preemphasisUSAtomic.load(ordering: .relaxed)
         if wantedPreemphasisUS != activePreemphasisUS {
             activePreemphasisUS = wantedPreemphasisUS

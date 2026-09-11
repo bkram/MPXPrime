@@ -55,6 +55,19 @@ combination test suite. Newest first.
   composite output of a settled configuration does not move (strict baselines
   unchanged).
 
+- **Fixed: one bad input sample could take the station 8 dB quiet for good.**
+  A NaN or infinity reaching the encoder -- from a misbehaving plug-in, a
+  driver glitch or a corrupt file -- lodged in the chain's filters and
+  envelope detectors, which have no way to flush one. Measured on the full
+  chain: a 64-sample burst left the composite 8.2 dB down and the processed
+  audio 12 dB down, still exactly that far down eight seconds later, with no
+  error anywhere and the output otherwise looking normal. Only restarting
+  the transport cleared it. The encoder and the Meter now replace a
+  non-finite input sample with silence at every point where samples they did
+  not generate enter the processing, count what they replaced, and pass
+  every finite value through untouched, hot ones included. Costs nothing
+  measurable (chain cost unchanged at 17.2 % on the reference machine).
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

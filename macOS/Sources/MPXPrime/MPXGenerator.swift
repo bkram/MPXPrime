@@ -3414,8 +3414,39 @@ final class MPXGenerator {
         var inputActivity: Float
     }
 
+    // MARK: - DSP ingress
+
+    /// Non-finite input samples the ingress guard has replaced with silence
+    /// since this generator was built. Non-zero means something upstream --
+    /// a plug-in, a driver, a decoded file -- handed the encoder NaN or Inf.
+    private let nonFiniteInputSamples = ManagedAtomic<UInt64>(0)
+
+    var nonFiniteInputSampleCount: UInt64 {
+        nonFiniteInputSamples.load(ordering: .relaxed)
+    }
+
+    /// The ingress policy (0.60, audit P0-4): a non-finite input sample is
+    /// silence, and every finite value passes through untouched -- including
+    /// legitimately over-range ones, which the peak stages exist to handle.
+    ///
+    /// Without this one sample of NaN or Inf is permanent: it propagates into
+    /// every recursive filter and envelope detector in the chain, and neither
+    /// a one-pole smoother nor the self-heal paths can ever flush it, so the
+    /// encoder goes silent until the transport restarts. `MPXDecoder` has
+    /// guarded its own input exactly this way since 0.36; this is the same
+    /// policy at the encoder's ingress, applied at each point where samples
+    /// the engine did not generate itself enter the DSP.
+    @inline(__always)
+    private func sanitizeIngress(_ x: Float) -> Float {
+        if x.isFinite { return x }
+        nonFiniteInputSamples.wrappingIncrement(ordering: .relaxed)
+        return 0.0
+    }
+
     private func processSampleDetailed(leftIn: Float, rightIn: Float) -> (mpx: Float, analysisStereo: ProgramStereoState) {
         defer { renderingCalibrationTone = false }
+        let leftIn = sanitizeIngress(leftIn)
+        let rightIn = sanitizeIngress(rightIn)
         // High-level chain order:
         // 0. Dual-rate audio chain boundary (when enabled, audio domain
         //    runs at the lower audio rate INSIDE the boundary; otherwise
@@ -3452,6 +3483,8 @@ final class MPXGenerator {
     /// metering snapshots (`analysisStereo` taken before stereo-image
     /// protection, and `inputActivity` from the raw input).
     private func processAudioDomain(leftIn: Float, rightIn: Float) -> AudioDomainOutput {
+        let leftIn = sanitizeIngress(leftIn)
+        let rightIn = sanitizeIngress(rightIn)
         var stereo = processProgramStereo(leftIn: leftIn, rightIn: rightIn)
         // Snapshot the program-stereo state BEFORE stereo-image protection so
         // analysis and metering callers see the unprotected program signal.
@@ -3682,8 +3715,8 @@ final class MPXGenerator {
 
     @inline(__always)
     private func directMonitorStereo(leftIn: Float, rightIn: Float) -> (Float, Float) {
-        var left = leftIn * inputGain
-        var right = rightIn * inputGain
+        var left = sanitizeIngress(leftIn) * inputGain
+        var right = sanitizeIngress(rightIn) * inputGain
         if monoMode {
             let mono = (left + right) * 0.5
             left = mono

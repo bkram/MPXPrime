@@ -230,8 +230,9 @@ key the installer generates and prints (stored in
 the Meter are macOS apps; the Monitor plays on a second ALSA device. See
 [docs/BUILDING.md](docs/BUILDING.md#linux-web-dashboard-encoder) for setup.
 
-### First-launch security note
+### First-launch security note (macOS)
 
+This applies to the macOS apps only; the Linux package has no such step.
 MPX Prime Studio is **ad-hoc signed**, not Apple-notarized. The DMG is built and signed by an automated GitHub Actions workflow with a self-managed signing identity -- it is *not* enrolled in the Apple Developer Notary Service. As a result, macOS Gatekeeper will refuse to open the app on first launch with a message similar to:
 
 > *"MPX Prime Studio" cannot be opened because Apple cannot check it for malicious software.*

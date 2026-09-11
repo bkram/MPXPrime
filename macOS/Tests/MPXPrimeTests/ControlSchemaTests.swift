@@ -169,10 +169,14 @@ struct ControlSchemaTests {
         let stageIDs = Set((model["stages"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
         let grouped = Set(StageGroup.allCases.flatMap(\.pageIDs)).union(StageGroup.soundLandingPageIDs)
         #expect(stageIDs.isSubset(of: grouped), "stages without a group: \(stageIDs.subtracting(grouped).sorted())")
-        // And the GUI can reach every one of them.
+        // And the GUI can reach every one of them. `Stage` is the macOS
+        // sidebar's enum, so this half only compiles where the GUI exists --
+        // without the wrap the whole Linux test target fails to build.
+        #if os(macOS)
         for id in StageGroup.allCases.flatMap(\.pageIDs) {
             #expect(Stage.stage(forSchemaPage: id) != nil, "no GUI stage for dashboard page \(id)")
         }
+        #endif
     }
 
     @Test func everyINIKeyHasASchemaDecision() throws {

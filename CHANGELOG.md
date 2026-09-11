@@ -82,6 +82,9 @@ combination test suite. Newest first.
   chapter gathers the install, the sound card mixer, render load, the CPU
   budget and the level question, so neither reader wades through the other's
   material.
+- **README trademark note.** The names MPX Prime / MPX Prime Studio / MPX
+  Prime Meter may not be used in a commercial offering without the
+  maintainer's prior written approval; the GPL-3.0 code license is unaffected.
 - **`docs/performance.md`.** The chain's measured cost on every machine it
   has run on -- M1 Pro, i7-9750H, Ryzen 5 PRO 2400GE (AVX2 and SSE2 kernels)
   -- as `--bench` chain cost, per-stage cost, clipper

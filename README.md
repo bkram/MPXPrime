@@ -285,6 +285,15 @@ Stereotool, Aphex, Waves, and others -- are trademarks of their respective owner
 and are used here descriptively only, to identify published behavior, prior art,
 and platform APIs for comparison.
 
+The names **MPX Prime**, **MPX Prime Studio** and **MPX Prime Meter** identify
+this project. They may not be used in any **commercial offering** -- a product,
+a service, a hosted instance, a bundle, or its marketing -- without the prior
+written approval of the project maintainer (ask via the
+[GitHub repository](https://github.com/bkram/MPXPrime)). This is a trademark
+condition, not a software-license condition: the code stays GPL-3.0 and may be
+used, modified and sold under that license, but a commercial fork or service
+built on it ships under its own name unless approval was given.
+
 ## License
 
 GPL-3.0. See `LICENSE`.

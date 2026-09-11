@@ -1,4 +1,5 @@
 import Testing
+import Atomics
 import Foundation
 @testable import MPXPrime
 
@@ -152,5 +153,119 @@ struct MonitorConditionerTests {
             }
         }
         #expect(l2[0] == 1.0 && l2[1] == -1.0, "a boosted monitor must clamp, got \(l2)")
+    }
+
+    // MARK: - Level changes (0.60 audit, P0-5)
+
+    /// The conditioner belongs to one thread; a level change reaches it
+    /// through `setTargetGain` on that thread and is RAMPED rather than
+    /// applied as a step, so moving the monitor fader cannot click.
+    @Test func aLevelChangeRampsInsteadOfStepping() {
+        var cond = MonitorConditioner()
+        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: 0.0)
+        cond.setTargetGain(0.5)
+
+        let frames = 64
+        var left = [Float](repeating: 1.0, count: frames)
+        var right = [Float](repeating: 1.0, count: frames)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: frames)
+            }
+        }
+        // 10 ms at this rate is far more than 64 frames, so the whole block
+        // is still on the way down: monotonic, and nowhere near the target.
+        #expect(left[0] < 1.0 && left[0] > 0.98, "the ramp started with a step: \(left[0])")
+        #expect(left[frames - 1] < left[0], "the ramp is not moving")
+        #expect(left[frames - 1] > 0.5, "the ramp reached the target far too fast")
+        for i in 1..<frames {
+            #expect(left[i] <= left[i - 1], "the ramp is not monotonic at \(i)")
+        }
+        #expect(left == right, "the two channels must ramp together")
+    }
+
+    @Test func theRampSettlesExactlyOnTheTarget() {
+        var cond = MonitorConditioner()
+        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: 0.0)
+        cond.setTargetGain(0.25)
+        // One second is far longer than the 10 ms ramp.
+        let frames = Int(sampleRate)
+        var left = [Float](repeating: 1.0, count: frames)
+        var right = [Float](repeating: 1.0, count: frames)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: frames)
+            }
+        }
+        #expect(abs(left[frames - 1] - 0.25) < 1e-6,
+                "settled on \(left[frames - 1]) instead of the target")
+        #expect(cond.gainLinear == 0.25)
+    }
+
+    @Test func configureSetsTheLevelWithoutARamp() {
+        // Engine start must come up at the configured level immediately --
+        // a ramp there would fade the monitor in on every restart.
+        var cond = MonitorConditioner()
+        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: -6.0)
+        var left: [Float] = [1.0]
+        var right: [Float] = [1.0]
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: 1)
+            }
+        }
+        #expect(abs(left[0] - powf(10.0, -6.0 / 20.0)) < 1e-6, "got \(left[0])")
+    }
+
+    @Test func aNonFiniteLevelIsIgnoredRatherThanAdopted() {
+        var cond = MonitorConditioner()
+        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: 0.0)
+        cond.setTargetGain(Float.nan)
+        #expect(cond.gainLinear == 1.0, "a NaN level reached the monitor")
+    }
+
+    /// Models the shipped hand-off exactly: the control side stores a Float
+    /// bit pattern into an atomic, the audio thread loads it, adopts it and
+    /// processes. Under `swift test --sanitize=thread` this is the check
+    /// that the monitor level no longer crosses threads by assignment --
+    /// before 0.60 the control side wrote straight into this struct while
+    /// the audio thread was mutating it.
+    @Test func theLevelHandOffSurvivesConcurrentControlWrites() {
+        let pending = ManagedAtomic<UInt32>(Float(1.0).bitPattern)
+        let stop = ManagedAtomic<Bool>(false)
+        let writer = Thread {
+            var i = 0
+            while !stop.load(ordering: .relaxed) {
+                let gain = Float(0.1 + Double(i % 10) * 0.1)
+                pending.store(gain.bitPattern, ordering: .relaxed)
+                i &+= 1
+            }
+        }
+        writer.start()
+        defer { stop.store(true, ordering: .relaxed) }
+
+        var cond = MonitorConditioner()
+        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: 0.0)
+        let frames = 256
+        var left = [Float](repeating: 0.5, count: frames)
+        var right = [Float](repeating: 0.5, count: frames)
+        for _ in 0..<1_000 {
+            cond.setTargetGain(Float(bitPattern: pending.load(ordering: .relaxed)))
+            left.withUnsafeMutableBufferPointer { l in
+                right.withUnsafeMutableBufferPointer { r in
+                    // swiftlint:disable force_unwrapping
+                    cond.process(left: l.baseAddress!, right: r.baseAddress!, frameCount: frames)
+                    // swiftlint:enable force_unwrapping
+                }
+            }
+            #expect(left.allSatisfy { $0.isFinite && abs($0) <= 1.0 })
+            for i in 0..<frames {
+                left[i] = 0.5
+                right[i] = 0.5
+            }
+        }
     }
 }

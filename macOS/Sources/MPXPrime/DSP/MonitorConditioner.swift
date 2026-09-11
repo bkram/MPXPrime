@@ -37,8 +37,22 @@ struct MonitorConditioner {
     }
 
     private(set) var shape: Shape = .flat
-    /// Linear monitor level (`monitor_gain_db`).
-    var gainLinear: Float = 1.0
+
+    // Monitor level. These belong to ONE thread -- whichever thread calls
+    // `process` -- and a level change reaches them through an atomic owned by
+    // the player, never by writing into this struct from the control side
+    // (0.60 audit, P0-5: the render thread mutates this struct every block,
+    // so a concurrent write from the main actor was a data race on a
+    // multi-field value, not just an unsynchronised Float).
+    private var currentGain: Float = 1.0
+    private var targetGain: Float = 1.0
+    private var rampRemaining: Int = 0
+    private var rampStep: Float = 0.0
+    /// About 10 ms, so a level move is inaudible rather than a step.
+    private var rampLength: Int = 480
+
+    /// The level the monitor is heading for. Test and diagnostic read.
+    var gainLinear: Float { targetGain }
 
     private var deemphL = DeemphasisFilter()
     private var deemphR = DeemphasisFilter()
@@ -57,7 +71,12 @@ struct MonitorConditioner {
 
     mutating func configure(shape: Shape, sampleRate: Float, gainDB: Double) {
         self.shape = shape
-        self.gainLinear = powf(10.0, Float(gainDB) / 20.0)
+        let gain = powf(10.0, Float(gainDB) / 20.0)
+        currentGain = gain
+        targetGain = gain
+        rampRemaining = 0
+        rampStep = 0.0
+        rampLength = max(1, Int((sampleRate * 0.010).rounded()))
         switch shape {
         case .deemphasised(let tauUS):
             deemphL.configure(tauUS: tauUS, sampleRate: sampleRate)
@@ -73,6 +92,30 @@ struct MonitorConditioner {
         deemphR.reset()
     }
 
+    /// Aim at a new level. MUST be called from the thread that calls
+    /// `process` -- the player reads the control side's atomic at the top of
+    /// its block and passes the value in here.
+    mutating func setTargetGain(_ gain: Float) {
+        let wanted = gain.isFinite ? max(0.0, gain) : 1.0
+        guard wanted != targetGain else { return }
+        targetGain = wanted
+        rampRemaining = rampLength
+        rampStep = (wanted - currentGain) / Float(rampLength)
+    }
+
+    /// A boosted monitor must not hand the converter something it will fold
+    /// over; clamp here where it is deterministic.
+    private func clampIfBoosted(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frameCount: Int
+    ) {
+        var lo: Float = -1.0
+        var hi: Float = 1.0
+        vDSP_vclip(left, 1, &lo, &hi, left, 1, vDSP_Length(frameCount))
+        vDSP_vclip(right, 1, &lo, &hi, right, 1, vDSP_Length(frameCount))
+    }
+
     /// Condition one block in place.
     mutating func process(
         left: UnsafeMutablePointer<Float>,
@@ -86,17 +129,33 @@ struct MonitorConditioner {
                 right[i] = deemphR.process(right[i])
             }
         }
-        guard gainLinear != 1.0 else { return }
-        var g = gainLinear
-        vDSP_vsmul(left, 1, &g, left, 1, vDSP_Length(frameCount))
-        vDSP_vsmul(right, 1, &g, right, 1, vDSP_Length(frameCount))
-        if g > 1.0 {
-            // A boosted monitor must not hand the converter something it will
-            // fold over; clamp here where it is deterministic.
-            var lo: Float = -1.0
-            var hi: Float = 1.0
-            vDSP_vclip(left, 1, &lo, &hi, left, 1, vDSP_Length(frameCount))
-            vDSP_vclip(right, 1, &lo, &hi, right, 1, vDSP_Length(frameCount))
+        var start = 0
+        if rampRemaining > 0 {
+            // Sample-by-sample only while a level move is in flight.
+            let n = min(rampRemaining, frameCount)
+            for i in 0..<n {
+                currentGain += rampStep
+                left[i] *= currentGain
+                right[i] *= currentGain
+            }
+            rampRemaining -= n
+            if rampRemaining == 0 { currentGain = targetGain }
+            start = n
+            if start >= frameCount {
+                clampIfBoosted(left: left, right: right, frameCount: frameCount)
+                return
+            }
+        }
+        let remaining = frameCount - start
+        guard currentGain != 1.0 else {
+            if start > 0 { clampIfBoosted(left: left, right: right, frameCount: frameCount) }
+            return
+        }
+        var g = currentGain
+        vDSP_vsmul(left + start, 1, &g, left + start, 1, vDSP_Length(remaining))
+        vDSP_vsmul(right + start, 1, &g, right + start, 1, vDSP_Length(remaining))
+        if g > 1.0 || start > 0 {
+            clampIfBoosted(left: left, right: right, frameCount: frameCount)
         }
     }
 }

@@ -267,6 +267,9 @@ final class AudioOutputEngine {
     private let startConfig: AppConfig
     private let monitorOutput = MonitorOutput()
     private var monitorConditioner = MonitorConditioner()
+    /// Monitor level published by the control side, consumed by the render
+    /// thread. Float bit pattern; the conditioner ramps to it.
+    private let pendingMonitorGain = ManagedAtomic<UInt32>(Float(1.0).bitPattern)
     private var monitorRing: StereoInputRingBuffer?
     private var postAGCLeftScratch: [Float] = []
     private var postAGCRightScratch: [Float] = []
@@ -274,7 +277,14 @@ final class AudioOutputEngine {
     private var preMPXRightScratch: [Float] = []
     private var isShuttingDown = false
     private var frameCounter: Int = 0
-    private var meteringEnabled: Bool = true
+    /// Written by start/stop and by the UI when the window is hidden, read
+    /// on the render and capture callbacks -- an atomic, not a plain Bool
+    /// (0.60 audit, P0-5).
+    private let meteringEnabledFlag = ManagedAtomic<Bool>(true)
+    private var meteringEnabled: Bool {
+        get { meteringEnabledFlag.load(ordering: .relaxed) }
+        set { meteringEnabledFlag.store(newValue, ordering: .relaxed) }
+    }
     private var pendingRuntimeConfig: MPXGenerator.RuntimeConfig?
     private var lastQueuedRuntimeConfig: MPXGenerator.RuntimeConfig?
     private var pendingRDSRuntimeConfig: MPXGenerator.RDSRuntimeConfig?
@@ -339,7 +349,11 @@ final class AudioOutputEngine {
     /// transmitter -- swapping the monitor device stops only its player.
     func applyMonitorSettings(_ config: AppConfig) {
         guard outputMode != .monitorAudio else { return }
-        monitorConditioner.gainLinear = powf(10.0, Float(config.monitorGainDB) / 20.0)
+        // The conditioner belongs to the render thread. Publish the level
+        // and let that thread pick it up at its next block (0.60 audit,
+        // P0-5) -- writing into the struct from here raced every block.
+        pendingMonitorGain.store(
+            powf(10.0, Float(config.monitorGainDB) / 20.0).bitPattern, ordering: .relaxed)
         monitorOutput.reconcile(
             enabled: config.monitorEnabled,
             monitorUID: config.monitorDeviceUID,
@@ -374,6 +388,8 @@ final class AudioOutputEngine {
         right: UnsafeMutablePointer<Float>,
         frameCount: Int
     ) {
+        monitorConditioner.setTargetGain(
+            Float(bitPattern: pendingMonitorGain.load(ordering: .relaxed)))
         monitorConditioner.process(left: left, right: right, frameCount: frameCount)
         monitorRing?.write(left: left, right: right, frameCount: frameCount)
     }

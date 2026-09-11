@@ -1,3 +1,11 @@
+// Platform split: on Linux the MPXPrimeAcceleration shim provides the
+// OSAllocatedUnfairLock polyfill; on macOS this file compiles to nothing.
+#if canImport(Accelerate)
+import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
+import Atomics
 import Foundation
 import MPXPrimeCore
 
@@ -59,13 +67,23 @@ final class ALSAMonitorOutput: @unchecked Sendable {
     private var left: [Float] = []
     private var right: [Float] = []
     private var conditioner = MonitorConditioner()
+    /// Monitor level published by the control side, consumed by the monitor
+    /// thread. Float bit pattern; the conditioner ramps to it.
+    private let pendingGain = ManagedAtomic<UInt32>(Float(1.0).bitPattern)
     private var decoder = MPXDecoder()
     private var decodeComposite = false
     private var preemphasisUS = 50
 
     /// Read by the render thread once per period to decide whether to write.
     let active = ManagedAtomic<Bool>(false)
-    private(set) var note: String?
+    /// Written by the control thread AND by the monitor thread when the
+    /// device is lost, read by the headless backend's actor -- a String is
+    /// refcounted, so an unsynchronised read of one being replaced can
+    /// crash (0.60 audit, P0-5). The monitor thread takes this lock only on
+    /// the failure path, one line before it stops.
+    private let noteState = OSAllocatedUnfairLock<String?>(initialState: nil)
+    var note: String? { noteState.withLock { $0 } }
+    private func setNote(_ value: String?) { noteState.withLock { $0 = value } }
     private(set) var runningDevice: String?
 
     var isRunning: Bool { active.load(ordering: .relaxed) }
@@ -91,9 +109,10 @@ final class ALSAMonitorOutput: @unchecked Sendable {
         return ring
     }
 
-    /// Level only; a plain Float write the loop picks up on its next period.
+    /// Level only. The conditioner belongs to the monitor thread, so publish
+    /// the value and let that thread adopt it at the top of its next period.
     func setGain(dB: Double) {
-        conditioner.gainLinear = powf(10.0, Float(dB) / 20.0)
+        pendingGain.store(powf(10.0, Float(dB) / 20.0).bitPattern, ordering: .relaxed)
     }
 
     /// Bring the monitor in line with the selection. Never throws into the
@@ -101,10 +120,10 @@ final class ALSAMonitorOutput: @unchecked Sendable {
     func reconcile(enabled: Bool, monitorDevice: String?, outputDevice: String) {
         switch LinuxMonitorRules.decide(enabled: enabled, monitorDevice: monitorDevice, outputDevice: outputDevice) {
         case .off(let why):
-            note = why
+            setNote(why)
             stop()
         case .run(let device):
-            note = nil
+            setNote(nil)
             if isRunning, runningDevice == device { return }
             stop()
             start(device: device)
@@ -113,7 +132,7 @@ final class ALSAMonitorOutput: @unchecked Sendable {
 
     private func start(device: String) {
         guard let ring else {
-            note = "The monitor could not start: the engine is not running."
+            setNote("The monitor could not start: the engine is not running.")
             return
         }
         do {
@@ -124,7 +143,7 @@ final class ALSAMonitorOutput: @unchecked Sendable {
             left = [Float](repeating: 0, count: out.periodFrames)
             right = [Float](repeating: 0, count: out.periodFrames)
         } catch {
-            note = "The monitor device could not be opened: \(String(describing: error))"
+            setNote("The monitor device could not be opened: \(String(describing: error))")
             pcm = nil
             return
         }
@@ -160,7 +179,7 @@ final class ALSAMonitorOutput: @unchecked Sendable {
     func shutdown() {
         stop()
         ring = nil
-        note = nil
+        setNote(nil)
     }
 
     private func loop() {
@@ -191,6 +210,8 @@ final class ALSAMonitorOutput: @unchecked Sendable {
                             r[i] = decoded.1
                         }
                     }
+                    conditioner.setTargetGain(
+                        Float(bitPattern: pendingGain.load(ordering: .relaxed)))
                     conditioner.process(left: l, right: r, frameCount: frames)
                 }
             }
@@ -231,7 +252,7 @@ final class ALSAMonitorOutput: @unchecked Sendable {
             }
             if rc < 0 {
                 if snd_pcm_recover(out.pcm, Int32(rc), 1) < 0 {
-                    note = "The monitor device was lost: \(alsaErrorString(Int32(rc)))"
+                    setNote("The monitor device was lost: \(alsaErrorString(Int32(rc)))")
                     active.store(false, ordering: .relaxed)
                     running.store(false, ordering: .releasing)
                     return false

@@ -4,6 +4,7 @@ import CoreAudio
 import Foundation
 import MPXPrimeCore
 import Atomics
+import os
 
 /// The second output: the operator's listening feed, on its own device and its
 /// own audio engine, running ALONGSIDE the transmitter feed.
@@ -45,7 +46,13 @@ final class MonitorOutput {
     /// Read by the render thread once per block to decide whether to write.
     let active = ManagedAtomic<Bool>(false)
     /// Operator-facing reason the monitor is not playing, if any.
-    private(set) var note: String?
+    /// Written by the control thread and by the device observer on `.main`,
+    /// read by the headless backend's actor -- a String is refcounted, so an
+    /// unsynchronised read of one being replaced can crash, not just tear
+    /// (0.60 audit, P0-5). Never taken from the render path.
+    private let noteState = OSAllocatedUnfairLock<String?>(initialState: nil)
+    var note: String? { noteState.withLock { $0 } }
+    private func setNote(_ value: String?) { noteState.withLock { $0 = value } }
 
     var isRunning: Bool { active.load(ordering: .relaxed) }
 
@@ -93,10 +100,10 @@ final class MonitorOutput {
             resolve: { uid in devices.first(where: { $0.uid == uid && $0.hasOutput })?.id })
         switch decision {
         case .off(let why):
-            note = why
+            setNote(why)
             stop()
         case .run(let deviceID):
-            note = nil
+            setNote(nil)
             if isRunning, runningDeviceID == deviceID, runningUID == monitorUID { return }
             stop()
             start(deviceID: deviceID, uid: monitorUID)
@@ -105,7 +112,7 @@ final class MonitorOutput {
 
     private func start(deviceID: AudioDeviceID, uid: String?) {
         guard let ring else {
-            note = "The monitor could not start: the engine is not running."
+            setNote("The monitor could not start: the engine is not running.")
             return
         }
         let player = RingBufferPlayer(
@@ -117,7 +124,7 @@ final class MonitorOutput {
             ring.dropToTargetBufferedFrames(0)
             try player.start(outputDeviceID: deviceID)
         } catch {
-            note = "The monitor device could not be started: \(error.localizedDescription)"
+            setNote("The monitor device could not be started: \(error.localizedDescription)")
             return
         }
         self.player = player
@@ -138,7 +145,7 @@ final class MonitorOutput {
             guard let self, self.isRunning, let uid = self.runningUID else { return }
             let devices = (try? AudioDevices.list()) ?? []
             if !devices.contains(where: { $0.uid == uid && $0.hasOutput }) {
-                self.note = "The monitor device was disconnected."
+                setNote("The monitor device was disconnected.")
                 self.stop()
             }
         }
@@ -160,7 +167,7 @@ final class MonitorOutput {
     func shutdown() {
         stop()
         ring = nil
-        note = nil
+        setNote(nil)
     }
 }
 #endif

@@ -81,6 +81,18 @@ combination test suite. Newest first.
   `multiband_transient_aware_attack_enabled`, which is off by default, so
   nothing on air changes unless you had turned it on.
 
+- **Fixed: moving the monitor level was a data race, and now it fades.** The
+  monitor's level was written straight into the conditioner from the control
+  side while the audio thread was using it for every block. The level now
+  travels as an atomic that the audio thread picks up at its next block, and
+  it ramps over 10 ms instead of stepping, so dragging the monitor fader no
+  longer clicks. Engine start still comes up at the configured level at once.
+  The metering on/off flag became an atomic for the same reason, and the
+  monitor's status message is now behind a lock -- it was written by the
+  device watcher and read by the web dashboard's status endpoint, and an
+  unsynchronised read of a string being replaced can crash rather than merely
+  read something stale. None of this touches the transmitter feed.
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

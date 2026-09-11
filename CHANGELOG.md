@@ -82,6 +82,14 @@ combination test suite. Newest first.
   chapter gathers the install, the sound card mixer, render load, the CPU
   budget and the level question, so neither reader wades through the other's
   material.
+- **License: AGPL-3.0.** The project moves from GPL-3.0 to the GNU Affero
+  General Public License v3 for this and later releases. The one difference
+  that matters here: someone who runs a modified encoder as a service for
+  others -- the web dashboard makes that a real deployment shape -- must offer
+  those users the source, as a distributor of a binary would. The vendored
+  `tuner/` stays GPL-3.0 (GPL-3.0 section 13 permits the combination);
+  dependencies are unchanged. About panels, the dashboard's About page,
+  README, CONTRIBUTORS and AGENTS say AGPL-3.0.
 - **README trademark note.** The names MPX Prime / MPX Prime Studio / MPX
   Prime Meter may not be used in a commercial offering without the
   maintainer's prior written approval; the GPL-3.0 code license is unaffected.

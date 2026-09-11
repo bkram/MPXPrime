@@ -1,7 +1,7 @@
 # Contributors and credits
 
 MPX Prime (MPX Prime Studio and MPX Prime Meter) is free software under the
-GPL-3.0; see [LICENSE](LICENSE). This file records who wrote what and which
+AGPL-3.0 since 0.50 (GPL-3.0 before); see [LICENSE](LICENSE). This file records who wrote what and which
 outside work the project builds on.
 
 ## Authors
@@ -37,7 +37,8 @@ outside work the project builds on.
   same author -- `tuner/` is a stripped subset (capture, FM demodulation, MPX
   output) compiled as `CMPXTuner` and linked into MPX Prime Meter. The exact
   upstream commit is recorded in `tuner/UPSTREAM_COMMIT.txt`; both projects are
-  GPL-3.0, so vendoring is license-clean.
+  GPL-3.0, so vendoring is license-clean; the tuner stays GPL-3.0 inside this
+  AGPL-3.0 project, which GPL-3.0 section 13 expressly permits.
 
 ## Libraries
 

@@ -290,10 +290,16 @@ this project. They may not be used in any **commercial offering** -- a product,
 a service, a hosted instance, a bundle, or its marketing -- without the prior
 written approval of the project maintainer (ask via the
 [GitHub repository](https://github.com/bkram/MPXPrime)). This is a trademark
-condition, not a software-license condition: the code stays GPL-3.0 and may be
+condition, not a software-license condition: the code stays AGPL-3.0 and may be
 used, modified and sold under that license, but a commercial fork or service
 built on it ships under its own name unless approval was given.
 
 ## License
 
-GPL-3.0. See `LICENSE`.
+**AGPL-3.0** (GNU Affero General Public License, version 3). See `LICENSE`.
+Since 0.50; releases up to 0.44 were GPL-3.0. The Affero clause matters for
+the web dashboard encoder: whoever runs a modified version as a service for
+others must offer them the source, exactly as a distributor of the binary
+would. The vendored `tuner/` code stays GPL-3.0 (its own license permits
+combining it with an AGPL-3.0 program); dependencies keep their own licenses
+(see `CONTRIBUTORS.md`).

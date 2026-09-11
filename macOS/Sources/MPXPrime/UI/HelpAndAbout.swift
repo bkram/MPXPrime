@@ -314,7 +314,7 @@ Now: {now_playing}
 /// what the processor actually does — it ships a patent-grade chain, full
 /// RDS, and a verification harness, so the About should say so rather than
 /// undersell it. The full disclaimer is NOT restated here: README.md
-/// (intended-use / not-certified) and LICENSE (GPL-3.0, no warranty) are
+/// (intended-use / not-certified) and LICENSE (AGPL-3.0, no warranty) are
 /// the single source of truth; the panel shows README's canonical key
 /// phrase plus links to both.
 struct AboutSectionView: View {
@@ -370,7 +370,7 @@ struct AboutSectionView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("Version \(AppConfig.appVersion) · GPL-3.0")
+                Text("Version \(AppConfig.appVersion) · AGPL-3.0")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -400,7 +400,7 @@ struct AboutSectionView: View {
                 .font(.callout)
 
                 // Single source of truth for the full disclaimer is README.md
-                // (intended-use / not-certified) + LICENSE (GPL-3.0, no
+                // (intended-use / not-certified) + LICENSE (AGPL-3.0, no
                 // warranty). The About only carries README's canonical key
                 // phrase plus pointers — do not restate the full text here.
                 Text("Experimental and not certified — no conformity or compliance is promised. See the README for intended use and the GPL-3.0 license for terms (provided without warranty).")

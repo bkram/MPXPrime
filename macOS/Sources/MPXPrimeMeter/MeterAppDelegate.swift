@@ -172,7 +172,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
 
     /// A proper About: the native panel with a description, clickable links, and
     /// the README's canonical disclaimer key phrase (single source of truth --
-    /// the full disclaimer lives in README, GPL-3.0 terms in LICENSE).
+    /// the full disclaimer lives in README, AGPL-3.0 terms in LICENSE).
     @objc private func showAboutPanel() {
         let credits = NSMutableAttributedString()
         let body: [NSAttributedString.Key: Any] = [
@@ -197,7 +197,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         credits.append(NSAttributedString(
             string: "\n\nExperimental and not certified -- no conformity or "
                 + "compliance is promised. See the README for intended use and "
-                + "the GPL-3.0 license (provided without warranty).",
+                + "the AGPL-3.0 license (provided without warranty).",
             attributes: body))
 
         let para = NSMutableParagraphStyle()
@@ -208,7 +208,7 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "MPX Prime Meter",
             .applicationVersion: appVersion,
-            .version: "GPL-3.0",
+            .version: "AGPL-3.0",
             .credits: credits
         ])
         NSApp.activate(ignoringOtherApps: true)

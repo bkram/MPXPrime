@@ -922,14 +922,14 @@ function renderAbout(c) {
     kv("Platform", "aboutPlatform", s.platform || "-") +
     kv("Engine rate", "aboutRate", s.sampleRateHz ? (s.sampleRateHz / 1000).toFixed(0) + " kHz" : "-") +
     kv("Operating mode", "aboutMode", MODE_LABEL[s.outputMode] || String(s.outputMode || "-").toUpperCase()) +
-    kv("Licence", "aboutLicence", "GPL-3.0") +
+    kv("Licence", "aboutLicence", "AGPL-3.0") +
     '<div class="subtitle" style="margin-top:10px">' +
       '<a href="https://github.com/bkram/MPXPrime" target="_blank" rel="noreferrer">View on GitHub</a> &middot; ' +
       '<a href="https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md" target="_blank" rel="noreferrer">Operator Guide</a> &middot; ' +
       '<a href="https://github.com/bkram/MPXPrime/blob/main/LICENSE" target="_blank" rel="noreferrer">License</a>' +
     '</div>' +
     '<div class="subtitle" style="margin-top:10px">Experimental and not certified - no conformity or compliance is promised. ' +
-      'See the README for intended use and the GPL-3.0 license for terms (provided without warranty).</div>';
+      'See the README for intended use and the AGPL-3.0 license for terms (provided without warranty).</div>';
   c.appendChild(card);
   pollStatus();
   syncAll();

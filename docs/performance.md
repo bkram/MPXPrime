@@ -58,10 +58,16 @@ past two buys nothing; per-core speed buys everything.
 
 | Machine | Chain cost | Composite clipper (16x) | Multiband (5-band FIR) | Pre-encode limiter | DC clipper | Bass clipper | RDS encoder |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| M1 Pro | **17.2 %** | 4.4 % | 4.3 % | 1.3 % | 1.3 % | 1.3 % | 0.6 % |
+| M1 Pro | **17.8 %** | 4.4 % | 4.3 % | 1.3 % | 1.3 % | 1.3 % | 0.6 % |
 | i7-9750H | **22.4 %** | 4.6 % | 5.1 % | 1.1 % | 1.3 % | 0.7 % | 1.2 % |
 | Ryzen 2400GE, AVX2 | **26.3 %** | 5.8 % | 6.0 % | -- | 1.7 % | 1.2 % | -- |
 | Ryzen 2400GE, SSE2 | **36.6 %** | 12.7 % | 6.5 % | -- | 3.2 % | 1.7 % | -- |
+
+0.60 added about 0.5 points on every machine: the BS.412 multiplex-power
+METER runs on every composite sample whether or not the limiter is enabled,
+so that switching it on acts on a full 60-second window instead of waiting a
+minute. Only the M1 Pro row is re-measured; the others are older figures and
+are not adjusted by hand.
 
 The AVX2 kernels take 10 points off the Ryzen's chain, the composite clipper
 alone halving from 12.7 % to 5.8 % -- and they compute bit-identical results

@@ -4112,17 +4112,23 @@ final class MPXGenerator {
         // post-injection overshoot is published separately so a final clamp
         // can never turn broken pilot / RDS into an apparently compliant
         // reading.
-        bs412Meter.process(output * inverseOutputGain)
-        bs412StatusState = BS412Status(
-            powerDBr: bs412Meter.powerDBr,
-            powerValid: bs412Meter.windowValid && !renderingCalibrationTone,
-            secondsObserved: bs412Meter.secondsObserved,
-            gainReductionDB: bs412Controlling ? bs412Rider.gainReductionDB : 0.0,
-            overCeiling: bs412Meter.windowValid && bs412Meter.powerDBr > bs412CeilingDBr,
-            unachievable: bs412Controlling && (bs412Rider.unachievable || bs412Guard.unachievable),
-            guardActive: bs412Controlling && bs412Guard.active,
-            controlSuspended: bs412Enabled && renderingCalibrationTone
-        )
+        // Status is rebuilt only at a block boundary. Doing it per sample
+        // cost 1.3 points of chain time with the stage DISABLED, because
+        // `powerDBr` takes a logarithm and `meanSquare` a Double divide --
+        // per sample, for a value that cannot change more than once per 64.
+        let bs412BlockComplete = bs412Meter.process(output * inverseOutputGain)
+        if bs412BlockComplete {
+            bs412StatusState = BS412Status(
+                powerDBr: bs412Meter.powerDBr,
+                powerValid: bs412Meter.windowValid && !renderingCalibrationTone,
+                secondsObserved: bs412Meter.secondsObserved,
+                gainReductionDB: bs412Controlling ? bs412Rider.gainReductionDB : 0.0,
+                overCeiling: bs412Meter.windowValid && bs412Meter.powerDBr > bs412CeilingDBr,
+                unachievable: bs412Controlling && (bs412Rider.unachievable || bs412Guard.unachievable),
+                guardActive: bs412Controlling && bs412Guard.active,
+                controlSuspended: bs412Enabled && renderingCalibrationTone
+            )
+        }
 
         return output
     }

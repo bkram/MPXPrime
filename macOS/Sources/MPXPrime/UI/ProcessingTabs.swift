@@ -14,7 +14,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Dedicated tab hosting the top-level Station Format picker. Moved out
-/// of the Processing → Overview grid so the grid stays focused on per-
+/// of the Processing -> Overview grid so the grid stays focused on per-
 /// stage status; the format selector gets its own breathing room and
 /// can show the full per-profile summary plus the standard tab help
 /// box without crowding the dashboard.

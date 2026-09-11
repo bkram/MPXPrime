@@ -43,6 +43,30 @@
   .sgroup { font-size:11px; color:var(--dim); padding:8px 10px 2px 14px; letter-spacing:.02em; }
   .sgroup + .nav, .sgroup ~ .nav.grp { padding-left:18px; }
   .crumb { font-size:11px; color:var(--dim); margin-bottom:2px; }
+  .ssearch { padding:4px 6px 6px; }
+  .ssearch input { width:100%; box-sizing:border-box; background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-size:12px; }
+  #navResults .nav { display:block; }
+  #navResults .nav .where { display:block; font-size:10px; color:var(--dim); }
+  #navResults .none { font-size:12px; color:var(--dim); padding:6px 10px; }
+  [data-key].hit { outline:2px solid var(--blue); outline-offset:2px; border-radius:6px; transition:outline-color .6s; }
+  .shortcuts { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 14px; }
+  .shortcuts .sc { background:var(--card); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:6px 12px; font-size:12px; cursor:pointer; }
+  .shortcuts .sc:hover { border-color:var(--blue); }
+  #navToggle { display:none; background:none; border:none; color:var(--text); font-size:20px; padding:0 12px; cursor:pointer; }
+  .numin { display:none; width:74px; background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:3px 6px; font-family:var(--mono); font-size:12px; }
+  /* Phone: the sidebar becomes a drawer behind the menu button, rows wrap,
+     and every slider gets a numeric field -- a range control on a 390 px
+     screen cannot set a 0.1 dB trim. */
+  @media (max-width: 720px) {
+    #navToggle { display:inline-block; }
+    #sidebar { position:fixed; top:0; bottom:0; left:0; width:240px; transform:translateX(-100%); transition:transform .15s; z-index:20; box-shadow:2px 0 12px rgba(0,0,0,.4); }
+    body.navopen #sidebar { transform:none; }
+    #content { padding:12px; }
+    .row { flex-wrap:wrap; }
+    .numin { display:inline-block; }
+    #strip .cell { padding:6px 8px; }
+    .mongrid, .ovgrid, .formgrid { grid-template-columns:1fr; }
+  }
   details.advcard { margin-top:10px; }
   details.advcard > summary { cursor:pointer; list-style:none; font-size:12px; font-weight:600; color:var(--dim); padding:6px 2px; user-select:none; }
   details.advcard > summary::before { content:""; display:inline-block; width:0; height:0; border-left:4px solid var(--dim); border-top:3px solid transparent; border-bottom:3px solid transparent; margin-right:7px; transition:transform .12s; }
@@ -135,6 +159,7 @@
 </head>
 <body>
 <div id="strip">
+  <button id="navToggle" aria-label="Menu" title="Menu">&#9776;</button>
   <div class="cell"><div class="k">Transport</div><div class="v" id="cTransport"><span class="dot" id="cDot"></span><span id="cRun">...</span></div></div>
   <div class="cell"><div class="k">Source</div><div class="v" id="cSource">-</div></div>
   <div class="cell"><div class="k">Rate</div><div class="v" id="cRate">-</div></div>
@@ -355,9 +380,78 @@ function pagePath(id) {
   }
   return [];
 }
+/* Search over the schema: label, key and page title, in the current mode.
+   222 controls is exactly the size where typing beats browsing. A hit jumps
+   to the control's page, opens its Advanced card if that is where it lives,
+   and highlights it. */
+let navQuery = "";
+function pageForKey(key) {
+  const has = (p) => (p.keys || []).includes(key) || (p.keys2 && p.keys2.keys.includes(key)) || (p.cards || []).some(c => c.keys.includes(key));
+  const p = MODEL.stages.find(has) || MODEL.rds.find(has) || MODEL.tools.find(has);
+  return p ? p.id : null;
+}
+function jumpToKey(key) {
+  const pid = pageForKey(key);
+  if (!pid) return;
+  showPage(pid);
+  const el = $("content").querySelector(`[data-key="${key}"]`);
+  if (!el) return;
+  const det = el.closest("details");
+  if (det) det.open = true;
+  el.classList.add("hit");
+  if (el.scrollIntoView) el.scrollIntoView({ block: "center" });
+  setTimeout(() => el.classList.remove("hit"), 2500);
+}
+function searchMatches(q) {
+  const needle = q.trim().toLowerCase();
+  if (needle.length < 2) return [];
+  const out = [];
+  for (const key of Object.keys(SCHEMA)) {
+    const def = SCHEMA[key];
+    if (!inCurrentMode(def.modes)) continue;
+    const pid = pageForKey(key);
+    if (!pid || !pageVisible(pid)) continue;
+    const page = pageDef(pid);
+    const hay = `${def.label || ""} ${key.replace(/_/g, " ")} ${page.title} ${pagePath(pid).join(" ")}`.toLowerCase();
+    if (hay.includes(needle)) out.push({ key, label: def.label || key, where: pagePath(pid).concat(page.title).join(" > ") });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+function renderSearchResults() {
+  const box = $("navResults");
+  const secs = document.querySelectorAll("#sidebar .ssec");
+  const active = navQuery.trim().length >= 2;
+  secs.forEach(s => { s.hidden = active; });
+  box.hidden = !active;
+  box.innerHTML = "";
+  if (!active) return;
+  const hits = searchMatches(navQuery);
+  if (!hits.length) { box.insertAdjacentHTML("beforeend", '<div class="none">No setting matches.</div>'); return; }
+  for (const h of hits) {
+    const el = document.createElement("div");
+    el.className = "nav";
+    el.dataset.hit = h.key;
+    el.innerHTML = `${h.label}<span class="where"></span>`;
+    el.querySelector(".where").textContent = h.where;
+    el.onclick = () => { jumpToKey(h.key); };
+    box.appendChild(el);
+  }
+}
 function renderSidebar() {
   const nav = $("sidebar");
   nav.innerHTML = "";
+  const search = document.createElement("div");
+  search.className = "ssearch";
+  search.innerHTML = '<input id="navSearch" type="search" placeholder="Search settings" aria-label="Search settings">';
+  nav.appendChild(search);
+  const results = document.createElement("div");
+  results.id = "navResults";
+  results.hidden = true;
+  nav.appendChild(results);
+  const input = search.firstChild;
+  input.value = navQuery;
+  input.oninput = () => { navQuery = input.value; renderSearchResults(); };
   const collapsed = collapsedSections();
   for (const sec of MODEL.sections) {
     const pages = (sec.pages || []).filter(pageVisible);
@@ -390,6 +484,7 @@ function renderSidebar() {
     wrap.appendChild(body);
     nav.appendChild(wrap);
   }
+  renderSearchResults();
 }
 function refreshSidebarDots() {
   document.querySelectorAll("#sidebar .nav").forEach(n => {
@@ -417,11 +512,18 @@ function sliderRow(key) {
   // PATCH still writes the raw value.
   const scale = def.scale ?? 1;
   const fmtv = (v) => (Number(v) * scale).toFixed(def.decimals ?? 1) + (def.unit || "");
-  input.oninput = () => { val.textContent = fmtv(input.value); };
+  // A numeric twin of the range (CSS shows it on phones only): raw INI
+  // units, so it is skipped for display-scaled sliders where the two would
+  // disagree on what a number means.
+  const num = scale === 1 ? document.createElement("input") : null;
+  if (num) { num.type = "number"; num.className = "numin"; num.min = def.min; num.max = def.max; num.step = def.step; num.setAttribute("aria-label", def.label); }
+  input.oninput = () => { val.textContent = fmtv(input.value); if (num) num.value = input.value; };
   input.onchange = () => patchKey(key, String(input.value));
+  if (num) num.onchange = () => { input.value = num.value; val.textContent = fmtv(num.value); patchKey(key, String(num.value)); };
   row.appendChild(input);
+  if (num) row.appendChild(num);
   row.appendChild(val);
-  row._sync = (v) => { if (v != null && v !== "") { input.value = v; val.textContent = fmtv(v); } };
+  row._sync = (v) => { if (v != null && v !== "") { input.value = v; val.textContent = fmtv(v); if (num) num.value = v; } };
   return row;
 }
 function checkRow(key) {
@@ -588,6 +690,7 @@ function pageHeader(c, title, sub) {
 function showPage(id) {
   if (pageHiddenInMode(id)) id = "monitoring";
   currentPage = id;
+  document.body.classList.remove("navopen");
   document.querySelectorAll("#sidebar .nav").forEach(n => n.classList.toggle("active", n.dataset.page === id));
   const c = $("content");
   c.innerHTML = "";
@@ -684,6 +787,7 @@ function renderGeneric(c, p, isRDS) {
 }
 function renderOverview(c) {
   pageHeader(c, "Overview", "DSP chain status at a glance");
+  c.appendChild(pillStrip("overview"));
   const grid = document.createElement("div");
   grid.className = "ovgrid";
   for (const s of MODEL.stages) {
@@ -719,8 +823,32 @@ function renderOverview(c) {
 function kv(k, vId, initial) {
   return `<div class="kvrow"><span class="k">${k}</span><span class="v" id="${vId}">${initial ?? "-"}</span></div>`;
 }
+/* The landing page's task entry points -- the four things an operator
+   comes to the dashboard to do, in outcome language, gated like the pages
+   they lead to. */
+const SHORTCUTS = [
+  { label: "Set my levels", page: "interfaces", key: "input_gain_db" },
+  { label: "Change the station text", page: "rdsRadiotext" },
+  { label: "Load a preset", page: "presets" },
+  { label: "Switch operating mode", page: "interfaces", key: "operating_mode" }
+];
+function shortcutBar() {
+  const bar = document.createElement("div");
+  bar.className = "shortcuts";
+  for (const s of SHORTCUTS) {
+    if (!pageVisible(s.page)) continue;
+    const b = document.createElement("button");
+    b.className = "sc";
+    b.dataset.page = s.page;
+    b.textContent = s.label;
+    b.onclick = () => { if (s.key) jumpToKey(s.key); else showPage(s.page); };
+    bar.appendChild(b);
+  }
+  return bar;
+}
 function renderMonitoring(c) {
   pageHeader(c, "Monitoring", "Overview and live status");
+  c.appendChild(shortcutBar());
   const grid = document.createElement("div");
   grid.className = "mongrid";
   const srcName = () => deviceName(deviceInfo?.selectedInput, "inputs");
@@ -1329,6 +1457,7 @@ $("btnBypass").onclick = async () => {
 };
 $("btnStartStop").onclick = () => transport(statusInfo?.running ? "stop" : "start");
 $("btnRestart").onclick = () => transport("restart");
+$("navToggle").onclick = () => document.body.classList.toggle("navopen");
 $("keySave").onclick = () => { apiKey = $("keyInput").value.trim(); localStorage.setItem("mpxprime_api_key", apiKey); boot(); };
 async function boot() {
   // The schema is the page model -- nothing can render before it arrives.

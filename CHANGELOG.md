@@ -33,6 +33,14 @@ combination test suite. Newest first.
   `AdvancedControls` and pinned by a test. What stays in view is what you move
   while listening: enables, thresholds, ratios, ceilings, drives, targets.
   Multiband goes from 20 visible controls to 9; AGC from 9 to 2.
+- **Finding things (phase 4 of the taxonomy plan).** A **Search settings**
+  box in the dashboard sidebar finds any control by label or setting name in
+  the current mode and jumps to it -- page, Advanced card opened, control
+  highlighted. The landing page offers task shortcuts (set my levels, change
+  the station text, load a preset, switch operating mode), the Sound
+  overview carries the clickable signal-chain strip, and on a phone the
+  sidebar becomes a drawer behind a menu button while every slider gains a
+  numeric field for exact values. `check-webui` drives all of it.
 
 ## 0.50 -- 2026-09-11
 

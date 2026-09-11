@@ -257,6 +257,41 @@ async function runModeUnguarded(mode) {
     }
     if (!content().querySelector(".crumb")) fail(mode, "taxonomy", "the landing page has no breadcrumb");
   }
+
+  // (1d) the aids: task shortcuts lead only to pages this mode has; the
+  // settings search finds a control, jumps to its page, opens the Advanced
+  // card it sits in and highlights it; the phone layout's hooks exist.
+  {
+    const scs = [...content().querySelectorAll(".shortcuts .sc")];
+    if (scs.length < 2) fail(mode, "aids", `landing page shows ${scs.length} task shortcuts`);
+    for (const b of scs) if (page.pageHiddenInMode(b.dataset.page)) fail(mode, "aids", `shortcut "${b.textContent}" leads to a page hidden in this mode`);
+    const search = $("navSearch");
+    if (!search) fail(mode, "aids", "no settings search box");
+    else {
+      const probe = mode === "mpx" ? "pilot" : "hpf";
+      search.value = probe;
+      search.dispatchEvent(new win.Event("input", { bubbles: true }));
+      const hits = [...win.document.querySelectorAll("#navResults .nav")];
+      if (!hits.length) fail(mode, "aids", `search for "${probe}" found nothing`);
+      else {
+        hits[0].click();
+        await settle();
+        const key = hits[0].dataset.hit;
+        const el = content().querySelector(`[data-key="${key}"]`);
+        if (!el) fail(mode, "aids", `search hit "${key}" did not land on a page showing it`);
+        else if (!el.classList.contains("hit")) fail(mode, "aids", `search hit "${key}" is not highlighted`);
+        const det = el && el.closest("details.advcard");
+        if (det && !det.open) fail(mode, "aids", `search hit "${key}" sits in a closed Advanced card`);
+      }
+      search.value = "";
+      search.dispatchEvent(new win.Event("input", { bubbles: true }));
+      if (win.document.querySelectorAll("#sidebar .ssec[hidden]").length) fail(mode, "aids", "sections stay hidden after the search is cleared");
+    }
+    if (!$("navToggle")) fail(mode, "aids", "no menu button for the phone drawer");
+    if (!/@media \(max-width: 720px\)/.test(html)) fail(mode, "aids", "no phone media query in the stylesheet");
+    page.showPage("agc"); await settle();
+    if (!content().querySelector(".row .numin")) fail(mode, "aids", "slider rows carry no numeric field for phones");
+  }
   if (page.currentMode() !== mode) {
     fail(mode, "boot", `page thinks the mode is ${page.currentMode()}`);
   }

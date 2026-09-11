@@ -762,7 +762,13 @@ pilot / RDS injection / budget-margin readouts, restart-pending badge)
 above five sidebar sections -- the same five, in the same order, as the
 native GUI's sidebar, named for what you are doing rather than for how the
 engine is built. Sections fold and remember it; a page's breadcrumb (for
-example "Sound > Dynamics") says where you are:
+example "Sound > Dynamics") says where you are. A **Search settings** box at
+the top of the sidebar finds any control by its label or setting name
+("pilot", "release", "deviation") and jumps to it, opening the Advanced
+card it lives in; the landing page offers task shortcuts (set my levels,
+change the station text, load a preset, switch operating mode); and on a
+phone the sidebar becomes a drawer behind the menu button and every slider
+gains a numeric field for exact values:
 
 - **On Air** -- Monitoring: source/output devices, input meters, MPX
   deviation / modulation, per-stage gain-reduction readouts, subcarrier

@@ -190,6 +190,10 @@ plan below orders them by benefit over risk rather than by the review's
 numbering. The review itself is not in the repo (non-ASCII punctuation; keep it
 out of the tree).
 
+**Picking this up?** Read [docs/audit-handoff.md](audit-handoff.md) first:
+what is done, what is left, the traps that cost time, and the working rules.
+This section stays the record of findings and evidence.
+
 ### Verdicts
 
 | # | Claim | Verdict | Where | Weight |

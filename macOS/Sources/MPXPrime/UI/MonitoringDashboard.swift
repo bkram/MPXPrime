@@ -98,7 +98,9 @@ struct MonitoringDashboardView: View {
                         ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
                         ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
                         ("SAFETY CLIP", grText(model.safetyClipDBValue)),
-                        ("BS.412 BUDGET", budgetText)
+                        ("BS.412 BUDGET", budgetText),
+                        ("MPX POWER", mpxPowerText),
+                        ("BS.412 GR", grText(model.bs412StatusValue.gainReductionDB))
                     ])
                 }
             }
@@ -164,6 +166,22 @@ struct MonitoringDashboardView: View {
         let state = model.compositeBudgetStateText
         let core = String(format: "%+5.1f dB", margin)
         return state.isEmpty || state == "Off" ? core : "\(core) · \(state)"
+    }
+
+    /// ITU-R BS.412 complete-multiplex power. Never a bare number before a
+    /// full 60 s window exists, and never a compliance reading while Test
+    /// Tone suspends control -- the operator sees the priming progress or
+    /// the suspension instead.
+    private var mpxPowerText: String {
+        let status = model.bs412StatusValue
+        if status.controlSuspended { return "suspended (tone)" }
+        if status.unachievable { return "pilot/RDS over budget" }
+        guard status.powerValid else {
+            return String(format: "%.0f / 60 s", Double(status.secondsObserved))
+        }
+        let core = String(format: "%+5.2f dBr", Double(status.powerDBr))
+        if status.guardActive { return "\(core) - guard" }
+        return status.overCeiling ? "\(core) - over" : core
     }
 
     private func grText(_ valueDB: Float) -> String {

@@ -105,9 +105,9 @@ struct BS412FullChainTests {
         // way the chain feeds it.
         var encoder = BS412MultiplexPowerMeter()
         encoder.configure(sampleRate: Float(sampleRate))
-        for sample in composite { encoder.process(total: sample, subcarriers: 0.0) }
+        for sample in composite { encoder.process(sample) }
 
-        #expect(encoder.primed, "65 s must prime a 60 s window")
+        #expect(encoder.windowValid, "65 s must validate a 60 s window")
         #expect(abs(encoder.powerDBr - meter) < 0.2,
                 """
                 encoder reads \(encoder.powerDBr) dBr and the Meter reads \(meter) dBr \
@@ -115,10 +115,12 @@ struct BS412FullChainTests {
                 """)
     }
 
-    @Test func theLimiterBringsTheCompleteMultiplexUnderTheCeiling() {
+    /// Settling behaviour, NOT a compliance test -- it looks at the settled
+    /// end of a long render. `BS412PowerLimiterTests` is what checks every
+    /// window, including the first and the transitions.
+    @Test func theLimiterSettlesUnderTheCeiling() {
         // Drive it hard enough to need real reduction, then check the Meter
-        // agrees the finished signal is compliant. The settled window is the
-        // last 60 s of a long render.
+        // agrees the finished signal is compliant.
         var hot = config(ceilingDBr: -1.0, bs412: true)
         hot.finalDriveDB = 6.0
         let composite = render(hot, seconds: 200.0)
@@ -136,8 +138,8 @@ struct BS412FullChainTests {
         #expect(!composite.isEmpty)
         var encoder = BS412MultiplexPowerMeter()
         encoder.configure(sampleRate: Float(sampleRate))
-        for sample in composite { encoder.process(total: sample, subcarriers: 0.0) }
-        #expect(encoder.primed)
+        for sample in composite { encoder.process(sample) }
+        #expect(encoder.windowValid)
         #expect(encoder.powerDBr.isFinite)
     }
 }

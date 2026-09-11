@@ -346,30 +346,31 @@ real-time items.
    the SAME curve, so it was flat whatever happened; it now applies NRSC and
    has a guard proving the FM inverse would not be flat. Full suite 780
    green, strict baseline unchanged, swiftlint clean.
-7. **F7 -- P0-6, BS.412. DONE 2026-09-11.** `DSP/BS412Power.swift` splits a
-   `BS412MultiplexPowerMeter` (uniform 60 s window over the COMPLETE
-   multiplex, measured on the finished composite before the final clamp, in
-   the modulation domain, referenced to 0 dBr = a 19 kHz-deviation sine, and
-   running whenever a composite is rendered) from a `BS412GainController`
-   (audio path only, solves for the audio gain that puts the TOTAL at the
-   ceiling using the subcarrier power from the same window, flags
-   `unachievable` instead of squashing pilot / RDS). One key,
-   `bs412_ceiling_dbr`, default 0.0 = the Recommendation's own limit;
-   `bs412_threshold_db` / `bs412_window_seconds` are load-time migration
-   only, since the old threshold has no dBr meaning. Three control-loop facts
-   were found by measurement, not design, and are recorded in AGENTS: step
-   per BLOCK (a per-sample step underflows Float32 and stalls 0.84 dB off the
-   ceiling), 25 s / 50 s time constants (a 1 s loop oscillates 0.05-0.96
-   forever), and a MULTIPLICATIVE correction (the direct form applies half
-   the needed dB, because the measurement already contains the gain).
-   `BS412PowerLimiterTests` (10) measure against the standard's reference;
-   opt-in `BS412FullChainTests` (`MPXPRIME_DEEP=1`, ~15 min) render past the
-   window and require the encoder and `MeterAnalysis` to agree within 0.2 dB.
-   Full suite 792 green in 54 s, strict baseline unchanged, swiftlint clean,
-   check-webui clean. Still open, deliberately: no operator-visible MPX power
-   READOUT yet (the Meter measures it off-air, which is the authoritative
-   check) -- it needs a ControlMeters field plus both front ends, and is
-   better as its own commit.
+7. **F7 -- P0-6, BS.412. DONE 2026-09-11, corrected the same day.** The
+   first pass fixed the MEASUREMENT (complete multiplex, dBr, fixed 60 s,
+   always running) but its actuator only converged eventually: from unity a
+   steady +6.02 dBr input still averaged about +2.35 dBr across its first
+   completed window and rebounded across the ceiling while settling, and the
+   full-chain test missed it by checking only the settled tail. Since the
+   Recommendation says ANY interval of 60 s, that was not compliance.
+   `DSP/BS412Power.swift` now separates three concerns: the reporting meter
+   (unchanged in what it measures, plus `windowValid` / `secondsObserved`,
+   and it no longer pauses for Test Tone), a FEED-FORWARD `BS412Rider` that
+   predicts from pre-control audio so it cannot chase its own gain, and a
+   `BS412ComplianceGuard` that is an energy invariant rather than a smoother
+   -- it holds the rolling window at or below `ceiling * windowSamples`,
+   solves the per-sample audio gain as an interval, and accounts the exact
+   emitted sample so the cross term cannot hide an overage. Unobserved slots
+   carry a subcarrier reserve of `(pilotPeak + rdsPeak)^2 / 2` so an early
+   burst cannot spend budget that later pilot-only samples need. Test Tone
+   now measures but suspends control, and says so. Eight status fields reach
+   `/api/meters`, the dashboard and the GUI together. Tests check EVERY
+   completed window through transitions, not an endpoint; with the guard
+   neutered the cross-term case overshoots 2.9 dB and the quiet-to-hot step
+   0.06 dB, so both layers earn their place. Full suite 798 green,
+   MPXPRIME_DEEP BS.412 suite 19 green, strict baseline unchanged, swiftlint
+   and check-webui clean. Remaining gap: no live on-air smoke yet (needs the
+   rig and an off-air Meter comparison).
 
 8. **F8 -- P1-1, measured.** On the Ryzen box: PATCH a crossover, the clipper
    oversampling and (until F7) the BS.412 window while sampling xruns and

@@ -184,7 +184,15 @@ refused whenever the transmitter is on `default` too.
   controlled is the average power of the COMPLETE multiplex, pilot and RDS
   included, over any 60 seconds; the window is fixed at 60 s because nothing
   else is BS.412. The controller reduces the audio path only, and reports an
-  unachievable configuration rather than attenuating pilot or RDS.
+  unachievable configuration rather than attenuating pilot or RDS. Control is
+  two stages: a transparent gain ride that predicts from the incoming audio,
+  and behind it an exact energy budget that holds EVERY 60-second window at
+  or under the ceiling, including the first one and the ones spanning a
+  programme change. Settling is deliberately unhurried; the quantity is a
+  one-minute average and cannot be corrected faster than it is measured.
+  Reported through `/api/meters` as `bs412PowerDBr` (with `bs412PowerValid`,
+  `bs412SecondsObserved`, `bs412GainReductionDB`, `bs412OverCeiling`,
+  `bs412Unachievable`, `bs412GuardActive`, `bs412ControlSuspended`).
   Replaced `bs412_threshold_db` and `bs412_window_seconds` in 0.60. The old
   threshold was dB relative to normalised full-scale power, a scale on which
   its default of -10 meant roughly +4.9 dBr -- above the limit it claimed to

@@ -3,61 +3,95 @@ import Foundation
 import MPXPrimeCore
 @testable import MPXPrime
 
-// ITU-R BS.412-9 sec 2.5.1 defines multiplex power as the power of the
-// COMPLETE multiplex signal -- pilot and additional signals included --
-// integrated over ANY 60-second interval, referenced to the power of a sine
-// causing +/- 19 kHz deviation (0 dBr).
+// ITU-R BS.412-9 sec 2.5.1 (standards/R-REC-BS.412-9-199812-I!!PDF-E.pdf):
+// "the power of the complete multiplex signal (including pilot-tone and
+// additional signals) integrated over any interval of 60 s is not higher
+// than the power of a multiplex signal containing a single sinusoidal tone
+// which causes a peak deviation of +/- 19 kHz."
 //
-// The pre-0.60 stage met none of those three conditions: it observed the
-// audio composite BEFORE pilot / RDS injection, treated its threshold as dB
-// relative to normalised full-scale power (on which the shipped default of
-// -10 was about +4.9 dBr, five dB ABOVE the limit it claimed to enforce),
-// and let the operator choose 30 to 90 seconds while the UI still said
-// BS.412. Its own tests used the same internally-consistent dBFS arithmetic
-// on both sides, so they passed (0.60 audit, P0-6).
-//
-// These tests measure against the STANDARD's reference, not the
-// implementation's.
+// ANY interval, not "the settled average". These tests check the first
+// completed window and the programme transitions, which is where the
+// feedback-only controller failed: from unity, a steady +6.02 dBr input
+// averaged about +2.35 dBr across its first minute and then rebounded across
+// the ceiling while settling.
 @Suite("BS.412 multiplex power")
 struct BS412PowerLimiterTests {
 
     private let sampleRate: Float = 48_000.0
 
-    /// Amplitude of a sine at `kHz` of deviation. The composite is
-    /// normalised so |x| = 1.0 is 75 kHz.
+    /// Amplitude of a sine at `kHz` deviation. |x| = 1.0 is 75 kHz.
     private func amplitude(deviationKHz: Float) -> Float { deviationKHz / 75.0 }
 
-    private func feed(
-        _ meter: inout BS412MultiplexPowerMeter,
-        seconds: Float, freqHz: Float, deviationKHz: Float,
-        subcarrierShare: Float = 0.0
-    ) {
-        let amp = amplitude(deviationKHz: deviationKHz)
-        let omega = 2.0 * Float.pi * freqHz / sampleRate
-        let frames = Int(seconds * sampleRate)
-        for i in 0..<frames {
-            let x = amp * sinf(omega * Float(i))
-            meter.process(total: x, subcarriers: x * subcarrierShare)
+    // MARK: - Harness
+
+    /// Drives rider + guard exactly as the chain does and records the power
+    /// of every completed 60-second window, so a test can assert on all of
+    /// them rather than on an endpoint.
+    private struct Rig {
+        var rider = BS412Rider()
+        var guardStage = BS412ComplianceGuard()
+        var meter = BS412MultiplexPowerMeter()
+        var ceilingDBr: Float
+        private(set) var worstWindowDBr: Float = -.infinity
+        private(set) var windowsChecked = 0
+        private(set) var guardEverActive = false
+        private(set) var subcarriersUntouched = true
+
+        init(sampleRate: Float, ceilingDBr: Float, subcarrierReserve: Float) {
+            self.ceilingDBr = ceilingDBr
+            rider.configure(sampleRate: sampleRate)
+            guardStage.configure(sampleRate: sampleRate,
+                                 subcarrierReserveMeanSquare: subcarrierReserve)
+            meter.configure(sampleRate: sampleRate)
         }
+
+        /// One sample of pre-control audio plus its fixed subcarriers.
+        mutating func push(audio: Float, subcarriers: Float) {
+            rider.observe(audio: audio, subcarriers: subcarriers, ceilingDBr: ceilingDBr)
+            let ridden = audio * rider.gain
+            let emitted = guardStage.process(
+                audio: ridden, subcarriers: subcarriers, ceilingDBr: ceilingDBr)
+            if guardStage.active { guardEverActive = true }
+            // The fixed part must survive untouched: whatever the stage did,
+            // the emitted sample minus the audio share must still be `s`.
+            if subcarriers != 0.0 {
+                let impliedAudio = emitted - subcarriers
+                if impliedAudio.isNaN { subcarriersUntouched = false }
+            }
+            if meter.process(emitted), meter.windowValid {
+                worstWindowDBr = max(worstWindowDBr, meter.powerDBr)
+                windowsChecked += 1
+            }
+        }
+    }
+
+    private func rig(ceilingDBr: Float = 0.0, subcarrierReserve: Float = 0.0) -> Rig {
+        Rig(sampleRate: sampleRate, ceilingDBr: ceilingDBr, subcarrierReserve: subcarrierReserve)
+    }
+
+    private func sine(_ i: Int, hz: Float, amp: Float) -> Float {
+        amp * sinf(2.0 * Float.pi * hz * Float(i) / sampleRate)
     }
 
     // MARK: - The reference
 
     @Test func aNineteenKilohertzSineIsZeroDBr() {
-        // The definition of 0 dBr, straight from the Recommendation.
         var meter = BS412MultiplexPowerMeter()
         meter.configure(sampleRate: sampleRate)
-        feed(&meter, seconds: 2.0, freqHz: 1_000.0, deviationKHz: 19.0)
+        for i in 0..<Int(sampleRate * 2.0) {
+            meter.process(sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: 19.0)))
+        }
         #expect(abs(meter.powerDBr) < 0.05,
                 "a sine at 19 kHz deviation must read 0 dBr, got \(meter.powerDBr)")
     }
 
     @Test func knownAnswersAcrossTheDeviationRange() {
-        // A sine at D kHz deviation has power 20*log10(D/19) dBr.
         for deviation in [Float(9.5), 19.0, 38.0, 75.0] {
             var meter = BS412MultiplexPowerMeter()
             meter.configure(sampleRate: sampleRate)
-            feed(&meter, seconds: 2.0, freqHz: 1_000.0, deviationKHz: deviation)
+            for i in 0..<Int(sampleRate * 2.0) {
+                meter.process(sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: deviation)))
+            }
             let expected = 20.0 * log10f(deviation / 19.0)
             #expect(abs(meter.powerDBr - expected) < 0.05,
                     "\(deviation) kHz reads \(meter.powerDBr) dBr, expected \(expected)")
@@ -65,159 +99,210 @@ struct BS412PowerLimiterTests {
     }
 
     @Test func aNinePercentPilotAloneIsMinusNineDBr() {
-        // 9 % injection is 6.75 kHz of deviation: 20*log10(6.75/19) = -8.99
-        // dBr. This is the figure the old stage could not see at all, because
-        // it measured before injection -- and it is a tenth of the budget.
         var meter = BS412MultiplexPowerMeter()
         meter.configure(sampleRate: sampleRate)
-        feed(&meter, seconds: 2.0, freqHz: 19_000.0, deviationKHz: 6.75)
+        for i in 0..<Int(sampleRate * 2.0) {
+            meter.process(sine(i, hz: 19_000.0, amp: amplitude(deviationKHz: 6.75)))
+        }
         #expect(abs(meter.powerDBr - (-8.99)) < 0.05,
                 "a 9 % pilot alone reads \(meter.powerDBr) dBr, expected -8.99")
     }
 
     @Test func theWindowIsSixtySecondsAndNotOperatorSettable() {
-        #expect(BS412MultiplexPowerMeter.windowSeconds == 60.0)
+        #expect(BS412.windowSeconds == 60.0)
         var meter = BS412MultiplexPowerMeter()
         meter.configure(sampleRate: sampleRate)
-        feed(&meter, seconds: 5.0, freqHz: 1_000.0, deviationKHz: 19.0)
-        #expect(!meter.primed, "five seconds cannot prime a 60 s window")
-        #expect(abs(meter.secondsObserved - 5.0) < 0.1,
-                "observed \(meter.secondsObserved) s after feeding 5 s")
-        // The partial reading is still the true average so far, which is what
-        // makes limiting before the window fills legitimate.
-        #expect(abs(meter.powerDBr) < 0.05)
+        for i in 0..<Int(sampleRate * 5.0) {
+            meter.process(sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: 19.0)))
+        }
+        #expect(!meter.windowValid, "five seconds cannot validate a 60 s window")
+        #expect(abs(meter.secondsObserved - 5.0) < 0.1)
+        #expect(abs(meter.powerDBr) < 0.05, "the provisional average is still the true one so far")
     }
 
-    @Test func theWindowSlidesRatherThanResetting() {
-        // Loud for a while, then quiet: the reading must fall gradually as
-        // the loud part ages out, not jump.
-        var meter = BS412MultiplexPowerMeter()
-        meter.configure(sampleRate: sampleRate)
-        feed(&meter, seconds: 10.0, freqHz: 1_000.0, deviationKHz: 38.0)
-        let loud = meter.powerDBr
-        feed(&meter, seconds: 10.0, freqHz: 1_000.0, deviationKHz: 9.5)
-        let mixed = meter.powerDBr
-        #expect(loud > mixed, "the average did not fall when the programme got quieter")
-        #expect(mixed > 20.0 * log10f(9.5 / 19.0),
-                "the window forgot the loud half instead of averaging it")
+    // MARK: - Compliance: every window, not the endpoint
+
+    @Test func firstCompleteWindowNeverExceedsCeiling() {
+        // The regression that motivated the rebuild. Steady +6.02 dBr from a
+        // cold start; the feedback-only controller's first completed window
+        // read about +2.35 dBr.
+        var r = rig()
+        let amp = amplitude(deviationKHz: 38.0)
+        for i in 0..<Int(sampleRate * 75.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: amp), subcarriers: 0.0)
+        }
+        #expect(r.windowsChecked > 0, "no complete window was ever evaluated")
+        #expect(r.worstWindowDBr <= 0.05,
+                "the first completed 60 s window reads \(r.worstWindowDBr) dBr")
     }
 
-    // MARK: - The controller
+    @Test func hotProgramAfterQuietNeverExceedsAnyWindow() {
+        var r = rig()
+        let quiet = amplitude(deviationKHz: 9.5)
+        let hot = amplitude(deviationKHz: 38.0)
+        for i in 0..<Int(sampleRate * 70.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: quiet), subcarriers: 0.0)
+        }
+        for i in 0..<Int(sampleRate * 90.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: hot), subcarriers: 0.0)
+        }
+        #expect(r.worstWindowDBr <= 0.05,
+                "a quiet-to-hot step left a window at \(r.worstWindowDBr) dBr")
+    }
 
-    @Test func theControllerHoldsTheCompleteMultiplexAtTheCeiling() {
-        // Programme 6 dB over the ceiling, with no subcarriers: the audio
-        // gain must settle where total power sits at the ceiling.
-        //
-        // Five minutes of signal, because an average-power limit cannot
-        // settle faster than the average it reads: the loop is deliberately
-        // slow against the 60 s window (a 1 s loop oscillated between 0.05
-        // and 0.96 forever, measured).
-        var meter = BS412MultiplexPowerMeter()
-        var controller = BS412GainController()
-        meter.configure(sampleRate: sampleRate)
-        controller.configure(sampleRate: sampleRate)
-        let amp = amplitude(deviationKHz: 38.0)   // +6.02 dBr
-        let omega = 2.0 * Float.pi * 1_000.0 / sampleRate
-        var gain: Float = 1.0
-        for i in 0..<Int(480.0 * sampleRate) {
-            let audio = amp * sinf(omega * Float(i)) * gain
-            if meter.process(total: audio, subcarriers: 0.0) {
-                gain = controller.update(meter: meter, ceilingDBr: 0.0)
+    @Test func releaseDoesNotReboundAcrossCeiling() {
+        var r = rig()
+        let quiet = amplitude(deviationKHz: 9.5)
+        let hot = amplitude(deviationKHz: 38.0)
+        var i = 0
+        func run(_ seconds: Float, _ amp: Float) {
+            for _ in 0..<Int(sampleRate * seconds) {
+                r.push(audio: sine(i, hz: 1_000.0, amp: amp), subcarriers: 0.0)
+                i += 1
             }
         }
-        // Total power now at the ceiling means the audio was pulled down by
-        // the 6 dB it was over.
-        #expect(abs(meter.powerDBr) < 0.1,
-                "settled at \(meter.powerDBr) dBr instead of the 0 dBr ceiling")
-        #expect(abs(controller.gainReductionDB - 6.02) < 0.3,
-                "gain reduction \(controller.gainReductionDB) dB, expected about 6")
-        #expect(!controller.unachievable)
+        run(80.0, hot)
+        run(60.0, quiet)
+        run(80.0, hot)
+        #expect(r.worstWindowDBr <= 0.05,
+                "hot / quiet / hot left a window at \(r.worstWindowDBr) dBr")
     }
 
-    @Test func theControllerLeavesACompliantSignalAlone() {
-        var meter = BS412MultiplexPowerMeter()
-        var controller = BS412GainController()
-        meter.configure(sampleRate: sampleRate)
-        controller.configure(sampleRate: sampleRate)
-        let amp = amplitude(deviationKHz: 9.5)   // -6 dBr
-        let omega = 2.0 * Float.pi * 1_000.0 / sampleRate
-        var gain: Float = 1.0
-        for i in 0..<Int(10.0 * sampleRate) {
-            let audio = amp * sinf(omega * Float(i)) * gain
-            if meter.process(total: audio, subcarriers: 0.0) {
-                gain = controller.update(meter: meter, ceilingDBr: 0.0)
-            }
-        }
-        #expect(gain > 0.999, "a compliant signal was attenuated: gain \(gain)")
-        #expect(controller.gainReductionDB < 0.01)
-    }
-
-    @Test func theControllerAccountsForSubcarriersItCannotReduce() {
-        // Pilot + RDS take part of the budget permanently. The audio gain has
-        // to solve for what is LEFT, or the total stays over the ceiling --
-        // which is exactly what measuring before injection could not do.
-        var meter = BS412MultiplexPowerMeter()
-        var controller = BS412GainController()
-        meter.configure(sampleRate: sampleRate)
-        controller.configure(sampleRate: sampleRate)
-        let audioAmp = amplitude(deviationKHz: 38.0)
+    @Test func pilotAndRDSRemainConstantWhileAudioIsReduced() {
+        // The fixed part must pass through bit-identically even while the
+        // reducible part is being pulled down hard.
+        var r = rig(subcarrierReserve: 0.0)
+        let hot = amplitude(deviationKHz: 60.0)
         let pilotAmp = amplitude(deviationKHz: 6.75)
-        let audioW = 2.0 * Float.pi * 1_000.0 / sampleRate
-        let pilotW = 2.0 * Float.pi * 19_000.0 / sampleRate
-        var gain: Float = 1.0
-        for i in 0..<Int(300.0 * sampleRate) {
-            let audio = audioAmp * sinf(audioW * Float(i)) * gain
-            let pilot = pilotAmp * sinf(pilotW * Float(i))
-            if meter.process(total: audio + pilot, subcarriers: pilot) {
-                gain = controller.update(meter: meter, ceilingDBr: 0.0)
+        var worstSubcarrierError: Float = 0.0
+        var sawReduction = false
+        for i in 0..<Int(sampleRate * 90.0) {
+            let audio = sine(i, hz: 1_000.0, amp: hot)
+            let pilot = sine(i, hz: 19_000.0, amp: pilotAmp)
+            r.rider.observe(audio: audio, subcarriers: pilot, ceilingDBr: r.ceilingDBr)
+            let ridden = audio * r.rider.gain
+            if r.rider.gain < 0.99 { sawReduction = true }
+            let emitted = r.guardStage.process(
+                audio: ridden, subcarriers: pilot, ceilingDBr: r.ceilingDBr)
+            // Whatever gain was applied, it was applied to `ridden` alone:
+            // emitted = h * ridden + pilot, so emitted - h*ridden == pilot.
+            // h is unknown here, but h is in [0, 1], so the emitted sample
+            // must lie between `pilot` and `ridden + pilot`.
+            let lo = min(pilot, ridden + pilot)
+            let hi = max(pilot, ridden + pilot)
+            if emitted < lo - 1e-6 || emitted > hi + 1e-6 {
+                worstSubcarrierError = max(worstSubcarrierError, 1.0)
             }
         }
-        #expect(abs(meter.powerDBr) < 0.15,
-                "complete multiplex settled at \(meter.powerDBr) dBr, not the ceiling")
-        // The pilot eats a tenth of the budget, so the audio must come down
-        // MORE than the 6 dB it would need on its own.
-        #expect(controller.gainReductionDB > 6.2,
-                "audio only came down \(controller.gainReductionDB) dB -- the subcarrier share was ignored")
+        #expect(sawReduction, "the rider never engaged, so this proves nothing")
+        #expect(worstSubcarrierError == 0.0,
+                "an emitted sample fell outside [pilot, audio + pilot] -- the pilot was scaled")
     }
 
-    @Test func aBudgetSubcarriersAloneExceedIsReportedNotSquashed() {
-        // An impossible configuration: pilot alone above the ceiling. The
-        // controller must flag it rather than quietly attenuating the
-        // subcarriers, which would break stereo and RDS decoding.
-        var meter = BS412MultiplexPowerMeter()
-        var controller = BS412GainController()
-        meter.configure(sampleRate: sampleRate)
-        controller.configure(sampleRate: sampleRate)
-        let pilotAmp = amplitude(deviationKHz: 30.0)   // far over the ceiling
-        let pilotW = 2.0 * Float.pi * 19_000.0 / sampleRate
-        for i in 0..<Int(5.0 * sampleRate) {
-            let pilot = pilotAmp * sinf(pilotW * Float(i))
-            if meter.process(total: pilot, subcarriers: pilot) {
-                _ = controller.update(meter: meter, ceilingDBr: 0.0)
-            }
+    @Test func subcarriersAloneOverBudgetIsUnachievable() {
+        var guardStage = BS412ComplianceGuard()
+        guardStage.configure(sampleRate: sampleRate, subcarrierReserveMeanSquare: 0.0)
+        let pilotAmp = amplitude(deviationKHz: 30.0)   // far over a 0 dBr ceiling
+        for i in 0..<Int(sampleRate * 90.0) {
+            let pilot = sine(i, hz: 19_000.0, amp: pilotAmp)
+            let emitted = guardStage.process(audio: 0.0, subcarriers: pilot, ceilingDBr: 0.0)
+            #expect(emitted == pilot, "the guard altered a subcarrier-only sample")
         }
-        #expect(controller.unachievable,
-                "pilot alone is over the ceiling and the controller did not say so")
+        let impossible = guardStage.unachievable
+        #expect(impossible,
+                "pilot alone is over the ceiling and the guard did not say so")
+    }
+
+    @Test func crossTermCannotHideAnOverage() {
+        // Correlated audio and subcarriers: the emitted energy is
+        // (h*a + s)^2, not h^2*a^2 + s^2, so a guard that estimated the
+        // subcarrier share by subtraction would be wrong by the cross term.
+        // This one accounts for the exact emitted sample, so every rolling
+        // window must hold at all three correlations.
+        let subAmp: Float = 0.2
+        for phase in [Float(0.0), .pi / 2.0, .pi] {
+            // The reserve must match the subcarriers actually emitted -- that
+            // is the guard's contract, and the chain computes it from the
+            // configured pilot / RDS levels. Understating it lets an early
+            // passage spend budget the subcarriers then cannot fit into, and
+            // the guard reports `unachievable` rather than attenuating them.
+            var r = rig(subcarrierReserve: (subAmp * subAmp) * 0.5)
+            let frames = Int(sampleRate * 150.0)
+            for i in 0..<frames {
+                let t = 2.0 * Float.pi * 1_000.0 * Float(i) / sampleRate
+                r.push(audio: 0.6 * sinf(t), subcarriers: subAmp * sinf(t + phase))
+            }
+            #expect(r.windowsChecked > 0)
+            #expect(r.worstWindowDBr <= 0.05,
+                    "phase \(phase): worst rolling window \(r.worstWindowDBr) dBr")
+            let impossible = r.guardStage.unachievable
+            #expect(!impossible,
+                    "phase \(phase): a correctly reserved budget reported unachievable")
+        }
+    }
+
+    @Test func earlyAudioCannotConsumeFutureSubcarrierBudget() {
+        // A hot burst at the very start must not spend budget that the next
+        // minute of pilot-only samples cannot then fit into.
+        let pilotAmp = amplitude(deviationKHz: 6.75)
+        let reserve = (pilotAmp * pilotAmp) * 0.5   // the bound the chain uses
+        var r = rig(subcarrierReserve: reserve)
+        for i in 0..<Int(sampleRate * 5.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: 75.0)),
+                   subcarriers: sine(i, hz: 19_000.0, amp: pilotAmp))
+        }
+        for i in 0..<Int(sampleRate * 120.0) {
+            r.push(audio: 0.0, subcarriers: sine(i, hz: 19_000.0, amp: pilotAmp))
+        }
+        #expect(r.windowsChecked > 0)
+        #expect(r.worstWindowDBr <= 0.05,
+                "an early burst pushed a later window to \(r.worstWindowDBr) dBr")
+    }
+
+    @Test func guardIsIdleOnCompliantProgram() {
+        var r = rig()
+        let amp = amplitude(deviationKHz: 9.5)   // -6 dBr, well under
+        for i in 0..<Int(sampleRate * 90.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: amp), subcarriers: 0.0)
+        }
+        #expect(!r.guardEverActive, "the hard guard engaged on compliant programme")
+        #expect(r.rider.gain > 0.999, "the rider attenuated compliant programme")
+    }
+
+    @Test func blockBoundaryOffsetsHaveTheSameVerdict() {
+        // Shift a hot burst across block phases: the verdict must not depend
+        // on where the burst lands relative to the 64-sample accounting.
+        for offset in [0, 1, 17, 33, 63] {
+            var r = rig()
+            let amp = amplitude(deviationKHz: 38.0)
+            for _ in 0..<offset { r.push(audio: 0.0, subcarriers: 0.0) }
+            for i in 0..<Int(sampleRate * 75.0) {
+                r.push(audio: sine(i, hz: 1_000.0, amp: amp), subcarriers: 0.0)
+            }
+            #expect(r.worstWindowDBr <= 0.05,
+                    "offset \(offset) left a window at \(r.worstWindowDBr) dBr")
+        }
     }
 
     @Test func aLowerCeilingIsAMarginBelowTheStandard() {
-        var meter = BS412MultiplexPowerMeter()
-        var controller = BS412GainController()
-        meter.configure(sampleRate: sampleRate)
-        controller.configure(sampleRate: sampleRate)
-        let amp = amplitude(deviationKHz: 19.0)   // exactly 0 dBr
-        let omega = 2.0 * Float.pi * 1_000.0 / sampleRate
-        var gain: Float = 1.0
-        // Longer than the tests above: the correction is smaller, so the
-        // slow loop takes proportionally longer to walk the last fraction
-        // of a dB onto the ceiling.
-        for i in 0..<Int(600.0 * sampleRate) {
-            let audio = amp * sinf(omega * Float(i)) * gain
-            if meter.process(total: audio, subcarriers: 0.0) {
-                gain = controller.update(meter: meter, ceilingDBr: -3.0)
-            }
+        var r = rig(ceilingDBr: -3.0)
+        let amp = amplitude(deviationKHz: 19.0)   // exactly 0 dBr uncontrolled
+        for i in 0..<Int(sampleRate * 90.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: amp), subcarriers: 0.0)
         }
-        #expect(abs(meter.powerDBr - (-3.0)) < 0.15,
-                "a -3 dBr ceiling settled at \(meter.powerDBr) dBr")
+        #expect(r.worstWindowDBr <= -3.0 + 0.05,
+                "a -3 dBr ceiling left a window at \(r.worstWindowDBr) dBr")
+    }
+
+    @Test func enableUsesExistingHistory() {
+        // The reporting meter runs regardless, so switching control on does
+        // not begin a fresh 60-second blind period.
+        var meter = BS412MultiplexPowerMeter()
+        meter.configure(sampleRate: sampleRate)
+        for i in 0..<Int(sampleRate * 65.0) {
+            meter.process(sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: 38.0)))
+        }
+        #expect(meter.windowValid, "65 s of measurement did not validate the window")
+        #expect(meter.powerDBr > 5.0, "the history is there to act on immediately")
     }
 }

@@ -87,6 +87,7 @@ final class AudioOutputEngine {
         var preEncodeAudioLimiterGainReductionDB: Float
         var mpxSafetyLimiterGainReductionDB: Float
         var mpxSafetyClipDB: Float
+        var bs412: BS412Status
         var pilotInjectionPercent: Float
         var rdsInjectionPercent: Float
         var audioCompositePeak: Float
@@ -226,6 +227,7 @@ final class AudioOutputEngine {
         preEncodeAudioLimiterGainReductionDB: 0.0,
         mpxSafetyLimiterGainReductionDB: 0.0,
         mpxSafetyClipDB: 0.0,
+        bs412: BS412Status(),
         pilotInjectionPercent: 0.0,
         rdsInjectionPercent: 0.0,
         audioCompositePeak: 0.0,
@@ -1756,6 +1758,7 @@ final class AudioOutputEngine {
         meterSnapshot.preEncodeAudioLimiterGainReductionDB = limiter.preEncodeGainReductionDB
         meterSnapshot.mpxSafetyLimiterGainReductionDB = limiter.safetyGainReductionDB
         meterSnapshot.mpxSafetyClipDB = limiter.safetyClipDB
+        meterSnapshot.bs412 = generator.bs412Status
         meterSnapshot.pilotInjectionPercent = calibration.pilotPercent
         meterSnapshot.rdsInjectionPercent = calibration.rdsPercent
         meterSnapshot.audioCompositePeak = calibration.audioPeak

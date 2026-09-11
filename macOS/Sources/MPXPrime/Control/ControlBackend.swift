@@ -97,6 +97,21 @@ struct ControlMeters: Codable, Sendable {
     var advancedDynamicsBandGainsDB: [Float]?
     var advancedDynamicsDensityDB: Float?
     var compositeClipperGainReductionDB: Float?
+    /// ITU-R BS.412-9 complete-multiplex power over the rolling 60 s window,
+    /// dBr (0 dBr is the Recommendation's limit). `bs412PowerValid` is false
+    /// until a full window has been observed and while Test Tone suspends
+    /// control -- show `--`, never a compliance claim, when it is false.
+    var bs412PowerDBr: Float?
+    var bs412PowerValid: Bool?
+    var bs412SecondsObserved: Float?
+    var bs412GainReductionDB: Float?
+    var bs412OverCeiling: Bool?
+    /// Pilot and RDS alone exceed the ceiling: no audio gain can meet it.
+    var bs412Unachievable: Bool?
+    /// The hard energy guard intervened. Normal programme never should.
+    var bs412GuardActive: Bool?
+    /// Measurement continues, control is suspended (Test Tone).
+    var bs412ControlSuspended: Bool?
     var preEncodeLimiterGainReductionDB: Float?
     var safetyLimiterGainReductionDB: Float?
     /// dB the safety soft clip absorbed (decaying peak). 0 = idle, as designed; > 0 means the

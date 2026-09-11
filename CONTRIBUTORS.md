@@ -31,6 +31,11 @@ outside work the project builds on.
   Stereotool-compatible text grammar, the receive-side `RDSStreamDecoder`, and
   the FM composite chain the encoder feeds.
 
+  **Relicensing consent:** Ryan Ginn agreed to this project's move from
+  GPL-3.0 to AGPL-3.0 in 0.50 (confirmed to the maintainer, 2026-09-11). The
+  ported portion is therefore covered for the AGPL-3.0 distribution, in
+  addition to GPL-3.0 section 13 permitting the combination.
+
 ## Vendored code
 
 - **FM-SDR-Tuner** (<https://github.com/bkram/FM-SDR-Tuner>), GPL-3.0, by the

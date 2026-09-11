@@ -866,6 +866,7 @@ function renderMonitoring(c) {
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Headroom</div>` +
       kv("Pre-Encode GR", "monPre") +
       (compositeMode() ? kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") : "") +
+      (compositeMode() ? kv("MPX Power", "monBS412") + kv("BS.412 GR", "monBS412GR") : "") +
       kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
     (compositeMode() ?
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
@@ -1375,6 +1376,36 @@ function applyMeters(m) {
   set("monClip", gr(m?.compositeClipperGainReductionDB));
   set("monSafe", gr(m?.safetyLimiterGainReductionDB));
   set("monSafeClip", gr(m?.safetyClipDB));
+  // ITU-R BS.412 complete-multiplex power. Never show a number as compliant
+  // before a full 60 s window exists, or while Test Tone suspends control:
+  // show the priming progress or the suspension instead.
+  (function () {
+    var el = document.getElementById("monBS412");
+    if (!el) return;
+    var txt = "-", colour = "";
+    if (m?.bs412ControlSuspended) {
+      txt = "suspended (tone)";
+      colour = "var(--warn, #c80)";
+    } else if (m?.bs412PowerDBr == null) {
+      txt = "-";
+    } else if (!m.bs412PowerValid) {
+      var secs = m.bs412SecondsObserved != null ? Math.floor(m.bs412SecondsObserved) : 0;
+      txt = secs + " / 60 s";
+    } else {
+      txt = m.bs412PowerDBr.toFixed(2) + " dBr";
+      if (m.bs412OverCeiling) colour = "var(--bad, #c33)";
+    }
+    if (m?.bs412Unachievable) {
+      txt += " (pilot/RDS over budget)";
+      colour = "var(--bad, #c33)";
+    } else if (m?.bs412GuardActive) {
+      txt += " (guard)";
+      colour = "var(--warn, #c80)";
+    }
+    el.textContent = txt;
+    el.style.color = colour;
+  })();
+  set("monBS412GR", gr(m?.bs412GainReductionDB));
   set("monAGC", m?.agcGainDB != null ? m.agcGainDB.toFixed(1) + " dB" : "-");
   // Electrical headroom at the converter (post output gain + line output);
   // the deviation trace stays in the modulation domain.

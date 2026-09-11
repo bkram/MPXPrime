@@ -128,6 +128,30 @@ combination test suite. Newest first.
   headless Mac encoder, which does not re-apply settings after starting, it
   then stayed there.
 
+- **BS.412 now holds every minute, not just the settled ones.** The 0.60
+  rebuild measured the right thing but its limiter only got there eventually:
+  from a cold start a steady signal 6 dB over spent most of its first minute
+  above the ceiling, then dipped below and came back across it while settling.
+  Since the rule is about *any* 60 seconds, that was still not compliance.
+  There are now two stages. A transparent gain ride looks at the audio as it
+  arrives rather than at a measurement that already includes its own
+  correction, so it reacts in the right direction immediately and cannot
+  hunt. Behind it sits an exact energy budget that simply cannot let any
+  60-second window exceed the ceiling, including the first one and the ones
+  spanning a change of programme. In normal use the ride does the work and
+  the budget never intervenes.
+- **BS.412 tells you where it is.** New Monitoring readouts in both the Mac
+  app and the dashboard: **MPX Power** in dBr, showing `42 / 60 s` while the
+  first minute fills rather than a number nobody should trust yet, and
+  **BS.412 GR** for how hard the audio is being held down. It also says when
+  the pilot and RDS alone exceed the ceiling, which no amount of audio
+  reduction can fix.
+- **Fixed: the Test Tone used to vanish from the power measurement.** A
+  transmitted calibration tone is part of the signal you radiate, so it now
+  counts. The limiter still steps aside so the tone keeps its calibrated
+  level, and both front ends say `suspended (tone)` instead of showing a
+  compliant-looking reading.
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

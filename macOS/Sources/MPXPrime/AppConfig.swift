@@ -1347,9 +1347,6 @@ struct AppConfig: Equatable {
 
         // BS.412
         bs412CeilingDBr = max(-10.0, min(0.0, bs412CeilingDBr))
-        // ITU-R BS.412-9 canonical rolling-average window is ~60 s.
-        // Allow ±30 s of regulator latitude; anything outside this range
-        // stops being BS.412 and becomes a generic fast AGC.
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
         compositeClipperStereoGuard = max(0.0, min(1.0, compositeClipperStereoGuard))

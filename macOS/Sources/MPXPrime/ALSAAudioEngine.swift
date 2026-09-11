@@ -229,6 +229,7 @@ struct ALSAMeterState {
     var clipperGRDB: Float = 0
     var safetyGRDB: Float = 0
     var safetyClipDB: Float = 0
+    var bs412 = BS412Status()
     var pilotPercent: Float = 0
     var rdsPercent: Float = 0
     var budgetMarginDB: Float = 0
@@ -595,6 +596,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
         state.clipperGRDB = limiter.gainReductionDB
         state.safetyGRDB = limiter.safetyGainReductionDB
         state.safetyClipDB = limiter.safetyClipDB
+        state.bs412 = generator.bs412Status
         state.pilotPercent = cal.pilotPercent
         state.rdsPercent = cal.rdsPercent
         state.budgetMarginDB = cal.budgetMarginDB

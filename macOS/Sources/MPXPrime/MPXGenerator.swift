@@ -854,7 +854,37 @@ final class MPXGenerator {
     /// The compliance statistic runs whether or not anything acts on it, so
     /// enabling the limiter does not start a 60 s wait (0.60 audit, P0-6).
     private var bs412Meter = BS412MultiplexPowerMeter()
-    private var bs412Controller = BS412GainController()
+    private var bs412Rider = BS412Rider()
+    private var bs412Guard = BS412ComplianceGuard()
+    private var bs412StatusState = BS412Status()
+
+    /// Compliance state for telemetry. Updated once per rendered sample.
+    var bs412Status: BS412Status { bs412StatusState }
+
+    /// Upper bound on the mean square of the subcarriers alone, for the
+    /// guard's unobserved-history reserve.
+    ///
+    /// Pilot and RDS are bounded oscillatory signals whose instantaneous sum
+    /// never exceeds the sum of their peaks, so over the window their mean
+    /// square is at most that of a single sinusoid of that combined
+    /// amplitude: `(pilotPeak + rdsPeak)^2 / 2`. That is the worst case of
+    /// perfect coherence and is the bound used here.
+    ///
+    /// Do NOT use the peak square without the halving: it is 3 dB
+    /// pessimistic, and a reserve above the ceiling makes the guard declare
+    /// a perfectly feasible configuration unachievable.
+    private var bs412SubcarrierReserve: Float {
+        let pilotPeak: Float = pilotSupported ? pilotLevel : 0.0
+        // The coder normalises its shaped output to unit peak before scaling,
+        // so the nominal injection IS the peak; 1.25 covers that estimate
+        // being taken over a finite test pattern.
+        let rdsPeak: Float = rdsSupported ? (1.25 * rdsInjectionPercent * 0.01) : 0.0
+        // Deliberately NOT gated on mono mode or the stereo-services flag:
+        // the reserve must bound whatever the next minute may carry, and
+        // over-reserving only costs headroom in the first window.
+        let peak: Float = (pilotPeak + rdsPeak) * deviationScale
+        return (peak * peak) * 0.5
+    }
     // CompositeClipper: disabled by default, field only for size/layout test.
     private var compositeClipperEnabled: Bool = false
     private var compositeClipperThresholdDB: Float = -3.0
@@ -1395,7 +1425,9 @@ final class MPXGenerator {
         )
         configureTruePeakGuard(sampleRate: audioRate)
         bs412Meter.configure(sampleRate: self.sampleRate)
-        bs412Controller.configure(sampleRate: self.sampleRate)
+        bs412Rider.configure(sampleRate: self.sampleRate)
+        bs412Guard.configure(sampleRate: self.sampleRate,
+                             subcarrierReserveMeanSquare: bs412SubcarrierReserve)
         compositeClipper.configure(
             sampleRate: self.sampleRate,
             thresholdDB: compositeClipperThresholdDB,
@@ -1816,7 +1848,9 @@ final class MPXGenerator {
         )
         configureTruePeakGuard(sampleRate: audioRate)
         bs412Meter.configure(sampleRate: sampleRate)
-        bs412Controller.configure(sampleRate: sampleRate)
+        bs412Rider.configure(sampleRate: sampleRate)
+        bs412Guard.configure(sampleRate: sampleRate,
+                             subcarrierReserveMeanSquare: bs412SubcarrierReserve)
         compositeClipper.configure(
             sampleRate: sampleRate,
             thresholdDB: compositeClipperThresholdDB,
@@ -3945,14 +3979,20 @@ final class MPXGenerator {
             right: audioComposite
         ).0
 
-        // BS.412 MPX power. The CONTROLLER rides the audio path only --
-        // pilot and RDS are injected after every peak stage at constant
-        // amplitude by design, so they are not the actuator's to touch. The
-        // gain it applies here comes from the previous sample's measurement
-        // of the FINISHED composite (taken at the bottom of this function);
-        // one sample of lag against a 60-second window is nothing.
-        if bs412Enabled && !renderingCalibrationTone {
-            audioComposite *= bs412Controller.currentGain
+        // BS.412, part 1 of 2: the transparent rider. It observes the audio
+        // BEFORE its own gain (feed-forward -- a loop closed around the
+        // 60-second measurement lags by design and cannot hold "any interval
+        // of 60 s") together with the subcarriers that will be added to it,
+        // and rides the AUDIO path only. Pilot and RDS are injected after
+        // every peak stage at constant amplitude; they are never the
+        // actuator's to touch. The hard guard further down is what proves
+        // the limit; this is what keeps the guard idle and the sound clean.
+        let bs412Controlling = bs412Enabled && !renderingCalibrationTone
+        if bs412Controlling {
+            bs412Rider.observe(
+                audio: audioComposite, subcarriers: delayedSubcarriers,
+                ceilingDBr: bs412CeilingDBr)
+            audioComposite *= bs412Rider.gain
         }
 
         // Final look-ahead MPX limiter on the audio composite, budget-
@@ -4032,7 +4072,20 @@ final class MPXGenerator {
         // Use the delay-aligned subcarriers so receiver-side stereo
         // demod sees pilot phase consistent with the audio composite's
         // internal 38 kHz subcarrier modulation.
-        mpx += delayedSubcarriers * outputGain
+        // BS.412, part 2 of 2: the compliance guard. Last point at which the
+        // reducible audio and the fixed subcarriers are still separable, and
+        // after every audio-only peak stage and the budget governor -- so
+        // this is where the energy budget can be enforced exactly.
+        let inverseOutputGain = 1.0 / max(1e-6, outputGain)
+        if bs412Controlling {
+            let audioModulation = mpx * inverseOutputGain
+            let emitted = bs412Guard.process(
+                audio: audioModulation, subcarriers: delayedSubcarriers,
+                ceilingDBr: bs412CeilingDBr)
+            mpx = emitted * outputGain
+        } else {
+            mpx += delayedSubcarriers * outputGain
+        }
 
         // Telemetry: measure how far the unclamped MPX exceeds ±1.0.
         // Non-zero envelope ⇒ pilot/RDS are being clipped at the
@@ -4045,25 +4098,33 @@ final class MPXGenerator {
             postInjectionOvershootEnv * postInjectionOvershootDecayCoeff
         )
 
-        // BS.412 measurement: the COMPLETE multiplex, pilot and RDS included,
-        // in the modulation domain (|x| = 1.0 is 75 kHz, so `output_gain_db`
-        // divides back out), taken before the final hard clamp. It runs
-        // whether or not the limiter is enabled, so switching the limiter on
-        // acts on a window that is already full instead of waiting a minute.
-        // The subcarrier power goes in alongside it because the controller
-        // cannot reduce that part of the budget.
-        if !renderingCalibrationTone {
-            let inverseOutputGain = 1.0 / max(1e-6, outputGain)
-            let blockComplete = bs412Meter.process(
-                total: mpx * inverseOutputGain,
-                subcarriers: delayedSubcarriers
-            )
-            if blockComplete && bs412Enabled {
-                _ = bs412Controller.update(meter: bs412Meter, ceilingDBr: bs412CeilingDBr)
-            }
-        }
+        let output = clampf(mpx, -1.0, 1.0)
 
-        return clampf(mpx, -1.0, 1.0)
+        // BS.412 reporting: the COMPLETE multiplex, pilot and RDS included,
+        // exactly as it leaves here, in the modulation domain (|x| = 1.0 is
+        // 75 kHz, so `output_gain_db` divides back out). It runs whether or
+        // not the limiter is enabled AND during Test Tone -- a transmitted
+        // calibration tone is still part of the multiplex, and omitting it
+        // would leave a hole in the power history. Enabling the limiter
+        // therefore acts on a window that is already full.
+        //
+        // This observes the CLAMPED sample, i.e. what is really emitted;
+        // post-injection overshoot is published separately so a final clamp
+        // can never turn broken pilot / RDS into an apparently compliant
+        // reading.
+        bs412Meter.process(output * inverseOutputGain)
+        bs412StatusState = BS412Status(
+            powerDBr: bs412Meter.powerDBr,
+            powerValid: bs412Meter.windowValid && !renderingCalibrationTone,
+            secondsObserved: bs412Meter.secondsObserved,
+            gainReductionDB: bs412Controlling ? bs412Rider.gainReductionDB : 0.0,
+            overCeiling: bs412Meter.windowValid && bs412Meter.powerDBr > bs412CeilingDBr,
+            unachievable: bs412Controlling && (bs412Rider.unachievable || bs412Guard.unachievable),
+            guardActive: bs412Controlling && bs412Guard.active,
+            controlSuspended: bs412Enabled && renderingCalibrationTone
+        )
+
+        return output
     }
 
     @inline(__always)

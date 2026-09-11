@@ -308,6 +308,7 @@ final class MPXPrimeViewModel: ObservableObject {
     /// path — outputGain × subcarrier reservation left no headroom.
     var compositeOverBudget: Bool { get { telemetry.compositeOverBudget } set { telemetry.compositeOverBudget = newValue } }
     var compositeClipperGainReductionDBValue: Float { get { telemetry.compositeClipperGainReductionDBValue } set { telemetry.compositeClipperGainReductionDBValue = newValue } }
+    var bs412StatusValue: BS412Status { get { telemetry.bs412StatusValue } set { telemetry.bs412StatusValue = newValue } }
     var compositeClipperLookaheadGainReductionDBValue: Float { get { telemetry.compositeClipperLookaheadGainReductionDBValue } set { telemetry.compositeClipperLookaheadGainReductionDBValue = newValue } }
     var preEncodeLimiterGainReductionDBValue: Float { get { telemetry.preEncodeLimiterGainReductionDBValue } set { telemetry.preEncodeLimiterGainReductionDBValue = newValue } }
     var safetyLimiterGainReductionDBValue: Float { get { telemetry.safetyLimiterGainReductionDBValue } set { telemetry.safetyLimiterGainReductionDBValue = newValue } }
@@ -1975,6 +1976,7 @@ final class MPXPrimeViewModel: ObservableObject {
         var advDynBandGainsDB: (Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0)
         var dacPeak: Float = 0.0
         var compositeClipperGainReductionDB: Float = 0.0
+        var bs412 = BS412Status()
         var compositeClipperLookaheadGainReductionDB: Float = 0.0
         var preEncodeAudioLimiterGainReductionDB: Float = 0.0
         var mpxSafetyLimiterGainReductionDB: Float = 0.0
@@ -2117,6 +2119,7 @@ final class MPXPrimeViewModel: ObservableObject {
                                  meters.adBandGain5DB)
             dacPeak = meters.dacPeak
             compositeClipperGainReductionDB = meters.compositeClipperGainReductionDB
+            bs412 = meters.bs412
             compositeClipperLookaheadGainReductionDB = meters.compositeClipperLookaheadGainReductionDB
             preEncodeAudioLimiterGainReductionDB = meters.preEncodeAudioLimiterGainReductionDB
             mpxSafetyLimiterGainReductionDB = meters.mpxSafetyLimiterGainReductionDB
@@ -2196,6 +2199,7 @@ final class MPXPrimeViewModel: ObservableObject {
             postInjectionOvershootValue = 0.0
             compositeOverBudget = false
             compositeClipperGainReductionDBValue = 0.0
+            bs412StatusValue = BS412Status()
             compositeClipperLookaheadGainReductionDBValue = 0.0
             preEncodeLimiterGainReductionDBValue = 0.0
             safetyLimiterGainReductionDBValue = 0.0
@@ -2315,6 +2319,7 @@ final class MPXPrimeViewModel: ObservableObject {
         postInjectionOvershootValue = postInjectionOvershoot
         self.compositeOverBudget = compositeOverBudget
         compositeClipperGainReductionDBValue = compositeClipperGainReductionDB
+        bs412StatusValue = bs412
         compositeClipperLookaheadGainReductionDBValue = compositeClipperLookaheadGainReductionDB
         preEncodeLimiterGainReductionDBValue = preEncodeAudioLimiterGainReductionDB
         safetyLimiterGainReductionDBValue = mpxSafetyLimiterGainReductionDB

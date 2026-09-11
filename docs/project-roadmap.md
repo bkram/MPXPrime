@@ -857,6 +857,51 @@ Meter accessibility (the old item 3) and dense-tab DisclosureGroups (old item 4,
 - ALSA output device enumeration is in the dashboard picker; a headless
   `--list-devices` equivalent could mirror it.
 
+### arm64 SIMD kernels for Linux (long-term, not started)
+
+Worth doing only for **Linux on arm64** -- a Pi 5, an Ampere box, an arm64
+VM. macOS on Apple Silicon needs nothing: `MPXPrimeAcceleration` compiles
+EMPTY there and the hot kernels are Accelerate's own `vDSP_dotpr` /
+`vDSP_conv` / `vvtanhf`, which are already hand-tuned for the part. The C
+kernels in `MPXPrimeNative/MPXPrimeSIMD.c` are x86-only today (SSE2 default
+plus an AVX2 clone behind a glibc ifunc), so an arm64 Linux build falls back
+to the portable Swift reference (`mpxReferenceDot` / `mpxReferenceTanh`) and
+runs the chain unaccelerated. Nobody has measured what that costs -- that
+measurement is step one, not the kernels.
+
+What it would take, in order:
+
+1. **Measure first.** `--bench` on arm64 Linux (an arm64 container on an
+   Apple Silicon Mac runs natively and is enough for a first number, a real
+   Pi 5 for a decision). If the reference path already fits the budget, stop:
+   the kernels are not worth a third numerics path.
+2. **NEON variants** of the same two kernels, selected at load the way the
+   x86 ones are -- except every arm64 CPU that matters has NEON, so this is a
+   compile-time target rather than an ifunc.
+3. **The bit-parity contract is the hard part.** One Linux baseline is valid
+   for every CPU only because AVX2 and SSE2 compute bit-identical results:
+   same 8-lane vectors, same accumulation and reduction ORDER, and FMA
+   contraction off (`#pragma clang fp contract(off)`). NEON must meet the
+   same three conditions or Linux needs a baseline per architecture, which is
+   a policy change, not a flag. NEON's fused multiply-add is exactly the trap
+   -- `vfmaq_f32` would silently change results. `AccelerateShimTests` holds
+   the C kernels to the Swift reference bit for bit and is the gate.
+4. **Decide the baseline question deliberately.** There is no
+   `default-linux-aarch64.json` today and nothing looks for one. Adding arm64
+   as a supported Linux target means either proving bit-parity with the
+   x86_64 capture (preferred) or accepting a second stored baseline and a
+   second CI leg.
+
+**Verification note, because it is easy to get wrong:** an **amd64** Docker
+image cannot test any of this. On an Apple Silicon Mac an amd64 image runs
+under emulation, executing x86 instructions -- it exercises the SSE2 path,
+not NEON. Use a NATIVE arm64 Linux container (`swift:noble` on this Mac runs
+arm64 at full speed) for correctness and bit-parity, and real arm64 hardware
+for any timing claim; an emulated container's timings are meaningless.
+Conversely the x86_64 strict baseline cannot be checked in an arm64
+container either -- it looks for a per-architecture file, finds none, and
+reports "Baseline: none", which is why the x86_64 comparison stays CI's job.
+
 ---
 
 # Anti-rework guardrails -- do not re-plan / re-implement

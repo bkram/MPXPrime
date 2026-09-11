@@ -786,6 +786,10 @@ example "Sound > Dynamics") says where you are:
   Coder, Composite Clipper incl. look-ahead + oversampling, BS.412, Final
   Stage). Real switches and sliders with the GUI's control vocabulary,
   applied live on release; each page has the GUI's "Reset This Tab" button.
+  Every stage page shows first what you move while listening -- enables,
+  thresholds, ratios, ceilings, drives, targets -- and folds time constants,
+  topology choices and set-once protections into a collapsed **Advanced**
+  card; the GUI folds the same controls into an "Advanced" group.
 - **RDS** -- Status (on-air PS/RT/PTYN/Long PS), Identity, Radiotext
   (mode, rotation, the 4 manual buffers, RT+ formats, Now Playing
   configuration), Long PS, Alt. Frequencies (list + method), Schedule

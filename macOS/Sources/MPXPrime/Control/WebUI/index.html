@@ -43,6 +43,10 @@
   .sgroup { font-size:11px; color:var(--dim); padding:8px 10px 2px 14px; letter-spacing:.02em; }
   .sgroup + .nav, .sgroup ~ .nav.grp { padding-left:18px; }
   .crumb { font-size:11px; color:var(--dim); margin-bottom:2px; }
+  details.advcard { margin-top:10px; }
+  details.advcard > summary { cursor:pointer; list-style:none; font-size:12px; font-weight:600; color:var(--dim); padding:6px 2px; user-select:none; }
+  details.advcard > summary::before { content:""; display:inline-block; width:0; height:0; border-left:4px solid var(--dim); border-top:3px solid transparent; border-bottom:3px solid transparent; margin-right:7px; transition:transform .12s; }
+  details.advcard[open] > summary::before { transform:rotate(90deg); }
   .nav { display:flex; align-items:center; gap:7px; padding:5px 10px; border-radius:6px; cursor:pointer; color:var(--text); font-size:13px; user-select:none; }
   .nav:hover { background:rgba(255,255,255,0.05); }
   .nav.active { background:var(--blue); color:#fff; }
@@ -611,7 +615,13 @@ function renderStage(c, s) {
   }
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.title + " Settings" }));
   const head = s.presetKind ? presetPicker(s.presetKind) : null;
-  const el = card(s.keys);
+  // Two disclosure levels at most: the page shows what an operator moves
+  // while listening; time constants, topology and set-once protections
+  // (`advanced` in the schema, AdvancedControls in Swift) fold into one
+  // collapsed Advanced card. The same keys fold in the GUI.
+  const primary = (s.keys || []).filter(k => !(SCHEMA[k] && SCHEMA[k].advanced));
+  const advanced = (s.keys || []).filter(k => SCHEMA[k] && SCHEMA[k].advanced);
+  const el = card(primary);
   if (head) {
     const bar = document.createElement("div");
     bar.style.cssText = "display:flex;padding:8px 0 2px";
@@ -620,6 +630,15 @@ function renderStage(c, s) {
   }
   if (bypassed) { el.style.opacity = "0.55"; el.style.pointerEvents = "none"; }
   c.appendChild(el);
+  if (advanced.length) {
+    const det = document.createElement("details");
+    det.className = "advcard";
+    det.appendChild(Object.assign(document.createElement("summary"), { textContent: "Advanced" }));
+    const adv = card(advanced);
+    if (bypassed) { adv.style.opacity = "0.55"; adv.style.pointerEvents = "none"; }
+    det.appendChild(adv);
+    c.appendChild(det);
+  }
   if (s.keys2 && s.keys2.keys.length) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.keys2.title }));
     const el2 = card(s.keys2.keys);

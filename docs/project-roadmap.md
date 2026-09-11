@@ -164,8 +164,10 @@ AGC, BS.412, Composite Clipper stay).
    remote-access page stays with phase 4 (it needs a decision on exposing
    `[CONTROL]` over the API it configures).
 2. **Labels** -- DONE 2026-09-11: Core -> Basics, MB Limiter -> Band Limiter, Final Stage -> Loudness and Output, in GUI + dashboard + strip + manuals (no screenshots in the docs to update).
-3. **Disclosure** -- `advanced` flags, collapsed Advanced cards, GUI
-   `DisclosureGroup`s aligned, parity test.
+3. **Disclosure** -- DONE 2026-09-11: `AdvancedControls.keys` (51 keys) ->
+   schema `advanced` flags (parity test) -> dashboard `details.advcard`
+   (harness checks placement + closed) and GUI `DisclosureGroup("Advanced")`
+   in every stage tab.
 4. **Aids** -- search, task shortcuts, phone layout, chain strip as the Sound
    landing page.
 5. **Operator round** -- the ten-task test on the result; fix what it finds.

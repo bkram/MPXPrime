@@ -114,6 +114,23 @@ struct ControlSchemaTests {
     /// (`NavigationSection`, `StageGroup`) written out -- same ids, titles,
     /// order and page lists -- so the two sidebars can never drift apart, and
     /// every page the model knows has exactly one home.
+    /// The dashboard folds exactly the controls `AdvancedControls.keys` names
+    /// (and the GUI tabs follow that list by hand): a flag on a widget the
+    /// table does not know, or a table entry the schema lacks, is a drift.
+    @Test func advancedFlagsMirrorTheSharedTable() throws {
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let schema = root["schema"] as? [String: [String: Any]] ?? [:]
+        let flagged = Set(schema.filter { ($0.value["advanced"] as? Bool) == true }.keys)
+        #expect(flagged == AdvancedControls.keys,
+                "schema-only: \(flagged.subtracting(AdvancedControls.keys).sorted()); table-only: \(AdvancedControls.keys.subtracting(flagged).sorted())")
+        for key in AdvancedControls.keys {
+            #expect(schema[key] != nil, "AdvancedControls names unknown key \(key)")
+        }
+    }
+
     @Test func sectionsMirrorTheSharedNavigationTable() throws {
         let path = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

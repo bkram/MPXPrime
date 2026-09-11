@@ -68,6 +68,71 @@ enum StageGroup: String, CaseIterable, Sendable {
     static let soundLandingPageIDs = ["overview", "profile"]
 }
 
+/// The controls each stage page folds into its collapsed **Advanced** group:
+/// time constants, topology choices, set-once protections. Both front ends
+/// fold the same keys -- the dashboard reads the `advanced` flag that
+/// `schema.json` carries per widget (`ControlSchemaTests` holds that flag set
+/// equal to this list), the GUI tabs wrap the matching rows in
+/// `DisclosureGroup("Advanced")` by hand and this is the list they follow.
+/// Two disclosure levels at most: page, then Advanced. What stays OUT of the
+/// group is what an operator moves while listening: enables, thresholds,
+/// ratios, ceilings, drives, targets, balances.
+enum AdvancedControls {
+    static let keys: Set<String> = [
+        "advanced_dynamics_max_gain_db",
+        "advanced_dynamics_speed",
+        "bass_clipper_crossover_hz",
+        "bs412_window_seconds",
+        "dc_clipper_cancel_freq_hz",
+        "expander_attack_ms",
+        "expander_release_ms",
+        "hf_clipper_crossover_hz",
+        "hf_limiter_attack_ms",
+        "hf_limiter_max_reduction_db",
+        "hf_limiter_release_ms",
+        "hf_trim_db",
+        "hf_trim_hz",
+        "limit_lookahead_enabled",
+        "limit_lookahead_ms",
+        "limit_threshold",
+        "mpx_clipper_cancel_audio",
+        "mpx_clipper_cancel_pilot",
+        "mpx_clipper_cancel_rds",
+        "mpx_clipper_lookahead_ms",
+        "mpx_clipper_stereo_guard",
+        "mpx_ssb_stereo_amount",
+        "multiband_high_attack_ms",
+        "multiband_high_release_ms",
+        "multiband_inter_band_coupling_enabled",
+        "multiband_knee_db",
+        "multiband_limiter_attack_ms",
+        "multiband_limiter_release_ms",
+        "multiband_link_strength",
+        "multiband_low_attack_ms",
+        "multiband_low_release_ms",
+        "multiband_mid_attack_ms",
+        "multiband_mid_release_ms",
+        "multiband_release_program_dependent",
+        "multiband_transient_aware_attack_enabled",
+        "pre_encode_bandlimited_residual_enabled",
+        "pre_encode_lookahead_hf_cutoff_hz",
+        "pre_encode_lookahead_hf_only",
+        "primebass_density",
+        "primebass_drive",
+        "primebass_harmonics",
+        "primebass_subharmonics_amount",
+        "primebass_subharmonics_enabled",
+        "program_lowpass_hz",
+        "wideband_agc_attack_ms",
+        "wideband_agc_bass_desensitize",
+        "wideband_agc_k_weighting",
+        "wideband_agc_max_gain_db",
+        "wideband_agc_min_gain_db",
+        "wideband_agc_release_ms",
+        "wideband_agc_release_program_dependent"
+    ]
+}
+
 enum ChainFeature: String, CaseIterable, Sendable {
     /// Stereo encoding itself: pilot, 38 kHz subcarrier, SSB leaning, mono mode.
     case stereoCoder

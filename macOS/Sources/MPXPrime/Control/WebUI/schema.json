@@ -921,7 +921,8 @@
       "max": 24.0,
       "min": 0.0,
       "step": 0.5,
-      "unit": " dB"
+      "unit": " dB",
+      "advanced": true
     },
     "advanced_dynamics_mid_offset_db": {
       "decimals": 1,
@@ -939,7 +940,8 @@
       "max": 4.0,
       "min": 0.25,
       "step": 0.05,
-      "unit": "x"
+      "unit": "x",
+      "advanced": true
     },
     "advanced_dynamics_target_db": {
       "decimals": 1,
@@ -1022,7 +1024,8 @@
       "max": 300.0,
       "min": 60.0,
       "step": 1,
-      "unit": " Hz"
+      "unit": " Hz",
+      "advanced": true
     },
     "bass_clipper_drive": {
       "decimals": 2,
@@ -1096,7 +1099,8 @@
       "max": 90.0,
       "min": 30.0,
       "step": 1,
-      "unit": " s"
+      "unit": " s",
+      "advanced": true
     },
     "dc_clipper_cancel_freq_hz": {
       "decimals": 0,
@@ -1105,7 +1109,8 @@
       "max": 4000.0,
       "min": 500.0,
       "step": 1,
-      "unit": " Hz"
+      "unit": " Hz",
+      "advanced": true
     },
     "dc_clipper_ceiling_db": {
       "decimals": 1,
@@ -1192,7 +1197,8 @@
       "max": 100.0,
       "min": 0.1,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "expander_ratio": {
       "decimals": 1,
@@ -1210,7 +1216,8 @@
       "max": 2000.0,
       "min": 10.0,
       "step": 1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "expander_threshold_db": {
       "decimals": 1,
@@ -1245,7 +1252,8 @@
       "max": 8000.0,
       "min": 3000.0,
       "step": 1,
-      "unit": " Hz"
+      "unit": " Hz",
+      "advanced": true
     },
     "hf_clipper_drive": {
       "decimals": 2,
@@ -1281,7 +1289,8 @@
         "am"
       ],
       "step": 0.05,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "hf_limiter_enabled": {
       "kind": "toggle",
@@ -1304,7 +1313,8 @@
         "am"
       ],
       "step": 0.5,
-      "unit": " dB"
+      "unit": " dB",
+      "advanced": true
     },
     "hf_limiter_release_ms": {
       "decimals": 0,
@@ -1318,7 +1328,8 @@
         "am"
       ],
       "step": 1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "hf_limiter_threshold_db": {
       "decimals": 1,
@@ -1341,7 +1352,8 @@
       "max": 12.0,
       "min": -12.0,
       "step": 0.1,
-      "unit": " dB"
+      "unit": " dB",
+      "advanced": true
     },
     "hf_trim_hz": {
       "decimals": 0,
@@ -1350,7 +1362,8 @@
       "max": 12000.0,
       "min": 1000.0,
       "step": 1,
-      "unit": " Hz"
+      "unit": " Hz",
+      "advanced": true
     },
     "hpf_hz": {
       "decimals": 0,
@@ -1376,7 +1389,8 @@
     },
     "limit_lookahead_enabled": {
       "kind": "toggle",
-      "label": "Look-Ahead"
+      "label": "Look-Ahead",
+      "advanced": true
     },
     "limit_lookahead_ms": {
       "decimals": 1,
@@ -1385,7 +1399,8 @@
       "max": 20.0,
       "min": 0.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "limit_mpx": {
       "kind": "toggle",
@@ -1398,7 +1413,8 @@
       "max": 0.999,
       "min": 0.5,
       "step": 0.001,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "lps_centered": {
       "kind": "toggle",
@@ -1455,15 +1471,18 @@
     },
     "mpx_clipper_cancel_audio": {
       "kind": "toggle",
-      "label": "Protect Audio Highs"
+      "label": "Protect Audio Highs",
+      "advanced": true
     },
     "mpx_clipper_cancel_pilot": {
       "kind": "toggle",
-      "label": "Protect Stereo Pilot"
+      "label": "Protect Stereo Pilot",
+      "advanced": true
     },
     "mpx_clipper_cancel_rds": {
       "kind": "toggle",
-      "label": "Protect RDS"
+      "label": "Protect RDS",
+      "advanced": true
     },
     "mpx_clipper_ceiling_db": {
       "decimals": 1,
@@ -1485,7 +1504,8 @@
       "max": 5.0,
       "min": 0.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "mpx_clipper_oversampling": {
       "kind": "seg",
@@ -1512,7 +1532,8 @@
       "max": 1.0,
       "min": 0.0,
       "step": 0.05,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "mpx_clipper_threshold_db": {
       "decimals": 1,
@@ -1548,7 +1569,8 @@
       "max": 1.0,
       "min": 0.0,
       "step": 0.05,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "mpx_ssb_stereo_enabled": {
       "kind": "toggle",
@@ -1573,7 +1595,8 @@
       "max": 120.0,
       "min": 1.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_high_hz": {
       "decimals": 0,
@@ -1600,7 +1623,8 @@
       "max": 1200.0,
       "min": 40.0,
       "step": 1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_high_threshold_db": {
       "decimals": 1,
@@ -1613,7 +1637,8 @@
     },
     "multiband_inter_band_coupling_enabled": {
       "kind": "toggle",
-      "label": "Inter-band Coupling"
+      "label": "Inter-band Coupling",
+      "advanced": true
     },
     "multiband_knee_db": {
       "decimals": 1,
@@ -1622,7 +1647,8 @@
       "max": 12.0,
       "min": 0.0,
       "step": 0.1,
-      "unit": " dB"
+      "unit": " dB",
+      "advanced": true
     },
     "multiband_limiter_attack_ms": {
       "decimals": 2,
@@ -1631,7 +1657,8 @@
       "max": 10.0,
       "min": 0.01,
       "step": 0.01,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_limiter_enabled": {
       "kind": "toggle",
@@ -1644,7 +1671,8 @@
       "max": 500.0,
       "min": 10.0,
       "step": 1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_limiter_threshold_db": {
       "decimals": 1,
@@ -1667,7 +1695,8 @@
         "hd"
       ],
       "step": 0.01,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "multiband_low_attack_ms": {
       "decimals": 1,
@@ -1676,7 +1705,8 @@
       "max": 120.0,
       "min": 1.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_low_hz": {
       "decimals": 0,
@@ -1703,7 +1733,8 @@
       "max": 1200.0,
       "min": 40.0,
       "step": 1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_low_threshold_db": {
       "decimals": 1,
@@ -1730,7 +1761,8 @@
       "max": 120.0,
       "min": 1.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_mid_ratio": {
       "decimals": 2,
@@ -1748,7 +1780,8 @@
       "max": 1200.0,
       "min": 40.0,
       "step": 1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "multiband_mid_threshold_db": {
       "decimals": 1,
@@ -1775,11 +1808,13 @@
     },
     "multiband_release_program_dependent": {
       "kind": "toggle",
-      "label": "Program-dependent Release"
+      "label": "Program-dependent Release",
+      "advanced": true
     },
     "multiband_transient_aware_attack_enabled": {
       "kind": "toggle",
-      "label": "Transient-aware Attack"
+      "label": "Transient-aware Attack",
+      "advanced": true
     },
     "multiband_x1_hz": {
       "decimals": 0,
@@ -2028,7 +2063,8 @@
     },
     "pre_encode_bandlimited_residual_enabled": {
       "kind": "toggle",
-      "label": "Reduce Clipping Distortion"
+      "label": "Reduce Clipping Distortion",
+      "advanced": true
     },
     "pre_encode_bandlimited_residual_taps": {
       "kind": "number",
@@ -2047,11 +2083,13 @@
       "max": 12000.0,
       "min": 1000.0,
       "step": 100,
-      "unit": " Hz"
+      "unit": " Hz",
+      "advanced": true
     },
     "pre_encode_lookahead_hf_only": {
       "kind": "toggle",
-      "label": "HF-Only Look-Ahead Detector"
+      "label": "HF-Only Look-Ahead Detector",
+      "advanced": true
     },
     "pre_encode_lookahead_ms": {
       "decimals": 1,
@@ -2118,7 +2156,8 @@
       "max": 1.0,
       "min": 0.0,
       "step": 0.01,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "primebass_drive": {
       "decimals": 2,
@@ -2127,7 +2166,8 @@
       "max": 2.0,
       "min": 0.2,
       "step": 0.01,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "primebass_enabled": {
       "kind": "toggle",
@@ -2149,7 +2189,8 @@
       "max": 1.0,
       "min": 0.0,
       "step": 0.01,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "primebass_subharmonics_amount": {
       "decimals": 2,
@@ -2158,11 +2199,13 @@
       "max": 1.0,
       "min": 0.0,
       "step": 0.01,
-      "unit": ""
+      "unit": "",
+      "advanced": true
     },
     "primebass_subharmonics_enabled": {
       "kind": "toggle",
-      "label": "Subharmonics"
+      "label": "Subharmonics",
+      "advanced": true
     },
     "processed_audio_ceiling_dbtp": {
       "decimals": 1,
@@ -2206,7 +2249,8 @@
       "max": 20000.0,
       "min": 8000.0,
       "step": 1,
-      "unit": " Hz"
+      "unit": " Hz",
+      "advanced": true
     },
     "ps_a": {
       "kind": "text",
@@ -2544,11 +2588,13 @@
       "max": 500.0,
       "min": 1.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "wideband_agc_bass_desensitize": {
       "kind": "toggle",
-      "label": "Bass-Desensitised Sidechain"
+      "label": "Bass-Desensitised Sidechain",
+      "advanced": true
     },
     "wideband_agc_enabled": {
       "kind": "toggle",
@@ -2556,7 +2602,8 @@
     },
     "wideband_agc_k_weighting": {
       "kind": "toggle",
-      "label": "K-Weighted Detector"
+      "label": "K-Weighted Detector",
+      "advanced": true
     },
     "wideband_agc_max_gain_db": {
       "decimals": 1,
@@ -2565,7 +2612,8 @@
       "max": 24.0,
       "min": 0.0,
       "step": 0.1,
-      "unit": " dB"
+      "unit": " dB",
+      "advanced": true
     },
     "wideband_agc_min_gain_db": {
       "decimals": 1,
@@ -2574,7 +2622,8 @@
       "max": 0.0,
       "min": -24.0,
       "step": 0.1,
-      "unit": " dB"
+      "unit": " dB",
+      "advanced": true
     },
     "wideband_agc_release_ms": {
       "decimals": 1,
@@ -2583,11 +2632,13 @@
       "max": 5000.0,
       "min": 40.0,
       "step": 0.1,
-      "unit": " ms"
+      "unit": " ms",
+      "advanced": true
     },
     "wideband_agc_release_program_dependent": {
       "kind": "toggle",
-      "label": "Program-Dependent Release"
+      "label": "Program-Dependent Release",
+      "advanced": true
     },
     "wideband_agc_target_db": {
       "decimals": 1,

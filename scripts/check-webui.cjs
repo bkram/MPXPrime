@@ -294,6 +294,17 @@ async function runModeUnguarded(mode) {
       if (seen.has(key)) fail(mode, id, `control "${key}" is rendered twice on one page`);
       seen.add(key);
     }
+    for (const el of content().querySelectorAll("[data-key]")) {
+      const def = schema.schema[el.dataset.key];
+      const inAdv = !!el.closest("details.advcard");
+      if (def && !!def.advanced !== inAdv && schema.model.stages.some(s => s.id === id)) {
+        fail(mode, id, `control "${el.dataset.key}" is ${inAdv ? "inside" : "outside"} the Advanced card but the schema says advanced=${!!def.advanced}`);
+      }
+    }
+    for (const det of content().querySelectorAll("details.advcard")) {
+      if (det.open) fail(mode, id, "the Advanced card renders open");
+      if (!det.querySelectorAll("[data-key]").length) fail(mode, id, "an Advanced card renders with no controls");
+    }
     for (const fc of content().querySelectorAll(".fcard")) {
       const body = fc.querySelector(".card");
       if (body && body.children.length === 0) {

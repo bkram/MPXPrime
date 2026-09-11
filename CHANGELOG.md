@@ -26,6 +26,13 @@ combination test suite. Newest first.
   in the GUI, the dashboard, the signal-chain strip and the manuals. INI keys
   are unchanged; established broadcast terms (AGC, Parametric EQ, BS.412,
   Composite Clipper, Pre-emphasis) stay.
+- **Every stage page folds its set-once controls away (phase 3 of the
+  taxonomy plan).** Time constants, topology choices and subcarrier
+  protections sit in a collapsed **Advanced** card on the dashboard and an
+  "Advanced" group in the GUI -- the same 51 controls on both, named once in
+  `AdvancedControls` and pinned by a test. What stays in view is what you move
+  while listening: enables, thresholds, ratios, ceilings, drives, targets.
+  Multiband goes from 20 visible controls to 9; AGC from 9 to 2.
 
 ## 0.50 -- 2026-09-11
 

@@ -130,9 +130,27 @@ struct StageSidebar: View {
     /// for the session. Two levels at most (section > group), per the
     /// taxonomy plan -- never a third.
     @State private var collapsedGroups: Set<StageGroup> = []
+    /// The sidebar's search field (the GUI's counterpart of the dashboard's
+    /// settings search): a non-empty filter flattens the sidebar to the
+    /// pages whose label, group or section matches.
+    @State private var filter = ""
 
     var body: some View {
         List(selection: $model.selectedStage) {
+            if !filter.trimmingCharacters(in: .whitespaces).isEmpty {
+                let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
+                let hits = Stage.allCases.filter { stage in
+                    model.isStageVisible(stage) && (
+                        stage.label.lowercased().contains(needle)
+                        || stage.group.title.lowercased().contains(needle)
+                        || Stage.soundGroups.contains { $0.stages.contains(stage) && $0.group.title.lowercased().contains(needle) })
+                }
+                Section(hits.isEmpty ? "No page matches" : "Pages") {
+                    ForEach(hits) { stage in
+                        StageSidebarRow(model: model, stage: stage).tag(stage)
+                    }
+                }
+            } else {
             ForEach(Stage.Group.allCases, id: \.rawValue) { group in
                 // A mode hides whole stages (the composite-domain ones outside
                 // MPX Output, every RDS page); a section or group left empty
@@ -151,8 +169,10 @@ struct StageSidebar: View {
                     }
                 }
             }
+            }
         }
         .listStyle(.sidebar)
+        .searchable(text: $filter, placement: .sidebar, prompt: "Search pages")
     }
 
     /// Sound: the landing pages, then the stages grouped by what they do to

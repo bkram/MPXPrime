@@ -170,9 +170,10 @@ AGC, BS.412, Composite Clipper stay).
    in every stage tab.
 4. **Aids** -- DONE 2026-09-11 (dashboard): settings search with jump +
    highlight, task shortcuts on the landing page, chain strip on the Sound
-   overview, phone drawer + numeric slider twins; harness drives them. Not
-   done: a GUI counterpart to the settings search (a `.searchable` sidebar
-   List) -- the GUI's parity item for this phase, open.
+   overview, phone drawer + numeric slider twins; harness drives them. GUI
+   counterpart: the sidebar's search field (`.searchable`) filters pages by
+   label, group and section -- pages, not individual controls, since GUI
+   controls are views, not schema entries.
 5. **Operator round** -- the ten-task test on the result; fix what it finds.
 
 Roughly one to two days each. Risk to watch: the parity rule (every change

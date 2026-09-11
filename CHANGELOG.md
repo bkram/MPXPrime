@@ -40,7 +40,8 @@ combination test suite. Newest first.
   the station text, load a preset, switch operating mode), the Sound
   overview carries the clickable signal-chain strip, and on a phone the
   sidebar becomes a drawer behind a menu button while every slider gains a
-  numeric field for exact values. `check-webui` drives all of it.
+  numeric field for exact values. `check-webui` drives all of it. The GUI
+  sidebar gains a search field that filters pages by label, group or section.
 
 ## 0.50 -- 2026-09-11
 

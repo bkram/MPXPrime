@@ -180,6 +180,127 @@ Roughly one to two days each. Risk to watch: the parity rule (every change
 lands in the GUI and the dashboard in the same commit) and label churn in the
 manuals -- hence labels as their own phase, once, with the anchor checker.
 
+## Audio-chain audit (external review of 0.50, 2026-09-11) -- verified findings and fix plan (target 0.60)
+
+An external review of revision `aaf0521` (0.50 as released; `develop/v.060`
+has carried only navigation work since) claimed seven P0 chain defects and two
+P1 real-time defects. Every claim was re-checked against the code on
+2026-09-11. **All nine hold.** Their practical weight differs a lot, so the
+plan below orders them by benefit over risk rather than by the review's
+numbering. The review itself is not in the repo (non-ASCII punctuation; keep it
+out of the tree).
+
+### Verdicts
+
+| # | Claim | Verdict | Where | Weight |
+| --- | --- | --- | --- | --- |
+| P0-1 | Live-apply configures the wideband AGC, phase rotator, bass clipper and the crossover resolve at the MPX rate | Confirmed | `MPXGenerator.applyRuntimeConfig` passes `sampleRate` at the four sites (about lines 1902, 1939, 2039, 2111); construction and `setSampleRate` pass `audioDomainSampleRate`; the HF clipper / HF limiter live-apply already use it (the 0.45 fix for the same class). `dual_rate_audio_domain_enabled` defaults to True, so the two rates differ by 4x. | **High** for any live change on those pages: AGC time constants 4x slower, phase-rotator corner divided by 4, bass-clipper crossover and decimator divided by 4, until restart. Cold start and every baseline are untouched (no gate calls `applyRuntimeConfig`). |
+| P0-2 | Bass / HF clipper transfer is discontinuous and non-monotonic | Confirmed | `DSP/AudioClippers.swift`: pass-through while `abs(x * drive) <= threshold`, otherwise `threshold * tanh(x * drive / threshold) / drive`. At the join the output drops from `threshold / drive` to `tanh(1) = 0.76` of it (24 %), then climbs back toward the same ceiling. | **High**: the bass clipper is ON in every Format Profile (`bass_clipper_enabled` default True); the HF clipper is off everywhere. The fix moves the composite: all four macOS baselines plus the Linux one. |
+| P0-3 | Transient-aware hold is seeded by its lifetime maximum | Confirmed | `MonoCompressor.processTransientAwareEnvelope`: `transientDriveObserved = max(transientDriveObserved, heldDrive)`, cleared only by `reset()`. The Advanced Dynamics copy keeps a decaying `heldDrive` -- the correct pattern. | **Low**: `multiband_transient_aware_attack_enabled` is off by default, off in Verification.ini, enabled by no profile. |
+| P0-4 | NaN / Inf are not sanitised at the encoder and Meter ingress | Confirmed | No `isFinite` on the generator's input path (`renderFromInputInPlace`, the input ring); `AudioOutputEngine` guards only the meter snapshot values; `MeterAnalysis.processBlock` feeds raw samples to the DC tracker, FIR history and detectors. `MPXDecoder` guards itself (0.36). | **Medium**: one non-finite sample poisons every IIR and envelope until restart. Real inputs rarely produce one, a float ALSA loopback or a misbehaving plug-in can. Containment is one compare per sample. |
+| P0-5 | Unsynchronised cross-thread state | Confirmed (formally) | `monitorConditioner.gainLinear` written on the main actor (`applyMonitorSettings`), read in `writeMonitorBlock` on the render thread; `ALSAMonitorOutput.setGain` vs its monitor thread; `meteringEnabled` plain Bool written by start/stop/UI, read in the render callback; `MonitorOutput.note` String written by the `.main` device observer. | **Low to medium**: single-word Float / Bool stores cannot tear on either ISA, but they are data races under the Swift 6 model; the String is the one that could crash if a non-main reader appeared (today all readers are main-actor). Cheap to fix with atomics. |
+| P0-6 | The BS.412 limiter does not implement the labelled standard | Confirmed | `BS412PowerLimiter`: threshold `10^(dB/10)` against the normalised mean square where 1.0 is the configured deviation, so 0 dBr (a 19 kHz sine, `(19/75)^2 / 2 = -14.9 dB`) is not where the scale says; the default "-10 dB" limits at about **+4.9 dBr**. It observes `audioComposite` BEFORE pilot / RDS injection (the pilot alone is -9 dBr of the budget), the window is operator-selectable 30-90 s, history advances only while enabled, `configure()` keeps the gain state. | **Medium**: off by default, off in Verification.ini, enabled by no profile -- but the label promises a compliance the stage cannot deliver. `MeterAnalysis` already defines dBr correctly (uniform 60 s window, 19 kHz sine reference): a ready-made oracle. |
+| P0-7 | AM "NRSC" uses the FM 75 us curve | Confirmed | `MPXGenerator` routes `am_preemphasis_us = 75` through the FM `PreemphasisFilter` (the analog `abs(1 + j w tau)` fit). NRSC-1 is the MODIFIED 75 us curve: zero at 2122 Hz, pole at 8700 Hz, +10 dB at 10 kHz. `AMOutputTests.nrscPreemphasisRisesWithFrequency` pins the plain curve at 1 dB (its 7.5 kHz point is +9.6 dB; NRSC-1 gives about +8.0). The monitor de-emphasises with the FM inverse. | **Medium**: AM Output only; no MPX baseline moves. |
+| P1-1 | Live-apply does allocation-heavy rebuilds on the render thread | Confirmed | Both engines call `generator.applyRuntimeConfig` from the render thread after the try-lock mailbox. Inside: the BS.412 ring is reallocated on a window change, the multiband / Advanced Dynamics FIR splitters are redesigned on a crossover or enable change (four Kaiser kernels; the code comment calls it a "rare-operator-action allocation"), the composite clipper reconfigures, strings are lowercased. | **Medium, unmeasured**: accepted so far as rare. Measure before designing: PATCH a crossover on the Ryzen box while sampling xruns and Render Load. |
+| P1-2 | RDS group generation takes locks, allocates and touches the clock on the audio thread | Confirmed | `buildGroup2`: `currentRTFrame` builds a String plus bytes, `writeSnapshot(rt:)` takes `snapshotLock` (blocking `withLock`) on every 2A group, `currentNowPlayingSnapshot` takes the Now Playing `NSLock`, every `buildGroup*` returns a fresh `[UInt8]`. `Date()` survives only in the CT cache refresh (background queue) and the RT `{time}` macro (justified, documented). | **Low to medium in practice**: one group every 87.7 ms, and zero xruns in every soak so far, including a Linux rig at 95 % render load. Real-time-correctness debt, not an observed fault. |
+
+### Where the review overreaches (not adopted)
+
+- Its phases 3-6 (tuner / recording hardening, an encoder-to-IQ-to-tuner
+  oracle, splitting `MPXGenerator` by orchestration concern, lifecycle
+  protocols for every stage, a latency ledger) are a multi-release programme,
+  not fixes for the findings above. The generator split in particular collides
+  with the standing rule not to refactor `processFinalComposite`
+  opportunistically. Parked; nothing below depends on them.
+- The "versioned prepared-state handoff" for P1-1 and the full
+  producer / consumer split for P1-2 re-architect the two best-tested parts of
+  the product. Do the cheap 80 % first (below) and let the measurement decide
+  whether the rest is needed.
+- Its suggested NaN policy (Inf to a +/-1 sentinel) is fine; NaN and Inf both
+  to silence is simpler and equally safe. Pick one in F2 and pin it.
+
+### Fix plan (one commit per item, test first, docs in the same commit)
+
+Order: the four zero-baseline fixes first, then the one composite-moving fix
+on its own, then the two labelled-standard fixes, then the two measured
+real-time items.
+
+1. **F1 -- P0-1, rate domain.** Change the four call sites to
+   `audioDomainSampleRate`. New `LiveApplyRateDomainTests`: a generator built at
+   config A and live-applied to B renders bit-identically to one built at B
+   (RDS off), for the AGC, phase rotator, bass clipper and crossovers, plus the
+   already-correct stages as regression. Also check that the engine-start
+   re-apply never trips a diff between construction-time and live clamps (the
+   same parity test shows it). Baselines: none.
+2. **F2 -- P0-4, non-finite ingress.** One in-place sanitising pass at the
+   generator's block ingress and at `MeterAnalysis.process`, a lock-free
+   counter to telemetry, a rate-limited status note off-thread. Tests: NaN /
+   +Inf / -Inf at block edges, sticky-state recovery, and the strict baseline
+   unchanged for finite input. Baselines: none.
+3. **F3 -- P0-5, ownership.** `gainLinear` and `meteringEnabled` as atomics
+   consumed at block start (Float by bit pattern), a short linear ramp for the
+   monitor gain on the owning thread, the monitor note behind a small lock or
+   explicitly main-actor. Tests: the ramp; a Thread Sanitizer run of
+   start / stop / gain-storm / device-change on macOS. Baselines: none.
+4. **F4 -- P0-3, transient hold.** Split the decaying hold value from the
+   diagnostic peak; two-burst independence and 48 / 96 / 192 kHz timing tests in
+   `MultibandPhase2Tests`. Baselines: none (stage off by default).
+5. **F5 -- P0-2, band waveshaper.** One shared odd-symmetric curve for both
+   clippers: unity up to `x0 = k * threshold`, then
+   `x0 + (threshold - x0) * tanh((abs(x) - x0) / (threshold - x0))`, sign
+   restored -- continuous with continuous slope, monotonic, and the ceiling
+   stays `threshold / drive`, so "Threshold" keeps its operator meaning. `k`
+   (candidates 0.5 and 0.7) is picked by measurement: THD / two-tone IM sweeps,
+   alias energy, `--verify-hf-transients`, `--verify-receiver`,
+   `--verify-stereo-guard`, `--verify-final-ride`, `--verify-program-ab`, then
+   the bass tracks of `docs/test-playlist.md` on a release build. Keep the
+   `vvtanhf` batch (only the argument changes) and the C-kernel bit-parity
+   contract. Recapture all four macOS baselines and the Linux one (Ryzen box,
+   `~/mpx-tools`) in the same commit. ARCHITECTURE + settings reference
+   describe the curve.
+6. **F6 -- P0-7, NRSC-1.** `NRSCPreemphasisFilter` / `NRSCDeemphasisFilter` in
+   `MPXPrimeCore` next to `PreemphasisDesign` (one zero at 2122 Hz, one pole at
+   8700 Hz, fitted the same least-squares way), used by the AM path and by the
+   `MonitorConditioner` `.am` case. Table-driven test against the NRSC-1
+   magnitude table at 0.5 dB, inverse-cascade flatness, 48 / 96 / 192 kHz
+   equivalence; rewrite the existing test's description. Docs: the AM section
+   of the operator guide, `am_preemphasis_us` in the settings reference,
+   ARCHITECTURE. No MPX baseline moves; AM has no baseline of its own today.
+7. **F7 -- P0-6, BS.412.** A `BS412MultiplexPower` meter (uniform 60 s,
+   sample-time, running whenever the mode is `mpx`) separate from a slow
+   controller that rides the AUDIO gain only. It observes the prospective
+   complete MPX at the injection point (audio composite after its own gain,
+   plus pilot and RDS as injected), one sample late, which a 60 s window does
+   not notice. Threshold in dBr: new key `bs412_ceiling_dbr` (default 0.0,
+   schema widget "Ceiling (dBr)", settings reference), `bs412_threshold_db` and
+   `bs412_window_seconds` parsed once for migration and dropped -- the old
+   threshold has no dBr meaning, so migration is "0 dBr with a load note"; the
+   window is 60 s, no widget. Tests: known-answer dBr at 50 and 75 kHz, pilot-
+   only accounting (-9.0 dBr at 9 % injection), disabled-to-enabled semantics,
+   and a 65 s full-chain render whose `MeterAnalysis` reading agrees with the
+   encoder within 0.2 dB and stays under the ceiling. Docs stop implying
+   compliance until that oracle passes. Baselines: none (off by default).
+8. **F8 -- P1-1, measured.** On the Ryzen box: PATCH a crossover, the clipper
+   oversampling and (until F7) the BS.412 window while sampling xruns and
+   Render Load. Then the cheap fixes: preallocate the BS.412 ring once, design
+   FIR kernels producer-side as a prepared field of `RuntimeConfig` (pure
+   functions of crossovers and rate), lowercase strings in
+   `makeRuntimeConfig`. Acceptance: `scripts/ab-music-live.sh` already asserts
+   "every toggle applied live without a spike"; add the crossover toggle to it.
+9. **F9 -- P1-2, measured.** Remove the two locks from the group build:
+   publish the RT segment / PS index as an atomic the API side resolves to
+   text, consume the Now Playing snapshot through a preallocated double buffer
+   with a sequence counter (never releasing a Swift object on the render
+   thread), reuse one fixed 104-bit buffer for the group (make
+   `RDSBitBufferReuseTests` prove storage reuse). The pre-encoded group bank
+   only if F8's instrumentation shows deadline misses.
+
+Effort: F1-F4 about a day together; F5 two to three days including listening
+and the Linux recapture; F6 a day; F7 two to three days; F8 / F9 half a day of
+measurement each, then one to three days depending on what it shows. Every
+commit: fast suite, swiftlint, `--verify --baseline-strict` unchanged (F5
+excepted, deliberately), CHANGELOG 0.60 bullet.
+
 ## HF transients (hi-hats / cymbals) -- open remainders of the 2026-08-29 campaign
 
 The dominant cause (final-stage order; the 1x shaper clipped before the

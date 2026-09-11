@@ -82,7 +82,6 @@ enum AdvancedControls {
         "advanced_dynamics_max_gain_db",
         "advanced_dynamics_speed",
         "bass_clipper_crossover_hz",
-        "bs412_window_seconds",
         "dc_clipper_cancel_freq_hz",
         "expander_attack_ms",
         "expander_release_ms",

@@ -106,6 +106,10 @@ final class ALSAMonitorOutput: @unchecked Sendable {
         decodeComposite = shape == .decodedComposite
         conditioner.configure(shape: shape, sampleRate: Float(sampleRate), gainDB: gainDB)
         conditioner.reset()
+        // Publish the configured level BEFORE the monitor thread starts, or
+        // its first period reads the atomic's unity default and ramps away
+        // from the level just configured.
+        pendingGain.store(conditioner.publishedGainBitPattern, ordering: .relaxed)
         return ring
     }
 

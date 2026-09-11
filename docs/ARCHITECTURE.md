@@ -149,7 +149,7 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 |    +-- Audio composite bandwidth FIR (linear-phase cleanup before
 |    |   pilot/RDS injection -- group delay folded into the subcarrier
 |    |   delay line so phase alignment is preserved)
-|    +-- BS.412 MPX power limiter (optional, EU regulatory compliance)
+|    +-- BS.412 multiplex power limiter (optional, EU regulatory compliance)
 |    |   Rolling 60-second average power measurement with slow gain reduction
 |    +-- Final-MPX safety limiter (audio composite only -- no pilot, no RDS)
 |    +-- Shaper `softClipSafety` (1x budget safety soft clip; idle behind
@@ -543,7 +543,7 @@ Within the main audio path, MPX Prime Studio runs:
       recurrence (`sin2x`/`cos2x` double-angle), so pilot/subcarrier coherence is untouched.
 21. Composite clipper (16x oversampled tanh soft-clip with differential topology + linear-phase FIR decimation + delta-based per-band substitution for pilot / stereo / RDS guards; vvtanhf-batched; optional OS-rate sliding-window-max look-ahead). Since 0.45 its ceiling is mapped onto the audio-composite BUDGET (what is left of the composite after the pilot/RDS reservation) instead of digital full scale -- see "Final-stage order and budget reference" below
 22. Audio composite bandwidth FIR (55 kHz linear-phase cleanup before pilot/RDS injection)
-23. BS.412 MPX power limiter (60s rolling average, optional, EU compliance)
+23. BS.412 multiplex power limiter (uniform 60 s window on the COMPLETE multiplex, dBr-referenced, optional, EU compliance)
 24. Final look-ahead MPX limiter (audio composite only, threshold just under the budget; rides the in-band overshoot the clipper's guard-band restoration leaves -- the composite-domain overshoot controller, Orban's "half-cosine composite limiter" role)
 25. Shaper: the single always-on budget safety soft clip (`audio_composite_softclip_enabled`, 1x; idle behind clipper + limiter, pinned by `CompositeShaperOrderingTests`; catches impossible configurations and the case where both peak stages are disabled). 0.45 removed the duplicate second soft clip, the 54 kHz "smoother" one-pole between them and the idle 0.98 post-gain soft clip (`audio_composite_smoother_enabled` / `final_mpx_softclip_enabled` keys gone)
 26. Composite budget governor (smoothed gain ride on audio path so post-injection clamp is unreachable for sane configs)
@@ -604,9 +604,15 @@ L/R domain audio clipper implementing Orban's distortion-cancellation principle:
 
 ### BS.412 MPX Power Limiter
 
-ITU-R BS.412 rolling average power measurement with slow gain reduction for European regulatory compliance (required in DE, AT, CH, SE, CZ, SI, and others). Measures decimated RMS power over a configurable sliding window (default 60 seconds) and applies slow gain reduction when average power exceeds the threshold. Operates on the audio composite before the safety limiter.
+ITU-R BS.412-9 multiplex power, for European regulatory compliance (required in DE, AT, CH, SE, CZ, SI, and others). Rebuilt in 0.60 (`DSP/BS412Power.swift`) after an audit found it implemented none of the Recommendation's three defining conditions -- see "What 0.60 corrected" below.
 
-Structurally a **dual-integrator power AGC**: power-detect (square sample) -> first integrator (per-block sum + 60-s rolling window) -> sample-and-hold (per-64-sample boundary flush) -> second integrator (gain smoothing with 1 s attack / 5 s release) -> feedback gain ride. Functionally equivalent to the topology described in US 6,618,486 (CRL Systems / Harman, expired 2015-09-09). We use a flat rolling-average window instead of the patent's leaky-integrator first stage -- gives a harder, more compliance-predictable boundary at the 60-s mark, generally preferred for type-approval testing.
+**Measurement** (`BS412MultiplexPowerMeter`) is of the COMPLETE multiplex, pilot and RDS included, taken on the finished composite just before the final clamp, in the modulation domain (`output_gain_db` divided back out; amplitude 1.0 is 75 kHz). The window is a uniform sliding 60 seconds, decimated to 64-sample blocks, and it runs whenever the engine renders a composite -- whether or not the limiter is enabled -- so switching the limiter on acts on a full window instead of waiting a minute. The reference is dBr: 0 dBr is the power of a sine causing +/- 19 kHz deviation, i.e. a normalised mean square of `(19/75)^2 / 2`.
+
+**Control** (`BS412GainController`) is deliberately separate, and rides the AUDIO path only -- pilot and RDS are injected after every peak stage at constant amplitude by design, so they are not the actuator's to touch. Because it cannot reduce the subcarrier share, it solves for the audio gain that puts the TOTAL at the ceiling, using the subcarrier-only power measured over the same window; if pilot and RDS alone exceed the ceiling it reports an unachievable configuration rather than quietly squashing them.
+
+The loop steps once per 64-sample block, not per sample, and its time constants (25 s down, 50 s up) are long ON PURPOSE: an average-power limit cannot be corrected faster than the average is measured. A 1 s loop around a 60 s window oscillated between 0.05 and 0.96 gain indefinitely, and a per-sample step at the correct time constant underflowed Float32 and stalled the gain 0.84 dB past the ceiling -- both measured. Settling takes a few minutes, which is the nature of the quantity.
+
+**What 0.60 corrected.** The pre-0.60 stage observed the audio composite BEFORE pilot / RDS injection, so it was blind to roughly a tenth of the power it was limiting; treated its threshold as dB relative to normalised full-scale power rather than dBr, on which the shipped default of -10 was about +4.9 dBr -- five dB ABOVE the limit it claimed to enforce; allowed 30-90 second windows while the UI still said BS.412; only advanced its history while enabled; and reallocated its window on any parameter change, so editing the threshold erased the compliance history. Its own tests used the same internally-consistent dBFS arithmetic on both sides and therefore passed. `BS412PowerLimiterTests` now measures against the standard's reference, and the opt-in `BS412FullChainTests` (`MPXPRIME_DEEP=1`) renders past the 60 s window and requires the encoder's figure and `MeterAnalysis`' independent one to agree within 0.2 dB.
 
 ### HF Limiter (0.45, default-on)
 

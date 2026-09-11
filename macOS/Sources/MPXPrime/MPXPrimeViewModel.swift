@@ -1286,8 +1286,7 @@ final class MPXPrimeViewModel: ObservableObject {
             config.hfLimiterMaxReductionDB = defaults.hfLimiterMaxReductionDB
         case .bs412:
             config.bs412Enabled = defaults.bs412Enabled
-            config.bs412ThresholdDB = defaults.bs412ThresholdDB
-            config.bs412WindowSeconds = defaults.bs412WindowSeconds
+            config.bs412CeilingDBr = defaults.bs412CeilingDBr
         case .compositeClipper:
             config.compositeClipperEnabled = defaults.compositeClipperEnabled
             config.compositeClipperThresholdDB = defaults.compositeClipperThresholdDB

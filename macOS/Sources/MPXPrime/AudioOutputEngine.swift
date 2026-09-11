@@ -336,6 +336,10 @@ final class AudioOutputEngine {
             sampleRate: Float(renderRate),
             gainDB: startConfig.monitorGainDB)
         monitorConditioner.reset()
+        // Publish the configured level BEFORE anything can render, or the
+        // render thread's first block reads the atomic's unity default and
+        // ramps the monitor away from the level it was just given.
+        pendingMonitorGain.store(monitorConditioner.publishedGainBitPattern, ordering: .relaxed)
         monitorOutput.reconcile(
             enabled: startConfig.monitorEnabled,
             monitorUID: startConfig.monitorDeviceUID,

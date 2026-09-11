@@ -325,9 +325,7 @@ struct ProcessingOverviewGrid: View {
     }
 
     private var bs412Subtitle: String {
-        String(format: "Thr %.1f dB · win %.0f s",
-            model.config.bs412ThresholdDB,
-            model.config.bs412WindowSeconds)
+        String(format: "Ceiling %.1f dBr · 60 s", model.config.bs412CeilingDBr)
     }
 
     private var compositeClipperSubtitle: String {

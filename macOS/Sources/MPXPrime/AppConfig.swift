@@ -59,7 +59,7 @@ struct AppConfig: Equatable {
     //   downwardExpanderEnabled/ThresholdDB/Ratio/AttackMS/ReleaseMS,
     //   bassClipperEnabled/CrossoverHz/ThresholdDB/Drive,
     //   dcClipperEnabled/CeilingDB/CancelFreqHz,
-    //   bs412Enabled/ThresholdDB/WindowSeconds
+    //   bs412Enabled/CeilingDBr
     //
     // Live-apply RDS (via RDSRuntimeConfig — changes take effect immediately):
     //   Master:    enRDS
@@ -467,8 +467,18 @@ struct AppConfig: Equatable {
     // the transmitter so the NEGATIVE peak reads 100 % modulation.
     var amPositivePeakPct: Double = 125.0
     var bs412Enabled: Bool = false
-    var bs412ThresholdDB: Double = -10.0
-    var bs412WindowSeconds: Double = 60.0
+    /// The compliance ceiling in dBr, where 0 dBr is the power of a sine at
+    /// +/- 19 kHz deviation (ITU-R BS.412-9 sec 2.5.1). 0.0 IS the standard's
+    /// limit; a negative value is an operator margin below it.
+    ///
+    /// Replaces `bs412_threshold_db`, which was dB relative to normalised
+    /// full-scale power -- a different scale, on which the old default of
+    /// -10 meant about +4.9 dBr, five dB ABOVE the limit it claimed to
+    /// enforce. There is no honest numeric conversion between the two, so an
+    /// INI carrying the old key migrates to the standard's 0.0 and says so.
+    /// `bs412_window_seconds` is gone with it: the Recommendation integrates
+    /// over 60 s and nothing else is BS.412.
+    var bs412CeilingDBr: Double = 0.0
     // Composite clipper defaults: ON with additive distortion cancellation
     // (Orban US 4,460,871 / 5,737,434, expired). Threshold/ceiling tuned for
     // ~1.5 dB perceived loudness lift on real program.
@@ -1020,10 +1030,15 @@ struct AppConfig: Equatable {
         cfg.amPositivePeakPct = mpx.double(
             "am_positive_peak_pct", defaultValue: cfg.amPositivePeakPct)
         cfg.bs412Enabled = mpx.bool("bs412_enabled", defaultValue: cfg.bs412Enabled)
-        cfg.bs412ThresholdDB = mpx.double(
-            "bs412_threshold_db", defaultValue: cfg.bs412ThresholdDB)
-        cfg.bs412WindowSeconds = mpx.double(
-            "bs412_window_seconds", defaultValue: cfg.bs412WindowSeconds)
+        if let ceiling = mpx.optionalDouble("bs412_ceiling_dbr") {
+            cfg.bs412CeilingDBr = ceiling
+        } else if mpx.optionalDouble("bs412_threshold_db") != nil
+                    || mpx.optionalDouble("bs412_window_seconds") != nil {
+            // Pre-0.60 keys. Their threshold has no dBr meaning, so the only
+            // honest migration is the standard's own ceiling; the caller
+            // announces it (`loadReportingMigration`).
+            cfg.bs412CeilingDBr = 0.0
+        }
         cfg.compositeClipperEnabled = mpx.bool(
             "mpx_clipper_enabled", defaultValue: cfg.compositeClipperEnabled)
         cfg.compositeClipperThresholdDB = mpx.double(
@@ -1331,11 +1346,10 @@ struct AppConfig: Equatable {
         alsaCaptureVolumeDB = alsaCaptureVolumeDB.map { max(-60.0, min(40.0, $0)) }
 
         // BS.412
-        bs412ThresholdDB = max(-20.0, min(0.0, bs412ThresholdDB))
+        bs412CeilingDBr = max(-10.0, min(0.0, bs412CeilingDBr))
         // ITU-R BS.412-9 canonical rolling-average window is ~60 s.
         // Allow ±30 s of regulator latitude; anything outside this range
         // stops being BS.412 and becomes a generic fast AGC.
-        bs412WindowSeconds = max(30.0, min(90.0, bs412WindowSeconds))
         compositeClipperThresholdDB = max(-12.0, min(0.0, compositeClipperThresholdDB))
         compositeClipperCeilingDB = max(-6.0, min(0.0, compositeClipperCeilingDB))
         compositeClipperStereoGuard = max(0.0, min(1.0, compositeClipperStereoGuard))
@@ -1556,8 +1570,7 @@ struct AppConfig: Equatable {
             "am_lowpass_hz = \(Self.formatFloat(amLowpassHz))",
             "am_positive_peak_pct = \(Self.formatFloat(amPositivePeakPct))",
             "bs412_enabled = \(Self.boolString(bs412Enabled))",
-            "bs412_threshold_db = \(Self.formatFloat(bs412ThresholdDB))",
-            "bs412_window_seconds = \(Self.formatFloat(bs412WindowSeconds))",
+            "bs412_ceiling_dbr = \(Self.formatFloat(bs412CeilingDBr))",
             "mpx_clipper_enabled = \(Self.boolString(compositeClipperEnabled))",
             "mpx_clipper_threshold_db = \(Self.formatFloat(compositeClipperThresholdDB))",
             "mpx_clipper_ceiling_db = \(Self.formatFloat(compositeClipperCeilingDB))",
@@ -1846,6 +1859,11 @@ extension Dictionary where Key == String, Value == String {
             return defaultValue
         }
         return val
+    }
+
+    fileprivate func optionalDouble(_ key: String) -> Double? {
+        guard let raw = self[key]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        return Double(raw)
     }
 
     fileprivate func int(_ key: String, defaultValue: Int) -> Int {

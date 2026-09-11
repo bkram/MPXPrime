@@ -56,6 +56,13 @@ struct MonitorConditioner {
     /// The level the monitor is heading for. Test and diagnostic read.
     var gainLinear: Float { targetGain }
 
+    /// What the player must seed its pending-gain atomic with straight after
+    /// `configure`, so the FIRST block adopts the level it was configured
+    /// with instead of ramping away from it. The atomics default to unity,
+    /// so without this a monitor configured at, say, -12 dB faded to 0 dB
+    /// over the first 10 ms and stayed there until the next control change.
+    var publishedGainBitPattern: UInt32 { targetGain.bitPattern }
+
     private var deemphL = DeemphasisFilter()
     private var deemphR = DeemphasisFilter()
 

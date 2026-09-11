@@ -199,10 +199,34 @@ out of the tree).
 | P0-3 | Transient-aware hold is seeded by its lifetime maximum | Confirmed, and worse than claimed -- **FIXED 2026-09-11** | `MonoCompressor.processTransientAwareEnvelope`: `transientDriveObserved = max(transientDriveObserved, heldDrive)`, cleared only by `reset()`. The Advanced Dynamics copy keeps a decaying `heldDrive` -- the correct pattern. | **Low reach, total effect**: the stage is off by default, off in Verification.ini and in no profile -- but when ON it did not work at all. `transientDriveObserved` saturates to 1.0 within a few samples of `configure` no matter what is playing (rmsPower starts at 0, so the first non-silent sample has an unbounded peak-to-RMS ratio), so every hold window for the rest of the run opened at 0.94 instead of tracking the transient. Measured: bursts at 0.6 / 0.8 / 0.95 all held 0.94 before, and 0.19 / 0.48 / 0.69 after. |
 | P0-4 | NaN / Inf are not sanitised at the encoder and Meter ingress | Confirmed, and worse than claimed -- **FIXED 2026-09-11** | No `isFinite` on the generator's input path (`renderFromInputInPlace`, the input ring); `AudioOutputEngine` guards only the meter snapshot values; `MeterAnalysis.processBlock` feeds raw samples to the DC tracker, FIR history and detectors. `MPXDecoder` guards itself (0.36). | **High, measured**: a 64-sample Inf burst leaves the composite 8.2 dB down and processed audio 12 dB down PERMANENTLY (8.2 dB at 0.5 s, still 8.2 dB at 7.5 s), output still finite and nothing logged -- it reads as "the station went quiet" with no cause. The Meter's own readouts (pilot, max deviation, MPX power) recovered on their own in the same probe, so its exposure is containment and visibility, not a reproduced sticky fault. |
 | P0-5 | Unsynchronised cross-thread state | Confirmed for three of four -- **FIXED 2026-09-11** | `monitorConditioner.gainLinear` written on the main actor (`applyMonitorSettings`), read in `writeMonitorBlock` on the render thread; `ALSAMonitorOutput.setGain` vs its monitor thread; `meteringEnabled` plain Bool written by start/stop/UI, read in the render callback; `MonitorOutput.note` String written by the `.main` device observer. | **Medium**: the conditioner is a STRUCT the render thread mutates every block, so the control-side write was a race on a multi-field value, not just an unsynchronised Float. The note is the sharp one and it is NOT main-actor-only as first thought: on Linux the monitor THREAD writes it on device loss and the headless actor reads it, and a refcounted String read while being replaced can crash. `runningDevice` is refuted -- the monitor thread never touches it, every access is on the control thread. |
-| P0-6 | The BS.412 limiter does not implement the labelled standard | Confirmed | `BS412PowerLimiter`: threshold `10^(dB/10)` against the normalised mean square where 1.0 is the configured deviation, so 0 dBr (a 19 kHz sine, `(19/75)^2 / 2 = -14.9 dB`) is not where the scale says; the default "-10 dB" limits at about **+4.9 dBr**. It observes `audioComposite` BEFORE pilot / RDS injection (the pilot alone is -9 dBr of the budget), the window is operator-selectable 30-90 s, history advances only while enabled, `configure()` keeps the gain state. | **Medium**: off by default, off in Verification.ini, enabled by no profile -- but the label promises a compliance the stage cannot deliver. `MeterAnalysis` already defines dBr correctly (uniform 60 s window, 19 kHz sine reference): a ready-made oracle. |
+| P0-6 | The BS.412 limiter does not implement the labelled standard | Confirmed on every count -- **FIXED 2026-09-11** | `BS412PowerLimiter`: threshold `10^(dB/10)` against the normalised mean square where 1.0 is the configured deviation, so 0 dBr (a 19 kHz sine, `(19/75)^2 / 2 = -14.9 dB`) is not where the scale says; the default "-10 dB" limits at about **+4.9 dBr**. It observes `audioComposite` BEFORE pilot / RDS injection (the pilot alone is -9 dBr of the budget), the window is operator-selectable 30-90 s, history advances only while enabled, `configure()` keeps the gain state. | **Medium**: off by default, off in Verification.ini, enabled by no profile -- but the label promises a compliance the stage cannot deliver. `MeterAnalysis` already defines dBr correctly (uniform 60 s window, 19 kHz sine reference): a ready-made oracle. |
 | P0-7 | AM "NRSC" uses the FM 75 us curve | Confirmed, and it reached three places not two -- **FIXED 2026-09-11** | `MPXGenerator` routes `am_preemphasis_us = 75` through the FM `PreemphasisFilter` (the analog `abs(1 + j w tau)` fit). NRSC-1 is the MODIFIED 75 us curve: zero at 2122 Hz, pole at 8700 Hz, +10 dB at 10 kHz. `AMOutputTests.nrscPreemphasisRisesWithFrequency` pins the plain curve at 1 dB (its 7.5 kHz point is +9.6 dB; NRSC-1 gives about +8.0). The monitor de-emphasises with the FM inverse. | **Medium**: AM Output only, no MPX baseline moves -- but the wrong curve reached the encoder filters, the monitor's inverse AND the calibration tone's pre-emphasis compensation, which the audit did not list. Error +3.66 dB at 10 kHz, +2.36 dB at 7.5 kHz relative to 1 kHz. |
 | P1-1 | Live-apply does allocation-heavy rebuilds on the render thread | Confirmed | Both engines call `generator.applyRuntimeConfig` from the render thread after the try-lock mailbox. Inside: the BS.412 ring is reallocated on a window change, the multiband / Advanced Dynamics FIR splitters are redesigned on a crossover or enable change (four Kaiser kernels; the code comment calls it a "rare-operator-action allocation"), the composite clipper reconfigures, strings are lowercased. | **Medium, unmeasured**: accepted so far as rare. Measure before designing: PATCH a crossover on the Ryzen box while sampling xruns and Render Load. |
 | P1-2 | RDS group generation takes locks, allocates and touches the clock on the audio thread | Confirmed | `buildGroup2`: `currentRTFrame` builds a String plus bytes, `writeSnapshot(rt:)` takes `snapshotLock` (blocking `withLock`) on every 2A group, `currentNowPlayingSnapshot` takes the Now Playing `NSLock`, every `buildGroup*` returns a fresh `[UInt8]`. `Date()` survives only in the CT cache refresh (background queue) and the RT `{time}` macro (justified, documented). | **Low to medium in practice**: one group every 87.7 ms, and zero xruns in every soak so far, including a Linux rig at 95 % render load. Real-time-correctness debt, not an observed fault. |
+
+### Found while fixing, not in the review
+
+- **`deviationKHzPeak` telemetry is wrong at any `mpx_deviation_khz` other
+  than 75.** The composite (subcarriers included) is scaled by
+  `deviationScale = mpx_deviation_khz / 75`, so amplitude 1.0 is 75 kHz by
+  construction -- which is what keeps pilot injection at 9 % of full
+  deviation at any setting (measured: pilot amplitude 0.09 at 75, 0.06 at
+  50). The meter computes `outputPeak * mpx_deviation_khz *
+  modulationReferenceScale`, i.e. it multiplies by the configured deviation
+  instead of 75, so at 50 kHz it would report 33 kHz for full modulation.
+  Agrees exactly at the default 75, which is why nobody has seen it. The
+  BS.412 work uses the 1.0 = 75 kHz convention throughout. Fixing the
+  readout is a separate, operator-visible change and wants the maintainer's
+  eye -- not folded into a compliance fix.
+- **The monitor gain published to the audio thread started at unity** rather
+  than at `monitor_gain_db`, so the first block ramped away from the
+  configured level; on headless macOS, which does not re-apply the runtime
+  config after start, it stayed at 0 dB. Introduced by F3 and caught in
+  review the same day; fixed by seeding the atomic from
+  `MonitorConditioner.publishedGainBitPattern` before anything can render,
+  with a regression test at a non-unity startup level (the original
+  concurrency test configured both sides at unity, where the mismatch is
+  invisible).
 
 ### Where the review overreaches (not adopted)
 
@@ -312,20 +336,31 @@ real-time items.
    the SAME curve, so it was flat whatever happened; it now applies NRSC and
    has a guard proving the FM inverse would not be flat. Full suite 780
    green, strict baseline unchanged, swiftlint clean.
-7. **F7 -- P0-6, BS.412.** A `BS412MultiplexPower` meter (uniform 60 s,
-   sample-time, running whenever the mode is `mpx`) separate from a slow
-   controller that rides the AUDIO gain only. It observes the prospective
-   complete MPX at the injection point (audio composite after its own gain,
-   plus pilot and RDS as injected), one sample late, which a 60 s window does
-   not notice. Threshold in dBr: new key `bs412_ceiling_dbr` (default 0.0,
-   schema widget "Ceiling (dBr)", settings reference), `bs412_threshold_db` and
-   `bs412_window_seconds` parsed once for migration and dropped -- the old
-   threshold has no dBr meaning, so migration is "0 dBr with a load note"; the
-   window is 60 s, no widget. Tests: known-answer dBr at 50 and 75 kHz, pilot-
-   only accounting (-9.0 dBr at 9 % injection), disabled-to-enabled semantics,
-   and a 65 s full-chain render whose `MeterAnalysis` reading agrees with the
-   encoder within 0.2 dB and stays under the ceiling. Docs stop implying
-   compliance until that oracle passes. Baselines: none (off by default).
+7. **F7 -- P0-6, BS.412. DONE 2026-09-11.** `DSP/BS412Power.swift` splits a
+   `BS412MultiplexPowerMeter` (uniform 60 s window over the COMPLETE
+   multiplex, measured on the finished composite before the final clamp, in
+   the modulation domain, referenced to 0 dBr = a 19 kHz-deviation sine, and
+   running whenever a composite is rendered) from a `BS412GainController`
+   (audio path only, solves for the audio gain that puts the TOTAL at the
+   ceiling using the subcarrier power from the same window, flags
+   `unachievable` instead of squashing pilot / RDS). One key,
+   `bs412_ceiling_dbr`, default 0.0 = the Recommendation's own limit;
+   `bs412_threshold_db` / `bs412_window_seconds` are load-time migration
+   only, since the old threshold has no dBr meaning. Three control-loop facts
+   were found by measurement, not design, and are recorded in AGENTS: step
+   per BLOCK (a per-sample step underflows Float32 and stalls 0.84 dB off the
+   ceiling), 25 s / 50 s time constants (a 1 s loop oscillates 0.05-0.96
+   forever), and a MULTIPLICATIVE correction (the direct form applies half
+   the needed dB, because the measurement already contains the gain).
+   `BS412PowerLimiterTests` (10) measure against the standard's reference;
+   opt-in `BS412FullChainTests` (`MPXPRIME_DEEP=1`, ~15 min) render past the
+   window and require the encoder and `MeterAnalysis` to agree within 0.2 dB.
+   Full suite 792 green in 54 s, strict baseline unchanged, swiftlint clean,
+   check-webui clean. Still open, deliberately: no operator-visible MPX power
+   READOUT yet (the Meter measures it off-air, which is the authoritative
+   check) -- it needs a ControlMeters field plus both front ends, and is
+   better as its own commit.
+
 8. **F8 -- P1-1, measured.** On the Ryzen box: PATCH a crossover, the clipper
    oversampling and (until F7) the BS.412 window while sampling xruns and
    Render Load. Then the cheap fixes: preallocate the BS.412 ring once, design

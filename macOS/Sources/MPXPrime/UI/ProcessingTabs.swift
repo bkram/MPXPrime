@@ -723,12 +723,8 @@ struct ProcessingBS412Tab: View {
         Card(title: "BS.412 MPX Power Limiter") {
             Toggle("Enable BS.412", isOn: model.configBinding(\.bs412Enabled, runtimeDisposition: .live))
             let disabled = !model.config.bs412Enabled
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.bs412ThresholdDB, runtimeDisposition: .live), range: -20...0, format: "%.1f dB",
-                tooltip: "MPX average-power ceiling per ITU-R BS.412. Required for EU regulatory compliance (DE, AT, CH, SE, CZ, SI, etc).").disabled(disabled)
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Window", value: model.configBinding(\.bs412WindowSeconds, runtimeDisposition: .live), range: 30...90, format: "%.0f s",
-                    tooltip: "Rolling averaging window for BS.412 power measurement. 60 s is the regulatory default; values outside ~30-90 s stop being BS.412 and become a generic AGC.").disabled(disabled)
-            }
+            DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.bs412CeilingDBr, runtimeDisposition: .live), range: -10...0, format: "%.1f dBr",
+                tooltip: "Average power of the complete multiplex, pilot and RDS included, over any 60 seconds. 0 dBr IS the ITU-R BS.412 limit (the power of a sine at 19 kHz deviation); set it lower only to keep a margin below the limit. Required for regulatory compliance in DE, AT, CH, SE, CZ, SI and others.").disabled(disabled)
         }
     }
 }

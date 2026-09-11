@@ -58,7 +58,7 @@ Recommended **off** by default (enable only when needed):
 - **PrimeBass** -- bass-enhancement harmonics; useful for thin source material, but adds harmonic content that competes with the audio composite headroom. Enable per-format.
 - **Bass Clipper** -- engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
 - **HF Clipper** -- pre-emphasis-aware HF *clipper* (same tab; `hf_clipper_*`). Off by default and no longer used by any profile: it is a waveshaper on the pre-emphasised high band, so it distorts the cymbals and hi-hats it controls (the 2026-08 field finding). Keep it as a last resort for maximum HF density on dense EDM after the HF Limiter is already on; leave off for talk / classical. Controls live-apply.
-- **BS.412 MPX Power Limiter** -- required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
+- **BS.412 MPX Power Limiter** -- required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. Two keys: `bs412_enabled` and `bs412_ceiling_dbr`. See "When to leave BS.412 and the Composite Clipper off" below.
 - **Advanced Dynamics** -- optional single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Sound` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
 - **SSB Stereo Encoder** -- optional SSB-leaning stereo encoder (`mpx_ssb_stereo_enabled` + `mpx_ssb_stereo_amount`, the dedicated `Stereo Coder` tab/page in both UIs, between Audio Limiter and Composite Clipper -- chain position of the stereo encoder itself). Leans the 38 kHz L-R subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower. Decode-compatible (coherent separation measured 81+ dB with it on) and mono-transparent, but the loudness benefit is not yet demonstrated on synthetic program -- treat it as a listening experiment, verify with `--verify-ssb-stereo` and a real receiver, and leave it off otherwise.
 
@@ -173,6 +173,23 @@ dashboard's device list shows it) and the same rules apply; `default` is
 refused whenever the transmitter is on `default` too.
 
 ### AM output shaping
+
+- `bs412_enabled` (`[MPX]`, default `False`, live-apply): the ITU-R BS.412-9
+  multiplex-power limiter. The MEASUREMENT runs whenever a composite is
+  rendered, so enabling this acts on a window that is already full.
+- `bs412_ceiling_dbr` (`[MPX]`, default `0.0`, range -10.0 to 0.0,
+  live-apply): the ceiling in dBr, where **0 dBr is the Recommendation's own
+  limit** -- the power of a sine causing 19 kHz deviation. A negative value is
+  an operator margin below the limit, not a different limit. The quantity
+  controlled is the average power of the COMPLETE multiplex, pilot and RDS
+  included, over any 60 seconds; the window is fixed at 60 s because nothing
+  else is BS.412. The controller reduces the audio path only, and reports an
+  unachievable configuration rather than attenuating pilot or RDS.
+  Replaced `bs412_threshold_db` and `bs412_window_seconds` in 0.60. The old
+  threshold was dB relative to normalised full-scale power, a scale on which
+  its default of -10 meant roughly +4.9 dBr -- above the limit it claimed to
+  enforce -- so there is no honest numeric conversion: an INI carrying either
+  old key adopts the standard's 0.0 dBr ceiling on load.
 
 Read only when `operating_mode = am`:
 

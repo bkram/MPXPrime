@@ -105,6 +105,29 @@ combination test suite. Newest first.
   own table and fails if the curves are ever confused. FM is untouched, bit
   for bit.
 
+- **Fixed: the BS.412 power limiter did not implement BS.412.** The
+  Recommendation caps the average power of the *whole* transmitted multiplex,
+  pilot and RDS included, over any 60 seconds, measured against a defined
+  reference. The old stage measured the audio alone before the pilot and RDS
+  were added, used a threshold scale that was not the standard's (its shipped
+  default sat about 5 dB *above* the legal limit), let the window be set
+  anywhere from 30 to 90 seconds, stopped measuring whenever it was switched
+  off, and threw away its accumulated history whenever a setting changed.
+  Stations relying on it for compliance were not getting it. It now measures
+  the finished signal, in the standard's own units, over a fixed 60 seconds,
+  continuously. The single control is a **Ceiling in dBr**, where 0 dBr is
+  the legal limit; the limiter reduces the audio only and reports a
+  configuration it cannot meet rather than quietly attenuating the pilot.
+  Settling now takes a few minutes by design, because the quantity is a
+  one-minute average. Existing configurations adopt the standard's ceiling on
+  upgrade. The stage remains off by default.
+- **Fixed: a monitor set to a non-default level could fade to full level at
+  startup.** Introduced by the monitor-level change above and caught in
+  review: the level published to the audio thread started at unity instead of
+  the configured value, so the first block ramped away from it. On the
+  headless Mac encoder, which does not re-apply settings after starting, it
+  then stayed there.
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

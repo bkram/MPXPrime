@@ -397,7 +397,7 @@
       },
       {
         "enable": "phase_rotation_enabled",
-        "help": "4-pole allpass chain that reduces waveform asymmetry \u2014 especially on voice \u2014 by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages.",
+        "help": "4-pole allpass chain that reduces waveform asymmetry — especially on voice — by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages.",
         "id": "phaseRotator",
         "keys": [
           "phase_rotation_enabled",
@@ -535,7 +535,7 @@
       {
         "bypassedWhen": "advanced_dynamics_enabled",
         "enable": "downward_expander_enabled",
-        "help": "Per-band downward expander \u2014 pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
+        "help": "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
         "id": "expander",
         "keys": [
           "downward_expander_enabled",
@@ -575,7 +575,7 @@
       },
       {
         "enable": "primebass_enabled",
-        "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude \u2014 saves headroom downstream. Mono Bass on the same page sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility.",
+        "help": "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream. Mono Bass on the same page sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility.",
         "id": "primeBass",
         "keys": [
           "primebass_enabled",
@@ -691,7 +691,7 @@
       },
       {
         "enable": "pre_encode_limiter_enabled",
-        "help": "Pre-encode L/R peak limiter \u2014 4x oversampled true-peak, stereo-linked \u2014 with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis.",
+        "help": "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis.",
         "id": "limiter",
         "keys": [
           "pre_encode_limiter_enabled",
@@ -772,8 +772,7 @@
         "id": "bs412",
         "keys": [
           "bs412_enabled",
-          "bs412_threshold_db",
-          "bs412_window_seconds"
+          "bs412_ceiling_dbr"
         ],
         "modes": [
           "mpx"
@@ -782,7 +781,7 @@
         "sub": "MPX power limiter",
         "summary": [
           [
-            "Thr {bs412_threshold_db} dB - win {bs412_window_seconds} s"
+            "Ceiling {bs412_ceiling_dbr} dBr - 60 s"
           ]
         ],
         "title": "BS.412"
@@ -1083,24 +1082,15 @@
       "kind": "toggle",
       "label": "BS.412"
     },
-    "bs412_threshold_db": {
+    "bs412_ceiling_dbr": {
       "decimals": 1,
+      "help": "Average power of the complete multiplex, pilot and RDS included, over any 60 seconds. 0 dBr IS the ITU-R BS.412 limit (the power of a sine at 19 kHz deviation); lower values keep a margin below it.",
       "kind": "slider",
-      "label": "Threshold",
+      "label": "Ceiling",
       "max": 0.0,
-      "min": -20.0,
+      "min": -10.0,
       "step": 0.1,
-      "unit": " dB"
-    },
-    "bs412_window_seconds": {
-      "decimals": 0,
-      "kind": "slider",
-      "label": "Window",
-      "max": 90.0,
-      "min": 30.0,
-      "step": 1,
-      "unit": " s",
-      "advanced": true
+      "unit": " dBr"
     },
     "dc_clipper_cancel_freq_hz": {
       "decimals": 0,

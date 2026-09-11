@@ -242,8 +242,7 @@ final class MPXGenerator {
         let processedAudioCeilingDBTP: Float
         let amPositivePeakPct: Float
         let bs412Enabled: Bool
-        let bs412ThresholdDB: Float
-        let bs412WindowSeconds: Float
+        let bs412CeilingDBr: Float
         let compositeClipperEnabled: Bool
         let compositeClipperThresholdDB: Float
         let compositeClipperCeilingDB: Float
@@ -381,8 +380,7 @@ final class MPXGenerator {
             processedAudioCeilingDBTP: Float(config.processedAudioCeilingDBTP),
             amPositivePeakPct: Float(config.amPositivePeakPct),
             bs412Enabled: config.bs412Enabled,
-            bs412ThresholdDB: Float(config.bs412ThresholdDB),
-            bs412WindowSeconds: Float(config.bs412WindowSeconds),
+            bs412CeilingDBr: Float(config.bs412CeilingDBr),
             compositeClipperEnabled: config.compositeClipperEnabled,
             compositeClipperThresholdDB: Float(config.compositeClipperThresholdDB),
             compositeClipperCeilingDB: Float(config.compositeClipperCeilingDB),
@@ -852,9 +850,11 @@ final class MPXGenerator {
 
     // BS.412 MPX power limiter
     private var bs412Enabled: Bool
-    private var bs412ThresholdDB: Float
-    private var bs412WindowSeconds: Float
-    private var bs412Limiter = BS412PowerLimiter()
+    private var bs412CeilingDBr: Float
+    /// The compliance statistic runs whether or not anything acts on it, so
+    /// enabling the limiter does not start a 60 s wait (0.60 audit, P0-6).
+    private var bs412Meter = BS412MultiplexPowerMeter()
+    private var bs412Controller = BS412GainController()
     // CompositeClipper: disabled by default, field only for size/layout test.
     private var compositeClipperEnabled: Bool = false
     private var compositeClipperThresholdDB: Float = -3.0
@@ -1254,8 +1254,7 @@ final class MPXGenerator {
         self.amNegativeCeiling = 100.0 / clampf(Float(config.amPositivePeakPct), 100.0, 125.0)
 
         self.bs412Enabled = config.bs412Enabled
-        self.bs412ThresholdDB = clampf(Float(config.bs412ThresholdDB), -20.0, 0.0)
-        self.bs412WindowSeconds = clampf(Float(config.bs412WindowSeconds), 1.0, 120.0)
+        self.bs412CeilingDBr = clampf(Float(config.bs412CeilingDBr), -10.0, 0.0)
         self.compositeClipperEnabled = config.compositeClipperEnabled
         self.compositeClipperThresholdDB = clampf(Float(config.compositeClipperThresholdDB), -12.0, 0.0)
         self.compositeClipperCeilingDB = clampf(Float(config.compositeClipperCeilingDB), -6.0, 0.0)
@@ -1395,11 +1394,8 @@ final class MPXGenerator {
             passbandHz: preEncodeLimiterPassbandHz
         )
         configureTruePeakGuard(sampleRate: audioRate)
-        bs412Limiter.configure(
-            sampleRate: self.sampleRate,
-            thresholdDB: bs412ThresholdDB,
-            windowSeconds: bs412WindowSeconds
-        )
+        bs412Meter.configure(sampleRate: self.sampleRate)
+        bs412Controller.configure(sampleRate: self.sampleRate)
         compositeClipper.configure(
             sampleRate: self.sampleRate,
             thresholdDB: compositeClipperThresholdDB,
@@ -1819,11 +1815,8 @@ final class MPXGenerator {
             passbandHz: preEncodeLimiterPassbandHz
         )
         configureTruePeakGuard(sampleRate: audioRate)
-        bs412Limiter.configure(
-            sampleRate: sampleRate,
-            thresholdDB: bs412ThresholdDB,
-            windowSeconds: bs412WindowSeconds
-        )
+        bs412Meter.configure(sampleRate: sampleRate)
+        bs412Controller.configure(sampleRate: sampleRate)
         compositeClipper.configure(
             sampleRate: sampleRate,
             thresholdDB: compositeClipperThresholdDB,
@@ -2203,21 +2196,12 @@ final class MPXGenerator {
         amNegativeCeiling = 100.0 / clampf(config.amPositivePeakPct, 100.0, 125.0)
         truePeakGuard.ceiling = digitalDelivery ? processedAudioCeiling : 1.0
 
-        // BS.412
-        let bs412Changed =
-            bs412Enabled != config.bs412Enabled
-            || fabsf(bs412ThresholdDB - config.bs412ThresholdDB) > 0.0001
-            || fabsf(bs412WindowSeconds - config.bs412WindowSeconds) > 0.0001
+        // BS.412. The ceiling is a threshold, not a topology: changing it
+        // must NOT wipe the 60 s window. The old stage reallocated its ring
+        // on any change, so editing the threshold erased the compliance
+        // history it was supposed to be accumulating (0.60 audit, P0-6).
         bs412Enabled = config.bs412Enabled
-        bs412ThresholdDB = clampf(config.bs412ThresholdDB, -20.0, 0.0)
-        bs412WindowSeconds = clampf(config.bs412WindowSeconds, 1.0, 120.0)
-        if bs412Changed {
-            bs412Limiter.configure(
-                sampleRate: mpxRate,
-                thresholdDB: bs412ThresholdDB,
-                windowSeconds: bs412WindowSeconds
-            )
-        }
+        bs412CeilingDBr = clampf(config.bs412CeilingDBr, -10.0, 0.0)
 
         // Split into "structural" (FIR / bandpass / bypass / clipper-kernel
         // reset) vs "lookahead-only" so a GUI slider drag of
@@ -3961,9 +3945,14 @@ final class MPXGenerator {
             right: audioComposite
         ).0
 
-        // BS.412 MPX power limiter — rolling average power limit for EU compliance.
+        // BS.412 MPX power. The CONTROLLER rides the audio path only --
+        // pilot and RDS are injected after every peak stage at constant
+        // amplitude by design, so they are not the actuator's to touch. The
+        // gain it applies here comes from the previous sample's measurement
+        // of the FINISHED composite (taken at the bottom of this function);
+        // one sample of lag against a 60-second window is nothing.
         if bs412Enabled && !renderingCalibrationTone {
-            audioComposite = bs412Limiter.process(audioComposite)
+            audioComposite *= bs412Controller.currentGain
         }
 
         // Final look-ahead MPX limiter on the audio composite, budget-
@@ -4055,6 +4044,24 @@ final class MPXGenerator {
             overshoot,
             postInjectionOvershootEnv * postInjectionOvershootDecayCoeff
         )
+
+        // BS.412 measurement: the COMPLETE multiplex, pilot and RDS included,
+        // in the modulation domain (|x| = 1.0 is 75 kHz, so `output_gain_db`
+        // divides back out), taken before the final hard clamp. It runs
+        // whether or not the limiter is enabled, so switching the limiter on
+        // acts on a window that is already full instead of waiting a minute.
+        // The subcarrier power goes in alongside it because the controller
+        // cannot reduce that part of the budget.
+        if !renderingCalibrationTone {
+            let inverseOutputGain = 1.0 / max(1e-6, outputGain)
+            let blockComplete = bs412Meter.process(
+                total: mpx * inverseOutputGain,
+                subcarriers: delayedSubcarriers
+            )
+            if blockComplete && bs412Enabled {
+                _ = bs412Controller.update(meter: bs412Meter, ceilingDBr: bs412CeilingDBr)
+            }
+        }
 
         return clampf(mpx, -1.0, 1.0)
     }

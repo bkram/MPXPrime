@@ -112,7 +112,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .multiband:
             return "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined."
         case .advancedDynamics:
-            return "Experimental single-stage leveler that replaces the AGC and Multiband stages with one fused 5-band stage, so leveling and density shaping can never fight. Set the sound you want (target, balance, density) - the stage adapts its own speed to the programme."
+            return "Single-stage leveler that replaces the AGC and Multiband stages with one fused 5-band stage, so leveling and density shaping can never fight. Set the sound you want (target, balance, density) - the stage adapts its own speed to the programme."
         case .expander:
             return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
         case .mbLimiter:
@@ -130,7 +130,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .bs412:
             return "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries."
         case .stereoCoder:
-            return "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. Hosts the experimental SSB Stereo option, which leans the subcarrier toward single-sideband to reclaim composite headroom ahead of the clipper."
+            return "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. Hosts the optional SSB Stereo mode, which leans the subcarrier toward single-sideband to reclaim composite headroom ahead of the clipper."
         case .compositeClipper:
             return "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever."
         case .finalStage:

@@ -21,7 +21,7 @@ Looking for something else?
 The encoder runs on two platforms with the **same DSP**; only the front end and audio backend differ:
 
 - **macOS** -- the full **GUI application** (`MPX Prime Studio.app`), Core Audio, plus a headless `--nogui` mode. The companion **MPX Prime Meter** analyzer ships in the same DMG (macOS only -- see its [manual](meter-operator-guide.md)).
-- **Linux** -- the **encoder only, headless** (`--nogui`, ALSA output, no GUI). Its interface is the built-in [web dashboard / REST API](#operating-it-from-a-browser). Installed from the Debian/Ubuntu package as the `mpxprime` systemd service (config at `/var/lib/mpxprime/MPXPrime.ini`). **There is no GUI and no Meter on Linux.** Setup: [BUILDING.md -> Linux (CLI-only)](BUILDING.md#linux-cli-only).
+- **Linux** -- the encoder as a **web-operated appliance**: a service that encodes into ALSA and is run from the built-in [web dashboard / REST API](#operating-it-from-a-browser), with the same controls as the GUI. Installed from the Debian/Ubuntu package as the `mpxprime` systemd service (config at `/var/lib/mpxprime/MPXPrime.ini`). Same DSP chain and same sound as on macOS; the GUI and the Meter are macOS apps, and the dashboard's scope and spectrum views are not yet fed on Linux. Setup: [Running on Linux](#running-on-linux-the-web-dashboard-encoder) below and [BUILDING.md -> Linux](BUILDING.md#linux-web-dashboard-encoder).
 
 Everything in this guide applies to both platforms; where a control is GUI-only, Linux operators reach the equivalent on the web dashboard, which mirrors the same layout. Platform differences are flagged inline; at a glance:
 
@@ -36,7 +36,7 @@ Everything in this guide applies to both platforms; where a control is GUI-only,
 
 The same INI keys, presets, RDS features and verifier thresholds apply on both; a config file moves between platforms once the device keys are re-pointed.
 
-## Installing and starting
+## Installing and starting (macOS)
 
 **Hardware.** One core carries the whole chain, so the CPU's per-core speed
 decides whether a machine fits; nothing else about it matters much (2 GB of
@@ -60,9 +60,24 @@ Command-line flags (run the binary inside the app bundle):
 "/Applications/MPX Prime Studio.app/Contents/MacOS/MPXPrime" --web         # headless + web dashboard
 ```
 
-**Linux.** There is no GUI: the web dashboard is the only operator interface,
-and the package sets it up so a headless box is configurable from another
-machine right after install. `dpkg -i` installs `/usr/bin/mpxprime` and a
+To build, run, verify, test, or package from source, see
+[docs/BUILDING.md](BUILDING.md).
+
+## Running on Linux: the web dashboard encoder
+
+On Linux the encoder is a **web-operated appliance**: a `mpxprime` systemd
+service that encodes into ALSA and serves the web dashboard, with the same
+DSP chain and the same sound as on macOS. Everything else in this guide
+applies here too; this chapter collects what is Linux-specific -- the
+installation, the sound card's own mixer, the render-load readout and the CPU
+budget, and the level question.
+
+### Installing the package
+
+The dashboard is the operator interface -- every control the macOS GUI has,
+laid out the same way -- and the encoder itself runs as a service, so the box
+is operated from a browser on any machine on the network. The package sets
+that up right after install. `dpkg -i` installs `/usr/bin/mpxprime` and a
 `mpxprime` systemd service (its unit runs the encoder with `--web`), and on a
 fresh install it creates the config `/var/lib/mpxprime/MPXPrime.ini` from the
 code defaults with the dashboard **enabled on all interfaces behind a randomly
@@ -91,8 +106,91 @@ come from the INI). Devices are ALSA PCM names (`default`, `hw:0,0`,
 `plughw:...`), not Core Audio devices; the Monitor plays on a second ALSA
 device (see Monitor output below).
 
-To build, run, verify, test, or package from source, see
-[docs/BUILDING.md](BUILDING.md).
+### Sound card mixer
+
+On Linux the dashboard's `Audio I/O` page shows the sound card's own level
+controls next to the devices they belong to: **Card Input Level** under the
+input device and **Card Output Level** under the output device, in dB as the
+card reports it. They are there because that mixer sits between the encoder
+and the exciter and nothing else on a headless box shows it: the test rig came
+back from a reboot at 96 %, 2 dB down, because its USB card has a hardware
+volume knob.
+
+Keep the output at 0 dB and do the calibration in the encoder with `MPX Output
+Level` and `Line Output`. Moving a card slider from the dashboard also makes the
+encoder remember it and put it back whenever something else (the knob, a
+reboot) moves it, so you do not need `alsactl store`. The card's capture side
+often carries analog gain of its own -- the reference USB card showed +6 dB on
+one box and +10 dB on another -- which is why
+an input calibrated on macOS lands at a different level here; set the card
+input to 0 dB and calibrate with `Input Gain`. The controls do not appear on
+macOS, where the system sound settings own this.
+
+### Render load
+
+The dashboard's Stream Health card shows **Xruns R/C** (render / capture
+dropouts since the engine started) and **Render Load**: the worst share of
+one buffer period the encoder's real-time thread needed recently. It turns
+red from 90 %. A CPU can sit in the nineties with no dropouts on a quiet
+input and drop about one buffer a second as soon as live programme arrives,
+so measure with programme. If the counter climbs, check Render Load first; a
+longer `blocksize` buys safety at the cost of latency -- with the chain near
+its limit, 2048 (85 ms of buffer) dropped an occasional burst with the
+Monitor on and 4096 (170 ms) dropped none, so on a CPU reading over 90 % use
+4096. The Monitor's own decoding runs on a separate thread and adds nothing
+to this figure.
+
+### CPU budget: what to turn off first
+
+The processing chain is the same on every machine, so on a small CPU it is
+the operator who decides what fits. **Render Load** is the figure to watch:
+from 98 % the status line says so ("Render load at or over 98 %: the
+processing chain does not fit this CPU"), and a single reading far above
+100 % right after a start or restart is the first period priming, not the
+chain. The shares below come from `--bench` on three machines (they agree
+within a few points) and from live render load on the Ryzen 5 PRO 2400GE;
+[docs/performance.md](performance.md) has every measurement. A slower CPU
+scales everything up together, so the ORDER is what carries over.
+
+| Stage (INI key) | Share of the chain's cost | Turn off? |
+| --- | --- | --- |
+| Everything else -- input, pre-emphasis, limiter, stereo encoder, RDS | about half | this is the floor |
+| Composite clipper at 16x (`mpx_clipper_oversampling`) | about a quarter; 8x saves 8-12 % of the chain, 32x adds 15-25 % | 16x is the default for a reason; 8x is the safe way down on a small CPU (restart), 32x only where the load is well under 60 % |
+| Multiband compressor, FIR crossovers (`multiband_enabled`, `multiband_fir_enabled`) | about a quarter | first candidate on a struggling CPU: `multiband_fir_enabled = False` keeps the compressor on the low-latency IIR crossovers for less than half of that (restart) |
+| Advanced Dynamics instead of AGC + multiband (`advanced_dynamics_enabled`) | a little less than the multiband | the cheaper of the two levelers |
+| SSB Stereo (`mpx_ssb_stereo_enabled`) | 5-8 % | first, when CPU is short -- it is the one stage that has tipped a chain from "fits" to "dropouts", and its headroom gain is small |
+| Monitor output (`monitor_enabled`) | 2-3 % on the render thread (its decoding runs on its own thread) | only when the chain already sits at the edge |
+| PrimeBass, bass clipper, DC clipper (`primebass_enabled`, `bass_clipper_enabled`, ...) | 1-2 % each | as the sound requires |
+| HF limiter, wideband AGC, BS.412 (`hf_limiter_enabled`, `wideband_agc_enabled`, `bs412_enabled`) | under 1 % each | keep them |
+| Encoder FIR (`encoder_fir_enabled`) | -- | never for CPU reasons: it is the transmitter's 15 kHz band limit |
+
+The build uses AVX2 automatically on CPUs that have it (any Ryzen, Intel
+N100 / Core); `mpxprime --version` shows `DSP kernels: avx2` or `sse2`. It
+does not change the sound -- the two variants compute bit-identical
+results -- only the cost: on a Ryzen 5 PRO 2400GE the full Music - Loud
+chain with SSB Stereo reads 29 % with AVX2 against 45 % without, so that
+class of machine runs everything with room to spare.
+
+Recipe for a box that reads over 90 % with programme: SSB Stereo off; then
+`blocksize = 4096` (buys tolerance, not CPU); then the composite clipper at 8x
+or the multiband on IIR crossovers, whichever your ears prefer. Format
+Profiles do not change this budget by themselves -- they set levels and
+thresholds, not which stages run -- except that a profile copied from a
+faster machine may bring SSB Stereo along.
+
+### Why the box is "not loud enough"
+
+The digital path is at full scale: the composite leaves the card at 0 dBFS
+minus `MPX Output Level`, and the card's own output is at 0 dB. Two things
+changed in 0.50 that make a rig upgraded from an older build quieter:
+`MPX Output Level` is attenuation-only in MPX Output (a positive value used to
+be accepted and pushed pilot and RDS above their set injection; it is clamped
+to 0 now, the same on both platforms), and the card mixer is now watched, so a
+knob at -2 dB no longer goes unnoticed. Beyond that the card is at its
+maximum: more drive has to come from the exciter's input sensitivity, exactly
+what `scripts/calibrate-tx.sh` tells you on macOS. To compare the two hosts
+honestly, run the built-in Test Tone at 0 dBFS (100 % modulation by
+definition) with the card at 0 dB on each and measure the same jack.
 
 ## First-time setup in five steps
 
@@ -174,92 +272,6 @@ Relevant config sections:
 ## The Audio I/O section: devices, operating mode, level calibration
 
 The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O** page) is the installation page: where the signal enters and leaves the app. It holds the input / MPX output / monitor device pickers, the **Operating Mode** (one segmented four-way choice, `operating_mode`: MPX Output for a transmitter, FM Output for an external stereo coder, HD Output for streaming or digital radio, AM Output for an AM transmitter), the **Monitor** output, the engine format (sample rate, block size, auto start), and the three **level calibration** controls: `Input Gain` on the Input card, `MPX Output Level` + `Line Output` (with a live **DAC Peak** readout) on the Output card.
-
-### Sound card mixer (Linux)
-
-On Linux the dashboard's `Audio I/O` page shows the sound card's own level
-controls next to the devices they belong to: **Card Input Level** under the
-input device and **Card Output Level** under the output device, in dB as the
-card reports it. They are there because that mixer sits between the encoder
-and the exciter and nothing else on a headless box shows it: the test rig came
-back from a reboot at 96 %, 2 dB down, because its USB card has a hardware
-volume knob.
-
-Keep the output at 0 dB and do the calibration in the encoder with `MPX Output
-Level` and `Line Output`. Moving a card slider from the dashboard also makes the
-encoder remember it and put it back whenever something else (the knob, a
-reboot) moves it, so you do not need `alsactl store`. The card's capture side
-often carries analog gain of its own -- the reference USB card showed +6 dB on
-one box and +10 dB on another -- which is why
-an input calibrated on macOS lands at a different level here; set the card
-input to 0 dB and calibrate with `Input Gain`. The controls do not appear on
-macOS, where the system sound settings own this.
-
-### Render load (Linux)
-
-The dashboard's Stream Health card shows **Xruns R/C** (render / capture
-dropouts since the engine started) and **Render Load**: the worst share of
-one buffer period the encoder's real-time thread needed recently. It turns
-red from 90 %. A CPU can sit in the nineties with no dropouts on a quiet
-input and drop about one buffer a second as soon as live programme arrives,
-so measure with programme. If the counter climbs, check Render Load first; a
-longer `blocksize` buys safety at the cost of latency -- with the chain near
-its limit, 2048 (85 ms of buffer) dropped an occasional burst with the
-Monitor on and 4096 (170 ms) dropped none, so on a CPU reading over 90 % use
-4096. The Monitor's own decoding runs on a separate thread and adds nothing
-to this figure.
-
-### CPU budget: what to turn off first
-
-The processing chain is the same on every machine, so on a small CPU it is
-the operator who decides what fits. **Render Load** is the figure to watch:
-from 98 % the status line says so ("Render load at or over 98 %: the
-processing chain does not fit this CPU"), and a single reading far above
-100 % right after a start or restart is the first period priming, not the
-chain. The shares below come from `--bench` on three machines (they agree
-within a few points) and from live render load on the Ryzen 5 PRO 2400GE;
-[docs/performance.md](performance.md) has every measurement. A slower CPU
-scales everything up together, so the ORDER is what carries over.
-
-| Stage (INI key) | Share of the chain's cost | Turn off? |
-| --- | --- | --- |
-| Everything else -- input, pre-emphasis, limiter, stereo encoder, RDS | about half | this is the floor |
-| Composite clipper at 16x (`mpx_clipper_oversampling`) | about a quarter; 8x saves 8-12 % of the chain, 32x adds 15-25 % | 16x is the default for a reason; 8x is the safe way down on a small CPU (restart), 32x only where the load is well under 60 % |
-| Multiband compressor, FIR crossovers (`multiband_enabled`, `multiband_fir_enabled`) | about a quarter | first candidate on a struggling CPU: `multiband_fir_enabled = False` keeps the compressor on the low-latency IIR crossovers for less than half of that (restart) |
-| Advanced Dynamics instead of AGC + multiband (`advanced_dynamics_enabled`) | a little less than the multiband | the cheaper of the two levelers; experimental |
-| SSB Stereo (`mpx_ssb_stereo_enabled`) | 5-8 % | **yes** -- experimental, and no measured benefit on any programme so far; the one stage that has tipped a chain from "fits" to "dropouts" |
-| Monitor output (`monitor_enabled`) | 2-3 % on the render thread (its decoding runs on its own thread) | only when the chain already sits at the edge |
-| PrimeBass, bass clipper, DC clipper (`primebass_enabled`, `bass_clipper_enabled`, ...) | 1-2 % each | as the sound requires |
-| HF limiter, wideband AGC, BS.412 (`hf_limiter_enabled`, `wideband_agc_enabled`, `bs412_enabled`) | under 1 % each | keep them |
-| Encoder FIR (`encoder_fir_enabled`) | -- | never for CPU reasons: it is the transmitter's 15 kHz band limit |
-
-The build uses AVX2 automatically on CPUs that have it (any Ryzen, Intel
-N100 / Core); `mpxprime --version` shows `DSP kernels: avx2` or `sse2`. It
-does not change the sound -- the two variants compute bit-identical
-results -- only the cost: on a Ryzen 5 PRO 2400GE the full Music - Loud
-chain with SSB Stereo reads 29 % with AVX2 against 45 % without, so that
-class of machine runs everything with room to spare.
-
-Recipe for a box that reads over 90 % with programme: SSB Stereo off; then
-`blocksize = 4096` (buys tolerance, not CPU); then the composite clipper at 8x
-or the multiband on IIR crossovers, whichever your ears prefer. Format
-Profiles do not change this budget by themselves -- they set levels and
-thresholds, not which stages run -- except that a profile copied from a
-faster machine may bring SSB Stereo along.
-
-### Why the Linux box is "not loud enough"
-
-The digital path is at full scale: the composite leaves the card at 0 dBFS
-minus `MPX Output Level`, and the card's own output is at 0 dB. Two things
-changed in 0.50 that make a rig upgraded from an older build quieter:
-`MPX Output Level` is attenuation-only in MPX Output (a positive value used to
-be accepted and pushed pilot and RDS above their set injection; it is clamped
-to 0 now, the same on both platforms), and the card mixer is now watched, so a
-knob at -2 dB no longer goes unnoticed. Beyond that the card is at its
-maximum: more drive has to come from the exciter's input sensitivity, exactly
-what `scripts/calibrate-tx.sh` tells you on macOS. To compare the two hosts
-honestly, run the built-in Test Tone at 0 dBFS (100 % modulation by
-definition) with the card at 0 dB on each and measure the same jack.
 
 ### Monitor output
 
@@ -450,7 +462,7 @@ Recommended starting point:
 
 The current defaults are intentionally moderate and are meant to be tuned upward from a clean starting point, not downward from a hyped one.
 
-## Advanced Dynamics (experimental)
+## Advanced Dynamics
 
 `advanced_dynamics_enabled` (default `False`) replaces the wideband AGC **and** the multiband compressor with one fused 5-band leveling stage. The point of the fusion is that slow leveling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with program-adaptive speed -- near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
 

@@ -413,7 +413,7 @@
    },
    {
     "enable": "advanced_dynamics_enabled",
-    "help": "Experimental single-stage leveler that REPLACES the AGC and the multiband compressor with one fused 5-band stage, so slow leveling and per-band density shaping can never fight (no AGC-vs-multiband pumping). Configure the sound you want (target level, tonal balance, density) instead of attack/release times; the stage adapts its own speed to the programme. Band layout follows the multiband crossovers. When enabled, the AGC and Multiband stages are bypassed.",
+    "help": "Single-stage leveler that REPLACES the AGC and the multiband compressor with one fused 5-band stage, so slow leveling and per-band density shaping can never fight (no AGC-vs-multiband pumping). Configure the sound you want (target level, tonal balance, density) instead of attack/release times; the stage adapts its own speed to the programme. Band layout follows the multiband crossovers. When enabled, the AGC and Multiband stages are bypassed.",
     "id": "advanced_dynamics",
     "keys": [
      "advanced_dynamics_enabled",
@@ -617,7 +617,7 @@
    },
    {
     "enable": "mpx_ssb_stereo_enabled",
-    "help": "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. The experimental SSB Stereo option leans the 38 kHz subcarrier toward single-sideband, keeping whichever sideband currently peaks lower to reclaim composite headroom ahead of the clipper. Independent of the Composite Clipper's enable; verify with --verify-ssb-stereo and a real receiver before regular use.",
+    "help": "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. The optional SSB Stereo mode leans the 38 kHz subcarrier toward single-sideband, keeping whichever sideband currently peaks lower to reclaim composite headroom ahead of the clipper. Independent of the Composite Clipper's enable; verify with --verify-ssb-stereo and a real receiver before regular use.",
     "id": "stereoCoder",
     "keys": [
      "pilot_level",

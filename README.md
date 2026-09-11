@@ -51,7 +51,7 @@ The macOS GUI is organised into these sections. The Linux build has no GUI -- th
 
 - `Monitoring`: live status, transport, interfaces summary, DSP status, RDS snapshot
 - `Audio I/O` (0.50): input / MPX output / monitor device pickers, the Operating Mode (MPX / FM / HD / AM Output, plus the Monitor switch), engine format, and the level calibration -- Input Gain, MPX Output Level, Line Output with a live DAC Peak readout -- remembered **per device** and recalled when you switch rigs
-- `Processing`: Overview, Format Profile, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), experimental single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, PrimeBass (+ Mono Bass), Bass Clipper, DC Clipper, HF Limiter / Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control, and the experimental SSB Stereo encoder (SSB-leaning stereo encoding) on top of the soft-clipper), BS.412, Final Stage
+- `Processing`: Overview, Format Profile, Core, Phase Rotator, AGC, Parametric EQ, Multiband (with optional transient-aware attack + inter-band gain coupling), single-stage Advanced Dynamics leveler (replaces AGC+multiband when enabled), Expander, MB Limiter, PrimeBass (+ Mono Bass), Bass Clipper, DC Clipper, HF Limiter / Clipper, Audio Limiter, Composite Clipper (optional look-ahead peak control, and the SSB Stereo encoder (SSB-leaning stereo encoding) on top of the soft-clipper), BS.412, Final Stage
 - `RDS`: status (master enable + live snapshot), identity (PI / PTY / PTYN / ECC + PS banks + runtime flags TP / TA / MS / DI), radiotext (RT / RT+ / Now Playing), long PS, alt. frequencies (AF), schedule (group sequence + clock-time), subcarrier (injection level + frequency + Gaussian shaping)
 - `Tools`: Test Tone (sine / pink / white, four stereo modes, frequency presets, dBFS level where 0 dBFS = 100% audio modulation -- a calibration source that bypasses the processing and shows the expected deviation; replaces the audio input live when enabled, Cmd-T)
 - `Settings` (a window, not a sidebar section): configuration path, spectrum options, remote control; devices, operating mode and engine format moved to `Audio I/O` in 0.50
@@ -67,7 +67,10 @@ transport restart since they reconfigure the modulator.
 
 ## MPX Prime Studio -- the encoder (macOS + Linux)
 
-Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
+Makes the FM multiplex. Two ways to run it, one DSP chain:
+
+- **macOS** -- a native GUI application (`MPX Prime Studio.app`), Core Audio, with an optional web dashboard and a headless mode.
+- **Linux** -- a **web-operated appliance**: the `mpxprime` systemd service encodes into ALSA and the web dashboard is the operator interface (every control the GUI has). Debian/Ubuntu package, x86_64, AVX2 recommended.
 
 - Real-time MPX generation with 19 kHz pilot and 38 kHz stereo subcarrier
 - **Premium receiver-side stereo separation** at the default config (0.28): 65 dB at 1 kHz, 50.5 dB at 10 kHz, 43.4 dB at 14 kHz, measured by `--verify-receiver` through the reusable `MPXDecoder` (matches Optimod 8x00 / Stereotool published numbers)
@@ -84,7 +87,7 @@ Makes the FM multiplex. Runs as a macOS GUI app or headless on macOS/Linux.
 - **Four operating modes** (Audio I/O - Operating Mode), one choice for what leaves the output device: **MPX Output** (the FM composite), **FM Output** (processed stereo L/R for an external stereo coder + RDS encoder, for transmitters that only accept L/R / AES3), **HD Output** (flat full-bandwidth L/R with a true-peak ceiling, for streaming or DAB+ / AAC) and **AM Output** (mono, NRSC pre-emphasis and band limit, asymmetric positive-peak headroom). Every stage with no function in the selected mode is switched off and hidden -- outside MPX Output no composite, pilot or RDS is generated at all -- in the app and on the web dashboard alike.
 - Scopes, spectrum, levels, sticky peaks, and live monitoring views (macOS GUI; the dashboard shows live meters/readouts and exposes the scope/spectrum data via `GET /api/telemetry` for external tooling -- no in-browser graphs)
 - **Remote control** -- an embedded, default-off REST API + web dashboard for local or remote operation ([see below](#remote-control)); it is the primary interface on the headless Linux build. Since 0.44 the dashboard has **full parity with the native GUI**: every setting, station formats + final-stage presets, the 8 operator preset slots (shared with the GUI), and a scope/spectrum telemetry endpoint for external tooling
-- **Linux command-line build** (experimental): the encoder runs headless with ALSA output, SIMD-accelerated so the full chain fits low-power hardware; shipped as Debian/Ubuntu packages with a systemd service. No GUI, no Meter.
+- **Linux web dashboard encoder** (supported; x86_64, AVX2 recommended): the same DSP chain as macOS, pinned by its own strict baseline in CI, real-time scheduled and measured, the sound card's mixer and the Monitor on the dashboard; shipped as a Debian/Ubuntu package whose upgrades keep the service up. The GUI, the Meter and the SDR tuner are macOS apps, and the dashboard's scope / spectrum views are not yet fed on Linux.
 - Config persisted to the INI (`~/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini` on macOS; `~/.local/share/...` or `/var/lib/mpxprime/` on Linux)
 
 ## MPX Prime Meter -- the analyzer (macOS only)
@@ -177,11 +180,10 @@ not the on-air signal.
 
 ## Requirements
 
-- macOS 15+ (primary platform). An experimental **Linux command-line port**
-  of the encoder (headless `--nogui` into an ALSA device, verifier, benchmark;
-  no GUI, no Meter) builds from the same source tree -- see
-  [docs/BUILDING.md](docs/BUILDING.md#linux-cli-only).
-- **Platform support tiers:** **Apple Silicon (arm64) is Tier 1** -- the primary, fully-supported target. **Intel (x86_64) is Tier 2, best-effort** -- the universal binary runs and the audio chain is identical, but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first; Intel gets lighter-weight fallbacks where they help but is not the optimization priority.
+- macOS 15+ (the GUI apps), or Linux x86_64 for the **web dashboard encoder**
+  (a systemd service operated from the browser; Debian/Ubuntu package, tested
+  on Ubuntu 24.04 and 26.04) -- see [docs/BUILDING.md](docs/BUILDING.md#linux-web-dashboard-encoder).
+- **Platform support tiers:** **Apple Silicon (arm64) and the Linux web dashboard encoder (x86_64 with AVX2) are Tier 1** -- supported, production platforms; the DSP chain is identical and each pins its own strict baseline in CI. **Intel macOS (x86_64) is Tier 2, best-effort** -- the universal binary runs, the chain is identical (zero-drift against the macOS baseline), but performance tuning (e.g. the GUI refresh profile) targets Apple Silicon first. Linux CPUs without AVX2 run the SSE2 kernels and sit below the recommended baseline (see the CPU bullet below).
 - **CPU -- minimum and recommended.** The encoder is single-thread-bound: one
   core carries the whole 192 kHz chain, so per-core speed is what counts and
   core count past two buys nothing. The yardstick is `MPXPrime --bench`
@@ -216,7 +218,7 @@ Pre-built universal binaries (Apple Silicon + Intel) ship as macOS `.dmg` files 
 
 Each release is built and signed by GitHub Actions from the matching tag. Pick the latest version, download `MPX_Prime-<version>.dmg`, and drag the apps into `/Applications` (or any folder you prefer). The DMG contains **two** apps: **MPX Prime Studio** (the encoder) and **MPX Prime Meter** (the companion analyzer, below) -- install whichever you need.
 
-**Linux (encoder only):** the same releases attach Debian/Ubuntu packages
+**Linux (the web dashboard encoder):** the same releases attach Debian/Ubuntu packages
 `mpxprime_<version>-ubuntu24.04_amd64.deb` (static Swift stdlib; installs and runs on later Ubuntu releases too).
 Install with `sudo dpkg -i mpxprime_*.deb` (or `sudo apt install ./mpxprime_*.deb`
 to pull dependencies); it provides the headless encoder as a `mpxprime`
@@ -224,10 +226,9 @@ systemd service that always serves the web dashboard -- its only operator
 interface -- at `http://<host>:8737/` on all interfaces, behind a random API
 key the installer generates and prints (stored in
 `/var/lib/mpxprime/MPXPrime.ini` as `control_api_key`; the
-[Operator Guide](docs/studio-operator-guide.md#installing-and-starting) walks through it). This is the
-CLI encoder only -- no GUI, no Meter; the Monitor plays on a second ALSA
-device. See
-[docs/BUILDING.md](docs/BUILDING.md#linux-cli-only) for setup.
+[Operator Guide](docs/studio-operator-guide.md#running-on-linux-the-web-dashboard-encoder) walks through it). The GUI and
+the Meter are macOS apps; the Monitor plays on a second ALSA device. See
+[docs/BUILDING.md](docs/BUILDING.md#linux-web-dashboard-encoder) for setup.
 
 ### First-launch security note
 

@@ -103,7 +103,7 @@ per-CPU kernels and of measuring before choosing a box.
 ## What this means when choosing a box
 
 - **Apple Silicon or a current Intel/AMD core**: everything on, every
-  experimental stage included, at 17-30 %. Nothing to decide.
+  optional stage included, at 17-30 %. Nothing to decide.
 - **A small x86 box for a Linux appliance**: needs AVX2 and a modern core --
   an Intel N100-class part is the floor, an N305 or a Core i3 comfortable.
   The Ryzen 5 PRO 2400GE above is the smallest machine measured that runs

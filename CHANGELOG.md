@@ -62,6 +62,26 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **Linux is a supported platform, not an experiment.** The web dashboard
+  encoder on x86_64 Linux -- a service operated from the browser -- joins
+  Apple Silicon as Tier 1: the same DSP chain pinned by
+  its own strict baseline in CI, bit-identical AVX2/SSE2 kernels, real-time
+  scheduling and render load measured and reported, the card mixer, the
+  Monitor, the dashboard as a full operator interface, a package whose
+  upgrades keep the service up. What it does not have is stated instead of
+  hedged: the GUI, the Meter and the SDR tuner are macOS apps by design; the
+  scope/spectrum telemetry and `--verify-program-ab` are not on Linux yet.
+- **Nothing in the chain is "experimental" any more.** Advanced Dynamics,
+  SSB Stereo, the multiband's transient-aware attack and inter-band coupling,
+  and the bandlimited-residual clipper were validated on air by the operator;
+  the label is gone from the GUI, the dashboard, the manuals and
+  ARCHITECTURE. They remain options that are off by default, with their A/B
+  verifier gates as regression detectors.
+- **The operator guide separates the platforms.** "Installing and starting"
+  is the macOS chapter; a new "Running on Linux: the web dashboard encoder"
+  chapter gathers the install, the sound card mixer, render load, the CPU
+  budget and the level question, so neither reader wades through the other's
+  material.
 - **`docs/performance.md`.** The chain's measured cost on every machine it
   has run on -- M1 Pro, i7-9750H, Ryzen 5 PRO 2400GE (AVX2 and SSE2 kernels)
   -- as `--bench` chain cost, per-stage cost, clipper

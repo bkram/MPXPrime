@@ -330,7 +330,7 @@ struct ProcessingMultibandTab: View {
             Toggle("Transient-aware Attack", isOn: model.configBinding(\.multibandTransientAwareAttackEnabled, runtimeDisposition: .live))
                 .help("Uses a peak/RMS hybrid detector and briefly slows attack on percussive fronts so kicks and snares are not over-squashed.")
             Toggle("Inter-band Coupling", isOn: model.configBinding(\.multibandInterBandCouplingEnabled, runtimeDisposition: .live))
-                .help("Experimental: low-band gain reduction gently lowers upper-band thresholds so bass-heavy passages stay tonally glued.")
+                .help("Low-band gain reduction gently lowers upper-band thresholds so bass-heavy passages stay tonally glued.")
 
             // Crossovers — operator-rare; collapsed by default. Once
             // the FabFilter-style spectrum-with-drag-handles editor
@@ -385,7 +385,7 @@ struct ProcessingLimiterTab: View {
                     "Reduce Clipping Distortion",
                     isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
                 )
-                .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Experimental; off keeps the current behavior.")
+                .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Off keeps the classic behavior.")
                 .disabled(disabled)
                 Toggle(isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)) {
                     HStack(spacing: 6) {
@@ -642,7 +642,7 @@ struct ProcessingAdvancedDynamicsTab: View {
     var body: some View {
         Card(title: "Advanced Dynamics") {
             Toggle("Enable Advanced Dynamics", isOn: model.configBinding(\.advancedDynamicsEnabled, runtimeDisposition: .live))
-                .help("Experimental single-stage 5-band leveler. While enabled, the AGC and Multiband stages are bypassed and this stage does all the leveling and density work in one place.")
+                .help("Single-stage 5-band leveler. While enabled, the AGC and Multiband stages are bypassed and this stage does all the leveling and density work in one place.")
             let disabled = !model.config.advancedDynamicsEnabled
             // Usage tip (the shared help box below already explains WHAT the
             // stage is; this is the how-to-drive-it line).
@@ -717,7 +717,7 @@ struct ProcessingStereoCoderTab: View {
                 .help("Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom before the clipper works. Independent of the Composite Clipper's enable.")
             // Disclaimer caption (the Advanced Dynamics pattern) instead of
             // folding the controls away: the tab exists for this option.
-            Text("Experimental. Standard receivers decode SSB stereo fine (measured 81+ dB separation), but phase-imperfect radios may lose a little separation -- A/B on a real receiver and verify with --verify-ssb-stereo before regular use. Stereo encoding itself is always active; this only changes how the subcarrier is assembled.")
+            Text("Standard receivers decode SSB stereo fine (measured 81+ dB separation); phase-imperfect radios may lose a little separation, so A/B on your own receivers. Stereo encoding itself is always active; this only changes how the subcarrier is assembled.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",

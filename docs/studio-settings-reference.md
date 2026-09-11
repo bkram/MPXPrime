@@ -7,12 +7,12 @@ Guide](studio-operator-guide.md).
 
 ## The configuration file
 
-> **Linux (experimental CLI port):** the encoder also runs headless on Linux
-> (`--nogui`; no GUI, no Meter). The same INI works, with two differences:
+> **Linux (web dashboard encoder):** the encoder also runs on Linux as a
+> service operated from the dashboard (`--web`; the GUI and the Meter are macOS apps). The same INI works, with two differences:
 > the default config path is `~/.local/share/MPX Prime Studio/MPX Prime
 > Studio.ini`, and the `input_device_uid` / `output_device_uid` keys hold
 > ALSA PCM names (`default`, `hw:0,0`, `plughw:...`) instead of CoreAudio
-> UIDs. See docs/BUILDING.md "Linux (CLI-only)" for setup and device notes.
+> UIDs. See docs/BUILDING.md "Linux (web dashboard encoder)" for setup and device notes.
 >
 > **A missing audio device does not crash the encoder.** If the configured
 > ALSA device can't be opened at start, the control server still comes up;
@@ -59,8 +59,8 @@ Recommended **off** by default (enable only when needed):
 - **Bass Clipper** -- engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary.
 - **HF Clipper** -- pre-emphasis-aware HF *clipper* (same tab; `hf_clipper_*`). Off by default and no longer used by any profile: it is a waveshaper on the pre-emphasised high band, so it distorts the cymbals and hi-hats it controls (the 2026-08 field finding). Keep it as a last resort for maximum HF density on dense EDM after the HF Limiter is already on; leave off for talk / classical. Controls live-apply.
 - **BS.412 MPX Power Limiter** -- required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. See "When to leave BS.412 and the Composite Clipper off" below.
-- **Advanced Dynamics** -- experimental single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Processing` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
-- **SSB Stereo Encoder** -- experimental SSB-leaning stereo encoder (`mpx_ssb_stereo_enabled` + `mpx_ssb_stereo_amount`, the dedicated `Stereo Coder` tab/page in both UIs, between Audio Limiter and Composite Clipper -- chain position of the stereo encoder itself). Leans the 38 kHz L-R subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower. Decode-compatible (coherent separation measured 81+ dB with it on) and mono-transparent, but the loudness benefit is not yet demonstrated on synthetic program -- treat it as a listening experiment, verify with `--verify-ssb-stereo` and a real receiver, and leave it off otherwise.
+- **Advanced Dynamics** -- optional single-stage leveler that REPLACES the AGC and Multiband stages while enabled (`advanced_dynamics_enabled`; `Processing` -> `Adv Dyn`). See "Advanced Dynamics" below. Leave off until you have A/B'd it against your tuned AGC+Multiband on your own program material.
+- **SSB Stereo Encoder** -- optional SSB-leaning stereo encoder (`mpx_ssb_stereo_enabled` + `mpx_ssb_stereo_amount`, the dedicated `Stereo Coder` tab/page in both UIs, between Audio Limiter and Composite Clipper -- chain position of the stereo encoder itself). Leans the 38 kHz L-R subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower. Decode-compatible (coherent separation measured 81+ dB with it on) and mono-transparent, but the loudness benefit is not yet demonstrated on synthetic program -- treat it as a listening experiment, verify with `--verify-ssb-stereo` and a real receiver, and leave it off otherwise.
 
 This is a sensible amateur-grade starting point. Tune from there based on listening A/B against your typical program material. Heavier formats (CHR, EDM, dance) may benefit from PrimeBass + Bass Clipper on; talk-heavy or classical formats may want Multiband intensity dropped and Composite Clipper drive reduced.
 

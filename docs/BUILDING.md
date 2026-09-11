@@ -78,10 +78,11 @@ The in-process SDR (RTL-SDR / SDRplay) is GUI-only; the headless dashboard takes
 an audio device (`--device`) or a composite on stdin (`--stdin`). See the
 [Meter Operator Guide](meter-operator-guide.md) for the full control surface.
 
-## Linux (CLI-only)
+## Linux (web dashboard encoder)
 
-The encoder also builds and runs on Linux as a **command-line-only** port
-(experimental; dev-tested on Ubuntu 24.04 x86_64). The GUI, the MPX Prime
+The encoder also builds and runs on Linux as a **web-operated** encoder: a
+headless service whose interface is the web dashboard (supported since 0.50; tested on Ubuntu 24.04 and 26.04, x86_64; recommended
+on CPUs with AVX2, see docs/performance.md). The GUI, the MPX Prime
 Meter and the SDR tuner remain macOS-only (the Monitor output plays on a
 second ALSA device); the DSP kernels carry an AVX2 clone next to the SSE2
 baseline and pick per CPU at load (`mpxprime --version` shows which), so the

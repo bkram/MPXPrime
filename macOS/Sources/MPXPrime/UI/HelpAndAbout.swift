@@ -403,7 +403,7 @@ struct AboutSectionView: View {
                 // (intended-use / not-certified) + LICENSE (AGPL-3.0, no
                 // warranty). The About only carries README's canonical key
                 // phrase plus pointers — do not restate the full text here.
-                Text("Experimental and not certified — no conformity or compliance is promised. See the README for intended use and the GPL-3.0 license for terms (provided without warranty).")
+                Text("Experimental and not certified -- no conformity or compliance is promised. See the README for intended use and the AGPL-3.0 license for terms (provided without warranty).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

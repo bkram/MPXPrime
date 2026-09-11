@@ -1575,11 +1575,16 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func remoteStatus() -> ControlStatus {
-        ControlStatus(
+        let actualRate = runningEngine?.renderSampleRateForControl ?? config.sampleRate
+        var notes = statusText.isEmpty ? [] : [statusText]
+        if let note = HeadlessControlBackend.rateMismatchNote(configured: config.sampleRate, actual: actualRate) {
+            notes.append(note)
+        }
+        return ControlStatus(
             running: isRunning,
             platform: "macOS (GUI)",
             version: AppConfig.appVersion,
-            sampleRateHz: config.sampleRate,
+            sampleRateHz: actualRate,
             uptimeSeconds: engineStartReference.map {
                 Date().timeIntervalSinceReferenceDate - $0
             },
@@ -1587,7 +1592,7 @@ final class MPXPrimeViewModel: ObservableObject {
             sourceMode: config.sourceMode,
             outputMode: config.operatingMode.rawValue,
             monitorActive: runningEngine?.monitorActiveForControl ?? false,
-            notes: statusText.isEmpty ? [] : [statusText]
+            notes: notes
         )
     }
 

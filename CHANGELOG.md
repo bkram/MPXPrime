@@ -62,6 +62,18 @@ combination test suite. Newest first.
   buffer, render load 94 %), 0 throughout at 4096 (170 ms) -- the deeper
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
+- **Intel review (x86_64 macOS, headless `--web`).** The whole control
+  path works on an i7 MacBook Pro -- status, devices, meters, the 20 Hz
+  stream, live and restart-class PATCHes, transport restart, the dashboard --
+  and the strict baseline is zero-drift on x86_64 Accelerate. Three findings
+  fixed: `/api/status` reported the CONFIGURED sample rate while CoreAudio
+  rendered at the device's (a 96 kHz built-in output against `sample_rate =
+  48000`) -- it now reports the engine's actual rate and adds a note when the
+  device did not take the configured one, in both backends; the meters' peak
+  hold decayed per READ with the elapsed time clamped to 1 s, so a client
+  polling every 15 s watched a held peak fall 6.6 dB per poll -- it decays by
+  wall clock now; and `--version` said `DSP kernels: sse2` on a machine that
+  runs Accelerate -- it says `DSP: Accelerate` on macOS.
 - **The default PS rotation is the product's own name.** `ps_dynamic`
   shipped as `3s:Stereo- 3s:Fool 3s:MAC 3s:App 3s:FM 3s:MPX 3s:+RDS`, a
   leftover from the project's origins; the default (code and sample INI) is

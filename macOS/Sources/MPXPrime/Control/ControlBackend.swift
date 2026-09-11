@@ -230,9 +230,15 @@ protocol ControlledEngine: AnyObject {
     /// Why the render thread is NOT real-time, when it is not (Linux); nil
     /// when it is or when the platform's audio engine owns scheduling itself.
     var schedulingNoteForControl: String? { get }
+    /// The rate the engine ACTUALLY renders at, when it can differ from the
+    /// configured one: CoreAudio follows the device (a built-in output that
+    /// tops out at 96 kHz renders at 96 kHz whatever `sample_rate` says).
+    /// Nil where the engine opens the configured rate exactly (ALSA).
+    var renderSampleRateForControl: Double? { get }
 }
 
 extension ControlledEngine {
+    var renderSampleRateForControl: Double? { nil }
     var monitorActiveForControl: Bool { false }
     var schedulingNoteForControl: String? { nil }
 }

@@ -61,18 +61,33 @@ actor HeadlessControlBackend: ControlBackend {
     // MARK: - ControlBackend
 
     func status() -> ControlStatus {
-        ControlStatus(
+        let actualRate = engine?.renderSampleRateForControl ?? config.sampleRate
+        var allNotes = notes
+        if let note = Self.rateMismatchNote(configured: config.sampleRate, actual: actualRate) {
+            allNotes.append(note)
+        }
+        return ControlStatus(
             running: engine != nil,
             platform: platformName(),
             version: AppConfig.appVersion,
-            sampleRateHz: config.sampleRate,
+            sampleRateHz: actualRate,
             uptimeSeconds: startedAt.map { Date().timeIntervalSince($0) },
             restartPending: restartPending,
             sourceMode: config.sourceMode,
             outputMode: config.operatingMode.rawValue,
             monitorActive: engine?.monitorActiveForControl ?? false,
-            notes: notes
+            notes: allNotes
         )
+    }
+
+    /// The device did not take the configured rate (CoreAudio renders at the
+    /// device's rate). Said out loud because the composite needs 192 kHz and a
+    /// 96 kHz built-in output silently cannot carry the 57 kHz RDS subcarrier;
+    /// the Intel MacBook's speakers did exactly this while status read 48000.
+    static func rateMismatchNote(configured: Double, actual: Double) -> String? {
+        guard actual > 0, abs(actual - configured) >= 1 else { return nil }
+        return "The output device runs at \(Int(actual.rounded())) Hz, not the configured "
+            + "\(Int(configured.rounded())) Hz; the engine renders at the device's rate."
     }
 
     func meters() -> ControlMeters? {
@@ -590,6 +605,8 @@ actor HeadlessControlBackend: ControlBackend {
 
 #if os(macOS)
 extension AudioOutputEngine: ControlledEngine {
+    var renderSampleRateForControl: Double? { renderSampleRate }
+
     /// Scope waveforms straight from the engine's meter histories + an MPX
     /// spectrum computed here with the shared MPXSpectrumAnalyzer. Called at
     /// the dashboard's poll rate (4-7 Hz), not per tick: a fresh 4096-point

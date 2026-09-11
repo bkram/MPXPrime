@@ -1406,7 +1406,13 @@ final class AudioOutputEngine {
     var meters: MeterSnapshot {
         meterLock.lock()
         let nowUptime = ProcessInfo.processInfo.systemUptime
-        let dt = max(0.0, min(1.0, nowUptime - (lastMeterReadUptime ?? (nowUptime - 0.2))))
+        // Elapsed time since the last read, so the hold decays by wall clock
+        // whatever the caller's rate. The old 1 s clamp made a client polling
+        // every 15 s see the held peak fall 6.6 dB PER POLL -- a tone that
+        // had stepped from -24 to -60 dBFS read -31, -38, -44 over 45 s on
+        // the Intel box. A long gap now decays the hold to nothing, which is
+        // what a peak hold means after 15 s.
+        let dt = max(0.0, min(60.0, nowUptime - (lastMeterReadUptime ?? (nowUptime - 0.2))))
         lastMeterReadUptime = nowUptime
         // Keep peak hold decay stable regardless of UI polling frequency.
         let decayPerSecond: Float = 0.47

@@ -134,7 +134,14 @@ func parseCLI() -> CLIOptions {
             // `mpxprime --version` launched a full encoder -- two of them were
             // found holding the sound card and the control port on the Linux
             // rig. Exit before anything else can start.
+            // On macOS the DSP runs on Apple's Accelerate; the per-CPU C kernels are
+            // the Linux shim's, so naming them here would mislead (an Intel Mac
+            // would read "sse2" while running vDSP).
+            #if canImport(Accelerate)
+            print("MPX Prime Studio \(AppConfig.appVersion) (DSP: Accelerate)")
+            #else
             print("MPX Prime Studio \(AppConfig.appVersion) (DSP kernels: \(String(cString: mpx_simd_kernel_variant())))")
+            #endif
             exit(0)
         case "--gui":
             options.gui = true

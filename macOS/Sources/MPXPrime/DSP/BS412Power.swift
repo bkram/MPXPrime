@@ -308,7 +308,7 @@ struct BS412Rider {
 /// alone. In normal operation the rider keeps it idle and it is bit-
 /// transparent.
 struct BS412ComplianceGuard {
-    /// Extra headroom under the operator ceiling. The bound above is proved
+    /// Extra headroom under the operator ceiling. The bound below is proved
     /// for block-aligned windows; a window starting mid-block can differ by
     /// at most one block's energy, and with the emitted composite bounded to
     /// 1.0 that is `decimation / windowSamples` of the budget -- under
@@ -316,11 +316,21 @@ struct BS412ComplianceGuard {
     /// also what absorbs float error in the rolling sum.
     static let internalMarginDB: Float = 0.01
 
+    /// How long an intervention stays visible in telemetry. Telemetry is
+    /// sampled per render block, and on ALSA only every fourth period, so a
+    /// few-sample flag is invisible: an isolated guard event has to still be
+    /// set at the next publication point or it may as well not be reported.
+    static let activeHoldSeconds: Float = 0.5
+
     private(set) var unachievable = false
     private(set) var active = false
 
+    /// Real emitted block energies only. Slots never written stay 0 and are
+    /// accounted through `reservePerBlock` instead, so changing the reserve
+    /// is O(1) and never discards measured history.
     private var ring: [Float] = [0.0]
     private var index = 0
+    private var observedBlocks = 0
     private var sum: Double = 0.0
     private var blocksPerWindow = 1
     private var windowSamples: Float = 1.0
@@ -334,52 +344,58 @@ struct BS412ComplianceGuard {
     private var blockEnergy: Float = 0.0
     private var blockSubcarrierEnergy: Float = 0.0
     private var impossibleRun = 0
-    private var activeRun = 0
+    private var activeHoldSamples = 1
+    private var activeHold = 0
 
     mutating func configure(sampleRate: Float, subcarrierReserveMeanSquare: Float) {
         let sr = max(8_000.0, sampleRate)
         let blocks = max(1, Int((sr * BS412.windowSeconds).rounded()) / BS412.decimation)
         windowSamples = Float(blocks * BS412.decimation)
-        let reserve = max(0.0, subcarrierReserveMeanSquare) * Float(BS412.decimation)
-        let sizeChanged = blocks != blocksPerWindow
-        if sizeChanged {
-            blocksPerWindow = blocks
-            ring = [Float](repeating: 0.0, count: blocks)
-        }
-        if sizeChanged || reserve != reservePerBlock {
-            // A pilot / RDS configuration change alters the unavoidable
-            // future energy, so the reserve has to be re-charged before any
-            // more audio energy is accepted against the old one.
-            recharge(reserve: reserve)
-        }
+        activeHoldSamples = max(1, Int((sr * Self.activeHoldSeconds).rounded()))
+        setSubcarrierReserve(subcarrierReserveMeanSquare)
+        guard blocks != blocksPerWindow else { return }
+        blocksPerWindow = blocks
+        ring = [Float](repeating: 0.0, count: blocks)
+        reset()
     }
 
-    private mutating func recharge(reserve: Float) {
-        reservePerBlock = reserve
+    /// Update the unavoidable future subcarrier energy. Pilot level and the
+    /// deviation scale are live-apply, so this MUST be called when they
+    /// change: a stale reserve under-charges the unobserved slots and lets a
+    /// completed window run over (measured at +0.47 dBr against a 0 dBr
+    /// ceiling after a live pilot increase during warm-up).
+    ///
+    /// O(1) and history-preserving by construction, because the reserve is
+    /// not stored in the ring.
+    mutating func setSubcarrierReserve(_ meanSquare: Float) {
+        reservePerBlock = max(0.0, meanSquare) * Float(BS412.decimation)
+    }
+
+    mutating func reset() {
         index = 0
+        observedBlocks = 0
         sum = 0.0
-        for i in 0..<ring.count {
-            ring[i] = reserve
-            sum += Double(reserve)
-        }
+        for i in 0..<ring.count { ring[i] = 0.0 }
         remainingSamples = 0
         blockEnergy = 0.0
         blockSubcarrierEnergy = 0.0
         impossibleRun = 0
         unachievable = false
         active = false
-        activeRun = 0
-    }
-
-    mutating func reset() {
-        recharge(reserve: reservePerBlock)
+        activeHold = 0
     }
 
     /// Pass one sample through the budget. `audio` is the reducible
     /// component, `subcarriers` the fixed one, both in the modulation domain.
-    /// Returns the emitted sample; `audio` is scaled, `subcarriers` never is.
+    ///
+    /// `enforcing` false still ACCOUNTS the sample and advances the window --
+    /// that is what lets the operator switch the stage on and have it act on
+    /// real history instead of starting a fresh 60-second blind period -- but
+    /// never attenuates.
     @inline(__always)
-    mutating func process(audio: Float, subcarriers: Float, ceilingDBr: Float) -> Float {
+    mutating func process(
+        audio: Float, subcarriers: Float, ceilingDBr: Float, enforcing: Bool
+    ) -> Float {
         let a = audio.isFinite ? audio : 0.0
         let s = subcarriers.isFinite ? subcarriers : 0.0
 
@@ -387,17 +403,17 @@ struct BS412ComplianceGuard {
             beginBlock(ceilingDBr: ceilingDBr)
         }
 
-        let allowance = remainingBlockEnergy / Float(remainingSamples)
-        let limit = sqrtf(max(0.0, allowance))
-        let candidate = a + s
-        var emitted = candidate
-        if fabsf(candidate) > limit {
-            emitted = (a * solveGain(audio: a, subcarriers: s, limit: limit)) + s
-            activeRun = 8
-        } else if activeRun > 0 {
-            activeRun -= 1
+        var emitted = a + s
+        if enforcing {
+            let allowance = remainingBlockEnergy / Float(remainingSamples)
+            let limit = sqrtf(max(0.0, allowance))
+            if fabsf(emitted) > limit {
+                emitted = (a * solveGain(audio: a, subcarriers: s, limit: limit)) + s
+                activeHold = activeHoldSamples
+            }
         }
-        active = activeRun > 0
+        if activeHold > 0 { activeHold -= 1 }
+        active = enforcing && activeHold > 0
 
         let energy = emitted * emitted
         remainingBlockEnergy = max(0.0, remainingBlockEnergy - energy)
@@ -411,7 +427,7 @@ struct BS412ComplianceGuard {
     /// Largest `h` in [0, 1] with `abs(h * audio + subcarriers) <= limit`.
     /// Solved as an interval, never iterated.
     @inline(__always)
-    private mutating func solveGain(audio: Float, subcarriers: Float, limit: Float) -> Float {
+    private func solveGain(audio: Float, subcarriers: Float, limit: Float) -> Float {
         guard audio != 0.0 else {
             // No audio gain can change this sample. Whether that is a fault
             // is decided per BLOCK, below -- a sinusoid routinely exceeds a
@@ -436,7 +452,13 @@ struct BS412ComplianceGuard {
     private mutating func beginBlock(ceilingDBr: Float) {
         let ceiling = BS412.meanSquare(forDBr: ceilingDBr - Self.internalMarginDB)
         let windowLimit = Double(ceiling) * Double(windowSamples)
-        let past = sum - Double(ring[index])
+        // The window after this block: every real slot except the one about
+        // to be replaced, plus this block, plus a reserve for each slot that
+        // still holds nothing.
+        let observedAfter = min(blocksPerWindow, observedBlocks + (observedBlocks < blocksPerWindow ? 1 : 0))
+        let unobservedAfter = max(0, blocksPerWindow - observedAfter)
+        let past = (sum - Double(ring[index]))
+            + (Double(reservePerBlock) * Double(unobservedAfter))
         remainingBlockEnergy = Float(max(0.0, windowLimit - past))
         remainingSamples = BS412.decimation
         blockEnergy = 0.0
@@ -458,6 +480,7 @@ struct BS412ComplianceGuard {
         blockSubcarrierEnergy = 0.0
 
         let energy = zapDenorm(blockEnergy)
+        if observedBlocks < blocksPerWindow { observedBlocks += 1 }
         sum -= Double(ring[index])
         ring[index] = energy
         sum += Double(energy)

@@ -140,6 +140,13 @@ combination test suite. Newest first.
   60-second window exceed the ceiling, including the first one and the ones
   spanning a change of programme. In normal use the ride does the work and
   the budget never intervenes.
+- **Fixed three BS.412 edge cases found in review.** Raising the pilot level
+  while the encoder was running left the limiter working from the old figure,
+  which allowed a completed minute to drift about half a dB over the ceiling.
+  Switching the limiter on after running with it off started it cold rather
+  than using the history it had been collecting, so it took a minute to
+  reach the right gain. And an isolated intervention was flagged for only
+  42 microseconds, far too briefly for the meters to ever show it.
 - **BS.412 tells you where it is.** New Monitoring readouts in both the Mac
   app and the dashboard: **MPX Power** in dBr, showing `42 / 60 s` while the
   first minute fills rather than a number nobody should trust yet, and

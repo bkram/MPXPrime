@@ -1882,6 +1882,11 @@ final class MPXGenerator {
         finalDrive = powf(10.0, config.finalDriveDB / 20.0)
         deviationScale = config.mpxDeviationKHz / 75.0
         pilotLevel = config.pilotLevel
+        // Both of the above feed the BS.412 guard's future-subcarrier
+        // reserve, and both are live-apply. Refreshing it is O(1) and keeps
+        // the accumulated window; leaving it stale under-charges the
+        // unobserved slots and lets a completed window run over.
+        bs412Guard.setSubcarrierReserve(bs412SubcarrierReserve)
         pilotInjectionPercent = config.pilotLevel * 100.0
         let preEncodeLimiterChanged =
             preEncodeAudioLimiterEnabled != config.preEncodeAudioLimiterEnabled
@@ -3987,11 +3992,15 @@ final class MPXGenerator {
         // every peak stage at constant amplitude; they are never the
         // actuator's to touch. The hard guard further down is what proves
         // the limit; this is what keeps the guard idle and the sound clean.
+        //
+        // The rider OBSERVES whether or not the stage is enabled, so that
+        // switching it on acts on real recent history rather than starting a
+        // fresh prediction window; only the gain application is gated.
         let bs412Controlling = bs412Enabled && !renderingCalibrationTone
+        bs412Rider.observe(
+            audio: audioComposite, subcarriers: delayedSubcarriers,
+            ceilingDBr: bs412CeilingDBr)
         if bs412Controlling {
-            bs412Rider.observe(
-                audio: audioComposite, subcarriers: delayedSubcarriers,
-                ceilingDBr: bs412CeilingDBr)
             audioComposite *= bs412Rider.gain
         }
 
@@ -4076,16 +4085,16 @@ final class MPXGenerator {
         // reducible audio and the fixed subcarriers are still separable, and
         // after every audio-only peak stage and the budget governor -- so
         // this is where the energy budget can be enforced exactly.
+        // The guard ACCOUNTS every sample whether or not it is enforcing, so
+        // its 60-second window is real history the moment the operator
+        // enables the stage. Only the attenuation is gated.
         let inverseOutputGain = 1.0 / max(1e-6, outputGain)
-        if bs412Controlling {
-            let audioModulation = mpx * inverseOutputGain
-            let emitted = bs412Guard.process(
-                audio: audioModulation, subcarriers: delayedSubcarriers,
-                ceilingDBr: bs412CeilingDBr)
-            mpx = emitted * outputGain
-        } else {
-            mpx += delayedSubcarriers * outputGain
-        }
+        let emitted = bs412Guard.process(
+            audio: mpx * inverseOutputGain,
+            subcarriers: delayedSubcarriers,
+            ceilingDBr: bs412CeilingDBr,
+            enforcing: bs412Controlling)
+        mpx = emitted * outputGain
 
         // Telemetry: measure how far the unclamped MPX exceeds ±1.0.
         // Non-zero envelope ⇒ pilot/RDS are being clipped at the

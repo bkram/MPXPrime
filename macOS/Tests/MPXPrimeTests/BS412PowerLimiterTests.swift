@@ -37,6 +37,11 @@ struct BS412PowerLimiterTests {
         private(set) var guardEverActive = false
         private(set) var subcarriersUntouched = true
 
+        mutating func resetWorstWindow() {
+            worstWindowDBr = -.infinity
+            windowsChecked = 0
+        }
+
         init(sampleRate: Float, ceilingDBr: Float, subcarrierReserve: Float) {
             self.ceilingDBr = ceilingDBr
             rider.configure(sampleRate: sampleRate)
@@ -45,12 +50,15 @@ struct BS412PowerLimiterTests {
             meter.configure(sampleRate: sampleRate)
         }
 
+        var enforcing = true
+
         /// One sample of pre-control audio plus its fixed subcarriers.
         mutating func push(audio: Float, subcarriers: Float) {
             rider.observe(audio: audio, subcarriers: subcarriers, ceilingDBr: ceilingDBr)
-            let ridden = audio * rider.gain
+            let ridden = enforcing ? audio * rider.gain : audio
             let emitted = guardStage.process(
-                audio: ridden, subcarriers: subcarriers, ceilingDBr: ceilingDBr)
+                audio: ridden, subcarriers: subcarriers, ceilingDBr: ceilingDBr,
+                enforcing: enforcing)
             if guardStage.active { guardEverActive = true }
             // The fixed part must survive untouched: whatever the stage did,
             // the emitted sample minus the audio share must still be `s`.
@@ -183,7 +191,8 @@ struct BS412PowerLimiterTests {
             let ridden = audio * r.rider.gain
             if r.rider.gain < 0.99 { sawReduction = true }
             let emitted = r.guardStage.process(
-                audio: ridden, subcarriers: pilot, ceilingDBr: r.ceilingDBr)
+                audio: ridden, subcarriers: pilot, ceilingDBr: r.ceilingDBr,
+                enforcing: true)
             // Whatever gain was applied, it was applied to `ridden` alone:
             // emitted = h * ridden + pilot, so emitted - h*ridden == pilot.
             // h is unknown here, but h is in [0, 1], so the emitted sample
@@ -205,7 +214,8 @@ struct BS412PowerLimiterTests {
         let pilotAmp = amplitude(deviationKHz: 30.0)   // far over a 0 dBr ceiling
         for i in 0..<Int(sampleRate * 90.0) {
             let pilot = sine(i, hz: 19_000.0, amp: pilotAmp)
-            let emitted = guardStage.process(audio: 0.0, subcarriers: pilot, ceilingDBr: 0.0)
+            let emitted = guardStage.process(
+                audio: 0.0, subcarriers: pilot, ceilingDBr: 0.0, enforcing: true)
             #expect(emitted == pilot, "the guard altered a subcarrier-only sample")
         }
         let impossible = guardStage.unachievable
@@ -294,9 +304,164 @@ struct BS412PowerLimiterTests {
                 "a -3 dBr ceiling left a window at \(r.worstWindowDBr) dBr")
     }
 
-    @Test func enableUsesExistingHistory() {
-        // The reporting meter runs regardless, so switching control on does
-        // not begin a fresh 60-second blind period.
+    // MARK: - Regressions from the 2026-09-11 review
+
+    @Test func enablingActsOnRealHistoryNotAFreshWindow() {
+        // The previous version of this test only checked that a STANDALONE
+        // meter had history -- it never toggled the controller, so it could
+        // not see that the rider and guard only advanced while enabled.
+        //
+        // Note what this can and cannot claim: audio already transmitted
+        // cannot be un-transmitted, so a window straddling the moment of
+        // enabling is over the ceiling by arithmetic. What must be true is
+        // that control starts INFORMED -- the rider already knows the
+        // programme is hot -- and that windows lying wholly after the
+        // switch are compliant without a 60-second wait.
+        var r = rig()
+        r.enforcing = false
+        let hot = amplitude(deviationKHz: 38.0)
+        var i = 0
+        func run(_ seconds: Float) {
+            for _ in 0..<Int(sampleRate * seconds) {
+                r.push(audio: sine(i, hz: 1_000.0, amp: hot), subcarriers: 0.0)
+                i += 1
+            }
+        }
+        run(70.0)
+        #expect(r.worstWindowDBr > 5.0,
+                "the disabled stage should not have altered anything, got \(r.worstWindowDBr) dBr")
+
+        // The instant of enabling: the rider must ALREADY be asking for
+        // reduction, because it has been observing all along. On the old
+        // code it sat at unity here and had to learn from scratch.
+        let gainAtEnable = r.rider.gain
+        #expect(gainAtEnable < 0.9,
+                "the rider was at \(gainAtEnable) when enabled -- it had no history")
+
+        r.enforcing = true
+        // Let the pre-enable audio age out of the window, then judge only
+        // windows that lie wholly after the switch.
+        run(70.0)
+        r.resetWorstWindow()
+        run(70.0)
+        #expect(r.windowsChecked > 0)
+        #expect(r.worstWindowDBr <= 0.05,
+                "a window wholly after enabling reads \(r.worstWindowDBr) dBr")
+    }
+
+    @Test func aLivePilotIncreaseUpdatesTheGuardsReserve() {
+        // Pilot level and the deviation scale are live-apply and both feed
+        // the reserve charged to not-yet-emitted slots. Leaving it stale
+        // under-charges them, and a completed window ran over at +0.47 dBr
+        // against a 0 dBr ceiling.
+        let smallPilot = amplitude(deviationKHz: 3.0)
+        let bigPilot = amplitude(deviationKHz: 12.0)
+        var r = rig(subcarrierReserve: (smallPilot * smallPilot) * 0.5)
+        var i = 0
+        // Warm-up at the small pilot, then the operator raises it.
+        for _ in 0..<Int(sampleRate * 10.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: 30.0)),
+                   subcarriers: sine(i, hz: 19_000.0, amp: smallPilot))
+            i += 1
+        }
+        r.guardStage.setSubcarrierReserve((bigPilot * bigPilot) * 0.5)
+        for _ in 0..<Int(sampleRate * 120.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: amplitude(deviationKHz: 30.0)),
+                   subcarriers: sine(i, hz: 19_000.0, amp: bigPilot))
+            i += 1
+        }
+        #expect(r.windowsChecked > 0)
+        #expect(r.worstWindowDBr <= 0.05,
+                "a live pilot increase left a completed window at \(r.worstWindowDBr) dBr")
+    }
+
+    @Test func aReserveChangeKeepsTheAccumulatedWindow() {
+        // The reserve is not stored in the ring, so updating it is O(1) and
+        // must not discard measured history -- otherwise a live pilot edit
+        // would blank the compliance window it is supposed to protect.
+        var guardStage = BS412ComplianceGuard()
+        guardStage.configure(sampleRate: sampleRate, subcarrierReserveMeanSquare: 0.0)
+        for i in 0..<Int(sampleRate * 10.0) {
+            _ = guardStage.process(audio: sine(i, hz: 1_000.0, amp: 0.3),
+                                   subcarriers: 0.0, ceilingDBr: 0.0, enforcing: true)
+        }
+        let before = guardStage.windowEnergy
+        #expect(before > 0.0)
+        guardStage.setSubcarrierReserve(0.005)
+        #expect(guardStage.windowEnergy == before,
+                "changing the reserve discarded the accumulated window")
+    }
+
+    @Test func anIsolatedGuardEventStaysVisibleToTelemetry() {
+        // Telemetry is sampled per render block, and on ALSA only every
+        // fourth period. An eight-sample flag is 42 us at 192 kHz -- an
+        // isolated intervention was already false by the next publication
+        // point, so it may as well not have been reported.
+        let sr: Float = 192_000.0
+        var guardStage = BS412ComplianceGuard()
+        guardStage.configure(sampleRate: sr, subcarrierReserveMeanSquare: 0.0)
+        // Spend the window budget, then force one intervention.
+        for i in 0..<Int(sr * 61.0) {
+            let x = 0.9 * sinf(2.0 * Float.pi * 1_000.0 * Float(i) / sr)
+            _ = guardStage.process(audio: x, subcarriers: 0.0,
+                                   ceilingDBr: 0.0, enforcing: true)
+        }
+        #expect(guardStage.active, "the guard should be working on a signal this hot")
+        // Now go silent and sample at a realistic publication distance: a
+        // 512-sample block, and four of them for the ALSA case.
+        for _ in 0..<512 {
+            _ = guardStage.process(audio: 0.0, subcarriers: 0.0,
+                                   ceilingDBr: 0.0, enforcing: true)
+        }
+        #expect(guardStage.active,
+                "the intervention was invisible one 512-sample block later")
+        for _ in 0..<(512 * 3) {
+            _ = guardStage.process(audio: 0.0, subcarriers: 0.0,
+                                   ceilingDBr: 0.0, enforcing: true)
+        }
+        #expect(guardStage.active,
+                "the intervention was invisible four blocks later, which is the ALSA rate")
+    }
+
+    /// Component tests above drive the rider and guard directly, so they
+    /// cannot see a WIRING mistake -- and two of the three defects this
+    /// section fixes were exactly that. This one goes through the generator.
+    @Test func theGeneratorRunsTheMeterWithTheStageDisabled() {
+        var cfg = AppConfig()
+        cfg.sampleRate = 192_000.0
+        cfg.blockSize = 4096
+        cfg.operatingMode = .mpx
+        cfg.enRDS = false
+        cfg.bs412Enabled = false          // DISABLED on purpose
+        let generator = MPXGenerator(config: cfg, sampleRate: 192_000.0)
+        let frames = Int(192_000.0 * 1.0)
+        var left = [Float](repeating: 0.0, count: frames)
+        var right = [Float](repeating: 0.0, count: frames)
+        for i in 0..<frames {
+            let v = Float(0.3 * sin(2.0 * Double.pi * 440.0 * Double(i) / 192_000.0))
+            left[i] = v
+            right[i] = v
+        }
+        left.withUnsafeMutableBufferPointer { lb in
+            right.withUnsafeMutableBufferPointer { rb in
+                // swiftlint:disable force_unwrapping
+                generator.renderFromInputInPlace(
+                    frameCount: frames, left: lb.baseAddress!, right: rb.baseAddress!)
+                // swiftlint:enable force_unwrapping
+            }
+        }
+        let status = generator.bs412Status
+        #expect(status.secondsObserved > 0.9,
+                """
+                one second rendered with BS.412 off advanced the window by \
+                \(status.secondsObserved) s -- the reporting meter is not wired \
+                unconditionally, so enabling the stage would start a blind minute
+                """)
+        #expect(!status.powerValid, "a one-second window must not be called valid")
+        #expect(status.powerDBr.isFinite)
+    }
+
+    @Test func theReportingMeterStillRunsWithTheStageOff() {
         var meter = BS412MultiplexPowerMeter()
         meter.configure(sampleRate: sampleRate)
         for i in 0..<Int(sampleRate * 65.0) {

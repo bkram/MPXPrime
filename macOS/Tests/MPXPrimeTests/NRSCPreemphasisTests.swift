@@ -17,15 +17,41 @@ import MPXPrimeCore
 @Suite("NRSC-1 AM pre-emphasis")
 struct NRSCPreemphasisTests {
 
-    /// The standard's own anchor points, in dB relative to DC. Independent of
-    /// our implementation: computed from the published zero/pole, and the
-    /// 10 kHz entry is the figure NRSC-1-C tabulates.
-    private static let table: [(hz: Double, dB: Double)] = [
-        (50, 0.002), (100, 0.009), (200, 0.036), (500, 0.220),
-        (1_000, 0.814), (2_000, 2.537), (3_000, 4.281), (4_000, 5.750),
-        (5_000, 6.924), (6_000, 7.850), (7_000, 8.581), (8_000, 9.161),
-        (9_000, 9.625), (10_000, 9.999),
+    /// NRSC-1-C-2024 Table 1, "Modified 75 us AM Standard Preemphasis Curve
+    /// (tabular form)", transcribed from `standards/nrsc-1-c-2024.pdf`
+    /// (page 9). Every point, magnitude and phase, as published -- not
+    /// computed from our own expression, so this really is an external
+    /// oracle.
+    ///
+    /// The document's own words (sec 5.2): "a single zero curve with a break
+    /// frequency at 2122 Hz ... To reduce the peak boost at high
+    /// frequencies, a single pole with a break frequency of 8700 Hz is
+    /// employed."
+    private static let table: [(hz: Double, dB: Double, phaseDeg: Double)] = [
+        (50, 0.00, 1.0), (100, 0.01, 2.0), (400, 0.14, 8.0), (700, 0.42, 13.7),
+        (1_000, 0.81, 18.7), (1_500, 1.63, 25.5), (2_000, 2.54, 30.4),
+        (2_500, 3.44, 33.6), (3_000, 4.28, 35.7), (3_500, 5.05, 36.9),
+        (4_000, 5.75, 37.4), (4_500, 6.37, 37.4), (5_000, 6.92, 37.1),
+        (5_500, 7.41, 36.6), (6_000, 7.85, 35.9), (6_500, 8.24, 35.2),
+        (7_000, 8.58, 34.3), (7_500, 8.89, 33.4), (8_000, 9.16, 32.5),
+        (8_500, 9.41, 31.6), (9_000, 9.62, 30.8), (9_500, 9.82, 29.9),
+        (10_000, 10.00, 29.0),
     ]
+
+    /// Phase of a designed biquad, in degrees.
+    private func phaseDeg(_ d: PreemphasisDesign, hz: Double, sampleRate: Double) -> Double {
+        let w = 2.0 * Double.pi * hz / sampleRate
+        let c1 = cos(w), s1 = sin(w)
+        let c2 = cos(2.0 * w), s2 = sin(2.0 * w)
+        let numRe = d.b0 + (d.b1 * c1) + (d.b2 * c2)
+        let numIm = -((d.b1 * s1) + (d.b2 * s2))
+        let denRe = 1.0 + (d.a1 * c1) + (d.a2 * c2)
+        let denIm = -((d.a1 * s1) + (d.a2 * s2))
+        let den = max(1e-300, (denRe * denRe) + (denIm * denIm))
+        let re = ((numRe * denRe) + (numIm * denIm)) / den
+        let im = ((numIm * denRe) - (numRe * denIm)) / den
+        return atan2(im, re) * 180.0 / Double.pi
+    }
 
     /// |H(e^jw)| of a designed biquad, in dB.
     private func responseDB(_ d: PreemphasisDesign, hz: Double, sampleRate: Double) -> Double {
@@ -44,15 +70,24 @@ struct NRSCPreemphasisTests {
     // MARK: - The curve itself
 
     @Test func theAnalogOracleMatchesTheStandardsTable() {
-        // The oracle every other test compares against, checked against the
-        // published figures rather than against our own filter.
+        // Our expression against the published table -- 23 points, magnitude
+        // and phase. If these ever disagree, the expression is wrong, not the
+        // standard.
         for point in Self.table {
             let got = PreemphasisDesign.nrscGainDB(frequencyHz: point.hz)
-            #expect(abs(got - point.dB) < 0.01,
-                    "NRSC-1 at \(Int(point.hz)) Hz is \(got) dB, the standard says \(point.dB) dB")
+            #expect(abs(got - point.dB) < 0.02,
+                    "NRSC-1 Table 1 at \(Int(point.hz)) Hz is \(got) dB, published \(point.dB) dB")
+        }
+        // The published phase, from the same one-zero/one-pole network.
+        for point in Self.table {
+            let phase = atan(point.hz / PreemphasisDesign.nrscZeroHz)
+                - atan(point.hz / PreemphasisDesign.nrscPoleHz)
+            let deg = phase * 180.0 / Double.pi
+            #expect(abs(deg - point.phaseDeg) < 0.1,
+                    "NRSC-1 Table 1 phase at \(Int(point.hz)) Hz is \(deg) deg, published \(point.phaseDeg)")
         }
         #expect(abs(PreemphasisDesign.nrscGainDB(frequencyHz: 10_000.0) - 10.0) < 0.01,
-                "the standard's anchor point is +10.00 dB at 10 kHz")
+                "the table's last entry is exactly +10.00 dB at 10 kHz")
     }
 
     @Test func theDesignedFilterFollowsTheStandardAtEveryRate() {
@@ -60,10 +95,30 @@ struct NRSCPreemphasisTests {
             let design = PreemphasisDesign.nrsc(sampleRate: sampleRate)
             for point in Self.table where point.hz < 0.45 * sampleRate {
                 let got = responseDB(design, hz: point.hz, sampleRate: sampleRate)
-                #expect(abs(got - point.dB) < 0.1,
+                #expect(abs(got - point.dB) < 0.05,
                         """
                         \(Int(sampleRate)) Hz design reads \(got) dB at \(Int(point.hz)) Hz, \
-                        the standard says \(point.dB) dB
+                        NRSC-1 Table 1 publishes \(point.dB) dB
+                        """)
+            }
+        }
+    }
+
+    @Test func theDesignedFilterTracksThePublishedPhase() {
+        // Magnitude is what the Standard's compliance method measures (sec
+        // 5.3.1: sweep the transmission system with audio tones), and the fit
+        // is a magnitude fit, so phase is the looser of the two. The residual
+        // is ordinary discrete-time phase near the top of the band and it
+        // shrinks with the sample rate -- measured worst deviation across the
+        // whole table: 4.84 deg at 48 kHz, 1.25 at 96 kHz, 0.34 at 192 kHz.
+        for (sampleRate, bound) in [(48_000.0, 6.0), (96_000.0, 2.0), (192_000.0, 0.6)] {
+            let design = PreemphasisDesign.nrsc(sampleRate: sampleRate)
+            for point in Self.table where point.hz < 0.45 * sampleRate {
+                let got = phaseDeg(design, hz: point.hz, sampleRate: sampleRate)
+                #expect(abs(got - point.phaseDeg) < bound,
+                        """
+                        \(Int(sampleRate)) Hz design phase \(got) deg at \(Int(point.hz)) Hz, \
+                        NRSC-1 Table 1 publishes \(point.phaseDeg) deg
                         """)
             }
         }
@@ -137,6 +192,8 @@ struct NRSCPreemphasisTests {
             let wantDB = PreemphasisDesign.nrscGainDB(frequencyHz: tone)
             #expect(abs(gotDB - wantDB) < 0.15,
                     "filter reads \(gotDB) dB at \(Int(tone)) Hz, design says \(wantDB) dB")
+            #expect(abs(gotDB - point.dB) < 0.2,
+                    "filter reads \(gotDB) dB at \(Int(point.hz)) Hz, NRSC-1 Table 1 publishes \(point.dB)")
         }
     }
 

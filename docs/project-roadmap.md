@@ -335,7 +335,13 @@ real-time items.
    inverse cascade flat, prove the curve is NOT the FM one, and pin FM's own
    path bit-identical. `AMOutputTests.nrscPreemphasisRisesWithFrequency`
    asserted the FM figures and called them NRSC; it now asserts the standard
-   and fails if AM goes back to the FM curve.
+   and fails if AM goes back to the FM curve. 2026-09-11, later the same
+   day: NRSC-1-C-2024 was obtained and now sits in `standards/`, and the
+   tests assert against its Table 1 verbatim -- all 23 points, magnitude
+   AND phase -- instead of against our own expression. The published
+   table agrees with the one-zero/one-pole definition to 0.005 dB and
+   0.05 deg, so the expression was right; the tests are now anchored to
+   the document rather than to us.
    `MonitorConditionerTests.amMonitorRemovesTheNRSCCurve` applied and removed
    the SAME curve, so it was flat whatever happened; it now applies NRSC and
    has a guard proving the FM inverse would not be flat. Full suite 780

@@ -14,6 +14,7 @@ Not to be confused with `docs/`, which holds this project's own manuals.
 | `R-REC-BS.450-4-201910-I!!PDF-E.pdf` | ITU-R BS.450 -- FM sound broadcasting transmission standards |
 | `rds-docs-unlocked.pdf` | UECP SPB 490 -- Universal Encoder Communication Protocol |
 | `trev_307-radiotext.pdf` | EBU Technical Review -- RadioText and RT+ |
+| `nrsc-1-c-2024.pdf` | NRSC-1-C (2024) -- AM pre-emphasis / de-emphasis and transmission bandwidth. Table 1 is the AM pre-emphasis oracle `NRSCPreemphasisTests` asserts against; free of charge from nrscstandards.org |
 
 Related standards used but not stored here: ITU-R SM.1268 (deviation
 measurement), ITU-R BS.412 (MPX power), NRSC-4-B (RBDS), 47 CFR 73.322.

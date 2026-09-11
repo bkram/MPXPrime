@@ -1831,6 +1831,14 @@ final class MPXGenerator {
     }
 
     func applyRuntimeConfig(_ config: RuntimeConfig) {
+        // Rate domains, named so a call site cannot pick the wrong one by
+        // accident. Audio-domain stages (everything before stereo encoding)
+        // run at `audioRate`; composite-side stages run at `mpxRate`. Until
+        // 0.60 the AGC, the phase rotator and the bass clipper took the MPX
+        // rate here while construction gave them the audio rate, so one live
+        // edit made their time constants and corners 4x wrong until restart.
+        let audioRate = audioDomainSampleRate
+        let mpxRate = sampleRate
         inputGain = powf(10.0, config.inputGainDB / 20.0)
         outputGain = powf(10.0, config.outputGainDB / 20.0)
         finalDrive = powf(10.0, config.finalDriveDB / 20.0)
@@ -1861,7 +1869,7 @@ final class MPXGenerator {
             // one live threshold change made look-ahead / attack / release /
             // hold 4x too long and moved the HF detector from 4 kHz to 1 kHz).
             preEncodeAudioLimiter.configure(
-                sampleRate: audioDomainSampleRate,
+                sampleRate: audioRate,
                 threshold: preEncodeThreshold,
                 releaseMS: preEncodeReleaseMS,
                 bandlimitedResidualEnabled: preEncodeBandlimitedResidualEnabled,
@@ -1872,7 +1880,7 @@ final class MPXGenerator {
                 lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
                 passbandHz: preEncodeLimiterPassbandHz
             )
-            configureTruePeakGuard(sampleRate: audioDomainSampleRate)
+            configureTruePeakGuard(sampleRate: audioRate)
         }
 
         let agcChanged =
@@ -1900,7 +1908,7 @@ final class MPXGenerator {
 
         if agcChanged || agcFlagsChanged {
             widebandAGC.configure(
-                sampleRate: sampleRate,
+                sampleRate: audioRate,
                 targetDB: widebandAGCTargetDB,
                 attackMS: widebandAGCAttackMS,
                 releaseMS: widebandAGCReleaseMS,
@@ -1937,7 +1945,7 @@ final class MPXGenerator {
         }
 
         let resolvedCrossovers = Self.resolveMultibandCrossovers(
-            sampleRate: sampleRate,
+            sampleRate: mpxRate,
             x1: config.multibandX1Hz,
             x2: config.multibandX2Hz,
             x3: config.multibandX3Hz,
@@ -2036,7 +2044,7 @@ final class MPXGenerator {
         phaseRotationEnabled = config.phaseRotationEnabled
         phaseRotationFreqHz = clampf(config.phaseRotationFreqHz, 50.0, 500.0)
         if phaseRotChanged {
-            phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: sampleRate)
+            phaseRotator.configure(freqHz: phaseRotationFreqHz, sampleRate: audioRate)
         }
 
         // Parametric EQ
@@ -2109,7 +2117,7 @@ final class MPXGenerator {
         bassClipperDrive = clampf(config.bassClipperDrive, 0.5, 3.0)
         if bassClipChanged {
             bassClipper.configure(
-                sampleRate: sampleRate,
+                sampleRate: audioRate,
                 crossoverHz: bassClipperCrossoverHz,
                 thresholdDB: bassClipperThresholdDB,
                 drive: bassClipperDrive
@@ -2131,7 +2139,7 @@ final class MPXGenerator {
             // belong to the audio-domain rate (init/setSampleRate already use it).
             hfClipper.configure(
                 enabled: hfClipperEnabled,
-                sampleRate: audioDomainSampleRate,
+                sampleRate: audioRate,
                 crossoverHz: hfClipperCrossoverHz,
                 thresholdDB: hfClipperThresholdDB,
                 drive: hfClipperDrive
@@ -2153,7 +2161,7 @@ final class MPXGenerator {
         if hfLimiterChanged {
             hfLimiter.configure(
                 enabled: hfLimiterEnabled,
-                sampleRate: audioDomainSampleRate,
+                sampleRate: audioRate,
                 thresholdDB: hfLimiterThresholdDB,
                 attackMS: hfLimiterAttackMS,
                 releaseMS: hfLimiterReleaseMS,
@@ -2194,7 +2202,7 @@ final class MPXGenerator {
         bs412WindowSeconds = clampf(config.bs412WindowSeconds, 1.0, 120.0)
         if bs412Changed {
             bs412Limiter.configure(
-                sampleRate: sampleRate,
+                sampleRate: mpxRate,
                 thresholdDB: bs412ThresholdDB,
                 windowSeconds: bs412WindowSeconds
             )
@@ -2227,7 +2235,7 @@ final class MPXGenerator {
         compositeClipperOversampling = config.compositeClipperOversampling
         if compClipStructuralChanged {
             compositeClipper.configure(
-                sampleRate: sampleRate,
+                sampleRate: mpxRate,
                 thresholdDB: compositeClipperThresholdDB,
                 ceilingDB: compositeClipperCeilingDB,
                 cancelAudio: compositeClipperCancelAudio,
@@ -2241,7 +2249,7 @@ final class MPXGenerator {
         } else if compClipLookaheadChanged {
             compositeClipper.setLookaheadMS(
                 compositeClipperLookaheadMS,
-                sampleRate: sampleRate
+                sampleRate: mpxRate
             )
             recomputeSubcarrierDelay()
         }
@@ -2273,7 +2281,7 @@ final class MPXGenerator {
         let newToneFreq = clampf(config.testToneFreq, 20.0, 20_000.0)
         if newToneFreq != toneFreq {
             toneFreq = newToneFreq
-            toneStep = twoPi * toneFreq / sampleRate
+            toneStep = twoPi * toneFreq / mpxRate
         }
         let normalisedMode = config.testToneMode.lowercased()
         if ["mono", "stereo", "left", "right"].contains(normalisedMode) {

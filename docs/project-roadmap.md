@@ -194,7 +194,7 @@ out of the tree).
 
 | # | Claim | Verdict | Where | Weight |
 | --- | --- | --- | --- | --- |
-| P0-1 | Live-apply configures the wideband AGC, phase rotator, bass clipper and the crossover resolve at the MPX rate | Confirmed | `MPXGenerator.applyRuntimeConfig` passes `sampleRate` at the four sites (about lines 1902, 1939, 2039, 2111); construction and `setSampleRate` pass `audioDomainSampleRate`; the HF clipper / HF limiter live-apply already use it (the 0.45 fix for the same class). `dual_rate_audio_domain_enabled` defaults to True, so the two rates differ by 4x. | **High** for any live change on those pages: AGC time constants 4x slower, phase-rotator corner divided by 4, bass-clipper crossover and decimator divided by 4, until restart. Cold start and every baseline are untouched (no gate calls `applyRuntimeConfig`). |
+| P0-1 | Live-apply configures the wideband AGC, phase rotator, bass clipper and the crossover resolve at the MPX rate | Confirmed for the three stages, refuted for the crossover resolve -- **FIXED 2026-09-11** | `MPXGenerator.applyRuntimeConfig` passes `sampleRate` at the four sites (about lines 1902, 1939, 2039, 2111); construction and `setSampleRate` pass `audioDomainSampleRate`; the HF clipper / HF limiter live-apply already use it (the 0.45 fix for the same class). `dual_rate_audio_domain_enabled` defaults to True, so the two rates differ by 4x. The crossover resolve is the exception: the CONSTRUCTOR resolves at the MPX rate too (it runs before the dual-rate properties are initialised), so the two paths agree and there is no parity break -- and its Nyquist clamp is unreachable anyway, the schema caps x4 at 12 kHz against a 23.8 kHz clamp. Left as it is, documented. | **High** for any live change on those pages: AGC time constants 4x slower, phase-rotator corner divided by 4, bass-clipper crossover and decimator divided by 4, until restart. Cold start and every baseline are untouched (no gate calls `applyRuntimeConfig`). |
 | P0-2 | Bass / HF clipper transfer is discontinuous and non-monotonic | Confirmed | `DSP/AudioClippers.swift`: pass-through while `abs(x * drive) <= threshold`, otherwise `threshold * tanh(x * drive / threshold) / drive`. At the join the output drops from `threshold / drive` to `tanh(1) = 0.76` of it (24 %), then climbs back toward the same ceiling. | **High**: the bass clipper is ON in every Format Profile (`bass_clipper_enabled` default True); the HF clipper is off everywhere. The fix moves the composite: all four macOS baselines plus the Linux one. |
 | P0-3 | Transient-aware hold is seeded by its lifetime maximum | Confirmed | `MonoCompressor.processTransientAwareEnvelope`: `transientDriveObserved = max(transientDriveObserved, heldDrive)`, cleared only by `reset()`. The Advanced Dynamics copy keeps a decaying `heldDrive` -- the correct pattern. | **Low**: `multiband_transient_aware_attack_enabled` is off by default, off in Verification.ini, enabled by no profile. |
 | P0-4 | NaN / Inf are not sanitised at the encoder and Meter ingress | Confirmed | No `isFinite` on the generator's input path (`renderFromInputInPlace`, the input ring); `AudioOutputEngine` guards only the meter snapshot values; `MeterAnalysis.processBlock` feeds raw samples to the DC tracker, FIR history and detectors. `MPXDecoder` guards itself (0.36). | **Medium**: one non-finite sample poisons every IIR and envelope until restart. Real inputs rarely produce one, a float ALSA loopback or a misbehaving plug-in can. Containment is one compare per sample. |
@@ -225,13 +225,15 @@ Order: the four zero-baseline fixes first, then the one composite-moving fix
 on its own, then the two labelled-standard fixes, then the two measured
 real-time items.
 
-1. **F1 -- P0-1, rate domain.** Change the four call sites to
-   `audioDomainSampleRate`. New `LiveApplyRateDomainTests`: a generator built at
-   config A and live-applied to B renders bit-identically to one built at B
-   (RDS off), for the AGC, phase rotator, bass clipper and crossovers, plus the
-   already-correct stages as regression. Also check that the engine-start
-   re-apply never trips a diff between construction-time and live clamps (the
-   same parity test shows it). Baselines: none.
+1. **F1 -- P0-1, rate domain. DONE 2026-09-11.** `applyRuntimeConfig` now
+   binds `audioRate` / `mpxRate` at the top and every configure call names its
+   domain; the AGC, phase rotator and bass clipper moved to the audio rate.
+   `LiveApplyRateDomainTests` renders a generator built at A and live-applied
+   to B against one built at B and requires bit-identical samples, for those
+   three plus the HF stages and the pre-encode limiter as regression, with a
+   boundary-disabled control case. Red/green checked: exactly the three fail
+   on the pre-fix rate. Full suite 756 green, swiftlint clean,
+   `--verify --baseline-strict` exit 0 (zero drift). AGENTS carries the rule.
 2. **F2 -- P0-4, non-finite ingress.** One in-place sanitising pass at the
    generator's block ingress and at `MeterAnalysis.process`, a lock-free
    counter to telemetry, a rate-limited status note off-thread. Tests: NaN /

@@ -42,6 +42,18 @@ combination test suite. Newest first.
   sidebar becomes a drawer behind a menu button while every slider gains a
   numeric field for exact values. `check-webui` drives all of it. The GUI
   sidebar gains a search field that filters pages by label, group or section.
+- **Fixed: three stages ran four times off after a live edit.** The chain is
+  dual-rate -- the audio stages run at 48 kHz inside a 192 kHz composite
+  engine -- and the wideband AGC, the phase rotator and the bass clipper were
+  reconfigured at the composite rate when a setting changed on a running
+  encoder. Their attack and release times came out four times too slow and
+  their corner frequencies four times too low, and stayed that way until the
+  transport was restarted. Starting the engine was always correct, which is
+  why no offline gate saw it. Every call site now names its rate domain, and
+  a new test renders a live-edited engine against a restarted one and demands
+  identical samples. Found by an external audit of the 0.50 chain; the
+  composite output of a settled configuration does not move (strict baselines
+  unchanged).
 
 ## 0.50 -- 2026-09-11
 

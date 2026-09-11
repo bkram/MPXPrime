@@ -18,12 +18,12 @@
 // dotpr/conv/vvtanhf are SIMD. Since 0.50 the hot kernels live in C
 // (MPXPrimeNative/MPXPrimeSIMD.c) so they can carry an AVX2 clone next to the
 // SSE2 baseline and let the dynamic linker pick per CPU -- Swift SIMD8 can
-// only ever be lowered to the build's baseline ISA, and the Celeron rig has
-// no AVX. The portable Swift versions stay here as `mpxReference*`, the
+// only ever be lowered to the build's baseline ISA, and AVX cannot be
+// assumed on every x86 box. The portable Swift versions stay here as `mpxReference*`, the
 // exact-equality references AccelerateShimTests holds the C kernels to.
-// Measured on a J4105 @ 192 kHz with the full chain: scalar was 102% of a
-// core (constant xruns); SIMD is what lets FIR multiband + the 16x composite
-// clipper fit, mirroring macOS where vDSP_dotpr/vvtanhf are documented as
+// Measured on a low-end x86 box @ 192 kHz with the full chain: scalar was
+// 102% of a core (constant xruns); SIMD is what lets FIR multiband + the 16x
+// composite clipper fit, mirroring macOS where vDSP_dotpr/vvtanhf are documented as
 // required for the real-time budget. The Linux strict baseline is captured
 // WITH these numerics; the C kernels reproduce them bit for bit (no FMA).
 #if !canImport(Accelerate)
@@ -66,9 +66,9 @@ public struct DSPSplitComplex {
 ///
 /// Unit-stride (the FIR-convolution hot path: multiband crossovers,
 /// encoder FIR, decimators) runs 4x-unrolled SIMD8 -- the scalar loop left
-/// the J4105-class CPU ~2% over real-time budget at 192 kHz; this is the
-/// Linux counterpart of macOS's vDSP_dotpr (SSE2 codegen; no AVX, Goldmont
-/// Plus has none). Strided calls keep the scalar path.
+/// a low-end x86 CPU ~2% over real-time budget at 192 kHz; this is the
+/// Linux counterpart of macOS's vDSP_dotpr (SSE2 baseline; AVX2 through the
+/// per-CPU C kernels). Strided calls keep the scalar path.
 public func vDSP_dotpr(
     _ a: UnsafePointer<Float>, _ ia: vDSP_Stride,
     _ b: UnsafePointer<Float>, _ ib: vDSP_Stride,

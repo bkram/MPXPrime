@@ -20,10 +20,9 @@ a number is missing, it has not been measured -- nothing is extrapolated.
   ALSA I/O, the meters and a real period's scheduling jitter. The macOS engine
   does not publish it; there the offline figure and `--bench-blocks` are what
   you have.
-- Loads above ~90 % drop buffers with live programme (measured: 95 % on the
-  Celeron dropped about one a second); an appliance should sit around 50-60 %.
-  The operator guide's "CPU budget: what to turn off first" section turns
-  these numbers into a recipe.
+- Loads above ~90 % drop buffers with live programme; an appliance should sit
+  around 50-60 %. The operator guide's "CPU budget: what to turn off first"
+  section turns these numbers into a recipe.
 
 ## Machines
 
@@ -31,9 +30,8 @@ a number is missing, it has not been measured -- nothing is extrapolated.
 | --- | --- | --- | --- | --- |
 | MacBook Pro 2021 | Apple M1 Pro | 8 P + 2 E | macOS 26.6 (arm64) | Accelerate |
 | MacBook Pro 2019 | Intel Core i7-9750H, 2.6-4.5 GHz | 6 | macOS 26.6 (x86_64) | Accelerate |
-| mpxbox-amd | AMD Ryzen 5 PRO 2400GE, 3.2-3.8 GHz | 4 (8 threads) | Ubuntu 26.04 (x86_64) | C kernels, AVX2 variant |
-| mpxbox-amd (SSE2 build) | same | same | same | C kernels, SSE2 variant (pre-0.50 numerics, same results) |
-| mpxbox | Intel Celeron J4105, 1.5-2.5 GHz | 4 | Ubuntu 24.04 (x86_64) | C kernels, SSE2 variant (no AVX on this CPU) |
+| Ryzen box | AMD Ryzen 5 PRO 2400GE, 3.2-3.8 GHz | 4 (8 threads) | Ubuntu 26.04 (x86_64) | C kernels, AVX2 variant |
+| Ryzen box (SSE2 build) | same | same | same | C kernels, SSE2 variant (what a CPU without AVX2 runs; same results, bit for bit) |
 
 The encoder is single-thread-bound: one core carries the whole chain, the
 other cores carry the control server, the meters and the monitor. Core count
@@ -47,7 +45,6 @@ past two buys nothing; per-core speed buys everything.
 | i7-9750H | **22.4 %** | 4.6 % | 5.1 % | 1.1 % | 1.3 % | 0.7 % | 1.2 % |
 | Ryzen 2400GE, AVX2 | **26.3 %** | 5.8 % | 6.0 % | -- | 1.7 % | 1.2 % | -- |
 | Ryzen 2400GE, SSE2 | **36.6 %** | 12.7 % | 6.5 % | -- | 3.2 % | 1.7 % | -- |
-| Celeron J4105 | not measured offline (see live) | | | | | | |
 
 The AVX2 kernels take 10 points off the Ryzen's chain, the composite clipper
 alone halving from 12.7 % to 5.8 % -- and they compute bit-identical results
@@ -61,7 +58,6 @@ to the SSE2 variant, so the Linux strict baseline is one file for every CPU.
 | i7-9750H | 20.1 % | 21.9 % | 25.4 % |
 | Ryzen 2400GE, AVX2 | 24.3 % | 26.4 % | 30.5 % |
 | Ryzen 2400GE, SSE2 | 31.4 % | 36.5 % | 46.2 % |
-| Celeron J4105 (live) | 79 % | 94 % | 127 % (does not run) |
 
 ## Block size (`--bench-blocks`: worst single block as a share of its duration)
 
@@ -73,33 +69,31 @@ to the SSE2 variant, so the Linux strict baseline is one file for every CPU.
 | Ryzen 2400GE, SSE2 | 42.5 % | 37.7 % |
 
 The DSP is block-invariant (every size renders bit-identical output); a
-larger block only smooths the worst case. On the Celeron, 4096 was the
-difference between occasional dropouts and none with the Monitor on.
+larger block only smooths the worst case. With a chain near its limit, 4096
+was the difference between occasional dropouts and none with the Monitor on.
 
 ## Live render load (Linux, `renderLoadPercent`, live programme)
 
-| Machine | Music - Loud, everything on | + SSB Stereo | Multiband off | Advanced Dynamics instead of AGC + multiband | Monitor on |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Ryzen 2400GE, AVX2 | **29 %** (the Mac's own configuration incl. SSB) | -- | -- | -- | -- |
-| Ryzen 2400GE, SSE2 | 43 % | 45 % | 37 % | 42 % | -- |
-| Celeron J4105 (SSE2) | 94-95 % | 101-103 % (43 dropouts/s) | 69 % | 88 % | +3 % |
+| Machine | Music - Loud, everything on | + SSB Stereo | Multiband off | Advanced Dynamics instead of AGC + multiband | Clipper 32x | Clipper 8x |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ryzen 2400GE, AVX2 | **29 %** (the Mac's own configuration incl. SSB) | -- | -- | -- | -- | -- |
+| Ryzen 2400GE, SSE2 | 43 % | 45 % | 37 % | 42 % | 54 % | 38 % |
 
-Per-stage costs on the Celeron, the only machine where they mattered:
-multiband FIR +26 % (IIR crossovers +11 %), SSB Stereo +8 %, PrimeBass +2 %,
-HF limiter +1 %, wideband AGC ~0. That box runs clean at 79 % with the
-composite clipper at 8x and SSB off.
+Every row ran with zero dropouts. The chain that fits comfortably here is the
+same chain that overran a low-end x86 core without AVX2 -- the point of the
+per-CPU kernels and of measuring before choosing a box.
 
 ## What this means when choosing a box
 
 - **Apple Silicon or a current Intel/AMD core**: everything on, every
   experimental stage included, at 17-30 %. Nothing to decide.
-- **A small x86 box for a Linux appliance**: needs AVX2 and roughly 2x the
-  Celeron J4105 per core -- an Intel N100-class part is the floor, an N305 or
-  a Core i3 comfortable. The Ryzen 5 PRO 2400GE above is such a box.
-- **Celeron J-series (Gemini Lake) and similar**: runs, but only with the
-  chain trimmed (no SSB, clipper at 8x or multiband on IIR crossovers,
-  blocksize 4096) and with no headroom for anything else. Fine for a test
-  rig, not for a transmitter site.
+- **A small x86 box for a Linux appliance**: needs AVX2 and a modern core --
+  an Intel N100-class part is the floor, an N305 or a Core i3 comfortable.
+  The Ryzen 5 PRO 2400GE above is the smallest machine measured that runs
+  everything with margin.
+- **Older low-power x86 parts without AVX2**: run only with the chain trimmed
+  (no SSB, the clipper at 8x or the multiband on IIR crossovers, blocksize
+  4096) and with no headroom left. Not a transmitter-site machine.
 
 Re-measure rather than extrapolate: `--bench` takes about a minute, and the
 dashboard's Render Load reads the truth with the real programme.

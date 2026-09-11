@@ -7,7 +7,7 @@ MPX Prime Studio is an FM composite (MPX) generator written in Swift. It takes l
 **It runs on two platforms:**
 
 - **macOS** -- a native SwiftUI application: the **MPX Prime Studio** encoder plus its companion **MPX Prime Meter** analyzer, both shipped in one DMG (Core Audio, full GUI).
-- **Linux** -- the **encoder** runs headless from the command line (ALSA output, no GUI), with the embedded REST API + **web dashboard** as its interface. SIMD-accelerated so the full chain runs in real time on low-power hardware (a fanless Celeron J4105 handles it); shipped as a Debian/Ubuntu package with a systemd service.
+- **Linux** -- the **encoder** runs headless from the command line (ALSA output, no GUI), with the embedded REST API + **web dashboard** as its interface. SIMD-accelerated, with AVX2 kernels picked per CPU at start-up, so the full chain runs in real time on modest x86 hardware (a Ryzen 5 PRO 2400GE runs everything at under 30 % of a core); shipped as a Debian/Ubuntu package with a systemd service.
 
 The same DSP core drives both: a full broadcast-style processing chain -- phase rotator, wideband AGC, 4-band parametric EQ, 3-/5-band multiband compressor, PrimeBass, mono bass, bass and audio-band clippers, L/R pre-emphasis, a gain-riding HF limiter (program-controlled pre-emphasis), pre-encode true-peak limiter, BS.412 power limiting, and an oversampled composite clipper with a look-ahead composite limiter behind it -- ahead of a pilot-locked stereo encoder, keeping the pilot and RDS subcarriers out of all peak control (post-clipper injection). The Linux build is bit-for-bit the same processing; only the audio backend and the front end differ.
 
@@ -240,7 +240,7 @@ If you would rather skip the Gatekeeper dialog entirely, build from source (see 
 - [docs/meter-operator-guide.md](docs/meter-operator-guide.md) -- **MPX Prime Meter Operator Guide**: SDR / audio input, the measurement readouts, WAV recording, calibration and measurement notes
 - [docs/rds-country-and-pty-tables.md](docs/rds-country-and-pty-tables.md) -- **RDS country codes and programme types**: the PI / ECC and PTY lookup tables both apps use
 - [docs/BUILDING.md](docs/BUILDING.md) -- build, run, verify, test, and package from source
-- [docs/performance.md](docs/performance.md) -- what the chain costs on every machine it has been measured on (Apple Silicon, Intel Mac, Ryzen and Celeron Linux boxes), and what that means when choosing a box
+- [docs/performance.md](docs/performance.md) -- what the chain costs on every machine it has been measured on (Apple Silicon, Intel Mac, a Ryzen Linux box), and what that means when choosing a box
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- detailed DSP chain and stage descriptions
 - [`AGENTS.md`](AGENTS.md) -- contributor / agent workflow guidance and release checklist
 - [docs/project-roadmap.md](docs/project-roadmap.md) -- project roadmap: open work and the anti-rework guardrails

@@ -142,7 +142,7 @@ If you cannot hear anything, check `Audio I/O` -> output device routing, that th
 
 ### Choosing a block size
 
-`Audio I/O` -> `Engine` -> `Block Size` (`blocksize` in `[INTERFACES]`, 256..8192 frames). The DSP itself does not depend on it -- the composite rendered in 64-, 480-, 1024- or 8192-frame blocks is bit-identical to 512 (pinned by a test) -- so the choice is only about latency versus dropout safety. Round-trip I/O latency is two blocks: at 192 kHz, 256 = 2.7 ms, 512 = 5.3 ms, 1024 = 10.7 ms, 2048 = 21 ms, 4096 = 43 ms, 8192 = 85 ms. Measure your machine with `--bench-blocks` on a release build: it reports the worst single block's render time as a fraction of that block's duration (100% = a dropout) -- keep at least 2x margin. On an Apple M1 Pro with the full chain the worst block is 17% at 512 and 23% at 256, so **512 is the recommended setting on Apple Silicon** (the shipped default is 1024, safe on every machine; 256 works on Apple Silicon if you need the latency; 64 is marginal at 46%). Intel and small Linux boxes (the fanless Celeron runs the chain near 92% of real time) want 1024-2048. Two hardware caveats: CoreAudio devices clamp the buffer to their own range and the engine logs "clamped HAL buffer" when that happens (the built-in output allows 15..4096, so 8192 is never honoured there), and many USB interfaces glitch below 256 regardless of CPU headroom.
+`Audio I/O` -> `Engine` -> `Block Size` (`blocksize` in `[INTERFACES]`, 256..8192 frames). The DSP itself does not depend on it -- the composite rendered in 64-, 480-, 1024- or 8192-frame blocks is bit-identical to 512 (pinned by a test) -- so the choice is only about latency versus dropout safety. Round-trip I/O latency is two blocks: at 192 kHz, 256 = 2.7 ms, 512 = 5.3 ms, 1024 = 10.7 ms, 2048 = 21 ms, 4096 = 43 ms, 8192 = 85 ms. Measure your machine with `--bench-blocks` on a release build: it reports the worst single block's render time as a fraction of that block's duration (100% = a dropout) -- keep at least 2x margin. On an Apple M1 Pro with the full chain the worst block is 17% at 512 and 23% at 256, so **512 is the recommended setting on Apple Silicon** (the shipped default is 1024, safe on every machine; 256 works on Apple Silicon if you need the latency; 64 is marginal at 46%). Intel Macs and Linux boxes want 1024-4096 (see [docs/performance.md](performance.md) for the block-size sweeps). Two hardware caveats: CoreAudio devices clamp the buffer to their own range and the engine logs "clamped HAL buffer" when that happens (the built-in output allows 15..4096, so 8192 is never honoured there), and many USB interfaces glitch below 256 regardless of CPU headroom.
 
 ## Where your settings live
 
@@ -180,7 +180,8 @@ Keep the output at 0 dB and do the calibration in the encoder with `MPX Output
 Level` and `Line Output`. Moving a card slider from the dashboard also makes the
 encoder remember it and put it back whenever something else (the knob, a
 reboot) moves it, so you do not need `alsactl store`. The card's capture side
-often carries analog gain of its own -- the rig's showed +6 dB -- which is why
+often carries analog gain of its own -- the reference USB card showed +6 dB on
+one box and +10 dB on another -- which is why
 an input calibrated on macOS lands at a different level here; set the card
 input to 0 dB and calibrate with `Input Gain`. The controls do not appear on
 macOS, where the system sound settings own this.
@@ -190,58 +191,52 @@ macOS, where the system sound settings own this.
 The dashboard's Stream Health card shows **Xruns R/C** (render / capture
 dropouts since the engine started) and **Render Load**: the worst share of
 one buffer period the encoder's real-time thread needed recently. It turns
-red from 90 %. A small CPU running the full chain at 192 kHz can sit in the
-nineties with no dropouts at all -- the rig's Celeron reads 95 % -- but it
-has no headroom left: anything else that lands on that thread shows up as
-xruns. If the counter climbs, check Render Load first; a longer `blocksize`
-buys safety at the cost of latency -- on the rig, 2048 (85 ms of buffer)
-dropped an occasional burst with the Monitor on and 4096 (170 ms) dropped
-none, so on a CPU reading over 90 % use 4096. The Monitor's own decoding runs
-on a separate thread and adds nothing to this figure.
+red from 90 %. A CPU can sit in the nineties with no dropouts on a quiet
+input and drop about one buffer a second as soon as live programme arrives,
+so measure with programme. If the counter climbs, check Render Load first; a
+longer `blocksize` buys safety at the cost of latency -- with the chain near
+its limit, 2048 (85 ms of buffer) dropped an occasional burst with the
+Monitor on and 4096 (170 ms) dropped none, so on a CPU reading over 90 % use
+4096. The Monitor's own decoding runs on a separate thread and adds nothing
+to this figure.
 
 ### CPU budget: what to turn off first
 
 The processing chain is the same on every machine, so on a small CPU it is
 the operator who decides what fits. **Render Load** is the figure to watch:
-at 95 % with live programme the rig already dropped about one buffer a
-second (a quiet input reads lower and drops nothing -- test with programme),
-and from 98 % the status line says so ("Render load at or over 98 %: the
-processing chain does not fit this CPU"). A single reading far above 100 %
-right after a start or restart is the first period priming, not the chain.
-Every figure below was measured on the reference Linux rig -- an Intel
-Celeron J4105 at 192 kHz, one core carrying the whole chain -- with live
-programme; a faster CPU scales everything down together, so the ORDER is
-what carries over. [docs/performance.md](performance.md) has the same
-measurements for every machine the encoder has run on, Apple Silicon and
-Intel Macs included.
+from 98 % the status line says so ("Render load at or over 98 %: the
+processing chain does not fit this CPU"), and a single reading far above
+100 % right after a start or restart is the first period priming, not the
+chain. The shares below come from `--bench` on three machines (they agree
+within a few points) and from live render load on the Ryzen 5 PRO 2400GE;
+[docs/performance.md](performance.md) has every measurement. A slower CPU
+scales everything up together, so the ORDER is what carries over.
 
-| Stage (INI key) | Cost on the rig | Turn off? |
+| Stage (INI key) | Share of the chain's cost | Turn off? |
 | --- | --- | --- |
-| Everything else -- input, pre-emphasis, limiter, stereo encoder, composite clipper at 16x, RDS | 69 % | this is the floor |
-| Multiband compressor, FIR crossovers (`multiband_enabled`, `multiband_fir_enabled`) | +26 % | first candidate: 3 dB of loudness against a quarter of the CPU. `multiband_fir_enabled = False` keeps the compressor on the low-latency IIR crossovers for +11 % instead (restart) |
-| Advanced Dynamics instead of AGC + multiband (`advanced_dynamics_enabled`) | +19 % | the cheaper of the two levelers by about 6 %; experimental |
-| SSB Stereo (`mpx_ssb_stereo_enabled`) | +8 % | **yes** -- experimental, and no measured benefit on any programme so far. On the rig this one stage took a 94 % chain to 103 % and 43 dropouts a second |
-| Composite clipper oversampling (`mpx_clipper_oversampling`) | 8x: -15 %; 32x: +33 % | 16x is the default for a reason; 8x is the safe way down on a small CPU (restart), 32x does not fit this class of machine at all |
-| Monitor output (`monitor_enabled`) | +3 % on the render thread (its decoding runs on its own thread) | only when the chain already sits at the edge |
-| PrimeBass (`primebass_enabled`) | +2 % | rarely worth it |
-| HF limiter (`hf_limiter_enabled`) | +1 % | keep it |
-| Wideband AGC (`wideband_agc_enabled`) | ~0 % | keep it |
+| Everything else -- input, pre-emphasis, limiter, stereo encoder, RDS | about half | this is the floor |
+| Composite clipper at 16x (`mpx_clipper_oversampling`) | about a quarter; 8x saves 8-12 % of the chain, 32x adds 15-25 % | 16x is the default for a reason; 8x is the safe way down on a small CPU (restart), 32x only where the load is well under 60 % |
+| Multiband compressor, FIR crossovers (`multiband_enabled`, `multiband_fir_enabled`) | about a quarter | first candidate on a struggling CPU: `multiband_fir_enabled = False` keeps the compressor on the low-latency IIR crossovers for less than half of that (restart) |
+| Advanced Dynamics instead of AGC + multiband (`advanced_dynamics_enabled`) | a little less than the multiband | the cheaper of the two levelers; experimental |
+| SSB Stereo (`mpx_ssb_stereo_enabled`) | 5-8 % | **yes** -- experimental, and no measured benefit on any programme so far; the one stage that has tipped a chain from "fits" to "dropouts" |
+| Monitor output (`monitor_enabled`) | 2-3 % on the render thread (its decoding runs on its own thread) | only when the chain already sits at the edge |
+| PrimeBass, bass clipper, DC clipper (`primebass_enabled`, `bass_clipper_enabled`, ...) | 1-2 % each | as the sound requires |
+| HF limiter, wideband AGC, BS.412 (`hf_limiter_enabled`, `wideband_agc_enabled`, `bs412_enabled`) | under 1 % each | keep them |
 | Encoder FIR (`encoder_fir_enabled`) | -- | never for CPU reasons: it is the transmitter's 15 kHz band limit |
 
 The build uses AVX2 automatically on CPUs that have it (any Ryzen, Intel
-N100 / Core, not the Celeron J-series); `mpxprime --version` shows `DSP
-kernels: avx2` or `sse2`. It does not change the sound -- the two variants
-compute bit-identical results -- only the cost: on a Ryzen 5 PRO 2400GE the
-full Music - Loud chain with SSB Stereo reads 29 % with AVX2 against 45 %
-without, so that class of machine runs everything with room to spare.
+N100 / Core); `mpxprime --version` shows `DSP kernels: avx2` or `sse2`. It
+does not change the sound -- the two variants compute bit-identical
+results -- only the cost: on a Ryzen 5 PRO 2400GE the full Music - Loud
+chain with SSB Stereo reads 29 % with AVX2 against 45 % without, so that
+class of machine runs everything with room to spare.
 
 Recipe for a box that reads over 90 % with programme: SSB Stereo off; then
 `blocksize = 4096` (buys tolerance, not CPU); then the composite clipper at 8x
-or the multiband on IIR crossovers, whichever your ears prefer -- the rig
-runs the clipper at 8x (79 %, no dropouts in a minute of programme). Format
+or the multiband on IIR crossovers, whichever your ears prefer. Format
 Profiles do not change this budget by themselves -- they set levels and
 thresholds, not which stages run -- except that a profile copied from a
-faster machine may bring SSB Stereo along, as happened to the rig.
+faster machine may bring SSB Stereo along.
 
 ### Why the Linux box is "not loud enough"
 

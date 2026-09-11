@@ -42,8 +42,8 @@ import MPXPrimeNative
 ///
 /// Unlike the macOS engine, ALL monitor DSP runs HERE, not on the render
 /// thread: the render thread copies the raw feed into the ring and nothing
-/// else. Measured on the rig (Celeron J4105, 192 kHz, full chain): the render
-/// thread already takes 95% of its core; decoding the composite alongside it
+/// else. Measured on a low-end x86 box (192 kHz, full chain): the render
+/// thread already took 95% of its core; decoding the composite alongside it
 /// cost 34 xruns per 20 s, moving the decode here cost none. So the composite
 /// is demodulated by a standalone `MPXDecoder` on its own PLL (the receiver
 /// model the verifier uses) and the audio modes are de-emphasised by the

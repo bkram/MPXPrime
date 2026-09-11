@@ -284,7 +284,7 @@ struct AccelerateShimTests {
 
     #if arch(x86_64)
     /// Both x86 variants by name, on this one machine: the SSE2 code that
-    /// runs on the Celeron and the AVX2 code that runs on the Ryzen and on
+    /// runs on a non-AVX box and the AVX2 code that runs on the Ryzen and on
     /// every CI runner must agree bit for bit with each other and with the
     /// reference -- otherwise the ifunc would silently make the baseline
     /// machine-dependent.

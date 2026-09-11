@@ -163,7 +163,7 @@ struct DSPThroughputTests {
     // MARK: - Tests
 
     // Absolute wall-clock budget: calibrated for the Tier-1 macOS dev
-    // hardware. The Linux dev/test host (low-power Celeron, debug builds)
+    // hardware. A low-power Linux test host (debug builds)
     // cannot meet it and would fail spuriously; the relative-ratio
     // throughput tests below still run there. Use --bench on a release
     // build to assess real Linux hardware instead.

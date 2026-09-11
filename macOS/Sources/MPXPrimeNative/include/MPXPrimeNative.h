@@ -37,8 +37,8 @@ void mpx_enable_flush_to_zero(void);
 /// SIMD kernels behind the Linux Accelerate shim (MPXPrimeSIMD.c). On
 /// Linux/x86_64 each is compiled twice -- an AVX2 clone and the SSE2
 /// baseline -- and the dynamic linker picks one per CPU at load time
-/// (clang `target_clones` + glibc ifunc), so ONE binary serves the Celeron
-/// rig and an AVX2 machine. Numerics are bit-identical across the clones
+/// (clang `target_clones` + glibc ifunc), so ONE binary serves CPUs with
+/// and without AVX2. Numerics are bit-identical across the clones
 /// and to the shim's portable Swift references: same 8-lane vectors, same
 /// accumulation and reduction order, and FMA contraction is disabled --
 /// which is what keeps the Linux strict baseline valid on every CPU.

@@ -4,15 +4,15 @@ setopt pipefail
 
 # Push the currently-playing track (VLC / Cog) to a remote MPX Prime Studio
 # encoder over its REST API (POST /api/nowplaying). Runs where the player is
-# (your Mac); the encoder can be anywhere reachable -- e.g. a headless mpxbox.
+# (your Mac); the encoder can be anywhere reachable -- e.g. a headless Linux encoder box.
 #
 # It reuses the sibling `nowplaying.sh` for VLC/Cog metadata extraction (the
 # AppleScript lives there, once), then POSTs artist/title/display so the
 # encoder's RT / PS / RT+ templates fill in. Only pushes on change, so RDS
 # RadioText does not thrash.
 #
-#   ./push-nowplaying.sh --url http://mpxbox:8737 --api-key <key>
-#   MPXPRIME_URL=http://mpxbox:8737 MPXPRIME_API_KEY=<key> ./push-nowplaying.sh
+#   ./push-nowplaying.sh --url http://encoder-host:8737 --api-key <key>
+#   MPXPRIME_URL=http://encoder-host:8737 MPXPRIME_API_KEY=<key> ./push-nowplaying.sh
 #   ./push-nowplaying.sh --url ... --api-key ... --interval 5 --once
 #
 # On the ENCODER, enable now-playing rendering (this script only supplies the
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$URL" ]]; then
-  print -u2 "error: --url (or MPXPRIME_URL) is required, e.g. http://mpxbox:8737"
+  print -u2 "error: --url (or MPXPRIME_URL) is required, e.g. http://encoder-host:8737"
   exit 2
 fi
 URL="${URL%/}"

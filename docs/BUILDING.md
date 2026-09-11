@@ -196,9 +196,9 @@ SIMD kernels in `MPXPrimeNative/MPXPrimeSIMD.c`, built on Linux/x86_64 as an
 SSE2 and an AVX2 variant behind a glibc ifunc that picks per CPU at load
 (bit-identical numerics, no FMA; `mpxprime --version` prints the variant) --
 this is what lets the full chain (FIR multiband crossovers + 16x composite
-clipper) run in real time on small CPUs like the Celeron J4105 (~94% of a
-core at 192 kHz on SSE2, zero xruns with a quiet input; the scalar versions
-were ~102% and starved) and at ~26% on an AVX2 Ryzen. The shim is pinned
+clipper) run in real time on modest x86 CPUs: ~26% of a core at 192 kHz on
+an AVX2 Ryzen 5 PRO 2400GE, ~37% with the SSE2 variant (the scalar versions
+would not fit a low-end core at all). The shim is pinned
 against real Accelerate by a golden
 fixture plus SIMD accuracy tests (`AccelerateShimTests`; regenerate the
 fixture on macOS with `MPXPRIME_CAPTURE_GOLDEN=1`). The ALSA engine lives

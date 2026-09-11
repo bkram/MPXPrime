@@ -2,8 +2,8 @@
 //
 // The shim's hot paths (FIR dot products behind vDSP_dotpr / vDSP_conv, and
 // vvtanhf) used to be portable Swift SIMD8 -- which the compiler can only
-// lower to the build's baseline ISA, SSE2, because the Celeron rig has no
-// AVX. Swift has no per-function target attributes, C does: each kernel is
+// lower to the build's baseline ISA, SSE2, because AVX cannot be assumed on
+// every x86 box. Swift has no per-function target attributes, C does: each kernel is
 // compiled as an AVX2 variant plus the SSE2 baseline, and a glibc ifunc
 // picks one at load time from CPUID. One binary, both machines.
 //
@@ -32,7 +32,7 @@ typedef int      v8i __attribute__((vector_size(32)));
 // Per-CPU dispatch (Linux/x86_64): both variants exist under their own
 // names so tests can hold the SSE2 and the AVX2 code to the reference on the
 // SAME machine -- clang's target_clones would hide them behind the ifunc and
-// the SSE2 variant would then only ever run on the Celeron, never in CI.
+// the SSE2 variant would then only ever run on a non-AVX box, never in CI.
 // The public symbol is an ifunc whose resolver picks once at load time.
 #if defined(__x86_64__) && defined(__linux__) && defined(__clang__)
 #define MPX_X86_DISPATCH 1

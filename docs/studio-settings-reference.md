@@ -442,7 +442,7 @@ From a source checkout on macOS, `dist-scripts/push-nowplaying.sh` does this for
 VLC and Cog:
 
 ```bash
-./dist-scripts/push-nowplaying.sh --url http://mpxbox:8737 --api-key <key>
+./dist-scripts/push-nowplaying.sh --url http://encoder-host:8737 --api-key <key>
 # or: MPXPRIME_URL=... MPXPRIME_API_KEY=... ./dist-scripts/push-nowplaying.sh --interval 5
 ```
 

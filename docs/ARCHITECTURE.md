@@ -232,7 +232,7 @@ there, consumed by the engine) so their live disposition stays DERIVED.
 On Linux the DSP's SIMD kernels (the FIR dot product behind `vDSP_dotpr` /
 `vDSP_conv`, and `vvtanhf`) are C with per-CPU clones: an AVX2 variant and
 the SSE2 baseline, selected by the dynamic linker at load time, so the same
-package serves an old Celeron and an AVX2 machine. The clones are
+package serves CPUs with and without AVX2. The clones are
 bit-identical to each other and to the shim's Swift references (same lane
 structure, same reduction order, no FMA), which is why one Linux strict
 baseline covers every CPU; `mpxprime --version` prints which variant runs.

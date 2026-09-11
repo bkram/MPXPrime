@@ -51,8 +51,8 @@ combination test suite. Newest first.
   nothing.** `GET /api/meters` gains `renderLoadPercent` (the worst share of
   a period the render thread needed in the last ~43 ms) and the dashboard's
   Stream Health card shows it with the xrun counters (`Xruns R/C`, `Render
-  Load`, red from 90 %). Measured on the rig it reads 95 % with nothing else
-  wrong -- the full chain at 192 kHz nearly fills a Celeron core -- which is
+  Load`, red from 90 %). On a low-end x86 test box it read 95 % with nothing else
+  wrong -- the full chain at 192 kHz nearly filled the core -- which is
   why the first Linux monitor build produced 34 xruns per 20 s: it decoded
   the composite on the render thread, as macOS does. On Linux the render
   thread now only copies the raw feed into the monitor ring; the monitor's
@@ -63,8 +63,8 @@ combination test suite. Newest first.
   buffer is the remedy on a CPU this full. Stopping the monitor also no
   longer aborts the process (a double `snd_pcm_close`).
 - **`docs/performance.md`.** The chain's measured cost on every machine it
-  has run on -- M1 Pro, i7-9750H, Ryzen 5 PRO 2400GE (AVX2 and SSE2 kernels),
-  Celeron J4105 -- as `--bench` chain cost, per-stage cost, clipper
+  has run on -- M1 Pro, i7-9750H, Ryzen 5 PRO 2400GE (AVX2 and SSE2 kernels)
+  -- as `--bench` chain cost, per-stage cost, clipper
   oversampling and block-size sweeps, live render load on Linux, and what
   that means when choosing a box.
 - **Intel review (x86_64 macOS, headless `--web`).** The whole control
@@ -99,16 +99,16 @@ combination test suite. Newest first.
   on Apple Silicon). Measured with `--bench` on the Ryzen 5 PRO 2400GE: the
   full chain went from 36.6 % to 26-27 % of real-time, the composite clipper
   from 12.7 % to 6 %; live, the Mac's own configuration (Music - Loud with
-  SSB Stereo) went from 45 % to 29 % render load on that box. The Celeron,
-  which has no AVX2, is unchanged.
+  SSB Stereo) went from 45 % to 29 % render load on that box. CPUs without
+  AVX2 are unchanged.
 - **The status line says when the chain does not fit the CPU.** Two
   consecutive 5 s ticks at or over 98 % render load raise a note in
   `/api/status` (and the dashboard), cleared once the load is back under
-  90 % (`RenderLoadWatch`, hysteresis pinned by tests). The rig ran 43 xruns
-  a second for eight hours with nothing but a climbing counter to show for
-  it: SSB Stereo had come over with a Mac profile and cost the 8 % the
-  Celeron did not have. The operator guide gains a CPU budget table (every
-  stage's cost measured on that rig) and the order to switch things off in.
+  90 % (`RenderLoadWatch`, hysteresis pinned by tests). A low-end x86 test
+  box ran 43 xruns a second for eight hours with nothing but a climbing
+  counter to show for it: SSB Stereo had come over with a Mac profile and
+  cost the 8 % that CPU did not have. The operator guide gains a CPU budget
+  table and the order to switch things off in.
 - **Linux: FTZ/DAZ on the capture and monitor threads too.** The render
   loop set it; the other two threads did not, and both run IIR math on x86.
 - **Dashboard meters move at the engine's rate.** New `GET /api/meters/stream`
@@ -1798,17 +1798,17 @@ combination test suite. Newest first.
   buffers, but a raw hw: device grants the request exactly -- 10.7 ms of
   slack on a heavily loaded small CPU without RT scheduling produced a
   constant xrun storm (audible as chopped/garbled MPX). A transmitter has
-  no latency requirement; measured on the J4105 driving a 192 kHz USB
+  no latency requirement; measured on a small x86 test box driving a 192 kHz USB
   interface (hw:) the storm went from ~28k xruns to zero.
 
 - **Linux: SIMD shim (full processing parity now fits small x86 CPUs).**
   The MPXPrimeAcceleration fallbacks for `vDSP_dotpr` / `vDSP_conv` (FIR
   crossovers, encoder FIR, decimators) and `vvtanhf` (oversampled clippers)
   are vectorized with portable Swift SIMD8 (SSE2 codegen -- no AVX flags,
-  Goldmont-class CPUs have none): 4x-unrolled dot products and a
+  low-end x86 CPUs may have none): 4x-unrolled dot products and a
   Cephes-style vectorized tanh (Cody-Waite expf, max error vs libm ~1e-7,
   batch-size-independent via a padded tail lane; both properties are
-  test-enforced). Measured on a Celeron J4105 at 192 kHz with a
+  test-enforced). Measured on a small x86 test box at 192 kHz with a
   fully-loaded chain: scalar ran 102% of a core with constant xruns;
   SIMD runs the SAME chain with FIR multiband and the 16x composite
   clipper at ~92% with zero xruns. The Linux strict baseline is

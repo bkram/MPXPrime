@@ -321,7 +321,12 @@ installation state, not sound:
   (`modulationReferenceScale`) so the kHz display no longer under-reads by the
   operator's exciter trim (project-roadmap.md item -1, field-measured 30.2 kHz displayed
   vs ~75 on air at -7.89 dB trim; `DeviationTelemetryTests` pins the
-  invariance). The electrical counterpart is `dacPeakDBFS` in `/api/meters` and
+  invariance). The kHz scale itself is fixed: composite amplitude 1.0 is
+  75 kHz whatever `mpx_deviation_khz` is (the generator scales the whole
+  composite by `mpx_deviation_khz / 75`), so `DeviationReadout.kilohertz`
+  multiplies by `MPXGenerator.referenceDeviationKHz`, never by the configured
+  deviation -- the pre-0.60 engines did, and under-read by that ratio away
+  from 75 (`DeviationReadoutTests`). The electrical counterpart is `dacPeakDBFS` in `/api/meters` and
   the Audio I/O Output card: the peak actually presented to the converter, post
   `output_gain_db` AND `mpx_line_output_dbfs`. The calibration test tone rides
   the same trims, so `scripts/smoke-live.sh`'s budget-arithmetic expectation is correct

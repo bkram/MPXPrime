@@ -130,7 +130,6 @@ final class AudioOutputEngine {
     // running at e.g. 192 kHz, not Core Audio SRC'ing behind our back).
     private var forcedOutputRate: (deviceID: AudioDeviceID, priorRate: Double)?
     private let outputMode: AudioOutputMode
-    private var targetDeviationKHz: Float
     /// Apply the composite line-output trim in place: scale, and when the trim
     /// is positive, clamp deterministically rather than leave the overshoot to
     /// the converter. Pure and allocation-free so the render path can call it
@@ -315,7 +314,6 @@ final class AudioOutputEngine {
         self.requestedInputDeviceID = inputDeviceID
         self.requestedOutputDeviceID = outputDeviceID
         self.outputMode = outputMode
-        self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
         self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
         // Deviation is a MODULATION-domain readout: the composite is metered
         // post-`output_gain_db`, so divide the trim back out or the meter
@@ -1491,7 +1489,8 @@ final class AudioOutputEngine {
         meterSnapshot.postAGCLeftPeak = postAGCLeftPeak
         meterSnapshot.postAGCRightPeak = postAGCRightPeak
         meterSnapshot.outputPeak = outputPeak
-        meterSnapshot.deviationKHzPeak = outputPeak * targetDeviationKHz * modulationReferenceScale
+        meterSnapshot.deviationKHzPeak = DeviationReadout.kilohertz(
+            compositePeak: outputPeak, modulationReferenceScale: modulationReferenceScale)
         meterSnapshot.dacPeak = outputPeak
             * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
         meterSnapshot.liveInputPeak = pendingInput
@@ -1500,7 +1499,8 @@ final class AudioOutputEngine {
         meterSnapshot.livePostAGCLeftPeak = pendingPostAGCLeft
         meterSnapshot.livePostAGCRightPeak = pendingPostAGCRight
         meterSnapshot.liveOutputPeak = pendingOutput
-        meterSnapshot.liveDeviationKHzPeak = pendingOutput * targetDeviationKHz * modulationReferenceScale
+        meterSnapshot.liveDeviationKHzPeak = DeviationReadout.kilohertz(
+            compositePeak: pendingOutput, modulationReferenceScale: modulationReferenceScale)
         pendingInputPeak = 0.0
         pendingInputLeftPeak = 0.0
         pendingInputRightPeak = 0.0
@@ -1789,7 +1789,6 @@ final class AudioOutputEngine {
         runtimeConfigLock.unlock()
         if let runtime {
             generator.applyRuntimeConfig(runtime)
-            targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
             lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
             modulationReferenceScale = outputMode == .mpxComposite
                 ? powf(10.0, -runtime.outputGainDB / 20.0) : 1.0

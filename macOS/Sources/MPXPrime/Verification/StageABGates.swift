@@ -399,7 +399,7 @@ private func printStereoGuardTable(label: String, config: AppConfig, durationSec
         let hat = hf.first(where: { $0.name == "hat_multitone" }).map {
             measureHFTransient(config: cfg, scenario: $0, durationSeconds: max(5.0, duration)).hfSINADDB ?? 0.0
         } ?? 0.0
-        let deviationKHz = d.peakAbs * Float(cfg.mpxDeviationKHz)
+        let deviationKHz = DeviationReadout.kilohertz(compositePeak: d.peakAbs, modulationReferenceScale: 1.0)
         points.append((share, d.maxSafetyGRDB, sep14))
         print(
             "\(String(format: "%5.2f", share))  "

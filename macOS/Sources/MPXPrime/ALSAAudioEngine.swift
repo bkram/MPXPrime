@@ -283,7 +283,6 @@ final class ALSAAudioEngine: @unchecked Sendable {
     // updateOutputMeters) every few periods.
     private var meterState = ALSAMeterState()
     private var meterPeriodCounter = 0
-    private var targetDeviationKHz: Float = 75.0
 
     /// Line output calibration (dBFS at 100% modulation -> linear), applied
     /// during the interleave/convert step after peak metering. Render-thread
@@ -332,7 +331,6 @@ final class ALSAAudioEngine: @unchecked Sendable {
         self.sampleRate = config.sampleRate
         self.useInputSource = config.sourceMode.lowercased() == "input"
         self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
-        self.targetDeviationKHz = Float(max(1.0, config.mpxDeviationKHz))
         // Modulation-domain deviation: divide output_gain_db back out of the
         // metered composite (composite mode only) -- same fix as the macOS
         // engine, see AudioOutputEngine.modulationReferenceScale.
@@ -529,7 +527,6 @@ final class ALSAAudioEngine: @unchecked Sendable {
                     lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
                     modulationReferenceScale = powf(10.0, -runtime.outputGainDB / 20.0)
                 }
-                targetDeviationKHz = max(1.0, runtime.mpxDeviationKHz)
                 // Source flip is honoured only when the capture path exists
                 // (capture PCM is opened at start; adding one mid-run is a
                 // restart-class change on Linux).
@@ -606,7 +603,8 @@ final class ALSAAudioEngine: @unchecked Sendable {
         state.renderLoadPct = renderLoadWindowPeak
         renderLoadWindowPeak = 0
         if meterLock.lockIfAvailable() {
-            state.deviationKHzPeak = meterOutputPeak * targetDeviationKHz * modulationReferenceScale
+            state.deviationKHzPeak = DeviationReadout.kilohertz(
+                compositePeak: meterOutputPeak, modulationReferenceScale: modulationReferenceScale)
             state.dacPeak = meterOutputPeak
                 * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
             meterState = state

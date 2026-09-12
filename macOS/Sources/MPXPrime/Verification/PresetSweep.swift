@@ -271,10 +271,7 @@ func runPresetSweepVerification(
                 scenario: scenario
             )
             let expectationsOverride = presetQualityOverride(for: sweep, scenario: scenario)
-            measured["\(sweep.id)/\(scenario.name)"] = buildBaselineRecord(
-                metrics: metrics,
-                targetDeviationKHz: config.mpxDeviationKHz
-            )
+            measured["\(sweep.id)/\(scenario.name)"] = buildBaselineRecord(metrics: metrics)
             presetWorstPeak = max(presetWorstPeak, metrics.peakAbs)
             presetWorstMargin = min(presetWorstMargin, metrics.minBudgetMarginDB)
             presetWorstOvershoot = max(presetWorstOvershoot, metrics.maxPostInjectionOvershoot)

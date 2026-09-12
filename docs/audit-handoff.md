@@ -97,9 +97,9 @@ dashboard in the same change.
 - there is no encoder-side BS.412 power readout, so compliance is only visible
   through the Meter off-air.
 
-### 4. `deviationKHzPeak` is wrong away from the default deviation
+### 4. `deviationKHzPeak` was wrong away from the default deviation -- FIXED 2026-09-12
 
-Found while fixing BS.412, not part of the review. The composite --
+Found while fixing BS.412, not part of the review. Fixed with the maintainer's go-ahead: both engines now go through `DeviationReadout.kilohertz` (peak x 75 x the trim reference), pinned by `DeviationReadoutTests` at 50 and 75 kHz. The description of the defect stays for the record. The composite --
 subcarriers included -- is scaled by `deviationScale = mpx_deviation_khz / 75`,
 so amplitude 1.0 is 75 kHz by construction; that is what holds pilot injection
 at 9 % of full deviation at any setting (measured: pilot amplitude 0.09 at 75,
@@ -108,8 +108,8 @@ at 9 % of full deviation at any setting (measured: pilot amplitude 0.09 at 75,
 configured deviation instead of 75. Exact at the default, so it has never been
 seen; at 50 kHz it would report 33 kHz for full modulation.
 
-This is an operator-facing number. Raise it with the maintainer rather than
-changing it quietly.
+This was an operator-facing number, so it was raised rather than changed
+quietly.
 
 ## Traps found the hard way
 

@@ -588,6 +588,12 @@ final class MPXGenerator {
     private var finalDrive: Float
     private let limitEnabled: Bool
     private let threshold: Float
+    /// Composite amplitude 1.0 is this many kHz of deviation at EVERY
+    /// `mpx_deviation_khz`: the whole composite is scaled by
+    /// `mpx_deviation_khz / referenceDeviationKHz`, so the pilot stays at
+    /// 9 % of the chosen deviation and every kHz readout multiplies a
+    /// composite peak by this constant (`DeviationReadout`).
+    static let referenceDeviationKHz: Float = 75.0
     private var deviationScale: Float
     private let programLowpassHz: Float
 
@@ -1151,7 +1157,7 @@ final class MPXGenerator {
         self.finalDrive = powf(10.0, Float(config.finalDriveDB) / 20.0)
         self.limitEnabled = config.limitMPX
         self.threshold = clampf(Float(config.limitThreshold), 0.5, 0.999)
-        self.deviationScale = Float(config.mpxDeviationKHz / 75.0)
+        self.deviationScale = Float(config.mpxDeviationKHz / Double(Self.referenceDeviationKHz))
         // AM narrows the program band to its own bandwidth key (NRSC-1 is
         // 10 kHz; narrower is common). Everything downstream reads this one
         // value, so no stage needs an AM branch of its own.
@@ -1880,7 +1886,7 @@ final class MPXGenerator {
         inputGain = powf(10.0, config.inputGainDB / 20.0)
         outputGain = powf(10.0, config.outputGainDB / 20.0)
         finalDrive = powf(10.0, config.finalDriveDB / 20.0)
-        deviationScale = config.mpxDeviationKHz / 75.0
+        deviationScale = config.mpxDeviationKHz / Self.referenceDeviationKHz
         pilotLevel = config.pilotLevel
         // Both of the above feed the BS.412 guard's future-subcarrier
         // reserve, and both are live-apply. Refreshing it is O(1) and keeps

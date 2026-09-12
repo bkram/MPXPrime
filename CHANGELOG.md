@@ -11,6 +11,19 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **The deviation readout is right at every deviation setting.** The
+  composite is built so that amplitude 1.0 is 75 kHz whatever
+  `mpx_deviation_khz` says (that is what keeps pilot injection at 9 % of the
+  chosen deviation), but both engines multiplied the metered peak by the
+  configured deviation instead of 75. Exact at the default, so nobody saw it;
+  at a 50 kHz setting full modulation read 33 kHz and the MOD percentage
+  67 %. One shared formula (`DeviationReadout`) now feeds the GUI meter,
+  `/api/meters`, the dashboard and the verifier's kHz columns and baseline
+  records (which carried the same multiply; Verification.ini says 75, so no
+  stored number moves), pinned through the generator at 50 and 75 kHz. The
+  Test Tone card's prediction and `scripts/smoke-live.sh` were
+  already in the physical convention and now agree with the meter at any
+  setting.
 - **The 0.60 BS.412 key migration is saved and announced.** An INI still
   carrying `bs412_threshold_db` / `bs412_window_seconds` was read onto the
   standard's 0.0 dBr ceiling but the file kept the old keys and nothing said

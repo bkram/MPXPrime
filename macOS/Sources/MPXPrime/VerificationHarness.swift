@@ -207,7 +207,7 @@ func runVerificationHarness(
         let line =
             "\(padded(scenario.name, width: 20))  "
             + "\(leftPadded(dbfsString(metrics.peakAbs), width: 9))"
-            + "  \(leftPadded(deviationString(peakAbs: metrics.peakAbs, targetDeviationKHz: config.mpxDeviationKHz), width: 7))"
+            + "  \(leftPadded(deviationString(peakAbs: metrics.peakAbs), width: 7))"
             + "  \(String(format: "%5.1f", nonNegative(metrics.maxLimiterGRDB)))"
             + "  \(String(format: "%6.1f", nonNegative(metrics.maxSafetyGRDB)))"
             + "  \(leftPadded(dbfsString(metrics.maxAudioCompositePeak), width: 7))"
@@ -264,10 +264,7 @@ func runVerificationHarness(
     do {
         let measured: [String: VerifierBaselineRecord] = Dictionary(
             uniqueKeysWithValues: scenarioMetrics.map { scenario, metrics in
-                (scenario.name, buildBaselineRecord(
-                    metrics: metrics,
-                    targetDeviationKHz: config.mpxDeviationKHz
-                ))
+                (scenario.name, buildBaselineRecord(metrics: metrics))
             }
         )
         // Encoder-side sideband fingerprint: computed only when capturing

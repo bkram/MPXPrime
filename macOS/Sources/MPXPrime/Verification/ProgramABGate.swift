@@ -369,7 +369,8 @@ private func renderProgramChain(
     let analysis = MeterAnalysis(
         sampleRate: Float(sampleRate),
         preemphasisUS: config.preemphasisUS,
-        fullScaleKHz: Float(config.mpxDeviationKHz),
+        // Composite amplitude 1.0 is 75 kHz at any `mpx_deviation_khz`.
+        fullScaleKHz: MPXGenerator.referenceDeviationKHz,
         maxBlock: 4_096,
         mpxPowerWindowSeconds: max(
             5, min(60, Int(Double(left.count) / sampleRate)))

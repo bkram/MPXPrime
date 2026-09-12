@@ -702,8 +702,11 @@ func ratioDB(_ numerator: Float, _ denominator: Float) -> Float {
     return Float(20.0 * log10(Double(numerator / denominator)))
 }
 
-func deviationString(peakAbs: Float, targetDeviationKHz: Double) -> String {
-    String(format: "%.1f", Double(peakAbs) * max(1.0, targetDeviationKHz))
+/// Composite amplitude 1.0 is 75 kHz at every `mpx_deviation_khz`
+/// (`DeviationReadout`); the verifier used to multiply by the configured
+/// deviation, which is the same number only because Verification.ini says 75.
+func deviationString(peakAbs: Float) -> String {
+    String(format: "%.1f", Double(peakAbs) * Double(MPXGenerator.referenceDeviationKHz))
 }
 
 func padded(_ text: String, width: Int) -> String {
@@ -735,10 +738,7 @@ func ratioString(_ value: Float, width: Int) -> String {
     return leftPadded(String(format: "%.2f", value), width: width)
 }
 
-func buildBaselineRecord(
-    metrics: VerificationMetrics,
-    targetDeviationKHz: Double
-) -> VerifierBaselineRecord {
+func buildBaselineRecord(metrics: VerificationMetrics) -> VerifierBaselineRecord {
     let peakDB = metrics.peakAbs > 1e-9
         ? Float(20.0 * log10(Double(metrics.peakAbs)))
         : -160.0
@@ -747,7 +747,7 @@ func buildBaselineRecord(
         : -160.0
     return VerifierBaselineRecord(
         peakDBFS: peakDB,
-        deviationKHz: Float(Double(metrics.peakAbs) * max(1.0, targetDeviationKHz)),
+        deviationKHz: Float(Double(metrics.peakAbs) * Double(MPXGenerator.referenceDeviationKHz)),
         limiterGRDB: nonNegative(metrics.maxLimiterGRDB),
         safetyGRDB: nonNegative(metrics.maxSafetyGRDB),
         audioCompositePeakDBFS: audioPeakDB,

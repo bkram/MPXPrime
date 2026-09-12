@@ -210,8 +210,10 @@ This section stays the record of findings and evidence.
 
 ### Found while fixing, not in the review
 
-- **`deviationKHzPeak` telemetry is wrong at any `mpx_deviation_khz` other
-  than 75.** The composite (subcarriers included) is scaled by
+- **`deviationKHzPeak` telemetry was wrong at any `mpx_deviation_khz` other
+  than 75 -- FIXED 2026-09-12** (`DeviationReadout`, both engines,
+  `DeviationReadoutTests` at 50 and 75 kHz; the maintainer chose to fix it).
+  The record: The composite (subcarriers included) is scaled by
   `deviationScale = mpx_deviation_khz / 75`, so amplitude 1.0 is 75 kHz by
   construction -- which is what keeps pilot injection at 9 % of full
   deviation at any setting (measured: pilot amplitude 0.09 at 75, 0.06 at
@@ -219,9 +221,8 @@ This section stays the record of findings and evidence.
   modulationReferenceScale`, i.e. it multiplies by the configured deviation
   instead of 75, so at 50 kHz it would report 33 kHz for full modulation.
   Agrees exactly at the default 75, which is why nobody has seen it. The
-  BS.412 work uses the 1.0 = 75 kHz convention throughout. Fixing the
-  readout is a separate, operator-visible change and wants the maintainer's
-  eye -- not folded into a compliance fix.
+  BS.412 work uses the 1.0 = 75 kHz convention throughout, and so does the
+  readout now.
 - **The monitor gain published to the audio thread started at unity** rather
   than at `monitor_gain_db`, so the first block ramped away from the
   configured level; on headless macOS, which does not re-apply the runtime

@@ -11,6 +11,31 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **The Mac dashboard shows Bad Input in every operating mode.** The 0.60
+  counter had been added to the Headroom card's composite rows only, so FM,
+  HD and AM operators could not see a fault the ingress guard counts in
+  every mode (the web dashboard already showed it everywhere). The card's
+  rows now come from one per-mode table shared with a test.
+- **A migration that could not be saved says so.** Both runtimes announced
+  "Saved." before writing the migrated INI and discarded the write's error;
+  an unwritable file left the station on the migrated settings while the
+  operator was told the file matched. One helper now writes once and words
+  success and failure, with the failure path under test.
+- **The band waveshaper's vector path is tested for real.** The batched test
+  compared the scalar curve with itself; it now runs the platform's
+  `vvtanhf` on eight distinct mixed-sign lanes, as the clippers do, against
+  the curve written out independently in Double.
+- **BS.412 wiring tests that actually fail when the wiring goes.** A review
+  removed the live reserve refresh from the generator and every BS.412 test
+  stayed green: the tests written for that fix called the guard directly.
+  Two generator-level tests now read the guard's reserve and the rider's and
+  guard's history through the generator, and each was shown to fail with
+  its wiring removed. The first of them found one more: a freshly built
+  generator reserved nothing for the subcarriers until its first live edit,
+  because the guard was configured before the pilot and RDS support flags
+  were set. Both engines re-apply the runtime config right after start, so
+  the air chain was right; offline renders with the limiter enabled were
+  not. The reserve now follows the flags.
 - **The deviation readout is right at every deviation setting.** The
   composite is built so that amplitude 1.0 is 75 kHz whatever
   `mpx_deviation_khz` says (that is what keeps pilot injection at 9 % of the

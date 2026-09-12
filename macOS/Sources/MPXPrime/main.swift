@@ -369,20 +369,12 @@ func loadOrCreateHeadlessConfig(path: String, explicit: Bool) throws -> AppConfi
     if FileManager.default.fileExists(atPath: path) {
         let loaded = try AppConfig.loadReportingMigration(fromINI: path)
         let config = loaded.config
-        if let legacy = loaded.legacyProfileID {
-            fputs(
-                "MPX Prime: pre-0.45 config (profile '\(legacy)') -- processing reset to the "
-                    + "'\(config.formatProfileID)' Format Profile; RDS, interfaces, control server and "
-                    + "calibration (pilot, deviation, output level, pre-emphasis) kept. Saved.\n",
-                stderr)
-            try? config.save(toINI: path)
-        }
-        if loaded.bs412KeysMigrated {
-            fputs(
-                "MPX Prime: pre-0.60 BS.412 keys (bs412_threshold_db / bs412_window_seconds) "
-                    + "replaced by bs412_ceiling_dbr = 0.0, the ITU-R BS.412-9 ceiling. Saved.\n",
-                stderr)
-            try? config.save(toINI: path)
+        let migration = AppConfig.persistMigration(
+            config, toINI: path,
+            legacyProfileID: loaded.legacyProfileID,
+            bs412KeysMigrated: loaded.bs412KeysMigrated)
+        if !migration.isEmpty {
+            fputs("MPX Prime: " + migration.joined(separator: " ") + "\n", stderr)
         }
         if config.safetyClipsAreThePeakController {
             fputs(

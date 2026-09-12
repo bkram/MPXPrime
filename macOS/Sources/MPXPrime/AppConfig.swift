@@ -711,6 +711,45 @@ struct AppConfig: Equatable {
         return (make(fromParsed: parsed), legacyProfileID, bs412KeysMigrated)
     }
 
+    /// Persist a load-time migration and word the outcome. Returns the lines
+    /// to announce (empty when nothing migrated). The write is attempted
+    /// ONCE for whatever migrated, and "Saved." is said only after it
+    /// succeeded: until 0.60 both runtimes printed "Saved." and then
+    /// discarded the save's error, so an unwritable file left the station
+    /// running the migrated settings while the operator was told the file
+    /// matched. `save` is injectable so the failure path is testable.
+    static func persistMigration(
+        _ config: AppConfig,
+        toINI path: String,
+        legacyProfileID: String?,
+        bs412KeysMigrated: Bool,
+        save: (AppConfig, String) throws -> Void = { try $0.save(toINI: $1) }
+    ) -> [String] {
+        var lines: [String] = []
+        if let legacy = legacyProfileID {
+            lines.append(
+                "Pre-0.45 config (profile '\(legacy)') -- processing reset to the "
+                    + "'\(config.formatProfileID)' Format Profile; RDS, interfaces, control server and "
+                    + "calibration (pilot, deviation, output level, pre-emphasis) kept.")
+        }
+        if bs412KeysMigrated {
+            lines.append(
+                "Pre-0.60 BS.412 keys (bs412_threshold_db / bs412_window_seconds) replaced by "
+                    + "bs412_ceiling_dbr = 0.0, the ITU-R BS.412-9 ceiling.")
+        }
+        guard !lines.isEmpty else { return [] }
+        do {
+            try save(config, path)
+            lines.append("Saved.")
+        } catch {
+            lines.append(
+                "NOT saved (\(error.localizedDescription)): the migrated settings are running, "
+                    + "but the file still carries the old keys and this migration repeats at every "
+                    + "start until the file can be written.")
+        }
+        return lines
+    }
+
     /// The pre-0.60 BS.412 keys are present and the 0.60 key is not.
     static func carriesLegacyBS412Keys(_ mpx: [String: String]) -> Bool {
         mpx.optionalDouble("bs412_ceiling_dbr") == nil

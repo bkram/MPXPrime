@@ -265,3 +265,4 @@ tuner/build*/
 
 # Implementation handoff notes (kept locally, not redistributed)
 sol-high.md
+code_review.md

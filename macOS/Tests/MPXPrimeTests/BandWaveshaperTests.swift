@@ -1,5 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Accelerate)
+import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
 @testable import MPXPrime
 
 // The curve `BassClipper` and `HFClipper` share. Until 0.60 it was
@@ -136,9 +141,10 @@ struct BandWaveshaperTests {
         }
     }
 
-    @Test func theBatchedPathMatchesTheScalarReference() {
-        // The clippers compute the tanh through vvtanhf in a batch; that must
-        // agree with the reference this file tests.
+    @Test func splittingTheCurveIntoArgumentAndShapeChangesNothing() {
+        // `apply` is `shaped(tanhf(tanhArgument))`; this pins that the split
+        // the batched path relies on is exact. It does NOT run the vector
+        // path -- the next test does.
         for threshold in thresholds {
             for knee in knees {
                 var x: Float = -3.0
@@ -151,6 +157,55 @@ struct BandWaveshaperTests {
                     #expect(abs(combined - reference) < 1e-6,
                             "batched and scalar disagree at x = \(x)")
                     x += 0.01
+                }
+            }
+        }
+    }
+
+    /// The production loops fill an 8-lane batch (4 oversample steps x L+R),
+    /// run `vvtanhf` on it and recombine per lane. This runs exactly that
+    /// -- the platform's vector tanh, not a scalar stand-in -- on lanes of
+    /// mixed sign and amplitude that are all DIFFERENT, so a lane swap,
+    /// a sign slip or a short count cannot pass, and compares against the
+    /// curve written out from its definition in Double, independent of
+    /// `BandWaveshaper`.
+    @Test func theVectorisedTanhPathMatchesAnIndependentCurve() {
+        for threshold in thresholds {
+            for knee in knees {
+                let x0 = knee * threshold
+                let width = threshold - x0
+                let lanes: [Float] = [
+                    -0.30 * threshold,          // well below the knee, negative
+                    0.95 * x0,                  // just under the knee
+                    x0,                         // exactly at the knee
+                    -threshold,                 // at the threshold, negative
+                    1.5 * threshold,            // over
+                    -0.5 * (x0 + threshold),    // inside the knee, negative
+                    3.0 * threshold,            // far over
+                    -1.01 * x0                  // just inside the knee, negative
+                ]
+                var arguments = lanes.map {
+                    BandWaveshaper.tanhArgument(driven: $0, threshold: threshold, knee: knee)
+                }
+                var tanhs = [Float](repeating: 0.0, count: lanes.count)
+                var n = Int32(lanes.count)
+                arguments.withUnsafeMutableBufferPointer { a in
+                    tanhs.withUnsafeMutableBufferPointer { t in
+                        // swiftlint:disable force_unwrapping
+                        vvtanhf(t.baseAddress!, a.baseAddress!, &n)
+                        // swiftlint:enable force_unwrapping
+                    }
+                }
+                for (i, x) in lanes.enumerated() {
+                    let got = BandWaveshaper.shaped(
+                        driven: x, tanhValue: tanhs[i], threshold: threshold, knee: knee)
+                    let m = Double(abs(x))
+                    let sign: Double = x < 0 ? -1.0 : 1.0
+                    let reference: Double = m <= Double(x0)
+                        ? Double(x)
+                        : sign * (Double(x0) + Double(width) * tanh((m - Double(x0)) / Double(width)))
+                    #expect(abs(Double(got) - reference) < 2e-6,
+                            "lane \(i) (x = \(x)) got \(got), curve says \(reference) at threshold \(threshold) knee \(knee)")
                 }
             }
         }

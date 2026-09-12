@@ -689,6 +689,13 @@ INI keys: `operating_mode`, `preemphasis_us`,
 
 The DSP status card's **Safety GR** is the final look-ahead MPX limiter's gain reduction (about 1 dB on dense program is normal: it rides the composite clipper's guard-band overshoot; since 0.45 it reports the true amount it removes). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/meters` and "Safety Clip" on the dashboard.
 
+**Bad Input** in the same card ("Bad Input Samples" on the web dashboard,
+`nonFiniteInputSamples` in `GET /api/meters`) counts input samples that
+arrived as NaN or Inf and were replaced with silence. It reads `none` in
+normal operation and is shown in every operating mode, because the guard runs
+in every mode: anything else means something upstream of the encoder is
+broken, even though the chain carried on.
+
 - `Audio I/O` -> `Output` is the composite/baseband output device
 - `Audio I/O` -> `Monitor` is the second device the Monitor output plays on, alongside the transmitter feed
 - The orange microphone indicator in the macOS menu bar is the system privacy indicator and appears when MPX Prime Studio is actively using audio input

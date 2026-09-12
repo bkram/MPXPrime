@@ -132,6 +132,42 @@ enum AdvancedControls {
     ]
 }
 
+/// The Headroom card's rows, in display order, and the modes that show each.
+/// ONE table, read by the GUI card, so a readout cannot be dropped in a mode
+/// the web dashboard shows it in: 0.60 added the Bad Input counter to the
+/// card's composite branch only, and FM / HD / AM operators on the Mac could
+/// not see a fault the ingress guard was counting in every mode.
+enum HeadroomReadout: String, CaseIterable, Sendable {
+    case preEncodeGR
+    case compositeGR
+    case safetyGR
+    case safetyClip
+    case bs412Budget
+    case mpxPower
+    case bs412GR
+    case badInput
+
+    /// Does this readout mean anything in `mode`?
+    func applies(in mode: AppConfig.OperatingMode) -> Bool {
+        switch self {
+        case .preEncodeGR, .badInput:
+            // The pre-encode limiter runs in every mode, and the ingress
+            // guard counts non-finite samples in every mode.
+            return true
+        case .compositeGR:
+            return ChainFeature.compositeClipper.applies(in: mode)
+        case .safetyGR, .safetyClip, .bs412Budget:
+            return ChainFeature.finalStage.applies(in: mode)
+        case .mpxPower, .bs412GR:
+            return ChainFeature.bs412.applies(in: mode)
+        }
+    }
+
+    static func visible(in mode: AppConfig.OperatingMode) -> [HeadroomReadout] {
+        allCases.filter { $0.applies(in: mode) }
+    }
+}
+
 enum ChainFeature: String, CaseIterable, Sendable {
     /// Stereo encoding itself: pilot, 38 kHz subcarrier, SSB leaning, mono mode.
     case stereoCoder

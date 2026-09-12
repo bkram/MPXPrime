@@ -461,6 +461,90 @@ struct BS412PowerLimiterTests {
         #expect(status.powerDBr.isFinite)
     }
 
+    /// Render `seconds` of a steady tone through a generator, block by block.
+    private func renderTone(_ generator: MPXGenerator, seconds: Double) {
+        let sr = 192_000.0
+        let frames = Int(sr * seconds)
+        var left = [Float](repeating: 0.0, count: frames)
+        var right = [Float](repeating: 0.0, count: frames)
+        for i in 0..<frames {
+            let v = Float(0.3 * sin(2.0 * Double.pi * 440.0 * Double(i) / sr))
+            left[i] = v
+            right[i] = v
+        }
+        left.withUnsafeMutableBufferPointer { lb in
+            right.withUnsafeMutableBufferPointer { rb in
+                // swiftlint:disable force_unwrapping
+                generator.renderFromInputInPlace(
+                    frameCount: frames, left: lb.baseAddress!, right: rb.baseAddress!)
+                // swiftlint:enable force_unwrapping
+            }
+        }
+    }
+
+    private func generatorConfig(bs412: Bool) -> AppConfig {
+        var cfg = AppConfig()
+        cfg.sampleRate = 192_000.0
+        cfg.blockSize = 4096
+        cfg.operatingMode = .mpx
+        cfg.enRDS = false
+        cfg.bs412Enabled = bs412
+        cfg.pilotLevel = 0.08
+        cfg.mpxDeviationKHz = 75.0
+        return cfg
+    }
+
+    /// Mutation-checked: a 2026-09-12 review removed the
+    /// `bs412Guard.setSubcarrierReserve` call from `applyRuntimeConfig` and
+    /// all 20 tests in this file stayed green, because
+    /// `aLivePilotIncreaseUpdatesTheGuardsReserve` calls the guard directly
+    /// from its fixture. This one edits the pilot AND the deviation live
+    /// through the generator and reads what the guard is actually charging.
+    @Test func aLivePilotOrDeviationEditReachesTheGuardThroughTheGenerator() {
+        let cfg = generatorConfig(bs412: true)
+        let generator = MPXGenerator(config: cfg, sampleRate: 192_000.0)
+        renderTone(generator, seconds: 0.5)
+        let reserveBefore = generator.bs412GuardSubcarrierReserveMeanSquare
+        let observedBefore = generator.bs412GuardObservedSeconds
+        #expect(reserveBefore > 0.0)
+        #expect(observedBefore > 0.4)
+
+        // Two live edits, each checked against a generator BUILT from the
+        // edited config (the truth), and each a material change so a stale
+        // reserve cannot pass by coincidence: pilot 0.08 -> 0.12, then
+        // deviation 75 -> 60 kHz.
+        var edited = cfg
+        for step in ["pilot", "deviation"] {
+            if step == "pilot" { edited.pilotLevel = 0.12 } else { edited.mpxDeviationKHz = 60.0 }
+            let before = generator.bs412GuardSubcarrierReserveMeanSquare
+            generator.applyRuntimeConfig(MPXGenerator.makeRuntimeConfig(from: edited))
+            let expected = MPXGenerator(config: edited, sampleRate: 192_000.0)
+                .bs412GuardSubcarrierReserveMeanSquare
+            #expect(abs(expected - before) > before * 0.25,
+                    "fixture problem: the \(step) edit did not move the reserve enough to test")
+            #expect(abs(generator.bs412GuardSubcarrierReserveMeanSquare - expected) < 1e-7,
+                    """
+                    after the live \(step) edit the guard reserves \
+                    \(generator.bs412GuardSubcarrierReserveMeanSquare) but a fresh generator \
+                    reserves \(expected) -- applyRuntimeConfig is not refreshing it
+                    """)
+        }
+        #expect(generator.bs412GuardObservedSeconds == observedBefore,
+                "the live edit discarded the guard's accumulated history")
+    }
+
+    /// The rider and the guard must ACCOUNT every sample with the stage
+    /// disabled, or enabling it starts cold -- the second wiring defect
+    /// found in review. Reads their history through the generator.
+    @Test func theGeneratorAccountsRiderAndGuardWithTheStageDisabled() {
+        let generator = MPXGenerator(config: generatorConfig(bs412: false), sampleRate: 192_000.0)
+        renderTone(generator, seconds: 2.0)
+        #expect(generator.bs412GuardObservedSeconds > 1.9,
+                "guard saw \(generator.bs412GuardObservedSeconds) s of a 2 s render with the stage off")
+        #expect(generator.bs412RiderObservedSeconds > 0.99,
+                "rider window holds \(generator.bs412RiderObservedSeconds) s after 2 s with the stage off")
+    }
+
     @Test func theReportingMeterStillRunsWithTheStageOff() {
         var meter = BS412MultiplexPowerMeter()
         meter.configure(sampleRate: sampleRate)

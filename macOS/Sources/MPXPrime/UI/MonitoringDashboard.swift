@@ -84,27 +84,25 @@ struct MonitoringDashboardView: View {
     }
 
     private var headroomPanel: some View {
-        // Composite clipper / safety limiter / BS.412 don't run in processed-audio
-        // output — only the pre-encode limiter does.
+        // Which rows exist in which mode is `HeadroomReadout`'s table, shared
+        // with the tests; this view only knows how to render each row.
         Card(title: "Headroom") {
             LiveObservationView(telemetry: model.telemetry) { _ in
-                if model.processedAudioOutputActive {
-                    metricsGrid([
-                        ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
-                    ])
-                } else {
-                    metricsGrid([
-                        ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue)),
-                        ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue)),
-                        ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue)),
-                        ("SAFETY CLIP", grText(model.safetyClipDBValue)),
-                        ("BS.412 BUDGET", budgetText),
-                        ("MPX POWER", mpxPowerText),
-                        ("BS.412 GR", grText(model.bs412StatusValue.gainReductionDB)),
-                        ("BAD INPUT", badInputText)
-                    ])
-                }
+                metricsGrid(HeadroomReadout.visible(in: model.config.operatingMode).map(headroomRow))
             }
+        }
+    }
+
+    private func headroomRow(_ readout: HeadroomReadout) -> (String, String) {
+        switch readout {
+        case .preEncodeGR: return ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
+        case .compositeGR: return ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue))
+        case .safetyGR: return ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue))
+        case .safetyClip: return ("SAFETY CLIP", grText(model.safetyClipDBValue))
+        case .bs412Budget: return ("BS.412 BUDGET", budgetText)
+        case .mpxPower: return ("MPX POWER", mpxPowerText)
+        case .bs412GR: return ("BS.412 GR", grText(model.bs412StatusValue.gainReductionDB))
+        case .badInput: return ("BAD INPUT", badInputText)
         }
     }
 

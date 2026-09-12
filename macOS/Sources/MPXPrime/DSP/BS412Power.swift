@@ -202,6 +202,13 @@ struct BS412Rider {
 
     var gainReductionDB: Float { -20.0 * log10f(max(1e-6, gain)) }
 
+    /// How much of the prediction window holds real history (0 ... 1 s).
+    /// Read by the generator-level wiring tests: the rider must observe
+    /// whether or not the stage is enforcing, or enabling it starts cold.
+    var observedSeconds: Float {
+        Float(filled) / Float(max(1, blocksPerWindow)) * Self.predictionSeconds
+    }
+
     mutating func configure(sampleRate: Float) {
         let sr = max(8_000.0, sampleRate)
         let blocks = max(1, Int((sr * Self.predictionSeconds).rounded()) / BS412.decimation)
@@ -369,6 +376,16 @@ struct BS412ComplianceGuard {
     /// not stored in the ring.
     mutating func setSubcarrierReserve(_ meanSquare: Float) {
         reservePerBlock = max(0.0, meanSquare) * Float(BS412.decimation)
+    }
+
+    /// The reserve currently charged to unobserved slots, as a mean square.
+    /// Read by the generator-level wiring test that proves a live pilot or
+    /// deviation edit reaches this stage.
+    var subcarrierReserveMeanSquare: Float { reservePerBlock / Float(BS412.decimation) }
+
+    /// How much of the 60 s window holds real emitted history.
+    var observedSeconds: Float {
+        Float(observedBlocks) / Float(max(1, blocksPerWindow)) * BS412.windowSeconds
     }
 
     mutating func reset() {

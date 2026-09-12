@@ -63,6 +63,78 @@ import Testing
     }
 }
 
+// Persisting a migration is reported truthfully: "Saved." only after the
+// write succeeded, and a failed write says so and leaves the migrated
+// settings running. Both runtimes go through this one helper, with the save
+// injectable so the failure path runs headless.
+@Suite struct MigrationPersistenceTests {
+
+    private func writeTemp(_ text: String) -> String {
+        let path = NSTemporaryDirectory() + "MPXPrime-MigrationPersist-\(UUID().uuidString).ini"
+        try? text.write(toFile: path, atomically: true, encoding: .utf8)
+        return path
+    }
+
+    private struct WriteFailure: Error, LocalizedError {
+        var errorDescription: String? { "disk full" }
+    }
+
+    @Test func aSuccessfulWriteIsReportedAsSavedAndRewritesTheFile() throws {
+        let path = writeTemp("[MPX]\nbs412_threshold_db = -10.0\n")
+        let loaded = try AppConfig.loadReportingMigration(fromINI: path)
+        let report = AppConfig.persistMigration(
+            loaded.config, toINI: path,
+            legacyProfileID: loaded.legacyProfileID, bs412KeysMigrated: loaded.bs412KeysMigrated)
+        #expect(report.count == 2)
+        #expect(report.last == "Saved.")
+        #expect(report.first?.hasPrefix("Pre-0.60 BS.412 keys") == true)
+        let mpx = try #require(try INIParser.parseFile(path)["MPX"])
+        #expect(mpx["bs412_threshold_db"] == nil)
+        #expect(mpx["bs412_ceiling_dbr"] != nil)
+    }
+
+    @Test func aFailedWriteIsReportedAsNotSavedAndLeavesTheFileAlone() throws {
+        let path = writeTemp("[MPX]\nbs412_threshold_db = -10.0\n")
+        let loaded = try AppConfig.loadReportingMigration(fromINI: path)
+        let report = AppConfig.persistMigration(
+            loaded.config, toINI: path,
+            legacyProfileID: loaded.legacyProfileID, bs412KeysMigrated: loaded.bs412KeysMigrated,
+            save: { _, _ in throw WriteFailure() })
+        #expect(report.count == 2)
+        #expect(report.last?.hasPrefix("NOT saved (disk full)") == true)
+        #expect(report.contains { $0.contains("Saved.") && !$0.contains("NOT saved") } == false)
+        // The migrated settings still run in memory...
+        #expect(loaded.config.bs412CeilingDBr == 0.0)
+        // ...and the file was not touched, so the next start migrates again.
+        let mpx = try #require(try INIParser.parseFile(path)["MPX"])
+        #expect(mpx["bs412_threshold_db"] == "-10.0")
+        #expect(mpx["bs412_ceiling_dbr"] == nil)
+    }
+
+    @Test func nothingToMigrateSaysNothingAndWritesNothing() throws {
+        let path = writeTemp("[MPX]\nbs412_enabled = False\n")
+        let loaded = try AppConfig.loadReportingMigration(fromINI: path)
+        var writes = 0
+        let report = AppConfig.persistMigration(
+            loaded.config, toINI: path,
+            legacyProfileID: nil, bs412KeysMigrated: loaded.bs412KeysMigrated,
+            save: { _, _ in writes += 1 })
+        #expect(report.isEmpty)
+        #expect(writes == 0)
+    }
+
+    @Test func bothMigrationsShareOneWrite() {
+        var writes = 0
+        let report = AppConfig.persistMigration(
+            AppConfig(), toINI: "/dev/null",
+            legacyProfileID: "chr_top40", bs412KeysMigrated: true,
+            save: { _, _ in writes += 1 })
+        #expect(report.count == 3)
+        #expect(writes == 1)
+        #expect(report.last == "Saved.")
+    }
+}
+
 // How the Now Playing poller launches a script. Until 0.60 it hard-coded
 // `/bin/zsh`, which no stock Ubuntu ships, so on Linux every script failed
 // to launch and the journal repeated "launch failed" every poll.

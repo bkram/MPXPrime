@@ -866,6 +866,13 @@ final class MPXGenerator {
 
     /// Compliance state for telemetry. Updated once per rendered sample.
     var bs412Status: BS412Status { bs412StatusState }
+    /// Diagnostics for the generator-level wiring tests, not operator
+    /// telemetry: what the guard charges unobserved slots with, and how much
+    /// history each control stage has accounted. Component tests cannot see
+    /// a wiring mistake; these let a test read the wired state directly.
+    var bs412GuardSubcarrierReserveMeanSquare: Float { bs412Guard.subcarrierReserveMeanSquare }
+    var bs412GuardObservedSeconds: Float { bs412Guard.observedSeconds }
+    var bs412RiderObservedSeconds: Float { bs412Rider.observedSeconds }
 
     /// Upper bound on the mean square of the subcarriers alone, for the
     /// guard's unobserved-history reserve.
@@ -2505,6 +2512,12 @@ final class MPXGenerator {
         pilotSupported = nyquist > (pilotFreq + 100.0)
         stereoSubcarrierSupported = nyquist > (subcarrierFreq + 100.0)
         rdsSupported = nyquist > 57_100.0
+        // The BS.412 guard's reserve reads these flags. Its `configure` runs
+        // earlier in both init and setSampleRate, when they are still false,
+        // so a fresh generator reserved NOTHING until the first live apply
+        // (found 2026-09-12 by the generator-level wiring test). Refresh it
+        // here, where the flags become true; O(1), keeps history.
+        bs412Guard.setSubcarrierReserve(bs412SubcarrierReserve)
 
         updateMonitorRecoveryRates()
         updatePrimeBassDynamicRates()

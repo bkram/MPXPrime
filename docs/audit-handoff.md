@@ -20,7 +20,7 @@ sub-claims were refuted and are recorded as such -- do not "fix" them:
 - `ALSAMonitorOutput.runningDevice` (part of P0-5) is only ever touched by
   the control thread.
 
-Seven are fixed and shipped, one commit each, CI green:
+Eight are fixed and shipped, CI green (the clipper in three commits):
 
 | Item | What it was |
 | --- | --- |
@@ -30,48 +30,29 @@ Seven are fixed and shipped, one commit each, CI green:
 | P0-5 | monitor gain, metering flag and monitor note crossed threads unguarded |
 | P0-6 | BS.412 implemented none of the Recommendation's three conditions |
 | P0-7 | AM applied the FM pre-emphasis curve, in three places |
+| P0-2 | both band clippers stepped down 24 % at the threshold (landed 2026-09-12; listening pass pending) |
 | CI | a GUI-only symbol broke the Linux test target's compile |
 
 ## What is left
 
-### 1. P0-2, the band clipper transfer -- the only composite-moving item
+### 1. P0-2, the band clipper transfer -- LANDED 2026-09-12
 
-`BassClipper` and `HFClipper` (`macOS/Sources/MPXPrime/DSP/AudioClippers.swift`)
-pass the band through untouched while `abs(x * drive) <= threshold`, then
-switch to `(threshold * tanh(x * drive / threshold)) / drive`. At the join the
-output drops to `tanh(1)` = 0.762 of where it was -- a 24 % discontinuity --
-then climbs back toward the same ceiling. Oversampling cannot repair a
-discontinuous transfer.
+Done, in three commits: the continuous soft knee for both clippers
+(2feec78), the `bass_kick` verification scenario with all four macOS
+baselines recaptured (d9c852e), and the x86_64 Linux baseline artifact
+(0fa68b9). The knee is 0.9, chosen by measuring THROUGH the real
+oversampled stage; the roadmap's F5 entry has the table and the reasons,
+including why a bare-curve sweep pointed the wrong way. What remains is the
+maintainer's listening pass (roadmap F5 step 5): if it disagrees, the knee
+moves, not the curve.
 
-This is the highest-value remaining fix and the riskiest to land, because
-`bass_clipper_enabled` defaults True, so a fresh installation has it on, but
-only the `music_loud` Format Profile enables it (the other four switch it
-off). It changes what those stations sound like.
-
-**Update 2026-09-12: built, measured through the real stage, and landing with knee 0.9 -- see the roadmap's F5 entry for the table. What follows was the plan before measurement; the knee decision below is superseded.**
-
-Proposed curve, to be confirmed by measurement rather than adopted on faith:
-one shared odd-symmetric waveshaper, unity up to `x0 = k * threshold`, then
-`x0 + (threshold - x0) * tanh((abs(x) - x0) / (threshold - x0))` with the sign
-restored. Continuous in value and slope, monotonic, and the asymptote stays at
-`threshold / drive`, so the operator-facing meaning of "Threshold" does not
-change. `k` is the open question; 0.5 and 0.7 are the candidates.
-
-Required before it lands:
-
-- static sweeps: finite output, odd symmetry, continuity and slope continuity
-  at the join, monotonicity, sub-threshold gain, bounded asymptote;
-- two-tone intermodulation, THD against input level, alias energy;
-- `--verify-hf-transients`, `--verify-receiver`, `--verify-stereo-guard`,
-  `--verify-final-ride`, and `--verify-program-ab` on the operator corpus;
-- a listening pass on the bass material in `docs/test-playlist.md`, on a
-  RELEASE build;
-- recapture of all four macOS baselines AND the Linux one, in the same commit.
-
-Do not recapture a baseline until a test explains the delta. Bring the
-measured numbers for both `k` candidates to the maintainer before choosing --
-this is a taste-adjacent decision with a measurement behind it, not a free
-choice.
+Two things learned there that generalise. The strict gates were BLIND to
+this stage -- no scenario drove it -- so "the baselines did not move" was
+never evidence about it; check a stage's engagement through the chain with
+a same-delay comparison before trusting a baseline to guard it. And "no
+drift reported" means "inside tolerance", not "unchanged": the fix moved a
+long-run true-peak overshoot to 96 % of its bound. A deliberate DSP change
+recaptures all four baselines in the same commit for exactly that reason.
 
 ### 2. P1-1 and P1-2, the real-time items -- blocked on one measurement
 

@@ -381,6 +381,9 @@ real-time items.
       between the push and the artifact commit, as AGENTS documents.
       Learned on the way: the strict compare grades an unseen scenario as
       WARN (`<new>` finding), so the capture must ship with the scenario.
+      Landed as d9c852e (scenario + four macOS baselines) and 0fa68b9 (the
+      x86_64 artifact from workflow run 34692757580); the Linux CI job was
+      red for that one push, as documented.
    5. **Listen** (maintainer): `docs/test-playlist.md` bass tracks on a
       RELEASE build, old vs new. If it sounds worse the knee moves, not the
       curve -- the discontinuity is not coming back.

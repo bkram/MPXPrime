@@ -690,8 +690,16 @@ struct AppConfig: Equatable {
     /// gain structure forward under a new label would keep the station
     /// distorting. `legacyProfileID` is the id that triggered the reset so the
     /// caller can log it and persist the reset config.
+    ///
+    /// `bs412KeysMigrated` reports the 0.60 BS.412 key change: an INI that
+    /// still carries `bs412_threshold_db` / `bs412_window_seconds` and no
+    /// `bs412_ceiling_dbr` is read onto the standard's 0.0 dBr ceiling, and
+    /// the caller SAVES (so the file matches what runs and the old keys go)
+    /// and says so once. Reading it silently is what the first 0.60 deploy
+    /// did: the rig ran the new ceiling while its INI kept showing the old
+    /// keys, which is a lie the operator cannot see through.
     static func loadReportingMigration(fromINI path: String) throws
-        -> (config: AppConfig, legacyProfileID: String?) {
+        -> (config: AppConfig, legacyProfileID: String?, bs412KeysMigrated: Bool) {
         let resolvedPath = resolveINIPath(path, forWrite: false)
         var parsed = try INIParser.parseFile(resolvedPath)
         var legacyProfileID: String?
@@ -699,7 +707,15 @@ struct AppConfig: Equatable {
             legacyProfileID = raw
             parsed = resetProcessingSections(parsed, toProfile: migrated)
         }
-        return (make(fromParsed: parsed), legacyProfileID)
+        let bs412KeysMigrated = carriesLegacyBS412Keys(parsed["MPX"] ?? [:])
+        return (make(fromParsed: parsed), legacyProfileID, bs412KeysMigrated)
+    }
+
+    /// The pre-0.60 BS.412 keys are present and the 0.60 key is not.
+    static func carriesLegacyBS412Keys(_ mpx: [String: String]) -> Bool {
+        mpx.optionalDouble("bs412_ceiling_dbr") == nil
+            && (mpx.optionalDouble("bs412_threshold_db") != nil
+                || mpx.optionalDouble("bs412_window_seconds") != nil)
     }
 
     static func resetProcessingSections(
@@ -1032,11 +1048,11 @@ struct AppConfig: Equatable {
         cfg.bs412Enabled = mpx.bool("bs412_enabled", defaultValue: cfg.bs412Enabled)
         if let ceiling = mpx.optionalDouble("bs412_ceiling_dbr") {
             cfg.bs412CeilingDBr = ceiling
-        } else if mpx.optionalDouble("bs412_threshold_db") != nil
-                    || mpx.optionalDouble("bs412_window_seconds") != nil {
+        } else if carriesLegacyBS412Keys(mpx) {
             // Pre-0.60 keys. Their threshold has no dBr meaning, so the only
-            // honest migration is the standard's own ceiling; the caller
-            // announces it (`loadReportingMigration`).
+            // honest migration is the standard's own ceiling.
+            // `loadReportingMigration` reports it so both runtimes save the
+            // rewritten INI and announce the change.
             cfg.bs412CeilingDBr = 0.0
         }
         cfg.compositeClipperEnabled = mpx.bool(

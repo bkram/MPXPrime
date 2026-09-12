@@ -433,12 +433,14 @@ final class MPXPrimeViewModel: ObservableObject {
         self.deviceLister = deviceLister
         let loadedConfig: AppConfig
         var legacyProfileReset: String?
+        var bs412KeysMigrated = false
         do {
             let loaded = try AppConfig.loadReportingMigration(fromINI: configPath)
             loadedConfig = loaded.config
             legacyProfileReset = loaded.legacyProfileID
-            if legacyProfileReset != nil {
-                // Persist the reset so the station does not re-migrate on
+            bs412KeysMigrated = loaded.bs412KeysMigrated
+            if legacyProfileReset != nil || bs412KeysMigrated {
+                // Persist the migration so the station does not re-migrate on
                 // every launch and the INI on disk matches what runs.
                 try? loadedConfig.save(toINI: configPath)
             }
@@ -470,6 +472,10 @@ final class MPXPrimeViewModel: ObservableObject {
                 "Pre-0.45 config (profile '\(legacy)'): processing reset to the "
                 + "'\(loadedConfig.formatProfileID)' Format Profile; RDS, interfaces and "
                 + "calibration kept."
+        } else if bs412KeysMigrated {
+            statusText =
+                "Pre-0.60 BS.412 keys replaced by bs412_ceiling_dbr = 0.0 (the ITU-R "
+                + "BS.412-9 ceiling); saved."
         } else if loadedConfig.safetyClipsAreThePeakController {
             // Same warning the headless runtime prints: nothing upstream of
             // the safety soft-clips controls peaks in this config.

@@ -201,7 +201,9 @@ engine started. Zero is the normal reading.
   threshold was dB relative to normalised full-scale power, a scale on which
   its default of -10 meant roughly +4.9 dBr -- above the limit it claimed to
   enforce -- so there is no honest numeric conversion: an INI carrying either
-  old key adopts the standard's 0.0 dBr ceiling on load.
+  old key adopts the standard's 0.0 dBr ceiling on load, the encoder says so
+  once (status bar in the app, the log on Linux) and saves the INI, so the old
+  keys disappear from the file and it matches what runs.
 
 Read only when `operating_mode = am`:
 
@@ -344,6 +346,15 @@ would empty the title, the original is kept.
 Copy it somewhere stable (for example your home folder) and point the
 Radiotext now-playing script setting at it. The first run prompts once for
 Automation permission to control the player.
+
+How the script is launched: an executable file runs directly, so its own
+`#!` line picks the interpreter; a file without the execute bit runs through
+the first of `/bin/zsh`, `/bin/bash`, `/bin/sh` that exists on the machine
+(stock Ubuntu has no zsh, so a Linux script should say `#!/bin/sh` or
+`#!/bin/bash`). A path that does not exist is reported as `script not found`
+-- the usual cause is a macOS path in a config copied to a Linux box. The
+poller reports a result when it CHANGES (new track, recovery, a different
+failure), not on every poll.
 
 Expected script behavior:
 

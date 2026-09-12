@@ -377,6 +377,13 @@ func loadOrCreateHeadlessConfig(path: String, explicit: Bool) throws -> AppConfi
                 stderr)
             try? config.save(toINI: path)
         }
+        if loaded.bs412KeysMigrated {
+            fputs(
+                "MPX Prime: pre-0.60 BS.412 keys (bs412_threshold_db / bs412_window_seconds) "
+                    + "replaced by bs412_ceiling_dbr = 0.0, the ITU-R BS.412-9 ceiling. Saved.\n",
+                stderr)
+            try? config.save(toINI: path)
+        }
         if config.safetyClipsAreThePeakController {
             fputs(
                 "MPX Prime: WARNING pre-encode limiter and composite clipper are both OFF -- "

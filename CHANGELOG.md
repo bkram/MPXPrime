@@ -11,6 +11,18 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **The 0.60 BS.412 key migration is saved and announced.** An INI still
+  carrying `bs412_threshold_db` / `bs412_window_seconds` was read onto the
+  standard's 0.0 dBr ceiling but the file kept the old keys and nothing said
+  so (found on the Linux rig's first 0.60 deploy). Both runtimes now report
+  the migration once and rewrite the INI, so the file matches what runs.
+- **Now Playing scripts launch on Linux.** The poller hard-coded `/bin/zsh`,
+  which stock Ubuntu does not ship, so every script failed to launch there.
+  An executable script now runs directly (its `#!` line decides), a plain
+  file runs through the first of zsh / bash / sh present, a missing path is
+  reported as `script not found: <path>`, and a poll result is logged when it
+  changes rather than every poll (the rig's journal had 186 identical
+  "launch failed" lines in 25 minutes).
 - **The sidebar is organised by what you are doing, not by how the engine is
   built (phase 1 of the taxonomy plan).** Five sections in both front ends --
   **On Air**, **Setup** (Audio I/O and Test Tone moved here from "Tools"),

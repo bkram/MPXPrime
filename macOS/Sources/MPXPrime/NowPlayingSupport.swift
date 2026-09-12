@@ -247,6 +247,18 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
         statusHandler(line)
     }
 
+    /// The poll result is reported the same way: on CHANGE. A script that
+    /// cannot launch (the Linux journal read "launch failed" every 5 s for
+    /// 25 minutes, 186 lines of it) or one that keeps returning the same
+    /// track says so once; the next different result -- a new track, a
+    /// recovery, a different failure -- is a new line.
+    private var lastPollStatus: String?
+    private func reportPollStatusOnChange(_ line: String) {
+        guard lastPollStatus != line else { return }
+        lastPollStatus = line
+        statusHandler(line)
+    }
+
     private func reconfigureTimer() {
         timer?.cancel()
         timer = nil
@@ -267,6 +279,7 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
             return
         }
         lastIdleStatus = nil
+        lastPollStatus = nil
 
         let newTimer = DispatchSource.makeTimerSource(queue: queue)
         newTimer.schedule(deadline: .now(), repeating: settings.pollSeconds)
@@ -291,17 +304,48 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
                     ? "-"
                     : snapshot.title
                 : snapshot.display
-            statusHandler("Now Playing: \(rendered)")
+            reportPollStatusOnChange("Now Playing: \(rendered)")
         case .failure(let error):
             state.clear()
-            statusHandler("Now Playing: \(friendlyStatusMessage(for: error))")
+            reportPollStatusOnChange("Now Playing: \(friendlyStatusMessage(for: error))")
         }
     }
 
+    /// How a script is launched. An executable file runs directly, so its
+    /// own shebang decides the interpreter (the shipped macOS scripts say
+    /// zsh; a Linux operator's script says whatever the box has). A file
+    /// without the execute bit runs through the first shell present of zsh,
+    /// bash, sh -- until 0.60 the runner hard-coded `/bin/zsh`, which no
+    /// stock Ubuntu ships, so on Linux EVERY script failed to launch. A
+    /// missing file is reported as such (the usual cause is a macOS path in
+    /// a config copied to a Linux box), never as a generic launch failure.
+    struct LaunchPlan: Equatable {
+        var executable: String
+        var arguments: [String]
+    }
+
+    static let shellCandidates = ["/bin/zsh", "/bin/bash", "/bin/sh"]
+
+    static func launchPlan(
+        forScript path: String,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
+        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> LaunchPlan? {
+        guard exists(path) else { return nil }
+        if isExecutable(path) {
+            return LaunchPlan(executable: path, arguments: [])
+        }
+        let shell = shellCandidates.first(where: isExecutable) ?? "/bin/sh"
+        return LaunchPlan(executable: shell, arguments: [path])
+    }
+
     private func runScript(path: String, timeoutSeconds: Double) -> Result<NowPlayingSnapshot, ScriptFailure> {
+        guard let plan = Self.launchPlan(forScript: path) else {
+            return .failure(ScriptFailure(message: "script not found: \(path)"))
+        }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = [path]
+        process.executableURL = URL(fileURLWithPath: plan.executable)
+        process.arguments = plan.arguments
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

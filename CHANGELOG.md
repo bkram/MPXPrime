@@ -11,6 +11,11 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Advanced Dynamics' transient hold decays by time, not by sample.** The
+  leveler kept a flat 0.94 per sample after the multiband compressor got its
+  time constant: 0.34 ms at the 48 kHz audio domain, 0.08 ms with the
+  dual-rate boundary off. The coefficient is now derived per rate and is
+  exactly 0.94 at 48 kHz, so the armed corpus gates see the same numbers.
 - **The Meter treats a repaired input sample as a hole, and says so.** The
   0.60 ingress guard replaced NaN / Inf with silence but every readout kept
   reading as valid across the gap. Now the repaired block stays out of the

@@ -306,9 +306,10 @@ real-time items.
    saturates for the first few milliseconds after `configure` because the RMS
    detector starts at zero (harmless now the hold decays, but it makes
    `MultibandPhase2Tests`' `transientDriveObserved > 0.10` assertion
-   vacuous), and `AdvancedDynamicsLeveler` still uses the rate-dependent
-   0.94 -- left alone because changing it means re-running the armed
-   `--verify-advanced-dynamics` corpus gate.
+   vacuous), and `AdvancedDynamicsLeveler` still used the rate-dependent
+   0.94 -- DONE 2026-09-12 as `0.94^(48000/sr)`, exactly 0.94 at the 48 kHz
+   domain so the armed gates see the same numbers, a time constant at any
+   other rate (`AdvancedDynamicsHoldTests`).
 5. **F5 -- P0-2, band waveshaper. BUILT AND MEASURED 2026-09-12, landing
    plan below.** The shared curve is in the working tree with nine
    property tests (`BandWaveshaperTests`: continuity in value and slope at

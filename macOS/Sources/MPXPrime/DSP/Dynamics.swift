@@ -590,6 +590,14 @@ struct AdvancedDynamicsLeveler {
     private var envAttackCoeff: Float = 0.0
     private var envReleaseCoeff: Float = 0.0
     private var transientHoldSamples: Int = 1
+    /// Per-sample decay of the transient hold. The design value is 0.94 per
+    /// sample AT THE 48 kHz AUDIO DOMAIN (a 0.337 ms time constant, the same
+    /// as `MonoCompressor`); it is re-derived per rate as `0.94^(48000/sr)`
+    /// so the hold decays by TIME, not by sample count -- a flat 0.94 was
+    /// 0.08 ms with the dual-rate boundary off (audit P0-3 follow-up). The
+    /// power form is exactly 0.94 at 48 kHz, so the production domain and
+    /// the armed corpus gates are bit-identical to before.
+    private var transientHoldDecayCoeff: Float = 0.94
 
     // Gain-smoother coefficient anchors; per-sample the effective
     // coefficient is a blend of these (no per-sample expf).
@@ -623,6 +631,10 @@ struct AdvancedDynamicsLeveler {
 
     var groupDelaySamples: Int { splitter.groupDelaySamples }
 
+    /// Diagnostic for the rate-independence test: the largest transient hold
+    /// any band is currently carrying. Not telemetry.
+    var maxHeldTransientDrive: Float { bands.reduce(0.0) { max($0, $1.heldDrive) } }
+
     /// Structure: sample rate + crossovers. Allocates FIR state — call only
     /// when these actually changed (engine start / crossover live-change).
     mutating func configureStructure(
@@ -637,6 +649,7 @@ struct AdvancedDynamicsLeveler {
         envAttackCoeff = expf(-1.0 / (0.005 * sr))
         envReleaseCoeff = expf(-1.0 / (0.060 * sr))
         transientHoldSamples = max(1, Int((sr * 0.010).rounded()))
+        transientHoldDecayCoeff = powf(0.94, 48_000.0 / sr)
         fastEnvCoeff = expf(-1.0 / (0.050 * sr))
         slowEnvCoeff = expf(-1.0 / (1.000 * sr))
         densityCoeff = expf(-1.0 / (0.500 * sr))
@@ -786,7 +799,7 @@ struct AdvancedDynamicsLeveler {
             st.transientHoldCounter -= 1
         }
         st.heldDrive = st.transientHoldCounter > 0
-            ? max(st.heldDrive * 0.94, transientDrive)
+            ? max(st.heldDrive * transientHoldDecayCoeff, transientDrive)
             : transientDrive
         let peakWeight = lerpf(0.18, 0.58, st.heldDrive)
         let hybrid = (rms * (1.0 - peakWeight)) + (linked * peakWeight)

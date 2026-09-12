@@ -204,6 +204,21 @@ struct NonFiniteIngressTests {
                 "the guard replaced a finite over-range sample")
     }
 
+    @Test func theCountReachesTheEngineTelemetry() {
+        // The guard is only useful to an operator if they can SEE that their
+        // source is sending rubbish. Pin the value the API and both front
+        // ends read.
+        let gen = MPXGenerator(config: richConfig(), sampleRate: sampleRate)
+        #expect(gen.nonFiniteInputSampleCount == 0, "a clean start must read zero")
+        _ = render(gen, frames: block * 2, poison: Float.infinity, poisonRange: 10..<20)
+        let count = gen.nonFiniteInputSampleCount
+        #expect(count >= 20,
+                "ten poisoned frames on two channels should count at least 20, got \(count)")
+        // And it must keep counting, not latch.
+        _ = render(gen, frames: block * 2, poison: Float.nan, poisonRange: 0..<5)
+        #expect(gen.nonFiniteInputSampleCount > count, "the counter stopped advancing")
+    }
+
     // MARK: - Meter side
 
     @Test func meterReadingsRecoverAfterANonFiniteBlock() {

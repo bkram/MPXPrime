@@ -661,6 +661,7 @@ extension AudioOutputEngine: ControlledEngine {
             advancedDynamicsDensityDB: m.advancedDynamicsActive
                 ? m.advancedDynamicsDensityDB : nil,
             compositeClipperGainReductionDB: m.compositeClipperGainReductionDB,
+            nonFiniteInputSamples: Int(m.nonFiniteInputSamples),
             bs412PowerDBr: m.bs412.powerDBr,
             bs412PowerValid: m.bs412.powerValid,
             bs412SecondsObserved: m.bs412.secondsObserved,
@@ -712,6 +713,7 @@ extension ALSAAudioEngine: ControlledEngine {
             advancedDynamicsDensityDB: state.advancedDynamicsActive
                 ? state.advancedDynamicsDensityDB : nil,
             compositeClipperGainReductionDB: state.clipperGRDB,
+            nonFiniteInputSamples: Int(state.nonFiniteInputSamples),
             bs412PowerDBr: state.bs412.powerDBr,
             bs412PowerValid: state.bs412.powerValid,
             bs412SecondsObserved: state.bs412.secondsObserved,

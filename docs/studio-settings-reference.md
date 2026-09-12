@@ -193,6 +193,10 @@ refused whenever the transmitter is on `default` too.
   Reported through `/api/meters` as `bs412PowerDBr` (with `bs412PowerValid`,
   `bs412SecondsObserved`, `bs412GainReductionDB`, `bs412OverCeiling`,
   `bs412Unachievable`, `bs412GuardActive`, `bs412ControlSuspended`).
+
+`/api/meters` also carries `nonFiniteInputSamples`: how many NaN / Inf
+input samples the DSP ingress guard has replaced with silence since the
+engine started. Zero is the normal reading.
   Replaced `bs412_threshold_db` and `bs412_window_seconds` in 0.60. The old
   threshold was dB relative to normalised full-scale power, a scale on which
   its default of -10 meant roughly +4.9 dBr -- above the limit it claimed to

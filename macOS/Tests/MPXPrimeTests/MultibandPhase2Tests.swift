@@ -47,7 +47,18 @@ struct MultibandPhase2Tests {
             smartPeak = max(smartPeak, abs(smart.process(hit)))
         }
 
-        #expect(smart.transientDriveObserved > 0.10)
+        // NOT `transientDriveObserved > 0.10`: that is the LIFETIME peak, and
+        // it saturates to 1.0 within a few samples of `configure` whatever is
+        // playing, because the RMS detector starts at zero and the first
+        // non-silent sample has an unbounded peak-to-RMS ratio. The assertion
+        // was therefore true for any signal at all (0.60 audit follow-up).
+        //
+        // What actually matters is that the transient-aware path behaved
+        // DIFFERENTLY from the classic one on this burst, which the peak
+        // comparison below states directly, and that the detector is left in
+        // a sane state rather than stuck at the ceiling.
+        #expect(smart.transientHoldValue >= 0.0 && smart.transientHoldValue <= 1.0,
+                "hold left at \(smart.transientHoldValue), outside [0, 1]")
         #expect(smartPeak > classicPeak * 1.04)
     }
 

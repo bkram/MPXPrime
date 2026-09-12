@@ -867,6 +867,7 @@ function renderMonitoring(c) {
       kv("Pre-Encode GR", "monPre") +
       (compositeMode() ? kv("Composite GR", "monClip") + kv("Safety GR", "monSafe") + kv("Safety Clip", "monSafeClip") : "") +
       (compositeMode() ? kv("MPX Power", "monBS412") + kv("BS.412 GR", "monBS412GR") : "") +
+      kv("Bad Input Samples", "monNonFinite") +
       kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
     (compositeMode() ?
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
@@ -1406,6 +1407,16 @@ function applyMeters(m) {
     el.style.color = colour;
   })();
   set("monBS412GR", gr(m?.bs412GainReductionDB));
+  // NaN / Inf arriving from the source. Zero is the normal reading and says
+  // so; anything else means something upstream is broken, even though the
+  // chain itself is protected.
+  (function () {
+    var el = document.getElementById("monNonFinite");
+    if (!el) return;
+    var n = m?.nonFiniteInputSamples;
+    el.textContent = n == null ? "-" : (n === 0 ? "none" : String(n));
+    el.style.color = n ? "var(--bad, #c33)" : "";
+  })();
   set("monAGC", m?.agcGainDB != null ? m.agcGainDB.toFixed(1) + " dB" : "-");
   // Electrical headroom at the converter (post output gain + line output);
   // the deviation trace stays in the modulation domain.

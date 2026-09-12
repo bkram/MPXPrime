@@ -100,7 +100,8 @@ struct MonitoringDashboardView: View {
                         ("SAFETY CLIP", grText(model.safetyClipDBValue)),
                         ("BS.412 BUDGET", budgetText),
                         ("MPX POWER", mpxPowerText),
-                        ("BS.412 GR", grText(model.bs412StatusValue.gainReductionDB))
+                        ("BS.412 GR", grText(model.bs412StatusValue.gainReductionDB)),
+                        ("BAD INPUT", badInputText)
                     ])
                 }
             }
@@ -182,6 +183,14 @@ struct MonitoringDashboardView: View {
         let core = String(format: "%+5.2f dBr", Double(status.powerDBr))
         if status.guardActive { return "\(core) - guard" }
         return status.overCeiling ? "\(core) - over" : core
+    }
+
+    /// NaN / Inf arriving from the source. "none" is the normal reading;
+    /// anything else means something upstream is broken, even though the
+    /// chain itself replaced them with silence and carried on.
+    private var badInputText: String {
+        let count = model.nonFiniteInputSamplesValue
+        return count == 0 ? "none" : String(count)
     }
 
     private func grText(_ valueDB: Float) -> String {

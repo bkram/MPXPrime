@@ -67,6 +67,7 @@ final class LiveTelemetry {
     var compositeOverBudget: Bool = false
     var compositeClipperGainReductionDBValue: Float = 0.0
     var bs412StatusValue = BS412Status()
+    var nonFiniteInputSamplesValue: UInt64 = 0
     var compositeClipperLookaheadGainReductionDBValue: Float = 0.0
     var preEncodeLimiterGainReductionDBValue: Float = 0.0
     var safetyLimiterGainReductionDBValue: Float = 0.0

@@ -140,6 +140,12 @@ combination test suite. Newest first.
   60-second window exceed the ceiling, including the first one and the ones
   spanning a change of programme. In normal use the ride does the work and
   the budget never intervenes.
+- **The encoder now shows when its input is broken.** A new **Bad Input**
+  readout on the Monitoring page of both the Mac app and the dashboard counts
+  the NaN or infinity samples the chain has had to replace with silence. It
+  reads `none` in normal operation. Anything else means whatever is feeding
+  the encoder is faulty, even though the processing itself carries on
+  unharmed.
 - **Fixed three BS.412 edge cases found in review.** Raising the pilot level
   while the encoder was running left the limiter working from the old figure,
   which allowed a completed minute to drift about half a dB over the ceiling.

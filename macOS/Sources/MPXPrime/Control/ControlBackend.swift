@@ -101,6 +101,10 @@ struct ControlMeters: Codable, Sendable {
     /// dBr (0 dBr is the Recommendation's limit). `bs412PowerValid` is false
     /// until a full window has been observed and while Test Tone suspends
     /// control -- show `--`, never a compliance claim, when it is false.
+    /// Input samples the DSP ingress guard has replaced with silence since
+    /// the engine started. Non-zero means something upstream handed the
+    /// encoder NaN or Inf; the chain is protected, but the source is broken.
+    var nonFiniteInputSamples: Int?
     var bs412PowerDBr: Float?
     var bs412PowerValid: Bool?
     var bs412SecondsObserved: Float?

@@ -308,19 +308,66 @@ real-time items.
    vacuous), and `AdvancedDynamicsLeveler` still uses the rate-dependent
    0.94 -- left alone because changing it means re-running the armed
    `--verify-advanced-dynamics` corpus gate.
-5. **F5 -- P0-2, band waveshaper.** One shared odd-symmetric curve for both
-   clippers: unity up to `x0 = k * threshold`, then
-   `x0 + (threshold - x0) * tanh((abs(x) - x0) / (threshold - x0))`, sign
-   restored -- continuous with continuous slope, monotonic, and the ceiling
-   stays `threshold / drive`, so "Threshold" keeps its operator meaning. `k`
-   (candidates 0.5 and 0.7) is picked by measurement: THD / two-tone IM sweeps,
-   alias energy, `--verify-hf-transients`, `--verify-receiver`,
-   `--verify-stereo-guard`, `--verify-final-ride`, `--verify-program-ab`, then
-   the bass tracks of `docs/test-playlist.md` on a release build. Keep the
-   `vvtanhf` batch (only the argument changes) and the C-kernel bit-parity
-   contract. Recapture all four macOS baselines and the Linux one (Ryzen box,
-   `~/mpx-tools`) in the same commit. ARCHITECTURE + settings reference
-   describe the curve.
+5. **F5 -- P0-2, band waveshaper. BUILT AND MEASURED 2026-09-12, landing
+   plan below.** The shared curve is in the working tree with nine
+   property tests (`BandWaveshaperTests`: continuity in value and slope at
+   the join, monotonicity, odd symmetry, untouched below the knee, the same
+   asymptote so "Threshold" keeps its meaning, finite output, batched path
+   equals scalar, and one confirming the old curve really did step down
+   24 %). Two findings from measuring it change how it has to land:
+
+   - **No shipped baseline moves.** `--verify`, `--verify-presets` and
+     `--verify-hf-transients` all pass with the new curve and the strict
+     compares show ZERO drift. The bass clipper (default -3 dB / drive 1.5 /
+     150 Hz, on in every profile) does not engage hard enough in any
+     verification scenario to register. Landing is therefore low-risk -- and
+     the gates are blind to this stage, which is its own finding (step 3).
+   - **The knee is a trade, not a free win.** THD / IM3 of the bare curve at
+     a -6 dB threshold: at light drive the old curve reads -27.8 dB and a
+     narrow knee (0.4) -25.6, a wide one (0.7) -27.5 -- a soft knee starts
+     shaping before threshold and the old hard-then-broken curve did not.
+     At moderate drive the narrow knee wins by ~3 dB (-19.1 vs -16.2). Hard
+     drive is a wash. So `k` is a real choice: 0.7 keeps today's behaviour
+     until the clipper actually works and still removes the discontinuity;
+     0.5 buys more where it works and colours light programme slightly.
+
+   Landing plan, each step its own commit:
+
+   1. **Evidence the gates do not have.** A chain-level monotonicity test
+      through the REAL oversampled `BassClipper`: sweep a kick-like burst's
+      level across the threshold and require output peak to be monotonic in
+      input peak. This is the operator-meaningful statement of P0-2 --
+      "louder in never means quieter out" -- and the old curve fails it
+      exactly at threshold, where a kick's peak lives. Plus alias energy
+      (energy folded down through the 4x decimator, old vs new) and a
+      single-burst broadband-spill probe. Steady-state THD alone under-
+      states a discontinuity's cost; these see it.
+   2. **Pick `k` objectively.** Sweep 0.4-0.8 at the SHIPPED operating
+      points -- each Format Profile's threshold / drive, not a synthetic
+      grid -- on the step-1 metrics plus THD / IM. Choose the value that
+      minimises worst-case distortion across profiles subject to light-
+      drive coloration staying within 0.5 dB of today. Current data says
+      0.7; confirm or move it. Present the table; the maintainer decides.
+   3. **Land** the curve, its tests, the chain-level test, and docs
+      (ARCHITECTURE, settings reference for the Threshold / Drive wording,
+      CHANGELOG, AGENTS). No baseline recapture -- measured, none moves.
+      Red / green: the chain-level monotonicity test fails on the old
+      curve.
+   4. **Close the coverage hole, deliberately and separately.** Add a bass-
+      heavy verification scenario that actually drives the bass clipper, so
+      the strict gates guard this stage from now on. That ADDS baseline
+      records (all four macOS files plus the Linux one, Ryzen box or the
+      `linux-baseline.yml` workflow) -- an additive, reviewable capture, not
+      a recapture hiding movement, and the reason it is not folded into
+      step 3.
+   5. **Listen** (maintainer): `docs/test-playlist.md` bass tracks on a
+      RELEASE build, old vs new. If it sounds worse the knee moves, not the
+      curve -- the discontinuity is not coming back.
+
+   Effort: steps 1-3 about a day, step 4 half a day plus the Linux capture,
+   step 5 yours. `HFClipper` shares the curve and is off in every profile,
+   so nothing shipped changes there.
+
 6. **F6 -- P0-7, NRSC-1. DONE 2026-09-11.** `PreemphasisDesign.nrsc(
    sampleRate:)` fits the modified 75 us curve (zero 2122 Hz, pole 8700 Hz)
    the same least-squares way the FM design is fitted -- a pre-warped

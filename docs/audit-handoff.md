@@ -54,11 +54,19 @@ drift reported" means "inside tolerance", not "unchanged": the fix moved a
 long-run true-peak overshoot to 96 % of its bound. A deliberate DSP change
 recaptures all four baselines in the same commit for exactly that reason.
 
-### 2. P1-1 and P1-2, the real-time items -- blocked on one measurement
+### 2. P1-1 and P1-2, the real-time items -- P1-1 measured, P1-2 not
 
 Both are real and both are architectural debt rather than observed faults. No
 soak has ever produced a dropout attributable to either, including a Linux rig
 at 95 % render load.
+
+**P1-1 was measured on 2026-09-12** (Ryzen box, 192 kHz, blocksize 4096,
+twelve live PATCHes -- crossover, BS.412, bass clipper, multiband -- while
+streaming `/api/meters` at 30 Hz): zero xruns; the crossover redesign was the
+worst period at 50.5 % Render Load against a 30.9 % median, about 4 ms of
+rebuild. That fits a 21 ms period with room and would not fit a 2.7 ms one
+(blocksize 512). So the cheap fixes are justified only if small blocks on air
+become a requirement; the roadmap's F8 entry carries the numbers.
 
 - **P1-1**: both engines call `generator.applyRuntimeConfig` on the render
   thread. Inside, a crossover or enable change redesigns FIR splitters and the
@@ -67,14 +75,15 @@ at 95 % render load.
   and the Now Playing `NSLock`, and every `buildGroup*` returns a fresh
   `[UInt8]` -- once per group, so about every 87.7 ms.
 
-**Measure before designing.** On the Ryzen box, PATCH a crossover and the
-clipper oversampling while sampling xruns and `renderLoadPercent`. If nothing
-misses a deadline, do the cheap fixes only: preallocate, design FIR kernels
-producer-side as prepared fields of `RuntimeConfig`, lowercase strings in
-`makeRuntimeConfig`, and remove the two locks from the RDS group build. The
-full prepared-state handoff and the pre-encoded group bank that the review
-proposes are a re-architecture of two of the best-tested parts of the product;
-they need evidence first.
+**Measure before designing** (done for P1-1, see above; P1-2 still lacks a
+measurement -- it needs a rig with programme and a long RDS soak while
+watching xruns). Nothing has missed a deadline, so if anything is done it is
+the cheap fixes only: preallocate, design FIR kernels producer-side as
+prepared fields of `RuntimeConfig`, lowercase strings in `makeRuntimeConfig`,
+and remove the two locks from the RDS group build. The full prepared-state
+handoff and the pre-encoded group bank that the review proposes are a
+re-architecture of two of the best-tested parts of the product; they need
+evidence first.
 
 ### 3. Telemetry gaps left open deliberately
 

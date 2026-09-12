@@ -44,8 +44,11 @@ then climbs back toward the same ceiling. Oversampling cannot repair a
 discontinuous transfer.
 
 This is the highest-value remaining fix and the riskiest to land, because
-`bass_clipper_enabled` defaults True and is on in every Format Profile. It
-therefore changes what every station sounds like.
+`bass_clipper_enabled` defaults True, so a fresh installation has it on, but
+only the `music_loud` Format Profile enables it (the other four switch it
+off). It changes what those stations sound like.
+
+**Update 2026-09-12: built, measured through the real stage, and landing with knee 0.9 -- see the roadmap's F5 entry for the table. What follows was the plan before measurement; the knee decision below is superseded.**
 
 Proposed curve, to be confirmed by measurement rather than adopted on faith:
 one shared odd-symmetric waveshaper, unity up to `x0 = k * threshold`, then

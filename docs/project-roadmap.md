@@ -199,7 +199,7 @@ This section stays the record of findings and evidence.
 | # | Claim | Verdict | Where | Weight |
 | --- | --- | --- | --- | --- |
 | P0-1 | Live-apply configures the wideband AGC, phase rotator, bass clipper and the crossover resolve at the MPX rate | Confirmed for the three stages, refuted for the crossover resolve -- **FIXED 2026-09-11** | `MPXGenerator.applyRuntimeConfig` passes `sampleRate` at the four sites (about lines 1902, 1939, 2039, 2111); construction and `setSampleRate` pass `audioDomainSampleRate`; the HF clipper / HF limiter live-apply already use it (the 0.45 fix for the same class). `dual_rate_audio_domain_enabled` defaults to True, so the two rates differ by 4x. The crossover resolve is the exception: the CONSTRUCTOR resolves at the MPX rate too (it runs before the dual-rate properties are initialised), so the two paths agree and there is no parity break -- and its Nyquist clamp is unreachable anyway, the schema caps x4 at 12 kHz against a 23.8 kHz clamp. Left as it is, documented. | **High** for any live change on those pages: AGC time constants 4x slower, phase-rotator corner divided by 4, bass-clipper crossover and decimator divided by 4, until restart. Cold start and every baseline are untouched (no gate calls `applyRuntimeConfig`). |
-| P0-2 | Bass / HF clipper transfer is discontinuous and non-monotonic | Confirmed | `DSP/AudioClippers.swift`: pass-through while `abs(x * drive) <= threshold`, otherwise `threshold * tanh(x * drive / threshold) / drive`. At the join the output drops from `threshold / drive` to `tanh(1) = 0.76` of it (24 %), then climbs back toward the same ceiling. | **High**: the bass clipper is ON in every Format Profile (`bass_clipper_enabled` default True); the HF clipper is off everywhere. The fix moves the composite: all four macOS baselines plus the Linux one. |
+| P0-2 | Bass / HF clipper transfer is discontinuous and non-monotonic | Confirmed | `DSP/AudioClippers.swift`: pass-through while `abs(x * drive) <= threshold`, otherwise `threshold * tanh(x * drive / threshold) / drive`. At the join the output drops from `threshold / drive` to `tanh(1) = 0.76` of it (24 %), then climbs back toward the same ceiling. | **High** for the stations it reaches: `bass_clipper_enabled` defaults True, so a fresh installation has it on, and `music_loud` is the one Format Profile that enables it (the other four switch it off; an earlier note here said "every profile", which was wrong). The HF clipper is off everywhere. The fix moves the composite: all four macOS baselines plus the Linux one. |
 | P0-3 | Transient-aware hold is seeded by its lifetime maximum | Confirmed, and worse than claimed -- **FIXED 2026-09-11** | `MonoCompressor.processTransientAwareEnvelope`: `transientDriveObserved = max(transientDriveObserved, heldDrive)`, cleared only by `reset()`. The Advanced Dynamics copy keeps a decaying `heldDrive` -- the correct pattern. | **Low reach, total effect**: the stage is off by default, off in Verification.ini and in no profile -- but when ON it did not work at all. `transientDriveObserved` saturates to 1.0 within a few samples of `configure` no matter what is playing (rmsPower starts at 0, so the first non-silent sample has an unbounded peak-to-RMS ratio), so every hold window for the rest of the run opened at 0.94 instead of tracking the transient. Measured: bursts at 0.6 / 0.8 / 0.95 all held 0.94 before, and 0.19 / 0.48 / 0.69 after. |
 | P0-4 | NaN / Inf are not sanitised at the encoder and Meter ingress | Confirmed, and worse than claimed -- **FIXED 2026-09-11** | No `isFinite` on the generator's input path (`renderFromInputInPlace`, the input ring); `AudioOutputEngine` guards only the meter snapshot values; `MeterAnalysis.processBlock` feeds raw samples to the DC tracker, FIR history and detectors. `MPXDecoder` guards itself (0.36). | **High, measured**: a 64-sample Inf burst leaves the composite 8.2 dB down and processed audio 12 dB down PERMANENTLY (8.2 dB at 0.5 s, still 8.2 dB at 7.5 s), output still finite and nothing logged -- it reads as "the station went quiet" with no cause. The Meter's own readouts (pilot, max deviation, MPX power) recovered on their own in the same probe, so its exposure is containment and visibility, not a reproduced sticky fault. |
 | P0-5 | Unsynchronised cross-thread state | Confirmed for three of four -- **FIXED 2026-09-11** | `monitorConditioner.gainLinear` written on the main actor (`applyMonitorSettings`), read in `writeMonitorBlock` on the render thread; `ALSAMonitorOutput.setGain` vs its monitor thread; `meteringEnabled` plain Bool written by start/stop/UI, read in the render callback; `MonitorOutput.note` String written by the `.main` device observer. | **Medium**: the conditioner is a STRUCT the render thread mutates every block, so the control-side write was a race on a multi-field value, not just an unsynchronised Float. The note is the sharp one and it is NOT main-actor-only as first thought: on Linux the monitor THREAD writes it on device loss and the headless actor reads it, and a refcounted String read while being replaced can crash. `runningDevice` is refuted -- the monitor thread never touches it, every access is on the control thread. |
@@ -319,17 +319,28 @@ real-time items.
    - **No shipped baseline moves.** `--verify`, `--verify-presets` and
      `--verify-hf-transients` all pass with the new curve and the strict
      compares show ZERO drift. The bass clipper (default -3 dB / drive 1.5 /
-     150 Hz, on in every profile) does not engage hard enough in any
+     150 Hz, enabled by `music_loud` and by the factory default) does not
+     engage hard enough in any
      verification scenario to register. Landing is therefore low-risk -- and
      the gates are blind to this stage, which is its own finding (step 3).
-   - **The knee is a trade, not a free win.** THD / IM3 of the bare curve at
-     a -6 dB threshold: at light drive the old curve reads -27.8 dB and a
-     narrow knee (0.4) -25.6, a wide one (0.7) -27.5 -- a soft knee starts
-     shaping before threshold and the old hard-then-broken curve did not.
-     At moderate drive the narrow knee wins by ~3 dB (-19.1 vs -16.2). Hard
-     drive is a wash. So `k` is a real choice: 0.7 keeps today's behaviour
-     until the clipper actually works and still removes the discontinuity;
-     0.5 buys more where it works and colours light programme slightly.
+   - **Measured through the REAL stage, the knee is not a trade -- it is a
+     clear win, and the wide knee wins.** A bare-curve sweep (no decimator)
+     had suggested a narrow knee traded light-drive coloration for a
+     moderate-drive gain; that was an artefact of leaving the stage's own
+     filters out. Through the 4x-oversampled `BassClipper` at the shipped
+     point, THD of a 113 Hz tone: old curve -19.6 dB at moderate drive
+     (0.65), knee 0.5 -27.5, knee 0.9 **-34.4**; at light drive all read
+     -34.0; at hard drive (0.95) old -16.6, 0.5 -19.1, 0.9 -18.0; at drive
+     2.5 old -16.5, 0.5 -18.4, 0.9 -17.3. The old curve cut a NOTCH into
+     the crest of every over-threshold peak, and moderate drive -- a kick a
+     little over threshold, the regime a bass clipper lives in -- is where
+     that hurt most. The widest knee removes the notch with the least added
+     curvature: never worse than the old curve anywhere, 15 dB better where
+     it matters, about a decibel behind the narrow knee only under 2x
+     overdrive. `defaultKnee = 0.9` (a knee about 1 dB wide). Also measured
+     through the stage: the old curve's output DIPS 0.16 dB as input rises
+     through threshold (the 24 % bare-curve step, smeared by the decimator),
+     the new one 0.00; broadband splatter above 15 kHz -55.0 vs -56.6 dB.
 
    Landing plan, each step its own commit:
 
@@ -342,12 +353,11 @@ real-time items.
       (energy folded down through the 4x decimator, old vs new) and a
       single-burst broadband-spill probe. Steady-state THD alone under-
       states a discontinuity's cost; these see it.
-   2. **Pick `k` objectively.** Sweep 0.4-0.8 at the SHIPPED operating
-      points -- each Format Profile's threshold / drive, not a synthetic
-      grid -- on the step-1 metrics plus THD / IM. Choose the value that
-      minimises worst-case distortion across profiles subject to light-
-      drive coloration staying within 0.5 dB of today. Current data says
-      0.7; confirm or move it. Present the table; the maintainer decides.
+   2. **Pick `k` objectively. DONE 2026-09-12: 0.9.** No profile overrides
+      the clipper's threshold / drive, so there is one shipped operating
+      point; swept 0.5-0.9 through the real stage against the old curve
+      (table above). The maintainer's listening pass (step 5) can still
+      move it.
    3. **Land** the curve, its tests, the chain-level test, and docs
       (ARCHITECTURE, settings reference for the Threshold / Drive wording,
       CHANGELOG, AGENTS). No baseline recapture -- measured, none moves.

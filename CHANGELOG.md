@@ -165,6 +165,21 @@ combination test suite. Newest first.
   level, and both front ends say `suspended (tone)` instead of showing a
   compliant-looking reading.
 
+- **Fixed: the Bass Clipper and HF Clipper put a notch in every peak they
+  caught.** Their soft-clip curve had a step exactly at the threshold: a
+  peak that crossed it came out 24 percent lower at the crossing point than a
+  slightly smaller peak that did not, so louder in could mean quieter out,
+  and every kick landing a little over the threshold carried a notch in its
+  crest. Oversampling hid some of the damage but cannot fix a discontinuous
+  curve. Both clippers now bend smoothly into the ceiling over roughly the
+  last decibel. Measured through the real stage at the shipped settings,
+  distortion on a kick just over the threshold drops from -19.6 dB to
+  -34.4 dB, and the new curve is never worse than the old one at any level.
+  `Threshold` and `Drive` mean exactly what they did. Affects the Music -
+  Loud profile and installations still on the factory default; the other
+  profiles have the Bass Clipper off. Nothing in the verification baselines
+  moved, so this ships without a recapture.
+
 ## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**

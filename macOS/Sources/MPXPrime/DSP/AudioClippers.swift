@@ -22,12 +22,97 @@ import FoundationNetworking   // URLSession/URLRequest on Linux corelibs
 import os
 #endif
 
+// MARK: - Shared band waveshaper
+
+/// The soft-clip curve `BassClipper` and `HFClipper` both apply to their
+/// driven band.
+///
+/// Until 0.60 both did this:
+///
+///     |x| <= threshold  ->  x                    (untouched)
+///     |x| >  threshold  ->  threshold * tanh(x / threshold)
+///
+/// which is DISCONTINUOUS at the join: just above it the output drops to
+/// `tanh(1)` = 0.7616 of where it was, a 24 % step down, and then climbs
+/// back toward the same ceiling -- so the transfer is not monotonic either.
+/// Oversampling reduces alias folding but cannot repair a discontinuous
+/// curve; the step itself is broadband distortion (0.60 audit, P0-2).
+///
+/// The replacement is a shifted soft knee. Below `x0 = knee * threshold` the
+/// band passes untouched; above it the excess is compressed by a tanh scaled
+/// to the remaining headroom:
+///
+///     |x| <= x0  ->  x
+///     |x| >  x0  ->  sign(x) * (x0 + w * tanh((|x| - x0) / w)),  w = threshold - x0
+///
+/// At the join the value is `x0` from both sides and the slope is 1 from
+/// both sides (`sech^2(0) = 1`), so value AND first derivative are
+/// continuous. It is monotonic, odd-symmetric, and its asymptote is still
+/// exactly `threshold`, so "Threshold" keeps the operator meaning it always
+/// had -- only the way the curve approaches it changes.
+enum BandWaveshaper {
+    /// Fraction of the threshold below which the band is untouched -- 0.9 is
+    /// a knee about 1 dB wide. Chosen by measurement THROUGH the real
+    /// 4x-oversampled `BassClipper` at the shipped operating point (150 Hz /
+    /// -3 dB / drive 1.5), THD of a 113 Hz tone, 2026-09-12:
+    ///
+    ///     input level      old curve   knee 0.5   knee 0.9
+    ///     light  (0.45)     -34.0       -35.1      -34.0  dB
+    ///     moderate (0.65)   -19.6       -27.5      -34.4
+    ///     hard   (0.95)     -16.6       -19.1      -18.0
+    ///     drive 2.5 (0.6)   -16.5       -18.4      -17.3
+    ///
+    /// The old curve cut a NOTCH into the crest of every over-threshold peak
+    /// (just above threshold it mapped to 0.76 of the pass-through value),
+    /// and moderate drive -- a kick landing a little over threshold, which
+    /// is where a bass clipper lives -- is where that hurt most. The widest
+    /// knee removes the notch with the least added curvature, so it wins
+    /// there by 15 dB and is never worse than the old curve anywhere; a
+    /// narrower knee buys about a decibel back only under 2x overdrive. A
+    /// bare-curve sweep without the decimator had suggested the opposite
+    /// trade; the stage's own filters are what make the wide knee right.
+    static let defaultKnee: Float = 0.9
+
+    /// The tanh ARGUMENT for a driven sample, for the vectorised path:
+    /// 0 below the knee, `(|x| - x0) / w` above it.
+    @inline(__always)
+    static func tanhArgument(driven: Float, threshold: Float, knee: Float) -> Float {
+        let x0 = knee * threshold
+        let width = max(1e-6, threshold - x0)
+        let magnitude = fabsf(driven)
+        return magnitude > x0 ? (magnitude - x0) / width : 0.0
+    }
+
+    /// Combine a driven sample with its already-computed tanh to give the
+    /// shaped result, still in the driven domain.
+    @inline(__always)
+    static func shaped(driven: Float, tanhValue: Float, threshold: Float, knee: Float) -> Float {
+        let x0 = knee * threshold
+        let magnitude = fabsf(driven)
+        guard magnitude > x0 else { return driven }
+        let width = max(1e-6, threshold - x0)
+        return copysignf(x0 + (width * tanhValue), driven)
+    }
+
+    /// Scalar reference, for tests and for anything not on the batched path.
+    @inline(__always)
+    static func apply(driven: Float, threshold: Float, knee: Float) -> Float {
+        shaped(
+            driven: driven,
+            tanhValue: tanhf(tanhArgument(driven: driven, threshold: threshold, knee: knee)),
+            threshold: threshold,
+            knee: knee
+        )
+    }
+}
+
 // MARK: - Bass Clipper (4x oversampled)
 struct BassClipper {
     private var splitL = LinkwitzRiley4()
     private var splitR = LinkwitzRiley4()
     private var thresholdLin: Float = 0.8
     private var drive: Float = 1.0
+    private var knee: Float = BandWaveshaper.defaultKnee
     private var lagL = Lagrange4Interp()
     private var lagR = Lagrange4Interp()
     private var decimL = BiquadCascade6()
@@ -42,12 +127,16 @@ struct BassClipper {
     private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
     private var clipResultBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
 
-    mutating func configure(sampleRate: Float, crossoverHz: Float, thresholdDB: Float, drive drv: Float) {
+    mutating func configure(
+        sampleRate: Float, crossoverHz: Float, thresholdDB: Float, drive drv: Float,
+        knee kneeFraction: Float = BandWaveshaper.defaultKnee
+    ) {
         let osRate = sampleRate * Float(Self.factor)
         splitL.configure(cutoffHz: crossoverHz, sampleRate: osRate)
         splitR.configure(cutoffHz: crossoverHz, sampleRate: osRate)
         thresholdLin = powf(10.0, min(0.0, thresholdDB) / 20.0)
         drive = max(0.1, drv)
+        knee = min(0.95, max(0.05, kneeFraction))
         let cutoff = min(sampleRate * 0.45, (osRate * 0.5) - 1_000.0)
         decimL.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
         decimR.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
@@ -79,8 +168,10 @@ struct BassClipper {
         let thr = thresholdLin
         let drv = drive
         let invDrv = 1.0 / drv
+        let knee = self.knee
         for i in 0..<(f * 2) {
-            clipDrivenBatch[i] = (lowBatch[i] * drv) / thr
+            clipDrivenBatch[i] = BandWaveshaper.tanhArgument(
+                driven: lowBatch[i] * drv, threshold: thr, knee: knee)
         }
         var n = Int32(f * 2)
         clipDrivenBatch.withUnsafeMutableBufferPointer { dPtr in
@@ -93,12 +184,9 @@ struct BassClipper {
         }
         for i in 0..<(f * 2) {
             let driven = lowBatch[i] * drv
-            let ax = fabsf(driven)
-            if ax <= thr {
-                clipResultBatch[i] = lowBatch[i]
-            } else {
-                clipResultBatch[i] = (thr * clipTanhBatch[i]) * invDrv
-            }
+            clipResultBatch[i] = BandWaveshaper.shaped(
+                driven: driven, tanhValue: clipTanhBatch[i],
+                threshold: thr, knee: knee) * invDrv
         }
 
         // Phase 3: per-OS-step decimation. State advances here.
@@ -185,8 +273,10 @@ struct HFClipper {
         let thr = thresholdLin
         let drv = drive
         let invDrv = 1.0 / drv
+        let knee = BandWaveshaper.defaultKnee
         for i in 0..<(f * 2) {
-            clipDrivenBatch[i] = (highBatch[i] * drv) / thr
+            clipDrivenBatch[i] = BandWaveshaper.tanhArgument(
+                driven: highBatch[i] * drv, threshold: thr, knee: knee)
         }
         var n = Int32(f * 2)
         clipDrivenBatch.withUnsafeMutableBufferPointer { dPtr in
@@ -199,11 +289,9 @@ struct HFClipper {
         }
         for i in 0..<(f * 2) {
             let driven = highBatch[i] * drv
-            if fabsf(driven) <= thr {
-                clipResultBatch[i] = highBatch[i]
-            } else {
-                clipResultBatch[i] = (thr * clipTanhBatch[i]) * invDrv
-            }
+            clipResultBatch[i] = BandWaveshaper.shaped(
+                driven: driven, tanhValue: clipTanhBatch[i],
+                threshold: thr, knee: knee) * invDrv
         }
 
         // Phase 3: recombine (low + clipped high) and decimate.

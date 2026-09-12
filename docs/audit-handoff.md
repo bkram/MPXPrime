@@ -85,17 +85,22 @@ handoff and the pre-encoded group bank that the review proposes are a
 re-architecture of two of the best-tested parts of the product; they need
 evidence first.
 
-### 3. Telemetry gaps left open deliberately
+### 3. Telemetry gaps -- two of three closed
 
-Each needs a `ControlMeters` field plus both front ends, which is why none of
-them rode along with a correctness fix. The parity rule applies: GUI and
-dashboard in the same change.
+Each needed a `ControlMeters` field plus both front ends. The parity rule
+applies: GUI and dashboard in the same change.
 
-- the non-finite ingress counter is never shown (`nonFiniteInputSampleCount`
-  exists on both the generator and `MeterAnalysis`);
-- `MeterAnalysis` does not drop its validity flags when it sanitises a block;
-- there is no encoder-side BS.412 power readout, so compliance is only visible
-  through the Meter off-air.
+- DONE: the non-finite ingress counter is `nonFiniteInputSamples` in
+  `/api/meters`, "Bad Input Samples" on the dashboard and BAD INPUT in the
+  Mac Headroom card -- in every operating mode since 9752e07 (the first cut
+  showed it in the composite branch only; `HeadroomReadout` is the per-mode
+  table now).
+- DONE: encoder-side BS.412 power is `bs412PowerDBr` (+ validity, seconds
+  observed, GR, guard and suspension flags) in `/api/meters`, MPX Power on
+  both front ends.
+- OPEN: `MeterAnalysis` does not drop its validity flags when it sanitises a
+  block. Finite recovery is not valid measurement; keep this before using
+  the Meter for automatic level decisions.
 
 ### 4. `deviationKHzPeak` was wrong away from the default deviation -- FIXED 2026-09-12
 

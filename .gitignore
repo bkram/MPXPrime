@@ -264,5 +264,4 @@ tuner/build*/
 .webui-check/
 
 # Implementation handoff notes (kept locally, not redistributed)
-bsfix.md
 sol-high.md

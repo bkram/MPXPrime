@@ -152,6 +152,15 @@ public struct MeterSnapshot {
     /// false = the decoded L/R (and side / correlation / balance) are M-only,
     /// not a measurement of the stereo image (0.45, audit M1).
     public var stereoDecodeActive = false
+    /// Input integrity (0.60). `nonFiniteInputSamples` counts the NaN / Inf
+    /// samples the ingress guard replaced with silence since the last peak
+    /// reset. A repaired sample is a HOLE, like a dropped one: the block it
+    /// sat in is left out of the accumulated statistics (exceedance,
+    /// histogram), the peaks are withheld while the hole is inside their
+    /// window and MPX power (and its max) while it is inside the BS.412
+    /// window. `inputFaultInWindow` is true for that longest span.
+    public var nonFiniteInputSamples: UInt64 = 0
+    public var inputFaultInWindow = false
     /// Decoded L/R level balance in dB (positive = left louder), smoothed and
     /// only valid while both channels carry signal. 0 dB is the target; a
     /// standing offset means the stereo encoder or the audio chain feeding it
@@ -348,6 +357,10 @@ public final class MeterAnalysis {
     /// written when a block actually carries NaN or Inf.
     private var ingressBlock: [Float]
     private var nonFiniteSamples: UInt64 = 0
+    private var nonFiniteSinceReset: UInt64 = 0
+    /// Samples analysed since the last repaired block; `.max` = never.
+    private var samplesSinceInputFault: UInt64 = .max
+    private var currentBlockRepaired = false
 
     // Coherent RDS subcarrier level meter (see MeteringPrimitives.swift).
     private let rdsMeter: RDSSubcarrierLevelMeter
@@ -571,6 +584,7 @@ public final class MeterAnalysis {
         slotSampleCount = 0
         exceedanceTotal = 0
         exceedanceOver = 0
+        nonFiniteSinceReset = 0
         mpxPowerMaxMS = -1.0
         bestSepDB = 0.0
         sepValid = false
@@ -581,6 +595,8 @@ public final class MeterAnalysis {
     }
 
     private func resetMPXWindow() {
+        // A fresh window holds no hole.
+        samplesSinceInputFault = .max
         for i in mpxSlots.indices { mpxSlots[i] = 0.0 }
         mpxSlotWrite = 0
         mpxSlotsFilled = 0
@@ -624,10 +640,20 @@ public final class MeterAnalysis {
         var faults = 0
         for v in samples where !v.isFinite { faults += 1 }
         guard faults > 0 else {
+            currentBlockRepaired = false
+            if samplesSinceInputFault != .max {
+                samplesSinceInputFault &+= UInt64(samples.count)
+            }
             processSanitizedBlock(samples)
             return
         }
         nonFiniteSamples &+= UInt64(faults)
+        nonFiniteSinceReset &+= UInt64(faults)
+        // The hole starts here: the readouts whose windows contain it are
+        // withheld from this block on, and this block's samples stay out of
+        // the accumulated statistics.
+        samplesSinceInputFault = 0
+        currentBlockRepaired = true
         let n = min(samples.count, ingressBlock.count)
         for i in 0..<n {
             let v = samples[i]
@@ -775,7 +801,7 @@ public final class MeterAnalysis {
                     // Deviation histogram: one sample per completed slot,
                     // binned at 1 kHz. Needs an established kHz scale --
                     // without one the bin index would be meaningless.
-                    if histogramScaleKHz > 0.0 {
+                    if histogramScaleKHz > 0.0, !currentBlockRepaired {
                         let devKHz = max(curPos, -curNeg) * histogramScaleKHz
                         let bin = devKHz >= Float(Self.histogramOverflowBin)
                             ? Self.histogramOverflowBin
@@ -828,7 +854,7 @@ public final class MeterAnalysis {
             i += 1
         }
         lastBlockCount = min(count, cap)
-        if !inWarmup, threshAmp > 0.0 {
+        if !inWarmup, threshAmp > 0.0, !currentBlockRepaired {
             exceedanceTotal += UInt64(count)
             exceedanceOver += UInt64(over77)
         }
@@ -1006,11 +1032,24 @@ public final class MeterAnalysis {
             && devScaleKHz != nil && snap.rdsDevKHz >= Self.rdsGateMinLevelKHz
 
         // Total-deviation +/- windowed peaks (kHz) + exceedance statistic.
+        // A repaired (non-finite) sample inside the peak window is a hole the
+        // peaks cannot be trusted across; the exceedance threshold is still
+        // maintained so counting resumes on the next clean block.
+        let faultInsidePeakWindow = samplesSinceInputFault < UInt64(posSlots.count * slotLen)
+        let faultInsideMPXWindow = samplesSinceInputFault < UInt64(mpxWindowSeconds * secLen)
+        snap.nonFiniteInputSamples = nonFiniteSinceReset
+        snap.inputFaultInWindow = faultInsideMPXWindow
         if let devScaleKHz {
-            snap.posPeakDevKHz = posMax * devScaleKHz
-            snap.negPeakDevKHz = negMin * devScaleKHz
-            snap.peakValid = true
             exceedanceThreshAmp = Self.exceedanceThresholdKHz / devScaleKHz
+            if faultInsidePeakWindow {
+                snap.posPeakDevKHz = 0.0
+                snap.negPeakDevKHz = 0.0
+                snap.peakValid = false
+            } else {
+                snap.posPeakDevKHz = posMax * devScaleKHz
+                snap.negPeakDevKHz = negMin * devScaleKHz
+                snap.peakValid = true
+            }
         } else {
             // Without a scale these two carry the LAST station's kHz -- the
             // struct is reused across blocks, and the view rendered (and
@@ -1070,10 +1109,12 @@ public final class MeterAnalysis {
             let mpxMSkHz2 = meanSq * Double(devScaleKHz) * Double(devScaleKHz)
             let refMSkHz2 = 19.0 * 19.0 / 2.0
             snap.mpxPowerDBr = Float(10.0 * log10(max(1e-9, mpxMSkHz2 / refMSkHz2)))
-            snap.mpxPowerValid = true
+            // A hole inside the window under-reads the power: withheld until
+            // it has aged out, and never taken into the compliance max.
+            snap.mpxPowerValid = !faultInsideMPXWindow
             // Compliance max: only once the window is fully primed (BS.412's
             // "any interval of 60 s" needs a full window).
-            if mpxSlotsFilled >= mpxSlots.count, meanSq > mpxPowerMaxMS {
+            if !faultInsideMPXWindow, mpxSlotsFilled >= mpxSlots.count, meanSq > mpxPowerMaxMS {
                 mpxPowerMaxMS = meanSq
             }
             if mpxPowerMaxMS >= 0.0 {

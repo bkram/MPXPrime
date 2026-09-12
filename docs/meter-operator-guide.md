@@ -73,7 +73,18 @@ reading.
 
 **Reset Peaks** works with capture stopped as well as running -- that is
 exactly when held values are still on screen -- and it also clears the
-SAMPLES DROPPED badge.
+SAMPLES DROPPED and BAD INPUT badges.
+
+A red **BAD INPUT** badge means the source handed the Meter samples that
+were not numbers (NaN or Inf); the badge carries the count. The Meter
+replaced them with silence and carried on, but a replaced sample is a hole,
+not a measurement: the deviation peaks read `--` until the hole has left
+their window, MPX POWER until it has left the 60 s window, the block it sat
+in is left out of the exceedance statistic and the histogram, and the
+readings accumulated since the last reset carry the gap until Reset Peaks.
+A capture path that produces this is broken upstream of the Meter -- a
+failing interface, a bad driver, a corrupt file -- and the badge is the
+signal to look there.
 
 Any readout can show `--`, and that is deliberate: it means the Meter does
 not currently have what it needs to measure that quantity (no deviation scale,

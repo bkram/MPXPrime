@@ -619,6 +619,13 @@ struct RootMeterView: View {
                             .help(warning)
                             .accessibilityLabel(warning)
                     }
+                    if let warning = t.badInputWarningText {
+                        Text("BAD INPUT")
+                            .font(BroadcastStyle.chipLabel)
+                            .foregroundColor(BroadcastStyle.overRed)
+                            .help(warning)
+                            .accessibilityLabel(warning)
+                    }
                     if t.rfOverloadActive {
                         Text("RF OVERLOAD")
                             .font(BroadcastStyle.chipLabel)

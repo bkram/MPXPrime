@@ -98,9 +98,10 @@ applies: GUI and dashboard in the same change.
 - DONE: encoder-side BS.412 power is `bs412PowerDBr` (+ validity, seconds
   observed, GR, guard and suspension flags) in `/api/meters`, MPX Power on
   both front ends.
-- OPEN: `MeterAnalysis` does not drop its validity flags when it sanitises a
-  block. Finite recovery is not valid measurement; keep this before using
-  the Meter for automatic level decisions.
+- DONE: `MeterAnalysis` treats a repaired sample as a hole -- the block is
+  left out of the accumulated statistics, the peaks and MPX power are
+  withheld while the hole is inside their windows, and the Meter shows a
+  BAD INPUT badge with the count (`MeterInputFaultTests`).
 
 ### 4. `deviationKHzPeak` was wrong away from the default deviation -- FIXED 2026-09-12
 

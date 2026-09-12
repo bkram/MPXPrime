@@ -166,6 +166,10 @@ final class MeterTelemetry {
     // is the liveness watchdog: the input stopped delivering while capture
     // still claims to run.
     var dropWarningText: String?
+    /// Non-nil once the analyser replaced NaN / Inf input with silence since
+    /// the last peak reset (0.60): the accumulated readings contain a hole,
+    /// exactly like a dropped sample, so the badge stays until Reset Peaks.
+    var badInputWarningText: String?
     var inputStalled = false
     /// True while the SDR front end is clipping (railed IQ samples, held ~2 s
     /// past the last hot block by `RFOverloadGate`): every level-derived
@@ -218,6 +222,7 @@ final class MeterTelemetry {
         rfSpectrumDB = []; rfSpanHz = 0; rfSpanText = "--"
         audioSpectrumMaxHz = 20_000; audioSpectrumNyquistHz = 0
         dropWarningText = nil
+        badInputWarningText = nil
         inputStalled = false
         rfOverloadActive = false
         monoDecode = false

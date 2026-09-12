@@ -970,6 +970,16 @@ final class MeterViewModel: ObservableObject {
         }
         put(\.exceedancePct, Double(s.exceedancePct))
         put(\.exceedanceValid, s.exceedanceValid)
+        // Input integrity (0.60): the source handed the Meter NaN / Inf. The
+        // analyser replaced them with silence and withholds the rolling
+        // readouts while the hole is inside their windows; the accumulated
+        // ones (peak-hold, histogram, BS.412 max) skipped the block but keep
+        // a gap, like a dropped sample, so the badge stays until Reset Peaks.
+        let badInput: String? = s.nonFiniteInputSamples > 0
+            ? "BAD INPUT -- \(s.nonFiniteInputSamples) non-finite input samples replaced with "
+                + "silence; peak / accumulated readings carry a gap; Reset Peaks to clear"
+            : nil
+        put(\.badInputWarningText, badInput)
         put(\.mpxPowerMaxText, s.mpxPowerMaxValid
             ? String(format: "%+.1f dBr", s.mpxPowerMaxDBr) : "--")
         put(\.mpxPowerMaxDBr, Double((s.mpxPowerMaxDBr * 10).rounded() / 10))

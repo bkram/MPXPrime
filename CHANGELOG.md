@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **The Meter treats a repaired input sample as a hole, and says so.** The
+  0.60 ingress guard replaced NaN / Inf with silence but every readout kept
+  reading as valid across the gap. Now the repaired block stays out of the
+  exceedance and histogram statistics, the deviation peaks read `--` while
+  the hole is inside their window and MPX power (and its compliance max)
+  while it is inside the BS.412 window, and a red **BAD INPUT** badge with
+  the count stays up until Reset Peaks, like SAMPLES DROPPED.
 - **The Mac dashboard shows Bad Input in every operating mode.** The 0.60
   counter had been added to the Headroom card's composite rows only, so FM,
   HD and AM operators could not see a fault the ingress guard counts in

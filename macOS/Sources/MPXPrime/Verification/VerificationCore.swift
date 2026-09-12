@@ -516,6 +516,37 @@ func verificationScenarios() -> [VerificationScenario] {
             let tone = Float(sin(2.0 * Double.pi * 10_000.0 * t)) * 0.85
             return (tone, -tone)
         }
+,
+        VerificationScenario(
+            name: "bass_kick",
+            description: "Repeated kick drum a little over the bass clipper's threshold -- the one scenario that drives that stage",
+            // Why this exists (0.60): none of the scenarios above pushes the
+            // low band far enough for the Bass Clipper to register, so its
+            // 0.60 transfer-curve fix moved NO stored baseline -- the strict
+            // gates were blind to the stage. Measured through the full
+            // Verification.ini chain: that curve change moves this
+            // scenario's composite peak by 1.1 dB and its RMS by 0.2 dB,
+            // which is what makes the record below a real guard. A 55 Hz
+            // kick decaying over 80 ms every half second, with a little
+            // 110 Hz body so the crossover has something on both sides.
+            quality: QualityExpectations(
+                maxCorrelationDelta: nil,
+                maxOutputCorrelation: nil,
+                minSideRetention: nil,
+                maxAbsRMSDeltaDB: 4.0,
+                maxOccupied999Hz: 58_500.0,
+                maxAbove60kRatioDB: -50.0,
+                maxAbove67kRatioDB: -60.0
+            )
+        ) { frame, sampleRate in
+            let t = Double(frame) / sampleRate
+            let beat = t.truncatingRemainder(dividingBy: 0.5)
+            let env = exp(-beat / 0.08)
+            let kick = 0.9 * env * sin(2.0 * Double.pi * 55.0 * beat)
+            let body = 0.12 * env * sin(2.0 * Double.pi * 110.0 * beat)
+            let v = Float(kick + body)
+            return (v, v)
+        }
     ]
 }
 

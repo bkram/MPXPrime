@@ -262,7 +262,7 @@ quality metrics after them:
 
 The deterministic scenarios are `mono_1khz`, `stereo_diff_400hz`,
 `program_mix`, `bright_dense`, `vocal_sibilant`, `hf_edge_12k`,
-`transient_push`, `hard_panned_hf` and `wide_bass`. `--verify-presets` runs
+`transient_push`, `hard_panned_hf`, `wide_bass` and `bass_kick` (0.60: the one scenario that drives the Bass Clipper hard enough for the strict baseline to see it). `--verify-presets` runs
 the same measurements across the shipped 5-band presets (`5B AC/Pop`,
 `5B CHR/EDM`, `5B Rock`, `5B Talk`, `5B News`, `5B Urban`, `5B Dance`), and
 each `--verify-*` A/B mode prints its own comparison table (the one-line

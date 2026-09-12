@@ -316,9 +316,11 @@ real-time items.
    equals scalar, and one confirming the old curve really did step down
    24 %). Two findings from measuring it change how it has to land:
 
-   - **No shipped baseline moves.** `--verify`, `--verify-presets` and
-     `--verify-hf-transients` all pass with the new curve and the strict
-     compares show ZERO drift. The bass clipper (default -3 dB / drive 1.5 /
+   - **No strict gate reported drift -- but nothing was zero.** `--verify`,
+     `--verify-presets` and `--verify-hf-transients` all pass with the new
+     curve; every movement stayed inside tolerance, some of it barely
+     (`transient_push` deviation -0.25 kHz at 83 % of tolerance; on the long
+     sweep `vocal_sibilant` true-peak overshoot at 96 %). The bass clipper (default -3 dB / drive 1.5 /
      150 Hz, enabled by `music_loud` and by the factory default) does not
      engage hard enough in any
      verification scenario to register. Landing is therefore low-risk -- and
@@ -363,13 +365,22 @@ real-time items.
       CHANGELOG, AGENTS). No baseline recapture -- measured, none moves.
       Red / green: the chain-level monotonicity test fails on the old
       curve.
-   4. **Close the coverage hole, deliberately and separately.** Add a bass-
-      heavy verification scenario that actually drives the bass clipper, so
-      the strict gates guard this stage from now on. That ADDS baseline
-      records (all four macOS files plus the Linux one, Ryzen box or the
-      `linux-baseline.yml` workflow) -- an additive, reviewable capture, not
-      a recapture hiding movement, and the reason it is not folded into
-      step 3.
+   4. **Close the coverage hole. DONE 2026-09-12.** `bass_kick` in the
+      scenario table: a 55 Hz kick decaying over 80 ms every half second
+      with a little 110 Hz body. Chosen by probing candidates through the
+      full Verification.ini chain with a same-delay comparison (clipper at
+      shipped settings vs settings that cannot clip -- toggling the stage
+      itself shifts the whole composite by its latency and fakes a
+      difference): the kick engages the clipper about 1.7x harder than
+      `wide_bass`, and the 0.60 curve change moves its composite peak by
+      1.1 dB and RMS by 0.2 dB against a 0.10 dB peak tolerance, so the
+      record is a real guard. Only `default.json` gains a record -- the
+      preset and long sweeps filter scenarios by name and do not include
+      it; the Linux `default-linux-x86_64.json` gains one through the
+      `linux-baseline.yml` workflow, which means one red Linux CI run
+      between the push and the artifact commit, as AGENTS documents.
+      Learned on the way: the strict compare grades an unseen scenario as
+      WARN (`<new>` finding), so the capture must ship with the scenario.
    5. **Listen** (maintainer): `docs/test-playlist.md` bass tracks on a
       RELEASE build, old vs new. If it sounds worse the knee moves, not the
       curve -- the discontinuity is not coming back.

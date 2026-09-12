@@ -177,8 +177,21 @@ combination test suite. Newest first.
   -34.4 dB, and the new curve is never worse than the old one at any level.
   `Threshold` and `Drive` mean exactly what they did. Affects the Music -
   Loud profile and installations still on the factory default; the other
-  profiles have the Bass Clipper off. Nothing in the verification baselines
-  moved, so this ships without a recapture.
+  profiles have the Bass Clipper off. The strict verification gates all
+  passed unchanged, but that is because every movement stayed inside their
+  tolerances -- the transient scenario's peak deviation shifted by a quarter
+  of a kilohertz -- so all four baselines were recaptured with it, as a
+  deliberate chain change requires.
+
+- **The verifier now watches the Bass Clipper.** None of the existing
+  verification scenarios pushed the low end hard enough for that stage to
+  register, which is how its transfer-curve fix above could change the
+  stage's behaviour without moving a single stored baseline. A new
+  `bass_kick` scenario -- a kick drum landing a little over the clipper's
+  threshold every half second -- drives it properly: the curve fix moves
+  this scenario's composite peak by about 1 dB against a 0.1 dB tolerance,
+  so any future change to the stage now fails the strict gate. Baselines
+  gain one record for it on macOS and Linux; nothing else was recaptured.
 
 ## 0.50 -- 2026-09-11
 

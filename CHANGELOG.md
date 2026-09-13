@@ -11,6 +11,10 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- Two GUI help texts (the restart badge and the restart-required list) no
+  longer name the pilot level among the restart-required settings; it has
+  been live-apply since it joined `RuntimeConfig`. Sum / diff levels, mono
+  mode, pre-emphasis and program lowpass stay restart-class.
 - **Advanced Dynamics' transient hold decays by time, not by sample.** The
   leveler kept a flat 0.94 per sample after the multiband compressor got its
   time constant: 0.34 ms at the 48 kHz audio domain, 0.08 ms with the

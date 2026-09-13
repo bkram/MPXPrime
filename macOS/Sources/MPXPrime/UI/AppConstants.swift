@@ -45,7 +45,7 @@ let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
 let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md")!
 let kLicenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 let kRestartRequiredSettingsListText =
-    "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, pilot/sum/diff levels, program lowpass, and other encoder-structure changes."
+    "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, sum/diff levels, program lowpass, and other encoder-structure changes."
 
 func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))

@@ -120,7 +120,7 @@ struct BroadcastStatusBar: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Restart pending: one or more changed settings need an engine restart to take effect. Activate to apply now.")
-        .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, pilot/sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
+        .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
     }
 
     // MARK: - Chips

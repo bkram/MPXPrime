@@ -39,7 +39,7 @@ jobs:
           # substitution against GITHUB_REF then produced a path with
           # "refs/heads/develop/v.NNN" in it and hdiutil failed.
           VERSION="${INPUT_VERSION:-${GITHUB_REF#refs/tags/v}}"
-          ./build-release.sh "$VERSION"
+          scripts/build-release.sh "$VERSION"
 
       - name: Upload DMG
         uses: actions/upload-artifact@v7

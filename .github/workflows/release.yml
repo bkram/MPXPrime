@@ -27,7 +27,7 @@ jobs:
       - name: Build Release (Universal Binary)
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          ./build-release.sh "$VERSION"
+          scripts/build-release.sh "$VERSION"
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -81,7 +81,7 @@ jobs:
       - name: Build .deb package
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          ./build-deb.sh "$VERSION" "${{ matrix.label }}"
+          scripts/build-deb.sh "$VERSION" "${{ matrix.label }}"
           sha256sum mpxprime_*_amd64.deb > "mpxprime_${VERSION}-${{ matrix.label }}.sha256"
 
       - name: Smoke-install the package

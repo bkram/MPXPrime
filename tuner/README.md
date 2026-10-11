@@ -68,7 +68,7 @@ cmake --build tuner/build
 
 Requires `librtlsdr` and `liquid-dsp` (e.g. `brew install librtlsdr liquid-dsp`).
 This CMake build produces the standalone `mpx-tuner` debug CLI only. The shipped
-app links these sources via the `CMPXTuner` SPM target instead; `build-release.sh`
+app links these sources via the `CMPXTuner` SPM target instead; `scripts/build-release.sh`
 bundles the librtlsdr / liquid-dsp / libusb / fftw dylibs (relocated to `@rpath`)
 inside `MPX Prime Meter.app`, so end users need neither Homebrew nor a
 separately-placed binary.

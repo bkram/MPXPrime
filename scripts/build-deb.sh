@@ -6,8 +6,8 @@
 # --product MPXPrime --static-swift-stdlib` (the Swift runtime is static;
 # system deps are resolved by dpkg-shlibdeps at package time).
 #
-#   ./build-deb.sh <version> [distro-label]
-#   ./build-deb.sh 0.42 ubuntu-24.04   -> mpxprime_0.42-ubuntu24.04_amd64.deb
+#   scripts/build-deb.sh <version> [distro-label]
+#   scripts/build-deb.sh 0.42 ubuntu-24.04   -> mpxprime_0.42-ubuntu24.04_amd64.deb
 #
 # Installs:
 #   /usr/bin/mpxprime                    the encoder (MPXPrime binary)
@@ -24,12 +24,15 @@
 # is the interface from the first start: http://<host>:8737/ + the key.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.." # repo root; the .deb is written here
 
-VERSION="${1:?usage: ./build-deb.sh <version> [distro-label]}"
+VERSION="${1:?usage: scripts/build-deb.sh <version> [distro-label]}"
 DISTRO="${2:-}"
 BIN="macOS/.build/release/MPXPrime"
-[ -x "$BIN" ] || { echo "error: build first: swift build --package-path macOS -c release --product MPXPrime --static-swift-stdlib" >&2; exit 1; }
+[ -x "$BIN" ] || {
+    echo "error: build first: swift build --package-path macOS -c release --product MPXPrime --static-swift-stdlib" >&2
+    exit 1
+}
 
 DEBVER="$VERSION"
 if [ -n "$DISTRO" ]; then
@@ -54,7 +57,7 @@ install -m 0644 macOS/MPXPrime.ini "$STAGE/usr/share/mpxprime/MPXPrime.sample.in
 install -m 0644 docs/studio-operator-guide.md docs/studio-settings-reference.md docs/rds-country-and-pty-tables.md README.md CONTRIBUTORS.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
 install -m 0644 LICENSE "$STAGE/usr/share/doc/mpxprime/copyright"
 
-cat > "$STAGE/lib/systemd/system/mpxprime.service" <<'EOF'
+cat >"$STAGE/lib/systemd/system/mpxprime.service" <<'EOF'
 [Unit]
 Description=MPX Prime Studio FM composite encoder (headless)
 Documentation=file:/usr/share/doc/mpxprime/studio-operator-guide.md
@@ -93,16 +96,16 @@ if command -v dpkg-shlibdeps >/dev/null 2>&1; then
         cd "$SHLIB_DIR"
         mkdir -p debian
         touch debian/control
-        if dpkg-shlibdeps -O "$STAGE/usr/bin/mpxprime" > shlibs.out 2>/dev/null; then
+        if dpkg-shlibdeps -O "$STAGE/usr/bin/mpxprime" >shlibs.out 2>/dev/null; then
             COMPUTED="$(sed -n 's/^shlibs:Depends=//p' shlibs.out)"
-            [ -n "$COMPUTED" ] && echo "$COMPUTED" > depends.txt
+            [ -n "$COMPUTED" ] && echo "$COMPUTED" >depends.txt
         fi
     )
     [ -f "$SHLIB_DIR/depends.txt" ] && DEPENDS="$(cat "$SHLIB_DIR/depends.txt")"
     rm -rf "$SHLIB_DIR"
 fi
 
-cat > "$STAGE/DEBIAN/control" <<EOF
+cat >"$STAGE/DEBIAN/control" <<EOF
 Package: mpxprime
 Version: ${DEBVER}
 Section: sound
@@ -120,7 +123,7 @@ Description: FM composite (MPX) encoder with RDS - headless + web control
  broadcast use without verification.
 EOF
 
-cat > "$STAGE/DEBIAN/postinst" <<'EOF'
+cat >"$STAGE/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if ! getent passwd mpxprime >/dev/null; then
@@ -180,7 +183,7 @@ exit 0
 EOF
 chmod 0755 "$STAGE/DEBIAN/postinst"
 
-cat > "$STAGE/DEBIAN/prerm" <<'EOF'
+cat >"$STAGE/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
 if [ -d /run/systemd/system ]; then
@@ -197,4 +200,4 @@ EOF
 chmod 0755 "$STAGE/DEBIAN/prerm"
 
 dpkg-deb --build --root-owner-group "$STAGE" .
-echo "built: $(ls mpxprime_${DEBVER}_amd64.deb)"
+echo "built: mpxprime_${DEBVER}_amd64.deb"

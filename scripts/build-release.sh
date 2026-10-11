@@ -1,21 +1,21 @@
-#!/bin/bash
-# Build MPX Prime release DMG with universal binary
+#!/usr/bin/env bash
+# Build MPX Prime release DMG with universal binary. Works from any
+# directory; the output lands in macOS/dist/.
+#
+#   scripts/build-release.sh <version>      # e.g. scripts/build-release.sh 0.60
 
-set -e
+set -euo pipefail
 
-cd "$(dirname "$0")"
+# shellcheck source=scripts/build-env.sh
+. "$(dirname "$0")/build-env.sh" # repo root + DEVELOPER_DIR, caches, BUILD_JOBS
 
-VERSION=${1:-0.50}
+VERSION="${1:?usage: scripts/build-release.sh <version>}"
 OUTPUT_DIR="macOS/dist"
 APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"
 CONFIG_NAME="MPX Prime Studio.ini"
 ICON_FILE="macOS/Resources/MPXPrime.icns"
 ENTITLEMENTS="macOS/MPXPrime.entitlements"
-export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
-export CLANG_MODULE_CACHE_PATH=${CLANG_MODULE_CACHE_PATH:-/tmp/swift-module-cache}
-export SWIFTPM_MODULECACHE_OVERRIDE=${SWIFTPM_MODULECACHE_OVERRIDE:-/tmp/swift-module-cache}
-BUILD_JOBS=${BUILD_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 1)}
 
 echo "Building MPX Prime $VERSION release (universal binary)..."
 echo "Using $BUILD_JOBS parallel build jobs..."
@@ -53,7 +53,7 @@ if [ -f "$ICON_FILE" ]; then
 fi
 
 # Create Info.plist
-cat > "$APP_DIR/Contents/Info.plist" << EOF
+cat >"$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -144,7 +144,7 @@ elif [ -f "$ICON_FILE" ]; then
     cp "$ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
     METER_ICON_NAME="MPXPrime"
 fi
-cat > "$METER_APP_DIR/Contents/Info.plist" << EOF
+cat >"$METER_APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -190,21 +190,25 @@ TUNER_LIQUID_DYLIB="/opt/homebrew/opt/liquid-dsp/lib/libliquid.dylib"
 TUNER_USB_DYLIB="/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib"
 TUNER_FFTW_DYLIB="/opt/homebrew/opt/fftw/lib/libfftw3f.3.dylib"
 METER_BIN="$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
-if [ -f "$TUNER_RTLSDR_DYLIB" ] && [ -f "$TUNER_LIQUID_DYLIB" ] \
-    && [ -f "$TUNER_USB_DYLIB" ] && [ -f "$TUNER_FFTW_DYLIB" ]; then
+if [ -f "$TUNER_RTLSDR_DYLIB" ] && [ -f "$TUNER_LIQUID_DYLIB" ] &&
+    [ -f "$TUNER_USB_DYLIB" ] && [ -f "$TUNER_FFTW_DYLIB" ]; then
     echo "Bundling RTL-SDR dylibs into $METER_APP_NAME.app..."
     FRAMEWORKS_DIR="$METER_APP_DIR/Contents/Frameworks"
     mkdir -p "$FRAMEWORKS_DIR"
     for d in "$TUNER_RTLSDR_DYLIB" "$TUNER_LIQUID_DYLIB" "$TUNER_USB_DYLIB" "$TUNER_FFTW_DYLIB"; do
-        cp "$d" "$FRAMEWORKS_DIR/"; chmod u+w "$FRAMEWORKS_DIR/$(basename "$d")"
+        cp "$d" "$FRAMEWORKS_DIR/"
+        chmod u+w "$FRAMEWORKS_DIR/$(basename "$d")"
     done
     # Rewrite any Homebrew load command pointing at one of our 4 dylibs to @rpath.
     relocate_macho() {
         local f="$1"
-        otool -L "$f" | awk 'NR>1 {print $1}' | grep -E '^/(opt/homebrew|usr/local)/' | while read -r dep; do
+        # grep exits 1 when a dylib has no Homebrew dependency (libusb does
+        # not); that is "nothing to do", not a failure, under pipefail.
+        otool -L "$f" | awk 'NR>1 {print $1}' | { grep -E '^/(opt/homebrew|usr/local)/' || true; } | while read -r dep; do
             case "$(basename "$dep")" in
-                librtlsdr.0.dylib|libliquid.dylib|libusb-1.0.0.dylib|libfftw3f.3.dylib)
-                    install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$f" ;;
+            librtlsdr.0.dylib | libliquid.dylib | libusb-1.0.0.dylib | libfftw3f.3.dylib)
+                install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$f"
+                ;;
             esac
         done
     }

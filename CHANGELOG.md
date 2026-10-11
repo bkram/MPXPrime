@@ -11,6 +11,16 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Build scripts: all under `scripts/`, anchored to the repo root.** The
+  root `build-release.sh` / `build-deb.sh` moved to `scripts/` (the
+  workflows and BUILDING follow); the copies that were only moved still changed
+  to their own directory and built into `scripts/.build` and
+  `macOS/macOS`. New everyday entry points: `scripts/build.sh` (release by
+  default, `debug`, `--product`, `--clean`), `scripts/run.sh` (release build +
+  run, arguments passed through, `--debug` / `--no-build`) and
+  `scripts/test.sh`; they share `scripts/build-env.sh`, the one place
+  `DEVELOPER_DIR`, the Homebrew `PATH`, the module cache and `BUILD_JOBS` are
+  set, and all work from any directory.
 - CI: the four workflows move to `actions/checkout@v7`, `actions/upload-artifact@v7`
   (one was still on v4) and `actions/setup-node@v7`; the runner had started
   forcing the Node 20 actions onto Node 24 and annotating every run. No

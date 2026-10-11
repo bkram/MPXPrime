@@ -18,7 +18,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -42,14 +42,14 @@ jobs:
           ./build-release.sh "$VERSION"
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: MPXPrime
           path: macOS/dist/MPX_Prime-*.dmg
           retention-days: 90
 
       - name: Upload App Bundles
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: MPXPrime-apps
           path: |

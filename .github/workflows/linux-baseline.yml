@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install build deps
         run: |
@@ -72,7 +72,7 @@ jobs:
         run: macOS/.build/release/MPXPrime --verify --baseline-strict
 
       - name: Upload baseline
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64-baseline
           path: macOS/verifier_baselines/default-linux-x86_64.json

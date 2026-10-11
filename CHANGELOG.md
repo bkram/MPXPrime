@@ -11,6 +11,11 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- CI: the four workflows move to `actions/checkout@v7`, `actions/upload-artifact@v7`
+  (one was still on v4) and `actions/setup-node@v7`; the runner had started
+  forcing the Node 20 actions onto Node 24 and annotating every run. No
+  `pull_request_target` or fork-PR flows here, so checkout v7's new
+  restriction does not apply.
 - **Format Profiles retuned against the published Orban, Omnia and Stereo
   Tool structures** (`docs/format-profiles-review.md`). Speech had the
   slowest, weakest multiband in the catalogue (light intensity clamped its

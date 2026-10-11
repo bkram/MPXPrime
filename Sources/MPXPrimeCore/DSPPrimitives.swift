@@ -296,11 +296,11 @@ public struct BiquadCascade6 {
 }
 
 /// WHICH pre-emphasis standard a stage is on. Passing a bare microsecond
-/// figure is what let AM ride the FM curve unnoticed until 0.60: 75 is a
+/// figure is what let AM ride the FM curve unnoticed until 0.65: 75 is a
 /// legal FM tau AND the NRSC nominal, so the wrong network looked right at
 /// every call site. Name the standard instead; the microseconds live inside.
 ///
-/// (The 0.60 audit asked for dedicated NRSC filter TYPES. This says the same
+/// (The 0.65 audit asked for dedicated NRSC filter TYPES. This says the same
 /// thing at every call site without a third copy of the same biquad body --
 /// the failure mode was a silent argument, not a shared implementation.)
 public enum PreemphasisCurve: Equatable, Sendable {

@@ -3,12 +3,12 @@ import Foundation
 import MPXPrimeCore
 @testable import MPXPrime
 
-// The cross-check the 0.60 audit asked for: render the real chain for longer
+// The cross-check the 0.65 audit asked for: render the real chain for longer
 // than the Recommendation's window, feed the composite into the Meter's
 // measurement engine, and require the encoder's own BS.412 figure and the
 // Meter's to agree.
 //
-// This is the test the pre-0.60 stage could never have passed. It measured
+// This is the test the pre-0.65 stage could never have passed. It measured
 // the audio composite BEFORE pilot and RDS injection, so it was blind to
 // about a tenth of the power; the Meter measures what is actually on the
 // wire. Both sides now compute the same quantity from the same definition,

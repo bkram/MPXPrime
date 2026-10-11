@@ -38,6 +38,8 @@ const { resolve } = require("node:path");
 const { JSDOM } = require("jsdom");
 
 const root = resolve(__dirname, "..");
+// The source version (Sources/MPXPrimeCore/Version.swift), so the mock says what the binary says.
+const version = readFileSync(resolve(root, "Sources/MPXPrimeCore/Version.swift"), "utf8").match(/string = "([^"]+)"/)[1];
 const webui = resolve(root, "Sources/MPXPrime/Control/WebUI");
 const html = readFileSync(resolve(webui, "index.html"), "utf8");
 const schema = JSON.parse(readFileSync(resolve(webui, "schema.json"), "utf8"));
@@ -160,7 +162,7 @@ function makeServer(mode) {
     if (path === "/api/devices") { state.deviceCalls += 1; return json(devices); }
     if (path === "/api/status") {
       return json({
-        running: state.running, platform: "macOS", version: "0.50",
+        running: state.running, platform: "macOS", version,
         sampleRateHz: Number(state.cfg.sample_rate || 192000),
         restartPending: state.restartPending,
         sourceMode: state.cfg.source_mode || "input",

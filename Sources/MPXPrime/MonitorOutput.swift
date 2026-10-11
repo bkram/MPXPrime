@@ -49,7 +49,7 @@ final class MonitorOutput {
     /// Written by the control thread and by the device observer on `.main`,
     /// read by the headless backend's actor -- a String is refcounted, so an
     /// unsynchronised read of one being replaced can crash, not just tear
-    /// (0.60 audit, P0-5). Never taken from the render path.
+    /// (0.65 audit, P0-5). Never taken from the render path.
     private let noteState = OSAllocatedUnfairLock<String?>(initialState: nil)
     var note: String? { noteState.withLock { $0 } }
     private func setNote(_ value: String?) { noteState.withLock { $0 = value } }

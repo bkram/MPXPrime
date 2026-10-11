@@ -51,7 +51,7 @@ struct MultibandPhase2Tests {
         // it saturates to 1.0 within a few samples of `configure` whatever is
         // playing, because the RMS detector starts at zero and the first
         // non-silent sample has an unbounded peak-to-RMS ratio. The assertion
-        // was therefore true for any signal at all (0.60 audit follow-up).
+        // was therefore true for any signal at all (0.65 audit follow-up).
         //
         // What actually matters is that the transient-aware path behaved
         // DIFFERENTLY from the classic one on this burst, which the peak

@@ -970,7 +970,7 @@ final class MeterViewModel: ObservableObject {
         }
         put(\.exceedancePct, Double(s.exceedancePct))
         put(\.exceedanceValid, s.exceedanceValid)
-        // Input integrity (0.60): the source handed the Meter NaN / Inf. The
+        // Input integrity (0.65): the source handed the Meter NaN / Inf. The
         // analyser replaced them with silence and withholds the rolling
         // readouts while the hole is inside their windows; the accumulated
         // ones (peak-hold, histogram, BS.412 max) skipped the block but keep

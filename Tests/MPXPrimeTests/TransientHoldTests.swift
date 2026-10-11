@@ -4,13 +4,13 @@ import Foundation
 
 // The multiband compressor's transient-aware detector holds a "drive" value
 // for a short window after a percussive front so the attack stays stretched
-// across the whole transient. Until 0.60 that hold was seeded from
+// across the whole transient. Until 0.65 that hold was seeded from
 // `transientDriveObserved`, a value that only ever increased: once a band
 // had seen one loud transient, every later hold window started from that
 // historical maximum, however long ago and however much quieter the
 // programme had become. `AdvancedDynamicsLeveler` always had the intended
 // shape -- a current hold that decays -- and `MonoCompressor` now matches it
-// (0.60 audit, P0-3).
+// (0.65 audit, P0-3).
 //
 // The stage is `multiband_transient_aware_attack_enabled`, off by default,
 // so no baseline moves; these tests are what keeps the shape correct.
@@ -70,7 +70,7 @@ struct TransientHoldTests {
     /// value is what stretches the attack, so a hold that ignores the
     /// programme makes the whole feature a constant.
     ///
-    /// On the pre-0.60 code every one of these reads 0.94. The seed was
+    /// On the pre-0.65 code every one of these reads 0.94. The seed was
     /// `transientDriveObserved`, a running maximum, and that maximum reaches
     /// 1.0 within the first few samples after `configure` no matter what is
     /// playing: the RMS detector starts at zero, so the first non-silent

@@ -347,7 +347,7 @@ struct MonoCompressor {
     var detector = EnvelopeFollower()
     /// Diagnostic ONLY: the largest hold value seen since `configure`.
     /// Processing must never read this. Seeding the hold window from this
-    /// lifetime maximum is the 0.60 audit's P0-3 -- it never decreased, so
+    /// lifetime maximum is the 0.65 audit's P0-3 -- it never decreased, so
     /// every later transient inherited the drive of the loudest one the
     /// band had ever seen, minutes earlier.
     var transientDriveObserved: Float = 0.0

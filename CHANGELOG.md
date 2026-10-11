@@ -11,6 +11,13 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **The next release is 0.65, not 0.60** (renamed 2026-10-11, before anything
+  shipped; "0.60" in older commit messages means this release). **One
+  version string**: `Sources/MPXPrimeCore/Version.swift` is the only copy.
+  `AppConfig.appVersion` (which still said 0.50) and the Meter's About box
+  read it, `scripts/version.sh` prints it for the packagers (their version
+  argument is now optional) and the dashboard render check, and
+  `release.yml` refuses a tag that does not match it.
 - **The SwiftPM package moves from `macOS/` to the repo root, and the root
   is bare.** The name stopped describing the package once the Linux
   encoder, the deb and the Linux baseline built from it. `Package.swift`,
@@ -230,13 +237,13 @@ combination test suite. Newest first.
   dual-rate boundary off. The coefficient is now derived per rate and is
   exactly 0.94 at 48 kHz, so the armed corpus gates see the same numbers.
 - **The Meter treats a repaired input sample as a hole, and says so.** The
-  0.60 ingress guard replaced NaN / Inf with silence but every readout kept
+  0.65 ingress guard replaced NaN / Inf with silence but every readout kept
   reading as valid across the gap. Now the repaired block stays out of the
   exceedance and histogram statistics, the deviation peaks read `--` while
   the hole is inside their window and MPX power (and its compliance max)
   while it is inside the BS.412 window, and a red **BAD INPUT** badge with
   the count stays up until Reset Peaks, like SAMPLES DROPPED.
-- **The Mac dashboard shows Bad Input in every operating mode.** The 0.60
+- **The Mac dashboard shows Bad Input in every operating mode.** The 0.65
   counter had been added to the Headroom card's composite rows only, so FM,
   HD and AM operators could not see a fault the ingress guard counts in
   every mode (the web dashboard already showed it everywhere). The card's
@@ -274,10 +281,10 @@ combination test suite. Newest first.
   Test Tone card's prediction and `scripts/smoke-live.sh` were
   already in the physical convention and now agree with the meter at any
   setting.
-- **The 0.60 BS.412 key migration is saved and announced.** An INI still
+- **The 0.65 BS.412 key migration is saved and announced.** An INI still
   carrying `bs412_threshold_db` / `bs412_window_seconds` was read onto the
   standard's 0.0 dBr ceiling but the file kept the old keys and nothing said
-  so (found on the Linux rig's first 0.60 deploy). Both runtimes now report
+  so (found on the Linux rig's first 0.65 deploy). Both runtimes now report
   the migration once and rewrite the INI, so the file matches what runs.
 - **Now Playing scripts launch on Linux.** The poller hard-coded `/bin/zsh`,
   which stock Ubuntu does not ship, so every script failed to launch there.
@@ -403,7 +410,7 @@ combination test suite. Newest first.
   headless Mac encoder, which does not re-apply settings after starting, it
   then stayed there.
 
-- **BS.412 now holds every minute, not just the settled ones.** The 0.60
+- **BS.412 now holds every minute, not just the settled ones.** The 0.65
   rebuild measured the right thing but its limiter only got there eventually:
   from a cold start a steady signal 6 dB over spent most of its first minute
   above the ceiling, then dipped below and came back across it while settling.

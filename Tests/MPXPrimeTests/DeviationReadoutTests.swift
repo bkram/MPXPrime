@@ -5,7 +5,7 @@ import Testing
 
 // The kHz scale of the deviation readout is FIXED: composite amplitude 1.0 is
 // 75 kHz at every `mpx_deviation_khz`, because the generator scales the whole
-// composite (subcarriers included) by `mpx_deviation_khz / 75`. Until 0.60
+// composite (subcarriers included) by `mpx_deviation_khz / 75`. Until 0.65
 // both engines multiplied the metered peak by the configured deviation
 // instead -- exact at the default, 33 kHz for full modulation at a 50 kHz
 // setting. Pinned here through the real generator: a pilot-only composite at

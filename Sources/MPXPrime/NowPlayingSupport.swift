@@ -315,7 +315,7 @@ final class NowPlayingScriptRunner: @unchecked Sendable {
     /// own shebang decides the interpreter (the shipped macOS scripts say
     /// zsh; a Linux operator's script says whatever the box has). A file
     /// without the execute bit runs through the first shell present of zsh,
-    /// bash, sh -- until 0.60 the runner hard-coded `/bin/zsh`, which no
+    /// bash, sh -- until 0.65 the runner hard-coded `/bin/zsh`, which no
     /// stock Ubuntu ships, so on Linux EVERY script failed to launch. A
     /// missing file is reported as such (the usual cause is a macOS path in
     /// a config copied to a Linux box), never as a generic launch failure.

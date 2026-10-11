@@ -152,7 +152,7 @@ public struct MeterSnapshot {
     /// false = the decoded L/R (and side / correlation / balance) are M-only,
     /// not a measurement of the stereo image (0.45, audit M1).
     public var stereoDecodeActive = false
-    /// Input integrity (0.60). `nonFiniteInputSamples` counts the NaN / Inf
+    /// Input integrity (0.65). `nonFiniteInputSamples` counts the NaN / Inf
     /// samples the ingress guard replaced with silence since the last peak
     /// reset. A repaired sample is a HOLE, like a dropped one: the block it
     /// sat in is left out of the accumulated statistics (exceedance,
@@ -629,7 +629,7 @@ public final class MeterAnalysis {
     /// source handed the Meter NaN or Inf.
     public var nonFiniteInputSampleCount: UInt64 { nonFiniteSamples }
 
-    /// DSP ingress guard (0.60, audit P0-4). The decoder sanitises its own
+    /// DSP ingress guard (0.65, audit P0-4). The decoder sanitises its own
     /// input, but the DC tracker, the measurement FIR, the power
     /// accumulators and the RDS / pilot phase detectors all saw the raw
     /// block first, so one non-finite sample poisoned every statistic on

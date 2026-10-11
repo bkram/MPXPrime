@@ -3,10 +3,10 @@ import Testing
 
 @testable import MPXPrime
 
-// The 0.60 BS.412 key change is a load-time migration that BOTH runtimes
-// persist: an INI carrying the pre-0.60 keys is read onto the standard's
+// The 0.65 BS.412 key change is a load-time migration that BOTH runtimes
+// persist: an INI carrying the pre-0.65 keys is read onto the standard's
 // 0.0 dBr ceiling, reported, and -- once saved -- rewritten without the old
-// keys. The first 0.60 deploy read it silently and the rig's INI kept
+// keys. The first 0.65 deploy read it silently and the rig's INI kept
 // showing keys the encoder no longer used.
 @Suite struct BS412KeyMigrationTests {
 
@@ -87,7 +87,7 @@ import Testing
             legacyProfileID: loaded.legacyProfileID, bs412KeysMigrated: loaded.bs412KeysMigrated)
         #expect(report.count == 2)
         #expect(report.last == "Saved.")
-        #expect(report.first?.hasPrefix("Pre-0.60 BS.412 keys") == true)
+        #expect(report.first?.hasPrefix("Pre-0.65 BS.412 keys") == true)
         let mpx = try #require(try INIParser.parseFile(path)["MPX"])
         #expect(mpx["bs412_threshold_db"] == nil)
         #expect(mpx["bs412_ceiling_dbr"] != nil)
@@ -135,7 +135,7 @@ import Testing
     }
 }
 
-// How the Now Playing poller launches a script. Until 0.60 it hard-coded
+// How the Now Playing poller launches a script. Until 0.65 it hard-coded
 // `/bin/zsh`, which no stock Ubuntu ships, so on Linux every script failed
 // to launch and the journal repeated "launch failed" every poll.
 @Suite struct NowPlayingLaunchPlanTests {
@@ -156,7 +156,7 @@ import Testing
             exists: { _ in true })
         #expect(noZsh == .init(executable: "/bin/bash", arguments: ["/home/op/np.sh"]))
 
-        // A Mac: zsh, as before 0.60.
+        // A Mac: zsh, as before 0.65.
         let mac = NowPlayingScriptRunner.launchPlan(
             forScript: "/Users/op/np.sh",
             isExecutable: { NowPlayingScriptRunner.shellCandidates.contains($0) },

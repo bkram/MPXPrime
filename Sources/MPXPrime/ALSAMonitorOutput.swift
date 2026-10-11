@@ -79,7 +79,7 @@ final class ALSAMonitorOutput: @unchecked Sendable {
     /// Written by the control thread AND by the monitor thread when the
     /// device is lost, read by the headless backend's actor -- a String is
     /// refcounted, so an unsynchronised read of one being replaced can
-    /// crash (0.60 audit, P0-5). The monitor thread takes this lock only on
+    /// crash (0.65 audit, P0-5). The monitor thread takes this lock only on
     /// the failure path, one line before it stops.
     private let noteState = OSAllocatedUnfairLock<String?>(initialState: nil)
     var note: String? { noteState.withLock { $0 } }

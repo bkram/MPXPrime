@@ -304,7 +304,7 @@ quality metrics after them:
 
 The deterministic scenarios are `mono_1khz`, `stereo_diff_400hz`,
 `program_mix`, `bright_dense`, `vocal_sibilant`, `hf_edge_12k`,
-`transient_push`, `hard_panned_hf`, `wide_bass` and `bass_kick` (0.60: the one scenario that drives the Bass Clipper hard enough for the strict baseline to see it). `--verify-presets` runs
+`transient_push`, `hard_panned_hf`, `wide_bass` and `bass_kick` (0.65: the one scenario that drives the Bass Clipper hard enough for the strict baseline to see it). `--verify-presets` runs
 the same measurements across the shipped 5-band presets (`5B AC/Pop`,
 `5B CHR/EDM`, `5B Rock`, `5B Talk`, `5B News`, `5B Urban`, `5B Dance`), and
 each `--verify-*` A/B mode prints its own comparison table (the one-line
@@ -532,12 +532,25 @@ Rules of thumb:
 - Never pin by commit hash to work around a bug; pin the last good release
   and record the reason in the CHANGELOG.
 
+## Versioning
+
+The version lives in exactly one place, `Sources/MPXPrimeCore/Version.swift`
+(`MPXPrimeVersion.string`). Studio (`--version`, the About box, the REST
+`/api/status`) and the Meter read it, so an unbundled binary reports the same
+number as the DMG. For shell, `scripts/version.sh` prints it: the packagers
+use it when called without a version argument, the dashboard render check
+reads it, and the release workflow fails when the pushed tag disagrees with
+it. To bump: change that one line, rename the integration branch to
+`develop/v.NNN`, and note the change in the CHANGELOG. Nothing else carries
+a copy.
+
 ## Release build and DMG
 
 Build a universal release app bundle and DMG:
 
 ```bash
-scripts/build-release.sh 0.41
+scripts/build-release.sh          # version from scripts/version.sh
+scripts/build-release.sh 0.65-rc1 # or an explicit one
 ```
 
 Artifacts are written to `dist/`. The script builds the arm64 products,

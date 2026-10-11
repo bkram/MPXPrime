@@ -5,7 +5,7 @@ import Testing
 @testable import MPXPrime
 
 // A non-finite input sample is a HOLE in the measurement, not a value. The
-// 0.60 ingress guard made the analyser survive it (NaN or Inf used to poison
+// 0.65 ingress guard made the analyser survive it (NaN or Inf used to poison
 // every sliding window permanently); this pins what the guard does to the
 // readouts: the repaired block stays out of the accumulated statistics, the
 // peaks are withheld while the hole is inside their window, MPX power while

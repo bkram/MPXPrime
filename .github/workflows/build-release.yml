@@ -33,12 +33,10 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          # Prefer workflow_dispatch input; fall back to the tag-derived
-          # version. Previously the dispatched value was silently dropped
-          # because INPUT_VERSION wasn't passed to the step env -- the
-          # substitution against GITHUB_REF then produced a path with
-          # "refs/heads/develop/v.NNN" in it and hdiutil failed.
-          VERSION="${INPUT_VERSION:-${GITHUB_REF#refs/tags/v}}"
+          # Prefer the workflow_dispatch input; fall back to the source
+          # version (scripts/version.sh). INPUT_VERSION must be passed to
+          # the step env or the dispatched value is silently dropped.
+          VERSION="${INPUT_VERSION:-$(scripts/version.sh)}"
           scripts/build-release.sh "$VERSION"
 
       - name: Upload DMG

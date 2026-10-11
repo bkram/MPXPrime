@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import MPXPrimeCore
 import SwiftUI
 
 // Hosts the single Meter window. Built programmatically (no nib): NSWindow +
@@ -162,9 +163,8 @@ final class MeterAppDelegate: NSObject, NSApplicationDelegate {
     private static let manualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/meter-operator-guide.md")!
     private static let licenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
 
-    private var appVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
-    }
+    /// The source version, so the unbundled binary says the same as the DMG.
+    private var appVersion: String { MPXPrimeVersion.string }
 
     @objc private func openManual() {
         NSWorkspace.shared.open(Self.manualURL)

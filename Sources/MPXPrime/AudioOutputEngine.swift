@@ -282,7 +282,7 @@ final class AudioOutputEngine {
     private var frameCounter: Int = 0
     /// Written by start/stop and by the UI when the window is hidden, read
     /// on the render and capture callbacks -- an atomic, not a plain Bool
-    /// (0.60 audit, P0-5).
+    /// (0.65 audit, P0-5).
     private let meteringEnabledFlag = ManagedAtomic<Bool>(true)
     private var meteringEnabled: Bool {
         get { meteringEnabledFlag.load(ordering: .relaxed) }
@@ -356,7 +356,7 @@ final class AudioOutputEngine {
     func applyMonitorSettings(_ config: AppConfig) {
         guard outputMode != .monitorAudio else { return }
         // The conditioner belongs to the render thread. Publish the level
-        // and let that thread pick it up at its next block (0.60 audit,
+        // and let that thread pick it up at its next block (0.65 audit,
         // P0-5) -- writing into the struct from here raced every block.
         pendingMonitorGain.store(
             powf(10.0, Float(config.monitorGainDB) / 20.0).bitPattern, ordering: .relaxed)

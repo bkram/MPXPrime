@@ -19,7 +19,7 @@ import MPXPrimeCore
 // Read "any interval of 60 s" carefully: it is not "the settled average".
 // A controller that converges eventually still breaks the Recommendation if
 // the first completed minute, or a minute spanning a programme transition,
-// sits above the ceiling. That is what the 0.60 rebuild missed and this
+// sits above the ceiling. That is what the 0.65 rebuild missed and this
 // file now separates into three concerns:
 //
 //  1. `BS412MultiplexPowerMeter` -- what was actually emitted. Reporting
@@ -164,7 +164,7 @@ struct BS412MultiplexPowerMeter {
 /// arrives, BEFORE its own gain, so it is not a loop closed around a lagging
 /// 60-second average.
 ///
-/// The pre-0.60-fix controller was exactly that loop, and it could not hold
+/// The pre-0.65-fix controller was exactly that loop, and it could not hold
 /// the Recommendation's "any interval of 60 s": from unity, a steady
 /// +6.02 dBr input still averaged about +2.35 dBr across its first completed
 /// minute. Feed-forward fixes the lag; the guard behind it fixes the proof.

@@ -201,7 +201,7 @@ struct ConfigPatchTests {
     }
 
     @Test func removedHFClipperKeysAreIgnoredLikeAnyUnknownKey() throws {
-        // The HF Clipper stage went in 0.61. A dashboard or script that still
+        // The HF Clipper stage went in 0.65. A dashboard or script that still
         // PATCHes its keys gets the unknown-key outcome -- `unchanged`, no
         // effective value, no plane touched -- and the config is untouched.
         let cfg = baseConfig()

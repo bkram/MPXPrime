@@ -520,9 +520,9 @@ func verificationScenarios() -> [VerificationScenario] {
         VerificationScenario(
             name: "bass_kick",
             description: "Repeated kick drum a little over the bass clipper's threshold -- the one scenario that drives that stage",
-            // Why this exists (0.60): none of the scenarios above pushes the
+            // Why this exists (0.65): none of the scenarios above pushes the
             // low band far enough for the Bass Clipper to register, so its
-            // 0.60 transfer-curve fix moved NO stored baseline -- the strict
+            // 0.65 transfer-curve fix moved NO stored baseline -- the strict
             // gates were blind to the stage. Measured through the full
             // Verification.ini chain: that curve change moves this
             // scenario's composite peak by 1.1 dB and its RMS by 0.2 dB,

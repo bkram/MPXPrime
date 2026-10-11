@@ -63,12 +63,12 @@ past two buys nothing; per-core speed buys everything.
 | Ryzen 2400GE, AVX2 | **27.0 %** | 5.8 % | 6.2 % | 1.3 % | 1.9 % | 1.2 % | 1.0 % |
 | Ryzen 2400GE, SSE2 | **36.6 %** | 12.7 % | 6.5 % | -- | 3.2 % | 1.7 % | -- |
 
-0.60 runs the BS.412 multiplex-power METER on every composite sample whether
+0.65 runs the BS.412 multiplex-power METER on every composite sample whether
 or not the limiter is enabled, so that switching it on acts on a full
 60-second window instead of waiting a minute. On the M1 Pro that added about
-0.5 points. On the Ryzen it did not: the 0.50 and 0.60 binaries were benched
+0.5 points. On the Ryzen it did not: the 0.50 and 0.65 binaries were benched
 alternately on the same box on 2026-09-12 (28.3 / 28.3 % against 27.3 /
-27.5 %), so the 0.60 chain is about a point CHEAPER there, and the BS.412
+27.5 %), so the 0.65 chain is about a point CHEAPER there, and the BS.412
 stage's own A/B delta fell from 0.3-0.6 % to 0.03 % because the meter no
 longer comes and goes with the switch. The i7 row is an older figure and is
 not adjusted by hand.

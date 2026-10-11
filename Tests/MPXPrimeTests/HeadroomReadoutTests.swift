@@ -3,7 +3,7 @@ import Testing
 @testable import MPXPrime
 
 // The Headroom card's rows come from one table so the GUI cannot drop a row
-// in a mode the web dashboard shows it in. 0.60 first added the Bad Input
+// in a mode the web dashboard shows it in. 0.65 first added the Bad Input
 // counter to the card's composite branch only; the ingress guard counts in
 // every mode and the dashboard showed it in every mode.
 @Suite("Headroom readouts per mode")

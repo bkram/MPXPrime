@@ -153,7 +153,7 @@ struct AMOutputTests {
                     "NRSC-1 boost at \(Int(f)) Hz is \(boost) dB, the standard says \(expected) dB")
         }
         // And the discriminating half: the FM 75 us curve would read 2.4 dB
-        // higher at 7.5 kHz, which is what shipped until 0.60.
+        // higher at 7.5 kHz, which is what shipped until 0.65.
         let fmWouldBe = 10.43
         let actual = (level(cfg, 7_500.0) - level(flat, 7_500.0)) - reference
         #expect(abs(actual - fmWouldBe) > 1.5,

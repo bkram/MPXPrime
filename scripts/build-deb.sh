@@ -6,7 +6,7 @@
 # --product MPXPrime --static-swift-stdlib` (the Swift runtime is static;
 # system deps are resolved by dpkg-shlibdeps at package time).
 #
-#   scripts/build-deb.sh <version> [distro-label]
+#   scripts/build-deb.sh [version] [distro-label]   # version defaults to scripts/version.sh
 #   scripts/build-deb.sh 0.42 ubuntu-24.04   -> mpxprime_0.42-ubuntu24.04_amd64.deb
 #
 # Installs:
@@ -26,7 +26,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.." # repo root; the .deb is written here
 
-VERSION="${1:?usage: scripts/build-deb.sh <version> [distro-label]}"
+VERSION="${1:-$(scripts/version.sh)}"
 DISTRO="${2:-}"
 BIN=".build/release/MPXPrime"
 [ -x "$BIN" ] || {

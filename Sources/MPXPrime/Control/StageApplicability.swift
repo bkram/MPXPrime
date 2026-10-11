@@ -17,7 +17,7 @@ import Foundation
 /// inert in the engine. `ModeGatingTests` pins that pairing.
 /// The dashboard's and the GUI sidebar's top-level sections, in order --
 /// named for what the operator is DOING, not for how the engine is built
-/// (roadmap "Web dashboard taxonomy and navigation", 0.60). `schema.json`
+/// (roadmap "Web dashboard taxonomy and navigation", 0.65). `schema.json`
 /// `model.sections` mirrors this table and `ControlSchemaTests` holds the two
 /// together; the GUI's `Stage.Group` maps onto it.
 enum NavigationSection: String, CaseIterable, Sendable {
@@ -74,7 +74,7 @@ enum StageGroup: String, CaseIterable, Sendable {
 /// Expander and Band Limiter that run inside the multiband stage) or the fused
 /// Advanced Dynamics leveler that replaces all four. One choice, stored as
 /// `advanced_dynamics_enabled`, live-apply. The pages of the engine not in use
-/// are HIDDEN in both front ends (until 0.60 they showed ghosted with a
+/// are HIDDEN in both front ends (until 0.65 they showed ghosted with a
 /// "bypassed" banner: four dimmed pages the operator had to scan past).
 /// `schema.json` `model.levelling` mirrors this table; `ControlSchemaTests`
 /// holds the two together.
@@ -176,7 +176,7 @@ enum AdvancedControls {
 
 /// The Headroom card's rows, in display order, and the modes that show each.
 /// ONE table, read by the GUI card, so a readout cannot be dropped in a mode
-/// the web dashboard shows it in: 0.60 added the Bad Input counter to the
+/// the web dashboard shows it in: 0.65 added the Bad Input counter to the
 /// card's composite branch only, and FM / HD / AM operators on the Mac could
 /// not see a fault the ingress guard was counting in every mode.
 enum HeadroomReadout: String, CaseIterable, Sendable {

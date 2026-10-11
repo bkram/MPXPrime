@@ -2,14 +2,15 @@
 # Build MPX Prime release DMG with universal binary. Works from any
 # directory; the output lands in dist/.
 #
-#   scripts/build-release.sh <version>      # e.g. scripts/build-release.sh 0.60
+#   scripts/build-release.sh               # the source version (scripts/version.sh)
+#   scripts/build-release.sh 0.65-rc1      # an explicit version string
 
 set -euo pipefail
 
 # shellcheck source=scripts/build-env.sh
 . "$(dirname "$0")/build-env.sh" # repo root + DEVELOPER_DIR, caches, BUILD_JOBS
 
-VERSION="${1:?usage: scripts/build-release.sh <version>}"
+VERSION="${1:-$(scripts/version.sh)}"
 OUTPUT_DIR="dist"
 APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"

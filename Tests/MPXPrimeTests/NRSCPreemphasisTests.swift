@@ -9,11 +9,11 @@ import MPXPrimeCore
 // channel instead of climbing at 6 dB/octave forever. Its published table
 // reaches exactly +10.00 dB at 10 kHz.
 //
-// Until 0.60 `am_preemphasis_us = 75` was handed to the FM network, which is
+// Until 0.65 `am_preemphasis_us = 75` was handed to the FM network, which is
 // 3.66 dB hotter at 10 kHz and diverging; the monitor removed the FM curve
 // too, and the calibration tone was compensated with it. The test that was
 // supposed to cover this asserted the FM numbers and called them NRSC
-// (0.60 audit, P0-7).
+// (0.65 audit, P0-7).
 @Suite("NRSC-1 AM pre-emphasis")
 struct NRSCPreemphasisTests {
 

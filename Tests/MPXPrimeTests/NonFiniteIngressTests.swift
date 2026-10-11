@@ -12,7 +12,7 @@ import MPXPrimeCore
 // measurement FIR, power accumulators and phase detectors all saw the raw
 // block before the decoder's own 0.36-era guard could help.
 //
-// The policy both sides now implement (0.60, audit P0-4): a non-finite
+// The policy both sides now implement (0.65, audit P0-4): a non-finite
 // sample is silence, every finite sample passes through untouched --
 // including legitimately over-range ones, which the peak stages exist to
 // handle. These tests pin containment and, more importantly, RECOVERY.

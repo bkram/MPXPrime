@@ -167,7 +167,7 @@ final class MeterTelemetry {
     // still claims to run.
     var dropWarningText: String?
     /// Non-nil once the analyser replaced NaN / Inf input with silence since
-    /// the last peak reset (0.60): the accumulated readings contain a hole,
+    /// the last peak reset (0.65): the accumulated readings contain a hole,
     /// exactly like a dropped sample, so the badge stays until Reset Peaks.
     var badInputWarningText: String?
     var inputStalled = false

@@ -153,7 +153,7 @@ struct BassClipperTests {
     }
 
 
-    // MARK: - Transfer continuity through the real stage (0.60 audit, P0-2)
+    // MARK: - Transfer continuity through the real stage (0.65 audit, P0-2)
 
     /// Shipped operating point: 150 Hz / -3 dB / drive 1.5.
     private static func shippedClipper() -> BassClipper {
@@ -177,7 +177,7 @@ struct BassClipperTests {
         return peak
     }
 
-    /// Louder in must never mean quieter out. The pre-0.60 curve stepped
+    /// Louder in must never mean quieter out. The pre-0.65 curve stepped
     /// DOWN 24 % the moment the driven band crossed the threshold, so a kick
     /// whose peak sat exactly there came out quieter than a slightly softer
     /// one. This walks the input level across that point through the real
@@ -199,7 +199,7 @@ struct BassClipperTests {
             previous = max(previous, peak)
             amplitude += 0.01
         }
-        // Measured through this stage at the shipped point: the pre-0.60 curve
+        // Measured through this stage at the shipped point: the pre-0.65 curve
         // dips 0.16 dB (the 4x decimator smears the bare curve's 24 % step
         // down to that), the continuous curve 0.00 dB.
         #expect(worstDropDB > -0.05,
@@ -242,7 +242,7 @@ struct BassClipperTests {
         var f: Float = 15_100.0
         while f < 23_500.0 { high += pow(mag(f), 2.0); f += 100.0 }
         let splatterDB = 20.0 * log10(sqrt(high) / max(1e-12, fundamental))
-        // Measured at the shipped point: pre-0.60 curve -55.0 dB, continuous
+        // Measured at the shipped point: pre-0.65 curve -55.0 dB, continuous
         // curve -56.6 dB. Oversampling already does most of the work here; the
         // bound is a regression guard against the old curve, not a target.
         #expect(splatterDB < -56.0,

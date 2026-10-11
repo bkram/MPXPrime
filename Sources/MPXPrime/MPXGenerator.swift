@@ -860,7 +860,7 @@ final class MPXGenerator {
     private var bs412Enabled: Bool
     private var bs412CeilingDBr: Float
     /// The compliance statistic runs whether or not anything acts on it, so
-    /// enabling the limiter does not start a 60 s wait (0.60 audit, P0-6).
+    /// enabling the limiter does not start a 60 s wait (0.65 audit, P0-6).
     private var bs412Meter = BS412MultiplexPowerMeter()
     private var bs412Rider = BS412Rider()
     private var bs412Guard = BS412ComplianceGuard()
@@ -1142,7 +1142,7 @@ final class MPXGenerator {
         // FM pre-emphasis picker has no function on an AM feed.
         self.preemphasisUS = digital ? 0 : (am ? config.amPreemphasisUS : config.preemphasisUS)
         // AM rides NRSC-1 (zero 2122 Hz, pole 8700 Hz), NOT the FM curve:
-        // until 0.60 `am_preemphasis_us = 75` was handed to the FM network,
+        // until 0.65 `am_preemphasis_us = 75` was handed to the FM network,
         // which keeps climbing where NRSC-1's pole flattens it -- 3.6 dB
         // too much at 10 kHz and worse above.
         self.preemphasisCurve = digital
@@ -1874,7 +1874,7 @@ final class MPXGenerator {
         // Rate domains, named so a call site cannot pick the wrong one by
         // accident. Audio-domain stages (everything before stereo encoding)
         // run at `audioRate`; composite-side stages run at `mpxRate`. Until
-        // 0.60 the AGC, the phase rotator and the bass clipper took the MPX
+        // 0.65 the AGC, the phase rotator and the bass clipper took the MPX
         // rate here while construction gave them the audio rate, so one live
         // edit made their time constants and corners 4x wrong until restart.
         let audioRate = audioDomainSampleRate
@@ -2232,7 +2232,7 @@ final class MPXGenerator {
         // BS.412. The ceiling is a threshold, not a topology: changing it
         // must NOT wipe the 60 s window. The old stage reallocated its ring
         // on any change, so editing the threshold erased the compliance
-        // history it was supposed to be accumulating (0.60 audit, P0-6).
+        // history it was supposed to be accumulating (0.65 audit, P0-6).
         bs412Enabled = config.bs412Enabled
         bs412CeilingDBr = clampf(config.bs412CeilingDBr, -10.0, 0.0)
 
@@ -2342,7 +2342,7 @@ final class MPXGenerator {
             // The pre-emphasis filter is fitted to the analog curve, so the
             // analog magnitude is the compensation -- of WHICHEVER curve this
             // mode rides. Computing the FM magnitude on an AM feed put the
-            // calibration tone out by up to 3.6 dB (0.60 audit, P0-7).
+            // calibration tone out by up to 3.6 dB (0.65 audit, P0-7).
             let gainDB = preemphasisCurve.analogGainDB(frequencyHz: Double(toneFreq))
             let magnitude = Float(pow(10.0, gainDB / 20.0))
             compensation = 1.0 / max(1e-6, magnitude)
@@ -3469,7 +3469,7 @@ final class MPXGenerator {
         nonFiniteInputSamples.load(ordering: .relaxed)
     }
 
-    /// The ingress policy (0.60, audit P0-4): a non-finite input sample is
+    /// The ingress policy (0.65, audit P0-4): a non-finite input sample is
     /// silence, and every finite value passes through untouched -- including
     /// legitimately over-range ones, which the peak stages exist to handle.
     ///

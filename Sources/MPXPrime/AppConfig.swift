@@ -1,10 +1,12 @@
 import Foundation
+import MPXPrimeCore
 
 // Equatable: synthesized whole-config equality is the remote-control API's
 // change detector (see Control/ConfigPatch.swift); must live on the
 // declaration for synthesis.
 struct AppConfig: Equatable {
-    static let appVersion: String = "0.50"
+    /// See `MPXPrimeVersion` (Sources/MPXPrimeCore/Version.swift), the one place the version lives.
+    static let appVersion: String = MPXPrimeVersion.string
 
     // Remote-control server ([CONTROL] section; server ships disabled).
     // control_bind other than 127.0.0.1 REQUIRES control_api_key
@@ -700,11 +702,11 @@ struct AppConfig: Equatable {
     /// distorting. `legacyProfileID` is the id that triggered the reset so the
     /// caller can log it and persist the reset config.
     ///
-    /// `bs412KeysMigrated` reports the 0.60 BS.412 key change: an INI that
+    /// `bs412KeysMigrated` reports the 0.65 BS.412 key change: an INI that
     /// still carries `bs412_threshold_db` / `bs412_window_seconds` and no
     /// `bs412_ceiling_dbr` is read onto the standard's 0.0 dBr ceiling, and
     /// the caller SAVES (so the file matches what runs and the old keys go)
-    /// and says so once. Reading it silently is what the first 0.60 deploy
+    /// and says so once. Reading it silently is what the first 0.65 deploy
     /// did: the rig ran the new ceiling while its INI kept showing the old
     /// keys, which is a lie the operator cannot see through.
     static func loadReportingMigration(fromINI path: String) throws
@@ -723,7 +725,7 @@ struct AppConfig: Equatable {
     /// Persist a load-time migration and word the outcome. Returns the lines
     /// to announce (empty when nothing migrated). The write is attempted
     /// ONCE for whatever migrated, and "Saved." is said only after it
-    /// succeeded: until 0.60 both runtimes printed "Saved." and then
+    /// succeeded: until 0.65 both runtimes printed "Saved." and then
     /// discarded the save's error, so an unwritable file left the station
     /// running the migrated settings while the operator was told the file
     /// matched. `save` is injectable so the failure path is testable.
@@ -743,7 +745,7 @@ struct AppConfig: Equatable {
         }
         if bs412KeysMigrated {
             lines.append(
-                "Pre-0.60 BS.412 keys (bs412_threshold_db / bs412_window_seconds) replaced by "
+                "Pre-0.65 BS.412 keys (bs412_threshold_db / bs412_window_seconds) replaced by "
                     + "bs412_ceiling_dbr = 0.0, the ITU-R BS.412-9 ceiling.")
         }
         guard !lines.isEmpty else { return [] }
@@ -759,7 +761,7 @@ struct AppConfig: Equatable {
         return lines
     }
 
-    /// The pre-0.60 BS.412 keys are present and the 0.60 key is not.
+    /// The pre-0.65 BS.412 keys are present and the 0.65 key is not.
     static func carriesLegacyBS412Keys(_ mpx: [String: String]) -> Bool {
         mpx.optionalDouble("bs412_ceiling_dbr") == nil
             && (mpx.optionalDouble("bs412_threshold_db") != nil
@@ -1091,7 +1093,7 @@ struct AppConfig: Equatable {
         if let ceiling = mpx.optionalDouble("bs412_ceiling_dbr") {
             cfg.bs412CeilingDBr = ceiling
         } else if carriesLegacyBS412Keys(mpx) {
-            // Pre-0.60 keys. Their threshold has no dBr meaning, so the only
+            // Pre-0.65 keys. Their threshold has no dBr meaning, so the only
             // honest migration is the standard's own ceiling.
             // `loadReportingMigration` reports it so both runtimes save the
             // rewritten INI and announce the change.

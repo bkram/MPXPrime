@@ -8,10 +8,10 @@ import MPXPrimeAcceleration
 @testable import MPXPrime
 
 // The curve `BassClipper` applies (the HF clipper shared it until that stage
-// was removed in 0.61). Until 0.60 it was
+// was removed in 0.65). Until 0.65 it was
 // discontinuous at the threshold -- the output stepped DOWN to tanh(1) =
 // 0.7616 of where it was, a 24 % drop, then climbed back toward the same
-// ceiling, so it was not monotonic either (0.60 audit, P0-2).
+// ceiling, so it was not monotonic either (0.65 audit, P0-2).
 //
 // Oversampling reduces alias folding; it cannot repair a discontinuous
 // transfer. These tests pin the properties the old one broke, and they are
@@ -22,7 +22,7 @@ struct BandWaveshaperTests {
     private let thresholds: [Float] = [0.25, 0.5, 0.8, 1.0]
     private let knees: [Float] = [0.4, 0.6, 0.8, 0.9]
 
-    /// The pre-0.60 curve, for comparison only.
+    /// The pre-0.65 curve, for comparison only.
     private func legacy(_ x: Float, threshold: Float) -> Float {
         fabsf(x) <= threshold ? x : copysignf(threshold * tanhf(fabsf(x) / threshold), x)
     }

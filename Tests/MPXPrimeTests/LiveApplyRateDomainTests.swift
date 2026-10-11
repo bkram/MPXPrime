@@ -10,7 +10,7 @@ import Foundation
 // off by the ratio -- 4x on the default engine format -- until the next
 // restart.
 //
-// Found by the 0.60 chain audit (P0-1): the wideband AGC, the phase
+// Found by the 0.65 chain audit (P0-1): the wideband AGC, the phase
 // rotator and the bass clipper took the MPX rate in `applyRuntimeConfig`
 // while construction and `setSampleRate` gave them the audio rate. Cold
 // start was therefore correct and every offline gate passed; only an

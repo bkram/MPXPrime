@@ -43,7 +43,7 @@ struct MonitorConditioner {
     // Monitor level. These belong to ONE thread -- whichever thread calls
     // `process` -- and a level change reaches them through an atomic owned by
     // the player, never by writing into this struct from the control side
-    // (0.60 audit, P0-5: the render thread mutates this struct every block,
+    // (0.65 audit, P0-5: the render thread mutates this struct every block,
     // so a concurrent write from the main actor was a data race on a
     // multi-field value, not just an unsynchronised Float).
     private var currentGain: Float = 1.0

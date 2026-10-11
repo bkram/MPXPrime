@@ -6,7 +6,7 @@ import Testing
 // The leveler's transient hold decayed by a flat 0.94 per sample: 0.34 ms at
 // the 48 kHz audio domain, 0.08 ms with the dual-rate boundary off or at a
 // different domain rate (audit P0-3 follow-up; MonoCompressor got the time
-// constant in 0.60, this stage kept the literal because changing it meant
+// constant in 0.65, this stage kept the literal because changing it meant
 // re-running the armed corpus gates). The coefficient is now 0.94^(48000/sr),
 // exactly 0.94 at 48 kHz -- so nothing moves where the gates were armed --
 // and the same decay per unit TIME everywhere else.

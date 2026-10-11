@@ -86,7 +86,7 @@ struct MonitorConditionerTests {
     }
 
     @Test func amMonitorRemovesTheNRSCCurve() {
-        // Until 0.60 this applied the FM curve and removed the FM curve, so
+        // Until 0.65 this applied the FM curve and removed the FM curve, so
         // it was flat whatever NRSC did -- it could not have caught the wrong
         // network. Now it applies NRSC-1 and asks the monitor to undo it.
         for f in [500.0, 2_000.0, 5_000.0, 9_000.0] {
@@ -171,7 +171,7 @@ struct MonitorConditionerTests {
         #expect(l2[0] == 1.0 && l2[1] == -1.0, "a boosted monitor must clamp, got \(l2)")
     }
 
-    // MARK: - Level changes (0.60 audit, P0-5)
+    // MARK: - Level changes (0.65 audit, P0-5)
 
     /// The conditioner belongs to one thread; a level change reaches it
     /// through `setTargetGain` on that thread and is RAMPED rather than
@@ -247,7 +247,7 @@ struct MonitorConditionerTests {
     /// bit pattern into an atomic, the audio thread loads it, adopts it and
     /// processes. Under `swift test --sanitize=thread` this is the check
     /// that the monitor level no longer crosses threads by assignment --
-    /// before 0.60 the control side wrote straight into this struct while
+    /// before 0.65 the control side wrote straight into this struct while
     /// the audio thread was mutating it.
     @Test func theLevelHandOffSurvivesConcurrentControlWrites() {
         let pending = ManagedAtomic<UInt32>(Float(1.0).bitPattern)
@@ -285,7 +285,7 @@ struct MonitorConditionerTests {
         }
     }
 
-    /// Startup regression (reported against the 0.60 P0-5 change): the
+    /// Startup regression (reported against the 0.65 P0-5 change): the
     /// players' pending-gain atomics default to UNITY while the conditioner
     /// is configured from `monitor_gain_db`. If the player does not publish
     /// the configured level before the audio thread runs, the first block

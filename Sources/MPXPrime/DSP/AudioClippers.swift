@@ -25,9 +25,9 @@ import os
 // MARK: - Shared band waveshaper
 
 /// The soft-clip curve `BassClipper` applies to its driven band (the HF
-/// clipper shared it until that stage was removed in 0.61).
+/// clipper shared it until that stage was removed in 0.65).
 ///
-/// Until 0.60 both did this:
+/// Until 0.65 both did this:
 ///
 ///     |x| <= threshold  ->  x                    (untouched)
 ///     |x| >  threshold  ->  threshold * tanh(x / threshold)
@@ -36,7 +36,7 @@ import os
 /// `tanh(1)` = 0.7616 of where it was, a 24 % step down, and then climbs
 /// back toward the same ceiling -- so the transfer is not monotonic either.
 /// Oversampling reduces alias folding but cannot repair a discontinuous
-/// curve; the step itself is broadband distortion (0.60 audit, P0-2).
+/// curve; the step itself is broadband distortion (0.65 audit, P0-2).
 ///
 /// The replacement is a shifted soft knee. Below `x0 = knee * threshold` the
 /// band passes untouched; above it the excess is compressed by a tanh scaled
@@ -246,7 +246,7 @@ struct BassClipper {
 // Attack ~1.5 ms / 5 ms hold / release ~20 ms (Orban used 3 ms / 10 ms in
 // the analog original). Default off -> bit-identical chain.
 //
-// Split ceiling (0.61): the top octave, 13 kHz and up, is held to its own,
+// Split ceiling (0.65): the top octave, 13 kHz and up, is held to its own,
 // tighter threshold (`hf_limiter_top_threshold_db`, default 1 dB under the
 // main one). The split lives in the DETECTOR, not in the signal path: a
 // zero-latency IIR band split of the boost cannot feed a projection

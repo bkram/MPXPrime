@@ -9,7 +9,7 @@ Active work list + anti-rework guardrails. **Not** a readme: positioning, archit
 ## Status
 
 Released through **0.50** (2026-09-11, tag `v0.50`, AGPL-3.0). **Active branch:
-`develop/v.060`**; 0.60 is the next target. Shipped-feature history lives in
+`develop/v.065`**; 0.65 is the next target. Shipped-feature history lives in
 CHANGELOG -- this file tracks only pending work and the anti-rework guardrails.
 Pruned 2026-09-05: every DONE item removed, open remainders kept.
 
@@ -17,7 +17,7 @@ Pruned 2026-09-05: every DONE item removed, open remainders kept.
 
 # Open work
 
-## Web dashboard taxonomy and navigation -- PLAN (2026-09-11, target 0.60; phase 1 landed 2026-09-11)
+## Web dashboard taxonomy and navigation -- PLAN (2026-09-11, target 0.65; phase 1 landed 2026-09-11)
 
 The dashboard (and, by the parity rule, the GUI sidebar) groups functions the
 way the ENGINE is built, not the way an operator works. This is the plan to
@@ -83,7 +83,7 @@ a new rig meets them:
 | --- | --- | --- |
 | **On Air** | status + transport, meters and the signal-chain strip, what RDS is showing right now, health notes (render load, xruns, device rate), task shortcuts | the landing page; today's Monitoring plus the shortcuts |
 | **Setup** | Audio devices and operating mode; Levels and calibration (input gain, output level, line output, DAC peak, the Linux card mixer); Engine (sample rate, block size); Remote access (control server, key); Test Tone | everything done once per rig; today spread over Tools / Audio I/O / the GUI Settings window |
-| **Sound** | Format Profile ("start here"), then the stages **grouped by function in signal order**: Input (Core, Phase Rotator) -- Levelling (AGC, Advanced Dynamics; one engine at a time since 0.60, the other's pages hidden) -- Tone (Parametric EQ, PrimeBass + Mono Bass) -- Dynamics (Multiband, Expander, MB Limiter; the Expander moved here 2026-10-10 because it runs per band inside the multiband stage) -- Peak control (Bass Clipper, Audio Clipper, HF Limiter, HF Clipper, Audio Limiter) -- Transmission, MPX Output only (Stereo Coder, Composite Clipper, BS.412, Final Stage) | today's flat Processing list, with headers; the Overview becomes the section's landing page with the clickable chain strip |
+| **Sound** | Format Profile ("start here"), then the stages **grouped by function in signal order**: Input (Core, Phase Rotator) -- Levelling (AGC, Advanced Dynamics; one engine at a time since 0.65, the other's pages hidden) -- Tone (Parametric EQ, PrimeBass + Mono Bass) -- Dynamics (Multiband, Expander, MB Limiter; the Expander moved here 2026-10-10 because it runs per band inside the multiband stage) -- Peak control (Bass Clipper, Audio Clipper, HF Limiter, HF Clipper, Audio Limiter) -- Transmission, MPX Output only (Stereo Coder, Composite Clipper, BS.412, Final Stage) | today's flat Processing list, with headers; the Overview becomes the section's landing page with the clickable chain strip |
 | **RDS** | On-air text (what listeners see, editable) -- Identity -- Radiotext -- Long PS -- Alternative frequencies -- Schedule -- Subcarrier (expert) | same pages, ordered by how often they are touched |
 | **Presets and System** | the eight preset slots (save / load / import / export), About and version, diagnostics (stream health detail, telemetry, logs) | today's Presets, Advanced, About |
 
@@ -180,9 +180,9 @@ Roughly one to two days each. Risk to watch: the parity rule (every change
 lands in the GUI and the dashboard in the same commit) and label churn in the
 manuals -- hence labels as their own phase, once, with the anchor checker.
 
-## Audio-chain audit (external review of 0.50, 2026-09-11) -- verified findings and fix plan (target 0.60)
+## Audio-chain audit (external review of 0.50, 2026-09-11) -- verified findings and fix plan (target 0.65)
 
-An external review of revision `aaf0521` (0.50 as released; `develop/v.060`
+An external review of revision `aaf0521` (0.50 as released; `develop/v.065`
 has carried only navigation work since) claimed seven P0 chain defects and two
 P1 real-time defects. Every claim was re-checked against the code on
 2026-09-11. **All nine hold.** Their practical weight differs a lot, so the
@@ -374,7 +374,7 @@ real-time items.
       shipped settings vs settings that cannot clip -- toggling the stage
       itself shifts the whole composite by its latency and fakes a
       difference): the kick engages the clipper about 1.7x harder than
-      `wide_bass`, and the 0.60 curve change moves its composite peak by
+      `wide_bass`, and the 0.65 curve change moves its composite peak by
       1.1 dB and RMS by 0.2 dB against a 0.10 dB peak tolerance, so the
       record is a real guard. Only `default.json` gains a record -- the
       preset and long sweeps filter scenarios by name and do not include
@@ -476,7 +476,7 @@ Effort: F1-F4 about a day together; F5 two to three days including listening
 and the Linux recapture; F6 a day; F7 two to three days; F8 / F9 half a day of
 measurement each, then one to three days depending on what it shows. Every
 commit: fast suite, swiftlint, `--verify --baseline-strict` unchanged (F5
-excepted, deliberately), CHANGELOG 0.60 bullet.
+excepted, deliberately), CHANGELOG 0.65 bullet.
 
 ## Clipper campaign -- APPROVED 2026-10-10 (items 1-4 and 7 queued; 5-6 research)
 

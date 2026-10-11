@@ -36,8 +36,8 @@ enum NavigationSection: String, CaseIterable, Sendable {
 
 /// How the Sound section groups the stage pages: by what the stage does to
 /// the signal, in signal order. `pageIDs` are the dashboard's stage page ids
-/// (the GUI maps them to `Stage` cases; its combined HF page answers to both
-/// `hfLimiter` and `hfClipper`). One stage id appears in exactly one group.
+/// (the GUI maps them to `Stage` cases). One stage id appears in exactly one
+/// group.
 enum StageGroup: String, CaseIterable, Sendable {
     case input, levelling, tone, dynamics, peakControl, transmission
 
@@ -54,11 +54,13 @@ enum StageGroup: String, CaseIterable, Sendable {
 
     var pageIDs: [String] {
         switch self {
-        case .input: return ["core", "phaseRotator", "expander"]
+        case .input: return ["core", "phaseRotator"]
         case .levelling: return ["agc", "advanced_dynamics"]
         case .tone: return ["parametricEQ", "primeBass"]
-        case .dynamics: return ["multiband", "mbLimiter"]
-        case .peakControl: return ["bassClipper", "dcClipper", "hfLimiter", "hfClipper", "limiter"]
+        // The Expander and the Band Limiter both run per band INSIDE the
+        // multiband stage (after the band compressors), so they sit with it.
+        case .dynamics: return ["multiband", "expander", "mbLimiter"]
+        case .peakControl: return ["bassClipper", "dcClipper", "hfLimiter", "limiter"]
         case .transmission: return ["stereoCoder", "compositeClipper", "bs412", "finalStage"]
         }
     }
@@ -66,6 +68,46 @@ enum StageGroup: String, CaseIterable, Sendable {
     /// The Sound section's own pages ahead of the groups: the landing grid and
     /// the Format Profile ("start here").
     static let soundLandingPageIDs = ["overview", "profile"]
+}
+
+/// The levelling engine: the regular AGC + Multiband chain (with the per-band
+/// Expander and Band Limiter that run inside the multiband stage) or the fused
+/// Advanced Dynamics leveler that replaces all four. One choice, stored as
+/// `advanced_dynamics_enabled`, live-apply. The pages of the engine not in use
+/// are HIDDEN in both front ends (until 0.60 they showed ghosted with a
+/// "bypassed" banner: four dimmed pages the operator had to scan past).
+/// `schema.json` `model.levelling` mirrors this table; `ControlSchemaTests`
+/// holds the two together.
+enum LevellingEngine: String, CaseIterable, Sendable {
+    case regular, advanced
+
+    /// The INI / API key that selects the engine (`True` = advanced).
+    static let configKey = "advanced_dynamics_enabled"
+
+    var title: String {
+        switch self {
+        case .regular: return "AGC + Multiband"
+        case .advanced: return "Advanced Dynamics"
+        }
+    }
+
+    /// The dashboard stage page ids this engine owns (GUI stages map through
+    /// `Stage.stage(forSchemaPage:)`).
+    var pageIDs: [String] {
+        switch self {
+        case .regular: return ["agc", "multiband", "expander", "mbLimiter"]
+        case .advanced: return ["advanced_dynamics"]
+        }
+    }
+
+    static func current(for config: AppConfig) -> LevellingEngine {
+        config.advancedDynamicsEnabled ? .advanced : .regular
+    }
+
+    /// The engine that owns a page, or nil for a page every engine shows.
+    static func engine(forPage id: String) -> LevellingEngine? {
+        allCases.first { $0.pageIDs.contains(id) }
+    }
 }
 
 /// The controls each stage page folds into its collapsed **Advanced** group:
@@ -85,10 +127,10 @@ enum AdvancedControls {
         "dc_clipper_cancel_freq_hz",
         "expander_attack_ms",
         "expander_release_ms",
-        "hf_clipper_crossover_hz",
         "hf_limiter_attack_ms",
         "hf_limiter_max_reduction_db",
         "hf_limiter_release_ms",
+        "hf_limiter_top_threshold_db",
         "hf_trim_db",
         "hf_trim_hz",
         "limit_lookahead_enabled",

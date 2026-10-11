@@ -29,6 +29,8 @@ struct StageEnabledIndicatorTests {
             .processingFormatProfile,
             .processingCore,
             .processingFinalStage,
+            // Switched by the Levelling engine picker, not by a flag of its own.
+            .processingAdvancedDynamics,
             .snapshots,
             .rdsProgram,
             .rdsRadiotext,

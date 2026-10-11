@@ -246,7 +246,14 @@ struct AppConfig: Equatable {
     /// Applied at the DAC write, AFTER all composite math -- deviation
     /// metering and the composite budget stay in the 0 dBFS = 100% domain.
     var mpxLineOutputDBFS: Double = 0.0
-    var finalDriveDB: Double = 6.0
+    // The processing defaults ARE the Music -- Clean profile (2026-10
+    // format-profile review, finding 7): `FormatProfileTests
+    // .defaultProfileMatchesShippingDefaults` holds `AppConfig()` and
+    // `applyFormatProfile("music_clean")` equal key for key, so a fresh
+    // install and a re-applied default profile sound the same. Drive 4 dB
+    // into the composite clipper (the profile overrides the "balanced"
+    // final-stage preset's 6 dB).
+    var finalDriveDB: Double = 4.0
     var finalStagePresetID: String = "balanced"
     // Top-level "Station Format" profile that atomically applies a coherent
     // bundle of multiband / final-stage / PrimeBass / mono-bass / composite-
@@ -265,7 +272,9 @@ struct AppConfig: Equatable {
     var limitLookaheadMS: Double = 5.0
     var limitLookaheadEnabled: Bool = true
     var preEncodeAudioLimiterEnabled: Bool = true
-    var preEncodeThreshold: Double = 0.85
+    // 0.90 = -0.9 dBFS, Music -- Clean; the HF limiter's -0.4 dB sits 0.5 dB
+    // above it (was 0.85, the Loud profile's figure, until 2026-10).
+    var preEncodeThreshold: Double = 0.90
     var preEncodeReleaseMS: Double = 50.0
     var preEncodeBandlimitedResidualEnabled: Bool = false
     var preEncodeBandlimitedResidualTapCount: Int = 33
@@ -297,23 +306,25 @@ struct AppConfig: Equatable {
     // normal chain to the cleaner softclip-only path.
     var mpxDeviationKHz: Double = 75.0
     var enRDS: Bool = true
-    // AGC defaults: research-grounded "Pop Medium" tuning. AGC ON because
+    // AGC defaults: the "balanced" final-stage preset, which is what the
+    // default Music -- Clean profile applies (-16 dB target, 200 ms / 1.2 s,
+    // +/-12 dB of range; until 2026-10 the defaults were a "Pop Medium"
+    // -14 / 150 / 1500 / +/-10 that no profile produced). AGC ON because
     // every commercial processor (Orban, Omnia, Stereo Tool) ships with
     // AGC engaged — amateur source material (mixed-era MP3s, podcasts,
     // vinyl rips) needs level-evening or single-band peak management
-    // pumps on bass-heavy program. Numerics from Orban 8500/8700i manual
-    // ranges; widened release cap supplied by 0.10 program-dependent path.
+    // pumps on bass-heavy program.
     var widebandAGCEnabled: Bool = true
-    var widebandAGCTargetDB: Double = -14.0
-    // 150 ms: a gain RIDER, not a peak controller. 6 ms (pre-0.45) was
+    var widebandAGCTargetDB: Double = -16.0
+    // 200 ms: a gain RIDER, not a peak controller. 6 ms (pre-0.45) was
     // limiter-fast on an RMS detector -- a 30 ms drum hit ducked the whole
     // program by several dB and held it there for the release (Orban WP
     // "hole punching"; Omnia.11: peaks belong to the limiter). Profiles use
     // 100-200 ms; `AGCDetectorTests.burstDoesNotDuckTheProgram` pins it.
-    var widebandAGCAttackMS: Double = 150.0
-    var widebandAGCReleaseMS: Double = 1500.0
-    var widebandAGCMaxGainDB: Double = 10.0
-    var widebandAGCMinGainDB: Double = -10.0
+    var widebandAGCAttackMS: Double = 200.0
+    var widebandAGCReleaseMS: Double = 1200.0
+    var widebandAGCMaxGainDB: Double = 12.0
+    var widebandAGCMinGainDB: Double = -12.0
     /// Use a BS.1770-flavoured pre-filter (HPF ~38 Hz + high-shelf
     /// +4 dB @ ~1.5 kHz) on the AGC's power detector so the detector
     /// tracks perceived loudness rather than flat RMS. Default on —
@@ -338,7 +349,7 @@ struct AppConfig: Equatable {
     var primeBassSubharmonicsEnabled: Bool = false
     var primeBassSubharmonicsAmount: Double = 0.20
     var monoBassEnabled: Bool = true
-    var monoBassFreqHz: Double = 125.0
+    var monoBassFreqHz: Double = 140.0   // Music -- Clean (Loud 115, Dense 110, Classical 90)
     // Multiband defaults: 5-band AC/Pop preset at "Normal" intensity. ON
     // because no commercial processor ships multiband disabled — amateur
     // source mix needs band-aware compression to keep speech and music
@@ -418,20 +429,16 @@ struct AppConfig: Equatable {
     var bassClipperCrossoverHz: Double = 150.0
     var bassClipperThresholdDB: Double = -3.0
     var bassClipperDrive: Double = 1.5
-    // Pre-emphasis-aware HF clipper (opt-in, default off). Clips the high band
-    // of the pre-emphasized L/R so HF transients are tamed by a dedicated stage
-    // instead of forcing the broadband pre-encode limiter to dull everything.
-    // De-emphasis-correct (limits pre-emphasized HF; receiver restores curve).
-    var hfClipperEnabled: Bool = false
-    var hfClipperCrossoverHz: Double = 5_000.0
-    var hfClipperThresholdDB: Double = -3.0
-    var hfClipperDrive: Double = 1.2
     // HF limiter: program-controlled pre-emphasis (rides only the boost
-    // component), the gain-riding alternative to the HF clipper. Threshold is
-    // the pre-emphasised L/R peak that triggers it; Max Reduction caps how much
-    // of the boost may be removed (the boost itself bounds the action).
+    // component). Threshold is the pre-emphasised L/R peak that triggers it,
+    // 0.5 dB ABOVE the pre-encode limiter's (Orban US 4,103,243 puts the HF
+    // comparators above the broadband limiter so the stage only ever sees HF
+    // excess; Music - Clean, 0.90 -> -0.4 dB). Top Threshold is the same
+    // ceiling for boost above 13 kHz, 1 dB tighter. Max Reduction caps how
+    // much of the boost may be removed (the boost itself bounds the action).
     var hfLimiterEnabled: Bool = true
-    var hfLimiterThresholdDB: Double = -2.0
+    var hfLimiterThresholdDB: Double = -0.4
+    var hfLimiterTopThresholdDB: Double = -1.4
     var hfLimiterAttackMS: Double = 1.5
     var hfLimiterReleaseMS: Double = 20.0
     var hfLimiterMaxReductionDB: Double = 12.0
@@ -504,11 +511,12 @@ struct AppConfig: Equatable {
     var compositeClipperStereoGuard: Double = 1.0
     var compositeClipperCancelPilot: Bool = true
     var compositeClipperCancelRDS: Bool = true
-    // Look-ahead composite peak control (0.0 disables; recommended preset: 2.0 ms).
+    // Look-ahead composite peak control (0.0 disables; every shipped profile
+    // and, since 2026-10, the default run 2.0 ms).
     // Sliding-window-max detector + half-cosine attack + 200 Hz smoothed gain
     // applied pre-clip so the soft-clip kernel sees an already-shaved signal.
     // See docs/project-roadmap.md "Enterprise-parity status" / 0.26 release plan.
-    var compositeClipperLookaheadMS: Double = 0.0
+    var compositeClipperLookaheadMS: Double = 2.0
     // Composite clipper oversampling factor. 16 (default) matches Optimod
     // 8X00 / Omnia.11 / Stereotool industry practice. 8 trades some
     // alias suppression for ~50% lower CPU on this stage (useful on weaker
@@ -633,7 +641,8 @@ struct AppConfig: Equatable {
     var rdsGaussianBWHZ: Double = 2400.0
     var rdsGaussianTaps: Int = 81
 
-    /// Pre-0.45 Format Profile ids mapped onto the four 0.45 profiles. The
+    /// Pre-0.45 Format Profile ids mapped onto the 0.45 profiles (EDM onto
+    /// Music -- Dense, the density tier 0.45 had folded into Loud). The
     /// old ids were deleted without migration in 71cdf78; a station that
     /// upgraded kept an unknown label AND the old, unowned gain structure
     /// (field finding 2026-08-29: no peak controller enabled, the safety
@@ -645,7 +654,7 @@ struct AppConfig: Equatable {
         "pop_ac": "music_clean",
         "chr_top40": "music_loud",
         "rock": "music_loud",
-        "edm_dance": "music_loud",
+        "edm_dance": "music_dense",
         "urban_hiphop": "music_loud",
         "jazz_classical": "classical_wide",
         "news_talk": "speech"
@@ -1050,18 +1059,12 @@ struct AppConfig: Equatable {
             "bass_clipper_threshold_db", defaultValue: cfg.bassClipperThresholdDB)
         cfg.bassClipperDrive = mpx.double(
             "bass_clipper_drive", defaultValue: cfg.bassClipperDrive)
-        cfg.hfClipperEnabled = mpx.bool(
-            "hf_clipper_enabled", defaultValue: cfg.hfClipperEnabled)
-        cfg.hfClipperCrossoverHz = mpx.double(
-            "hf_clipper_crossover_hz", defaultValue: cfg.hfClipperCrossoverHz)
-        cfg.hfClipperThresholdDB = mpx.double(
-            "hf_clipper_threshold_db", defaultValue: cfg.hfClipperThresholdDB)
-        cfg.hfClipperDrive = mpx.double(
-            "hf_clipper_drive", defaultValue: cfg.hfClipperDrive)
         cfg.hfLimiterEnabled = mpx.bool(
             "hf_limiter_enabled", defaultValue: cfg.hfLimiterEnabled)
         cfg.hfLimiterThresholdDB = mpx.double(
             "hf_limiter_threshold_db", defaultValue: cfg.hfLimiterThresholdDB)
+        cfg.hfLimiterTopThresholdDB = mpx.double(
+            "hf_limiter_top_threshold_db", defaultValue: cfg.hfLimiterTopThresholdDB)
         cfg.hfLimiterAttackMS = mpx.double(
             "hf_limiter_attack_ms", defaultValue: cfg.hfLimiterAttackMS)
         cfg.hfLimiterReleaseMS = mpx.double(
@@ -1375,10 +1378,8 @@ struct AppConfig: Equatable {
         bassClipperCrossoverHz = max(60.0, min(300.0, bassClipperCrossoverHz))
         bassClipperThresholdDB = max(-12.0, min(0.0, bassClipperThresholdDB))
         bassClipperDrive = max(0.5, min(3.0, bassClipperDrive))
-        hfClipperCrossoverHz = max(3_000.0, min(8_000.0, hfClipperCrossoverHz))
-        hfClipperThresholdDB = max(-12.0, min(0.0, hfClipperThresholdDB))
-        hfClipperDrive = max(0.5, min(3.0, hfClipperDrive))
         hfLimiterThresholdDB = max(-12.0, min(0.0, hfLimiterThresholdDB))
+        hfLimiterTopThresholdDB = max(-12.0, min(0.0, hfLimiterTopThresholdDB))
         hfLimiterAttackMS = max(0.2, min(20.0, hfLimiterAttackMS))
         hfLimiterReleaseMS = max(5.0, min(500.0, hfLimiterReleaseMS))
         hfLimiterMaxReductionDB = max(1.0, min(24.0, hfLimiterMaxReductionDB))
@@ -1603,12 +1604,9 @@ struct AppConfig: Equatable {
             "bass_clipper_crossover_hz = \(Self.formatFloat(bassClipperCrossoverHz))",
             "bass_clipper_threshold_db = \(Self.formatFloat(bassClipperThresholdDB))",
             "bass_clipper_drive = \(Self.formatFloat(bassClipperDrive))",
-            "hf_clipper_enabled = \(Self.boolString(hfClipperEnabled))",
-            "hf_clipper_crossover_hz = \(Self.formatFloat(hfClipperCrossoverHz))",
-            "hf_clipper_threshold_db = \(Self.formatFloat(hfClipperThresholdDB))",
-            "hf_clipper_drive = \(Self.formatFloat(hfClipperDrive))",
             "hf_limiter_enabled = \(Self.boolString(hfLimiterEnabled))",
             "hf_limiter_threshold_db = \(Self.formatFloat(hfLimiterThresholdDB))",
+            "hf_limiter_top_threshold_db = \(Self.formatFloat(hfLimiterTopThresholdDB))",
             "hf_limiter_attack_ms = \(Self.formatFloat(hfLimiterAttackMS))",
             "hf_limiter_release_ms = \(Self.formatFloat(hfLimiterReleaseMS))",
             "hf_limiter_max_reduction_db = \(Self.formatFloat(hfLimiterMaxReductionDB))",
@@ -1745,8 +1743,16 @@ struct AppConfig: Equatable {
             "control_port = \(controlPort)",
             "control_api_key = \(controlAPIKey)"
         ]
-        return (mpxLines + [""] + rdsLines + [""] + interfacesLines + [""] + controlLines + [""]).joined(
-            separator: "\n")
+        // Built up in steps: the one-line `a + [""] + b + ...` chain made the
+        // Linux 6.2 compiler give up type-checking ("unable to type-check this
+        // expression in reasonable time"), which broke the Linux build while
+        // Xcode's compiler accepted it.
+        var all: [String] = []
+        for section in [mpxLines, rdsLines, interfacesLines, controlLines] {
+            all.append(contentsOf: section)
+            all.append("")
+        }
+        return all.joined(separator: "\n")
     }
 
     func save(toINI path: String) throws {

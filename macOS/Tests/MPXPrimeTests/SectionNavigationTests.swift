@@ -103,7 +103,9 @@ struct SectionNavigationTests {
     @Test func compositeOutputShowsAllStages() {
         let model = makeViewModel()
         model.config.processedAudioOutput = false
-        for stage in Stage.allCases {
+        // Every mode-gated stage shows; the one exception is the page of the
+        // levelling engine not in use (the default is AGC + Multiband).
+        for stage in Stage.allCases where stage.levellingEngine != .advanced {
             #expect(model.isStageVisible(stage), "\(stage) should be visible in composite mode")
         }
     }
@@ -129,17 +131,68 @@ struct SectionNavigationTests {
         let model = makeViewModel()
         model.selectedStage = .rdsRadiotext
         model.config.processedAudioOutput = true
-        model.normalizeSelectionForOutputMode()
+        model.normalizeSelection()
         #expect(model.selectedStage == .processingOverview,
             "a hidden RDS selection should snap back to the Processing overview")
+    }
+
+    @Test func hdOutputHidesPreemphasisDependentHFControl() {
+        let model = makeViewModel()
+        model.config.operatingMode = .hd
+        #expect(!model.isStageVisible(.processingHFLimiter))
+
+        model.selectedStage = .processingHFLimiter
+        model.normalizeSelection()
+        #expect(model.selectedStage == .processingOverview)
+
+        for mode: AppConfig.OperatingMode in [.mpx, .fm, .am] {
+            model.config.operatingMode = mode
+            #expect(model.isStageVisible(.processingHFLimiter),
+                    "HF control should remain available in \(mode.title)")
+        }
     }
 
     @Test func compositeStageSelectionSurvivesInCompositeMode() {
         let model = makeViewModel()
         model.selectedStage = .processingCompositeClipper
         model.config.processedAudioOutput = false
-        model.normalizeSelectionForOutputMode()
+        model.normalizeSelection()
         #expect(model.selectedStage == .processingCompositeClipper)
+    }
+
+    // MARK: - Levelling engine hides the other engine's pages
+
+    @Test func levellingEngineChoiceHidesTheOtherEnginesPages() {
+        let model = makeViewModel()
+        let regular: [Stage] = [.processingAGC, .processingMultiband, .processingExpander, .processingMBLimiter]
+        // Defaults: the regular chain, so Advanced Dynamics has no page.
+        #expect(LevellingEngine.current(for: model.config) == .regular)
+        for stage in regular {
+            #expect(model.isStageVisible(stage), "\(stage) belongs to the regular engine and should show")
+        }
+        #expect(!model.isStageVisible(.processingAdvancedDynamics))
+
+        model.config.advancedDynamicsEnabled = true
+        for stage in regular {
+            #expect(!model.isStageVisible(stage), "\(stage) is replaced by Advanced Dynamics and should hide")
+        }
+        #expect(model.isStageVisible(.processingAdvancedDynamics))
+
+        // A selection the new engine does not own snaps to the overview --
+        // the page the picker lives on.
+        model.selectedStage = .processingAGC
+        model.normalizeSelection()
+        #expect(model.selectedStage == .processingOverview)
+
+        // Mode gating composes with the engine: HD has no HF control
+        // whichever engine levels, and the engine still hides its rival.
+        model.config.operatingMode = .hd
+        #expect(!model.isStageVisible(.processingHFLimiter))
+        #expect(!model.isStageVisible(.processingAGC))
+        model.config.advancedDynamicsEnabled = false
+        #expect(!model.isStageVisible(.processingHFLimiter))
+        #expect(model.isStageVisible(.processingAGC))
+        #expect(!model.isStageVisible(.processingAdvancedDynamics))
     }
 }
 

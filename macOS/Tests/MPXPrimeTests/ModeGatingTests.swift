@@ -74,6 +74,7 @@ struct ModeGatingTests {
         #expect(ChainFeature.coderFinalClipper.modes == ["fm"])
         #expect(ChainFeature.preemphasis.modes == ["mpx", "fm"])
         #expect(ChainFeature.stereoImage.modes == ["mpx", "fm"])
+        #expect(ChainFeature.hfLimiter.modes == ["mpx", "fm", "am"])
     }
 
     // MARK: - Config plumbing
@@ -242,6 +243,7 @@ struct ModeGatingTests {
         var hfOn = hfBase
         hfOn.hfLimiterEnabled = true
         hfOn.hfLimiterThresholdDB = -12.0
+        hfOn.hfLimiterTopThresholdDB = -12.0
         hfOn.hfLimiterMaxReductionDB = 24.0
         #expect(!ChainFeature.hfLimiter.applies(in: .hd))
         #expect(renderAudioOnly(cfg: hfBase, stereo: true) == renderAudioOnly(cfg: hfOn, stereo: true),

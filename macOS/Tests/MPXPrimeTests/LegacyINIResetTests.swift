@@ -60,7 +60,6 @@ import Testing
         #expect(cfg.compositeClipperEnabled)
         #expect(cfg.compositeClipperCancelAudio == false)
         #expect(cfg.hfLimiterEnabled)
-        #expect(cfg.hfClipperEnabled == false)
         #expect(cfg.advancedDynamicsEnabled == false)
         // input_gain_db is calibration-class since 0.50 (per-device memory,
         // Audio I/O): the legacy reset PRESERVES the operator's source

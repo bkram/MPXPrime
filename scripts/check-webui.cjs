@@ -23,7 +23,13 @@
  *   7. a server-side clamp snaps the control back instead of throwing;
  *   8. changing a device re-reads the device list;
  *   9. a mode change made elsewhere reaches a page that is sitting on
- *      Monitoring.
+ *      Monitoring;
+ *  10. the levelling engine selector on the Overview WORKS: only the engine in
+ *      use has its pages listed (sidebar, overview grid), nothing is ghosted,
+ *      and switching engines flips them both ways;
+ *  11. "Apply recommended" on the Overview WORKS: with a Format Profile
+ *      selected one click POSTs that profile to /api/presets and re-reads the
+ *      config; with `custom` selected the button is disabled and says why.
  *
  * Usage: scripts/check-webui.sh   (installs jsdom into .webui-check/ once)
  */
@@ -75,6 +81,7 @@ function configFor(mode) {
   }
   cfg.processed_audio_ceiling_dbtp = "-1.0";
   cfg.am_positive_peak_pct = "125";
+  cfg.format_profile_id = "music_clean";   // not a widget: the loop misses it
   cfg.output_gain_db = RECALLED_OUTPUT_GAIN[mode];
   cfg.operating_mode = mode;   // last: it is itself a widget key the loop seeds
   return cfg;
@@ -91,7 +98,9 @@ function makeServer(mode) {
     restartPending: false,
     running: false,
     deviceCalls: 0,
-    patches: []
+    configReads: 0,
+    patches: [],
+    presetPosts: []
   };
   const devices = {
     inputs: [{ id: "in-a", name: "Input A", canInput: true, canOutput: false },
@@ -113,6 +122,7 @@ function makeServer(mode) {
     const method = (opts.method || "GET").toUpperCase();
     if (path === "/api/schema") return json(schema);
     if (path === "/api/config") {
+      if (method === "GET") state.configReads += 1;
       if (method === "PATCH") {
         const patch = JSON.parse(opts.body);
         const outcomes = [];
@@ -170,7 +180,14 @@ function makeServer(mode) {
       state.streamReads = (state.streamReads || 0) + 1;
       return { ok: true, status: 200, statusText: "", body, json: async () => ({}) };
     }
-    if (path === "/api/presets") return json({});
+    if (path === "/api/presets") {
+      if (method === "POST") {
+        const body = JSON.parse(opts.body);
+        state.presetPosts.push(body);
+        if (body.kind === "format_profile") state.cfg.format_profile_id = body.id;
+      }
+      return json({});
+    }
     if (path === "/api/rds") return json({ ps: "TEST", rt: "" });
     if (path === "/api/snapshots") return json({ slots: [] });
     if (path.startsWith("/api/transport/")) return json({ ok: true });
@@ -289,7 +306,7 @@ async function runModeUnguarded(mode) {
     }
     if (!$("navToggle")) fail(mode, "aids", "no menu button for the phone drawer");
     if (!/@media \(max-width: 720px\)/.test(html)) fail(mode, "aids", "no phone media query in the stylesheet");
-    page.showPage("agc"); await settle();
+    page.showPage("limiter"); await settle();
     if (!content().querySelector(".row .numin")) fail(mode, "aids", "slider rows carry no numeric field for phones");
   }
   if (page.currentMode() !== mode) {
@@ -345,6 +362,132 @@ async function runModeUnguarded(mode) {
       if (body && body.children.length === 0) {
         fail(mode, id, `card "${fc.querySelector("h2")?.textContent}" renders empty`);
       }
+    }
+  }
+
+  // (10) the levelling engine. configFor() seeds every toggle "True", so the
+  // page boots on the Advanced Dynamics engine; the AGC + Multiband pages
+  // must be gone (not ghosted), and the selector must flip them both ways.
+  {
+    const lv = schema.model.levelling;
+    if (!lv || !Array.isArray(lv.engines) || lv.engines.length < 2) {
+      fail(mode, "levelling", "schema.json has no model.levelling with two engines");
+    } else {
+      const engineFor = (on) => lv.engines.find(e => /^(true|yes|1|on)$/i.test(e.value) === on) || lv.engines[0];
+      const cardIds = () => [...content().querySelectorAll(".ovgrid .ovcard")].map(n => n.dataset.page);
+      // Every page an engine owns is a stage; the overview draws a card for
+      // each one its engine has in use, switch or no switch (Advanced
+      // Dynamics has none: the selector IS its switch).
+      const expect = async (where, cur) => {
+        const sel = content().querySelector("#levelling .seg button.sel");
+        if (!sel || sel.dataset.engine !== cur.id) fail(mode, where, `the selector shows "${sel ? sel.dataset.engine : "none"}", not "${cur.id}"`);
+        for (const e of lv.engines) {
+          for (const id of e.pages || []) {
+            const hidden = page.pageHiddenInMode(id);
+            const listed = navIds().includes(id);
+            const carded = cardIds().includes(id);
+            if (e === cur) {
+              if (hidden) fail(mode, where, `"${id}" belongs to the engine in use but pageHiddenInMode says hidden`);
+              if (!listed) fail(mode, where, `sidebar does not list "${id}" though its engine is in use`);
+              if (!carded) fail(mode, where, `overview shows no card for "${id}" though its engine is in use`);
+            } else {
+              if (!hidden) fail(mode, where, `"${id}" belongs to the other engine but pageHiddenInMode says shown`);
+              if (listed) fail(mode, where, `sidebar still lists "${id}" of the engine not in use`);
+              if (carded) fail(mode, where, `overview still shows a card for "${id}" of the engine not in use`);
+            }
+          }
+        }
+        if (win.document.querySelector("#sidebar [data-bypasswhen]")) fail(mode, where, "a sidebar entry is still marked as bypassed");
+        for (const c of content().querySelectorAll(".ovgrid .ovcard")) {
+          const st = schema.model.stages.find(s => s.id === c.dataset.page);
+          if (c.style.opacity && Number(c.style.opacity) < 1) fail(mode, where, `overview card "${c.dataset.page}" is dimmed`);
+          if (c.querySelector("input:disabled")) fail(mode, where, `overview card "${c.dataset.page}" has a disabled switch`);
+          if (st && !st.enable && c.querySelector(".switch")) fail(mode, where, `overview card "${c.dataset.page}" has a switch but the stage has no enable key`);
+          if (st && st.enable && !c.querySelector(".switch")) fail(mode, where, `overview card "${c.dataset.page}" has no switch`);
+        }
+        // The Monitoring signal chain follows the same choice.
+        page.showPage("monitoring");
+        await settle();
+        const chain = cardIds();
+        for (const e of lv.engines) {
+          for (const id of e.pages || []) {
+            const st = schema.model.stages.find(s => s.id === id);
+            if (e === cur && st && st.summary && !chain.includes(id)) fail(mode, where, `signal chain shows no card for "${id}" though its engine is in use`);
+            if (e !== cur && chain.includes(id)) fail(mode, where, `signal chain still shows "${id}" of the engine not in use`);
+          }
+        }
+        page.showPage("overview");
+        await settle();
+        drainErrors(where);
+      };
+      page.showPage("overview");
+      await settle();
+      const buttons = content().querySelectorAll("#levelling .seg button");
+      if (buttons.length !== lv.engines.length) {
+        fail(mode, "levelling", `the Overview shows ${buttons.length} engine buttons, not ${lv.engines.length}`);
+      } else {
+        const start = engineFor(/^(true|yes|1|on)$/i.test(server.state.cfg[lv.key]));
+        const other = lv.engines.find(e => e !== start);
+        await expect("levelling", start);
+        const patchesBefore = server.state.patches.length;
+        content().querySelector(`#levelling .seg button[data-engine="${other.id}"]`).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+        await settle();
+        drainErrors(`levelling ${start.id}->${other.id}`);
+        if (!server.state.patches.slice(patchesBefore).includes(lv.key)) fail(mode, `levelling ${start.id}->${other.id}`, `no PATCH carried ${lv.key}`);
+        if (server.state.cfg[lv.key] !== other.value) fail(mode, `levelling ${start.id}->${other.id}`, `server holds ${lv.key}=${server.state.cfg[lv.key]}`);
+        await expect(`levelling ${start.id}->${other.id}`, other);
+        const back = content().querySelector(`#levelling .seg button[data-engine="${start.id}"]`);
+        if (!back) fail(mode, `levelling ${other.id}->${start.id}`, "the Overview no longer offers the selector");
+        else {
+          back.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+          await settle();
+          drainErrors(`levelling ${other.id}->${start.id}`);
+          if (server.state.cfg[lv.key] !== start.value) fail(mode, `levelling ${other.id}->${start.id}`, "did not switch back");
+          await expect(`levelling ${other.id}->${start.id}`, start);
+        }
+      }
+    }
+  }
+
+  // (11) "Apply recommended": the Overview offers it next to the levelling
+  // selector; with a profile selected a click POSTs exactly that profile and
+  // re-reads the config; with `custom` it is disabled and says why.
+  {
+    const profileId = server.state.cfg.format_profile_id;
+    page.showPage("overview");
+    await settle();
+    const button = content().querySelector("#recommended #applyRecommended");
+    if (!button) fail(mode, "recommended", "the Overview shows no Apply recommended button");
+    else {
+      if (button.disabled) fail(mode, "recommended", `the button is disabled though "${profileId}" is selected`);
+      const caption = content().querySelector("#recommended .subtitle");
+      if (!caption || !caption.textContent.includes(profileId)) fail(mode, "recommended", "the caption does not name the selected profile");
+      const postsBefore = server.state.presetPosts.length;
+      const readsBefore = server.state.configReads;
+      button.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await settle();
+      drainErrors("recommended");
+      const posts = server.state.presetPosts.slice(postsBefore);
+      if (posts.length !== 1) fail(mode, "recommended", `the click made ${posts.length} POSTs to /api/presets, not 1`);
+      else if (posts[0].kind !== "format_profile" || posts[0].id !== profileId || "intensity" in posts[0]) {
+        fail(mode, "recommended", `the POST body was ${JSON.stringify(posts[0])}`);
+      }
+      if (server.state.configReads <= readsBefore) fail(mode, "recommended", "the config was not re-read after the apply");
+      // Custom: nothing to re-apply, so the button rests and the caption says so.
+      server.state.cfg.format_profile_id = "custom";
+      await page.loadConfig();
+      page.showPage("overview");
+      await settle();
+      drainErrors("recommended custom");
+      const rest = content().querySelector("#recommended #applyRecommended");
+      if (!rest) fail(mode, "recommended custom", "the button is gone instead of disabled");
+      else if (!rest.disabled) fail(mode, "recommended custom", "the button is enabled with the custom profile");
+      const restCaption = content().querySelector("#recommended .subtitle");
+      if (!restCaption || !/Custom keeps your manual tuning/.test(restCaption.textContent)) fail(mode, "recommended custom", "the caption does not explain the disabled button");
+      server.state.cfg.format_profile_id = profileId;
+      await page.loadConfig();
+      page.syncAll();
+      await settle();
     }
   }
 

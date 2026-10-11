@@ -50,7 +50,6 @@ struct LiveApplyRateDomainTests {
         cfg.parametricEQEnabled = false
         cfg.bassClipperEnabled = false
         cfg.dcClipperEnabled = false
-        cfg.hfClipperEnabled = false
         cfg.hfLimiterEnabled = false
         cfg.preEncodeAudioLimiterEnabled = false
         cfg.bs412Enabled = false
@@ -193,22 +192,21 @@ struct LiveApplyRateDomainTests {
 
     // MARK: - Stages fixed earlier, kept as regression cover
 
-    @Test func hfStagesSurviveALiveEdit() {
+    @Test func hfLimiterSurvivesALiveEdit() {
         var a = baseConfig()
         a.preemphasisUS = 75
         a.hfLimiterEnabled = true
         a.hfLimiterThresholdDB = -6.0
+        a.hfLimiterTopThresholdDB = -7.0
         a.hfLimiterAttackMS = 1.5
         a.hfLimiterReleaseMS = 20.0
-        a.hfClipperEnabled = true
-        a.hfClipperCrossoverHz = 4_000.0
-        a.hfClipperThresholdDB = -4.0
         var b = a
+        b.hfLimiterThresholdDB = -9.0
+        b.hfLimiterTopThresholdDB = -12.0
         b.hfLimiterAttackMS = 6.0
         b.hfLimiterReleaseMS = 120.0
-        b.hfClipperCrossoverHz = 7_000.0
-        expectTheEditIsAudible(stage: "HF limiter + HF clipper", from: a, to: b)
-        expectRestartEqualsLive(stage: "HF limiter + HF clipper", from: a, to: b)
+        expectTheEditIsAudible(stage: "HF limiter", from: a, to: b)
+        expectRestartEqualsLive(stage: "HF limiter", from: a, to: b)
     }
 
     @Test func preEncodeLimiterSurvivesALiveEdit() {

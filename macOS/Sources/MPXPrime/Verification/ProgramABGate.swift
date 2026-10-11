@@ -276,7 +276,7 @@ func runProgramABVerification(
 
 #if canImport(AVFoundation)
 
-private func programABInputFiles(path: String) -> [URL] {
+func programABInputFiles(path: String) -> [URL] {
     let fm = FileManager.default
     var isDirectory: ObjCBool = false
     guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else { return [] }

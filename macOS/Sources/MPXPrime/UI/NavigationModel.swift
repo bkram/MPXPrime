@@ -56,7 +56,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
     case primeBass = "PrimeBass"
     case bassClipper = "Bass Clip"
     case dcClipper = "Audio Clip"
-    case hfClipper = "HF Clip"
+    case hfLimiter = "HF Limiter"
     case limiter = "Audio Limiter"
     case stereoCoder = "Stereo Coder"
     case compositeClipper = "Comp Clip"
@@ -82,7 +82,7 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         case .primeBass: return .processingPrimeBass
         case .bassClipper: return .processingBassClipper
         case .dcClipper: return .processingDCClipper
-        case .hfClipper: return .processingHFClipper
+        case .hfLimiter: return .processingHFLimiter
         case .limiter: return .processingLimiter
         case .stereoCoder: return .processingStereoCoder
         case .compositeClipper: return .processingCompositeClipper
@@ -123,8 +123,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
         case .dcClipper:
             return "8x oversampled distortion-cancelled clipper on the audio band. Cleans up audio-band peaks before pre-emphasis adds HF boost."
-        case .hfClipper:
-            return "Pre-emphasis-aware HF control, two stages after pre-emphasis. HF Limiter: gain-riding, removes part of the pre-emphasis boost only while an HF transient overshoots (no clipping distortion; on in Music - Loud). HF Clipper: waveshaper on the pre-emphasised high band -- denser, but it distorts cymbals and hi-hats; last resort, default off."
+        case .hfLimiter:
+            return "Pre-emphasis-aware HF control after pre-emphasis: gain-riding, removes part of the pre-emphasis boost only while an HF transient overshoots and the boost is what overshoots (no clipping distortion; on in every profile). The top octave above 13 kHz has its own, tighter ceiling."
         case .limiter:
             return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
         case .bs412:
@@ -168,8 +168,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset Bass Clipper Tab"
         case .dcClipper:
             return "Reset Audio Clipper Tab"
-        case .hfClipper:
-            return "Reset HF Clipper Tab"
+        case .hfLimiter:
+            return "Reset HF Limiter Tab"
         case .limiter:
             return "Reset Audio Limiter Tab"
         case .bs412:
@@ -211,8 +211,8 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
             return "Reset bass clipper tab to defaults"
         case .dcClipper:
             return "Reset audio clipper tab to defaults"
-        case .hfClipper:
-            return "Reset HF clipper tab to defaults"
+        case .hfLimiter:
+            return "Reset HF limiter tab to defaults"
         case .limiter:
             return "Reset audio limiter tab to defaults"
         case .bs412:
@@ -313,7 +313,7 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingPrimeBass
     case processingBassClipper
     case processingDCClipper
-    case processingHFClipper
+    case processingHFLimiter
     case processingLimiter
     case processingStereoCoder
     case processingCompositeClipper
@@ -373,8 +373,7 @@ enum Stage: String, CaseIterable, Identifiable {
 
     /// The dashboard's page id for this stage, so the sidebar can lay the
     /// Sound section out from `StageGroup.pageIDs` -- the same order the
-    /// dashboard shows. The GUI's one HF page answers to both `hfLimiter` and
-    /// `hfClipper`; the mapping below points both at it.
+    /// dashboard shows.
     static func stage(forSchemaPage id: String) -> Stage? {
         switch id {
         case "overview": return .processingOverview
@@ -390,7 +389,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case "primeBass": return .processingPrimeBass
         case "bassClipper": return .processingBassClipper
         case "dcClipper": return .processingDCClipper
-        case "hfLimiter", "hfClipper": return .processingHFClipper
+        case "hfLimiter": return .processingHFLimiter
         case "limiter": return .processingLimiter
         case "stereoCoder": return .processingStereoCoder
         case "compositeClipper": return .processingCompositeClipper
@@ -421,6 +420,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingCompositeClipper: return .compositeClipper
         case .processingBS412: return .bs412
         case .processingFinalStage: return .finalStage
+        case .processingHFLimiter: return .hfLimiter
         default: return group == .rds ? .rds : nil
         }
     }
@@ -428,6 +428,21 @@ enum Stage: String, CaseIterable, Identifiable {
     /// Does this stage configure anything that has a function in `mode`?
     func applies(in mode: AppConfig.OperatingMode) -> Bool {
         chainFeature?.applies(in: mode) ?? true
+    }
+
+    /// The levelling engine this stage belongs to, or nil for a stage every
+    /// engine shows. The ownership table is `LevellingEngine.pageIDs` in
+    /// Control/StageApplicability.swift (shared with the dashboard); this is
+    /// its GUI face, keyed by the dashboard page id the stage answers to.
+    var levellingEngine: LevellingEngine? {
+        switch self {
+        case .processingAGC, .processingMultiband, .processingExpander, .processingMBLimiter:
+            return .regular
+        case .processingAdvancedDynamics:
+            return .advanced
+        default:
+            return nil
+        }
     }
 
     /// Sidebar row label.
@@ -448,7 +463,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Expander"
         case .processingBassClipper: return "Bass Clipper"
         case .processingDCClipper: return "Audio Clipper"
-        case .processingHFClipper: return "HF Limiter / Clipper"
+        case .processingHFLimiter: return "HF Limiter"
         case .processingLimiter: return "Audio Limiter"
         case .processingBS412: return "BS.412"
         case .processingStereoCoder: return "Stereo Coder"
@@ -484,7 +499,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "arrow.up.right.and.arrow.down.left"
         case .processingBassClipper: return "speaker.wave.1"
         case .processingDCClipper: return "scissors"
-        case .processingHFClipper: return "speaker.wave.3"
+        case .processingHFLimiter: return "speaker.wave.3"
         case .processingLimiter: return "rectangle.compress.vertical"
         case .processingBS412: return "doc.badge.gearshape"
         case .processingStereoCoder: return "dot.radiowaves.left.and.right"
@@ -523,7 +538,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return "Per-band downward expander"
         case .processingBassClipper: return "Pre-clip the low band before the chain"
         case .processingDCClipper: return "Audio-band peak clipper"
-        case .processingHFClipper: return "Pre-emphasis-aware HF clipper"
+        case .processingHFLimiter: return "Program-controlled pre-emphasis (gain-riding HF limiter)"
         case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
         case .processingBS412: return "ITU-R BS.412 MPX power limiter"
         case .processingStereoCoder: return "Pilot-locked stereo encoder (SSB option)"
@@ -574,7 +589,7 @@ enum Stage: String, CaseIterable, Identifiable {
         case .processingExpander: return .expander
         case .processingBassClipper: return .bassClipper
         case .processingDCClipper: return .dcClipper
-        case .processingHFClipper: return .hfClipper
+        case .processingHFLimiter: return .hfLimiter
         case .processingLimiter: return .limiter
         case .processingBS412: return .bs412
         case .processingStereoCoder: return .stereoCoder

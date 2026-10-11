@@ -29,8 +29,7 @@
             "title": "Input",
             "pages": [
               "core",
-              "phaseRotator",
-              "expander"
+              "phaseRotator"
             ]
           },
           {
@@ -54,6 +53,7 @@
             "title": "Dynamics",
             "pages": [
               "multiband",
+              "expander",
               "mbLimiter"
             ]
           },
@@ -64,7 +64,6 @@
               "bassClipper",
               "dcClipper",
               "hfLimiter",
-              "hfClipper",
               "limiter"
             ]
           },
@@ -106,6 +105,25 @@
     "compositeModes": [
       "mpx"
     ],
+    "levelling": {
+      "key": "advanced_dynamics_enabled",
+      "title": "Levelling",
+      "help": "One levelling engine runs at a time: the regular AGC + Multiband chain (with the per-band Expander and Band Limiter inside the multiband stage) or Advanced Dynamics, which replaces all four. The pages of the engine not in use are hidden.",
+      "engines": [
+        {
+          "id": "regular",
+          "title": "AGC + Multiband",
+          "value": "False",
+          "pages": ["agc", "multiband", "expander", "mbLimiter"]
+        },
+        {
+          "id": "advanced",
+          "title": "Advanced Dynamics",
+          "value": "True",
+          "pages": ["advanced_dynamics"]
+        }
+      ]
+    },
     "monitorModes": [
       "mpx",
       "fm",
@@ -137,6 +155,10 @@
       [
         "MB",
         "multiband"
+      ],
+      [
+        "AdvDyn",
+        "advanced_dynamics"
       ],
       [
         "PrimeBass",
@@ -413,7 +435,6 @@
         "title": "Phase Rotator"
       },
       {
-        "bypassedWhen": "advanced_dynamics_enabled",
         "enable": "wideband_agc_enabled",
         "help": "Wideband Automatic Gain Control with optional K-weighted (BS.1770-style) detector and program-dependent release. Long-term level riding that brings quiet and loud sources to a similar perceived level before the multiband stage.",
         "id": "agc",
@@ -467,7 +488,6 @@
         "title": "Parametric EQ"
       },
       {
-        "bypassedWhen": "advanced_dynamics_enabled",
         "enable": "multiband_enabled",
         "help": "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined.",
         "id": "multiband",
@@ -515,11 +535,9 @@
         "title": "Multiband"
       },
       {
-        "enable": "advanced_dynamics_enabled",
-        "help": "Single-stage leveler that REPLACES the AGC and the multiband compressor with one fused 5-band stage, so slow leveling and per-band density shaping can never fight (no AGC-vs-multiband pumping). Configure the sound you want (target level, tonal balance, density) instead of attack/release times; the stage adapts its own speed to the programme. Band layout follows the multiband crossovers. When enabled, the AGC and Multiband stages are bypassed.",
+        "help": "Single-stage leveler that REPLACES the AGC and the multiband compressor with one fused 5-band stage, so slow leveling and per-band density shaping can never fight (no AGC-vs-multiband pumping). Configure the sound you want (target level, tonal balance, density) instead of attack/release times; the stage adapts its own speed to the programme. Band layout follows the multiband crossovers. Chosen as the Levelling engine on the Sound Overview page, where it replaces AGC + Multiband.",
         "id": "advanced_dynamics",
         "keys": [
-          "advanced_dynamics_enabled",
           "advanced_dynamics_target_db",
           "advanced_dynamics_density",
           "advanced_dynamics_speed",
@@ -530,10 +548,14 @@
         ],
         "pill": "AD",
         "sub": "single-stage leveler",
+        "summary": [
+          [
+            "Target {advanced_dynamics_target_db} dB - density {advanced_dynamics_density}"
+          ]
+        ],
         "title": "Advanced Dynamics"
       },
       {
-        "bypassedWhen": "advanced_dynamics_enabled",
         "enable": "downward_expander_enabled",
         "help": "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact.",
         "id": "expander",
@@ -554,7 +576,6 @@
         "title": "Expander"
       },
       {
-        "bypassedWhen": "advanced_dynamics_enabled",
         "enable": "multiband_limiter_enabled",
         "help": "Per-band fast peak limiter sitting after the multiband compressor. Catches band-internal peaks before recombination, preserves the multiband target while controlling overshoots.",
         "id": "mbLimiter",
@@ -647,11 +668,12 @@
       },
       {
         "enable": "hf_limiter_enabled",
-        "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter. Gain-riding, so no clipping distortion; on by default.",
+        "help": "Pre-emphasis-aware HF limiter: rides only the pre-emphasis BOOST of the signal (program-controlled pre-emphasis, the classic Optimod HF-limiter topology). A cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of dragging the whole mix down in the Audio Limiter; peaks the boost did not cause are left to the Audio Limiter. Threshold sits 0.5 dB above the Audio Limiter's; Top Threshold is the tighter ceiling for boost above 13 kHz. Gain-riding, so no clipping distortion; on by default.",
         "id": "hfLimiter",
         "keys": [
           "hf_limiter_enabled",
           "hf_limiter_threshold_db",
+          "hf_limiter_top_threshold_db",
           "hf_limiter_attack_ms",
           "hf_limiter_release_ms",
           "hf_limiter_max_reduction_db"
@@ -665,29 +687,10 @@
         "sub": "Program-controlled pre-emphasis (gain-riding)",
         "summary": [
           [
-            "thr {hf_limiter_threshold_db} dB - max {hf_limiter_max_reduction_db} dB"
+            "thr {hf_limiter_threshold_db} dB - top {hf_limiter_top_threshold_db} dB - max {hf_limiter_max_reduction_db} dB"
           ]
         ],
         "title": "HF Limiter"
-      },
-      {
-        "enable": "hf_clipper_enabled",
-        "help": "Pre-emphasis-aware HF clipper on the high band of the pre-emphasized signal. A waveshaper: it distorts the band it controls, so prefer the HF Limiter and keep this as a last resort for maximum density. De-emphasis-correct; default off.",
-        "id": "hfClipper",
-        "keys": [
-          "hf_clipper_enabled",
-          "hf_clipper_crossover_hz",
-          "hf_clipper_threshold_db",
-          "hf_clipper_drive"
-        ],
-        "pill": null,
-        "sub": "Pre-emphasis-aware HF clipper",
-        "summary": [
-          [
-            "X {hf_clipper_crossover_hz} Hz - thr {hf_clipper_threshold_db} dB"
-          ]
-        ],
-        "title": "HF Clipper"
       },
       {
         "enable": "pre_encode_limiter_enabled",
@@ -1235,38 +1238,6 @@
       "kind": "text",
       "label": "Group Sequence"
     },
-    "hf_clipper_crossover_hz": {
-      "decimals": 0,
-      "kind": "slider",
-      "label": "Crossover",
-      "max": 8000.0,
-      "min": 3000.0,
-      "step": 1,
-      "unit": " Hz",
-      "advanced": true
-    },
-    "hf_clipper_drive": {
-      "decimals": 2,
-      "kind": "slider",
-      "label": "Drive",
-      "max": 3.0,
-      "min": 0.5,
-      "step": 0.01,
-      "unit": ""
-    },
-    "hf_clipper_enabled": {
-      "kind": "toggle",
-      "label": "HF Clipper"
-    },
-    "hf_clipper_threshold_db": {
-      "decimals": 1,
-      "kind": "slider",
-      "label": "Threshold",
-      "max": 0.0,
-      "min": -12.0,
-      "step": 0.1,
-      "unit": " dB"
-    },
     "hf_limiter_attack_ms": {
       "decimals": 2,
       "kind": "slider",
@@ -1334,6 +1305,21 @@
       ],
       "step": 0.1,
       "unit": " dB"
+    },
+    "hf_limiter_top_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Top Threshold",
+      "max": 0.0,
+      "min": -12.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ],
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
     },
     "hf_trim_db": {
       "decimals": 1,

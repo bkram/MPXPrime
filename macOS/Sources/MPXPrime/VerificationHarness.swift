@@ -18,6 +18,7 @@ func runVerificationHarness(
     hfTransientsComparison: Bool = false,
     stereoGuardSweep: Bool = false,
     finalRideIsolation: Bool = false,
+    primeBassGate: Bool = false,
     programAB: Bool = false,
     programABPath: String = "",
     programABProfile: String = "music_clean",
@@ -37,6 +38,13 @@ func runVerificationHarness(
             durationSeconds: durationSeconds,
             csvPath: programABCSV
         )
+    }
+    if primeBassGate {
+        print("MPX Prime PrimeBass Verification")
+        print("Config: \(configPath) (render rate only; chains use shipped defaults / profile)")
+        print("Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(2.0, min(durationSeconds, 6.0)))) s per scenario")
+        print("")
+        return runPrimeBassVerification(baseConfig: config, durationSeconds: durationSeconds)
     }
     if finalRideIsolation {
         print("MPX Prime Final-MPX Limiter Ride Isolation")

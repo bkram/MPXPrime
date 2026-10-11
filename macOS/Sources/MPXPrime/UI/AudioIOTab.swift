@@ -54,6 +54,11 @@ struct OperatingModeCardContent: View {
                 let oldProcessed = model.config.processedAudioOutput
                 let bound = model.configBinding(\.operatingMode, runtimeDisposition: .restart)
                 bound.wrappedValue = newMode
+                // Visibility follows the selected configuration immediately,
+                // even though the signal-path change itself waits for restart.
+                // Do not leave a now-hidden DSP page displayed in the detail
+                // pane while its sidebar row has already disappeared.
+                model.normalizeSelection()
                 // The mode changes what output_gain_db MEANS, so recall the
                 // output device's per-mode calibration and persist it.
                 model.recallCalibrationIfDeviceChanged(

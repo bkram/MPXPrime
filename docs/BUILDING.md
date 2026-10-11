@@ -159,6 +159,29 @@ Linux specifics:
   The pilot (19 kHz, 8 percent) and RDS sidebands (around a suppressed 57 kHz
   carrier) should be visible in any spectrum tool.
 
+### Checking the Linux build from a Mac (Docker)
+
+Without a Linux box, the official Swift images build and test the Linux
+target in minutes; this is also how the Linux baseline
+(`macOS/verifier_baselines/default-linux-x86_64.json`) is recaptured after a
+DSP change moves it. From a checkout with no `.build/` inside it:
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src swift:6.4-noble bash -c '
+  apt-get update -qq >/dev/null && apt-get install -y -qq libasound2-dev >/dev/null
+  swift build --package-path macOS -c release --product MPXPrime
+  swift test --package-path macOS
+  macOS/.build/release/MPXPrime --verify --seconds 5
+  macOS/.build/release/MPXPrime --verify --baseline-strict
+  macOS/.build/release/MPXPrime --verify --capture-baseline --seconds 5   # only to recapture the Linux baseline
+'
+```
+
+`swift:6.2-noble` is the oldest image worth testing (the CI runner installs
+`swiftly install latest`, 6.4 at the time of writing). The container's
+`.build/` is owned by root; delete it with the container (`docker run --rm
+... rm -rf macOS/.build`) rather than from the host.
+
 ### Debian/Ubuntu package
 
 `./build-deb.sh <version> [distro-label]` builds `mpxprime_<ver>_amd64.deb`
@@ -211,7 +234,8 @@ in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
 headless run (or set `[CONTROL] control_enabled = True`). See the user
 manual's "Remote control" section for endpoints and the security model. `scripts/run-build-web.sh`
 (repo root, macOS + Linux) builds the release binary and runs it headless
-with the dashboard in one step.
+with the dashboard in one step; it prints the dashboard URL and API key
+first and refuses to start a second instance on a port that is in use.
 
 ## Offline verification
 
@@ -351,6 +375,77 @@ Spelling hits on project vocabulary are filtered through
 term, never to hide a typo. The two Claude Code skills in `.claude/skills/`
 (`markdown-lint`, `proofread-english`) carry the rules and the fix workflow;
 they are checked in so every contributor and agent gets the same checks.
+
+## Updating dependencies
+
+What is pinned, and where:
+
+- **SwiftPM**: `macOS/Package.swift` declares `swift-atomics` and
+  `hummingbird` with `from:` minimums; `macOS/Package.resolved` (tracked)
+  pins the exact versions of those two and of everything Hummingbird pulls
+  in (SwiftNIO, swift-log, swift-crypto, ...). Every build and every CI job
+  uses the committed pins, so a bump is a deliberate commit, never a side
+  effect of a build.
+- **Toolchains**: macOS builds with the Xcode the machine has (the
+  Requirements above state the floor); Linux installs `swiftly install
+  latest` (`ci.yml`, `release.yml`, `linux-baseline.yml`), so the Linux
+  compiler moves on its own and a toolchain regression shows up in CI first.
+- **GitHub Actions**: `actions/checkout`, `actions/upload-artifact`,
+  `actions/setup-node`, `softprops/action-gh-release` are pinned by major
+  (`@vN`) in `.github/workflows/*.yml`.
+- **Node**: only the dashboard render check, `scripts/check-webui.sh`,
+  which installs `jsdom@<major>` into the gitignored `.webui-check/` cache
+  on first run. There is no `package.json`.
+- **Homebrew**: `swiftlint` (CI installs whatever brew ships and runs it
+  `--strict`), `librtlsdr` and `liquid-dsp` for the Meter.
+
+The procedure, when a bump is wanted (a security fix, a feature we need, or
+a quarterly sweep):
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export PATH=/opt/homebrew/bin:$PATH
+
+# 1. See what is behind: the pins vs each repo's newest tag.
+swift package show-dependencies --package-path macOS | head -30
+git ls-remote --tags https://github.com/hummingbird-project/hummingbird | tail -5
+
+# 2. Bump. `update` moves every pin to the newest version the `from:` ranges
+#    allow and rewrites Package.resolved; name one package to bump only it.
+swift package update --package-path macOS                 # everything
+swift package update --package-path macOS hummingbird     # one package
+git diff macOS/Package.resolved                           # review what moved
+
+# 3. Re-run the gates. A dependency bump is a code change.
+swift build --package-path macOS -c release
+swift test --package-path macOS
+macOS/.build/release/MPXPrime --verify --seconds 5
+macOS/.build/release/MPXPrime --verify --baseline-strict
+swiftlint --strict
+scripts/check-webui.sh
+./build-release.sh <version>                              # the universal slice still links
+
+# 4. Linux leg (Ubuntu 24.04 box or let CI do it on the push):
+#    swift build ... --static-swift-stdlib, swift test, the two --verify gates.
+
+# 5. Commit Package.resolved (and Package.swift if a `from:` floor moved)
+#    with a message that names the packages and versions.
+```
+
+Rules of thumb:
+
+- Read the release notes of a MINOR bump of Hummingbird before taking it: it
+  raises its Swift floor inside a major (2.27 needs Swift 6.2), and when it
+  does, raise the Requirements line above and the `from:` in `Package.swift`
+  in the same commit, so a fresh clone cannot resolve below the tested set.
+- A transitive major (for example swift-crypto 4 -> 5) only lands if
+  Hummingbird's own ranges allow it; `git diff Package.resolved` shows it.
+- Bump the Actions majors together, in every workflow, so the four files
+  stay on one line; read the action's release note for runner or Node
+  requirements first.
+- Bump `jsdom` in `check-webui.sh`, delete `.webui-check/`, re-run the check.
+- Never pin by commit hash to work around a bug; pin the last good release
+  and record the reason in the CHANGELOG.
 
 ## Release build and DMG
 

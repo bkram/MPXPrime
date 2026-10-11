@@ -114,44 +114,10 @@ struct ProcessingCoreTab: View {
     }
 }
 
-/// Banner + ghosting for the stages Advanced Dynamics replaces (AGC,
-/// Multiband, and the per-band Expander / MB Limiter that run inside the
-/// multiband stage). Their tabs stay reachable so the operator can inspect
-/// the stored settings, but the controls are dimmed + disabled to make
-/// unmistakable that the stage is not in the chain right now.
-struct BypassedByAdvancedDynamicsNotice: View {
-    @ObservedObject var model: MPXPrimeViewModel
-    let stageName: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "moon.zzz.fill")
-                .accessibilityHidden(true)
-            Text("\(stageName) is bypassed: Advanced Dynamics is enabled and does this stage's work.")
-            Spacer()
-            Button("Open Advanced Dynamics") {
-                model.selectedStage = .processingAdvancedDynamics
-            }
-            .buttonStyle(.bordered)
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.orange.opacity(0.12))
-        )
-    }
-}
-
 struct ProcessingAGCTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        let bypassed = model.config.advancedDynamicsEnabled
-        if bypassed {
-            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Wideband AGC")
-        }
         Card(title: "Wideband AGC") {
             Toggle("Enable Wideband AGC", isOn: model.configBinding(\.widebandAGCEnabled, runtimeDisposition: .live))
             DoubleSliderRow(title: "Platform Target", value: model.configBinding(\.widebandAGCTargetDB, runtimeDisposition: .live), range: -36 ... -6, format: "%.1f dB",
@@ -176,8 +142,6 @@ struct ProcessingAGCTab: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .disabled(bypassed)
-        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -239,10 +203,6 @@ struct ProcessingMultibandTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        let bypassed = model.config.advancedDynamicsEnabled
-        if bypassed {
-            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Multiband")
-        }
         Card(title: "Multiband Dynamics") {
             // Preset / intensity / enable / mode -- common to all bands.
             Picker("Preset", selection: Binding(
@@ -366,8 +326,6 @@ struct ProcessingMultibandTab: View {
                     tooltip: "High-Mid / High crossover frequency. Separates sibilance region from air / top-end.")
             }
         }
-        .disabled(bypassed)
-        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -543,10 +501,6 @@ struct ProcessingMultibandLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        let bypassed = model.config.advancedDynamicsEnabled
-        if bypassed {
-            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Multiband Limiter")
-        }
         Card(title: "Multiband Limiter") {
             Toggle("Enable Multiband Limiter", isOn: model.configBinding(\.multibandLimiterEnabled, runtimeDisposition: .live))
             DoubleSliderRow(
@@ -576,8 +530,6 @@ struct ProcessingMultibandLimiterTab: View {
             .disabled(!model.config.multibandLimiterEnabled)
             }
         }
-        .disabled(bypassed)
-        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -585,10 +537,6 @@ struct ProcessingExpanderTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        let bypassed = model.config.advancedDynamicsEnabled
-        if bypassed {
-            BypassedByAdvancedDynamicsNotice(model: model, stageName: "Downward Expander")
-        }
         Card(title: "Downward Expander") {
             Toggle("Enable Expander", isOn: model.configBinding(\.downwardExpanderEnabled, runtimeDisposition: .live))
             let disabled = !model.config.downwardExpanderEnabled
@@ -603,8 +551,6 @@ struct ProcessingExpanderTab: View {
                     tooltip: "Time to close the gate once program falls below the threshold. Longer release avoids chattering on sustained-but-quiet sources.").disabled(disabled)
             }
         }
-        .disabled(bypassed)
-        .opacity(bypassed ? 0.5 : 1.0)
     }
 }
 
@@ -627,7 +573,7 @@ struct ProcessingBassClipperTab: View {
     }
 }
 
-struct ProcessingHFClipperTab: View {
+struct ProcessingHFLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
@@ -636,11 +582,13 @@ struct ProcessingHFClipperTab: View {
         if ChainFeature.hfLimiter.applies(in: model.config.operatingMode) {
             Card(title: "HF Limiter") {
                 Toggle("Enable HF Limiter", isOn: model.configBinding(\.hfLimiterEnabled, runtimeDisposition: .live))
-                    .help("Gain-riding HF control: rides only the pre-emphasis boost, so overshooting cymbals / hi-hats briefly lose part of their boost instead of being clipped (Optimod HF-limiter topology, Orban US 4,103,243, expired). Prefer this over the HF Clipper.")
+                    .help("Gain-riding HF control: rides only the pre-emphasis boost, so overshooting cymbals / hi-hats briefly lose part of their boost instead of being clipped (Optimod HF-limiter topology, Orban US 4,103,243, expired). Peaks the boost did not cause are left to the Audio Limiter.")
                 let limiterDisabled = !model.config.hfLimiterEnabled
                 DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfLimiterThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                    tooltip: "Pre-emphasised L/R peak that starts the HF gain ride. Set at or a little below the Audio Limiter threshold so HF peaks are tamed before the broadband limiter has to act.").disabled(limiterDisabled)
+                    tooltip: "Pre-emphasised L/R peak that starts the HF gain ride. Sits 0.5 dB ABOVE the Audio Limiter threshold (US 4,103,243), so the ride only acts on HF excess the broadband limiter would otherwise clip.").disabled(limiterDisabled)
                 DisclosureGroup("Advanced") {
+                DoubleSliderRow(title: "Top Threshold", value: model.configBinding(\.hfLimiterTopThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
+                    tooltip: "The same ceiling for boost above 13 kHz (cymbals, the top octave); 1 dB under Threshold by default. The detector slides between the two with the share of the boost above 13 kHz.").disabled(limiterDisabled)
                 DoubleSliderRow(title: "Attack", value: model.configBinding(\.hfLimiterAttackMS, runtimeDisposition: .live), range: 0.2...20, format: "%.2f ms",
                     tooltip: "How fast the boost is pulled down. 1-3 ms: the Audio Limiter's look-ahead catches what leaks during the attack.").disabled(limiterDisabled)
                 DoubleSliderRow(title: "Release", value: model.configBinding(\.hfLimiterReleaseMS, runtimeDisposition: .live), range: 5...500, format: "%.0f ms",
@@ -648,19 +596,6 @@ struct ProcessingHFClipperTab: View {
                 DoubleSliderRow(title: "Max Reduction", value: model.configBinding(\.hfLimiterMaxReductionDB, runtimeDisposition: .live), range: 1...24, format: "%.1f dB",
                     tooltip: "Cap on how much of the pre-emphasis boost may be removed. The stage can never cut HF below the flat (un-emphasised) program level.").disabled(limiterDisabled)
                 }
-            }
-        }
-        Card(title: "HF Clipper") {
-            Toggle("Enable HF Clipper", isOn: model.configBinding(\.hfClipperEnabled, runtimeDisposition: .live))
-                .help("Waveshaper on the pre-emphasised high band: it distorts the band it controls. Keep off unless you need maximum HF density; the HF Limiter above is the clean alternative.")
-            let disabled = !model.config.hfClipperEnabled
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                tooltip: "Clipping threshold for the high band. Lower = more aggressive HF clipping, offloading HF transients from the broadband limiter.").disabled(disabled)
-            DoubleSliderRow(title: "Drive", value: model.configBinding(\.hfClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
-                tooltip: "Pre-clipping gain on the high band. Higher drive increases HF density but also clipping distortion.").disabled(disabled)
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Crossover", value: model.configBinding(\.hfClipperCrossoverHz, runtimeDisposition: .live), range: 3000...8000, format: "%.0f Hz",
-                    tooltip: "Crossover frequency isolating the high band for clipping. Content above this is clipped; below passes unmodified.").disabled(disabled)
             }
         }
     }
@@ -671,29 +606,30 @@ struct ProcessingAdvancedDynamicsTab: View {
 
     var body: some View {
         Card(title: "Advanced Dynamics") {
-            Toggle("Enable Advanced Dynamics", isOn: model.configBinding(\.advancedDynamicsEnabled, runtimeDisposition: .live))
-                .help("Single-stage 5-band leveler. While enabled, the AGC and Multiband stages are bypassed and this stage does all the leveling and density work in one place.")
-            let disabled = !model.config.advancedDynamicsEnabled
+            // No enable toggle here: the Levelling engine picker on the Sound
+            // overview is the one switch, and this page exists only while it
+            // says Advanced Dynamics -- a toggle that makes its own page
+            // vanish is not a control an operator can reason about.
             // Usage tip (the shared help box below already explains WHAT the
             // stage is; this is the how-to-drive-it line).
-            Text("While enabled, AGC and Multiband are bypassed. Start with the defaults, then raise Density for a more competitive sound. Band layout follows the Multiband tab's crossovers (toggle this stage off briefly to edit them).")
+            Text("Advanced Dynamics is the active levelling engine (chosen on the Sound Overview page). Start with the defaults, then raise Density for a more competitive sound. Band layout follows the Multiband page's crossovers; switch to AGC + Multiband on the Overview to edit them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             DoubleSliderRow(title: "Target Level", value: model.configBinding(\.advancedDynamicsTargetDB, runtimeDisposition: .live), range: -30...(-6), format: "%.1f dB",
-                tooltip: "The level every band is brought toward. Lower = more headroom and gentler sound; higher = denser and louder into the clippers.").disabled(disabled)
+                tooltip: "The level every band is brought toward. Lower = more headroom and gentler sound; higher = denser and louder into the clippers.")
             DoubleSliderRow(title: "Density", value: model.configBinding(\.advancedDynamicsDensity, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "How tightly the leveler holds program at target. Higher = tighter hold window and faster leveling (denser, more processed); lower = more dynamics left intact.").disabled(disabled)
+                tooltip: "How tightly the leveler holds program at target. Higher = tighter hold window and faster leveling (denser, more processed); lower = more dynamics left intact.")
             DoubleSliderRow(title: "Bass Balance", value: model.configBinding(\.advancedDynamicsLowOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
-                tooltip: "Low-band target offset relative to Target Level. The five bands interpolate between the Bass / Mid / Treble anchors, setting the on-air tonal balance.").disabled(disabled)
+                tooltip: "Low-band target offset relative to Target Level. The five bands interpolate between the Bass / Mid / Treble anchors, setting the on-air tonal balance.")
             DoubleSliderRow(title: "Mid Balance", value: model.configBinding(\.advancedDynamicsMidOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
-                tooltip: "Mid-band target offset relative to Target Level.").disabled(disabled)
+                tooltip: "Mid-band target offset relative to Target Level.")
             DoubleSliderRow(title: "Treble Balance", value: model.configBinding(\.advancedDynamicsHighOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
-                tooltip: "High-band target offset relative to Target Level. The default -9 dB approximates a natural music spectrum; raise it for a brighter on-air sound.").disabled(disabled)
+                tooltip: "High-band target offset relative to Target Level. The default -9 dB approximates a natural music spectrum; raise it for a brighter on-air sound.")
             DisclosureGroup("Advanced") {
                 DoubleSliderRow(title: "Speed", value: model.configBinding(\.advancedDynamicsSpeed, runtimeDisposition: .live), range: 0.25...4, format: "%.2fx",
-                    tooltip: "Overall time-constant scale. The stage adapts its own attack/release to the programme; this scales that adaptive behavior faster or slower.").disabled(disabled)
+                    tooltip: "Overall time-constant scale. The stage adapts its own attack/release to the programme; this scales that adaptive behavior faster or slower.")
                 DoubleSliderRow(title: "Max Boost", value: model.configBinding(\.advancedDynamicsMaxGainDB, runtimeDisposition: .live), range: 0...24, format: "%.1f dB",
-                    tooltip: "Maximum lift applied to quiet program per band. The reduction side is fixed at 24 dB, so the total range absorbs large in-song level jumps.").disabled(disabled)
+                    tooltip: "Maximum lift applied to quiet program per band. The reduction side is fixed at 24 dB, so the total range absorbs large in-song level jumps.")
             }
         }
     }

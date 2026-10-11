@@ -96,15 +96,6 @@ Audio Input device (L/R) @ device's native rate (e.g. 48 / 96 / 192 kHz)
 |        5 ms hold, 20 ms release, max reduction 12 dB; live-apply.
 |        `hf_limiter_*`. Added 0.45 (hi-hat / cymbal field finding).
 |
-+--> Pre-emphasis-aware HF clipper (L/R domain, oversampled, optional, default-off)
-|    +-- Waveshaper on the *pre-emphasised* high band, between pre-emphasis
-|        and the pre-encode limiter. Superseded by the HF limiter above
-|        (it distorts the cymbal band it controls; no profile uses it since
-|        0.45) but kept as an opt-in last resort for maximum HF density.
-|        Configurable crossover (3-8 kHz, default 5 kHz), threshold
-|        (-12..0 dB, default -3), drive (0.5-3.0, default 1.2); live-apply.
-|        `hf_clipper_*`. Added 0.35.
-|
 +--> Pre-encode audio limiter (L/R domain, stereo-linked oversampled, look-ahead)
 |    +-- True-peak limiter on L/R before stereo encoding --
 |        `StereoLinkedOversampledPeakLimiter` uses a max(|L|, |R|)
@@ -535,7 +526,6 @@ Within the main audio path, MPX Prime Studio runs:
 16. Stereo-image protection
 17. Pre-emphasis (L/R domain, immediately upstream of pre-encode limiter; canonical Optimod / Stereotool placement so the limiter peak-controls the +10-12 dB HF-boosted signal; `PreemphasisDesign` biquad fitted to the analog curve at configure time, 0.45 -- the matched-z zero it replaced under-boosted 0.6 dB at 10 kHz / 1.4 dB at 15 kHz at the 48 kHz audio rate)
 18. HF limiter (0.45; L/R domain, default-on in every profile): program-controlled pre-emphasis after Orban US 4,103,243 -- rides only the boost component `pre - flat` with a stereo-linked feed-forward detector, boost-dominance guard, 1.5 ms attack / 5 ms hold / 20 ms release; can never cut HF below the flat program level; live-apply (`hf_limiter_*`)
-18a. Pre-emphasis-aware HF clipper (L/R domain, oversampled, optional, default-off, no longer used by any profile; clips only the pre-emphasised high band -- a waveshaper on the cymbal band, superseded by the HF limiter; configurable crossover ~5 kHz / threshold / drive; live-apply; added 0.35)
 19. Pre-encode audio limiter (L/R domain, `StereoLinkedOversampledPeakLimiter` -- `max(|L|, |R|)` detector drives both channels identically; 0.30: default-on look-ahead with Dolby HF-subband-aware detector per `US 5,579,404`; 0.45: the 4:1 decimator is a linear-phase Kaiser FIR flat to 15 kHz and 80 dB down from 16.5 kHz at the 48 kHz audio domain, ~640 taps / 1.7 ms -- it is the chain's 15 kHz band-limit in the pre-emphasised domain, since the encoder FIR runs before pre-emphasis and its transition tail arrives +14 dB hotter; the 6th-order Butterworth at 14.4 kHz it replaced cost -2.3 dB at 14 kHz on air and had -27 dB alias rejection)
 20. Stereo encoder (M/S encoding, 38 kHz DSB-SC subcarrier)
     - **SSB Stereo** (`mpx_ssb_stereo_enabled`, optional, default off): SSB-leaning

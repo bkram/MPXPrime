@@ -344,8 +344,8 @@ struct StageProcessingContent: View {
                         ProcessingBassClipperTab(model: model)
                     case .dcClipper:
                         ProcessingDCClipperTab(model: model)
-                    case .hfClipper:
-                        ProcessingHFClipperTab(model: model)
+                    case .hfLimiter:
+                        ProcessingHFLimiterTab(model: model)
                     case .limiter:
                         ProcessingLimiterTab(model: model)
                     case .bs412:

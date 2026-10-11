@@ -245,6 +245,77 @@ struct LinkwitzRiley4 {
     }
 }
 
+/// One side of a 4th-order Linkwitz-Riley crossover (two cascaded
+/// Butterworth biquads, Q = 1/sqrt 2): -6 dB at the corner, 24 dB/oct.
+/// `LinkwitzRiley4` computes both sides; this is for a path that only
+/// needs one (PrimeBass band isolation).
+///
+/// The state is Double. With the corner below 100 Hz at 192 kHz the poles
+/// sit within 3e-3 of z = 1 and a Float direct-form section amplifies its
+/// own rounding noise by about 3e5 towards DC: measured 2026-10-10 as a
+/// wandering -65 dBFS offset out of a 55 Hz lowpass and -40 dB of DC
+/// leakage through a 95 Hz highpass. Float in, Float out; coefficients are
+/// the RBJ cookbook ones, designed in Double.
+struct LR4Section {
+    private var b0 = 1.0
+    private var b1 = 0.0
+    private var b2 = 0.0
+    private var a1 = 0.0
+    private var a2 = 0.0
+    private var z1a = 0.0
+    private var z2a = 0.0
+    private var z1b = 0.0
+    private var z2b = 0.0
+
+    mutating func configureLowpass(cutoffHz: Float, sampleRate: Float) {
+        design(cutoffHz: cutoffHz, sampleRate: sampleRate, highpass: false)
+    }
+
+    mutating func configureHighpass(cutoffHz: Float, sampleRate: Float) {
+        design(cutoffHz: cutoffHz, sampleRate: sampleRate, highpass: true)
+    }
+
+    private mutating func design(cutoffHz: Float, sampleRate: Float, highpass: Bool) {
+        let sr = Double(max(8_000.0, sampleRate))
+        let fc = min(sr * 0.49, max(1.0, Double(cutoffHz)))
+        let w = 2.0 * Double.pi * fc / sr
+        let cosW = cos(w)
+        let alpha = sin(w) / (2.0 * 0.7071067811865476)
+        let a0 = 1.0 + alpha
+        if highpass {
+            b0 = ((1.0 + cosW) * 0.5) / a0
+            b1 = -(1.0 + cosW) / a0
+        } else {
+            b0 = ((1.0 - cosW) * 0.5) / a0
+            b1 = (1.0 - cosW) / a0
+        }
+        b2 = b0
+        a1 = (-2.0 * cosW) / a0
+        a2 = (1.0 - alpha) / a0
+        z1a = 0.0
+        z2a = 0.0
+        z1b = 0.0
+        z2b = 0.0
+    }
+
+    @inline(__always)
+    private static func flush(_ x: Double) -> Double {
+        abs(x) < 1e-30 ? 0.0 : x
+    }
+
+    @inline(__always)
+    mutating func process(_ x: Float) -> Float {
+        let x0 = Double(x)
+        let y1 = (b0 * x0) + z1a
+        z1a = Self.flush((b1 * x0) - (a1 * y1) + z2a)
+        z2a = Self.flush((b2 * x0) - (a2 * y1))
+        let y2 = (b0 * y1) + z1b
+        z1b = Self.flush((b1 * y1) - (a1 * y2) + z2b)
+        z2b = Self.flush((b2 * y1) - (a2 * y2))
+        return Float(y2)
+    }
+}
+
 struct StereoLinkwitzRiley4 {
     private var left = LinkwitzRiley4()
     private var right = LinkwitzRiley4()

@@ -83,7 +83,7 @@ a new rig meets them:
 | --- | --- | --- |
 | **On Air** | status + transport, meters and the signal-chain strip, what RDS is showing right now, health notes (render load, xruns, device rate), task shortcuts | the landing page; today's Monitoring plus the shortcuts |
 | **Setup** | Audio devices and operating mode; Levels and calibration (input gain, output level, line output, DAC peak, the Linux card mixer); Engine (sample rate, block size); Remote access (control server, key); Test Tone | everything done once per rig; today spread over Tools / Audio I/O / the GUI Settings window |
-| **Sound** | Format Profile ("start here"), then the stages **grouped by function in signal order**: Input (Core, Phase Rotator, Expander) -- Levelling (AGC, Advanced Dynamics) -- Tone (Parametric EQ, PrimeBass + Mono Bass) -- Dynamics (Multiband, MB Limiter) -- Peak control (Bass Clipper, Audio Clipper, HF Limiter, HF Clipper, Audio Limiter) -- Transmission, MPX Output only (Stereo Coder, Composite Clipper, BS.412, Final Stage) | today's flat Processing list, with headers; the Overview becomes the section's landing page with the clickable chain strip |
+| **Sound** | Format Profile ("start here"), then the stages **grouped by function in signal order**: Input (Core, Phase Rotator) -- Levelling (AGC, Advanced Dynamics; one engine at a time since 0.60, the other's pages hidden) -- Tone (Parametric EQ, PrimeBass + Mono Bass) -- Dynamics (Multiband, Expander, MB Limiter; the Expander moved here 2026-10-10 because it runs per band inside the multiband stage) -- Peak control (Bass Clipper, Audio Clipper, HF Limiter, HF Clipper, Audio Limiter) -- Transmission, MPX Output only (Stereo Coder, Composite Clipper, BS.412, Final Stage) | today's flat Processing list, with headers; the Overview becomes the section's landing page with the clickable chain strip |
 | **RDS** | On-air text (what listeners see, editable) -- Identity -- Radiotext -- Long PS -- Alternative frequencies -- Schedule -- Subcarrier (expert) | same pages, ordered by how often they are touched |
 | **Presets and System** | the eight preset slots (save / load / import / export), About and version, diagnostics (stream health detail, telemetry, logs) | today's Presets, Advanced, About |
 
@@ -478,6 +478,79 @@ measurement each, then one to three days depending on what it shows. Every
 commit: fast suite, swiftlint, `--verify --baseline-strict` unchanged (F5
 excepted, deliberately), CHANGELOG 0.60 bullet.
 
+## Clipper campaign -- APPROVED 2026-10-10 (items 1-4 and 7 queued; 5-6 research)
+
+Prompted by Stereo Tool's RuleBreaker 2 release notes (about 0.4 dB louder
+at equal quality). Mapped onto our chain; each item ships only through the
+real-music A/B (`--verify-program-ab`) with a loudness gain at unchanged
+crest / IMD / separation, in this order:
+
+1. ~~**FM presence tilt**~~ -- DONE 2026-10-10 as PEQ values on Music --
+   Loud (+1.5 dB at 80 Hz, +1.0 dB at 3 kHz); a 10 kHz / 5 kHz pair stays
+   an option once the real-music A/B can run.
+2. ~~**Bass-protection polarity metric**~~ -- DONE 2026-10-10: `BassPol` /
+   `BassLoss` / `InPol` in `--verify-stereo-guard`; the bass clipper costs
+   0.02 dB and keeps polarity at +1.000 on every guard share.
+3. **Transient-aware clipper drive**: a sidechain that admits short
+   transients at higher drive and backs off on sustained dense material.
+   Medium.
+4. **Split HF ceiling** in the HF limiter: tighter above 13 kHz, more room
+   below 12 kHz. Medium; belongs with the HF limiter fixes in
+   `docs/hf-limiter-review.md`.
+5. **Pumping-sound removal**: detect narrow-band bursts (a lone hat, a
+   sibilant) and handle them per band instead of in the broadband limiter.
+   Large; wait for the Advanced Dynamics audit.
+6. **Tonal crackle in the distortion-cancelled clipper**: research first.
+7. ~~**"Apply recommended" on the Sound Overview**~~ -- DONE 2026-10-10 in
+   both front ends (re-applies the selected profile; disabled on Custom).
+
+## Stage reviews of 2026-10-10 -- fixes in progress
+
+Four stages were audited against the literature and the established
+processors on the same day; each has a review document under `docs/` with
+findings, a ranked fix plan and the tests that pin the invariants:
+
+- `docs/hf-limiter-review.md` -- FIXED 2026-10-10 (see its "Fix landed"
+  section) -- keep it; one defect (the bass-immunity
+  gate keys on 20 % of the PEAK instead of the excess, so a loud kick with
+  a quiet hat drives the gain to the 12 dB floor on every crest) and one
+  design gap (threshold below the broadband limiter's; Orban puts it
+  0.5 dB above). The HF Clipper is removed in the same change.
+- `docs/advanced-dynamics-review.md` -- FIXED 2026-10-10 (see the review's
+  "Fix landed" section; the hat cost is unchanged, the ride cost and the
+  default flip stay open) -- one defect (the attack law reaches
+  30 us time constants and modulates even the 60 Hz band within a cycle),
+  density works backwards, coupling is bass-down only, the per-band
+  limiters vanish with the replaced path, live reconfiguration snaps the
+  gains. Ride-cymbal cost -9 dB was never recorded.
+- `docs/ssb-stereo-review.md` -- the "opportunistic" selector compares two
+  mirror-image candidates with identical envelopes (choice is random,
+  reclaim measured 0.00 dB) and the kept sideband wanders, forfeiting the
+  narrower-spectrum benefit. Fix: keep the lower sideband, add a decoder
+  phase-error sweep, drop the loudness claim.
+- `docs/format-profiles-review.md` -- APPLIED 2026-10-10 (see its "Applied"
+  section) -- Speech had the slowest, weakest
+  multiband in the catalogue where the industry uses the fastest;
+  Classical rides with pop AGC range; final-stage AGC targets are silently
+  overridden; profiles do not switch Advanced Dynamics off; a "Music --
+  Dense" profile is proposed. Values land after the stage fixes.
+
+## PrimeBass -- correctness review (2026-10-10), FIXED the same day
+
+Field report: PrimeBass does not sound good. `docs/primebass-review.md` checks
+the stage against the literature and the broadcast processors it was modelled
+on. The headline: both waveshapers are odd-symmetric (`x * |x|` included), so
+the stage never produces the 2nd harmonic the comments, the loudness weights
+and the roadmap table below claim; the input is a 6 dB/oct one-pole rather
+than a band-pass, so midrange intermodulates with the bass; and three
+per-sample nonlinearities (input gate, delta limiter, instantaneous makeup)
+add buzz on top. Ranked fixes in the review: (3) remove the per-sample
+nonlinearities first, then A/B (1) a shaped Bass Clipper as the enhancer with
+PrimeBass off in "Music -- Loud" against (2) a corrected asymmetric generator
+with proper band-passes and delay matching. The "already implemented" table
+under Anti-rework guardrails stays as the patent map; its claim that the
+even generator exists is withdrawn.
+
 ## HF transients (hi-hats / cymbals) -- open remainders of the 2026-08-29 campaign
 
 The dominant cause (final-stage order; the 1x shaper clipped before the
@@ -486,7 +559,8 @@ limiter is default-on in every profile. Still open, lowest effort first:
 
 - `mpx_clipper_cancel_audio` low-band-only variant -- measured no effect once
   the HF clipper is out of the path; low priority.
-- Band-limit the HF clipper's residual (opt-in stage only now).
+- ~~Band-limit the HF clipper's residual~~ -- moot: the HF Clipper stage was
+  removed 2026-10-10 (`docs/hf-limiter-review.md`).
 - Pre-encode limiter: half-cosine attack + HF-only gain path (see
   enterprise item B5 below).
 - `hf_limiter_stereo_link` -- Orban prefers UN-linked fast HF limiters; A/B
@@ -875,7 +949,7 @@ Digital" note; CHANGELOG.
 
 Highest-leverage audible-gap closer vs the enterprise tier: these stages are implemented and shipped but **default-off and not preset-validated**, so a fresh install runs below the chain's real capability. Each needs a verifier/listening A/B -> a per-preset enablement decision. OFF must stay bit-identical (`--verify --baseline-strict` green); ON validated via `--verify-receiver` (separation + pilot/RDS guards unchanged).
 
-1. **Pre-emphasis-aware HF clipper** (`hf_clipper_*`): opt-in last resort since the HF limiter went default-on (it measured 17 dB worse hat SINAD). Decide in a later release whether it stays at all.
+1. ~~**Pre-emphasis-aware HF clipper**~~ -- REMOVED 2026-10-10; it was off in every profile and distorted the band it controlled.
 2. **Multiband Phase 2 -- transient-aware attack** (`multiband_transient_aware_attack_enabled`). Verifier + dense-percussive listening A/B; preset decision.
 3. **Multiband inter-band coupling** (`multiband_inter_band_coupling_enabled`, `--verify-multiband-coupling`). "Loud bass softens highs" -- listening A/B; preset decision.
 4. **Anti-aliased residual clipping** (`pre_encode_bandlimited_residual_enabled`) -- see Next up #1.
@@ -1107,7 +1181,18 @@ Recommended combination for Step 2 #2: 5,574,791's HF/total log-ratio detector w
 | [US 5,737,434](https://patents.google.com/patent/US5737434A/en) | Multi-band compressor with cross-band coupling | `MonoCompressor` per-band logic | Inter-band coupling landed opt-in 0.28 (`multiband_inter_band_coupling_enabled`, `--verify-multiband-coupling`). Listening validation pending. Expired. |
 | [US 5,579,404](https://patents.google.com/patent/US5579404A/en) / [EP 0685130 B1](https://patents.google.com/patent/EP0685130B1/en) | Digital audio limiter -- subband-aware look-ahead | `StereoLinkedOversampledPeakLimiter` (pre-encode L/R) | Both phases default-on in 0.30 (textbook delay+detector look-ahead, US 4,208,548 prior art, 1 ms; Dolby split-band 4 kHz HF detector). Dolby; US expired ~2013-11, EP ~2014-02. |
 
-## Bass enhancement (PrimeBass) -- already implemented (do not re-implement)
+## Bass enhancement (PrimeBass) -- implemented, correctness disputed (see the 2026-10-10 review above)
+
+The patent map below is still the design-around record. The 2026-10-10
+review (`docs/primebass-review.md`) found that the "even (asymmetric
+squarer)" generator is `x * |x|`, an odd function, so no even harmonic is
+produced. FIXED 2026-10-10: `processPrimeBass` is now an LR4 band-pass ->
+envelope-normalised asymmetric device (`2 x^2` plus a tanh odd device with
+its linear term removed) -> LR4 band-pass F0..5 F0 -> envelope -> peak
+guard; the per-sample gate, the allpass and `limitStereoDeltaPeak` are
+gone; `--verify-primebass` is the gate. The rows below remain the patent
+map; the Werrbach transient burst and the Big Bottom law (now on the
+harmonic layer via `density`) still apply.
 
 | Patent | Title | Where in code | Note |
 | ------ | ----- | ------------- | ---- |

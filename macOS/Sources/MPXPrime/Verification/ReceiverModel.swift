@@ -221,6 +221,61 @@ func receiverToneMetrics(
     )
 }
 
+/// Coherent-decode separation of a left-driven tone when the decoder's
+/// 38 kHz reference is off by each of `referenceErrorsDegrees`. The pilot
+/// phase fit is exact (`estimatePilotPhase`); the error is added to the
+/// recovered pilot phase as HALF the requested angle, because
+/// `decodeMPXWithReference` doubles the pilot phase to form the 38 kHz
+/// reference. DSB crosstalk goes as (1 - cos phi), SSB crosstalk as
+/// sin phi: this is the receiver-side cost of SSB stereo, which the
+/// exact-reference decoders above cannot see.
+func receiverToneSeparationUnderReferenceError(
+    config: AppConfig,
+    toneHz: Double,
+    durationSeconds: Double,
+    referenceErrorsDegrees: [Double]
+) -> [Float] {
+    var cfg = config
+    cfg.monoMode = false
+    cfg.enRDS = false
+    let amplitude = 0.45
+    let samples = renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
+        let tone = Float(amplitude * sin(2.0 * Double.pi * toneHz * Double(frame) / sampleRate))
+        return (tone, 0.0)
+    }
+    let window = receiverAnalysisWindow(sampleCount: samples.count, sampleRate: cfg.sampleRate)
+    let pilot = estimatePilotPhase(
+        samples: samples,
+        sampleRate: cfg.sampleRate,
+        start: window.start,
+        count: window.count
+    )
+    return referenceErrorsDegrees.map { degrees in
+        let decoded = decodeMPXWithReference(
+            samples: samples,
+            pilotPhase: pilot.phase + (0.5 * degrees * Double.pi / 180.0),
+            config: cfg,
+            programActivity: Float(amplitude),
+            expectedSide: 0.0
+        )
+        let left = toneVector(
+            samples: decoded.left,
+            sampleRate: cfg.sampleRate,
+            frequencyHz: toneHz,
+            start: window.start,
+            count: window.count
+        )
+        let right = toneVector(
+            samples: decoded.right,
+            sampleRate: cfg.sampleRate,
+            frequencyHz: toneHz,
+            start: window.start,
+            count: window.count
+        )
+        return drivenChannelSeparation(driven: left, other: right).separationDB
+    }
+}
+
 /// Separation scored against the channel the test actually drove (LEFT in
 /// every receiver scenario), never "stronger vs weaker". The pilot-phase fit
 /// in `estimatePilotPhase` is unambiguous (a pilot phase error of pi would be
@@ -514,7 +569,6 @@ func runEncoderStageIsolationSweep(
     var rows: [StageIsolationRow] = []
     rows.append(measure(label: "baseline (full chain)") { _ in })
     rows.append(measure(label: "bass clipper OFF") { $0.bassClipperEnabled = false })
-    rows.append(measure(label: "HF clipper OFF") { $0.hfClipperEnabled = false })
     rows.append(measure(label: "distortion-cancel clip OFF") { $0.dcClipperEnabled = false })
     rows.append(measure(label: "composite clipper OFF") { $0.compositeClipperEnabled = false })
     rows.append(measure(label: "audio composite softclip OFF") { $0.audioCompositeSoftClipEnabled = false })
@@ -671,7 +725,6 @@ func guardBandCancellationMetrics(
         // itself. Otherwise upstream clipper/limiter IM dominates the
         // guard bands and masks the cancellation depth we want to gate.
         cfg.bassClipperEnabled = false
-        cfg.hfClipperEnabled = false
         cfg.dcClipperEnabled = false
         cfg.audioCompositeSoftClipEnabled = false
         cfg.preEncodeAudioLimiterEnabled = false

@@ -200,6 +200,21 @@ struct ConfigPatchTests {
         #expect(!planes.dspLive && !planes.rdsLive && !planes.restartRequired)
     }
 
+    @Test func removedHFClipperKeysAreIgnoredLikeAnyUnknownKey() throws {
+        // The HF Clipper stage went in 0.61. A dashboard or script that still
+        // PATCHes its keys gets the unknown-key outcome -- `unchanged`, no
+        // effective value, no plane touched -- and the config is untouched.
+        let cfg = baseConfig()
+        let (patched, outcomes, planes) = try ConfigPatch.apply(
+            ["hf_clipper_enabled": "True", "hf_clipper_drive": "2.0"], to: cfg)
+        #expect(patched == cfg)
+        for outcome in outcomes {
+            #expect(outcome.disposition == .unchanged, "\(outcome.key)")
+            #expect(outcome.effectiveValue == nil, "\(outcome.key)")
+        }
+        #expect(!planes.dspLive && !planes.rdsLive && !planes.restartRequired)
+    }
+
     @Test func sameValueReportsUnchanged() throws {
         let cfg = baseConfig()
         let (_, outcomes, planes) = try ConfigPatch.apply(

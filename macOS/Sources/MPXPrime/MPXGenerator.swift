@@ -225,12 +225,9 @@ final class MPXGenerator {
         let bassClipperCrossoverHz: Float
         let bassClipperThresholdDB: Float
         let bassClipperDrive: Float
-        let hfClipperEnabled: Bool
-        let hfClipperCrossoverHz: Float
-        let hfClipperThresholdDB: Float
-        let hfClipperDrive: Float
         let hfLimiterEnabled: Bool
         let hfLimiterThresholdDB: Float
+        let hfLimiterTopThresholdDB: Float
         let hfLimiterAttackMS: Float
         let hfLimiterReleaseMS: Float
         let hfLimiterMaxReductionDB: Float
@@ -363,12 +360,9 @@ final class MPXGenerator {
             bassClipperCrossoverHz: Float(config.bassClipperCrossoverHz),
             bassClipperThresholdDB: Float(config.bassClipperThresholdDB),
             bassClipperDrive: Float(config.bassClipperDrive),
-            hfClipperEnabled: config.hfClipperEnabled,
-            hfClipperCrossoverHz: Float(config.hfClipperCrossoverHz),
-            hfClipperThresholdDB: Float(config.hfClipperThresholdDB),
-            hfClipperDrive: Float(config.hfClipperDrive),
             hfLimiterEnabled: config.hfLimiterEnabled,
             hfLimiterThresholdDB: Float(config.hfLimiterThresholdDB),
+            hfLimiterTopThresholdDB: Float(config.hfLimiterTopThresholdDB),
             hfLimiterAttackMS: Float(config.hfLimiterAttackMS),
             hfLimiterReleaseMS: Float(config.hfLimiterReleaseMS),
             hfLimiterMaxReductionDB: Float(config.hfLimiterMaxReductionDB),
@@ -644,70 +638,82 @@ final class MPXGenerator {
     private var primeBassSubharmonicsEnabled: Bool
     private var primeBassSubharmonicsAmount: Float
     private var primeBassFreqHz: Float
-    private var primeBassLP = OnePoleLP()
-    private var primeBassSubLP = OnePoleLP()
-    private var primeBassHarmHPF = Biquad()
-    private var primeBassHarmLPF = Biquad()
-    // Allpass at F0 — Aphex US 4,150,253 "HP-then-clip" topology
-    // adapted for bass enhancement: instead of a HPF (which would
-    // attenuate F0 itself), use an allpass that preserves amplitude
-    // but rotates phase by ~180° across F0. Harmonics generated
-    // downstream are then phase-decorrelated from the direct
-    // lowboost path, preventing comb-filter summing at the bass
-    // clipper's input.
-    private var primeBassSideAP = Biquad()
+    // PrimeBass: psychoacoustic missing-fundamental enhancer (MaxxBass /
+    // Larsen-Aarts topology), rewritten 2026-10-10 after
+    // docs/primebass-review.md. Mid channel only:
+    //
+    //   band = LR4 LP(F0) . LR4 HP(0.35 F0) (mid)       fundamental band
+    //   env  = peak follower |band|, 1 ms / 150 ms, floor -60 dBFS
+    //   x    = band / env                                 unit amplitude
+    //   h    = evenW * 2 x^2  +  oddW * (tanh(d x) - b1 x) / b3
+    //   out  = mid + env * level * LR4 LP(5 F0) . LR4 HP(F0) (h)
+    //
+    // For a unit sine 2 x^2 is a pure 2nd harmonic plus DC (the output
+    // highpass removes the DC); tanh(d x) is an odd series b1 sin t +
+    // b3 sin 3t + b5 sin 5t ..., so subtracting b1 x leaves the 3rd, 5th,
+    // 7th with NO fundamental and dividing by b3 makes the 3rd unit. Both
+    // coefficients come from a configure-time Fourier sum. Normalising
+    // the band to unit amplitude before the device and multiplying by the
+    // envelope after it makes the harmonic-to-fundamental ratio
+    // level-invariant (an x^2 law enhances loud bass most). No gate, no
+    // allpass, no per-sample limiter: every level-dependent element is a
+    // one-pole envelope (review findings 1-6).
+    //
+    // Knobs: `amount` = harmonic series level relative to the fundamental
+    // (0.22 -> about -11 dB at 2 F0 on a sustained 50 Hz tone); `harmonics`
+    // = even/odd balance (0 = 2nd only with a little 3rd, 1 = 3rd/5th
+    // dominant); `drive` = hardness of the odd device (soft cubic -> hard
+    // clip, raising the 5th and 7th); `density` = upward compression of
+    // the harmonic layer (0 = tracks the bass level exactly, 1 = bass
+    // 20 dB below -20 dBFS gets up to +6 dB more: MaxxBass's loop
+    // compressor, Big Bottom's inverse law); `freq` = F0.
+    private var primeBassInHPF = LR4Section()
+    private var primeBassInLPF = LR4Section()
+    private var primeBassOutHPF = LR4Section()
+    private var primeBassOutLPF = LR4Section()
+    private var primeBassSubLPF = LR4Section()
+    // Exact DC zero after the output band: a Float direct-form highpass
+    // at F0 / 192 kHz leaks DC at about -40 dB (its numerator sum is
+    // rounding noise over a 1e-5 denominator), audible as a -67 dBFS
+    // offset from the squarer; (1 - z^-1) is exact.
+    private var primeBassDCBlock = DCBlocker1p()
     private var primeBassSubPrevSample: Float = 0.0
     private var primeBassSubPhase: Int = 0
-    // Werrbach Big Bottom dynamic-bass-extension envelope follower
-    // (US 5,359,665, Aphex, expired 2012-07-31). Drives `primeBassAdaptiveGain`
-    // directly via its asymmetric attack/release: fast attack (~10 ms)
-    // catches the leading edge of a kick / plucked-bass note; slow
-    // release (~300 ms) extends the boost over the natural decay.
-    // Net effect per the patent: "envelope duration extension" —
-    // perceived bass holds longer without growing the peak. Replaces
-    // the prior spectral-ratio detector + transient-hold machinery,
-    // which tracked compositional balance over seconds and so
-    // couldn't engage on a typical drum hit before the hit was over.
-    // `internal` access on env so tests can verify dynamics directly.
-    var primeBassBigBottomEnv: Float = 0.0
-    private var primeBassBigBottomAttackCoeff: Float = 0.0
-    private var primeBassBigBottomReleaseCoeff: Float = 0.0
-    var primeBassAdaptiveGain: Float = 0.0
-    private var primeBassLevelEst: Float = 1e-3
-    private var primeBassMakeupGain: Float = 1.0
-    private var primeBassLevelAlpha: Float = 0.0
-    private var primeBassMakeupAttackCoeff: Float = 0.0
-    private var primeBassMakeupReleaseCoeff: Float = 0.0
-    // MaxxBass-style equal-loudness weighting (US 5,930,373, expired
-    // 2017): per-harmonic-order gain derived from an ISO 226 phon-curve
-    // approximation evaluated at 2..5 x F0 at configure time.
-    // Even-harmonic weight applies to the asymmetric (squared-with-sign)
-    // generator's output; odd-harmonic weight applies to the soft-clip
-    // difference generator's output. Precomputing avoids per-sample
-    // log/exp.
-    private var primeBassHarmEvenWeight: Float = 0.55
-    private var primeBassHarmOddWeight: Float = 0.65
-    // MaxxBass: when harmonic synthesis is active, the direct LF gain
-    // is reduced — the perceived bass is carried more by the
-    // weighted harmonics, less by the LF amplitude itself. This buys
-    // headroom in the bass clipper and pre-encode limiter while
-    // preserving subjective bass weight.
-    private let primeBassDirectGainReduction: Float = 0.62
+    // tanh device: drive d and its unit-sine Fourier coefficients.
+    private var primeBassOddDrive: Float = 1.0
+    private var primeBassOddFundamental: Float = 0.0
+    private var primeBassOddThirdInv: Float = 1.0
+    /// Level-normaliser envelope (peak of the fundamental band). `internal`
+    /// so tests can verify its attack / release directly.
+    var primeBassLevelEnv: Float = 0.0
+    private var primeBassLevelAttackCoeff: Float = 0.0
+    private var primeBassLevelReleaseCoeff: Float = 0.0
+    // Envelope-based peak guard: the enhancement may add at most +1.5 dB of
+    // peak (the Bass Clipper after the stage holds the rest). Smoothed peak
+    // envelopes of the dry mid and of the candidate output set a harmonic
+    // gain that moves at 5 ms / 100 ms -- never per sample.
+    private var primeBassDryPeakEnv: Float = 0.0
+    private var primeBassWetPeakEnv: Float = 0.0
+    private var primeBassGuardGain: Float = 1.0
+    private var primeBassPeakReleaseCoeff: Float = 0.0
+    private var primeBassGuardAttackCoeff: Float = 0.0
+    private var primeBassGuardReleaseCoeff: Float = 0.0
+    private static let primeBassLevelFloor: Float = 0.001  // -60 dBFS
+    private static let primeBassPeakGrowthMax: Float = 1.175  // +1.4 dB target, +1.5 dB bound
+    private static let primeBassNormClamp: Float = 1.5
     // Werrbach transient-discriminate harmonic gain (US 5,424,488,
     // Aphex Sound Enhancement System, expired 2013). The harmonic-band
     // gain is modulated by a transient detector built from two
-    // envelopes — a fast follower (~5 ms attack) tracking the LF
-    // input and a slow follower (~50 ms attack) tracking its baseline.
-    // Their normalized difference is positive on real onsets (drum
-    // hits, plucked bass) and decays to zero as the slow follower
-    // catches up, ~50–150 ms post-attack. Mapped through a
-    // floor → peak range to give a brief harmonic burst on attacks
-    // and a lower sustain floor on continuous program — "punchy
-    // not boomy."
+    // envelopes on the fundamental band -- a fast follower (~5 ms
+    // attack) tracking the current attack and a slow follower (~50 ms
+    // attack) tracking its baseline. Their normalized difference is
+    // positive on real onsets (drum hits, plucked bass) and decays to
+    // zero as the slow follower catches up, ~50-150 ms post-attack.
+    // Mapped through a floor -> peak range to give a brief harmonic
+    // burst on attacks and a lower sustain floor on continuous program:
+    // "punchy not boomy."
     // `internal` access on these three so tests can verify the
-    // transient detector directly without relying on FFT spectral
-    // analysis, which is muddied by fundamental-bin leakage when
-    // input and harmonic frequencies are close.
+    // transient detector directly.
     var primeBassFastEnv: Float = 0.0
     var primeBassSlowEnv: Float = 0.0
     var primeBassTransientGainObserved: Float = primeBassTransientFloor
@@ -826,13 +832,9 @@ final class MPXGenerator {
     private var bassClipperThresholdDB: Float
     private var bassClipperDrive: Float
     private var bassClipper = BassClipper()
-    private var hfClipperEnabled: Bool
-    private var hfClipperCrossoverHz: Float
-    private var hfClipperThresholdDB: Float
-    private var hfClipperDrive: Float
-    private var hfClipper = HFClipper()
     private var hfLimiterEnabled: Bool
     private var hfLimiterThresholdDB: Float
+    private var hfLimiterTopThresholdDB: Float
     private var hfLimiterAttackMS: Float
     private var hfLimiterReleaseMS: Float
     private var hfLimiterMaxReductionDB: Float
@@ -1222,7 +1224,8 @@ final class MPXGenerator {
         self.multibandMode = (config.multibandMode == 5) ? 5 : 3
         self.multibandMakeup = powf(10.0, Float(config.multibandMakeupDB) / 20.0)
         self.multibandKneeDB = clampf(Float(config.multibandKneeDB), 0.0, 12.0)
-        self.multibandLinkStrength = clampf(Float(config.multibandLinkStrength), 0.0, 1.0)
+        self.multibandLinkStrength = ChainFeature.stereoProgram.applies(in: mode)
+            ? clampf(Float(config.multibandLinkStrength), 0.0, 1.0) : 0.0
         self.multibandReleaseProgramDependent = config.multibandReleaseProgramDependent
         self.multibandTransientAwareAttackEnabled = config.multibandTransientAwareAttackEnabled
         self.multibandInterBandCouplingEnabled = config.multibandInterBandCouplingEnabled
@@ -1275,13 +1278,10 @@ final class MPXGenerator {
         self.bassClipperThresholdDB = clampf(Float(config.bassClipperThresholdDB), -12.0, 0.0)
         self.bassClipperDrive = clampf(Float(config.bassClipperDrive), 0.5, 3.0)
 
-        self.hfClipperEnabled = config.hfClipperEnabled
-        self.hfClipperCrossoverHz = clampf(Float(config.hfClipperCrossoverHz), 3_000.0, 8_000.0)
-        self.hfClipperThresholdDB = clampf(Float(config.hfClipperThresholdDB), -12.0, 0.0)
-        self.hfClipperDrive = clampf(Float(config.hfClipperDrive), 0.5, 3.0)
-
         self.hfLimiterEnabled = config.hfLimiterEnabled
+            && ChainFeature.hfLimiter.applies(in: mode)
         self.hfLimiterThresholdDB = clampf(Float(config.hfLimiterThresholdDB), -12.0, 0.0)
+        self.hfLimiterTopThresholdDB = clampf(Float(config.hfLimiterTopThresholdDB), -12.0, 0.0)
         self.hfLimiterAttackMS = clampf(Float(config.hfLimiterAttackMS), 0.2, 20.0)
         self.hfLimiterReleaseMS = clampf(Float(config.hfLimiterReleaseMS), 5.0, 500.0)
         self.hfLimiterMaxReductionDB = clampf(Float(config.hfLimiterMaxReductionDB), 1.0, 24.0)
@@ -1336,6 +1336,7 @@ final class MPXGenerator {
         self.dualRateFactor = ratioIsClean ? factor : 1
 
         self.monoBassEnabled = config.monoBassEnabled
+            && ChainFeature.stereoProgram.applies(in: mode)
         self.monoBassFreqHz = clampf(Float(config.monoBassFreqHz), 60.0, 250.0)
         self.rdsCoder = BasicRDSCoder(
             config: config,
@@ -1396,17 +1397,11 @@ final class MPXGenerator {
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
         )
-        hfClipper.configure(
-            enabled: hfClipperEnabled,
-            sampleRate: audioRate,
-            crossoverHz: hfClipperCrossoverHz,
-            thresholdDB: hfClipperThresholdDB,
-            drive: hfClipperDrive
-        )
         hfLimiter.configure(
             enabled: hfLimiterEnabled,
             sampleRate: audioRate,
             thresholdDB: hfLimiterThresholdDB,
+            topThresholdDB: hfLimiterTopThresholdDB,
             attackMS: hfLimiterAttackMS,
             releaseMS: hfLimiterReleaseMS,
             maxReductionDB: hfLimiterMaxReductionDB
@@ -1821,17 +1816,11 @@ final class MPXGenerator {
             thresholdDB: bassClipperThresholdDB,
             drive: bassClipperDrive
         )
-        hfClipper.configure(
-            enabled: hfClipperEnabled,
-            sampleRate: audioRate,
-            crossoverHz: hfClipperCrossoverHz,
-            thresholdDB: hfClipperThresholdDB,
-            drive: hfClipperDrive
-        )
         hfLimiter.configure(
             enabled: hfLimiterEnabled,
             sampleRate: audioRate,
             thresholdDB: hfLimiterThresholdDB,
+            topThresholdDB: hfLimiterTopThresholdDB,
             attackMS: hfLimiterAttackMS,
             releaseMS: hfLimiterReleaseMS,
             maxReductionDB: hfLimiterMaxReductionDB
@@ -1982,19 +1971,25 @@ final class MPXGenerator {
         primeBassEnabled = config.primeBassEnabled
         primeBassAmount = clampf(config.primeBassAmount, 0.0, 1.0)
         primeBassHarmonics = clampf(config.primeBassHarmonics, 0.0, 1.0)
-        primeBassDrive = clampf(config.primeBassDrive, 0.0, 2.5)
         primeBassDensity = clampf(config.primeBassDensity, 0.0, 1.0)
         primeBassSubharmonicsEnabled = config.primeBassSubharmonicsEnabled
         primeBassSubharmonicsAmount = clampf(config.primeBassSubharmonicsAmount, 0.0, 1.0)
+        let primeBassDriveChanged =
+            fabsf(primeBassDrive - clampf(config.primeBassDrive, 0.0, 2.5)) > 0.0001
+        primeBassDrive = clampf(config.primeBassDrive, 0.0, 2.5)
         primeBassFreqHz = clampf(config.primeBassFreqHz, 45.0, 220.0)
         if primeBassFiltersChanged {
             configurePrimeBassFilters()
+        } else if primeBassDriveChanged {
+            configurePrimeBassOddDevice()
         }
 
+        let effectiveMonoBassEnabled = config.monoBassEnabled
+            && ChainFeature.stereoProgram.applies(in: operatingMode)
         let stereoImageChanged =
-            monoBassEnabled != config.monoBassEnabled
+            monoBassEnabled != effectiveMonoBassEnabled
             || fabsf(monoBassFreqHz - config.monoBassFreqHz) > 0.0001
-        monoBassEnabled = config.monoBassEnabled
+        monoBassEnabled = effectiveMonoBassEnabled
         monoBassFreqHz = clampf(config.monoBassFreqHz, 60.0, 250.0)
         if stereoImageChanged {
             configureStereoImage()
@@ -2035,7 +2030,8 @@ final class MPXGenerator {
         multibandMode = (config.multibandMode == 5) ? 5 : 3
         multibandMakeup = powf(10.0, config.multibandMakeupDB / 20.0)
         multibandKneeDB = clampf(config.multibandKneeDB, 0.0, 12.0)
-        multibandLinkStrength = clampf(config.multibandLinkStrength, 0.0, 1.0)
+        multibandLinkStrength = ChainFeature.stereoProgram.applies(in: operatingMode)
+            ? clampf(config.multibandLinkStrength, 0.0, 1.0) : 0.0
         multibandReleaseProgramDependent = config.multibandReleaseProgramDependent
         multibandTransientAwareAttackEnabled = config.multibandTransientAwareAttackEnabled
         multibandInterBandCouplingEnabled = config.multibandInterBandCouplingEnabled
@@ -2180,37 +2176,21 @@ final class MPXGenerator {
             )
         }
 
-        // HF clipper (pre-emphasis-aware)
-        let hfClipChanged =
-            hfClipperEnabled != config.hfClipperEnabled
-            || fabsf(hfClipperCrossoverHz - config.hfClipperCrossoverHz) > 0.0001
-            || fabsf(hfClipperThresholdDB - config.hfClipperThresholdDB) > 0.0001
-            || fabsf(hfClipperDrive - config.hfClipperDrive) > 0.0001
-        hfClipperEnabled = config.hfClipperEnabled
-        hfClipperCrossoverHz = clampf(config.hfClipperCrossoverHz, 3_000.0, 8_000.0)
-        hfClipperThresholdDB = clampf(config.hfClipperThresholdDB, -12.0, 0.0)
-        hfClipperDrive = clampf(config.hfClipperDrive, 0.5, 3.0)
-        if hfClipChanged {
-            // The stage runs inside the dual-rate audio domain: coefficients
-            // belong to the audio-domain rate (init/setSampleRate already use it).
-            hfClipper.configure(
-                enabled: hfClipperEnabled,
-                sampleRate: audioRate,
-                crossoverHz: hfClipperCrossoverHz,
-                thresholdDB: hfClipperThresholdDB,
-                drive: hfClipperDrive
-            )
-        }
-
-        // HF limiter (pre-emphasis-aware, gain-riding)
+        // HF limiter (pre-emphasis-aware, gain-riding). The stage runs inside
+        // the dual-rate audio domain: coefficients belong to the audio-domain
+        // rate (init/setSampleRate already use it).
+        let effectiveHFLimiterEnabled = config.hfLimiterEnabled
+            && ChainFeature.hfLimiter.applies(in: operatingMode)
         let hfLimiterChanged =
-            hfLimiterEnabled != config.hfLimiterEnabled
+            hfLimiterEnabled != effectiveHFLimiterEnabled
             || fabsf(hfLimiterThresholdDB - config.hfLimiterThresholdDB) > 0.0001
+            || fabsf(hfLimiterTopThresholdDB - config.hfLimiterTopThresholdDB) > 0.0001
             || fabsf(hfLimiterAttackMS - config.hfLimiterAttackMS) > 0.0001
             || fabsf(hfLimiterReleaseMS - config.hfLimiterReleaseMS) > 0.0001
             || fabsf(hfLimiterMaxReductionDB - config.hfLimiterMaxReductionDB) > 0.0001
-        hfLimiterEnabled = config.hfLimiterEnabled
+        hfLimiterEnabled = effectiveHFLimiterEnabled
         hfLimiterThresholdDB = clampf(config.hfLimiterThresholdDB, -12.0, 0.0)
+        hfLimiterTopThresholdDB = clampf(config.hfLimiterTopThresholdDB, -12.0, 0.0)
         hfLimiterAttackMS = clampf(config.hfLimiterAttackMS, 0.2, 20.0)
         hfLimiterReleaseMS = clampf(config.hfLimiterReleaseMS, 5.0, 500.0)
         hfLimiterMaxReductionDB = clampf(config.hfLimiterMaxReductionDB, 1.0, 24.0)
@@ -2219,6 +2199,7 @@ final class MPXGenerator {
                 enabled: hfLimiterEnabled,
                 sampleRate: audioRate,
                 thresholdDB: hfLimiterThresholdDB,
+                topThresholdDB: hfLimiterTopThresholdDB,
                 attackMS: hfLimiterAttackMS,
                 releaseMS: hfLimiterReleaseMS,
                 maxReductionDB: hfLimiterMaxReductionDB
@@ -2531,35 +2512,35 @@ final class MPXGenerator {
 
     private func updatePrimeBassDynamicRates() {
         // Audio-domain stage.
-        let sampleRate = audioDomainSampleRate
-        let sr = max(8_000.0, sampleRate)
-        let dt = 1.0 / sr
-        // Slow level estimate, used by the gate-floor calculation at
-        // function entry. ~1.1 s tracks the longer-term mid level for
-        // the gate threshold without flickering on per-note dynamics.
-        primeBassLevelAlpha = 1.0 - expf(-dt / 1.1)
-        primeBassMakeupAttackCoeff = expf(-1.0 / ((45.0 * 0.001) * sr))
-        primeBassMakeupReleaseCoeff = expf(-1.0 / ((220.0 * 0.001) * sr))
-        // Big Bottom envelope follower (US 5,359,665). Fast attack so
-        // the boost ramps up within the leading edge of a kick or
-        // plucked-bass note (~10 ms); slow release so it extends over
-        // the natural decay of the note (~300 ms) — that's the
-        // patent's "envelope duration extension" behaviour.
-        primeBassBigBottomAttackCoeff = expf(-1.0 / ((10.0 * 0.001) * sr))
-        primeBassBigBottomReleaseCoeff = expf(-1.0 / ((300.0 * 0.001) * sr))
+        let sr = max(8_000.0, audioDomainSampleRate)
+        func coeff(_ milliseconds: Float) -> Float {
+            expf(-1.0 / ((milliseconds * 0.001) * sr))
+        }
+        // Level normaliser on |band|: 1 ms attack so the envelope sits on
+        // the band's peaks within a quarter cycle (a slower attack lets
+        // band / env overshoot on every onset and the squarer turns the
+        // overshoot into a thump), 150 ms release so the 6.5 % droop
+        // between the peaks of a 50 Hz tone is the only ripple.
+        primeBassLevelAttackCoeff = coeff(1.0)
+        primeBassLevelReleaseCoeff = coeff(150.0)
+        // Peak guard: peak-hold followers (100 ms release) on the dry mid
+        // and on the candidate output; the harmonic gain they drive moves
+        // at 5 ms / 100 ms.
+        primeBassPeakReleaseCoeff = coeff(100.0)
+        primeBassGuardAttackCoeff = coeff(5.0)
+        primeBassGuardReleaseCoeff = coeff(100.0)
         // Werrbach dual-envelope transient detector. Fast envelope
-        // follows the LF input quickly so its level reflects the
-        // *current* attack; slow envelope tracks the recent baseline.
-        // Their (fast − slow) / slow difference saturates positive on
-        // onsets and decays to zero as the slow follower catches up —
-        // ~50–150 ms post-attack. The asymmetric attack/release on
-        // each follower keeps the response sharp at the leading edge
-        // (fast attack) without letting it dip on cycle-by-cycle
-        // valleys of a sustained tone (slower release).
-        primeBassFastAttackCoeff = expf(-1.0 / ((5.0 * 0.001) * sr))
-        primeBassFastReleaseCoeff = expf(-1.0 / ((30.0 * 0.001) * sr))
-        primeBassSlowAttackCoeff = expf(-1.0 / ((50.0 * 0.001) * sr))
-        primeBassSlowReleaseCoeff = expf(-1.0 / ((250.0 * 0.001) * sr))
+        // follows the band quickly so its level reflects the *current*
+        // attack; slow envelope tracks the recent baseline. Their
+        // (fast - slow) / slow difference saturates positive on onsets
+        // and decays to zero as the slow follower catches up, ~50-150 ms
+        // post-attack. The asymmetric attack/release on each follower
+        // keeps the response sharp at the leading edge without letting
+        // it dip on cycle-by-cycle valleys of a sustained tone.
+        primeBassFastAttackCoeff = coeff(5.0)
+        primeBassFastReleaseCoeff = coeff(30.0)
+        primeBassSlowAttackCoeff = coeff(50.0)
+        primeBassSlowReleaseCoeff = coeff(250.0)
     }
 
     private func configureStereoImage() {
@@ -2597,54 +2578,58 @@ final class MPXGenerator {
         // Audio-domain stage.
         let sampleRate = audioDomainSampleRate
         let nyquist = max(200.0, (sampleRate * 0.5) - 200.0)
-        let bassCutoff = clampf(primeBassFreqHz, 45.0, nyquist)
-        primeBassLP.configure(cutoffHz: bassCutoff, sampleRate: sampleRate)
-        let subCutoff = clampf(max(45.0, primeBassFreqHz * 0.8), 45.0, nyquist)
-        primeBassSubLP.configure(cutoffHz: subCutoff, sampleRate: sampleRate)
-        let harmHPFCutoff = clampf(max(120.0, primeBassFreqHz * 1.6), 45.0, nyquist)
-        let harmLPFMin = min(nyquist - 20.0, max(harmHPFCutoff + 20.0, 280.0))
-        let harmLPFCutoff = clampf(max(280.0, primeBassFreqHz * 5.0), harmLPFMin, nyquist)
-        primeBassHarmHPF.configureHighpass(cutoffHz: harmHPFCutoff, sampleRate: sampleRate)
-        primeBassHarmLPF.configureLowpass(cutoffHz: harmLPFCutoff, sampleRate: sampleRate)
-
-        // Aphex-style phase-shifting allpass at F0 (Q=0.7 for ~180°
-        // shift across F0 with unit magnitude). The waveshaper sees a
-        // phase-rotated copy of the LF, so the synthesized harmonics
-        // are phase-decorrelated from the direct lowboost path.
-        primeBassSideAP.configureAllpass(freqHz: bassCutoff, sampleRate: sampleRate)
-
-        // MaxxBass equal-loudness weighting (US 5,930,373). Compute
-        // per-order perceptual weights at the harmonic frequencies of
-        // the configured PrimeBass cutoff and combine into two scalars:
-        // one for the even-harmonic generator (2nd + 4th) and one for
-        // the odd-harmonic generator (3rd + 5th). Weights are biased
-        // by the relative perceptual contribution of each harmonic
-        // order to "missing-fundamental" reconstruction (3rd > 2nd >
-        // 4th > 5th in the 80-300 Hz warmth band).
-        let f0 = clampf(primeBassFreqHz, 45.0, 200.0)
-        let w2 = Self.primeBassEqualLoudnessWeight(2.0 * f0)
-        let w3 = Self.primeBassEqualLoudnessWeight(3.0 * f0)
-        let w4 = Self.primeBassEqualLoudnessWeight(4.0 * f0)
-        let w5 = Self.primeBassEqualLoudnessWeight(5.0 * f0)
-        primeBassHarmEvenWeight = 0.5 * (w2 + (0.4 * w4))
-        primeBassHarmOddWeight = 0.5 * (w3 + (0.4 * w5))
+        let f0 = clampf(primeBassFreqHz, 45.0, nyquist)
+        // Input band: the fundamentals below F0 and nothing above. LR4
+        // (24 dB/oct) on both edges, so at the default F0 a 1 kHz vocal
+        // reaches the nonlinearity about 80 dB down and cannot
+        // intermodulate with the bass (review finding 2: the one-pole
+        // lowpass passed it at -20 dB).
+        primeBassInHPF.configureHighpass(cutoffHz: max(25.0, f0 * 0.35), sampleRate: sampleRate)
+        primeBassInLPF.configureLowpass(cutoffHz: f0, sampleRate: sampleRate)
+        // Output band F0 .. 5 F0: the highpass removes the fundamental
+        // residue and the DC of x^2, the lowpass keeps the series where
+        // the ear reconstructs the pitch and out of the midrange.
+        let outHigh = clampf(f0 * 5.0, f0 + 20.0, nyquist)
+        primeBassOutHPF.configureHighpass(cutoffHz: f0, sampleRate: sampleRate)
+        primeBassOutLPF.configureLowpass(cutoffHz: outHigh, sampleRate: sampleRate)
+        // Subharmonic band: the octave divider's square wave keeps only
+        // its own fundamental (at or below 0.5 F0); the square's 3rd at
+        // 1.5 F0 is 27 dB down.
+        primeBassSubLPF.configureLowpass(cutoffHz: max(25.0, f0 * 0.7), sampleRate: sampleRate)
+        primeBassDCBlock.configure(cutoffHz: 8.0, sampleRate: sampleRate)
+        configurePrimeBassOddDevice()
     }
 
-    /// Approximation of the ISO 226 (40 phon) inverse-threshold
-    /// equal-loudness curve over 60-600 Hz, returned as a unit-bounded
-    /// perceptual weight. Peaks near 150 Hz (the warmth band where
-    /// missing-fundamental reconstruction is strongest), falls off
-    /// below 60 Hz (sub-bass loses sensitivity at low SPL) and above
-    /// 500 Hz (no longer in the bass-extension band). Used to weight
-    /// the synthesized harmonics in MaxxBass-style bass enhancement.
-    @inline(__always)
-    private static func primeBassEqualLoudnessWeight(_ f: Float) -> Float {
-        let logF = log10f(max(20.0, f))
-        // Bell curve centered at log10(150) ≈ 2.176.
-        let center: Float = 2.176
-        let width: Float = 0.55
-        let dx = (logF - center) / width
-        return 0.85 * expf(-(dx * dx))
+    /// tanh device coefficients. For a unit sine x = sin t, tanh(d x) is an
+    /// odd Fourier series b1 sin t + b3 sin 3t + b5 sin 5t + ...; the per-
+    /// sample device is (tanh(d x) - b1 x) / b3, so a unit sine yields a
+    /// unit 3rd harmonic plus the higher odd orders and no fundamental
+    /// (review finding 6: the previous tanh difference kept a 1.6x linear
+    /// term that the output filter then subtracted from the direct path).
+    /// 256-point rectangle rule over one period; the integrand is smooth
+    /// and periodic, so the sum is exact to Float precision for orders
+    /// well below 256. Configure-time only (also re-run when `drive`
+    /// changes live).
+    private func configurePrimeBassOddDevice() {
+        // drive 0..2.5 -> d 0.8..3.8: soft cubic (3rd dominant) to a hard
+        // clip (5th and 7th rise).
+        let d = 0.8 + (1.2 * clampf(primeBassDrive, 0.0, 2.5))
+        primeBassOddDrive = d
+        let points = 256
+        var b1: Float = 0.0
+        var b3: Float = 0.0
+        for k in 0..<points {
+            let t = twoPi * (Float(k) + 0.5) / Float(points)
+            let y = tanhf(d * sinf(t))
+            b1 += y * sinf(t)
+            b3 += y * sinf(3.0 * t)
+        }
+        b1 *= 2.0 / Float(points)
+        b3 *= 2.0 / Float(points)
+        primeBassOddFundamental = b1
+        // b3 is negative (compression flattens the peaks); keep the sign so
+        // the 3rd harmonic has a defined polarity, guard the magnitude.
+        primeBassOddThirdInv = fabsf(b3) > 1e-6 ? 1.0 / b3 : 0.0
     }
 
     private func configureMultibandFilters() {
@@ -3197,6 +3182,10 @@ final class MPXGenerator {
     /// Test-visible duty of the digital true-peak guard (dB of gain ride).
     var truePeakGuardGainReductionDB: Float { truePeakGuard.gainReductionDB }
 
+    /// The HF limiter's boost gain on the last audio-domain sample (linear,
+    /// 1 = full pre-emphasis); `--verify-hf-transients` reads its trajectory.
+    var hfLimiterGain: Float { hfLimiter.gain }
+
     @inline(__always)
     private func audioOnlyOutputMakeup() -> Float {
         if amDelivery {
@@ -3572,25 +3561,14 @@ final class MPXGenerator {
         // HF limiter: program-controlled pre-emphasis (Orban US 4,103,243
         // topology). Rides only the boost component `pre - flat`, so an HF
         // transient that overshoots loses (part of) its pre-emphasis boost
-        // for a few ms instead of being clipped or dragging the whole mix
-        // down in the broadband limiter below. Default off -> not invoked.
+        // for a few ms instead of dragging the whole mix down in the
+        // broadband limiter below. Default off -> not invoked.
         if hfLimiterEnabled && !audioStagesBypassed {
             let limited = hfLimiter.process(
                 flatL: flatL, flatR: flatR,
                 emphasizedL: stereo.left, emphasizedR: stereo.right)
             stereo.left = limited.0
             stereo.right = limited.1
-        }
-
-        // Pre-emphasis-aware HF clipper: tame HF transients of the pre-emphasized
-        // signal with a dedicated stage so the broadband limiter below doesn't
-        // pull gain across the whole signal and dull it. De-emphasis-correct
-        // (acts on the pre-emphasized HF). Default off -> not invoked ->
-        // bit-identical to the prior chain.
-        if hfClipperEnabled && !audioStagesBypassed {
-            let hf = hfClipper.process(left: stereo.left, right: stereo.right)
-            stereo.left = hf.0
-            stereo.right = hf.1
         }
 
         if preEncodeAudioLimiterEnabled && !audioStagesBypassed {
@@ -4351,209 +4329,125 @@ final class MPXGenerator {
     }
 
     private func processPrimeBass(left: Float, right: Float) -> (Float, Float) {
+        let amount = clampf(primeBassAmount, 0.0, 1.0)
+        let subAmount = primeBassSubharmonicsEnabled
+            ? clampf(primeBassSubharmonicsAmount, 0.0, 1.0) : 0.0
+        if amount <= 1e-4, subAmount <= 1e-4 {
+            return (left, right)
+        }
+        let harmonics = clampf(primeBassHarmonics, 0.0, 1.0)
+        let density = clampf(primeBassDensity, 0.0, 1.0)
         let mid = (left + right) * 0.5
         let side = (left - right) * 0.5
-        let low = primeBassLP.process(mid)
 
-        let drive = clampf(primeBassDrive, 0.0, 2.5)
-        let density = clampf(primeBassDensity, 0.0, 1.0)
-        let amount = clampf(primeBassAmount, 0.0, 1.0)
-        let harmonics = clampf(primeBassHarmonics, 0.0, 1.0)
-        let subAmount = (primeBassSubharmonicsEnabled ? primeBassSubharmonicsAmount : 0.0)
-        if amount <= 1e-4, harmonics <= 1e-4, subAmount <= 1e-4 {
-            return (left, right)
-        }
+        // 1. Fundamental band, 0.35 F0 .. F0, 24 dB/oct both sides.
+        let band = primeBassInLPF.process(primeBassInHPF.process(mid))
+        let bandAbs = fabsf(band)
 
-        let midAbs = max(1e-6, fabsf(mid))
-        let bassAbs = fabsf(low)
-        let gateFloor = max(0.012, primeBassLevelEst * 0.18)
-        if midAbs < gateFloor, bassAbs < gateFloor {
-            return (left, right)
-        }
+        // 2. Level normaliser: the device always sees a unit-amplitude
+        //    waveform, so its harmonic ratios do not depend on level.
+        let levelCoeff =
+            bandAbs > primeBassLevelEnv ? primeBassLevelAttackCoeff : primeBassLevelReleaseCoeff
+        primeBassLevelEnv = zapDenorm(
+            (levelCoeff * primeBassLevelEnv) + ((1.0 - levelCoeff) * bandAbs))
+        let env = max(Self.primeBassLevelFloor, primeBassLevelEnv)
+        // Below the floor the band is divided by the floor instead, so the
+        // harmonics fade quadratically into silence: no gate step.
+        let x = clampf(band / env, -Self.primeBassNormClamp, Self.primeBassNormClamp)
 
-        // Big Bottom dynamic-bass envelope follower (Werrbach US 5,359,665,
-        // Aphex, expired 2012-07-31). Track LF level with fast attack
-        // (~10 ms) and slow release (~300 ms): the boost ramps up
-        // within the leading edge of a kick / plucked-bass note and
-        // then extends over the natural decay. "Envelope duration
-        // extension" — same peak boost as a static gain, just held
-        // longer. Replaces the prior spectral-ratio detector +
-        // transient-hold machinery, which tracked compositional
-        // balance over seconds and so couldn't engage on a typical
-        // drum hit before the hit was already over.
-        let bigBottomCoeff =
-            bassAbs > primeBassBigBottomEnv
-            ? primeBassBigBottomAttackCoeff
-            : primeBassBigBottomReleaseCoeff
-        primeBassBigBottomEnv =
-            (bigBottomCoeff * primeBassBigBottomEnv)
-            + ((1.0 - bigBottomCoeff) * bassAbs)
+        // 3. Harmonic device: even (2nd) and odd (3rd, 5th ...) parts,
+        //    balanced by `harmonics`.
+        let even = 2.0 * x * x
+        let odd = (tanhf(primeBassOddDrive * x) - (primeBassOddFundamental * x)) * primeBassOddThirdInv
+        let evenWeight = 1.0 - (0.55 * harmonics)
+        let oddWeight = 0.25 + (0.75 * harmonics)
+        let shaped = (evenWeight * even) + (oddWeight * odd)
 
-        // Map envelope to [0, 1]. The ×4 normalization brings typical
-        // program-level LF (~0.15-0.25 average) to roughly full
-        // engagement; loud bass clamps at 1.0. The user's `amount` /
-        // `drive` / `density` knobs upstream still scale how much that
-        // engagement actually contributes to `boostGain` and
-        // `harmonicGain`, so the follower's job here is just per-note
-        // envelope tracking — knob-mediated intensity stays a separate
-        // dimension.
-        let adaptive = clampf(primeBassBigBottomEnv * 4.0, 0.0, 1.0)
-        primeBassAdaptiveGain = adaptive
-
-        // Slow level estimate for the next-tick gate floor. Same role
-        // as before — gate uses last tick's value, this updates for
-        // the next call.
-        primeBassLevelEst += (midAbs - primeBassLevelEst) * primeBassLevelAlpha
-
-        let driveFactor = 0.55 + (0.42 * drive)
-        let densityFactor = 0.50 + (0.42 * density)
-        let boostGain = amount * driveFactor * densityFactor * (0.62 + (0.42 * adaptive))
-        // MaxxBass: reduce direct LF gain when harmonic synthesis is
-        // engaged — the equal-loudness-weighted harmonics carry part
-        // of the perceived bass weight that the LF amplitude carried
-        // before. Buys headroom in the bass clipper / pre-encode
-        // limiter without sacrificing subjective bass.
-        let directScale = 1.0 - ((1.0 - primeBassDirectGainReduction) * harmonics)
-        let lowBoost = low * boostGain * directScale
-
-        // Aphex-style phase decorrelation (US 4,150,253, expired 1996):
-        // pre-waveshape the LF through an allpass at F0 to rotate
-        // phase ~180° across the band without changing amplitude. The
-        // synthesized harmonics' phase is then decorrelated from the
-        // direct lowboost path, preventing comb-filter summing at the
-        // bass clipper's input. (The classic Aphex HP-then-clip
-        // topology uses a high-pass, but for a bass-extension target
-        // a HP at F0×1.6 would also kill the F0 amplitude entering
-        // the waveshaper — an allpass preserves amplitude while
-        // achieving the same phase decorrelation.)
-        let lowSide = primeBassSideAP.process(low)
-
-        let nlDrive = 1.0 + (drive * (1.0 + (amount * 1.8) + (harmonics * 1.4)))
-        let driven = lowSide * nlDrive
-        // Odd-harmonic generator (3rd, 5th): tanh-difference soft-clip.
-        let oddSrc = tanhf(driven) - tanhf(lowSide * (0.65 + (0.18 * density)))
-        // Even-harmonic generator (2nd, 4th): asymmetric sign-preserving
-        // squaring — primarily 2nd-harmonic content with bounded peak.
-        let evenSrc = lowSide * fabsf(lowSide) * (0.6 + (0.4 * drive))
-        // MaxxBass equal-loudness weighting (US 5,930,373) — per-order
-        // weights precomputed at configure time from an ISO 226
-        // approximation evaluated at 2..5 x F0.
-        let weighted =
-            (oddSrc * primeBassHarmOddWeight) + (evenSrc * primeBassHarmEvenWeight)
-        // Band-limit the harmonics: HP above F0 to remove the residual
-        // fundamental that the waveshaper passes through, then LP at
-        // ~5×F0 to keep harmonic energy out of the upper audio band.
-        let harmonicBand = primeBassHarmLPF.process(primeBassHarmHPF.process(weighted))
-
-        // Werrbach transient-discriminate gain (US 5,424,488). Two
-        // independent envelope followers on the LF input: fast (~5 ms
-        // attack / 30 ms release) reflects the current attack; slow
-        // (~50 ms attack / 250 ms release) tracks the recent baseline.
-        // The normalized difference (fast − slow) / slow saturates
-        // positive on real onsets (fast jumps above slow) and decays
-        // to zero as slow catches up. Mapped directly to the harmonic
-        // gain — no further smoothing — so the burst shape is set
-        // entirely by the input followers' time constants: fast
-        // attack within ~5 ms, return to floor within ~50–150 ms.
+        // 4. Werrbach transient-discriminate gain (US 5,424,488) on the
+        //    band: fast (5 / 30 ms) vs slow (50 / 250 ms) follower, the
+        //    normalised difference maps 0.7 (sustain) .. 1.4 (onset).
         let fastCoeff =
-            midAbs > primeBassFastEnv
-            ? primeBassFastAttackCoeff : primeBassFastReleaseCoeff
-        primeBassFastEnv =
-            (fastCoeff * primeBassFastEnv) + ((1.0 - fastCoeff) * midAbs)
+            bandAbs > primeBassFastEnv ? primeBassFastAttackCoeff : primeBassFastReleaseCoeff
+        primeBassFastEnv = zapDenorm(
+            (fastCoeff * primeBassFastEnv) + ((1.0 - fastCoeff) * bandAbs))
         let slowCoeff =
-            midAbs > primeBassSlowEnv
-            ? primeBassSlowAttackCoeff : primeBassSlowReleaseCoeff
-        primeBassSlowEnv =
-            (slowCoeff * primeBassSlowEnv) + ((1.0 - slowCoeff) * midAbs)
+            bandAbs > primeBassSlowEnv ? primeBassSlowAttackCoeff : primeBassSlowReleaseCoeff
+        primeBassSlowEnv = zapDenorm(
+            (slowCoeff * primeBassSlowEnv) + ((1.0 - slowCoeff) * bandAbs))
         let transientDrive = clampf(
             (primeBassFastEnv - primeBassSlowEnv) / max(1e-3, primeBassSlowEnv),
             0.0,
             1.0
         )
-        let transientPeak = Self.primeBassTransientPeak
-        let transientFloor = Self.primeBassTransientFloor
-        let transientGain = transientFloor + (transientDrive * (transientPeak - transientFloor))
+        let transientGain =
+            Self.primeBassTransientFloor
+            + (transientDrive * (Self.primeBassTransientPeak - Self.primeBassTransientFloor))
         primeBassTransientGainObserved = transientGain
 
-        let harmonicGain =
-            harmonics * (0.32 + (0.34 * density)) * (0.62 + (0.36 * adaptive))
-            * transientGain
-        var enhancement = lowBoost + (harmonicBand * harmonicGain)
+        // 5. Level law. `amount` sets the series level relative to the
+        //    fundamental (x is unit, env is the fundamental's peak);
+        //    `density` adds a bounded upward compression so quiet bass
+        //    keeps its harmonic layer (gain FALLS with level, never rises:
+        //    Big Bottom's law, review finding 5).
+        let compression = clampf(powf(0.1 / env, 0.12 * density), 1.0, 2.0)
+        //    Below the normaliser floor the band is no longer unit and the
+        //    tanh device's small-signal linear term (d - b1) x would leak a
+        //    copy of whatever reaches it (a 1 kHz tone through the input
+        //    lowpass' numeric floor); fade the series out continuously
+        //    with the envelope instead -- a slope, not a gate.
+        let floorFade = min(1.0, primeBassLevelEnv / Self.primeBassLevelFloor)
+        let harmonicLevel = amount * 3.2 * transientGain * compression * floorFade
+        var enhancement =
+            primeBassOutLPF.process(primeBassOutHPF.process(shaped)) * env * harmonicLevel
 
+        // 6. Subharmonic octave divider (off by default). Square wave at
+        //    half the band's zero-crossing rate, scaled by the same
+        //    envelope, band-limited to its own fundamental. Below the
+        //    normaliser floor the band is the input filters' rounding
+        //    noise, whose crossings would free-run the divider as a random
+        //    telegraph signal (measured -85 dB on a lone 1 kHz tone): hold
+        //    the phase there, and fade the wave out with the envelope.
         if subAmount > 1e-4 {
-            let prev = primeBassSubPrevSample
-            if prev <= 0.0, low > 0.0 {
+            if primeBassLevelEnv > Self.primeBassLevelFloor, primeBassSubPrevSample <= 0.0, band > 0.0 {
                 primeBassSubPhase ^= 1
             }
-            primeBassSubPrevSample = low
+            primeBassSubPrevSample = band
             let square: Float = primeBassSubPhase == 0 ? -1.0 : 1.0
-            let envelope = sqrtf(max(0.0, fabsf(low)))
-            let subRaw = square * envelope
-            let subWave = primeBassSubLP.process(subRaw)
-            let subGain = subAmount * (0.22 + (0.24 * density)) * (0.55 + (0.24 * drive))
-            enhancement += subWave * subGain
+            let subWave = primeBassSubLPF.process(square * primeBassLevelEnv * floorFade)
+            enhancement += subWave * subAmount * 1.2
         }
 
-        let enhClip = max(0.52, 0.72 - (0.08 * density))
-        let satEnhancement = enhClip * tanhf(enhancement / max(1e-4, enhClip))
-        var midOut = mid + satEnhancement
-        midOut *= 1.0 / (1.0 + (0.03 * amount) + (0.03 * subAmount))
-
-        let outMidAbs = max(1e-6, fabsf(midOut))
-        let targetMakeupPower = 0.34 + (0.08 * density)
-        let targetMakeup = clampf(
-            powf(midAbs / outMidAbs, targetMakeupPower),
-            0.94,
-            1.06 + (0.06 * density)
-        )
-        primeBassMakeupGain = smoothPrimeBassGain(
-            current: primeBassMakeupGain,
-            target: targetMakeup,
-            attackCoeff: primeBassMakeupAttackCoeff,
-            releaseCoeff: primeBassMakeupReleaseCoeff
-        )
-        midOut *= primeBassMakeupGain
-
-        let outL = midOut + side
-        let outR = midOut - side
-        return Self.limitStereoDeltaPeak(
-            inputLeft: left,
-            inputRight: right,
-            outputLeft: outL,
-            outputRight: outR,
-            allowedPeakScale: 1.04 + (0.04 * amount) + (0.04 * subAmount)
-        )
-    }
-
-    private func smoothPrimeBassGain(
-        current: Float,
-        target: Float,
-        attackCoeff: Float,
-        releaseCoeff: Float
-    ) -> Float {
-        let coeff = target > current ? attackCoeff : releaseCoeff
-        return (coeff * current) + ((1.0 - coeff) * target)
-    }
-
-    private static func limitStereoDeltaPeak(
-        inputLeft: Float,
-        inputRight: Float,
-        outputLeft: Float,
-        outputRight: Float,
-        allowedPeakScale: Float
-    ) -> (Float, Float) {
-        let inPeak = max(max(fabsf(inputLeft), fabsf(inputRight)), 1e-6)
-        let outPeak = max(max(fabsf(outputLeft), fabsf(outputRight)), 1e-6)
-        let allowedPeak = inPeak * allowedPeakScale
-        guard outPeak > allowedPeak else {
-            return (outputLeft, outputRight)
+        // 7. Envelope-based peak guard (+1.5 dB max). Compares the smoothed
+        //    peak of what the output WOULD be at full gain with the dry
+        //    peak and scales the enhancement down smoothly; the Bass
+        //    Clipper after the stage handles the rest, as it does for the
+        //    broadcast processors.
+        //    Peak-hold followers (instant attack, 100 ms release): a
+        //    finite attack under-reads the sharper wet peaks and lets the
+        //    growth through (measured 1.6-2.1 dB at 1 ms).
+        primeBassDryPeakEnv = zapDenorm(max(fabsf(mid), primeBassDryPeakEnv * primeBassPeakReleaseCoeff))
+        primeBassWetPeakEnv = zapDenorm(
+            max(fabsf(mid + enhancement), primeBassWetPeakEnv * primeBassPeakReleaseCoeff))
+        let allowedPeak = primeBassDryPeakEnv * Self.primeBassPeakGrowthMax
+        var guardTarget: Float = 1.0
+        if primeBassWetPeakEnv > allowedPeak {
+            let added = primeBassWetPeakEnv - primeBassDryPeakEnv
+            guardTarget = added > 1e-9
+                ? clampf((allowedPeak - primeBassDryPeakEnv) / added, 0.0, 1.0) : 1.0
         }
+        let guardCoeff =
+            guardTarget < primeBassGuardGain ? primeBassGuardAttackCoeff : primeBassGuardReleaseCoeff
+        primeBassGuardGain = (guardCoeff * primeBassGuardGain) + ((1.0 - guardCoeff) * guardTarget)
 
-        let scale = allowedPeak / outPeak
-        return (
-            inputLeft + ((outputLeft - inputLeft) * scale),
-            inputRight + ((outputRight - inputRight) * scale)
-        )
+        // The DC blocker sits AFTER the guard gain: the gain's residual
+        // ripple within a bass cycle is correlated with the waveform it
+        // multiplies, which rectifies a little DC (-65 dBFS measured with
+        // the subharmonic on); (1 - z^-1) removes it exactly.
+        // Direct path is dry: no boost, no gain reduction, no delay (the
+        // harmonic path carries no fundamental, so there is nothing to
+        // comb against; measured in PrimeBassMaxxBassTests).
+        let midOut = mid + primeBassDCBlock.process(enhancement * primeBassGuardGain)
+        return (midOut + side, midOut - side)
     }
 
     private func processMultibandStereo(left: Float, right: Float) -> (Float, Float) {

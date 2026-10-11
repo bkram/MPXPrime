@@ -158,7 +158,7 @@ scales everything up together, so the ORDER is what carries over.
 | Composite clipper at 16x (`mpx_clipper_oversampling`) | about a quarter; 8x saves 8-12 % of the chain, 32x adds 15-25 % | 16x is the default for a reason; 8x is the safe way down on a small CPU (restart), 32x only where the load is well under 60 % |
 | Multiband compressor, FIR crossovers (`multiband_enabled`, `multiband_fir_enabled`) | about a quarter | first candidate on a struggling CPU: `multiband_fir_enabled = False` keeps the compressor on the low-latency IIR crossovers for less than half of that (restart) |
 | Advanced Dynamics instead of AGC + multiband (`advanced_dynamics_enabled`) | a little less than the multiband | the cheaper of the two levelers |
-| SSB Stereo (`mpx_ssb_stereo_enabled`) | 5-8 % | first, when CPU is short -- it is the one stage that has tipped a chain from "fits" to "dropouts", and its headroom gain is small |
+| SSB Stereo (`mpx_ssb_stereo_enabled`) | 5-8 % | first, when CPU is short -- it is the one stage that has tipped a chain from "fits" to "dropouts", and it buys spectrum, not loudness (it costs composite peak on wide stereo program) |
 | Monitor output (`monitor_enabled`) | 2-3 % on the render thread (its decoding runs on its own thread) | only when the chain already sits at the edge |
 | PrimeBass, bass clipper, DC clipper (`primebass_enabled`, `bass_clipper_enabled`, ...) | 1-2 % each | as the sound requires |
 | HF limiter, wideband AGC, BS.412 (`hf_limiter_enabled`, `wideband_agc_enabled`, `bs412_enabled`) | under 1 % each | keep them |
@@ -373,16 +373,23 @@ The same measurement also verifies the RDS injection end to end: if the reported
 
 ## Picking a Format Profile
 
-For one-click "make this sound right", MPX Prime Studio ships four complete Format Profiles plus a `Custom` sentinel, on the **Processing -> Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state -- not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / mono bass / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
+For one-click "make this sound right", MPX Prime Studio ships five complete Format Profiles plus a `Custom` sentinel, on the **Processing -> Format Profile** tab. Since the 2026-08 rework a profile owns the FULL chain state -- not just tonal color: every profile enables the AGC, the pre-encode Audio Limiter, the composite clipper (with 2 ms look-ahead) and the final safety limiter, then sets the format-appropriate multiband / PrimeBass / mono bass / drive on top (every profile also enables the HF Limiter; Music - Loud adds the Bass Clipper). Picking a profile can never leave the always-on safety soft-clips as the de-facto peak controller (the failure mode of the old 8-profile set). Per-stage knobs stay editable afterwards; pick `Custom` to flag "my settings are bespoke".
 
-**Upgrading from a pre-0.45 config.** An INI that still carries one of the old profile ids (`chr_top40`, `pop_ac`, `community_radio`, `rock`, `edm_dance`, `urban_hiphop`, `jazz_classical`, `news_talk`) is **reset on load**: its processing (`[MPX]`) is rebuilt from the nearest new Format Profile (`chr_top40` / `rock` / `edm_dance` / `urban_hiphop` -> Music - Loud, `community_radio` / `pop_ac` -> Music - Clean, `news_talk` -> Speech, `jazz_classical` -> Classical), while **RDS, interfaces (devices, sample rate, block size), the control server and the hardware calibration keys (pilot level, deviation, MPX output level, output gain, pre-emphasis, mono mode, test tone) are kept exactly as they were**. The reset config is saved back to disk and both apps say so at startup (status bar in Studio, a line on stderr headless). Reason: those configs typically had the Audio Limiter and Composite Clipper off with the safety soft clips doing all the clipping -- the hi-hat / cymbal distortion field finding -- and carrying that forward under a new label would keep the station distorting. If a current-profile config still has both peak controllers off, the apps warn (but do not reset); re-apply a Format Profile or enable the Composite Clipper.
+**Upgrading from a pre-0.45 config.** An INI that still carries one of the old profile ids (`chr_top40`, `pop_ac`, `community_radio`, `rock`, `edm_dance`, `urban_hiphop`, `jazz_classical`, `news_talk`) is **reset on load**: its processing (`[MPX]`) is rebuilt from the nearest new Format Profile (`chr_top40` / `rock` / `urban_hiphop` -> Music - Loud, `edm_dance` -> Music - Dense, `community_radio` / `pop_ac` -> Music - Clean, `news_talk` -> Speech, `jazz_classical` -> Classical), while **RDS, interfaces (devices, sample rate, block size), the control server and the hardware calibration keys (pilot level, deviation, MPX output level, output gain, pre-emphasis, mono mode, test tone) are kept exactly as they were**. The reset config is saved back to disk and both apps say so at startup (status bar in Studio, a line on stderr headless). Reason: those configs typically had the Audio Limiter and Composite Clipper off with the safety soft clips doing all the clipping -- the hi-hat / cymbal distortion field finding -- and carrying that forward under a new label would keep the station distorting. If a current-profile config still has both peak controllers off, the apps warn (but do not reset); re-apply a Format Profile or enable the Composite Clipper.
 
 | Profile | Character | AGC target | Drive | Extras |
 |---|---|---|---|---|
-| **Music -- Clean** (default) | Transparent leveling, honest peaks, low clipper work | -16 dB | +4 dB | -- |
-| **Music -- Loud** | Competitive loudness into the clipper | -15 dB | +8 dB | HF Limiter + Bass Clipper, PrimeBass, mono bass at 115 Hz |
-| **Speech / Talk** | Voice-optimized | -16 dB | +4.5 dB | Phase rotator on |
-| **Classical / Wide Dynamics** | Dynamic-preserving | -18 dB | +3 dB | Light multiband, gentle limiter |
+| **Music -- Clean** (default) | Transparent leveling, honest peaks, low clipper work | -16 dB | +4 dB | Bass Clipper at the defaults (every vendor structure bass-clips; idle at this drive) |
+| **Music -- Loud** | Competitive loudness into the clipper | -15 dB | +8 dB | Bass Clipper, PrimeBass, Band Limiter, presence tilt (+1.5 dB at 80 Hz, +1 dB at 3 kHz), mono bass at 115 Hz |
+| **Music -- Dense** (new 0.60) | The top density tier: dance / urban / CHR-dense | -15 dB | +9 dB | Dance multiband (heavy), Bass Clipper, PrimeBass, Band Limiter, mono bass at 110 Hz |
+| **Speech / Talk** | Voice-optimized: fast, dense multiband that evens out substandard material | -14 dB | +4.5 dB | Phase rotator on |
+| **Classical / Wide Dynamics** | Dynamic-preserving: a gentle 2:1-style ride, at most 6 dB of lift, 3 s release | -18 dB | +3 dB | Light multiband, mono bass at 90 Hz |
+
+Every profile runs the regular AGC + Multiband chain and switches Advanced
+Dynamics off when applied; its HF Limiter thresholds sit 0.5 dB above its
+Audio Limiter threshold (the top-band threshold 1 dB tighter). A fresh
+install's defaults equal Music -- Clean. The 2026-10-10 review behind these
+values is `docs/format-profiles-review.md`.
 
 Pick once, tune as needed. The selected profile is stored as `format_profile_id`; switching profiles overwrites the per-stage settings to the new profile (except `custom`, a no-op label). Assume a nominal input level around **-12 dBFS** (pro line-up convention) -- the AGC absorbs source variation from there; 0 dBFS masters work but arrive with no headroom of their own.
 
@@ -452,7 +459,7 @@ This keeps bass more mono-compatible while leaving the upper image open enough f
 
 The current low-frequency enhancement and multiband stages are now tuned more conservatively than earlier builds.
 
-- `PrimeBass` adds perceived bass weight by synthesising controlled harmonics of low-frequency content. The listener hears more bass without the chain having to push LF peaks higher, which saves headroom for the rest of the dynamics chain.
+- `PrimeBass` adds perceived bass weight by synthesising a controlled 2nd + 3rd harmonic series of the bass below its cutoff (missing-fundamental effect): the listener hears more bass on small speakers and car radios without the chain pushing LF peaks higher. Rebuilt in 0.60 after a review found the old generator could not make a 2nd harmonic and let the midrange intermodulate with the bass; `Amount` sets the series level, `Harmonics` the 2nd-versus-3rd balance, `Drive` the hardness, `Density` how much quiet bass is lifted. It is gated by `--verify-primebass`.
 - `Multiband` uses linear-phase Kaiser-windowed FIR crossovers in TX mode (parallel-cumulative-LP topology, sum-to-flat at `-155 dB`), so percussive transients land time-aligned across all bands and the recombined signal only changes spectral balance when the band gains move -- not when bands fall out of phase. Monitor mode keeps the IIR Linkwitz-Riley 4 cascade for low latency. Since 0.45 each crossover sits at exactly -6 dB with a slope of about half an octave to -40 dB (steeper than a Linkwitz-Riley 4, far gentler than the near-brick-wall edges of earlier builds), and the crossovers cost 9.3 ms of processing latency at the 48 kHz audio domain instead of 21 ms. Both 3-band and 5-band modes are supported. INI key `multiband_fir_enabled` toggles the FIR path (default on). Two advanced options are default-off while being evaluated: `multiband_transient_aware_attack_enabled` for peak/RMS transient handling, and `multiband_inter_band_coupling_enabled` for low-band-GR-driven upper-band threshold bias. `multiband_release_program_dependent` (default on) gives each band a dual-slope release since 0.45: a drum hit's extra gain reduction comes back at the band's release time (no hole after the hit), while a genuine drop in average level releases three times more gently (no breathing when a chorus ends); earlier builds only lengthened the release by 10% under this flag.
 
 Recommended starting point:
@@ -469,18 +476,18 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 - `advanced_dynamics_target_db` (default `-16.0`) -- the level every band is brought toward.
 - `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / -3 / -9`) -- tonal balance anchors relative to the target; the 5 bands interpolate between them (the same low/mid/high anchor scheme the multiband compressor uses).
 - `advanced_dynamics_max_gain_db` (default `12.0`) -- maximum lift for quiet program (the reduction side is fixed at 24 dB). The default was lowered from 18 after field testing: high boost both chases natural fades harder and lowers the silence gate (`target - max_gain - 10 dB`), pumping tails on sparse material. Raise it deliberately for wide-dynamics formats.
-- `advanced_dynamics_density` (`0..1`, default `0.5`) -- denser = tighter hold window and faster leveling.
+- `advanced_dynamics_density` (`0..1`, default `0.5`) -- denser = tighter hold window and faster leveling. Independently of the knob, the release slows itself on already-dense programme (up to 2.5x at zero fast/slow envelope divergence) and runs at full speed on sparse, dynamic programme; until 0.60 the code had this backwards.
 - `advanced_dynamics_speed` (`0.25..4`, default `1.0`) -- overall time-constant scale.
 
 A built-in **decay guard** distinguishes "program actively fading" from "program is quiet": while a band's envelope sits well below its recent peak (a note or song decaying naturally), the leveler holds instead of lifting, resuming when the level stabilizes or new material arrives. Without it a solo decaying sound (a bell, a fade-out) gets its fade flattened and extended -- heard as added ringing/sustain.
 
 Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics` and must pass program-material A/B plus listening before any preset enables it.
 
-In the GUI the stage lives at `Processing -> Adv Dyn` (sidebar entry "Advanced Dynamics", between Multiband and Expander, with a card on the Processing Overview grid); in the web dashboard it has its own "Advanced Dynamics" page.
+In both front ends the stage is one of two **Levelling** engines, chosen at the top of the Sound Overview page (GUI and web dashboard alike): **AGC + Multiband** (the regular chain, with the per-band Expander and Band Limiter that run inside the multiband stage) or **Advanced Dynamics**. The choice IS `advanced_dynamics_enabled` and applies live. The pages of the engine not in use are hidden -- sidebar, Overview grid, Monitoring signal chain and pill strip -- so there are no dimmed panes to scan past (until 0.60 they stayed visible, ghosted, behind a "bypassed" banner). The Advanced Dynamics page has no enable toggle of its own; the selector is the switch. Its band layout follows the Multiband page's crossovers; switch to AGC + Multiband to edit them.
 
 While the stage is active, the Monitoring dashboard's Signal Chain "AGC" pill switches identity to **Adv Dyn** and reads the leveler's density plus its five per-band gains (low to high, dB); the web dashboard's Headroom card gains the matching "Adv Dynamics" row. The AGC readouts honestly report the AGC as Off (gain 0.0) while it is bypassed -- the leveler replaces it, so a moving "AGC gain" would be stale telemetry. Over the API the same values are `advancedDynamicsActive`, `advancedDynamicsBandGainsDB` (5 floats, low to high), and `advancedDynamicsDensityDB` in `GET /api/meters` (null while the stage is off).
 
-While the stage is enabled, both UIs ghost the stages it replaces: the AGC, Multiband, Expander, and Band Limiter tabs/cards dim, their controls disable, a "bypassed" banner links back to Advanced Dynamics, and the sidebar/overview enabled-dots show the EFFECTIVE state (off while bypassed). The stored flags are untouched -- disabling Advanced Dynamics restores the exact previous AGC/Multiband behavior. A test pins the bypass as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
+The stored AGC, Multiband, Expander and Band Limiter settings are untouched while Advanced Dynamics is selected -- switching back restores the exact previous behavior. A test pins the replacement as total: with the leveler on, extreme AGC/multiband settings produce bit-identical output to having those stages off.
 
 ## Saving setups: the eight preset slots
 
@@ -594,8 +601,10 @@ and give up the composite-only stages, which the external box then provides.
 The FM-only stages leave the path: the audio keeps its full bandwidth (up to
 the `Program Lowpass` setting, allowed to 20 kHz here), pre-emphasis is forced
 off, stereo-image protection is skipped because a digital carrier has neither
-deviation nor multipath to protect, and the final loudness clipper is not
-offered -- clipping into a codec costs quality. Peaks are held at the true-peak
+deviation nor multipath to protect, the pre-emphasis-aware HF Limiter page
+is hidden and inactive, and the final loudness clipper is not offered --
+clipping into a codec costs quality. Their saved settings are retained for the
+next time the box returns to an FM or AM path. Peaks are held at the true-peak
 ceiling instead of being normalised to full scale.
 
 ### AM Output
@@ -756,11 +765,19 @@ For one-off runs, `--control` (alias: `--web`) or `--control-port 9000`
 enables it without editing the INI; these flags imply `--nogui` (run
 headless, serve the dashboard). In the macOS GUI app, use the Settings window.
 From a source checkout, `scripts/run-build-web.sh` builds the release binary and
-starts it headless with the dashboard, on macOS and Linux alike.
+starts it headless with the dashboard, on macOS and Linux alike. Before the
+run it prints the dashboard URL, the config path and the API key the
+dashboard will ask for (read from that config's `[CONTROL]` section), and it
+refuses to start when something already listens on the control port --
+usually an earlier instance -- naming the process, instead of launching a
+second encoder beside it.
 
 **Security:** binding 127.0.0.1 needs no key. Binding any other interface
 REQUIRES `control_api_key` -- the server refuses to start remote-exposed
-without one. Clients send the key as `Authorization: Bearer <key>` or
+without one. A headless run whose control server cannot start (that refusal,
+or the port already in use) exits with status 1 and says why: an encoder
+without its dashboard cannot be reached, and a second copy on a port another
+instance holds would only fight it for the audio devices. Clients send the key as `Authorization: Bearer <key>` or
 `X-API-Key: <key>`. The server speaks plain HTTP; for access beyond a
 trusted network, front it with a TLS reverse proxy (nginx/caddy).
 
@@ -792,12 +809,15 @@ gains a numeric field for exact values:
   format: sample rate, block size, auto start, spectrum window, monitor;
   the card mixer on Linux; and the read-only Remote Control card showing the
   server's own settings, which stay INI/GUI-only by design), and Test Tone.
-- **Sound** -- Overview (stage grid with enable switches) and Profile (the
-  station-format picker, start here), then the stages grouped by what they
-  do to the signal, in signal order: **Input** (Core, Phase Rotator,
-  Expander), **Levelling** (AGC, Advanced Dynamics), **Tone** (Parametric EQ,
-  PrimeBass + Mono Bass), **Dynamics** (Multiband incl. crossovers X1-X4, MB
-  Limiter), **Peak control** (Bass Clipper, Audio Clipper, HF Limiter, HF
+- **Sound** -- Overview (the Levelling choice, an "Apply recommended" button
+  that re-applies the selected Format Profile's stage settings, and the
+  stage grid with enable switches) and Profile (the station-format picker,
+  start here), then the stages grouped by what they
+  do to the signal, in signal order: **Input** (Core, Phase Rotator),
+  **Levelling** (AGC or Advanced Dynamics, one at a time; see Advanced
+  Dynamics), **Tone** (Parametric EQ, PrimeBass + Mono Bass), **Dynamics**
+  (Multiband incl. crossovers X1-X4, Expander, MB Limiter -- the last two run
+  per band inside the multiband stage), **Peak control** (Bass Clipper, Audio Clipper, HF Limiter, HF
   Clipper, Audio Limiter) and, in MPX Output only, **Transmission** (Stereo
   Coder, Composite Clipper incl. look-ahead + oversampling, BS.412, Final
   Stage). Real switches and sliders with the GUI's control vocabulary,
@@ -850,7 +870,7 @@ Disabled by bypass:
 - Mono bass
 - Multiband processing (incl. per-band expander and MB limiter)
 - Advanced Dynamics
-- Bass / audio / HF clippers
+- Bass and audio clippers
 - Pre-encode audio limiter
 - Stereo-image protection
 
@@ -894,8 +914,9 @@ Start here before changing the processing.
   trim). Keep the operating system and interface at unity and calibrate with
   the two Audio I/O trims instead.
 - **The sound is harsh on cymbals or sibilance.** Back off Final Drive first,
-  then check that the HF Limiter is on and the HF Clipper is off (the default
-  in every Format Profile).
+  then check that the HF Limiter is on (the default in every Format
+  Profile) and that its threshold still sits half a decibel above the Audio
+  Limiter's.
 
 For an ears-on check after any change, `docs/test-playlist.md` lists reference
 tracks chosen to expose specific artifacts -- asymmetrical peaks, sibilance,

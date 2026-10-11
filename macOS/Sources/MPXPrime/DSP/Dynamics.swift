@@ -553,14 +553,25 @@ struct MonoCompressor {
 /// with *program-adaptive* time constants instead of fixed attack/release:
 ///
 ///  - transient acceleration: a rising peak-vs-RMS transient blends the
-///    gain smoother toward a near-instant attack coefficient (up to ~1000x
-///    faster than the base attack) so fast peaks are caught;
+///    gain smoother's TIME CONSTANT from the base attack toward a per-band
+///    floor of two band periods (33 ms on the bass band, 0.3 ms on the top
+///    band at the default crossovers), so fast peaks are caught without
+///    sub-cycle gain slew (modulation splatter) on low bands;
 ///  - come-to-a-stop hold: inside the target window the gain freezes
-///    entirely, and busy (dense) program slows release further, so material
-///    that already sits at the desired density passes untouched;
+///    entirely, and dense (already-compressed) program slows release
+///    further, so material that already sits at the desired density passes
+///    untouched;
 ///  - distance acceleration: the further the band sits from target, the
 ///    faster it approaches (both directions), giving a wide usable range
-///    (>20 dB jumps inside one song) that stays inaudible near target.
+///    (>20 dB jumps inside one song) that stays inaudible near target;
+///  - band sync: no band may sit more than `bandSyncMaxDisparityDB` from
+///    its neighbours (transitively further apart for bands further apart,
+///    the Thimeo / Orban "preserve frequency balance" coupling), so a tone
+///    on a crossover skirt is not lifted by the neighbour's full range and
+///    the top band never ducks alone on every burst;
+///  - per-band peak limiter before the sum: the limiters the classic
+///    multiband path keeps on each band are kept here too, so leveled band
+///    peaks are tamed before the HF limiter and the clippers see them.
 ///
 /// The band split reuses `LinearPhaseMultibandSplitter5` (own instance so
 /// live-toggling never shares filter state with the multiband compressor);
@@ -579,14 +590,34 @@ struct AdvancedDynamicsLeveler {
         /// Slow-release peak of `env` for the decay guard: while `env` sits
         /// well below this (program actively fading), lifting holds.
         var fallEnv: Float = 0.0
+        /// Smoothed band-sync bounds (dB) on this band's gain, derived from
+        /// its neighbours' gains. Start wide open so a fresh stage is unbound
+        /// until the first neighbour reading has settled in.
+        var syncLoDB: Float = -24.0
+        var syncHiDB: Float = 24.0
+        /// Above its gate on the last sample: carries program, so it is a
+        /// spectral-balance reference for its neighbours.
+        var active: Bool = false
     }
     private var bands = [BandState](repeating: BandState(), count: 5)
+    /// Per-band peak limiters, run on each band's leveled output before the
+    /// sum (review finding 1a). Fixed, conservative settings -- the
+    /// multiband-limiter defaults (-3 dB, 0.5 / 50 ms); the generator's
+    /// `multiband_limiter_*` keys belong to the classic path and must have
+    /// no effect here (the stage-bypass contract is bit-exact).
+    private var limiters = [BandLimiter](repeating: BandLimiter(), count: 5)
+    static let bandLimiterThresholdDB: Float = -3.0
+    static let bandLimiterAttackMS: Float = 0.5
+    static let bandLimiterReleaseMS: Float = 50.0
     /// Per-band level targets in dB (amplitude, 20*log10), band 1..5.
     private var bandTargetsDB = [Float](repeating: -16.0, count: 5)
 
-    // Detector coefficients (fixed; the adaptivity lives in the gain smoother).
-    private var rmsAttackCoeff: Float = 0.0
-    private var rmsReleaseCoeff: Float = 0.0
+    // Detector coefficients (fixed; the adaptivity lives in the gain
+    // smoother). The RMS window is band-scaled: at least two band periods
+    // (review finding 5), so the bass band's level has no 2f ripple to
+    // modulate its gain with; the envelope follower keeps 5 / 60 ms.
+    private var rmsAttackCoeffs = [Float](repeating: 0.0, count: 5)
+    private var rmsReleaseCoeffs = [Float](repeating: 0.0, count: 5)
     private var envAttackCoeff: Float = 0.0
     private var envReleaseCoeff: Float = 0.0
     private var transientHoldSamples: Int = 1
@@ -599,13 +630,25 @@ struct AdvancedDynamicsLeveler {
     /// the armed corpus gates are bit-identical to before.
     private var transientHoldDecayCoeff: Float = 0.94
 
-    // Gain-smoother coefficient anchors; per-sample the effective
-    // coefficient is a blend of these (no per-sample expf).
-    private var attackBaseCoeff: Float = 0.0
-    private var attackFastCoeff: Float = 0.0
+    // Attack law anchors, in SECONDS (review finding 2). The per-sample
+    // coefficient is derived from a time constant blended between the base
+    // attack and the band's fast attack; blending the COEFFICIENT instead
+    // (the pre-fix law) reached 30 us at full acceleration on every band,
+    // the 60 Hz band included -- a whole cycle of gain slew per sample.
+    private var attackBaseS: Float = 0.030
+    /// Two band periods per band (2 / lower band edge; band 1 uses 60 Hz).
+    private var attackFloorS = [Float](repeating: 0.0005, count: 5)
+    /// The fastest attack each band may reach: `attackBaseS / 1000`, floored
+    /// at `attackFloorS` and never slower than the base attack itself.
+    private var attackFastS = [Float](repeating: 0.0005, count: 5)
+    private var invSampleRate: Float = 1.0 / 192_000.0
     private var releaseBaseCoeff: Float = 0.0
     private var releaseFastCoeff: Float = 0.0
     private var gateDriftCoeff: Float = 0.0
+    /// Smoother on the band-sync bounds (50 ms) so a bound that appears or
+    /// moves (a neighbour crossing the gate, a fast neighbour attack) pulls
+    /// this band along at a musical rate instead of stepping its gain.
+    private var syncBoundCoeff: Float = 0.0
 
     // Program-density estimator (dual-envelope, WidebandAGCRider pattern).
     private var fastEnv: Float = 0.0
@@ -629,23 +672,78 @@ struct AdvancedDynamicsLeveler {
     private var holdWindowDB: Float = 2.0
     private var gateThresholdDB: Float = -42.0
 
+    /// Band sync (review finding 3): how far a band's gain may sit ABOVE
+    /// (`bandSyncMaxLiftAboveNeighbourDB`) and BELOW
+    /// (`bandSyncMaxCutBelowNeighbourDB`) each adjacent band's gain, in dB.
+    /// Bands further apart are bounded transitively (twice the bound two
+    /// bands apart, and so on), which is the octave-distance weighting in
+    /// its simplest form. The bound is applied to the DESIRED gain, so a
+    /// band comes to rest inside its hold window short of the bound through
+    /// the ordinary time constants (no step), and as a safety clamp on the
+    /// applied gain against the smoothed bound. Internal (not an INI key):
+    /// the roadmap's Step 7 decides whether it becomes one.
+    ///
+    /// `bandSyncGatedBandsAreReferences`: whether a band below its gate
+    /// (no program) still constrains its neighbours. With it on, a lone
+    /// tone over an empty spectrum is lifted at most D past the empty
+    /// bands (the crossover-skirt scenario reads +4 dB) but a sparse
+    /// spectrum -- quiet ballad, speech with empty bass and top bands --
+    /// loses most of its leveling range (quiet_ballad read -4 dB vs the
+    /// classic chain). With it off an empty band carries no spectral-
+    /// balance information and caps nothing; it is still bounded by its
+    /// active neighbours and still drifts to unity itself.
+    static let bandSyncMaxLiftAboveNeighbourDB: Float = 6.0
+    static let bandSyncMaxCutBelowNeighbourDB: Float = 6.0
+    static let bandSyncGatedBandsAreReferences: Bool = false
+    /// The larger of the two bounds: the disparity any adjacent pair of
+    /// active bands can reach (tests).
+    static var bandSyncMaxDisparityDB: Float {
+        max(bandSyncMaxLiftAboveNeighbourDB, bandSyncMaxCutBelowNeighbourDB)
+    }
+
     var groupDelaySamples: Int { splitter.groupDelaySamples }
 
     /// Diagnostic for the rate-independence test: the largest transient hold
     /// any band is currently carrying. Not telemetry.
     var maxHeldTransientDrive: Float { bands.reduce(0.0) { max($0, $1.heldDrive) } }
 
-    /// Structure: sample rate + crossovers. Allocates FIR state — call only
-    /// when these actually changed (engine start / crossover live-change).
+    /// The per-band attack floors in seconds (diagnostics / tests).
+    var attackFloorSeconds: [Float] { attackFloorS }
+
+    /// Structure: sample rate + crossovers. Allocates FIR state when the
+    /// rate or a crossover actually changed -- call on engine start and on
+    /// a crossover live-change. Continuity (review finding 6): the band
+    /// gains, detector envelopes, density and limiter envelopes are KEPT,
+    /// and only the splitter is rebuilt (and only when its design changed),
+    /// so a live crossover change or a re-enable never snaps every band to
+    /// unity on air. `reset()` remains the explicit full flush.
     mutating func configureStructure(
         sampleRate: Float, x1Hz: Float, x2Hz: Float, x3Hz: Float, x4Hz: Float
     ) {
         let sr = max(8_000.0, sampleRate)
-        splitter.configure(x1Hz: x1Hz, x2Hz: x2Hz, x3Hz: x3Hz, x4Hz: x4Hz, sampleRate: sr)
-        // Detector: 10 ms / 90 ms RMS window, 5 ms / 60 ms envelope
-        // (MonoCompressor's hybrid-detector time constants).
-        rmsAttackCoeff = expf(-1.0 / (0.010 * sr))
-        rmsReleaseCoeff = expf(-1.0 / (0.090 * sr))
+        let structureChanged = !structureConfigured
+            || sr != storedSampleRate
+            || x1Hz != storedX1Hz || x2Hz != storedX2Hz
+            || x3Hz != storedX3Hz || x4Hz != storedX4Hz
+        if structureChanged {
+            splitter.configure(x1Hz: x1Hz, x2Hz: x2Hz, x3Hz: x3Hz, x4Hz: x4Hz, sampleRate: sr)
+            splitter.reset()
+        }
+        // Per-band time floors: two periods of the band's lower edge (band 1
+        // has no lower edge; 60 Hz is the lowest program fundamental it is
+        // expected to ride). Guarded so a degenerate crossover cannot make a
+        // floor of seconds or of zero.
+        let edges: [Float] = [60.0, x1Hz, x2Hz, x3Hz, x4Hz]
+        for i in 0..<5 {
+            attackFloorS[i] = 2.0 / clampf(edges[i], 20.0, 24_000.0)
+        }
+        // Detector: 10 ms / 90 ms RMS window, each floored at the band's two
+        // periods; 5 ms / 60 ms envelope (MonoCompressor's hybrid-detector
+        // time constants).
+        for i in 0..<5 {
+            rmsAttackCoeffs[i] = expf(-1.0 / (max(0.010, attackFloorS[i]) * sr))
+            rmsReleaseCoeffs[i] = expf(-1.0 / (max(0.090, attackFloorS[i]) * sr))
+        }
         envAttackCoeff = expf(-1.0 / (0.005 * sr))
         envReleaseCoeff = expf(-1.0 / (0.060 * sr))
         transientHoldSamples = max(1, Int((sr * 0.010).rounded()))
@@ -657,17 +755,42 @@ struct AdvancedDynamicsLeveler {
         couplingReleaseCoeff = expf(-1.0 / (0.300 * sr))
         fallEnvCoeff = expf(-1.0 / (1.0 * sr))
         gateDriftCoeff = expf(-1.0 / (1.6 * sr))
+        syncBoundCoeff = expf(-1.0 / (0.050 * sr))
+        invSampleRate = 1.0 / sr
+        if sr != storedSampleRate || !structureConfigured {
+            configureLimiters(sampleRate: sr)
+        }
         storedSampleRate = sr
+        storedX1Hz = x1Hz
+        storedX2Hz = x2Hz
+        storedX3Hz = x3Hz
+        storedX4Hz = x4Hz
+        structureConfigured = true
         setParameters(
             targetDB: storedTargetDB, lowOffsetDB: storedLowOffsetDB,
             midOffsetDB: storedMidOffsetDB, highOffsetDB: storedHighOffsetDB,
             maxGainDB: storedMaxGainDB, density: storedDensity, speed: storedSpeed
         )
-        reset()
+    }
+
+    private mutating func configureLimiters(sampleRate sr: Float) {
+        for i in 0..<limiters.count {
+            limiters[i].configure(
+                sampleRate: sr,
+                thresholdDB: Self.bandLimiterThresholdDB,
+                attackMS: Self.bandLimiterAttackMS,
+                releaseMS: Self.bandLimiterReleaseMS
+            )
+        }
     }
 
     // Parameter mirrors so structure changes can re-derive coefficients.
+    private var structureConfigured = false
     private var storedSampleRate: Float = 192_000.0
+    private var storedX1Hz: Float = 0.0
+    private var storedX2Hz: Float = 0.0
+    private var storedX3Hz: Float = 0.0
+    private var storedX4Hz: Float = 0.0
     private var storedTargetDB: Float = -16.0
     private var storedLowOffsetDB: Float = 0.0
     private var storedMidOffsetDB: Float = -3.0
@@ -709,19 +832,28 @@ struct AdvancedDynamicsLeveler {
         gateThresholdDB = targetDB - maxLiftDB - 10.0
 
         let speedScale = Double(1.0 / storedSpeed)
-        let attackBaseS = 0.030 * speedScale
-        let attackFastS = max(0.000_05, attackBaseS / 1_000.0)  // ~1000x
+        // Attack anchors in the time domain; `speed` scales the base attack,
+        // the per-band floor is physical (two band periods) and is not
+        // scaled. A floor above the base attack (the bass band at speed 4)
+        // simply pins that band at its base attack.
+        attackBaseS = Float(0.030 * speedScale)
+        for i in 0..<5 {
+            attackFastS[i] = min(attackBaseS, max(attackBaseS / 1_000.0, attackFloorS[i]))
+        }
         let releaseBaseS = lerpf(1.2, 0.4, storedDensity)
         let releaseFastS = releaseBaseS * 0.25
-        attackBaseCoeff = expf(-1.0 / Float(attackBaseS * Double(sr)))
-        attackFastCoeff = expf(-1.0 / Float(attackFastS * Double(sr)))
         releaseBaseCoeff = expf(-1.0 / (Float(Double(releaseBaseS) * speedScale) * sr))
         releaseFastCoeff = expf(-1.0 / (Float(Double(releaseFastS) * speedScale) * sr))
     }
 
+    /// Full flush: every band to unity, every detector and the splitter
+    /// cleared. Not called by the generator's live-change path (see
+    /// `configureStructure`); for tests, verify modes and explicit resets.
     mutating func reset() {
         splitter.reset()
         for i in 0..<bands.count { bands[i] = BandState() }
+        for i in 0..<limiters.count { limiters[i] = BandLimiter() }
+        configureLimiters(sampleRate: storedSampleRate)
         fastEnv = 0.0
         slowEnv = 0.0
         density = 0.0
@@ -735,16 +867,27 @@ struct AdvancedDynamicsLeveler {
     var bandGainsDBFixed: (Float, Float, Float, Float, Float) {
         (bands[0].gainDB, bands[1].gainDB, bands[2].gainDB, bands[3].gainDB, bands[4].gainDB)
     }
+    /// Fast/slow envelope divergence in dB (~0 on dense program, several dB
+    /// on sparse, dynamic program). Diagnostics / telemetry.
     var currentDensityDB: Float { density }
 
     mutating func process(left: Float, right: Float) -> (Float, Float) {
         guard splitter.enabled else { return (left, right) }
-        let split = splitter.process(left: left, right: right)
+        // NaN / Inf guard: one non-finite input sample would otherwise sit
+        // in every one-pole state (envelopes, gains, limiter) for good. It
+        // is replaced by silence for this sample; everything downstream
+        // stays finite and the stage recovers within the FIR length.
+        let inL = left.isFinite ? left : 0.0
+        let inR = right.isFinite ? right : 0.0
+        let split = splitter.process(left: inL, right: inR)
 
         // Program-density estimate on the full-band linked input (the
-        // WidebandAGCRider dual-envelope pattern): busy program -> high
-        // density -> slower release ("stop when already dense").
-        let monoPower = max(1e-12, 0.5 * ((left * left) + (right * right)))
+        // WidebandAGCRider dual-envelope pattern): the fast/slow envelope
+        // DIVERGENCE in dB. Dense, already-compressed program keeps the two
+        // envelopes together (~0 dB); sparse, dynamic program (syllables,
+        // hits, pauses) drives them apart. The release law below slows as
+        // the divergence falls ("stop when already dense").
+        let monoPower = max(1e-12, 0.5 * ((inL * inL) + (inR * inR)))
         fastEnv = zapDenorm((fastEnvCoeff * fastEnv) + ((1.0 - fastEnvCoeff) * monoPower))
         slowEnv = zapDenorm((slowEnvCoeff * slowEnv) + ((1.0 - slowEnvCoeff) * monoPower))
         let envRatio = max(fastEnv, slowEnv) / max(1e-12, min(fastEnv, slowEnv))
@@ -783,9 +926,10 @@ struct AdvancedDynamicsLeveler {
         let linked = sqrtf(((bl * bl) + (br * br)) * 0.5)
 
         var st = bands[i]
-        // RMS window + transient drive (MonoCompressor hybrid pattern).
+        // Band-scaled RMS window + transient drive (MonoCompressor hybrid
+        // pattern).
         let power = linked * linked
-        let rmsCoeff = power > st.rmsPower ? rmsAttackCoeff : rmsReleaseCoeff
+        let rmsCoeff = power > st.rmsPower ? rmsAttackCoeffs[i] : rmsReleaseCoeffs[i]
         st.rmsPower = zapDenorm((rmsCoeff * st.rmsPower) + ((1.0 - rmsCoeff) * power))
         let rms = sqrtf(max(1e-12, st.rmsPower))
         let peakToRMS = linked / max(1e-4, rms)
@@ -801,7 +945,10 @@ struct AdvancedDynamicsLeveler {
         st.heldDrive = st.transientHoldCounter > 0
             ? max(st.heldDrive * transientHoldDecayCoeff, transientDrive)
             : transientDrive
-        let peakWeight = lerpf(0.18, 0.58, st.heldDrive)
+        // At rest the level is the RMS alone (no instantaneous term, so no
+        // 2f ripple on the bass band's level); while a front is being
+        // caught the hold blends up to 58 % of |x| in.
+        let peakWeight = 0.58 * st.heldDrive
         let hybrid = (rms * (1.0 - peakWeight)) + (linked * peakWeight)
         let envCoeff = hybrid > st.env ? envAttackCoeff : envReleaseCoeff
         st.env = zapDenorm((envCoeff * st.env) + ((1.0 - envCoeff) * hybrid))
@@ -825,8 +972,43 @@ struct AdvancedDynamicsLeveler {
         default: weight = Self.couplingWeights.0
         }
         let couplingBias = -weight * couplingGRDB
-        let desiredDB = clampf(
+        var desiredDB = clampf(
             (bandTargetsDB[i] + couplingBias) - levelDB, -maxCutDB, maxLiftDB)
+
+        // Band sync: this band's gain must stay within the lift / cut
+        // bounds of each (reference) neighbour's gain. Band i-1 already
+        // carries this sample's gain and gate state, band i+1 the previous
+        // sample's. The bound targets are smoothed (50 ms) before use so
+        // neither the appearance of a bound nor a fast neighbour attack can
+        // step this band's gain.
+        st.active = levelDB >= gateThresholdDB
+        let liftD = Self.bandSyncMaxLiftAboveNeighbourDB
+        let cutD = Self.bandSyncMaxCutBelowNeighbourDB
+        var boundLo = -maxCutDB
+        var boundHi = maxLiftDB
+        if i > 0 {
+            let nb = bands[i - 1]
+            if nb.active || Self.bandSyncGatedBandsAreReferences {
+                boundLo = max(boundLo, nb.gainDB - cutD)
+                boundHi = min(boundHi, nb.gainDB + liftD)
+            }
+        }
+        if i < 4 {
+            let nb = bands[i + 1]
+            if nb.active || Self.bandSyncGatedBandsAreReferences {
+                boundLo = max(boundLo, nb.gainDB - cutD)
+                boundHi = min(boundHi, nb.gainDB + liftD)
+            }
+        }
+        if boundLo > boundHi {
+            // Neighbours more than 2D apart: sit between them.
+            let mid = 0.5 * (boundLo + boundHi)
+            boundLo = mid
+            boundHi = mid
+        }
+        st.syncLoDB = (syncBoundCoeff * st.syncLoDB) + ((1.0 - syncBoundCoeff) * boundLo)
+        st.syncHiDB = (syncBoundCoeff * st.syncHiDB) + ((1.0 - syncBoundCoeff) * boundHi)
+        desiredDB = clampf(desiredDB, st.syncLoDB, st.syncHiDB)
 
         let errorDB = desiredDB - st.gainDB
         if levelDB < gateThresholdDB {
@@ -835,29 +1017,43 @@ struct AdvancedDynamicsLeveler {
         } else if fabsf(errorDB) <= holdWindowDB {
             // At target: come to a complete stop (gain untouched).
         } else if errorDB < 0.0 {
-            // Reduce: transient drive + distance accelerate the base
-            // attack toward the near-instant coefficient (blend of
-            // precomputed anchors, no per-sample expf).
+            // Reduce: transient drive + distance accelerate the base attack
+            // toward the band's fast attack. The blend is in the TIME domain
+            // (accel 0.5 = a quarter of the way from base to fast, in
+            // seconds), and the fast attack is floored at two band periods,
+            // so no band ever slews its gain inside one cycle. One expf per
+            // reducing band per sample; the hold / lift / gate branches
+            // (most of steady state) never pay it.
             let distanceAccel = clampf((-errorDB - holdWindowDB) / 12.0, 0.0, 1.0)
             let accel = max(st.heldDrive, distanceAccel)
-            let coeff = lerpf(attackBaseCoeff, attackFastCoeff, accel * accel)
+            let tauS = lerpf(attackBaseS, attackFastS[i], accel * accel)
+            let coeff = expf(-invSampleRate / tauS)
             st.gainDB = (coeff * st.gainDB) + ((1.0 - coeff) * desiredDB)
         } else if decaying {
             // Hold: let the fade decay naturally at whatever gain the
             // material was riding; lifting resumes when the envelope
             // stabilizes or new material arrives.
         } else {
-            // Lift: base release, slowed by program density, accelerated
-            // when the band sits far below target.
+            // Lift: base release, accelerated when the band sits far below
+            // target, slowed by program density.
             let distanceAccel = clampf((errorDB - holdWindowDB) / 15.0, 0.0, 1.0)
             var rel = lerpf(releaseBaseCoeff, releaseFastCoeff, distanceAccel)
-            // Density slowdown: blend toward "no movement" (coeff -> 1)
-            // as the program gets busy. densitySmoothed is 0..4 dB.
-            let slowBlend = clampf(density / 4.0, 0.0, 1.0)
-            rel = lerpf(rel, 1.0, slowBlend * 0.6)
+            // Density law (review finding 4). `density` is the fast/slow
+            // envelope divergence: ~0 dB on dense, already-compressed
+            // program, 4 dB and more on sparse, dynamic program. Dense
+            // program already sits at its density and must be left alone,
+            // so the release slows as the divergence falls (2.5x slower at
+            // 0 dB); sparse program gets the full configured release so the
+            // lift can follow it. The pre-fix law slowed WITH divergence --
+            // the opposite of what the settings reference promises.
+            let denseness = 1.0 - clampf(density / 4.0, 0.0, 1.0)
+            rel = lerpf(rel, 1.0, denseness * 0.6)
             st.gainDB = (rel * st.gainDB) + ((1.0 - rel) * desiredDB)
         }
         st.gainDB = clampf(st.gainDB, -maxCutDB, maxLiftDB)
+        // Safety clamp against the smoothed sync bound (continuous, since
+        // the bound is).
+        st.gainDB = clampf(st.gainDB, st.syncLoDB, st.syncHiDB)
         if i == 0 {
             // Smooth low-band reduction feeding the coupling bias.
             let reduction = max(0.0, -st.gainDB)
@@ -869,6 +1065,8 @@ struct AdvancedDynamicsLeveler {
         bands[i] = st
 
         let gain = powf(10.0, st.gainDB / 20.0)
-        return (bl * gain, br * gain)
+        // Per-band peak limiter before the sum: leveled band peaks are
+        // tamed here, not left to the HF limiter / clippers.
+        return limiters[i].process(left: bl * gain, right: br * gain)
     }
 }

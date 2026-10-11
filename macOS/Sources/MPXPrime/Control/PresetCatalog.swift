@@ -216,12 +216,17 @@ enum PresetCatalog {
             lowReleaseMS: 450, midThresholdDB: -16, midRatio: 1.4, midAttackMS: 30,
             midReleaseMS: 360, highThresholdDB: -15, highRatio: 1.25, highAttackMS: 20,
             highReleaseMS: 280, kneeDB: 4.5, linkStrength: 0.60, releaseProgramDependent: true),
+        // Talk density (2026-10 format-profile review, finding 1): real
+        // ratios and a fast release, the way Orban NEWS-TALK and Omnia Talk
+        // run it. The old 1.24 / 1.18 / 1.08 at 360-560 ms was the slowest
+        // and weakest row in the catalogue, and at light intensity the high
+        // band clamped to bypass.
         .init(
             id: "5_talk", title: "5B Talk", mode: 5, lowHz: nil, highHz: nil, x1Hz: 110, x2Hz: 420,
-            x3Hz: 2200, x4Hz: 7600, lowThresholdDB: -12.5, lowRatio: 1.24, lowAttackMS: 48,
-            lowReleaseMS: 560, midThresholdDB: -11.8, midRatio: 1.18, midAttackMS: 40,
-            midReleaseMS: 450, highThresholdDB: -11.2, highRatio: 1.08, highAttackMS: 30,
-            highReleaseMS: 360, kneeDB: 5.2, linkStrength: 0.46, releaseProgramDependent: true),
+            x3Hz: 2200, x4Hz: 7600, lowThresholdDB: -14, lowRatio: 1.8, lowAttackMS: 25,
+            lowReleaseMS: 220, midThresholdDB: -13, midRatio: 1.7, midAttackMS: 18,
+            midReleaseMS: 180, highThresholdDB: -12, highRatio: 1.5, highAttackMS: 12,
+            highReleaseMS: 140, kneeDB: 5.2, linkStrength: 0.46, releaseProgramDependent: true),
         .init(
             id: "5_urban", title: "5B Urban", mode: 5, lowHz: nil, highHz: nil, x1Hz: 85, x2Hz: 300,
             x3Hz: 1300, x4Hz: 5400, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 18,
@@ -387,7 +392,15 @@ enum PresetCatalog {
         .init(id: "speech", title: "Speech / Talk",
               agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 100.0,
               agcReleaseMS: 750.0, agcMaxGainDB: 10.0, agcMinGainDB: -8.0,
-              finalDriveDB: 4.5, preEncodeAudioLimiterEnabled: true)
+              finalDriveDB: 4.5, preEncodeAudioLimiterEnabled: true),
+        // Classical (2026-10 review, finding 3): a gentle 2:1-style ride with
+        // no pianissimo lift. Orban CLASSICAL runs its AGC near 0 dB gain
+        // reduction and BBC classical distribution keeps an LRA of 15 LU;
+        // "balanced"'s 12 dB of lift at 1.2 s chased every quiet passage.
+        .init(id: "classical", title: "Classical / Wide",
+              agcEnabled: true, agcTargetDB: -18.0, agcAttackMS: 200.0,
+              agcReleaseMS: 3000.0, agcMaxGainDB: 6.0, agcMinGainDB: -12.0,
+              finalDriveDB: 3.0, preEncodeAudioLimiterEnabled: true)
     ]
 
     static func applyFinalStage(id: String, to config: inout AppConfig) -> String? {
@@ -429,17 +442,39 @@ enum PresetCatalog {
         // Gain structure -- a profile owns the FULL chain state so one click
         // is a guaranteed-sane sound (2026-08 rework: the old 8 profiles only
         // set the "color" and left broken level structures broken).
+        /// The AGC target, speed and range come from the final-stage preset
+        /// (2026-10 review, finding 2: the profile used to override the
+        /// target, so the stored preset id no longer described the AGC).
+        /// `agcEnabled` restates the preset's flag for the gain-structure test.
         let agcEnabled: Bool
-        let agcTargetDB: Double
         let preEncodeLimiterEnabled: Bool
         let preEncodeThreshold: Double
         let limitMPX: Bool
         let compositeClipperEnabled: Bool
         let compositeClipperLookaheadMS: Double
-        let hfClipperEnabled: Bool
         let hfLimiterEnabled: Bool
+        // 0.5 dB above `preEncodeThreshold` (US 4,103,243: the HF comparators
+        // sit above the broadband limiter so the stage only sees HF excess);
+        // the top-octave ceiling is 1 dB under that.
+        let hfLimiterThresholdDB: Double
+        let hfLimiterTopThresholdDB: Double
         let bassClipperEnabled: Bool
         let phaseRotationEnabled: Bool
+        // Spectral shaping and density (2026-10 review): the parametric EQ
+        // (band 1 low shelf at 80 Hz, band 3 presence at 3 kHz Q 1; bands 2
+        // and 4 flat) and the per-band limiter (-3 dB, 0.5 / 50 ms) belong
+        // to the profile too, so every stage has ONE defined state after a
+        // profile pick. Advanced Dynamics is switched off by every profile
+        // (finding 6): a profile defines the regular AGC + Multiband chain.
+        let parametricEQEnabled: Bool
+        let peqLowShelfGainDB: Double
+        let peqPresenceGainDB: Double
+        let bandLimiterEnabled: Bool
+
+        /// The AGC target the profile lands on, read from its final-stage preset.
+        var agcTargetDB: Double {
+            PresetCatalog.finalStagePresets.first(where: { $0.id == finalStagePresetID })?.agcTargetDB ?? .nan
+        }
     }
 
     static let formatProfiles: [FormatProfile] = [
@@ -452,64 +487,108 @@ enum PresetCatalog {
               primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 6.0,
-              agcEnabled: true, agcTargetDB: -16.0,
+              agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
-              phaseRotationEnabled: false),
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.6, hfLimiterTopThresholdDB: -1.6,
+              bassClipperEnabled: false,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false),
+        // Music -- Clean is also what `AppConfig()` ships: the drift test
+        // (`FormatProfileTests.defaultProfileMatchesShippingDefaults`) holds
+        // the two equal key for key.
         .init(id: "music_clean", title: "Music — Clean",
-              summary: "The default: transparent leveling, honest peaks, low clipper work. For stations that value fidelity over loudness.",
+              summary: "The default: transparent leveling, honest peaks, low clipper work, bass clipper idling at the defaults. For stations that value fidelity over loudness.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
               primeBassPresetID: "ac", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 4.0,
-              agcEnabled: true, agcTargetDB: -16.0,
+              agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.90,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
-              phaseRotationEnabled: false),
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.4, hfLimiterTopThresholdDB: -1.4,
+              // Every vendor structure bass-clips (Orban, Omnia). At drive 1.5
+              // into -3 dB the distortion-cancelled stage idles on AC material
+              // and catches the LF peaks that would otherwise spend composite
+              // budget (2026-10 review, finding 5).
+              bassClipperEnabled: true,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false),
         .init(id: "music_loud", title: "Music — Loud",
-              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper on, PrimeBass, mono bass at 115 Hz.",
+              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper + band limiter on, PrimeBass, a touch of low-shelf and presence EQ, mono bass at 115 Hz.",
               multibandPresetID: "5_chr", multibandIntensity: .normal,
               finalStagePresetID: "chr", primeBassEnabled: true,
               primeBassPresetID: "chr", monoBassFreqHz: 115.0,
               compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
               finalDriveDB: 8.0,
-              agcEnabled: true, agcTargetDB: -15.0,
+              agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: true,
-              phaseRotationEnabled: false),
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.9, hfLimiterTopThresholdDB: -1.9,
+              bassClipperEnabled: true,
+              phaseRotationEnabled: false,
+              // Orban GREGG "<100 Hz lift" and IMPACT presence (2026-10 review,
+              // listening-gated); the band limiter buys density before more
+              // clipping (roadmap B4).
+              parametricEQEnabled: true, peqLowShelfGainDB: 1.5, peqPresenceGainDB: 1.0,
+              bandLimiterEnabled: true),
+        // The top density tier 0.45 folded into Loud (its EDM profile was
+        // dance heavy at +9 dB). Orban ships Open / Medium / Dense per format;
+        // the most shared Stereo Tool presets are "CHR Dense" / "Loud Dense".
+        .init(id: "music_dense", title: "Music — Dense",
+              summary: "Maximum density: dance multiband at heavy intensity, 9 dB of drive into a tight composite clipper, PrimeBass, every peak stage on, mono bass at 110 Hz. For CHR / EDM / urban stations that compete on loudness.",
+              multibandPresetID: "5_dance", multibandIntensity: .heavy,
+              finalStagePresetID: "chr", primeBassEnabled: true,
+              primeBassPresetID: "chr", monoBassFreqHz: 110.0,
+              compositeClipperThresholdDB: -0.6, compositeClipperCeilingDB: -0.2,
+              finalDriveDB: 9.0,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.9, hfLimiterTopThresholdDB: -1.9,
+              bassClipperEnabled: true,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: true),
         .init(id: "speech", title: "Speech / Talk",
-              summary: "Voice-optimized: phase rotator for waveform symmetry, speech multiband + final stage, conservative drive.",
-              multibandPresetID: "5_talk", multibandIntensity: .light,
+              summary: "Voice-optimized: phase rotator for waveform symmetry, fast-release talk multiband for density, speech final stage, conservative drive.",
+              multibandPresetID: "5_talk", multibandIntensity: .normal,
               finalStagePresetID: "speech", primeBassEnabled: false,
               primeBassPresetID: "talk", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 4.5,
-              agcEnabled: true, agcTargetDB: -16.0,
+              agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
-              phaseRotationEnabled: true),
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.6, hfLimiterTopThresholdDB: -1.6,
+              bassClipperEnabled: false,
+              phaseRotationEnabled: true,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false),
         .init(id: "classical_wide", title: "Classical / Wide Dynamics",
-              summary: "Dynamic-preserving: gentle slow AGC, light multiband, minimal clipper work, no enhancement.",
+              summary: "Dynamic-preserving: a slow 6 dB AGC ride with no pianissimo lift, light multiband, minimal clipper work, mono bass only below 90 Hz, no enhancement.",
               multibandPresetID: "5_classic", multibandIntensity: .light,
-              finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
+              finalStagePresetID: "classical", primeBassEnabled: false,
+              primeBassPresetID: "ac", monoBassFreqHz: 90.0,
               compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
               finalDriveDB: 3.0,
-              agcEnabled: true, agcTargetDB: -18.0,
+              agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.92,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
-              hfClipperEnabled: false, hfLimiterEnabled: true, bassClipperEnabled: false,
-              phaseRotationEnabled: false)
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.2, hfLimiterTopThresholdDB: -1.2,
+              bassClipperEnabled: false,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false)
     ]
 
     static func formatProfile(forID id: String) -> FormatProfile? {
@@ -547,17 +626,49 @@ enum PresetCatalog {
         // Gain structure (2026-08 rework): the profile owns the full chain
         // state so a profile pick can never leave the safety soft-clips as
         // the de-facto peak controller.
+        // The AGC target, speed and range stay as the final-stage preset set
+        // them (2026-10 review, finding 2); only the flag is restated.
         config.widebandAGCEnabled = profile.agcEnabled
-        config.widebandAGCTargetDB = profile.agcTargetDB
         config.preEncodeAudioLimiterEnabled = profile.preEncodeLimiterEnabled
         config.preEncodeThreshold = profile.preEncodeThreshold
         config.limitMPX = profile.limitMPX
         config.compositeClipperEnabled = profile.compositeClipperEnabled
         config.compositeClipperLookaheadMS = profile.compositeClipperLookaheadMS
-        config.hfClipperEnabled = profile.hfClipperEnabled
         config.hfLimiterEnabled = profile.hfLimiterEnabled
+        config.hfLimiterThresholdDB = profile.hfLimiterThresholdDB
+        config.hfLimiterTopThresholdDB = profile.hfLimiterTopThresholdDB
+        // The bass clipper runs at the shipped defaults wherever a profile
+        // turns it on: -3 dB, 150 Hz, drive 1.5 (idle on AC material).
         config.bassClipperEnabled = profile.bassClipperEnabled
+        config.bassClipperThresholdDB = -3.0
+        config.bassClipperCrossoverHz = 150.0
+        config.bassClipperDrive = 1.5
         config.phaseRotationEnabled = profile.phaseRotationEnabled
+        // Spectral shaping: band 1 low shelf at 80 Hz, band 3 presence at
+        // 3 kHz Q 1; bands 2 and 4 flat at their default centres.
+        config.parametricEQEnabled = profile.parametricEQEnabled
+        config.peqB1FreqHz = 80.0
+        config.peqB1GainDB = profile.peqLowShelfGainDB
+        config.peqB2FreqHz = 500.0
+        config.peqB2GainDB = 0.0
+        config.peqB2Q = 1.0
+        config.peqB3FreqHz = 3000.0
+        config.peqB3GainDB = profile.peqPresenceGainDB
+        config.peqB3Q = 1.0
+        config.peqB4FreqHz = 8000.0
+        config.peqB4GainDB = 0.0
+        // Per-band limiter inside the multiband stage: -3 dB, 0.5 / 50 ms.
+        config.multibandLimiterEnabled = profile.bandLimiterEnabled
+        config.multibandLimiterThresholdDB = -3.0
+        config.multibandLimiterAttackMS = 0.5
+        config.multibandLimiterReleaseMS = 50.0
+        // A profile defines the regular AGC + Multiband chain. Under Advanced
+        // Dynamics the AGC and multiband settings just written are bypassed
+        // and the levelling would not change (2026-10 review, finding 6), so
+        // the Levelling choice is reset here. It is deliberately NOT an
+        // installation-preserved key (InstallationKeys.swift): snapshots and
+        // profiles carry it, the way they carry the rest of the sound.
+        config.advancedDynamicsEnabled = false
         return profile.title
     }
 }

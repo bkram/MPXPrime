@@ -74,8 +74,15 @@ struct AdvancedDynamicsHoldTests {
             #expect(ratio > 0.05 && ratio < 0.8, "\(sr) Hz: implausible decay share \(ratio)")
             ratios.append(ratio)
         }
+        // Tolerance 0.06 (was 0.03): the share depends on how many rising
+        // edges of the burst re-trigger the hold, which is sample-exact and
+        // so mildly rate-dependent (measured 0.41 / 0.41 / 0.37 at 48 / 96 /
+        // 192 kHz once the detector's rest-state instantaneous term was
+        // dropped, 2026-10-10). A flat 0.94 per sample would read 0.05 and
+        // 0.003 at 96 and 192 kHz: the fault this test exists for is an
+        // order of magnitude outside the tolerance.
         for (i, sr) in [96_000, 192_000].enumerated() {
-            #expect(abs(ratios[i + 1] - ratios[0]) < 0.03,
+            #expect(abs(ratios[i + 1] - ratios[0]) < 0.06,
                     "\(sr) Hz decays the hold to \(ratios[i + 1]) in 0.5 ms where 48 kHz decays it to \(ratios[0])")
         }
     }

@@ -49,6 +49,7 @@ jobs:
         run: |
           macOS/.build/release/MPXPrime --verify --seconds 5
           macOS/.build/release/MPXPrime --verify-receiver --seconds 5
+          macOS/.build/release/MPXPrime --verify-primebass --seconds 3
           macOS/.build/release/MPXPrime --verify --baseline-strict
 
   linux:

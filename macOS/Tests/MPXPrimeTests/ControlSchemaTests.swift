@@ -179,6 +179,45 @@ struct ControlSchemaTests {
         #endif
     }
 
+    @Test func levellingModelMirrorsTheSharedTable() throws {
+        // The Levelling engine picker is the same choice on both front ends:
+        // the dashboard reads `model.levelling`, the GUI reads
+        // `LevellingEngine`. A page one lists and the other does not would be
+        // hidden on one surface and shown on the other.
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MPXPrime/Control/WebUI/schema.json")
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]
+        let model = root["model"] as? [String: Any] ?? [:]
+        let levelling = model["levelling"] as? [String: Any] ?? [:]
+        #expect(levelling["key"] as? String == LevellingEngine.configKey)
+        let engines = levelling["engines"] as? [[String: Any]] ?? []
+        #expect(engines.map { $0["id"] as? String } == LevellingEngine.allCases.map(\.rawValue))
+        #expect(engines.map { $0["title"] as? String } == LevellingEngine.allCases.map(\.title))
+        #expect(engines.map { $0["pages"] as? [String] ?? [] } == LevellingEngine.allCases.map(\.pageIDs))
+        // The value each engine stores is the flag's INI spelling.
+        #expect(engines.map { $0["value"] as? String } == ["False", "True"])
+
+        let stages = model["stages"] as? [[String: Any]] ?? []
+        let stageIDs = Set(stages.compactMap { $0["id"] as? String })
+        for id in LevellingEngine.allCases.flatMap(\.pageIDs) {
+            #expect(stageIDs.contains(id), "levelling names unknown stage page \(id)")
+            #expect(LevellingEngine.engine(forPage: id) != nil)
+        }
+        // Hidden, not ghosted: no page carries the 0.59 bypass marker.
+        for stage in stages {
+            #expect(stage["bypassedWhen"] == nil, "stage \(stage["id"] ?? "?") still carries bypassedWhen")
+        }
+        // The picker is the one switch: the Advanced Dynamics page lists no
+        // enable toggle of its own, while the key keeps its widget so a
+        // PATCH of it still renders.
+        let advanced = stages.first { $0["id"] as? String == "advanced_dynamics" } ?? [:]
+        #expect(!(advanced["keys"] as? [String] ?? []).contains(LevellingEngine.configKey))
+        #expect(advanced["enable"] == nil, "advanced_dynamics must not carry its own enable")
+        let widgets = root["schema"] as? [String: [String: Any]] ?? [:]
+        #expect(widgets[LevellingEngine.configKey] != nil)
+    }
+
     @Test func everyINIKeyHasASchemaDecision() throws {
         let schema = try loadSchema()
         let vocabulary = try iniVocabulary()
@@ -261,7 +300,8 @@ struct ControlSchemaTests {
             "hf_limiter_threshold_db": .hfLimiter,
             "hf_limiter_attack_ms": .hfLimiter,
             "hf_limiter_release_ms": .hfLimiter,
-            "hf_limiter_max_reduction_db": .hfLimiter
+            "hf_limiter_max_reduction_db": .hfLimiter,
+            "hf_limiter_top_threshold_db": .hfLimiter
         ]
         let everyMode = AppConfig.OperatingMode.allCases.map(\.rawValue)
         for (key, feature) in expected {

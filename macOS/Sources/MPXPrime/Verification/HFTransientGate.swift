@@ -27,9 +27,23 @@ import MPXPrimeCore
 //                the 0-15 kHz audio composite. Nothing but the pilot belongs
 //                there; L/R-domain clipping products that are not lowpassed
 //                afterwards show up here (pilot guard + L-R sideband foot).
+//   HF loss   -- the HF limiter's own tonal cost (2026-10, docs/hf-limiter-
+//                review.md finding 3): decoded 6-15 kHz level against the
+//                100 Hz-1 kHz bed with the stage ON minus the same chain
+//                with it OFF, on the hat and ride scenarios (dB, positive =
+//                the limiter dulled the top). Against the INPUT the column
+//                reads 6-13 dB on every profile and 0.5 dB of it is the
+//                limiter: the multiband takes the rest off these synthetic
+//                beds, so the input is no reference for this stage.
+//   G ripple  -- the HF limiter's gain trajectory on a SUSTAINED cymbal
+//                wash (no hats): depth of its 20-300 Hz content, as the
+//                peak-to-peak of an equivalent sinusoid. The hold/release
+//                cycle of a wash lives there and the SINAD mask hid it.
 
 struct HFTransientScenario {
     let name: String
+    /// Reports the HF limiter's gain-trajectory ripple (the sustained wash).
+    var gainRipple: Bool = false
     /// Hat partials whose bins count as "wanted" in the decoded spectrum;
     /// empty for noise-based scenarios (SINAD not computed).
     let wantedHz: [Double]
@@ -74,6 +88,10 @@ func hfTransientScenarios() -> [HFTransientScenario] {
     var hatNoiseR = DeterministicNoise(seed: 0x4846_0000_0000_0002)
     var washNoiseL = DeterministicNoise(seed: 0x4846_0000_0000_0003)
     var washNoiseR = DeterministicNoise(seed: 0x4846_0000_0000_0004)
+    var steadyNoiseL = DeterministicNoise(seed: 0x4846_0000_0000_0005)
+    var steadyNoiseR = DeterministicNoise(seed: 0x4846_0000_0000_0006)
+    var steadyBandL = HFNoiseBand()
+    var steadyBandR = HFNoiseBand()
     var hatBandL = HFNoiseBand()
     var hatBandR = HFNoiseBand()
     var washBandL = HFNoiseBand()
@@ -120,6 +138,24 @@ func hfTransientScenarios() -> [HFTransientScenario] {
             let washL = 0.12 * washBandL.process(washNoiseL.next(), sampleRate: sr)
             let washR = 0.13 * washBandR.process(washNoiseR.next(), sampleRate: sr)
             return (Float(b.0) + hatL + washL, Float(b.1) + hatR + washR)
+        },
+        HFTransientScenario(
+            name: "wash_sustained", gainRipple: true,
+            wantedHz: [], wantedHalfWidthHz: 0.0, bedHz: bed
+        ) { frame, sampleRate in
+            // A steady crash/ride wash (6-14 kHz noise at a constant level)
+            // over a QUIET bed, so the wash owns the pre-emphasised peak and
+            // the HF limiter works: the gain-ripple scenario. (On the full
+            // bed the peaks are the bed's and the program gate rightly keeps
+            // the stage out.) No hats, so nothing in 20-300 Hz is program --
+            // whatever the gain trajectory carries there is the hold/release
+            // cycle.
+            let t = Double(frame) / sampleRate
+            let sr = Float(sampleRate)
+            let b = bedSample(t)
+            let washL = 0.45 * steadyBandL.process(steadyNoiseL.next(), sampleRate: sr)
+            let washR = 0.40 * steadyBandR.process(steadyNoiseR.next(), sampleRate: sr)
+            return (Float(0.25 * b.0) + washL, Float(0.25 * b.1) + washR)
         }
     ]
 }
@@ -130,6 +166,13 @@ struct HFTransientMeasurement {
     var hfSINADDB: Float?
     var inputHFSINADDB: Float?
     var hfCrestDeltaDB: Float = 0.0
+    /// Decoded 6-15 kHz vs 100 Hz-1 kHz (dB); the HF loss column is the
+    /// difference between two of these, HF limiter ON minus OFF.
+    var decodedHFOverBedDB: Float?
+    /// 20-300 Hz depth of the HF limiter's gain trajectory (dB p-p).
+    var gainRippleDB: Float?
+    /// Average HF limiter gain reduction over the window (dB).
+    var hfLimiterGRDB: Float = 0.0
 }
 
 /// Hann-windowed power spectrum (bins 0..<fftSize/2) of `samples[start..<start+fftSize]`.
@@ -207,6 +250,25 @@ func hfCrestDB(_ samples: [Float], start: Int, count: Int, sampleRate: Float) ->
     return Float(20.0 * log10(Double(max(1e-15, p999)) / rms))
 }
 
+/// Depth of the 20-300 Hz content of the HF limiter's gain trajectory (dB,
+/// as the peak-to-peak of an equivalent sinusoid: 2 sqrt 2 x the RMS of the
+/// band-passed gain in dB). LR4 band edges in Double, primed on the samples
+/// before the window; the trajectory is read at the render rate.
+func hfGainRippleDB(_ gains: [Float], start: Int, count: Int, sampleRate: Float) -> Float {
+    var hp = LR4Section()
+    var lp = LR4Section()
+    hp.configureHighpass(cutoffHz: 20.0, sampleRate: sampleRate)
+    lp.configureLowpass(cutoffHz: 300.0, sampleRate: sampleRate)
+    let primeStart = max(0, start - Int(0.5 * sampleRate))
+    var sumSq: Double = 0.0
+    for i in primeStart..<(start + count) {
+        let gainDB = -20.0 * log10f(max(1e-6, gains[i]))
+        let banded = lp.process(hp.process(gainDB))
+        if i >= start { sumSq += Double(banded * banded) }
+    }
+    return Float(2.0 * 2.0.squareRoot() * (sumSq / Double(max(1, count))).squareRoot())
+}
+
 func measureHFTransient(
     config: AppConfig,
     scenario: HFTransientScenario,
@@ -218,11 +280,13 @@ func measureHFTransient(
     var inputLeft = [Float](repeating: 0.0, count: frames)
     var inputRight = [Float](repeating: 0.0, count: frames)
     var mpx = [Float](repeating: 0.0, count: frames)
+    var hfGain = [Float](repeating: 1.0, count: frames)
     for frame in 0..<frames {
         let source = scenario.sample(frame, sampleRate)
         inputLeft[frame] = source.0
         inputRight[frame] = source.1
         mpx[frame] = generator.renderSingleSample(leftIn: source.0, rightIn: source.1)
+        hfGain[frame] = generator.hfLimiterGain
     }
 
     // Analysis window: the last power-of-two block (<= 131072 samples, ~0.68 s
@@ -295,7 +359,19 @@ func measureHFTransient(
         m.hfSINADDB = sinad(chosenSpec)
         let inputSpec = hannPowerSpectrum(inputLeft, start: start, fftSize: fftSize)
         m.inputHFSINADDB = sinad(inputSpec)
+        // Tonal balance: the top band against the bed. Level independent
+        // (the AGC / drive move both bands together), so ON minus OFF is
+        // the HF the limiter alone took away.
+        let hf = bandPower(chosenSpec, sampleRate: sampleRate, fftSize: fftSize, lowHz: 6_000.0, highHz: 15_000.0)
+        let bed = bandPower(chosenSpec, sampleRate: sampleRate, fftSize: fftSize, lowHz: 100.0, highHz: 1_000.0)
+        m.decodedHFOverBedDB = Float(10.0 * log10(max(1e-30, hf) / max(1e-30, bed)))
     }
+    if scenario.gainRipple {
+        m.gainRippleDB = hfGainRippleDB(hfGain, start: start, count: fftSize, sampleRate: Float(sampleRate))
+    }
+    var grSum: Double = 0.0
+    for i in start..<frames { grSum += Double(-20.0 * log10f(max(1e-6, hfGain[i]))) }
+    m.hfLimiterGRDB = Float(grSum / Double(fftSize))
 
     let sr = Float(sampleRate)
     m.hfCrestDeltaDB =
@@ -323,7 +399,6 @@ func applyFieldChain2026_08(_ c: inout AppConfig) {
     c.compositeClipperLookaheadMS = 2.0
     c.compositeClipperThresholdDB = -0.8
     c.compositeClipperCeilingDB = -0.2
-    c.hfClipperEnabled = false
     c.bassClipperEnabled = false
     c.dcClipperEnabled = false
     c.limitMPX = false
@@ -361,15 +436,11 @@ func hfTransientChainVariants() -> [HFTransientChainVariant] {
         },
         HFTransientChainVariant(label: "profile music_clean", gated: true, mutate: profile("music_clean")),
         HFTransientChainVariant(label: "profile music_loud", gated: true, mutate: profile("music_loud")),
+        HFTransientChainVariant(label: "profile music_dense", gated: true, mutate: profile("music_dense")),
         HFTransientChainVariant(label: "profile speech", gated: true, mutate: profile("speech")),
         HFTransientChainVariant(label: "profile classical_wide", gated: true, mutate: profile("classical_wide")),
         HFTransientChainVariant(label: "music_loud - HF limiter OFF", gated: false,
                                 mutate: loudPlus { $0.hfLimiterEnabled = false }),
-        HFTransientChainVariant(label: "music_loud + HF clipper (pre-0.45)", gated: false,
-                                mutate: loudPlus {
-                                    $0.hfLimiterEnabled = false
-                                    $0.hfClipperEnabled = true
-                                }),
         HFTransientChainVariant(label: "music_loud HF limiter thr -4 dB", gated: false,
                                 mutate: loudPlus { $0.hfLimiterThresholdDB = -4.0 }),
         HFTransientChainVariant(label: "music_loud HF limiter attack 0.5 ms", gated: false,
@@ -437,6 +508,11 @@ let hfTransientMinHatSINADDB: Float = 20.0
 let hfTransientMinHatSINADLoudDB: Float = 15.0
 let hfTransientMinCrestDeltaDB: Float = -6.0
 let hfTransientMaxGapSpillDB: Float = -34.0
+// Tonal balance and gain ripple (2026-10): the loud profile's +8 dB drive
+// into the composite clipper is allowed half a dB more top-end loss.
+let hfTransientMaxHFLossDB: Float = 1.0
+let hfTransientMaxHFLossLoudDB: Float = 1.5
+let hfTransientMaxGainRippleDB: Float = 0.3
 
 func runHFTransientVerification(
     baseConfig: AppConfig,
@@ -451,10 +527,12 @@ func runHFTransientVerification(
     print("Columns: RideSINAD / HatSINAD = decoded HF partials vs IM+harmonics in 300 Hz-15 kHz (dB, higher is cleaner)")
     print("         HatCrest / WashCrest = decoded >6 kHz crest minus input crest (dB, 0 = attack intact)")
     print("         WashGap = composite 15.5-18.5 + 19.5-22.5 kHz vs 0-15 kHz audio (dB, lower is cleaner)")
-    print("         Peak = worst composite peak over the three scenarios")
+    print("         HFLoss = decoded 6-15 kHz vs the 100 Hz-1 kHz bed, HF limiter ON minus OFF, worst of hat / ride (dB, + = the limiter dulled the top)")
+    print("         GRipple = 20-300 Hz depth of the HF limiter's gain trajectory on a sustained wash (dB p-p; GR = its average)")
+    print("         Peak = worst composite peak over the four scenarios")
     print("")
-    print("Chain variant                            RideSINAD  HatSINAD  HatCrest  WashCrest  WashGap  Peak dBFS")
-    print("---------------------------------------  ---------  --------  --------  ---------  -------  ---------")
+    print("Chain variant                            RideSINAD  HatSINAD  HatCrest  WashCrest  WashGap  HFLoss  GRipple  HF GR  Peak dBFS")
+    print("---------------------------------------  ---------  --------  --------  ---------  -------  ------  -------  -----  ---------")
 
     var warnings: [String] = []
     var floorPrinted = false
@@ -467,14 +545,27 @@ func runHFTransientVerification(
         // generator + filter state, so sharing one instance across variants
         // would hand each variant a different noise realisation and make
         // the crest column incomparable between rows.
+        var hfLoss: Float = 0.0
         for scenario in hfTransientScenarios() {
             let m = measureHFTransient(config: cfg, scenario: scenario, durationSeconds: duration)
             byName[scenario.name] = m
             worstPeak = max(worstPeak, m.compositePeakDBFS)
+            // The limiter's own HF cost: the same chain with the stage off.
+            // The tonal scenarios are pure functions of the frame index, so
+            // the second render sees the same input.
+            if let onRatio = m.decodedHFOverBedDB, cfg.hfLimiterEnabled {
+                var off = cfg
+                off.hfLimiterEnabled = false
+                let reference = measureHFTransient(config: off, scenario: scenario, durationSeconds: duration)
+                if let offRatio = reference.decodedHFOverBedDB {
+                    hfLoss = max(hfLoss, offRatio - onRatio)
+                }
+            }
         }
         let ride = byName["ride_multitone"] ?? HFTransientMeasurement()
         let hat = byName["hat_multitone"] ?? HFTransientMeasurement()
         let wash = byName["cymbal_wash"] ?? HFTransientMeasurement()
+        let steady = byName["wash_sustained"] ?? HFTransientMeasurement()
         if !floorPrinted {
             print(
                 "(input floor: RideSINAD \(String(format: "%.1f", ride.inputHFSINADDB ?? 0.0)) dB, "
@@ -488,13 +579,19 @@ func runHFTransientVerification(
                 + "  \(String(format: "%+8.1f", hat.hfCrestDeltaDB))"
                 + "  \(String(format: "%+9.1f", wash.hfCrestDeltaDB))"
                 + "  \(String(format: "%7.1f", wash.gapSpillDB))"
+                + "  \(String(format: "%+6.2f", hfLoss))"
+                + "  \(String(format: "%7.2f", steady.gainRippleDB ?? 0.0))"
+                + "  \(String(format: "%5.1f", steady.hfLimiterGRDB))"
                 + "  \(String(format: "%9.2f", worstPeak))"
         )
         guard variant.gated else { continue }
         if let s = ride.hfSINADDB, s < hfTransientMinRideSINADDB {
             warnings.append("\(variant.label): ride HF SINAD \(String(format: "%.1f", s)) dB < \(String(format: "%.0f", hfTransientMinRideSINADDB)) dB")
         }
-        let hatGate = variant.label.contains("music_loud") ? hfTransientMinHatSINADLoudDB : hfTransientMinHatSINADDB
+        // Loud and Dense drive the composite clipper 8-9 dB hot; they get the
+        // loud gates, every other profile the clean ones.
+        let loudVariant = variant.label.contains("music_loud") || variant.label.contains("music_dense")
+        let hatGate = loudVariant ? hfTransientMinHatSINADLoudDB : hfTransientMinHatSINADDB
         if let s = hat.hfSINADDB, s < hatGate {
             warnings.append("\(variant.label): hat HF SINAD \(String(format: "%.1f", s)) dB < \(String(format: "%.0f", hatGate)) dB")
         }
@@ -503,6 +600,13 @@ func runHFTransientVerification(
         }
         if wash.gapSpillDB > hfTransientMaxGapSpillDB {
             warnings.append("\(variant.label): 15-23 kHz composite spill \(String(format: "%.1f", wash.gapSpillDB)) dB > \(String(format: "%.0f", hfTransientMaxGapSpillDB)) dB")
+        }
+        let lossGate = loudVariant ? hfTransientMaxHFLossLoudDB : hfTransientMaxHFLossDB
+        if hfLoss > lossGate {
+            warnings.append("\(variant.label): decoded HF loss \(String(format: "%.2f", hfLoss)) dB > \(String(format: "%.1f", lossGate)) dB")
+        }
+        if let ripple = steady.gainRippleDB, ripple > hfTransientMaxGainRippleDB {
+            warnings.append("\(variant.label): HF limiter gain ripple \(String(format: "%.2f", ripple)) dB > \(String(format: "%.1f", hfTransientMaxGainRippleDB)) dB on the sustained wash")
         }
     }
 

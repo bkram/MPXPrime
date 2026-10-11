@@ -10,6 +10,7 @@ import Glibc
 import Foundation
 import MPXPrimeCore
 import MPXPrimeNative
+import NIOCore
 
 #if !canImport(Darwin)
 // Glibc imports C's `stderr` as a mutable global, which Swift 6 strict
@@ -56,6 +57,7 @@ struct CLIOptions {
     var verifyHFTransients: Bool = false
     var verifyStereoGuard: Bool = false
     var verifyFinalRide: Bool = false
+    var verifyPrimeBass: Bool = false
     var verifyProgramAB: Bool = false
     var programABPath: String = ""
     var programABProfile: String = "music_clean"
@@ -186,6 +188,10 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyFinalRide = true
             options.gui = false
+        case "--verify-primebass":
+            options.verify = true
+            options.verifyPrimeBass = true
+            options.gui = false
         case "--verify-program-ab":
             if i + 1 < args.count {
                 options.verify = true
@@ -263,6 +269,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-hf-transients [--seconds 5]
           MPXPrime [--config <path>] --verify-stereo-guard [--seconds 5]
           MPXPrime [--config <path>] --verify-final-ride [--seconds 4]
+          MPXPrime [--config <path>] --verify-primebass [--seconds 3]
           MPXPrime --verify-program-ab <file-or-dir> [--ab-profile music_clean] [--ab-csv out.csv] [--seconds 30]
           MPXPrime --bench
           MPXPrime --bench-blocks
@@ -294,6 +301,11 @@ func printUsage() {
           --verify-final-ride  Attribute the Final-MPX limiter's duty: one composite-clipper candidate
                      switched off per row (pilot / RDS / stereo guard, oversampling, knee, look-ahead,
                      limiter, shaper) on a hot chain and on Music - Loud, every peak controller's duty printed
+          --verify-primebass  PrimeBass missing-fundamental gate: synthetic bass through the real engine with
+                     the stage on vs off (defaults and Music - Loud), decoded; 2F0 / 3F0 level, fundamental
+                     change, energy above 5F0, DC, peak growth, smoothness, level invariance, 1 kHz isolation
+                     and IMD, disabled-path identity, each with a PASS/FAIL threshold (exit 1 on any FAIL);
+                     real-music rows when $MPXPRIME_MUSIC_DIR exists
           --verify-program-ab <file-or-dir>  Real-music A/B: render each audio file through the shipped
                      Format Profile with AGC+multiband (A) vs Advanced Dynamics (B), measured with the
                      Meter engine (BS.412 power, deviation, exceedance) plus decoded crest / image /
@@ -340,8 +352,13 @@ func buildDeviceInfo(inputID: AudioDeviceID?, outputID: AudioDeviceID?, allDevic
 
 /// Launch the control server as a detached task when enabled via the INI's
 /// [CONTROL] section or the --control/--control-port flags. A startup
-/// failure (port in use, remote bind without key) must be LOUD but must not
-/// take the encoder down.
+/// failure (port in use, remote bind without key) ends the headless run
+/// politely, exit status 1. The dashboard is the only way to reach a headless
+/// encoder, so one that runs on without it is unreachable -- and the usual
+/// cause, an earlier instance still holding the port, means a second copy
+/// would be fighting the first for the audio devices (it used to keep
+/// running, silently, as a duplicate). systemd restarts on failure, so a
+/// port holder that is on its way out resolves itself.
 func startControlServerIfEnabled(
     config: AppConfig, options: CLIOptions, backend: HeadlessControlBackend
 ) {
@@ -356,9 +373,25 @@ func startControlServerIfEnabled(
         do {
             try await ControlServer.run(backend: backend, settings: settings)
         } catch {
-            fputs("[Control] server failed: \(error)\n", stderr)
+            fputs("[Control] \(controlStartFailureMessage(error, settings: settings))\n", stderr)
+            await backend.shutdown()
+            exit(1)
         }
     }
+}
+
+/// One message an operator can act on, for a control-server start failure.
+/// The port-in-use case is named (it is the common one) with its way out;
+/// anything else carries the underlying error.
+func controlStartFailureMessage(_ error: Error, settings: ControlServerSettings) -> String {
+    let url = "http://\(settings.host):\(settings.port)/"
+    if let io = error as? IOError, io.errnoCode == EADDRINUSE {
+        return "cannot listen on \(settings.host):\(settings.port): the port is already in use. "
+            + "Another MPX Prime is probably running there -- use its dashboard at \(url), "
+            + "stop it first, or pass --control-port <other>. Exiting rather than running twice."
+    }
+    return "server failed to start: \(error). Exiting: a headless encoder "
+        + "without its dashboard cannot be reached."
 }
 
 /// Load the headless run's config. A missing file at the DEFAULT path is
@@ -434,6 +467,7 @@ do {
                 hfTransientsComparison: options.verifyHFTransients,
                 stereoGuardSweep: options.verifyStereoGuard,
                 finalRideIsolation: options.verifyFinalRide,
+                primeBassGate: options.verifyPrimeBass,
                 programAB: options.verifyProgramAB,
                 programABPath: options.programABPath,
                 programABProfile: options.programABProfile,

@@ -304,7 +304,33 @@ const inCurrentMode = (modes) => !modes || modes.indexOf(currentMode()) >= 0;
 /* Does a composite exist at all in this mode? Sourced from the schema's
    `compositeModes` (ChainFeature.finalStage), never spelled out in JS. */
 const compositeMode = () => inCurrentMode(MODEL.compositeModes);
+/* Levelling engine: AGC + Multiband or Advanced Dynamics, one at a time.
+   `model.levelling` names the key, the engines and the pages each one owns;
+   the pages of the engine NOT in use are hidden outright (never ghosted),
+   like a page outside the operating mode. Also driven by the CONFIG value:
+   the key is live-apply, so the page follows the click at once. */
+const currentLevelling = () => {
+  const lv = MODEL && MODEL.levelling;
+  if (!lv || !lv.engines || !lv.engines.length) return null;
+  const on = isTrue(cfg[lv.key]);
+  return lv.engines.find(e => isTrue(e.value) === on) || lv.engines[0];
+};
+const levellingOwns = (id) => {
+  const lv = MODEL && MODEL.levelling;
+  return !!lv && (lv.engines || []).some(e => (e.pages || []).includes(id));
+};
+const levellingHides = (id) => {
+  const lv = MODEL && MODEL.levelling;
+  if (!lv) return false;
+  const cur = currentLevelling();
+  return (lv.engines || []).some(e => e !== cur && (e.pages || []).includes(id));
+};
+/* Is a page out of the picture here: outside the operating mode, OR owned
+   by the levelling engine that is not in use. Every caller that lists pages
+   (sidebar, pills, overview, signal chain, search, shortcuts) goes through
+   this, so they all hide the same set. */
 const pageHiddenInMode = (id) => {
+  if (levellingHides(id)) return true;
   const rds = MODEL.rds.find(p => p.id === id);
   if (rds) return !inCurrentMode(rds.modes || MODEL.rdsModes);
   const st = MODEL.stages.find(x => x.id === id);
@@ -332,17 +358,11 @@ function outputTargetRow() {
 }
 
 /* ---------------- sidebar ---------------- */
-/* A stage whose schema entry carries `bypassedWhen: <key>` is out of the
-   chain while that key is truthy (Advanced Dynamics replacing AGC +
-   Multiband + the per-band Expander / MB Limiter). Everywhere the UI
-   shows enabled-state it shows the EFFECTIVE state. */
-function stageBypassed(s) { return !!(s && s.bypassedWhen && isTrue(cfg[s.bypassedWhen])); }
-function navItem(id, title, enableKey, bypassKey) {
+function navItem(id, title, enableKey) {
   const el = document.createElement("div");
   el.className = "nav";
   el.dataset.page = id;
   if (enableKey) el.dataset.enable = enableKey;
-  if (bypassKey) el.dataset.bypasswhen = bypassKey;
   el.textContent = title;
   const dot = document.createElement("span");
   dot.className = "edot";
@@ -353,8 +373,9 @@ function navItem(id, title, enableKey, bypassKey) {
 /* The sidebar is built from MODEL.sections -- the one taxonomy the GUI
    sidebar reads too (StageApplicability.swift: NavigationSection /
    StageGroup; ControlSchemaTests keeps them equal). Sections collapse and
-   remember it per browser; a page hidden in the current mode is skipped, and
-   a group or section left empty by that is not drawn at all. */
+   remember it per browser; a page hidden in the current mode or by the
+   levelling choice is skipped, and a group or section left empty by that is
+   not drawn at all. */
 const COLLAPSED_KEY = "mpxprime_nav_collapsed";
 function collapsedSections() {
   try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "[]")); } catch (e) { return new Set(); }
@@ -368,7 +389,7 @@ function pageVisible(id) { return !!pageDef(id) && !pageHiddenInMode(id); }
 function navFor(id, grouped) {
   const p = pageDef(id);
   const enable = MODEL.stages.includes(p) ? p.enable : (id === "rdsStatus" ? "en_rds" : null);
-  const el = navItem(id, p.title, enable, p.bypassedWhen);
+  const el = navItem(id, p.title, enable);
   if (grouped) el.classList.add("grp");
   return el;
 }
@@ -488,10 +509,7 @@ function renderSidebar() {
 }
 function refreshSidebarDots() {
   document.querySelectorAll("#sidebar .nav").forEach(n => {
-    if (n.dataset.enable) {
-      const bypassed = n.dataset.bypasswhen && isTrue(cfg[n.dataset.bypasswhen]);
-      n.classList.toggle("on", isTrue(cfg[n.dataset.enable]) && !bypassed);
-    }
+    if (n.dataset.enable) n.classList.toggle("on", isTrue(cfg[n.dataset.enable]));
   });
 }
 
@@ -600,7 +618,8 @@ function card(keys, extraEl) {
    which widgets exist has changed, so the sidebar and the current page have to
    be rebuilt; when it does not, syncing values in place is enough. */
 function renderSignature() {
-  return currentMode();
+  const lv = currentLevelling();
+  return currentMode() + ":" + (lv ? lv.id : "");
 }
 let lastRenderSig = null;
 let rerendering = false;
@@ -620,7 +639,9 @@ function syncAll() {
     rerendering = true;
     try {
       renderSidebar();
-      showPage(pageHiddenInMode(currentPage) ? "monitoring" : currentPage);
+      // A page the levelling choice took away goes home to the selector;
+      // one the operating mode took away goes to Monitoring.
+      showPage(levellingHides(currentPage) ? "overview" : (pageHiddenInMode(currentPage) ? "monitoring" : currentPage));
     } finally {
       rerendering = false;
     }
@@ -646,7 +667,7 @@ function pillStrip(currentId) {
     p.textContent = label;
     if (id) {
       const st = MODEL.stages.find(s => s.id === id);
-      if (st && ((st.enable && !isTrue(cfg[st.enable])) || stageBypassed(st))) p.classList.add("dim");
+      if (st && st.enable && !isTrue(cfg[st.enable])) p.classList.add("dim");
       if (id === currentId) p.classList.add("cur");
       p.onclick = () => showPage(id);
     }
@@ -688,7 +709,8 @@ function pageHeader(c, title, sub) {
   c.appendChild(Object.assign(document.createElement("div"), { className:"subtitle", textContent: sub }));
 }
 function showPage(id) {
-  if (pageHiddenInMode(id)) id = "monitoring";
+  if (levellingHides(id)) id = "overview";
+  else if (pageHiddenInMode(id)) id = "monitoring";
   currentPage = id;
   document.body.classList.remove("navopen");
   document.querySelectorAll("#sidebar .nav").forEach(n => n.classList.toggle("active", n.dataset.page === id));
@@ -706,16 +728,6 @@ function showPage(id) {
 function renderStage(c, s) {
   pageHeader(c, s.title, s.sub);
   c.appendChild(pillStrip(s.id));
-  const bypassed = stageBypassed(s);
-  if (bypassed) {
-    const note = document.createElement("div");
-    note.className = "card cardpad";
-    note.style.cssText = "border-color:#8a6d1a;background:rgba(180,140,30,.10);margin-bottom:10px";
-    note.innerHTML = `<b>${s.title} is bypassed</b> - Advanced Dynamics is enabled and does this stage's work. ` +
-      '<a href="#" id="goAdvDyn">Open Advanced Dynamics</a>';
-    c.appendChild(note);
-    note.querySelector("#goAdvDyn").onclick = (e) => { e.preventDefault(); showPage("advanced_dynamics"); };
-  }
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.title + " Settings" }));
   const head = s.presetKind ? presetPicker(s.presetKind) : null;
   // Two disclosure levels at most: the page shows what an operator moves
@@ -731,22 +743,17 @@ function renderStage(c, s) {
     bar.appendChild(head);
     el.prepend(bar);
   }
-  if (bypassed) { el.style.opacity = "0.55"; el.style.pointerEvents = "none"; }
   c.appendChild(el);
   if (advanced.length) {
     const det = document.createElement("details");
     det.className = "advcard";
     det.appendChild(Object.assign(document.createElement("summary"), { textContent: "Advanced" }));
-    const adv = card(advanced);
-    if (bypassed) { adv.style.opacity = "0.55"; adv.style.pointerEvents = "none"; }
-    det.appendChild(adv);
+    det.appendChild(card(advanced));
     c.appendChild(det);
   }
   if (s.keys2 && s.keys2.keys.length) {
     c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.keys2.title }));
-    const el2 = card(s.keys2.keys);
-    if (bypassed) { el2.style.opacity = "0.55"; el2.style.pointerEvents = "none"; }
-    c.appendChild(el2);
+    c.appendChild(card(s.keys2.keys));
   }
   const stageKeys = [...(s.keys||[]), ...((s.keys2 && s.keys2.keys) || [])];
   if (stageKeys.length) c.appendChild(resetTabButton(stageKeys, s.title));
@@ -785,35 +792,121 @@ function renderGeneric(c, p, isRDS) {
   }
   syncAll();
 }
+/* The levelling engine selector: the same segmented control the operating
+   mode uses on Audio I/O, in a card under the pill strip. One click patches
+   the key; the signature change then rebuilds the sidebar and this page, so
+   the other engine's pages vanish and its own appear. */
+function levellingCard() {
+  const lv = MODEL.levelling;
+  if (!lv || !lv.engines || !lv.engines.length) return null;
+  const cur = currentLevelling();
+  const el = document.createElement("div");
+  el.className = "card cardpad";
+  el.id = "levelling";
+  el.style.cssText = "margin:8px 0 14px";
+  el.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: lv.title || "Levelling", style:"margin-top:0" }));
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.cssText = "border-bottom:none;padding:4px 0";
+  row.insertAdjacentHTML("beforeend", '<div class="rlabel">Engine</div>');
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  for (const e of lv.engines) {
+    const b = document.createElement("button");
+    b.textContent = e.title;
+    b.dataset.v = e.value;
+    b.dataset.engine = e.id;
+    if (e === cur) b.classList.add("sel");
+    b.onclick = () => patchKey(lv.key, e.value);
+    seg.appendChild(b);
+  }
+  row.appendChild(seg);
+  el.appendChild(row);
+  if (lv.help) {
+    const help = document.createElement("div");
+    help.className = "subtitle";
+    help.style.cssText = "margin:6px 0 0";
+    help.textContent = lv.help;
+    el.appendChild(help);
+  }
+  return el;
+}
+/* Apply recommended: one click re-applies the selected Format Profile's full
+   fan-out, the same POST the Profile page's picker makes. A profile owns stage
+   keys only; devices, levels, the operating mode, the control server and the
+   calibration are not in it and stay. `custom` is the sentinel for bespoke
+   tuning: nothing to re-apply, so the button rests. */
+function recommendedCard() {
+  const id = cfg.format_profile_id || "";
+  const canApply = !!id && id !== "custom";
+  const el = document.createElement("div");
+  el.className = "card cardpad";
+  el.id = "recommended";
+  el.style.cssText = "margin:0 0 14px";
+  el.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Recommended settings", style:"margin-top:0" }));
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.cssText = "border-bottom:none;padding:4px 0";
+  const b = document.createElement("button");
+  b.id = "applyRecommended";
+  b.textContent = "Apply recommended";
+  b.disabled = !canApply;
+  b.onclick = async () => {
+    try {
+      await api("/api/presets", { method:"POST", body:JSON.stringify({ kind:"format_profile", id }) });
+      await loadConfig(); syncAll();
+      // The cards' summaries and switches are built at render time: redraw
+      // so the re-applied values show (same as a card switch does).
+      if (currentPage === "overview") showPage("overview");
+      toast("recommended settings of '" + id + "' applied live");
+    } catch (e) { toast("apply recommended failed: " + e.message, true); }
+  };
+  row.appendChild(b);
+  const cap = document.createElement("div");
+  cap.className = "subtitle";
+  cap.style.cssText = "margin:0";
+  cap.textContent = canApply
+    ? "Re-applies the '" + id + "' profile's recommended stage settings; devices, levels and the operating mode are untouched."
+    : "Custom keeps your manual tuning; pick a Format Profile first";
+  row.appendChild(cap);
+  el.appendChild(row);
+  return el;
+}
 function renderOverview(c) {
   pageHeader(c, "Overview", "DSP chain status at a glance");
   c.appendChild(pillStrip("overview"));
+  const lvCard = levellingCard();
+  if (lvCard) c.appendChild(lvCard);
+  c.appendChild(recommendedCard());
   const grid = document.createElement("div");
   grid.className = "ovgrid";
+  // One card per switchable stage, plus a stage a levelling engine owns
+  // even when it has no switch of its own: Advanced Dynamics is switched by
+  // the selector above, so its card shows status and opens the page only.
   for (const s of MODEL.stages) {
-    if (!s.enable || !inCurrentMode(s.modes)) continue;
+    if (!(s.enable || levellingOwns(s.id)) || !pageVisible(s.id)) continue;
     const el = document.createElement("div");
     el.className = "ovcard";
-    const bypassed = stageBypassed(s);
-    const on = isTrue(cfg[s.enable]) && !bypassed;
-    if (bypassed) el.style.opacity = "0.55";
+    el.dataset.page = s.id;
+    const on = s.enable ? isTrue(cfg[s.enable]) : true;
     el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div>` +
-      `<div class="ovsum">${bypassed ? "Bypassed - Advanced Dynamics is on" : (summaryText(s.summary) || "")}</div>`;
-    const foot = document.createElement("div");
-    foot.className = "ovfoot";
-    const sw = document.createElement("label");
-    sw.className = "switch";
-    sw.dataset.key = s.enable;
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = isTrue(cfg[s.enable]);
-    input.disabled = bypassed;
-    input.onchange = (e) => { e.stopPropagation(); patchKey(s.enable, input.checked ? "True" : "False").then(() => showPage("overview")); };
-    sw.appendChild(input);
-    sw.insertAdjacentHTML("beforeend", '<span class="knob"></span>');
-    sw.onclick = (e) => e.stopPropagation();
-    foot.appendChild(sw);
-    el.appendChild(foot);
+      `<div class="ovsum">${summaryText(s.summary) || ""}</div>`;
+    if (s.enable) {
+      const foot = document.createElement("div");
+      foot.className = "ovfoot";
+      const sw = document.createElement("label");
+      sw.className = "switch";
+      sw.dataset.key = s.enable;
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = isTrue(cfg[s.enable]);
+      input.onchange = (e) => { e.stopPropagation(); patchKey(s.enable, input.checked ? "True" : "False").then(() => showPage("overview")); };
+      sw.appendChild(input);
+      sw.insertAdjacentHTML("beforeend", '<span class="knob"></span>');
+      sw.onclick = (e) => e.stopPropagation();
+      foot.appendChild(sw);
+      el.appendChild(foot);
+    }
     el.onclick = () => showPage(s.id);
     grid.appendChild(el);
   }
@@ -879,13 +972,12 @@ function renderMonitoring(c) {
   const chain = document.createElement("div");
   chain.className = "ovgrid";
   for (const s of MODEL.stages) {
-    if (!s.summary || !inCurrentMode(s.modes)) continue;
-    const bypassed = stageBypassed(s);
-    const on = (!s.enable || isTrue(cfg[s.enable])) && !bypassed;
+    if (!s.summary || !pageVisible(s.id)) continue;
+    const on = !s.enable || isTrue(cfg[s.enable]);
     const el = document.createElement("div");
     el.className = "ovcard";
-    if (bypassed) el.style.opacity = "0.55";
-    el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div><div class="ovsum">${bypassed ? "Bypassed - Advanced Dynamics is on" : summaryText(s.summary)}</div>`;
+    el.dataset.page = s.id;
+    el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div><div class="ovsum">${summaryText(s.summary)}</div>`;
     el.onclick = () => showPage(s.id);
     chain.appendChild(el);
   }

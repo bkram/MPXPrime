@@ -7,7 +7,8 @@ import MPXPrimeAcceleration
 #endif
 @testable import MPXPrime
 
-// The curve `BassClipper` and `HFClipper` share. Until 0.60 it was
+// The curve `BassClipper` applies (the HF clipper shared it until that stage
+// was removed in 0.61). Until 0.60 it was
 // discontinuous at the threshold -- the output stepped DOWN to tanh(1) =
 // 0.7616 of where it was, a 24 % drop, then climbed back toward the same
 // ceiling, so it was not monotonic either (0.60 audit, P0-2).

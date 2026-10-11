@@ -104,16 +104,23 @@ final class MPXPrimeViewModel: ObservableObject {
     var processedAudioOutputActive: Bool { config.processedAudioOutput }
 
     /// A sidebar stage is shown only where it configures something with a
-    /// function in the current operating mode (`ChainFeature`): no composite
-    /// means no stereo coder, composite clipper, BS.412, final stage or RDS.
+    /// function in the current configuration: the operating mode decides the
+    /// chain's shape (`ChainFeature`: no composite means no stereo coder,
+    /// composite clipper, BS.412, final stage or RDS) and the levelling engine
+    /// decides which leveler pages exist (`LevellingEngine`: the engine not in
+    /// use is hidden outright, not ghosted -- a dimmed page the operator has
+    /// to scan past tells them nothing a hidden one does not).
     func isStageVisible(_ stage: Stage) -> Bool {
         stage.applies(in: config.operatingMode)
+            && (stage.levellingEngine.map { $0 == LevellingEngine.current(for: config) } ?? true)
     }
 
-    /// If the current selection points at a stage hidden by the active output
-    /// mode, snap back to the Processing overview. Called on engine (re)start so
-    /// switching into processed-audio mode never leaves a stale RDS/composite pane.
-    func normalizeSelectionForOutputMode() {
+    /// If the current selection points at a stage the configuration hides
+    /// (by operating mode or by levelling engine), snap back to the Sound
+    /// overview. Called on engine (re)start and from both choosers, so a
+    /// switch never leaves a stale pane under a sidebar row that has already
+    /// disappeared.
+    func normalizeSelection() {
         if !isStageVisible(selectedStage) {
             selectedStage = .processingOverview
         }
@@ -143,25 +150,26 @@ final class MPXPrimeViewModel: ObservableObject {
              .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsAF,
              .rdsSchedule, .rdsCarrier:
             return nil
+        // Advanced Dynamics has no enable of its own: the Levelling engine
+        // picker is the one switch, and this row exists only while it says
+        // Advanced Dynamics, so a dot could only ever read "on".
+        case .processingAdvancedDynamics:
+            return nil
         case .processingPhaseRotator: return config.phaseRotationEnabled
-        // AGC / Multiband (and the per-band Expander + MB Limiter that run
-        // inside the multiband stage) are bypassed while Advanced Dynamics
-        // is enabled -- the dot shows the EFFECTIVE state, not the stored
-        // flag, so a bypassed stage reads as off in the sidebar.
-        case .processingAGC:
-            return config.widebandAGCEnabled && !config.advancedDynamicsEnabled
+        // AGC / Multiband (with the per-band Expander + MB Limiter inside the
+        // multiband stage) and Advanced Dynamics are the two levelling
+        // engines. The one not in use has no sidebar rows at all
+        // (`isStageVisible`), so a visible row's dot is simply its stored
+        // flag -- there is no "on but replaced" state left to show.
+        case .processingAGC: return config.widebandAGCEnabled
         case .processingParametricEQ: return config.parametricEQEnabled
-        case .processingMultiband:
-            return config.multibandEnabled && !config.advancedDynamicsEnabled
-        case .processingAdvancedDynamics: return config.advancedDynamicsEnabled
-        case .processingExpander:
-            return config.downwardExpanderEnabled && !config.advancedDynamicsEnabled
-        case .processingMBLimiter:
-            return config.multibandLimiterEnabled && !config.advancedDynamicsEnabled
+        case .processingMultiband: return config.multibandEnabled
+        case .processingExpander: return config.downwardExpanderEnabled
+        case .processingMBLimiter: return config.multibandLimiterEnabled
         case .processingPrimeBass: return config.primeBassEnabled
         case .processingBassClipper: return config.bassClipperEnabled
         case .processingDCClipper: return config.dcClipperEnabled
-        case .processingHFClipper: return config.hfLimiterEnabled || config.hfClipperEnabled
+        case .processingHFLimiter: return config.hfLimiterEnabled
         case .processingLimiter: return config.preEncodeAudioLimiterEnabled
         case .processingStereoCoder: return config.ssbStereoEnabled
         case .processingCompositeClipper: return config.compositeClipperEnabled
@@ -1275,13 +1283,10 @@ final class MPXPrimeViewModel: ObservableObject {
             config.dcClipperEnabled = defaults.dcClipperEnabled
             config.dcClipperCeilingDB = defaults.dcClipperCeilingDB
             config.dcClipperCancelFreqHz = defaults.dcClipperCancelFreqHz
-        case .hfClipper:
-            config.hfClipperEnabled = defaults.hfClipperEnabled
-            config.hfClipperCrossoverHz = defaults.hfClipperCrossoverHz
-            config.hfClipperThresholdDB = defaults.hfClipperThresholdDB
-            config.hfClipperDrive = defaults.hfClipperDrive
+        case .hfLimiter:
             config.hfLimiterEnabled = defaults.hfLimiterEnabled
             config.hfLimiterThresholdDB = defaults.hfLimiterThresholdDB
+            config.hfLimiterTopThresholdDB = defaults.hfLimiterTopThresholdDB
             config.hfLimiterAttackMS = defaults.hfLimiterAttackMS
             config.hfLimiterReleaseMS = defaults.hfLimiterReleaseMS
             config.hfLimiterMaxReductionDB = defaults.hfLimiterMaxReductionDB
@@ -1302,7 +1307,7 @@ final class MPXPrimeViewModel: ObservableObject {
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .advancedDynamics, .mbLimiter, .expander,
              .primeBass,
-             .bassClipper, .dcClipper, .hfClipper, .limiter,
+             .bassClipper, .dcClipper, .hfLimiter, .limiter,
              .stereoCoder, .compositeClipper, .bs412,
              .finalStage:
             runtimeDisposition = .live
@@ -1866,7 +1871,7 @@ final class MPXPrimeViewModel: ObservableObject {
             runningEngine = engine
             isRunning = true
             pendingRuntimeApply = false
-            normalizeSelectionForOutputMode()
+            normalizeSelection()
             if runConfig.processedAudioOutput {
                 NSApp.sendAction(#selector(AppDelegate.closeCompositeOnlyAuxWindows), to: nil, from: nil)
             }

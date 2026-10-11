@@ -12,7 +12,11 @@ import Foundation
 @Suite("Monitor render parity")
 struct MonitorRenderParityTests {
 
-    private let frames = 4_096
+    // Two blocks' worth: the default 2 ms composite look-ahead (every
+    // shipped profile and, since 2026-10, `AppConfig()`) ramps its gain in
+    // over the first ~20 ms, so the "produces audio" window below must sit
+    // after it.
+    private let frames = 8_192
 
     private func config() -> AppConfig {
         var cfg = AppConfig()

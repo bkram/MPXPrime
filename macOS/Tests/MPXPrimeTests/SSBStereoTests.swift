@@ -2,11 +2,15 @@ import Testing
 import Foundation
 @testable import MPXPrime
 
-// SSB Stereo: experimental SSB-leaning stereo encoder (default off).
-// These tests pin (1) config plumbing, (2) the SSB action itself (one
-// 38 kHz sideband suppressed at full amount, symmetric at amount 0),
-// (3) mono transparency, and (4) chain inertness when off (zero-drift at
-// unit level). Receiver-decode separation is gated by --verify-ssb-stereo.
+// SSB Stereo: fixed lower-sideband SSB / VSB stereo encoder (default off).
+// These tests pin (1) config plumbing, (2) the SSB action itself (the
+// UPPER 38 kHz sideband suppressed at full amount at every audio
+// frequency, sideband gains summing to 1 at every amount, symmetric at
+// amount 0, a selection that never moves), (3) mono transparency, (4) the
+// composite-peak COST on 90-degree L/R against theory, and (5) chain
+// inertness when off (zero-drift at unit level). Receiver-decode
+// separation and the decoder phase-error sweep are gated by
+// --verify-ssb-stereo.
 @Suite("SSB Stereo encoder")
 struct SSBStereoTests {
     private let sampleRate: Float = 192_000.0
@@ -37,28 +41,43 @@ struct SSBStereoTests {
     }
 
     private func renderMPX(
-        config: AppConfig, leftHz: Float, rightHz: Float?, frames: Int
+        config: AppConfig, leftHz: Float?, rightHz: Float?, frames: Int
     ) -> [Float] {
         let generator = MPXGenerator(config: config, sampleRate: Double(sampleRate))
         var samples = [Float](repeating: 0.0, count: frames)
         for i in 0..<frames {
             let t = Float(i) / sampleRate
-            let l = 0.4 * sinf(2.0 * Float.pi * leftHz * t)
+            let l = leftHz.map { 0.4 * sinf(2.0 * Float.pi * $0 * t) } ?? 0.0
             let r = rightHz.map { 0.4 * sinf(2.0 * Float.pi * $0 * t) } ?? 0.0
             samples[i] = generator.renderSingleSample(leftIn: l, rightIn: r)
         }
         return samples
     }
 
-    private func sidebandAsymmetryDB(config: AppConfig, toneHz: Float) -> Float {
-        let fftSize = 65_536
+    /// Encoder-side sideband levels (dBFS) at 38 - f (lower) and 38 + f
+    /// (upper) for a single-channel sine, by exact tone projection over the
+    /// verifier's analysis window (the last 0.25 s of a 0.5 s render, so
+    /// the encoder's delay lines are long settled). No FFT scalloping: the
+    /// gain-sum test needs 0.1 dB.
+    private func sidebandLevels(
+        config: AppConfig, toneHz: Float, driveLeft: Bool = true
+    ) -> (lower: Float, upper: Float) {
         let samples = renderMPX(
-            config: config, leftHz: toneHz, rightHz: nil, frames: fftSize * 2)
-        let analyzer = FFTAnalyzer(fftSize: fftSize)
-        let report = analyzer.analyze(Array(samples.suffix(fftSize)), sampleRate: sampleRate)
-        let lower = report.dBFSAt(freqHz: 38_000.0 - toneHz)
-        let upper = report.dBFSAt(freqHz: 38_000.0 + toneHz)
-        return abs(lower - upper)
+            config: config,
+            leftHz: driveLeft ? toneHz : nil,
+            rightHz: driveLeft ? nil : toneHz,
+            frames: Int(sampleRate) / 2)
+        let metrics = encoderSidebandMetricsFromSamples(
+            samples: samples,
+            config: config,
+            toneHz: Double(toneHz),
+            drivenChannel: driveLeft ? "L" : "R")
+        return (metrics.lowerSidebandDBFS, metrics.upperSidebandDBFS)
+    }
+
+    private func sidebandAsymmetryDB(config: AppConfig, toneHz: Float) -> Float {
+        let levels = sidebandLevels(config: config, toneHz: toneHz)
+        return abs(levels.lower - levels.upper)
     }
 
     @Test func runtimeConfigCarriesSSBStereoFields() {
@@ -84,17 +103,108 @@ struct SSBStereoTests {
     }
 
     @Test func fullSSBSuppressesOneSideband() {
-        // Classic DSB: symmetric sidebands around 38 kHz. Full SSB: one
-        // sideband suppressed. The suppressed side should sit well below
-        // the kept side (Hilbert ripple bounds perfection; require the
-        // asymmetry to open up by a decisive margin).
+        // Classic DSB: symmetric sidebands around 38 kHz. Full SSB: the
+        // UPPER sideband suppressed. The 511-tap Kaiser Hilbert delivers
+        // a 60 dB class null at 10 kHz; require 40 dB (the old 15 dB
+        // bound only covered the removed selector's chatter).
         let dsbAsym = sidebandAsymmetryDB(
             config: makeCleanConfig(ssbStereo: false), toneHz: 10_000.0)
-        let ssbAsym = sidebandAsymmetryDB(
+        let ssb = sidebandLevels(
             config: makeCleanConfig(ssbStereo: true, amount: 1.0), toneHz: 10_000.0)
+        let depth = ssb.lower - ssb.upper
         #expect(dsbAsym < 1.5, "DSB sidebands should be symmetric, got \(dsbAsym) dB")
-        #expect(ssbAsym > 15.0,
-            "full SSB should suppress one sideband; asymmetry only \(ssbAsym) dB")
+        #expect(depth > 40.0,
+            "full SSB should suppress the upper sideband; it is only \(depth) dB below the lower one")
+    }
+
+    @Test func ssbKeepsLowerSidebandAtEveryFrequency() {
+        // The kept sideband is FIXED at 38 - f: lower sideband, every
+        // audio frequency, either channel driven. A sign fault shows the
+        // mirror image (upper kept) at every row; the old opportunistic
+        // selector showed it at some rows. 40 dB is the gate's bound.
+        let config = makeCleanConfig(ssbStereo: true, amount: 1.0)
+        for toneHz: Float in [1_000.0, 5_000.0, 10_000.0, 14_000.0] {
+            for driveLeft in [true, false] {
+                let levels = sidebandLevels(config: config, toneHz: toneHz, driveLeft: driveLeft)
+                let depth = levels.lower - levels.upper
+                #expect(depth >= 40.0,
+                    "\(Int(toneHz)) Hz \(driveLeft ? "L" : "R") drive: upper sideband only \(depth) dB below the lower one")
+            }
+        }
+    }
+
+    @Test func ssbSidebandGainsSumToUnity() {
+        // Orban's compatibility condition: the sideband gains (1 + a) / 2
+        // and (1 - a) / 2 sum to 1, so a product detector recovers L-R at
+        // the DSB level whatever the amount. Linear sideband amplitudes
+        // must therefore sum to the same value at amount 0, 0.5 and 1,
+        // and equal the classic path's. 5 kHz keeps both sidebands
+        // (33 / 43 kHz) well inside the composite FIR's flat passband.
+        func sumDB(_ config: AppConfig) -> Float {
+            let levels = sidebandLevels(config: config, toneHz: 5_000.0)
+            let linear = powf(10.0, levels.lower / 20.0) + powf(10.0, levels.upper / 20.0)
+            return 20.0 * log10f(linear)
+        }
+        let reference = sumDB(makeCleanConfig(ssbStereo: false))
+        for amount in [0.0, 0.5, 1.0] {
+            let sum = sumDB(makeCleanConfig(ssbStereo: true, amount: amount))
+            #expect(abs(sum - reference) < 0.1,
+                "amount \(amount): sideband sum \(sum) dBFS vs classic \(reference) dBFS")
+        }
+    }
+
+    @Test func ssbSelectionIsConstant() {
+        // The sideband selection is a constant (-1 = lower in the
+        // `dsb - sel * quad` convention): no tracker, no hysteresis, no
+        // crossfade, nothing program-dependent to wander.
+        #expect(SSBStereoEncoder.lowerSidebandSelection == -1.0)
+        var encoder = SSBStereoEncoder()
+        encoder.configure(sampleRate: sampleRate)
+        encoder.setAmount(1.0)
+        #expect(encoder.currentSelection == -1.0)
+        for i in 0..<48_000 {
+            let t = Float(i) / sampleRate
+            let theta = 2.0 * Float.pi * 19_000.0 * t
+            let envelope = 1.0 + sinf(2.0 * Float.pi * 3.0 * t)
+            let base = 0.4 * sinf(2.0 * Float.pi * 200.0 * t)
+            let diff = 0.3 * envelope * sinf(2.0 * Float.pi * 7_000.0 * t)
+            _ = encoder.process(base: base, diff: diff, sub: sinf(2.0 * theta), cos2: cosf(2.0 * theta))
+            if i % 1_000 == 0 {
+                #expect(encoder.currentSelection == -1.0)
+            }
+        }
+        #expect(encoder.currentSelection == -1.0)
+    }
+
+    @Test func ssbCompositePeakOnQuadratureLRStaysWithinTheory() {
+        // SSB cannot lower a composite peak; on L/R correlated at 90
+        // degrees it RAISES it (Orban's overshoot case). For a single tone
+        // pair the cost is exactly 20 log10(max(1 + a, sqrt 2) / sqrt 2):
+        // +3.01 dB at amount 1, +0.51 dB at 0.5. Pin the measured cost to
+        // that theory from both sides: more means a delay or sign fault,
+        // less means the encoder is not doing its job. The pilot is off
+        // so it cannot dilute the ratio (with it on the same measurement
+        // reads 2.1 dB at amount 1); measured 2.97 dB on 2026-10-10.
+        func peakDB(_ configIn: AppConfig) -> Float {
+            var config = configIn
+            config.pilotLevel = 0.0
+            let generator = MPXGenerator(config: config, sampleRate: Double(sampleRate))
+            let frames = Int(sampleRate) / 2
+            var peak: Float = 0.0
+            for i in 0..<frames {
+                let phase = 2.0 * Float.pi * 1_000.0 * Float(i) / sampleRate
+                let mpx = generator.renderSingleSample(leftIn: 0.5 * sinf(phase), rightIn: 0.5 * cosf(phase))
+                if i >= frames / 2 { peak = max(peak, abs(mpx)) }
+            }
+            return 20.0 * log10f(max(peak, 1e-9))
+        }
+        let off = peakDB(makeCleanConfig(ssbStereo: false))
+        for amount in [0.5, 1.0] {
+            let delta = peakDB(makeCleanConfig(ssbStereo: true, amount: amount)) - off
+            let theory = ssbQuadraturePeakCostDB(amount: Float(amount))
+            #expect(abs(delta - theory) <= 0.3,
+                "amount \(amount): SSB added \(delta) dB of composite peak, theory \(theory) dB")
+        }
     }
 
     @Test func amountZeroKeepsDSBSymmetry() {

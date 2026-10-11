@@ -476,10 +476,7 @@ actor HeadlessControlBackend: ControlBackend {
         }
     }
 
-    /// Best-effort initial start used at boot: attempts to start the engine
-    /// but never throws, so a missing device leaves the process (and the
-    /// control server) alive for remote recovery. Returns whether it started.
-    @discardableResult
+    /// Copy a render-thread scheduling failure into the operator-facing notes.
     private func recordSchedulingNote() {
         guard let note = engine?.schedulingNoteForControl, !notes.contains(note) else { return }
         notes.append(note)
@@ -500,6 +497,9 @@ actor HeadlessControlBackend: ControlBackend {
         if !raise, has { notes.removeAll { $0 == Self.renderOverloadNote } }
     }
 
+    /// Best-effort start used at boot and by reconciliation: a missing device
+    /// leaves the process and control server alive for remote recovery.
+    @discardableResult
     func startEngineTolerant() -> Bool {
         do {
             try startEngine()

@@ -11,6 +11,182 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Format Profiles retuned against the published Orban, Omnia and Stereo
+  Tool structures** (`docs/format-profiles-review.md`). Speech had the
+  slowest, weakest multiband in the catalogue (light intensity clamped its
+  high band to 1:1 with 400-640 ms releases) where every vendor's talk
+  preset is the fastest: now -14 / -13 / -12 dB at 1.8 / 1.7 / 1.5 with
+  140-220 ms releases, AGC -14. Classical rode with pop AGC range: a new
+  `classical` final-stage preset gives a gentle ride with at most 6 dB of
+  lift and a 3 s release, mono bass down to 90 Hz. Clean bass-clips at the
+  defaults like every vendor structure. Loud gains a presence tilt (+1.5 dB
+  at 80 Hz, +1.0 dB at 3 kHz) and the band limiter. New **Music -- Dense**:
+  the top density tier that 0.45 folded away (dance multiband heavy, drive
+  9, PrimeBass, band limiter); the legacy `edm_dance` id migrates to it.
+  Every profile switches Advanced Dynamics off when applied; the AGC target
+  lives in the final-stage preset instead of being overridden; a fresh
+  install's defaults now equal Music -- Clean (drive 4, pre-encode 0.90,
+  AGC -16, composite look-ahead 2 ms). Baselines `default`, `presets` and
+  `long` recaptured (+0.24 dB composite GR from the pre-encode default on
+  the harness config); the Linux default baseline follows.
+- **"Apply recommended" on the Sound Overview, both front ends.** One click
+  re-applies the selected Format Profile's recommended stage settings through
+  the same path as loading the profile; devices, levels, operating mode,
+  control server and calibration stay untouched. With `Custom` selected the
+  button is disabled and says so. The dashboard posts the existing
+  `/api/presets` format-profile apply and re-reads the config; the render
+  check clicks it and asserts the one POST and the re-read; a GUI test pins
+  that drifted stage keys come back and installation keys do not move.
+- **`--verify-stereo-guard` proves the bass is never inverted or dropped.**
+  Two new columns on every guard-share row, plus a dedicated bass scenario
+  (50 + 80 Hz L/R pair, a 2 kHz left-only reference with a timing dip):
+  `BassPol`, the polarity of the decoded mono bass against the same chain
+  with the bass clipper off (+1.000 everywhere; a negated composite reads
+  -1.0 in the test's control), with the input-referenced `InPol` gated at
+  +0.5 because an IIR crossover rotates bass by 50-90 degrees and no
+  input-referenced bound near 1 is reachable; and `BassLoss`, the clipper's
+  own bass cost against the 2 kHz reference (0.02 dB; the -2.9 dB raw tilt
+  on Music -- Loud is the multiband's band balance, printed separately).
+  Stereo Tool once shipped a bass-protection stage that inverted the bass;
+  this is the Clipper campaign's proof we do not. Four unit tests.
+- **Advanced Dynamics: the attack law, the density law and band coupling
+  are fixed.** The reduce-side time constant was blended in the COEFFICIENT
+  domain between 30 ms and 30 us, so any jump more than about 14 dB past the
+  hold window slewed every band -- the 60 Hz band included -- within one
+  cycle (modulation splatter; no gate measured distortion so nobody saw it).
+  It is now blended in time with a floor of two band periods per band.
+  "Density" worked backwards: dense programme got the FASTEST release; it
+  now releases up to 2.5x slower on dense programme, as the manual said.
+  Each band is bounded to within 6 dB of its active neighbours (an empty
+  band constrains nobody); five per-band limiters run on the bands before
+  the sum, so leveled peaks no longer reach the clippers raw; a live
+  crossover change no longer snaps every band gain to unity; detector
+  windows scale with the band and the rest-state instantaneous term is gone
+  (`docs/advanced-dynamics-review.md`). Eleven new tests pin all of it;
+  `--verify-advanced-dynamics` and `--verify-hf-transients` stay OK; the hat
+  cost versus AGC + Multiband is unchanged, so the default flip stays
+  blocked. AD is off in every baseline; none moved.
+- **PrimeBass rebuilt as a real missing-fundamental enhancer.** The old
+  stage could not do what it claimed: both waveshapers were odd-symmetric
+  (`x * |x|` included), so it never made a 2nd harmonic; a 6 dB/oct one-pole
+  let vocals and snare intermodulate with the bass; a per-sample input gate,
+  an allpass and an instantaneous delta limiter added buzz and smeared the
+  kick (`docs/primebass-review.md`). Now: 24 dB/oct band-pass below F0,
+  envelope normalisation (the harmonic-to-fundamental ratio is level-invariant,
+  0.04 dB over 20 dB), an asymmetric device (`2 x^2` even plus a tanh odd
+  device with its linear term removed, so no fundamental leaks), 24 dB/oct
+  band-pass F0..5 F0, an envelope peak guard (+1.5 dB max) and a DC blocker;
+  the Werrbach transient burst stays, the octave divider is band-limited and
+  phase-held. Knobs keep their names: `amount` = series level, `harmonics` =
+  2nd-vs-odd balance, `drive` = odd hardness, `density` = Big Bottom's
+  inverse law on the harmonic layer. New gate `--verify-primebass` (in CI)
+  prints eleven metrics per profile with thresholds -- harmonic levels,
+  fundamental change, energy above 5 F0, DC, steps, peak growth, level
+  invariance, midrange intermodulation, 1 kHz pass-through, disabled
+  bit-identity -- and twelve unit tests pin the same. No baseline moved: no
+  shipped baseline enables PrimeBass.
+- **SSB Stereo keeps the lower sideband, always; the "opportunistic"
+  selector is gone.** It compared two candidates, `base + dsb - quad` and
+  `base + dsb + quad`, that are time-mirror images with identical envelopes,
+  so its 5 ms peak trackers chased sample-grid noise, the choice was random,
+  the composite-peak reclaim measured 0.00 dB, and the kept sideband wandered
+  between 23-38 kHz and 38-53 kHz with every 5 ms crossfade -- forfeiting
+  the narrower-spectrum benefit that is the point of SSB (`docs/ssb-stereo-review.md`).
+  Now it is a fixed lower-sideband SSB/VSB encoder like Orban's and Stereo
+  Tool's. `--verify-ssb-stereo` pins the kept sideband (upper >= 40 dB
+  down), a decoder 38 kHz reference-error sweep (0 / 5 / 10 degrees: SSB on
+  decodes 27.2 / 21.2 dB at 1 kHz against 54 / 42 dB for DSB, on theory),
+  the 90-degree L/R composite-peak cost against tone-pair theory (+2.97 dB
+  measured, +3.01 theory at amount 1), and prints the reclaim as
+  informational instead of exiting TIGHT; the unit tests pin the sideband at
+  every frequency (raised from 15 to 40 dB), the gain sum and the constant
+  selection. Off path bit-identical.
+- **Linux: the INI serialiser compiles again under Swift 6.2.** The one-line
+  `mpxLines + [""] + rdsLines + ...` chain in `AppConfig.serialisedINI` made
+  the 6.2.4 Linux compiler give up ("unable to type-check this expression in
+  reasonable time") while Xcode's compiler accepted it; found by building the
+  tree in a `swift:6.2-noble` container. It is now built up in a loop. No
+  behaviour change.
+- docs: four more stage reviews -- `hf-limiter-review.md`,
+  `advanced-dynamics-review.md`, `ssb-stereo-review.md` and
+  `format-profiles-review.md` -- each with findings, a ranked fix plan and
+  the tests that pin the invariants; the roadmap's "Stage reviews of
+  2026-10-10" section summarises them.
+- docs: `primebass-review.md` -- PrimeBass checked against the virtual-bass
+  literature and the broadcast processors it was modelled on. The stage's
+  two waveshapers are both odd-symmetric, so it never produces the 2nd
+  harmonic its comments and tests assume; the input is a 6 dB/oct one-pole,
+  not a band-pass; three per-sample nonlinearities add buzz. Ranked fixes
+  and a decision point are in the review and on the roadmap.
+- **Levelling is a choice, not a toggle with ghosted leftovers.** The Sound
+  Overview page in both front ends now opens with one segmented choice,
+  `Levelling`: **AGC + Multiband** (the regular chain, with the per-band
+  Expander and Band Limiter inside the multiband stage) or **Advanced
+  Dynamics**. It is the same `advanced_dynamics_enabled` key, live-apply. The
+  pages of the engine not in use are hidden outright -- sidebar, Overview
+  grid, Monitoring signal chain, pill strip, settings search -- where they
+  used to stay on screen dimmed, behind a "bypassed" banner, four panes the
+  operator scanned past on every visit. The Advanced Dynamics page loses its
+  own enable toggle (the selector is the switch); the AdvDyn pill joins the
+  dashboard's chain strip. `LevellingEngine` in `StageApplicability.swift`
+  is the one table; `schema.json` `model.levelling` mirrors it and
+  `ControlSchemaTests` holds the two together; `check-webui.cjs` switches
+  engines from the page and asserts the sidebar and grid follow.
+- **Chain review, both front ends.** The Expander moves from the Input group
+  to Dynamics, next to the Band Limiter: both run per band inside the
+  multiband stage, and the groups are meant to read in signal order. The
+  GUI's Sound Overview grid gains the cards the dashboard already had -- HF
+  Limiter and Stereo Coder -- and gates its composite cards by the
+  `ChainFeature` table instead of a separate processed-audio flag. The
+  Advanced Dynamics card carries no enable switch in either front end; the
+  Levelling choice is the switch. Mode gating itself checked out: every key
+  the table gates is hidden by both front ends and inert in the engine, now
+  including the HF Clipper.
+- **The HF Clipper is gone.** A waveshaper on the pre-emphasised cymbal band,
+  off in every profile since 0.45 because it distorts the band it controls,
+  it cost a page in both front ends, four INI keys, schema entries, tests and
+  an engine stage for a documented last resort. Removed from the engine, the
+  config, the Levelling-independent `ChainFeature` table, both front ends,
+  the presets, the verifiers and the tests; the GUI page and the dashboard
+  page are now plainly "HF Limiter". Old INIs that still carry `hf_clipper_*`
+  keys load fine (unknown keys are ignored) and lose them on the next save; a
+  REST PATCH of one reports `unchanged`, like any unknown key (pinned by a
+  test). The engine now also forces Mono Bass and the multiband stereo Link
+  off wherever the programme is mono instead of relying on the mono chain
+  making them identities, and changing the operating mode in the GUI snaps a
+  now-hidden page back to the Processing overview.
+- **The HF Limiter no longer flutters the highs on a kick, and sits where
+  Orban puts it.** Its bass-immunity guard keyed on 20 % of the PEAK rather
+  than on the excess, so a loud kick with a quiet hat drove the gain to the
+  12 dB floor on every crest -- at 60 Hz the release never completed between
+  crests -- the exact "kick flutters the highs" the manual said could not
+  happen; and its -2 dB threshold sat below the Audio Limiter's, so it acted
+  as a general HF compressor (`docs/hf-limiter-review.md`). Now a programme
+  gate on two 15 ms peak-hold envelopes opens the stage only when the boost
+  covers the excess ("only start a ride you can finish"); the gain law uses
+  the signed boost projection, lands exactly on the threshold, never removes
+  more than the excess and never raises a peak; the threshold sits 0.5 dB
+  ABOVE each profile's Audio Limiter threshold (Music -- Clean -0.4 dB, Loud
+  -0.9, Speech -0.6, Classical -0.2); and a new `hf_limiter_top_threshold_db`
+  (Advanced, default 1 dB tighter) gives the band above 13 kHz its own
+  ceiling through a detector-side slide, one gain on the whole boost, zero
+  latency. Eighteen tests pin it; `--verify-hf-transients` gains the stage's
+  own HF loss (0.3-0.7 dB on the shipped profiles, bound 1.0 / 1.5 dB), its
+  gain ripple on a sustained wash (bound 0.3 dB) and its average GR, and
+  hat / ride SINAD are unchanged to 0.1 dB. All four macOS baselines
+  recaptured: the hard-panned HF scenario keeps 0.2 dB more side energy
+  (less HF ducking), 0.1 dB of peak work moves to the Audio Limiter and the
+  safety stage, receiver decode unchanged; the Linux default baseline must be
+  recaptured on a Linux box.
+- `scripts/run-build-web.sh` prints what you need to log in before it runs:
+  the dashboard URL, the config path and the API key the dashboard will ask
+  for (from that config's `[CONTROL]` section, or a note that the loopback
+  bind needs none). It also refuses to build or start when something already
+  listens on the control port, naming the process. And it selects the full
+  Xcode toolchain on macOS (`DEVELOPER_DIR`, default `/Applications/Xcode.app`),
+  failing with a clear message when it is missing: the Command Line Tools
+  `swift` cannot load the SwiftUI macro plugin, so every `@State` property
+  failed to compile.
 - Two GUI help texts (the restart badge and the restart-required list) no
   longer name the pilot level among the restart-required settings; it has
   been live-apply since it joined `RuntimeConfig`. Sum / diff levels, mono

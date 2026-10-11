@@ -2,7 +2,7 @@
 
 Asked: audit the SSB-leaning stereo encoder and fix it. Modelled on Stereo
 Tool's SSB stereo option. Line numbers refer to
-`macOS/Sources/MPXPrime/DSP/SSBStereoEncoder.swift`,
+`Sources/MPXPrime/DSP/SSBStereoEncoder.swift`,
 `MPXGenerator.swift` and `Verification/StageABGates.swift` at `1ffbf10`.
 
 ## What it does

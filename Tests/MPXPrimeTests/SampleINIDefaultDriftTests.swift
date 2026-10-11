@@ -3,7 +3,7 @@ import Foundation
 @testable import MPXPrime
 
 // Guards against silent drift between the CODE defaults (AppConfig()) and
-// the shipped sample config (macOS/MPXPrime.ini). Every key where the
+// the shipped sample config (MPXPrime.ini). Every key where the
 // sample deliberately differs from the default must be listed here WITH the
 // reason -- an unexplained difference is either a stale sample (update the
 // INI) or an accidentally-changed default (fix the code). Verification.ini
@@ -42,11 +42,12 @@ struct SampleINIDefaultDriftTests {
     ]
 
     private func sampleINIURL() -> URL {
-        // <package>/Tests/MPXPrimeTests/ThisFile.swift -> <package>/MPXPrime.ini
+        // <package>/Tests/MPXPrimeTests/ThisFile.swift -> <package>/Resources/MPXPrime.ini
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // MPXPrimeTests
             .deletingLastPathComponent()   // Tests
-            .deletingLastPathComponent()   // macOS package root
+            .deletingLastPathComponent()   // package root
+            .appendingPathComponent("Resources")
             .appendingPathComponent("MPXPrime.ini")
     }
 

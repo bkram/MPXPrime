@@ -200,7 +200,7 @@ struct AppConfigDefaultsTests {
 struct SampleINIRoundTripTests {
 
     /// Locate the sample INI by walking up from the test bundle until we
-    /// find the `macOS/MPXPrime.ini` next to the package manifest. SPM
+    /// find `Resources/MPXPrime.ini` under the package root. SPM
     /// test bundles run from a derived data location; the source tree
     /// is reachable via Bundle resourcePath ancestry.
     private func sampleINIPath() -> String? {
@@ -208,8 +208,8 @@ struct SampleINIRoundTripTests {
         let here = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // MPXPrimeTests/
             .deletingLastPathComponent() // Tests/
-            .deletingLastPathComponent() // macOS/
-        let candidate = here.appendingPathComponent("MPXPrime.ini").path
+            .deletingLastPathComponent() // package root
+        let candidate = here.appendingPathComponent("Resources").appendingPathComponent("MPXPrime.ini").path
         return FileManager.default.fileExists(atPath: candidate) ? candidate : nil
     }
 

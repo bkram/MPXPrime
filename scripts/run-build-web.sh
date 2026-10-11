@@ -135,9 +135,9 @@ if ! command -v swift >/dev/null 2>&1; then
 fi
 
 echo "Building MPXPrime (release)..."
-swift build --package-path macOS -c release --product MPXPrime
+swift build -c release --product MPXPrime
 
-BIN="macOS/.build/release/MPXPrime"
+BIN=".build/release/MPXPrime"
 
 refuse_if_port_busy # again after the build: it takes long enough for someone to start one
 

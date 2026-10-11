@@ -11,5 +11,5 @@ set -euo pipefail
 # shellcheck source=scripts/build-env.sh
 . "$(dirname "$0")/build-env.sh"
 
-echo "+ swift test --package-path $PACKAGE $*"
-exec swift test --package-path "$PACKAGE" "$@"
+echo "+ swift test $*"
+exec swift test "$@"

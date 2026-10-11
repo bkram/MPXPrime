@@ -6,6 +6,15 @@ __pycache__/
 # C extensions
 *.so
 
+# SwiftPM build output (the package is the repo root)
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+# Audit captures (env-gated MPXPRIME_AUDIT_CAPTURE=1 driver output; kept locally)
+.audit-out/
+
 # Distribution / packaging
 .Python
 build/

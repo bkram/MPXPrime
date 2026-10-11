@@ -24,7 +24,7 @@ import Foundation
 // Run with:
 //   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 //     MPXPRIME_HF_RESPONSE=1 swift test -c release \
-//     --package-path macOS --filter DualRateHFResponse
+//     --filter DualRateHFResponse
 //
 // Output: markdown table to stdout listing per-frequency dB delta of
 // boundary-on vs boundary-off.

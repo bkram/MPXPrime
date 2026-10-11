@@ -22,9 +22,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."  # repo root
 
 echo "Building MPXPrimeMeter (release)..."
-swift build --package-path macOS -c release --product MPXPrimeMeter
+swift build -c release --product MPXPrimeMeter
 
-BIN="macOS/.build/release/MPXPrimeMeter"
+BIN=".build/release/MPXPrimeMeter"
 
 echo "Running: $BIN $*"
 exec "$BIN" "$@"

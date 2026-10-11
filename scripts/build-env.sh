@@ -18,11 +18,17 @@
 # Nothing in here is macOS-only by accident: on Linux the Xcode and Homebrew
 # lines are skipped and the plain swift toolchain on PATH is used.
 
-# shellcheck disable=SC2034  # PACKAGE / BUILD_DIR are used by the sourcing scripts
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# BASH_SOURCE in bash, $0 when an interactive zsh sources this file (zsh sets
+# $0 to the sourced file). Refuse to continue from anywhere that is not the
+# package root rather than let a build land in some other directory.
+# shellcheck disable=SC2034  # BUILD_DIR is used by the sourcing scripts
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+if [ ! -f "$REPO_ROOT/Package.swift" ]; then
+    echo "build-env.sh: no Package.swift at $REPO_ROOT; source this file as scripts/build-env.sh from the repo" >&2
+    return 1 2>/dev/null || exit 1
+fi
 cd "$REPO_ROOT" || exit 1
-PACKAGE="macOS"
-BUILD_DIR="$PACKAGE/.build"
+BUILD_DIR=".build"
 
 if [ "$(uname -s)" = "Darwin" ]; then
     if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then

@@ -8,7 +8,7 @@
 // picks one at load time from CPUID. One binary, both machines.
 //
 // BIT-IDENTITY IS THE CONTRACT. The Linux strict baseline
-// (verifier_baselines/default-linux-x86_64.json) was captured with the Swift
+// (Tests/Verification/baselines/default-linux-x86_64.json) was captured with the Swift
 // SSE2 numerics; these kernels reproduce them exactly on every clone:
 //   - the same 8-lane vectors, the same four accumulators unrolled by 32,
 //     the same (acc0 + acc1) + (acc2 + acc3) then lane 0..7 reduction, the

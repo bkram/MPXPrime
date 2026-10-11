@@ -1,8 +1,8 @@
 # HF Limiter -- correctness review (2026-10-10)
 
 Asked: is the HF Limiter proper, do we still need it, and does it need a fix.
-Line numbers refer to `macOS/Sources/MPXPrime/DSP/AudioClippers.swift` and
-`macOS/Sources/MPXPrime/MPXGenerator.swift` at `1ffbf10`.
+Line numbers refer to `Sources/MPXPrime/DSP/AudioClippers.swift` and
+`Sources/MPXPrime/MPXGenerator.swift` at `1ffbf10`.
 
 ## What it is and why the chain needs it
 

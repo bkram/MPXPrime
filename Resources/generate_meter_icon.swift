@@ -128,4 +128,4 @@ for entry in sizes {
 }
 
 print("Iconset at: \(iconsetDir)")
-print("Convert: iconutil --convert icns \(iconsetDir) --output macOS/Resources/MPXPrimeMeter.icns")
+print("Convert: iconutil --convert icns \(iconsetDir) --output Resources/MPXPrimeMeter.icns")

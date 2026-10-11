@@ -19,7 +19,7 @@ import MPXPrimeCore
 // has to stay fast. Run before a release, or after touching the final stage:
 //
 //   MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-//     swift test --package-path macOS --filter BS412FullChain
+//     swift test --filter BS412FullChain
 private let deepEnabled = ProcessInfo.processInfo.environment["MPXPRIME_DEEP"] != nil
 
 @Suite("BS.412 full-chain cross-check", .enabled(if: deepEnabled))

@@ -38,7 +38,7 @@ const { resolve } = require("node:path");
 const { JSDOM } = require("jsdom");
 
 const root = resolve(__dirname, "..");
-const webui = resolve(root, "macOS/Sources/MPXPrime/Control/WebUI");
+const webui = resolve(root, "Sources/MPXPrime/Control/WebUI");
 const html = readFileSync(resolve(webui, "index.html"), "utf8");
 const schema = JSON.parse(readFileSync(resolve(webui, "schema.json"), "utf8"));
 

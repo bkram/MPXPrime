@@ -8,7 +8,7 @@ FM-demodulates, and produces the raw MPX composite (pilot + L-R + RDS) at
 Two consumers share these sources:
 
 - **`CMPXTuner`** (the primary path) -- the same C++ compiled as a **library
-  with a pure-C ABI** (`capi-include`... see `macOS/Sources/CMPXTuner/include/mpx_tuner_capi.h`)
+  with a pure-C ABI** (`capi-include`... see `Sources/CMPXTuner/include/mpx_tuner_capi.h`)
   and **linked directly into MPX Prime Meter**. The Meter opens the device with
   `mpxtuner_open(...)` and receives float MPX blocks (1.0 == 150 kHz) on a
   callback from the library's capture thread -- no subprocess, no FIFO. Live

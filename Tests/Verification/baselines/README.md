@@ -35,7 +35,7 @@ removed in 0.11); `safetyGRDB` is the final look-ahead MPX limiter.
 - Every run of a gate loads its baseline (if the file exists) and compares
   each metric with a per-metric tolerance (`MetricTolerances.default` and
   `ReceiverMetricTolerances.default` in
-  `macOS/Sources/MPXPrime/VerifierBaseline.swift`). A missing file prints
+  `Sources/MPXPrime/VerifierBaseline.swift`). A missing file prints
   `Baseline: none` and the gate runs on physical thresholds only.
 - Drift is reported as `Baseline drift (<n> findings):` followed by one line
   per metric (`<scenario>: <metric> measured X, baseline Y (delta, tolerance
@@ -59,14 +59,14 @@ baselines in the same commit -- the four macOS files and the Linux one:
 ```bash
 # From the repo root, on an otherwise idle machine (the gates are single-thread
 # CPU-bound and a running GUI starves them):
-swift run --package-path macOS MPXPrime --verify --capture-baseline
-swift run --package-path macOS MPXPrime --verify-presets --capture-baseline --seconds 5
-swift run --package-path macOS MPXPrime --verify-long --capture-baseline --seconds 30
-swift run --package-path macOS MPXPrime --verify-receiver --capture-baseline --seconds 5
+swift run MPXPrime --verify --capture-baseline
+swift run MPXPrime --verify-presets --capture-baseline --seconds 5
+swift run MPXPrime --verify-long --capture-baseline --seconds 30
+swift run MPXPrime --verify-receiver --capture-baseline --seconds 5
 
 # Then prove the fresh files round-trip:
-swift run --package-path macOS MPXPrime --verify --baseline-strict
-git add macOS/verifier_baselines/*.json
+swift run MPXPrime --verify --baseline-strict
+git add Tests/Verification/baselines/*.json
 ```
 
 The Linux x86_64 file can only be written on x86_64 Linux (Rosetta cannot run

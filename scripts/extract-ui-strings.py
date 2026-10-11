@@ -16,17 +16,17 @@ import re
 import sys
 
 ROOTS = [
-    "macOS/Sources/MPXPrime/UI",
-    "macOS/Sources/MPXPrime/MPXPrimeViewModel.swift",
-    "macOS/Sources/MPXPrime/AppDelegate.swift",
-    "macOS/Sources/MPXPrime/UIBroadcastStatusBar.swift",
-    "macOS/Sources/MPXPrime/UISignalFlowStrip.swift",
-    "macOS/Sources/MPXPrime/UIInspector.swift",
-    "macOS/Sources/MPXPrime/UIProcessingOverview.swift",
-    "macOS/Sources/MPXPrime/Control/PresetCatalog.swift",
-    "macOS/Sources/MPXPrime/Control/WebUI/schema.json",
-    "macOS/Sources/MPXPrimeMeter",
-    "macOS/Sources/MPXPrimeUI",
+    "Sources/MPXPrime/UI",
+    "Sources/MPXPrime/MPXPrimeViewModel.swift",
+    "Sources/MPXPrime/AppDelegate.swift",
+    "Sources/MPXPrime/UIBroadcastStatusBar.swift",
+    "Sources/MPXPrime/UISignalFlowStrip.swift",
+    "Sources/MPXPrime/UIInspector.swift",
+    "Sources/MPXPrime/UIProcessingOverview.swift",
+    "Sources/MPXPrime/Control/PresetCatalog.swift",
+    "Sources/MPXPrime/Control/WebUI/schema.json",
+    "Sources/MPXPrimeMeter",
+    "Sources/MPXPrimeUI",
 ]
 CALLS = r"(?:Text|Label|Button|Toggle|Picker|Section|Stepper|TextField|Menu|Tab|NavigationLink|help|accessibilityLabel|accessibilityHint|GroupBox|DisclosureGroup)"
 PATTERNS = [

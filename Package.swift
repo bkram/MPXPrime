@@ -9,9 +9,9 @@ let packageDir = #filePath.hasSuffix("/Package.swift")
     ? String(#filePath.dropLast("/Package.swift".count))
     : "."
 
-// Repo root (one level above the SPM package at macOS/). The vendored RTL-SDR
-// tuner C++ lives in repo-root tuner/; the CMPXTuner target compiles it.
-let repoRoot = "\(packageDir)/.."
+// The package is the repo root. The vendored RTL-SDR tuner C++ lives in
+// tuner/; the CMPXTuner target compiles it.
+let repoRoot = packageDir
 
 // Platform split: the encoder ships on macOS (GUI + CLI) and Linux (CLI only).
 // The Meter, all SwiftUI, and the SDR tuner are macOS-only. Manifest-level

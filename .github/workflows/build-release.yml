@@ -45,7 +45,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: MPXPrime
-          path: macOS/dist/MPX_Prime-*.dmg
+          path: dist/MPX_Prime-*.dmg
           retention-days: 90
 
       - name: Upload App Bundles
@@ -53,6 +53,6 @@ jobs:
         with:
           name: MPXPrime-apps
           path: |
-            macOS/dist/MPX Prime Studio.app
-            macOS/dist/MPX Prime Meter.app
+            dist/MPX Prime Studio.app
+            dist/MPX Prime Meter.app
           retention-days: 90

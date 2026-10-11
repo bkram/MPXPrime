@@ -12,7 +12,7 @@ import MPXPrimeAcceleration
 // invocation. Run on demand with:
 //
 //   MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-//     swift test --package-path macOS --filter DeepDSP
+//     swift test --filter DeepDSP
 //
 // Five layers (run by individual @Suites within this file):
 //

@@ -21,12 +21,12 @@
 # from the Xcode toolchain.)
 
 included:
-  - macOS/Sources
+  - Sources
 
 excluded:
-  - macOS/.build
-  - macOS/dist
-  - macOS/Tests
+  - .build
+  - dist
+  - Tests
 
 opt_in_rules:
   # ── Accessibility (HIG) ────────────────────────────────────────

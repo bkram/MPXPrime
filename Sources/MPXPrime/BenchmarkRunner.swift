@@ -12,11 +12,11 @@ import MPXPrimeCore
 //
 // Run on the dev machine (M1 Pro):
 //   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-//     MPXPRIME_BENCH=1 swift test -c release --package-path macOS --filter Benchmark
+//     MPXPRIME_BENCH=1 swift test -c release --filter Benchmark
 //
 // Run on a CLT-only machine (Intel MBP via SSH, etc):
-//   swift build --package-path macOS -c release
-//   macOS/.build/release/MPXPrime --bench
+//   swift build -c release
+//   .build/release/MPXPrime --bench
 //
 // Save the stdout output as the captured baseline for that machine.
 

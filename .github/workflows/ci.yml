@@ -37,20 +37,20 @@ jobs:
         run: swiftlint --strict
 
       - name: Tests
-        run: swift test --package-path macOS
+        run: swift test
 
       - name: Build (release)
-        run: swift build --package-path macOS -c release
+        run: swift build -c release
 
       # Fast offline verify gates. baseline-strict pins the composite to the
       # captured macOS baseline (schema 3) -- any DSP drift fails the PR here
       # instead of at release prep. Runners are arm64 like the capture machine.
       - name: Verify gates
         run: |
-          macOS/.build/release/MPXPrime --verify --seconds 5
-          macOS/.build/release/MPXPrime --verify-receiver --seconds 5
-          macOS/.build/release/MPXPrime --verify-primebass --seconds 3
-          macOS/.build/release/MPXPrime --verify --baseline-strict
+          .build/release/MPXPrime --verify --seconds 5
+          .build/release/MPXPrime --verify-receiver --seconds 5
+          .build/release/MPXPrime --verify-primebass --seconds 3
+          .build/release/MPXPrime --verify --baseline-strict
 
   linux:
     runs-on: ubuntu-24.04
@@ -78,17 +78,17 @@ jobs:
 
       # The Linux toolchain ships Testing, so plain swift test works here.
       - name: Tests
-        run: swift test --package-path macOS
+        run: swift test
 
       - name: Build (release)
-        run: swift build --package-path macOS -c release --product MPXPrime
+        run: swift build -c release --product MPXPrime
 
       # Linux pins its own strict baseline (SIMD-shim numerics,
       # default-linux-x86_64.json).
       - name: Verify gates
         run: |
-          macOS/.build/release/MPXPrime --verify --seconds 5
-          macOS/.build/release/MPXPrime --verify --baseline-strict
+          .build/release/MPXPrime --verify --seconds 5
+          .build/release/MPXPrime --verify --baseline-strict
 
   # Documentation lint: every tracked Markdown file passes markdownlint with
   # the repo config (.markdownlint-cli2.jsonc) and every intra-repo link /

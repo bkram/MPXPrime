@@ -368,23 +368,15 @@ private func verifierBaselineFileName() -> String {
     #endif
 }
 
-/// Resolves the default baseline path. Prefers `macOS/verifier_baselines/`
-/// when run from the repo root (detected by presence of `macOS/Package.swift`),
-/// otherwise `./verifier_baselines/` — so the same binary works whether it's
-/// invoked from the repo root or from inside the `macOS/` subdirectory.
+/// Resolves the default baseline path: `Tests/Verification/baselines/` under
+/// the current directory, which is the repo root when the gates are run as
+/// documented.
 func defaultVerifierBaselinePath() -> URL {
     let cwd = FileManager.default.currentDirectoryPath
-    let repoRootMarker = URL(fileURLWithPath: cwd)
-        .appendingPathComponent("macOS")
-        .appendingPathComponent("Package.swift")
-    if FileManager.default.fileExists(atPath: repoRootMarker.path) {
-        return URL(fileURLWithPath: cwd)
-            .appendingPathComponent("macOS")
-            .appendingPathComponent("verifier_baselines")
-            .appendingPathComponent(verifierBaselineFileName())
-    }
     return URL(fileURLWithPath: cwd)
-        .appendingPathComponent("verifier_baselines")
+        .appendingPathComponent("Tests")
+        .appendingPathComponent("Verification")
+        .appendingPathComponent("baselines")
         .appendingPathComponent(verifierBaselineFileName())
 }
 

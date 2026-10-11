@@ -8,7 +8,7 @@ import Foundation
 // `swift test`. Run with release optimizations on the dev machine:
 //
 //   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-//     MPXPRIME_BENCH=1 swift test -c release --package-path macOS --filter Benchmark
+//     MPXPRIME_BENCH=1 swift test -c release --filter Benchmark
 //
 // The actual bench logic lives in Sources/MPXPrime/BenchmarkRunner.swift
 // so the same report can be produced via `MPXPrime --bench` on a

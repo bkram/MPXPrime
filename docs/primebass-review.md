@@ -3,7 +3,7 @@
 The field report is "PrimeBass does not sound good". This review checks the
 stage against the bass-enhancement literature and the processors it was
 modelled on, then ranks what to do about it. Line numbers refer to
-`macOS/Sources/MPXPrime/MPXGenerator.swift` at `1ffbf10`.
+`Sources/MPXPrime/MPXGenerator.swift` at `1ffbf10`.
 
 ## What the stage does today
 

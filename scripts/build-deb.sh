@@ -2,7 +2,7 @@
 #
 # Build a Debian/Ubuntu package for the MPX Prime Studio encoder (Linux CLI:
 # headless encoder + REST API/web dashboard). Run ON the target Ubuntu
-# release after `swift build --package-path macOS -c release
+# release after `swift build -c release
 # --product MPXPrime --static-swift-stdlib` (the Swift runtime is static;
 # system deps are resolved by dpkg-shlibdeps at package time).
 #
@@ -28,9 +28,9 @@ cd "$(dirname "$0")/.." # repo root; the .deb is written here
 
 VERSION="${1:?usage: scripts/build-deb.sh <version> [distro-label]}"
 DISTRO="${2:-}"
-BIN="macOS/.build/release/MPXPrime"
+BIN=".build/release/MPXPrime"
 [ -x "$BIN" ] || {
-    echo "error: build first: swift build --package-path macOS -c release --product MPXPrime --static-swift-stdlib" >&2
+    echo "error: build first: swift build -c release --product MPXPrime --static-swift-stdlib" >&2
     exit 1
 }
 
@@ -53,7 +53,7 @@ if [ -d "$RESOURCES" ]; then
 else
     echo "warning: resource bundle not found; dashboard will serve the stub" >&2
 fi
-install -m 0644 macOS/MPXPrime.ini "$STAGE/usr/share/mpxprime/MPXPrime.sample.ini"
+install -m 0644 Resources/MPXPrime.ini "$STAGE/usr/share/mpxprime/MPXPrime.sample.ini"
 install -m 0644 docs/studio-operator-guide.md docs/studio-settings-reference.md docs/rds-country-and-pty-tables.md README.md CONTRIBUTORS.md CHANGELOG.md "$STAGE/usr/share/doc/mpxprime/"
 install -m 0644 LICENSE "$STAGE/usr/share/doc/mpxprime/copyright"
 

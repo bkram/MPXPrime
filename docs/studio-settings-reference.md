@@ -481,13 +481,13 @@ and leave `now_playing_script` empty (the push is the source). A `/`-segmented
 template shows the static segment when nothing is playing; a line whose
 `{artist}`/`{title}` is missing is skipped rather than aired half-filled.
 
-From a source checkout on macOS, `dist-scripts/push-nowplaying.sh` does this for
+From a source checkout on macOS, `scripts/dist/push-nowplaying.sh` does this for
 VLC and Cog:
 
 ```bash
-./dist-scripts/push-nowplaying.sh --url http://encoder-host:8737 --api-key <key>
-# or: MPXPRIME_URL=... MPXPRIME_API_KEY=... ./dist-scripts/push-nowplaying.sh --interval 5
+scripts/dist/push-nowplaying.sh --url http://encoder-host:8737 --api-key <key>
+# or: MPXPRIME_URL=... MPXPRIME_API_KEY=... scripts/dist/push-nowplaying.sh --interval 5
 ```
 
-It reuses `dist-scripts/nowplaying.sh` for extraction and pushes only on track
+It reuses `scripts/dist/nowplaying.sh` for extraction and pushes only on track
 change (no RadioText thrash), clearing the track when playback stops.

@@ -1,8 +1,8 @@
 # Advanced Dynamics -- correctness review (2026-10-10)
 
 Asked: audit the single-stage leveler and fix what is wrong. Line numbers
-refer to `macOS/Sources/MPXPrime/DSP/Dynamics.swift` and
-`macOS/Sources/MPXPrime/MPXGenerator.swift` at `1ffbf10`.
+refer to `Sources/MPXPrime/DSP/Dynamics.swift` and
+`Sources/MPXPrime/MPXGenerator.swift` at `1ffbf10`.
 
 ## What it does
 

@@ -37,7 +37,7 @@ that the Meter decodes are in the Studio manual's appendices
 
 ## Starting the Meter
 
-- Double-click `MPX Prime Meter.app`, or run `macOS/.build/release/MPXPrimeMeter --gui`.
+- Double-click `MPX Prime Meter.app`, or run `.build/release/MPXPrimeMeter --gui`.
 - Headless terminal dashboard: `scripts/run-meter.sh --device <spec>` (audio-device
   input) or `scripts/run-meter.sh --stdin` (a composite piped on stdin). The in-process
   SDR is GUI-only; with no arguments `scripts/run-meter.sh` opens the window and
@@ -460,7 +460,7 @@ back through the analyzer headlessly. The Meter's own **MPX** recordings are
 the rate from that flag, not from the WAV header:
 
 ```bash
-macOS/.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
+.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
     --no-monitor --seconds 200 < capture.wav
 ```
 

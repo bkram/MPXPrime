@@ -33,7 +33,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            macOS/dist/MPX_Prime-*.dmg
+            dist/MPX_Prime-*.dmg
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
         env:
@@ -75,8 +75,8 @@ jobs:
 
       - name: Build (release, static Swift stdlib)
         run: |
-          swift build --package-path macOS -c release --product MPXPrime             --static-swift-stdlib
-          macOS/.build/release/MPXPrime --verify --seconds 5
+          swift build -c release --product MPXPrime             --static-swift-stdlib
+          .build/release/MPXPrime --verify --seconds 5
 
       - name: Build .deb package
         run: |

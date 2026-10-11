@@ -12,13 +12,13 @@ import Foundation
 // by default so a normal `swift test` doesn't spam the filesystem with
 // WAV files.
 //
-// Output: macOS/.audit-out/lookahead/<scenario>/{demod,mpx}-<arrangement>.wav
+// Output: .audit-out/lookahead/<scenario>/{demod,mpx}-<arrangement>.wav
 // where <arrangement> is "lookahead-0.0ms" / "lookahead-1.0ms" / etc.
 //
 // Usage:
 //   MPXPRIME_AUDIT_CAPTURE=1 \
 //     DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-//     swift test --package-path macOS \
+//     swift test \
 //       --filter CompositeClipperLookaheadCaptureTests
 
 @Suite(

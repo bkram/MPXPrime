@@ -164,9 +164,9 @@ Every one of these cost real time on 2026-09-11. They are not hypothetical.
 ## Gates
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swiftlint --strict
-swift run --package-path macOS MPXPrime --verify --baseline-strict --seconds 5
+swift run MPXPrime --verify --baseline-strict --seconds 5
 scripts/check-webui.sh                      # whenever schema.json changes
 npx --yes markdownlint-cli2 '**/*.md'
 python3 scripts/check-doc-anchors.py
@@ -177,7 +177,7 @@ Linux, in a native arm64 container (the encoder needs libasound):
 ```bash
 docker run --rm -v "$PWD":/src -w /src swift:noble bash -lc \
   "apt-get update -qq && apt-get install -y -qq libasound2-dev && \
-   swift test --package-path macOS --scratch-path /tmp/linuxbuild"
+   swift test --scratch-path /tmp/linuxbuild"
 ```
 
 State the expected movement in every commit message: what should change, what

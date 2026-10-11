@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build MPX Prime release DMG with universal binary. Works from any
-# directory; the output lands in macOS/dist/.
+# directory; the output lands in dist/.
 #
 #   scripts/build-release.sh <version>      # e.g. scripts/build-release.sh 0.60
 
@@ -10,12 +10,12 @@ set -euo pipefail
 . "$(dirname "$0")/build-env.sh" # repo root + DEVELOPER_DIR, caches, BUILD_JOBS
 
 VERSION="${1:?usage: scripts/build-release.sh <version>}"
-OUTPUT_DIR="macOS/dist"
+OUTPUT_DIR="dist"
 APP_NAME="MPX Prime Studio"
 EXECUTABLE_NAME="MPXPrime"
 CONFIG_NAME="MPX Prime Studio.ini"
-ICON_FILE="macOS/Resources/MPXPrime.icns"
-ENTITLEMENTS="macOS/MPXPrime.entitlements"
+ICON_FILE="Resources/MPXPrime.icns"
+ENTITLEMENTS="Resources/MPXPrime.entitlements"
 
 echo "Building MPX Prime $VERSION release (universal binary)..."
 echo "Using $BUILD_JOBS parallel build jobs..."
@@ -24,16 +24,39 @@ echo "Using $BUILD_JOBS parallel build jobs..."
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# Build release binary for both architectures with entitlements
+# Build each architecture, then copy its products aside before the next
+# build. The toolchain decides where products land (the classic backend
+# uses .build/<triple>/release, the Swift Build backend one shared
+# .build/out/Products/Release for every arch, so a second --arch build
+# OVERWRITES the first); --show-bin-path is the only reliable answer, and
+# the copy is what keeps the arm64 slice from being a stale or wrong-arch
+# file when lipo runs.
+SLICES="$OUTPUT_DIR/.slices"
+mkdir -p "$SLICES/arm64" "$SLICES/x86_64"
+
 echo "Building arm64..."
-xcrun swift build --package-path macOS -c release --arch arm64 -j "$BUILD_JOBS"
+xcrun swift build -c release --arch arm64 -j "$BUILD_JOBS"
+BIN_ARM64="$(xcrun swift build -c release --arch arm64 --show-bin-path)"
+cp "$BIN_ARM64/MPXPrime" "$BIN_ARM64/MPXPrimeMeter" "$SLICES/arm64/"
 
 # x86_64: the encoder only. MPX Prime Meter links the arm64-only RTL-SDR tuner
 # libs (CMPXTuner -> librtlsdr/liquid-dsp), so it is Apple-Silicon-only; building
 # the whole package for x86_64 would try to link those and fail. --product keeps
 # the Intel slice to the universal encoder.
 echo "Building x86_64 (encoder only; Meter is Apple-Silicon-only)..."
-xcrun swift build --package-path macOS -c release --arch x86_64 --product MPXPrime -j "$BUILD_JOBS"
+xcrun swift build -c release --arch x86_64 --product MPXPrime -j "$BUILD_JOBS"
+BIN_X86="$(xcrun swift build -c release --arch x86_64 --product MPXPrime --show-bin-path)"
+cp "$BIN_X86/MPXPrime" "$SLICES/x86_64/"
+
+# Each slice must be what its name says, or the universal binary is a lie.
+for pair in "arm64:$SLICES/arm64/MPXPrime" "arm64:$SLICES/arm64/MPXPrimeMeter" "x86_64:$SLICES/x86_64/MPXPrime"; do
+    want="${pair%%:*}"
+    file="${pair#*:}"
+    if ! lipo -info "$file" | grep -q "architecture: $want"; then
+        echo "error: $file is not an $want binary: $(lipo -info "$file")" >&2
+        exit 1
+    fi
+done
 
 # Create .app bundle structure
 APP_DIR="$OUTPUT_DIR/$APP_NAME.app"
@@ -44,8 +67,8 @@ mkdir -p "$APP_DIR/Contents/Resources"
 # Copy universal binary to app bundle
 echo "Creating universal binary..."
 lipo -create \
-    "macOS/.build/arm64-apple-macosx/release/MPXPrime" \
-    "macOS/.build/x86_64-apple-macosx/release/MPXPrime" \
+    "$SLICES/arm64/MPXPrime" \
+    "$SLICES/x86_64/MPXPrime" \
     -output "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 
 if [ -f "$ICON_FILE" ]; then
@@ -95,9 +118,9 @@ cp "$ENTITLEMENTS" "$APP_DIR/Contents/Resources/MPXPrime.entitlements"
 # previous heredoc template used the wrong section names ([ mpxprime ],
 # [pilot ], etc.) — the parser only recognizes [MPX] / [RDS] /
 # [INTERFACES], so every key in those sections silently fell back to
-# defaults. Copying macOS/MPXPrime.ini directly fixes that and also
+# defaults. Copying Resources/MPXPrime.ini directly fixes that and also
 # means anything tested by SampleINIRoundTripTests is what ships.
-cp "macOS/MPXPrime.ini" "$OUTPUT_DIR/$CONFIG_NAME"
+cp "Resources/MPXPrime.ini" "$OUTPUT_DIR/$CONFIG_NAME"
 
 # Copy default config to app resources
 cp "$OUTPUT_DIR/$CONFIG_NAME" "$APP_DIR/Contents/Resources/"
@@ -106,7 +129,7 @@ cp "$OUTPUT_DIR/$CONFIG_NAME" "$APP_DIR/Contents/Resources/"
 # bundle so they always travel with the app. They are also placed at the top
 # level of the DMG (below) for easy discovery.
 mkdir -p "$APP_DIR/Contents/Resources/Scripts"
-cp dist-scripts/nowplaying.sh dist-scripts/push-nowplaying.sh "$APP_DIR/Contents/Resources/Scripts/"
+cp scripts/dist/nowplaying.sh scripts/dist/push-nowplaying.sh "$APP_DIR/Contents/Resources/Scripts/"
 chmod +x "$APP_DIR/Contents/Resources/Scripts/"*.sh
 
 # Ad-hoc sign the completed app bundle so macOS sees a valid bundle structure.
@@ -131,12 +154,12 @@ mkdir -p "$METER_APP_DIR/Contents/MacOS"
 mkdir -p "$METER_APP_DIR/Contents/Resources"
 # MPX Prime Meter is Apple-Silicon-only (it links the arm64 RTL-SDR tuner libs),
 # so it ships as an arm64 binary; the encoder above stays universal.
-cp "macOS/.build/arm64-apple-macosx/release/MPXPrimeMeter" \
+cp "$SLICES/arm64/MPXPrimeMeter" \
     "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
 chmod u+w "$METER_APP_DIR/Contents/MacOS/$METER_EXECUTABLE_NAME"
 # The Meter has its own icon (analyzer VU gauge) so it is distinct from
 # MPX Prime Studio in the Dock; fall back to the shared icon if it is missing.
-METER_ICON_FILE="macOS/Resources/MPXPrimeMeter.icns"
+METER_ICON_FILE="Resources/MPXPrimeMeter.icns"
 if [ -f "$METER_ICON_FILE" ]; then
     cp "$METER_ICON_FILE" "$METER_APP_DIR/Contents/Resources/"
     METER_ICON_NAME="MPXPrimeMeter"
@@ -243,15 +266,17 @@ cp -R "$APP_DIR" "$DMG_STAGING/"
 cp -R "$METER_APP_DIR" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
 mkdir -p "$DMG_STAGING/Now Playing Scripts"
-cp dist-scripts/nowplaying.sh dist-scripts/push-nowplaying.sh "$DMG_STAGING/Now Playing Scripts/"
+cp scripts/dist/nowplaying.sh scripts/dist/push-nowplaying.sh "$DMG_STAGING/Now Playing Scripts/"
 chmod +x "$DMG_STAGING/Now Playing Scripts/"*.sh
 hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH" || {
     echo "Failed to create DMG, keeping .app bundle"
 }
-rm -rf "$DMG_STAGING"
+rm -rf "$DMG_STAGING" "$SLICES"
 
 echo ""
 echo "Build complete!"
+echo "Note: .build/release now holds the x86_64 encoder (the last build);"
+echo "      scripts/build.sh restores the native one."
 echo "Output: $DMG_PATH"
 echo "App: $APP_DIR"
 ls -la "$OUTPUT_DIR/"

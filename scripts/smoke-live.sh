@@ -10,7 +10,7 @@
 #
 # Usage: scripts/smoke-live.sh [--ini <path>] [--device-uid <uid>] [--port <n>] [--seconds <n>]
 #   --ini         INI to smoke (default: your station INI in Application Support;
-#                 falls back to macOS/Verification.ini). The file is COPIED; the
+#                 falls back to Tests/Verification/Verification.ini). The file is COPIED; the
 #                 original is never modified.
 #   --device-uid  CoreAudio UID of the virtual device (default BlackHole2ch_UID;
 #                 `brew install blackhole-2ch`, set it to 192 kHz in Audio MIDI Setup).
@@ -22,7 +22,7 @@ set -u
 cd "$(dirname "$0")/.."  # repo root
 
 INI_DEFAULT="$HOME/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini"
-INI="$INI_DEFAULT"; [ -f "$INI" ] || INI="macOS/Verification.ini"
+INI="$INI_DEFAULT"; [ -f "$INI" ] || INI="Tests/Verification/Verification.ini"
 DEVICE_UID="BlackHole2ch_UID"
 PORT=8799
 SECONDS_RUN=60
@@ -41,10 +41,10 @@ if pgrep -f "MPX Prime Studio.app|MPXPrime --gui" >/dev/null; then
   exit 3
 fi
 
-BIN=macOS/.build/release/MPXPrime
+BIN=.build/release/MPXPrime
 if [ ! -x "$BIN" ]; then
   echo "[smoke] building release binary..."
-  swift build --package-path macOS -c release --product MPXPrime >/dev/null 2>&1 || { echo "FAIL: build"; exit 3; }
+  swift build -c release --product MPXPrime >/dev/null 2>&1 || { echo "FAIL: build"; exit 3; }
 fi
 
 WORK=$(mktemp -d /tmp/mpxprime-smoke.XXXXXX)

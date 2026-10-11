@@ -77,9 +77,7 @@ func defaultVerificationConfigPath() -> String {
     let launchDirectory =
         ProcessInfo.processInfo.environment["PWD"] ?? FileManager.default.currentDirectoryPath
     let candidates = [
-        ((launchDirectory as NSString).appendingPathComponent("macOS/Verification.ini")
-            as NSString).standardizingPath,
-        ((launchDirectory as NSString).appendingPathComponent("Verification.ini")
+        ((launchDirectory as NSString).appendingPathComponent("Tests/Verification/Verification.ini")
             as NSString).standardizingPath
     ]
     for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
@@ -89,10 +87,10 @@ func defaultVerificationConfigPath() -> String {
     // measures the operator's station INI produces official-looking TIGHT/
     // WARN verdicts about the wrong thing (pilot/RDS levels, clipper
     // enables, AGC -- all operator-set). Verification runs are only
-    // meaningful against the pinned macOS/Verification.ini, so demand it.
+    // meaningful against the pinned Tests/Verification/Verification.ini, so demand it.
     fputs(
         """
-        MPX Prime: macOS/Verification.ini not found from the current directory.
+        MPX Prime: Tests/Verification/Verification.ini not found from the current directory.
         Verification must run against the pinned config -- run from the repo
         root, or pass --config <path> explicitly to verify a specific INI.
         """ + "\n",
@@ -281,8 +279,8 @@ func printUsage() {
           --gui      Launch native SwiftUI macOS window (default)
           --nogui    Run headless
           --verify   Run the offline MPX verification harness
-                     Uses macOS/Verification.ini by default when available
-                     Compares against macOS/verifier_baselines/default.json if present.
+                     Uses Tests/Verification/Verification.ini by default when available
+                     Compares against Tests/Verification/baselines/default.json if present.
           --capture-baseline  Run --verify and write measurements to the baseline file.
           --baseline-strict   Any baseline drift elevates exit code to WARN (2).
           --verify-presets  Sweep key multiband presets through the offline verification harness

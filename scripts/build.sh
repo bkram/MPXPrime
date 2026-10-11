@@ -7,10 +7,10 @@
 #   scripts/build.sh                      # release, every product (Studio + Meter)
 #   scripts/build.sh debug                # debug build
 #   scripts/build.sh --product MPXPrime   # one product only (the encoder)
-#   scripts/build.sh --clean              # wipe macOS/.build first
+#   scripts/build.sh --clean              # wipe .build first
 #   scripts/build.sh release --product MPXPrimeMeter -v   # extra args go to swift build
 #
-# The binaries land in macOS/.build/<config>/ (MPXPrime, MPXPrimeMeter); the
+# The binaries land in .build/<config>/ (MPXPrime, MPXPrimeMeter); the
 # path of the one you asked for is printed at the end. Needs
 # `brew install librtlsdr liquid-dsp` for the Meter; pass --product MPXPrime
 # to build the encoder without them.
@@ -45,7 +45,7 @@ if [ "$CLEAN" = 1 ]; then
     rm -rf "$BUILD_DIR"
 fi
 
-CMD=(swift build --package-path "$PACKAGE" -c "$CONFIG" -j "$BUILD_JOBS")
+CMD=(swift build -c "$CONFIG" -j "$BUILD_JOBS")
 [ -n "$PRODUCT" ] && CMD+=(--product "$PRODUCT")
 [ "${#EXTRA[@]}" -gt 0 ] && CMD+=("${EXTRA[@]}")
 

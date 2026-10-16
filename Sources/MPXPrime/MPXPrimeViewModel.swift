@@ -298,6 +298,10 @@ final class MPXPrimeViewModel: ObservableObject {
     // Live monitoring telemetry lives on its own observable so a metering
     // tick does not invalidate the whole view model. These forward to it;
     // writer code in the update methods is unchanged. See LiveTelemetry.
+    // The explicit type is deliberate: without it every file that touches
+    // `telemetry` re-type-checks the @Observable initialiser (4 s of CPU
+    // per build across 14 jobs, docs/BUILDING.md "Fast rebuilds").
+    // swiftlint:disable:next redundant_type_annotation
     let telemetry: LiveTelemetry = LiveTelemetry()
     var inputRingText: String { get { telemetry.inputRingText } set { telemetry.inputRingText = newValue } }
     var inputBufferValue: Double { get { telemetry.inputBufferValue } set { telemetry.inputBufferValue = newValue } }

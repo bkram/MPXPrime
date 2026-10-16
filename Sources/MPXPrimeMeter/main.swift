@@ -601,7 +601,7 @@ if args.contains("--help") || args.contains("-h") {
         channel: parseChannel(args),
         monitor: !args.contains("--no-monitor"),
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
-        monitorChannels: (try? monitorChannelsArg.get()) ?? nil,
+        monitorChannels: try? monitorChannelsArg.get(),
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
         fullScaleKHz: parseValue(args, "--full-scale-khz").flatMap { Float($0) },
@@ -618,11 +618,11 @@ if args.contains("--help") || args.contains("-h") {
 } else {
     exitCode = runLive(
         deviceSpec: parseDevice(args),
-        channels: (try? captureChannels.get()) ?? nil,
+        channels: try? captureChannels.get(),
         channel: parseChannel(args),
         monitor: !args.contains("--no-monitor"),
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
-        monitorChannels: (try? monitorChannelsArg.get()) ?? nil,
+        monitorChannels: try? monitorChannelsArg.get(),
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
         fullScaleKHz: parseValue(args, "--full-scale-khz").flatMap { Float($0) },

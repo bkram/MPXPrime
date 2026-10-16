@@ -46,6 +46,9 @@ enum MeterScale {
 
 @MainActor
 final class MeterViewModel: ObservableObject {
+    // Explicit type on purpose: it spares every file that touches
+    // `telemetry` a re-check of the initialiser (docs/BUILDING.md).
+    // swiftlint:disable:next redundant_type_annotation
     let telemetry: MeterTelemetry = MeterTelemetry()
 
     /// Where the composite comes from: a Core Audio input device, or a live

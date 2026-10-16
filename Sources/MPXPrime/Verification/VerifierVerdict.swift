@@ -62,9 +62,9 @@ enum CompositeVerdictBounds {
 
 /// Every rule that fires, strongest first. Empty means PASS.
 func compositeVerdictFindings(_ input: CompositeVerdictInputs) -> [VerdictFinding] {
-    typealias B = CompositeVerdictBounds
+    typealias Bound = CompositeVerdictBounds
     var findings: [VerdictFinding] = []
-    if input.worstPostInjectionOvershoot > B.postInjectionOvershoot {
+    if input.worstPostInjectionOvershoot > Bound.postInjectionOvershoot {
         findings.append(VerdictFinding(
             level: 3,
             message: "FAIL - post-injection composite overshoot (subcarrier budget violated after pilot/RDS injection)."))
@@ -73,20 +73,20 @@ func compositeVerdictFindings(_ input: CompositeVerdictInputs) -> [VerdictFindin
         findings.append(VerdictFinding(
             level: 2, message: "WARN - composite budget exceeded on at least one scenario."))
     }
-    if input.worstSafetyGRDB > B.safetyWarnDB {
+    if input.worstSafetyGRDB > Bound.safetyWarnDB {
         findings.append(VerdictFinding(
             level: 2,
-            message: "WARN - safety limiter is doing significant work (\(String(format: "%.1f", input.worstSafetyGRDB)) dB > \(String(format: "%.1f", B.safetyWarnDB)) dB)."))
+            message: "WARN - safety limiter is doing significant work (\(String(format: "%.1f", input.worstSafetyGRDB)) dB > \(String(format: "%.1f", Bound.safetyWarnDB)) dB)."))
     }
-    if input.worstBudgetMarginDB < B.marginWarnDB {
+    if input.worstBudgetMarginDB < Bound.marginWarnDB {
         findings.append(VerdictFinding(
             level: 2,
-            message: "WARN - composite budget margin \(String(format: "%.2f", input.worstBudgetMarginDB)) dB is below \(String(format: "%.2f", B.marginWarnDB)) dB."))
+            message: "WARN - composite budget margin \(String(format: "%.2f", input.worstBudgetMarginDB)) dB is below \(String(format: "%.2f", Bound.marginWarnDB)) dB."))
     }
-    if input.worstTruePeakDBFS > B.truePeakWarnDBFS {
+    if input.worstTruePeakDBFS > Bound.truePeakWarnDBFS {
         findings.append(VerdictFinding(
             level: 2,
-            message: "WARN - composite 4x true peak \(String(format: "%+.2f", input.worstTruePeakDBFS)) dBFS is over-deviation beyond \(String(format: "%+.2f", B.truePeakWarnDBFS)) dBFS."))
+            message: "WARN - composite 4x true peak \(String(format: "%+.2f", input.worstTruePeakDBFS)) dBFS is over-deviation beyond \(String(format: "%+.2f", Bound.truePeakWarnDBFS)) dBFS."))
     }
     if input.strictBaseline && input.baselineDriftCount > 0 {
         findings.append(VerdictFinding(
@@ -102,16 +102,16 @@ func compositeVerdictFindings(_ input: CompositeVerdictInputs) -> [VerdictFindin
             level: 1,
             message: "TIGHT - composite safety is OK, but decoded-audio quality drift exceeded expected bounds."))
     }
-    if input.worstBudgetMarginDB < B.marginTightDB && input.worstBudgetMarginDB >= B.marginWarnDB {
+    if input.worstBudgetMarginDB < Bound.marginTightDB && input.worstBudgetMarginDB >= Bound.marginWarnDB {
         findings.append(VerdictFinding(
             level: 1, message: "TIGHT - verification stayed close to the composite budget limit."))
     }
-    if input.worstSafetyGRDB > B.safetyTightDB && input.worstSafetyGRDB <= B.safetyWarnDB {
+    if input.worstSafetyGRDB > Bound.safetyTightDB && input.worstSafetyGRDB <= Bound.safetyWarnDB {
         findings.append(VerdictFinding(
             level: 1,
-            message: "TIGHT - safety limiter gain reduction \(String(format: "%.1f", input.worstSafetyGRDB)) dB is above \(String(format: "%.1f", B.safetyTightDB)) dB."))
+            message: "TIGHT - safety limiter gain reduction \(String(format: "%.1f", input.worstSafetyGRDB)) dB is above \(String(format: "%.1f", Bound.safetyTightDB)) dB."))
     }
-    if input.worstTruePeakDBFS > B.truePeakTightDBFS && input.worstTruePeakDBFS <= B.truePeakWarnDBFS {
+    if input.worstTruePeakDBFS > Bound.truePeakTightDBFS && input.worstTruePeakDBFS <= Bound.truePeakWarnDBFS {
         findings.append(VerdictFinding(
             level: 1,
             message: "TIGHT - composite 4x true peak \(String(format: "%+.2f", input.worstTruePeakDBFS)) dBFS is above full deviation."))

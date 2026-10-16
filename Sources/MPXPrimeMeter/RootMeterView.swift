@@ -1085,7 +1085,7 @@ struct RootMeterView: View {
     /// MPX POWER readout: the 60 s value, plus the worst window once valid.
     private static func mpxPowerReadout(_ t: MeterTelemetry) -> String {
         guard t.mpxPowerValid else { return "--" }
-        let current: String = String(format: "%+.1f dBr", t.mpxPowerDBr)
+        let current = String(format: "%+.1f dBr", t.mpxPowerDBr)
         guard t.mpxPowerMaxValid else { return current }
         return current + String(format: "  max %+.1f", t.mpxPowerMaxDBr)
     }

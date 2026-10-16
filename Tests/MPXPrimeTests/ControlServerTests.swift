@@ -2,6 +2,7 @@ import Foundation
 import Hummingbird
 import HummingbirdTesting
 import NIOCore
+import MPXPrimeCore
 import Testing
 
 @testable import MPXPrime
@@ -29,6 +30,15 @@ private actor MockBackend: ControlBackend {
             outputMode: "mpxComposite",
             notes: []
         )
+    }
+
+    /// Every reader a meter stream asked with, in order.
+    var meterReaders: [MeterPeakReader] = []
+    func recordedMeterReaders() -> [MeterPeakReader] { meterReaders }
+
+    func meters(reader: MeterPeakReader) -> ControlMeters? {
+        meterReaders.append(reader)
+        return meters()
     }
 
     func meters() -> ControlMeters? {
@@ -259,6 +269,52 @@ struct ControlServerTests {
                 }
             }
         }
+    }
+
+    @Test func eachMeterStreamReadsAsItsOwnPeakReader() async throws {
+        // The web stream and the GUI (or two dashboard tabs) used to share one
+        // pending peak, so each read took the other's peaks. A stream now
+        // reads as one reader of its own for its whole life.
+        let backend = MockBackend()
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        try await app.test(.router) { client in
+            for _ in 0..<2 {
+                try await client.execute(uri: "/api/meters/stream?hz=30&frames=3", method: .get) { response in
+                    #expect(response.status == .ok)
+                }
+            }
+        }
+        let readers = await backend.recordedMeterReaders()
+        #expect(readers.count == 6)
+        #expect(!readers.contains(.shared))
+        #expect(Set(readers[0..<3]).count == 1, "one stream, one reader")
+        #expect(Set(readers[3..<6]).count == 1, "one stream, one reader")
+        #expect(readers[0] != readers[3], "two streams, two readers")
+    }
+
+    @Test func meterStreamSlowsDownWhileTheEngineIsStopped() async throws {
+        // Stopped: the "not running" line goes out at stoppedStreamHz (2 Hz),
+        // not at the requested 30 Hz. Two lines are one interval apart, so
+        // the body takes at least ~0.5 s (a lower bound: sleeps never end
+        // early, so this cannot flake on a slow runner).
+        let backend = MockBackend()
+        _ = try await backend.transport(.stop)
+        let app = Application(
+            router: ControlServer.buildRouter(backend: backend, apiKey: nil))
+        let clock = ContinuousClock()
+        let started = clock.now
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/api/meters/stream?hz=30&frames=2", method: .get) { response in
+                let text = String(bytes: response.body.readableBytesView, encoding: .utf8) ?? ""
+                let lines = text.split(separator: "\n").filter { !$0.isEmpty }
+                #expect(lines.count == 2)
+                #expect(lines.allSatisfy { $0.contains("engine not running") })
+            }
+        }
+        let elapsed = clock.now - started
+        #expect(elapsed >= .milliseconds(Int(1000.0 / ControlServer.stoppedStreamHz * 0.9)),
+                "stopped stream sent its lines \(elapsed) apart")
     }
 
     @Test func configPatchAppliesAndReportsDispositions() async throws {

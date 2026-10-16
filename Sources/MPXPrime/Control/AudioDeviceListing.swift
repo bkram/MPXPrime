@@ -15,10 +15,12 @@ enum AudioDeviceListing {
         #if os(macOS)
         guard let devices = try? AudioDevices.list() else { return ([], [], "") }
         let inputs = devices.filter { $0.hasInput }.map {
-            ControlDevice(id: $0.uid, name: $0.name, canInput: true, canOutput: $0.hasOutput)
+            ControlDevice(id: $0.uid, name: $0.name, canInput: true, canOutput: $0.hasOutput,
+                          inputChannels: $0.inputChannels, outputChannels: $0.outputChannels)
         }
         let outputs = devices.filter { $0.hasOutput }.map {
-            ControlDevice(id: $0.uid, name: $0.name, canInput: $0.hasInput, canOutput: true)
+            ControlDevice(id: $0.uid, name: $0.name, canInput: $0.hasInput, canOutput: true,
+                          inputChannels: $0.inputChannels, outputChannels: $0.outputChannels)
         }
         return (inputs, outputs, "")
         #else

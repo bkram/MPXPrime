@@ -1,17 +1,17 @@
 {
-  "capturedAt" : "2026-10-10T10:54:30Z",
-  "configPath" : "\/Users\/mrk\/Projects\/git\/MPXPrime\/macOS\/Verification.ini",
+  "capturedAt" : "2026-10-16T01:30:25Z",
+  "configPath" : "\/Users\/mrk\/Projects\/git\/MPXPrime\/Tests\/Verification\/Verification.ini",
   "metrics" : {
-    "coherentSep10k" : 41.149868,
-    "coherentSep14k" : 25.45487,
-    "coherentSep1k" : 95.7952,
-    "noPilotPilotPercent" : 1.560359e-07,
-    "pilotGuardDepthDB" : 10.983067,
-    "pllSep10k" : 40.547462,
-    "pllSep14k" : 25.245564,
-    "pllSep1k" : 64.349655,
-    "rdsGuardDepthDB" : 12.530197,
-    "subcarrierPilotPercent" : 7.9999075
+    "coherentSep10k" : 98.316895,
+    "coherentSep14k" : 69.85714,
+    "coherentSep1k" : 98.37313,
+    "noPilotPilotPercent" : 6.949946e-06,
+    "pilotGuardDepthDB" : 29.980186,
+    "pllSep10k" : 62.152878,
+    "pllSep14k" : 61.395374,
+    "pllSep1k" : 64.4121,
+    "rdsGuardDepthDB" : 30.55373,
+    "subcarrierPilotPercent" : 7.9999633
   },
   "renderSampleRateHz" : 192000,
   "schemaVersion" : 1

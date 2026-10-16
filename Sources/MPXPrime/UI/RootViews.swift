@@ -43,15 +43,12 @@ struct RootView: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     BroadcastStatusBar(model: model)
                 }
-                .inspector(isPresented: $model.inspectorVisible) {
-                    StageInspector(model: model)
-                        .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
-                }
         }
         .toolbar {
             // Frequently used commands belong in the toolbar (HIG). The
             // sidebar-collapse toggle is added automatically by
-            // NavigationSplitView at the leading edge.
+            // NavigationSplitView at the leading edge. Open and Save are
+            // rare and live in the File menu only.
             ToolbarItemGroup(placement: .navigation) {
                 Button {
                     model.startOrStopTransport()
@@ -63,58 +60,52 @@ struct RootView: View {
                       ? "Stop the encoder (Command-Return)"
                       : "Start the encoder (Command-Return)")
 
+                // The label says the state, not just the action: "Bypassed"
+                // with a filled red tint while the chain is bypassed, so the
+                // toolbar alone shows that the station is unprocessed.
                 Button {
                     model.toggleBypass()
                 } label: {
-                    Label("Bypass",
+                    Label(model.processingBypass ? "Bypassed" : "Bypass",
                           systemImage: model.processingBypass ? "waveform.slash" : "waveform")
                 }
-                .help("Toggle processing bypass (Command-B)")
+                .tint(model.processingBypass ? BroadcastStyle.overRed : nil)
+                .help(model.processingBypass
+                      ? "Processing is bypassed. Click to process again (Command-B)."
+                      : "Bypass all processing (Command-B)")
             }
+            // Same order as the Window menu. A window the mode has no signal
+            // for is disabled, not hidden, so the toolbar never changes shape.
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    NSApp.sendAction(#selector(AppDelegate.openConfig), to: nil, from: nil)
-                } label: {
-                    Label("Open", systemImage: "folder")
-                }
-                .help("Open a configuration file (Command-O)")
-
-                Button {
-                    model.saveCurrentConfig()
-                } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                }
-                .help("Save the current configuration (Command-S)")
-
-                // Composite scope is meaningless without an MPX composite.
-                if !model.processedAudioOutputActive {
-                    Button {
-                        NSApp.sendAction(#selector(AppDelegate.showScopesWindow), to: nil, from: nil)
-                    } label: {
-                        Label("Scopes", systemImage: "waveform.path")
-                    }
-                    .help("Open the Scopes window")
-                }
-
-                // In processed-audio mode the MPX spectrum is meaningless; the
-                // Spectrum button opens the Audio (pre-MPX) spectrum instead.
-                Button {
-                    if model.processedAudioOutputActive {
-                        NSApp.sendAction(#selector(AppDelegate.showPreMPXSpectrumWindow), to: nil, from: nil)
-                    } else {
-                        NSApp.sendAction(#selector(AppDelegate.showSpectrumWindow), to: nil, from: nil)
-                    }
-                } label: {
-                    Label("Spectrum", systemImage: "chart.bar.xaxis")
-                }
-                .help(model.processedAudioOutputActive ? "Open the Audio Spectrum window" : "Open the MPX Spectrum window")
-
                 Button {
                     NSApp.sendAction(#selector(AppDelegate.showLevelsWindow), to: nil, from: nil)
                 } label: {
-                    Label("Levels", systemImage: "slider.vertical.3")
+                    Label(kLevelsWindowTitle, systemImage: "slider.vertical.3")
                 }
-                .help("Open the Levels window")
+                .help("Open the Levels window (Command-6)")
+
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.showPreMPXSpectrumWindow), to: nil, from: nil)
+                } label: {
+                    Label(kAudioSpectrumWindowTitle, systemImage: "chart.bar")
+                }
+                .help("Open the Audio Spectrum window (Command-7)")
+
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.showSpectrumWindow), to: nil, from: nil)
+                } label: {
+                    Label(kMPXSpectrumWindowTitle, systemImage: "chart.bar.xaxis")
+                }
+                .disabled(!ChainFeature.finalStage.applies(in: model.config.operatingMode))
+                .help("Open the MPX Spectrum window (Command-8). Only MPX Output generates a composite.")
+
+                Button {
+                    NSApp.sendAction(#selector(AppDelegate.showScopesWindow), to: nil, from: nil)
+                } label: {
+                    Label(kScopesWindowTitle, systemImage: "waveform.path")
+                }
+                .disabled(!ChainFeature.finalStage.applies(in: model.config.operatingMode))
+                .help("Open the Scopes window (Command-9). Only MPX Output generates a composite.")
             }
         }
     }
@@ -245,50 +236,56 @@ struct StageSidebarRow: View {
     }
 }
 
-/// Content column for the currently-selected stage. Each stage renders its
-/// own scroll view + content; for Processing and RDS stages the per-tab view
-/// is the same one the legacy segmented-picker section used, plus the
-/// per-tab reset button. Monitoring stays as a single dashboard.
+/// Content column for the selected stage, with ONE page anatomy for every
+/// page: title (the sidebar label), one-sentence subtitle, the page's cards
+/// at 20 pt padding and 1120 pt maximum width, the reset button (pages with
+/// settings of their own) and the help box from `Stage.helpText`.
 struct StageContentView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        // If the selection is hidden by the active output mode (e.g. an RDS or
-        // composite stage while processed-audio output is on), display the
-        // Processing overview instead of a stale pane.
+        // A selection the configuration hides (an RDS page outside MPX Output,
+        // the other levelling engine's page) shows the Sound Overview, and the
+        // header says so too: title and content always name the same page.
         let stage = model.isStageVisible(model.selectedStage) ? model.selectedStage : .processingOverview
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(stage.detailTitle)
                     .font(.title2.weight(.semibold))
-                Spacer()
+                Text(stage.detailSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             .padding(.top, 16)
-            .padding(.horizontal, 22)
-            .padding(.bottom, 8)
+            .padding(.horizontal, PageLayout.padding)
+            .padding(.bottom, 12)
 
-            Text(stage.detailSubtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 16)
+            // Sound pages carry the signal-flow strip as alternate navigation.
+            if stage.group == .sound && stage != .processingOverview {
+                SignalFlowStrip(model: model)
+                    .frame(maxWidth: PageLayout.maxWidth, alignment: .leading)
+            }
 
-            Group {
-                if stage == .monitoring {
-                    MonitoringDashboardView(model: model)
-                } else if stage == .audioIO {
-                    AudioIOTab(model: model)
-                } else if stage == .testTone {
-                    TestToneView(model: model)
-                } else if stage == .snapshots {
-                    SnapshotsView(model: model)
-                } else if !model.isStageVisible(model.selectedStage) {
-                    ProcessingOverviewGrid(model: model)
-                } else if stage.legacyProcessingTab != nil {
-                    StageProcessingContent(model: model)
-                } else if stage.legacyRDSTab != nil {
-                    StageRDSContent(model: model)
+            ScrollView {
+                VStack(alignment: .leading, spacing: PageLayout.cardSpacing) {
+                    StagePageBody(model: model, stage: stage)
+
+                    if stage.hasReset {
+                        HStack {
+                            Spacer()
+                            Button(stage.resetButtonTitle) {
+                                model.resetPage(stage)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    // Footer help, below the controls and the reset: the
+                    // System Settings "explanation under the controls" idiom.
+                    TabHelpBox(text: stage.helpText)
                 }
+                .padding(PageLayout.padding)
+                .frame(maxWidth: PageLayout.maxWidth, alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -296,192 +293,59 @@ struct StageContentView: View {
     }
 }
 
-/// Content for a Processing stage selection. Hosts the existing per-tab
-/// view plus the per-tab reset button. The legacy segmented Picker is
-/// gone -- sidebar selection drives `selectedProcessingTab` via the
-/// `selectedStage.didSet` sync. A read-only signal-flow chip strip sits
-/// at the top as alternate navigation (Wheatstone-style block-diagram
-/// hint without the editor cost).
-struct StageProcessingContent: View {
+/// The cards of one page, without scroll view, padding, reset or help: the
+/// scaffold in `StageContentView` owns those for every page alike.
+struct StagePageBody: View {
     @ObservedObject var model: MPXPrimeViewModel
+    let stage: Stage
 
     var body: some View {
-        VStack(spacing: 0) {
-            if model.selectedStage != .processingOverview {
-                // Cap to the same 1120 pt width as the content column
-                // below so the strip sits horizontally centered over its
-                // content. Default `.frame(maxWidth:)` alignment is
-                // `.center`, so no extra alignment argument needed.
-                SignalFlowStrip(model: model)
-                    .frame(maxWidth: 1120)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    switch model.selectedProcessingTab {
-                    case .overview:
-                        ProcessingOverviewGrid(model: model)
-                    case .formatProfile:
-                        ProcessingFormatProfileTab(model: model)
-                    case .core:
-                        ProcessingCoreTab(model: model)
-                    case .agc:
-                        ProcessingAGCTab(model: model)
-                    case .phaseRotator:
-                        ProcessingPhaseRotatorTab(model: model)
-                    case .parametricEQ:
-                        ProcessingParametricEQTab(model: model)
-                    case .primeBass:
-                        ProcessingPrimeBassTab(model: model)
-                    case .multiband:
-                        ProcessingMultibandTab(model: model)
-                    case .advancedDynamics:
-                        ProcessingAdvancedDynamicsTab(model: model)
-                    case .mbLimiter:
-                        ProcessingMultibandLimiterTab(model: model)
-                    case .expander:
-                        ProcessingExpanderTab(model: model)
-                    case .bassClipper:
-                        ProcessingBassClipperTab(model: model)
-                    case .dcClipper:
-                        ProcessingDCClipperTab(model: model)
-                    case .hfLimiter:
-                        ProcessingHFLimiterTab(model: model)
-                    case .limiter:
-                        ProcessingLimiterTab(model: model)
-                    case .bs412:
-                        ProcessingBS412Tab(model: model)
-                    case .stereoCoder:
-                        ProcessingStereoCoderTab(model: model)
-                    case .compositeClipper:
-                        ProcessingCompositeClipperTab(model: model)
-                    case .finalStage:
-                        ProcessingFinalStageTab(model: model)
-                    }
-
-                    if model.selectedProcessingTab != .overview {
-                        HStack {
-                            Spacer()
-                            Button(model.selectedProcessingTab.resetButtonTitle) {
-                                model.resetCurrentProcessingTabToDefaults()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-
-                        // Tab help text as a footer block below the
-                        // controls and the Reset action -- matches
-                        // System Settings / Xcode "explanation under
-                        // the controls" idiom rather than competing
-                        // with the controls visually at the top of
-                        // the tab.
-                        TabHelpBox(text: model.selectedProcessingTab.helpText)
-                    }
-                }
-                .padding(20)
-                .frame(maxWidth: 1120, alignment: .topLeading)
-            }
-        }
-    }
-}
-
-/// Content for an RDS stage selection.
-struct StageRDSContent: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                switch model.selectedRDSTab {
-                case .control:
-                    RDSStatusTab(model: model)
-                case .program:
-                    RDSProgramTab(model: model)
-                case .radiotext:
-                    RDSRadiotextTab(model: model)
-                case .longPS:
-                    RDSLongPSTab(model: model)
-                case .af:
-                    RDSAFTab(model: model)
-                case .schedule:
-                    RDSScheduleTab(model: model)
-                case .carrier:
-                    RDSCarrierTab(model: model)
-                }
-
-                HStack {
-                    Spacer()
-                    Button(model.selectedRDSTab.resetButtonTitle) {
-                        model.resetCurrentRDSTabToDefaults()
-                    }
-                    .buttonStyle(.bordered)
-                }
-
-                // Footer help block -- same pattern as Processing tabs.
-                // Sits below the controls and the Reset action so it
-                // reads as explanatory text rather than competing with
-                // the controls at the top of the view.
-                TabHelpBox(text: model.selectedRDSTab.helpText)
-            }
-            .padding(20)
-            .frame(maxWidth: 1120, alignment: .topLeading)
-        }
-    }
-}
-
-enum CardStyle {
-    /// Standard broadcast panel -- used for parameter controls, general
-    /// status blocks, RDS config. Uses the window control-background
-    /// surface.
-    case standard
-    /// Meter / readout plate -- slightly darker surface so heat-mapped
-    /// bars and LED dots pop. Used for metering cards and RDS live
-    /// snapshots where the content is dense numeric readout.
-    case meter
-}
-
-struct Card<Content: View>: View {
-    let title: String
-    let style: CardStyle
-    @ViewBuilder var content: Content
-
-    init(title: String, style: CardStyle = .standard, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.style = style
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 6)
-                .padding(.horizontal, 4)
-
-            VStack(alignment: .leading, spacing: BroadcastStyle.cardSpacing) {
-                content
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(padding)
-            .background(surface)
-            .overlay(
-                RoundedRectangle(cornerRadius: BroadcastStyle.panelCornerRadius)
-                    .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelCornerRadius))
+        if stage == .monitoring {
+            MonitoringDashboardView(model: model)
+        } else if stage == .audioIO {
+            AudioIOTab(model: model)
+        } else if stage == .testTone {
+            TestToneView(model: model)
+        } else if stage == .snapshots {
+            SnapshotsView(model: model)
+        } else if let tab = stage.legacyProcessingTab {
+            processingPage(tab)
+        } else if let tab = stage.legacyRDSTab {
+            rdsPage(tab)
         }
     }
 
-    private var surface: Color {
-        switch style {
-        case .standard: return BroadcastStyle.panelSurface
-        case .meter:    return BroadcastStyle.meterSurface
+    @ViewBuilder private func processingPage(_ tab: ProcessingTab) -> some View {
+        switch tab {
+        case .overview: ProcessingOverviewGrid(model: model)
+        case .core: ProcessingCoreTab(model: model)
+        case .agc: ProcessingAGCTab(model: model)
+        case .phaseRotator: ProcessingPhaseRotatorTab(model: model)
+        case .parametricEQ: ProcessingParametricEQTab(model: model)
+        case .primeBass: ProcessingPrimeBassTab(model: model)
+        case .multiband: ProcessingMultibandTab(model: model)
+        case .advancedDynamics: ProcessingAdvancedDynamicsTab(model: model)
+        case .mbLimiter: ProcessingMultibandLimiterTab(model: model)
+        case .expander: ProcessingExpanderTab(model: model)
+        case .bassClipper: ProcessingBassClipperTab(model: model)
+        case .dcClipper: ProcessingDCClipperTab(model: model)
+        case .hfLimiter: ProcessingHFLimiterTab(model: model)
+        case .limiter: ProcessingLimiterTab(model: model)
+        case .bs412: ProcessingBS412Tab(model: model)
+        case .stereoCoder: ProcessingStereoCoderTab(model: model)
+        case .compositeClipper: ProcessingCompositeClipperTab(model: model)
+        case .finalStage: ProcessingFinalStageTab(model: model)
         }
     }
 
-    private var padding: CGFloat {
-        switch style {
-        case .standard: return BroadcastStyle.cardPadding
-        case .meter:    return BroadcastStyle.meterCardPadding
+    @ViewBuilder private func rdsPage(_ tab: RDSTab) -> some View {
+        switch tab {
+        case .control: RDSStatusTab(model: model)
+        case .program: RDSProgramTab(model: model)
+        case .radiotext: RDSRadiotextTab(model: model)
+        case .af: RDSAFTab(model: model)
+        case .schedule: RDSScheduleTab(model: model)
+        case .carrier: RDSCarrierTab(model: model)
         }
     }
 }

@@ -65,7 +65,7 @@ final class BasicRDSCoder {
     private static let offsetA = 0x0FC
     private static let offsetB = 0x198
     private static let offsetC = 0x168
-    private static let offsetCp = 0x1E0
+    private static let offsetCp = 0x350  // IEC 62106 Annex A: C' = 1101010000 (was 0x1E0, which receivers reject)
     private static let offsetD = 0x1B4
     private static let gregorianCalendar = Calendar(identifier: .gregorian)
 
@@ -249,8 +249,6 @@ final class BasicRDSCoder {
     private var rtDynamicCacheMinuteEpoch = Int64.min
     private var rtDynamicCacheDayEpoch = Int64.min
 
-    private var biphaseKernel: [Float] = []
-    private var gaussianKernel: [Float] = []
     private var shapingKernel: [Float] = []
     private var biphaseOverlapAdd: [Float] = []
     private var biphaseOverlapIndex: Int = 0
@@ -700,31 +698,60 @@ final class BasicRDSCoder {
     }
 
     private func updateShapingFilters() {
-        biphaseKernel = Self.biphaseShapingTaps(
-            sampleRate: sampleRate, bitrate: Self.bitrate, tapCount: 301)
-        if gaussianEnabled {
-            gaussianKernel = Self.gaussianTaps(
-                sampleRate: sampleRate, bandwidthHz: gaussianBWHZ, tapCount: gaussianTaps)
-        } else {
-            gaussianKernel = [1.0]
-        }
-
-        shapingKernel = Self.convolveKernels(biphaseKernel, gaussianKernel)
-        if shapingKernel.isEmpty {
-            shapingKernel = [1.0]
-        }
+        shapingKernel = Self.makeShapingKernel(
+            sampleRate: sampleRate, gaussianEnabled: gaussianEnabled,
+            gaussianBandwidthHz: gaussianBWHZ, gaussianTaps: gaussianTaps)
         let olaSize = max(4096, shapingKernel.count * 8)
         biphaseOverlapAdd = Array(repeating: 0.0, count: olaSize)
         biphaseOverlapIndex = 0
-        shapingPeak = estimateShapingPeak()
+        shapingPeak = Self.estimateShapingPeak(kernel: shapingKernel, sampleRate: sampleRate)
     }
 
-    private func estimateShapingPeak() -> Float {
+    /// The shaping filter lengths are TIME spans, given as taps at 192 kHz
+    /// and scaled with the rate: 301 biphase taps are 1.86 bit periods, the
+    /// default 81 Gaussian taps +/-3.1 sigma at 2.4 kHz. Until 2026-10 they
+    /// were fixed tap counts, so at 384 kHz the Gaussian spanned +/-1.6 sigma
+    /// and the biphase kernel 0.93 bit periods and the RDS spectrum above
+    /// 3.5 kHz rose from -80 to -43 dB (review 2026-10 finding 7). At
+    /// 192 kHz the counts are unchanged.
+    static let biphaseTapsAt192k = 301
+
+    static func rateScaledTapCount(_ tapsAt192k: Int, sampleRate: Float) -> Int {
+        let scaled = Int((Double(tapsAt192k) * Double(max(8_000.0, sampleRate)) / 192_000.0).rounded())
+        return max(9, scaled | 1)
+    }
+
+    /// Biphase symbol shaping (EN 50067 eq. 3), optionally followed by the
+    /// Gaussian smoothing filter, at `sampleRate`.
+    static func makeShapingKernel(
+        sampleRate: Float, gaussianEnabled: Bool, gaussianBandwidthHz: Float, gaussianTaps: Int
+    ) -> [Float] {
+        let biphase = biphaseShapingTaps(
+            sampleRate: sampleRate, bitrate: bitrate,
+            tapCount: rateScaledTapCount(biphaseTapsAt192k, sampleRate: sampleRate))
+        let gaussian = gaussianEnabled
+            ? Self.gaussianTaps(
+                sampleRate: sampleRate, bandwidthHz: gaussianBandwidthHz,
+                tapCount: rateScaledTapCount(gaussianTaps, sampleRate: sampleRate))
+            : [1.0]
+        let kernel = convolveKernels(biphase, gaussian)
+        return kernel.isEmpty ? [1.0] : kernel
+    }
+
+    /// Peak of the shaped baseband on the stream EN 50067 sec 1.4 defines
+    /// the nominal level on: all-zeros data, so the differential bit never
+    /// changes and the biphase output is a continuous bit-rate wave. The
+    /// coder divides by this, so `rds_level` is the peak deviation of that
+    /// stream. Until 2026-10 the estimate ran on all-ones data (the
+    /// differential bit toggling every bit), whose peak is 0.18 dB lower, so
+    /// 2.0 kHz configured put about 2.04 kHz on air (review 2026-10 finding
+    /// 8).
+    static func estimateShapingPeak(kernel: [Float], sampleRate: Float) -> Float {
         let frames = 8192
         var peak: Float = 1e-6
         var testPhase: Float = 0.0
-        var testBit: Int = 0
-        var localOLA = Array(repeating: Float.zero, count: max(1024, shapingKernel.count * 6))
+        let testBit = 0  // all-zeros data: the differential bit is constant
+        var localOLA = Array(repeating: Float.zero, count: max(1024, kernel.count * 6))
         var localIndex = 0
         for _ in 0..<frames {
             let previousPhase = testPhase
@@ -732,7 +759,6 @@ final class BasicRDSCoder {
             testPhase += Self.bitrate / sampleRate
             while testPhase >= 1.0 {
                 testPhase -= 1.0
-                testBit ^= 1
                 impulse += testBit == 0 ? -1.0 : 1.0
             }
             if previousPhase < 0.5, testPhase >= 0.5 {
@@ -740,7 +766,7 @@ final class BasicRDSCoder {
             }
             let shaped = Self.nextShapingSampleLocal(
                 impulse: impulse,
-                kernel: shapingKernel,
+                kernel: kernel,
                 overlapAdd: &localOLA,
                 index: &localIndex
             )
@@ -761,7 +787,13 @@ final class BasicRDSCoder {
         )
     }
 
-    private static func nextShapingSampleLocal(
+    /// One overlap-add step: add `impulse x kernel` starting at the current
+    /// slot, then emit and clear that slot. The add comes FIRST so kernel
+    /// tap 0 leaves with the impulse that excites it; until 2026-10 the slot
+    /// was emitted first and tap 0 landed in the slot just read, coming out
+    /// one whole buffer (at least 4096 samples, 21 ms) late (review 2026-10
+    /// finding 10).
+    static func nextShapingSampleLocal(
         impulse: Float,
         kernel: [Float],
         overlapAdd: inout [Float],
@@ -770,8 +802,6 @@ final class BasicRDSCoder {
         guard !overlapAdd.isEmpty else { return 0.0 }
         let n = overlapAdd.count
         var idx = index
-        let y = overlapAdd[idx]
-        overlapAdd[idx] = 0.0
 
         if impulse != 0.0, !kernel.isEmpty {
             let scaledImpulse = impulse
@@ -790,6 +820,8 @@ final class BasicRDSCoder {
             }
         }
 
+        let y = overlapAdd[idx]
+        overlapAdd[idx] = 0.0
         idx += 1
         if idx >= n {
             idx = 0
@@ -798,7 +830,7 @@ final class BasicRDSCoder {
         return y
     }
 
-    private static func biphaseShapingTaps(sampleRate: Float, bitrate: Float, tapCount: Int)
+    static func biphaseShapingTaps(sampleRate: Float, bitrate: Float, tapCount: Int)
         -> [Float] {
         // Match Python path intent: firwin2-shaped EN50067 biphase impulse response.
         let count = max(9, tapCount | 1)

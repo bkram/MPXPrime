@@ -20,6 +20,7 @@ struct AMOutputTests {
         cfg.operatingMode = .am
         cfg.processingBypass = false
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.multibandEnabled = false
         cfg.primeBassEnabled = false
         cfg.monoBassEnabled = false

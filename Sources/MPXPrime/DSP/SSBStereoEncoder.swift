@@ -48,7 +48,7 @@ import os
 /// 20*log10(1 + amount), +3 dB at full SSB (Orban's documented overshoot
 /// case). The earlier "opportunistic" selector that switched between the
 /// two sidebands compared two signals with identical envelopes and
-/// measured 0.00 dB of reclaim (docs/ssb-stereo-review.md); it is gone.
+/// measured 0.00 dB of reclaim (the SSB stereo review); it is gone.
 ///
 /// Receiver cost: a decoder whose 38 kHz reference is phi degrees off
 /// leaks sin(phi) of L-R into the other channel with SSB, against

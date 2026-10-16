@@ -294,17 +294,19 @@ struct MonitorConditionerTests {
     /// start, it then stays there.
     ///
     /// The previous concurrency test could not see this: it configured both
-    /// sides at unity, where the mismatch is invisible.
+    /// sides at unity, where the mismatch is invisible. Both players start
+    /// through `OutputWiring.configureMonitor`, which this test calls -- it
+    /// used to perform the publish itself (review finding 10), so deleting
+    /// the players' seed left it green.
     @Test func startupPublishesTheConfiguredLevelBeforeTheFirstBlock() {
         let startupDB = -12.0
         let expected = powf(10.0, Float(startupDB) / 20.0)
 
+        // Exactly what a player does at startup.
         var cond = MonitorConditioner()
-        cond.configure(shape: .flat, sampleRate: sampleRate, gainDB: startupDB)
-
-        // Exactly what a player does at startup, in order.
         let pending = ManagedAtomic<UInt32>(Float(1.0).bitPattern)
-        pending.store(cond.publishedGainBitPattern, ordering: .relaxed)
+        OutputWiring.configureMonitor(
+            &cond, shape: .flat, sampleRate: sampleRate, gainDB: startupDB, pendingGain: pending)
 
         // Now the audio thread's first block, and several after it.
         let frames = 256

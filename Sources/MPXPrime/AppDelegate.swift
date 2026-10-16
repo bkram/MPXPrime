@@ -50,18 +50,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return false
         } else if sender == scopesWindow {
             model?.scopesWindowVisible = false
+            model?.setMonitoringWindowOnScreen(.scopes, false)
             sender.orderOut(nil)
             return false
         } else if sender == spectrumWindow {
             model?.spectrumWindowVisible = false
+            model?.setMonitoringWindowOnScreen(.mpxSpectrum, false)
             sender.orderOut(nil)
             return false
         } else if sender == preMPXSpectrumWindow {
             model?.preMPXSpectrumWindowVisible = false
+            model?.setMonitoringWindowOnScreen(.audioSpectrum, false)
             sender.orderOut(nil)
             return false
         } else if sender == levelsWindow {
             model?.levelsWindowVisible = false
+            model?.setMonitoringWindowOnScreen(.levels, false)
             sender.orderOut(nil)
             return false
         } else if sender == aboutWindow {
@@ -93,27 +97,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         model?.setAppActive(false)
     }
 
+    /// Which detached monitoring window this is, if any.
+    private func monitoringKind(of w: NSWindow) -> MonitoringWindowKind? {
+        if w === scopesWindow { return .scopes }
+        if w === spectrumWindow { return .mpxSpectrum }
+        if w === preMPXSpectrumWindow { return .audioSpectrum }
+        if w === levelsWindow { return .levels }
+        return nil
+    }
+
+    /// Report a monitoring window's visibility: open, not miniaturised and
+    /// not fully covered. Until this, an open window counted as visible
+    /// behind other windows and in the Dock.
+    private func reportMonitoringWindow(_ w: NSWindow) {
+        guard let kind = monitoringKind(of: w) else { return }
+        let onScreen = w.isVisible && !w.isMiniaturized && w.occlusionState.contains(.visible)
+        model?.setMonitoringWindowOnScreen(kind, onScreen)
+    }
+
     func windowDidMiniaturize(_ notification: Notification) {
-        guard (notification.object as AnyObject?) === window else { return }
-        model?.setMainWindowMinimized(true)
+        guard let w = notification.object as? NSWindow else { return }
+        if w === window {
+            model?.setMainWindowMinimized(true)
+        } else {
+            reportMonitoringWindow(w)
+        }
     }
 
     func windowDidDeminiaturize(_ notification: Notification) {
-        guard (notification.object as AnyObject?) === window else { return }
-        model?.setMainWindowMinimized(false)
+        guard let w = notification.object as? NSWindow else { return }
+        if w === window {
+            model?.setMainWindowMinimized(false)
+        } else {
+            reportMonitoringWindow(w)
+        }
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
-        guard let w = notification.object as? NSWindow, w === window else { return }
-        let visible = w.occlusionState.contains(.visible)
-        model?.setMainWindowOccluded(!visible)
+        guard let w = notification.object as? NSWindow else { return }
+        if w === window {
+            let visible = w.occlusionState.contains(.visible)
+            model?.setMainWindowOccluded(!visible)
+        } else {
+            reportMonitoringWindow(w)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = makeMPXPrimeAppIcon()
         NSApp.activate(ignoringOtherApps: true)
 
-        let vm = MPXPrimeViewModel(configPath: configPath)
+        // CoreAudio hot-plug events re-list the devices; only the app injects
+        // this (tests build the view model without an observer).
+        let vm = MPXPrimeViewModel(
+            configPath: configPath,
+            deviceObserver: { AudioDevices.startObserving($0) })
         model = vm
         setupMainMenu()
 
@@ -171,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // workaround for AVAudioEngine's first-start failure on
             // non-default input devices. The input path now uses a
             // direct AUHAL audio unit (`InputAUHAL`) per TN2091,
-            // which doesn't have that bug — auto-start delivers
+            // which doesn't have that bug -- auto-start delivers
             // frames immediately on the first try.
             DispatchQueue.main.async { [weak vm] in
                 vm?.startOrStopTransport(forceStart: true)
@@ -195,11 +233,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(applyPendingChanges) {
-            menuItem.title = model?.runtimeApplyButtonTitle ?? "Apply Restart"
+            menuItem.title = model?.runtimeApplyButtonTitle ?? "Restart to Apply"
             return model?.runtimeApplyPending ?? false
         }
-        if menuItem.action == #selector(toggleInspector) {
-            menuItem.state = (model?.inspectorVisible ?? false) ? .on : .off
+        // The menu item carries the bypass state as a checkmark, so the menu
+        // bar shows it as well as the toolbar and the status bar.
+        if menuItem.action == #selector(toggleBypass) {
+            menuItem.state = (model?.processingBypass ?? false) ? .on : .off
             return true
         }
         // Composite-domain windows are meaningless in processed-audio output;
@@ -241,7 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         aboutItem.target = self
         appMenu.addItem(NSMenuItem.separator())
         let settingsItem = appMenu.addItem(
-            withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+            withTitle: "Settings\u{2026}", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = NSMenu(
             title: "Services")
@@ -266,11 +306,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // File Menu
         let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
         let fileMenu = NSMenu(title: "File")
-        let openItem = fileMenu.addItem(withTitle: "Open…", action: #selector(openConfig), keyEquivalent: "o")
+        let openItem = fileMenu.addItem(withTitle: "Open\u{2026}", action: #selector(openConfig), keyEquivalent: "o")
         openItem.target = self
         let saveItem = fileMenu.addItem(withTitle: "Save", action: #selector(saveConfig), keyEquivalent: "s")
         saveItem.target = self
-        let saveAsItem = fileMenu.addItem(withTitle: "Save As…", action: #selector(saveConfigAs), keyEquivalent: "S")
+        let saveAsItem = fileMenu.addItem(withTitle: "Save As\u{2026}", action: #selector(saveConfigAs), keyEquivalent: "S")
         saveAsItem.target = self
         saveAsItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(NSMenuItem.separator())
@@ -281,7 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
 
-        // Edit Menu — without these items the responder chain never routes
+        // Edit Menu -- without these items the responder chain never routes
         // cut / copy / paste / select all to the focused text field, so those
         // keyboard shortcuts silently do nothing.
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
@@ -304,7 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(NSMenuItem.separator())
         let dictationItem = editMenu.addItem(
-            withTitle: "Start Dictation…",
+            withTitle: "Start Dictation\u{2026}",
             action: Selector(("startDictation:")),
             keyEquivalent: "")
         dictationItem.isEnabled = true
@@ -316,21 +356,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
-        // View Menu — toggles for the right-pane Inspector and other
-        // workspace-level visibility states. Standard ⌥⌘I shortcut for
-        // inspector matches Pages, Keynote, Logic Pro, Final Cut.
+        // View Menu. "Test Tone" opens a sidebar page, not a dialog, so it
+        // carries no ellipsis. Command-T: the app has no tabs, so the
+        // "New Tab" convention that would claim it does not apply here.
         let viewItem = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
         let viewMenu = NSMenu(title: "View")
-        let inspectorItem = viewMenu.addItem(
-            withTitle: "Inspector",
-            action: #selector(toggleInspector),
-            keyEquivalent: "i")
-        inspectorItem.target = self
-        inspectorItem.keyEquivalentModifierMask = [.command, .option]
-
-        viewMenu.addItem(NSMenuItem.separator())
         let testToneItem = viewMenu.addItem(
-            withTitle: "Test Tone…",
+            withTitle: Self.testToneMenuTitle,
             action: #selector(showTestToneTab),
             keyEquivalent: "t")
         testToneItem.target = self
@@ -339,10 +371,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
-        // Go Menu — ⌘1-⌘4 jump to a sidebar section. Matches the
+        // Go Menu -- Cmd-1-Cmd-4 jump to a sidebar section. Matches the
         // section-shortcut pattern in Mail, Music, Notes (sidebar-driven
         // macOS apps). Each item remembers the last sub-tab visited
-        // in that group, so ⌘2 from RDS returns to the Processing
+        // in that group, so Cmd-2 from RDS returns to the Processing
         // sub-tab the operator was last editing.
         let goItem = NSMenuItem(title: "Go", action: nil, keyEquivalent: "")
         let goMenu = NSMenu(title: "Go")
@@ -379,8 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let transportItem = NSMenuItem(title: "Control", action: nil, keyEquivalent: "")
         let transportMenu = NSMenu(title: "Control")
 
-        // ⌘T is reserved for "New Tab" per macOS convention; use ⌘Return for
-        // the transport toggle instead.
+        // Command-Return toggles the transport.
         let startStopItem = transportMenu.addItem(
             withTitle: "Start/Stop", action: #selector(toggleTransport), keyEquivalent: "\r"
         )
@@ -394,7 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         resetPeaksItem.target = self
         transportMenu.addItem(NSMenuItem.separator())
         let applyItem = transportMenu.addItem(
-            withTitle: "Apply Restart", action: #selector(applyPendingChanges), keyEquivalent: "A")
+            withTitle: "Restart to Apply", action: #selector(applyPendingChanges), keyEquivalent: "A")
         applyItem.target = self
         applyItem.keyEquivalentModifierMask = [.command, .shift]
 
@@ -405,26 +436,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "Window")
 
-        // No keyEquivalent: ⌘1 is reserved by the Go menu for "Monitoring".
-        // Operators jump back to the main window via the Window menu or
-        // by clicking on it; this entry just brings it forward when it
-        // was hidden behind a detached window.
-        let mainWindowItem = windowMenu.addItem(withTitle: "Main", action: #selector(showMainWindow), keyEquivalent: "")
+        // The main window under its own title (no shortcut: Command-1 to 5
+        // belong to the Go menu), then the monitoring windows in toolbar
+        // order on consecutive shortcuts, Command-6 to 9.
+        let mainWindowItem = windowMenu.addItem(withTitle: "MPX Prime Studio", action: #selector(showMainWindow), keyEquivalent: "")
         mainWindowItem.target = self
-        let preMPXSpectrumItem = windowMenu.addItem(withTitle: kAudioSpectrumWindowTitle, action: #selector(showPreMPXSpectrumWindow), keyEquivalent: "7")
-        preMPXSpectrumItem.target = self
-        let spectrumItem = windowMenu.addItem(withTitle: kMPXSpectrumWindowTitle, action: #selector(showSpectrumWindow), keyEquivalent: "8")
-        spectrumItem.target = self
-        let levelsItem = windowMenu.addItem(withTitle: kLevelsWindowTitle, action: #selector(showLevelsWindow), keyEquivalent: "9")
-        levelsItem.target = self
-        // ⌘0 is reserved for "Actual Size" per macOS convention. Use ⇧⌘0 so
-        // the numeric-window mnemonic is preserved without stepping on zoom.
-        let scopesItem = windowMenu.addItem(withTitle: kScopesWindowTitle, action: #selector(showScopesWindow), keyEquivalent: "0")
-        scopesItem.target = self
-        scopesItem.keyEquivalentModifierMask = [.command, .shift]
+        for entry in Self.monitoringWindowMenu {
+            let item = windowMenu.addItem(withTitle: entry.title, action: entry.action, keyEquivalent: entry.key)
+            item.target = self
+        }
 
         windowMenu.addItem(NSMenuItem.separator())
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Minimise", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
@@ -456,6 +479,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApp.mainMenu = mainMenu
     }
 
+    /// The monitoring windows in the Window menu: toolbar order, consecutive
+    /// shortcuts Command-6 to 9 (Command-1 to 5 belong to the Go menu).
+    static let monitoringWindowMenu: [(title: String, key: String, action: Selector)] = [
+        (kLevelsWindowTitle, "6", #selector(showLevelsWindow)),
+        (kAudioSpectrumWindowTitle, "7", #selector(showPreMPXSpectrumWindow)),
+        (kMPXSpectrumWindowTitle, "8", #selector(showSpectrumWindow)),
+        (kScopesWindowTitle, "9", #selector(showScopesWindow))
+    ]
+
+    /// View menu title for the Test Tone page: a page, not a dialog, so no
+    /// ellipsis.
+    static let testToneMenuTitle = Stage.testTone.label
+
     @objc private func showAbout() {
         if let existing = aboutWindow {
             revealWindow(existing)
@@ -484,7 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let hostingController = NSHostingController(rootView: helpView)
         let w = NSWindow(contentViewController: hostingController)
         w.title = "MPX Prime Studio Help"
-        // Utility/documentation windows should not minimize (macOS HIG —
+        // Utility/documentation windows should not minimize (macOS HIG --
         // matches About / Settings styleMasks). Resizable so long help
         // text remains usable on smaller displays.
         w.styleMask = [.titled, .closable, .resizable]
@@ -526,15 +562,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    @objc private func toggleInspector() {
-        guard let vm = model else { return }
-        vm.inspectorVisible.toggle()
-    }
-
     @objc private func showTestToneTab() {
         guard let vm = model else { return }
         vm.selectedStage = .testTone
-        // Bring the main window forward so ⌘T from a detached
+        // Bring the main window forward so Cmd-T from a detached
         // visualizer still feels right (the new tab is the focus).
         if let w = window { w.makeKeyAndOrderFront(nil) }
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -602,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let existing = scopesWindow {
             revealWindow(existing)
             model?.scopesWindowVisible = true
+            model?.setMonitoringWindowOnScreen(.scopes, true)
             return
         }
         guard let vm = model else { return }
@@ -624,6 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         w.makeKeyAndOrderFront(nil)
         scopesWindow = w
         model?.scopesWindowVisible = true
+        model?.setMonitoringWindowOnScreen(.scopes, true)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -631,8 +664,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// when the engine (re)starts in processed-audio mode so a window left open
     /// from composite mode doesn't keep showing a now-meaningless view.
     @objc func closeCompositeOnlyAuxWindows() {
+        // close() does not go through windowShouldClose, so clear the
+        // visibility here as well.
         scopesWindow?.close()
         spectrumWindow?.close()
+        model?.scopesWindowVisible = false
+        model?.spectrumWindowVisible = false
+        model?.setMonitoringWindowOnScreen(.scopes, false)
+        model?.setMonitoringWindowOnScreen(.mpxSpectrum, false)
     }
 
     @objc func showSpectrumWindow() {
@@ -642,6 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let existing = spectrumWindow {
             revealWindow(existing)
             model?.spectrumWindowVisible = true
+            model?.setMonitoringWindowOnScreen(.mpxSpectrum, true)
             return
         }
         guard let vm = model else { return }
@@ -659,6 +699,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         w.makeKeyAndOrderFront(nil)
         spectrumWindow = w
         model?.spectrumWindowVisible = true
+        model?.setMonitoringWindowOnScreen(.mpxSpectrum, true)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -666,6 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let existing = preMPXSpectrumWindow {
             revealWindow(existing)
             model?.preMPXSpectrumWindowVisible = true
+            model?.setMonitoringWindowOnScreen(.audioSpectrum, true)
             return
         }
         guard let vm = model else { return }
@@ -675,14 +717,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let w = NSWindow(contentViewController: hostingController)
         w.title = kAudioSpectrumWindowTitle
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        w.setContentSize(NSSize(width: kWindowWidth, height: kWindowHeight))
-        w.minSize = NSSize(width: kWindowMinWidth, height: kWindowMinHeight)
+        w.setContentSize(NSSize(width: kAudioSpectrumWindowWidth, height: kAudioSpectrumWindowHeight))
+        w.minSize = NSSize(width: kAudioSpectrumWindowMinWidth, height: kAudioSpectrumWindowMinHeight)
         w.isReleasedWhenClosed = false
         w.delegate = self
         restoreFrame(for: w, autosaveName: kPreMPXSpectrumWindowAutosaveName)
         w.makeKeyAndOrderFront(nil)
         preMPXSpectrumWindow = w
         model?.preMPXSpectrumWindowVisible = true
+        model?.setMonitoringWindowOnScreen(.audioSpectrum, true)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -690,6 +733,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let existing = levelsWindow {
             revealWindow(existing)
             model?.levelsWindowVisible = true
+            model?.setMonitoringWindowOnScreen(.levels, true)
             return
         }
         guard let vm = model else { return }
@@ -707,6 +751,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         w.makeKeyAndOrderFront(nil)
         levelsWindow = w
         model?.levelsWindowVisible = true
+        model?.setMonitoringWindowOnScreen(.levels, true)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -737,7 +782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc private func saveConfigAs() {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = Self.iniContentTypes
-        savePanel.message = "Save configuration as…"
+        savePanel.message = "Save configuration as..."
         savePanel.nameFieldStringValue = "config.ini"
 
         savePanel.begin { [weak self] response in

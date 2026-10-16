@@ -47,12 +47,69 @@ struct RDSSignalTests {
 
     // MARK: - Pilot and RDS presence
 
-    @Test func pilotPresentAt19kHz() {
+    /// Pilot and RDS levels against their DEFINITIONS, not "present": the old
+    /// bounds (pilot above -40 dBFS, RDS band above -60 dBFS) passed a pilot
+    /// 19 dB low (test-suite review 2026-10 finding 13). Composite
+    /// 1.0 is 75 kHz at every deviation setting and the whole composite is
+    /// scaled by `mpx_deviation_khz / 75`, so the pilot amplitude is
+    /// `pilot_level * deviation / 75` (9 % of 75 kHz = 0.09) and the RDS
+    /// subcarrier's peak is `rds_level` kHz of that deviation. 0.5 s of
+    /// silent input, processing bypassed: the composite is pilot + RDS only.
+    private func pilotAndRDS(rdsLevel: Double, deviationKHz: Double)
+        -> (config: AppConfig, pilotAmplitude: Double, rdsPeak: Double) {
         var config = AppConfig()
-        config.processingBypass = true  // isolate MPX/pilot path from audio DSP transients
-        let report = analyze(renderMPX(config: config))
-        let pilotDB = report.peakDBFS(in: 18_800...19_200)
-        #expect(pilotDB > -40.0, "pilot at 19 kHz measured \(pilotDB) dBFS, expected > -40")
+        config.processingBypass = true
+        config.rdsLevel = rdsLevel
+        config.mpxDeviationKHz = deviationKHz
+        let gen = MPXGenerator(config: config, sampleRate: Double(sampleRate))
+        let frames = warmupFrames + 192 * 500     // 192 frames hold exactly 19 pilot cycles
+        var left = [Float](repeating: 0.0, count: frames)
+        var right = [Float](repeating: 0.0, count: frames)
+        left.withUnsafeMutableBufferPointer { lBuf in
+            right.withUnsafeMutableBufferPointer { rBuf in
+                // swiftlint:disable:next force_unwrapping
+                gen.renderFromInputInPlace(frameCount: frames, left: lBuf.baseAddress!, right: rBuf.baseAddress!)
+            }
+        }
+        let x = Array(left[warmupFrames...])
+        // Least-squares 19 kHz sinusoid over a whole number of cycles
+        // (192 samples = 19 cycles at 192 kHz), then RDS = what is left.
+        let w = 2.0 * Double.pi * 19_000.0 / Double(sampleRate)
+        var s = 0.0, c = 0.0
+        for i in 0..<x.count {
+            s += Double(x[i]) * sin(w * Double(i))
+            c += Double(x[i]) * cos(w * Double(i))
+        }
+        s *= 2.0 / Double(x.count)
+        c *= 2.0 / Double(x.count)
+        var peak = 0.0
+        for i in 0..<x.count {
+            let residual = Double(x[i]) - s * sin(w * Double(i)) - c * cos(w * Double(i))
+            peak = max(peak, abs(residual))
+        }
+        return (config, hypot(s, c), peak)
+    }
+
+    @Test(arguments: [75.0, 60.0])
+    func pilotIsAtItsConfiguredInjection(deviationKHz: Double) {
+        let m = pilotAndRDS(rdsLevel: 2.0, deviationKHz: deviationKHz)
+        let expected = m.config.pilotLevel * deviationKHz / 75.0
+        let errorDB = 20.0 * log10(m.pilotAmplitude / expected)
+        #expect(abs(errorDB) < 0.2,
+                "pilot amplitude \(m.pilotAmplitude) at \(deviationKHz) kHz deviation, expected \(expected) (\(errorDB) dB off)")
+    }
+
+    @Test(arguments: [(2.0, 75.0), (4.0, 75.0), (2.0, 60.0)])
+    func rdsSubcarrierPeakIsItsConfiguredInjection(rdsLevel: Double, deviationKHz: Double) {
+        // The coder's biphase shaping peaks a few percent over the nominal
+        // (+0.37 dB before 2026-10; the all-zeros reference made it ~0 dB); 1 dB keeps a doubled or halved
+        // level (6 dB), the scaling by deviation and a missing subcarrier
+        // all far outside the bound.
+        let m = pilotAndRDS(rdsLevel: rdsLevel, deviationKHz: deviationKHz)
+        let expected = rdsLevel / 75.0  // true kHz at every deviation (review 2026-10 finding 5)
+        let errorDB = 20.0 * log10(max(m.rdsPeak, 1e-12) / expected)
+        #expect(abs(errorDB) < 1.0,
+                "RDS peak \(m.rdsPeak) for rds_level \(rdsLevel) kHz at \(deviationKHz) kHz deviation, expected \(expected) (\(errorDB) dB off)")
     }
 
     @Test func rdsSubcarrierPresentAround57kHz() {

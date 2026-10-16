@@ -75,9 +75,9 @@ struct RecommendedSettingsTests {
         // a page the configuration still shows.
         let model = makeViewModel()
         model.applyFormatProfile("speech")
-        model.selectedStage = .processingMultiband
+        model.selectedStage = .processingAdvancedDynamics
         applyRecommended(model)
-        #expect(model.selectedStage == .processingMultiband)
+        #expect(model.selectedStage == .processingAdvancedDynamics)
     }
 
     @Test func applyRecommendedWithCustomChangesNothing() {

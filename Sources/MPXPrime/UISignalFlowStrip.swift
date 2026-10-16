@@ -5,7 +5,7 @@ import MPXPrimeUI
 import SwiftUI
 
 /// Compact "block-diagram chip strip" header for the Processing section.
-/// Renders the audio chain as a horizontal row of clickable chips — input
+/// Renders the audio chain as a horizontal row of clickable chips -- input
 /// on the left, output on the right, current stage highlighted. Tapping
 /// a chip selects that stage in the sidebar (drives `model.selectedStage`).
 ///
@@ -16,51 +16,11 @@ import SwiftUI
 struct SignalFlowStrip: View {
     @ObservedObject var model: MPXPrimeViewModel
 
-    /// Stages shown in the strip, in chain order. Phase Rotator runs
-    /// before AGC (cf. MPXGenerator.processProgramStereo). Composite
-    /// Clipper runs before BS.412 in the audio-composite domain
-    /// (cf. processFinalComposite); earlier strip ordering had them
-    /// reversed.
-    ///
-    /// MB Limiter and Downward Expander are *per-band* processors
-    /// inside the Multiband stage — not three serial stages — so the
-    /// strip only shows the `MB` pill. They keep their own sidebar
-    /// entries for operator-facing controls.
-    private static let chainStages: [Stage] = [
-        .processingCore,
-        .processingPhaseRotator,
-        .processingAGC,
-        .processingParametricEQ,
-        .processingMultiband,
-        .processingAdvancedDynamics,
-        .processingPrimeBass,
-        .processingBassClipper,
-        .processingDCClipper,
-        .processingLimiter,
-        .processingStereoCoder,
-        .processingCompositeClipper,
-        .processingBS412,
-        .processingFinalStage
-    ]
-
-    /// Compact label for each stage in the chip — chain order is
-    /// dense; full-length labels won't fit at typical window widths.
-    private static let chipLabels: [Stage: String] = [
-        .processingCore: "Basics",
-        .processingPhaseRotator: "PhaseRot",
-        .processingAGC: "AGC",
-        .processingParametricEQ: "PEQ",
-        .processingPrimeBass: "PrimeBass",
-        .processingMultiband: "MB",
-        .processingAdvancedDynamics: "AdvDyn",
-        .processingBassClipper: "BassClip",
-        .processingDCClipper: "DC-Clip",
-        .processingLimiter: "Lim",
-        .processingStereoCoder: "Coder",
-        .processingCompositeClipper: "MPX-Clip",
-        .processingBS412: "BS.412",
-        .processingFinalStage: "Final"
-    ]
+    // The stages and their chip names come from the one name table
+    // (`Stage.signalChain`, `Stage.chipLabel`); the dashboard's chain pills
+    // are the same table written out (`LayoutNameTableTests`). The Expander
+    // and the Band Limiter run per band inside the multiband, so the strip
+    // shows only the multiband chip for them.
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -68,22 +28,25 @@ struct SignalFlowStrip: View {
                 chip(text: "IN", kind: .terminal)
                 connector
                 // Processed-audio output drops the composite-domain stages
-                // (composite clipper, BS.412, final stage) — they aren't in the
+                // (composite clipper, BS.412, final stage) -- they aren't in the
                 // chain and their sidebar entries are hidden.
-                ForEach(Self.chainStages.filter { model.isStageVisible($0) }, id: \.self) { stage in
+                ForEach(Stage.signalChain.filter { model.isStageVisible($0) }, id: \.self) { stage in
                     chip(
-                        text: Self.chipLabels[stage] ?? stage.label,
+                        text: stage.chipLabel ?? stage.label,
                         kind: stage == model.selectedStage ? .active : .stage,
                         stage: stage
                     )
                     connector
                 }
-                chip(text: model.processedAudioOutputActive ? "CODER" : "OUT", kind: .terminal)
+                // The output terminal is OUT in every mode: what follows is
+                // an exciter, a stereo coder, a stream encoder or a
+                // transmitter, and the Mode chip in the status bar says which.
+                chip(text: "OUT", kind: .terminal)
             }
             .padding(.vertical, 2)
         }
-        .padding(.horizontal, 22)
-        .padding(.bottom, 12)
+        .padding(.horizontal, PageLayout.padding)
+        .padding(.bottom, 4)
     }
 
     private enum ChipKind {
@@ -98,7 +61,7 @@ struct SignalFlowStrip: View {
         // so the strip shows what's actually in the signal path. Stages with
         // no toggle (Core, Final) report nil and stay full-strength.
         let bypassed = stage.map { model.isStageEnabled($0) == false } ?? false
-        let help = (stage?.label ?? "") + " — \(stage?.detailSubtitle ?? "")"
+        let help = (stage?.label ?? "") + ": \(stage?.detailSubtitle ?? "")"
             + (bypassed ? " (bypassed)" : "")
         let label = Text(text)
             .font(.caption.monospaced().weight(kind == .active ? .semibold : .regular))
@@ -159,8 +122,8 @@ struct SignalFlowStrip: View {
     }
 
     private var connector: some View {
-        // Decorative line between chips — hide from VoiceOver so the
-        // strip reads as "AGC, Multiband, Bass Clipper, …" instead
+        // Decorative line between chips -- hide from VoiceOver so the
+        // strip reads as "AGC, Multiband, Bass Clipper, ..." instead
         // of intermixed connector / chip / connector / chip noise.
         Rectangle()
             .fill(BroadcastStyle.connectorFill)

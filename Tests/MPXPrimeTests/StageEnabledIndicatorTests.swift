@@ -26,7 +26,6 @@ struct StageEnabledIndicatorTests {
         let noBadgeStages: [Stage] = [
             .monitoring,
             .processingOverview,
-            .processingFormatProfile,
             .processingCore,
             .processingFinalStage,
             // Switched by the Levelling engine picker, not by a flag of its own.
@@ -34,7 +33,6 @@ struct StageEnabledIndicatorTests {
             .snapshots,
             .rdsProgram,
             .rdsRadiotext,
-            .rdsLongPS,
             .rdsAF,
             .rdsSchedule,
             .rdsCarrier
@@ -57,6 +55,7 @@ struct StageEnabledIndicatorTests {
         model.config.bassClipperEnabled = false
         model.config.primeBassEnabled = true
         model.config.widebandAGCEnabled = false
+        model.config.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         #expect(model.isStageEnabled(.processingBassClipper) == false)
         #expect(model.isStageEnabled(.processingPrimeBass) == true)
         #expect(model.isStageEnabled(.processingAGC) == false)

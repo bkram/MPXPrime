@@ -34,6 +34,55 @@ enum LinuxMonitorRules {
     }
 }
 
+/// Float -> integer PCM for the ALSA integer formats (both engines' output
+/// and the monitor). Platform-independent so it is tested on macOS.
+///
+/// S16 is rounded to nearest with TPDF dither (two uniform draws of +/-0.5
+/// LSB, triangular over +/-1 LSB): until 2026-10 `Int16(x * 32767)`
+/// TRUNCATED toward zero, a 1 LSB dead zone around zero (crossover
+/// distortion near -96 dBFS) with no dither (review 2026-10 finding 11).
+/// S32 is rounded; at 32 bits the Float source carries no information that
+/// dither could preserve. Inputs are already clamped to [-1, 1].
+struct PCMSampleConverter {
+    /// xorshift32 state; any non-zero seed. Real-time safe (no allocation).
+    private var state: UInt32
+
+    init(seed: UInt32 = 0x9E37_79B9) {
+        state = seed == 0 ? 0x9E37_79B9 : seed
+    }
+
+    static let s16Scale = 32_767.0
+    static let s32Scale = 2_147_483_520.0
+
+    @inline(__always)
+    private mutating func uniform() -> Double {
+        state ^= state << 13
+        state ^= state >> 17
+        state ^= state << 5
+        // [-0.5, 0.5)
+        return Double(state) / 4_294_967_296.0 - 0.5
+    }
+
+    /// TPDF-dithered, rounded S16.
+    @inline(__always)
+    mutating func s16(_ x: Float) -> Int16 {
+        Self.s16(x, dither: uniform() + uniform())
+    }
+
+    /// Rounded S16 with an explicit dither offset in LSB (0 = plain rounding).
+    @inline(__always)
+    static func s16(_ x: Float, dither: Double) -> Int16 {
+        let v = (Double(x) * s16Scale + dither).rounded()
+        return Int16(max(-32_768.0, min(32_767.0, v)))
+    }
+
+    @inline(__always)
+    static func s32(_ x: Float) -> Int32 {
+        let v = (Double(x) * s32Scale).rounded()
+        return Int32(max(-2_147_483_648.0, min(2_147_483_647.0, v)))
+    }
+}
+
 #if os(Linux)
 import Atomics
 import CAlsa
@@ -58,6 +107,8 @@ import MPXPrimeNative
 /// same `MonitorConditioner` the macOS monitor uses.
 final class ALSAMonitorOutput: @unchecked Sendable {
     private var pcm: ALSAPCM?
+    /// S16 dither state; monitor thread only.
+    private var pcmConverter = PCMSampleConverter(seed: 0x51ED_270B)
     private var thread: Thread?
     private let running = ManagedAtomic<Bool>(false)
     private var ring: StereoInputRingBuffer?
@@ -104,19 +155,19 @@ final class ALSAMonitorOutput: @unchecked Sendable {
         self.deadbandFrames = max(64, periodFrames)
         self.preemphasisUS = preemphasisUS
         decodeComposite = shape == .decodedComposite
-        conditioner.configure(shape: shape, sampleRate: Float(sampleRate), gainDB: gainDB)
-        conditioner.reset()
-        // Publish the configured level BEFORE the monitor thread starts, or
-        // its first period reads the atomic's unity default and ramps away
-        // from the level just configured.
-        pendingGain.store(conditioner.publishedGainBitPattern, ordering: .relaxed)
+        // Configures AND publishes the configured level BEFORE the monitor
+        // thread starts, or its first period reads the atomic's unity default
+        // and ramps away from the level just configured.
+        OutputWiring.configureMonitor(
+            &conditioner, shape: shape, sampleRate: Float(sampleRate), gainDB: gainDB,
+            pendingGain: pendingGain)
         return ring
     }
 
     /// Level only. The conditioner belongs to the monitor thread, so publish
     /// the value and let that thread adopt it at the top of its next period.
     func setGain(dB: Double) {
-        pendingGain.store(powf(10.0, Float(dB) / 20.0).bitPattern, ordering: .relaxed)
+        pendingGain.store(OutputWiring.monitorGainBitPattern(gainDB: dB), ordering: .relaxed)
     }
 
     /// Bring the monitor in line with the selection. Never throws into the
@@ -228,17 +279,15 @@ final class ALSAMonitorOutput: @unchecked Sendable {
                 }
                 if !write(out, out.floatBuf, frames) { return }
             case SND_PCM_FORMAT_S32_LE:
-                let scale: Double = 2_147_483_520.0
                 for i in 0..<frames {
-                    out.int32Buf[ch * i] = Int32(Double(clamp(left[i])) * scale)
-                    if ch == 2 { out.int32Buf[2 * i + 1] = Int32(Double(clamp(right[i])) * scale) }
+                    out.int32Buf[ch * i] = PCMSampleConverter.s32(clamp(left[i]))
+                    if ch == 2 { out.int32Buf[2 * i + 1] = PCMSampleConverter.s32(clamp(right[i])) }
                 }
                 if !write(out, out.int32Buf, frames) { return }
             default:
-                let scale: Double = 32_767.0
                 for i in 0..<frames {
-                    out.int16Buf[ch * i] = Int16(Double(clamp(left[i])) * scale)
-                    if ch == 2 { out.int16Buf[2 * i + 1] = Int16(Double(clamp(right[i])) * scale) }
+                    out.int16Buf[ch * i] = pcmConverter.s16(clamp(left[i]))
+                    if ch == 2 { out.int16Buf[2 * i + 1] = pcmConverter.s16(clamp(right[i])) }
                 }
                 if !write(out, out.int16Buf, frames) { return }
             }

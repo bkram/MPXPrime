@@ -77,6 +77,25 @@ The AVX2 kernels take 10 points off the Ryzen's chain, the composite clipper
 alone halving from 12.7 % to 5.8 % -- and they compute bit-identical results
 to the SSE2 variant, so the Linux strict baseline is one file for every CPU.
 
+## Render-path optimisation (2026-10-16)
+
+Four bit-identical changes cut the render thread's own cost (CHANGELOG,
+Unreleased). Measured with an interleaved A/B harness, median of five runs,
+192 kHz, default configuration (Advanced Dynamics on), RDS off for the hash
+comparison:
+
+| Machine | Before | After | Music -- Loud before / after |
+| --- | ---: | ---: | ---: |
+| Intel Core i7-1355U, Linux (Docker), P-core | 20.6 % | 12.8 % | 22.8 % / 14.3 % |
+| Apple M1 Pro, macOS (machine under load) | 23.7 % | 16.1 % | 22.7 % / 16.3 % |
+
+Each change alone on the i7-1355U: no runtime exclusivity checks -4.3 points,
+no per-sample copy of the Advanced Dynamics state -1.3, trimmed FIR splitter
+dots and a mono composite bandwidth FIR -1.5, composite clipper idle path
+-0.8 (more on quiet programme, nothing under constant clipping; the
+worst-case block is unchanged). The `--bench` tables in this file predate
+these changes; re-measure a machine before quoting it.
+
 ## Composite clipper oversampling (`--bench`, whole chain)
 
 | Machine | 8x | 16x (default) | 32x |

@@ -60,7 +60,9 @@ final class CanonicalWavWriter: @unchecked Sendable {
         // Frame-align the limit so the finalized file never ends mid-frame.
         let capped = min(maxDataBytes, Self.riffDataLimit)
         self.maxDataBytes = capped - (capped % UInt64(blockAlign))
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
         handle = try FileHandle(forWritingTo: url)
 
         let byteRate = sampleRate * blockAlign

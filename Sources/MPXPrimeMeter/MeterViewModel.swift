@@ -46,7 +46,7 @@ enum MeterScale {
 
 @MainActor
 final class MeterViewModel: ObservableObject {
-    let telemetry = MeterTelemetry()
+    let telemetry: MeterTelemetry = MeterTelemetry()
 
     /// Where the composite comes from: a Core Audio input device, or a live
     /// RTL-SDR decoded in-process by the linked CMPXTuner library (mono MPX).
@@ -81,10 +81,24 @@ final class MeterViewModel: ObservableObject {
     @Published var sdrAntennaCount: Int = 1
     /// Active SDR device label (e.g. "SDRplay RSPdx" / "RTL-SDR R820T").
     @Published var sdrDeviceName: String = ""
+    /// Every Core Audio device from the last scan (the Devices popover);
+    /// `inputDevices` / `outputDevices` are its per-role subsets.
+    @Published var allDevices: [AudioDevice] = []
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
+    @Published var lastDeviceScan = Date()
     @Published var selectedInputID: AudioDeviceID?
     @Published var selectedOutputID: AudioDeviceID?   // nil = system default
+    /// Which channels of the input device carry the composite (nil = 1, 2).
+    /// `channel` (L / R / Mix) then picks within that pair: L is the
+    /// lower-numbered chosen channel. Restart-class, like the device.
+    @Published var inputChannels: ChannelPair?
+    /// Which channels of the monitor device play the decoded audio (nil =
+    /// 1, 2; one channel = (L+R)/2 on it). Applies live.
+    @Published var monitorChannels: ChannelPair?
+    /// Which channels of the pass-through device carry the composite (nil =
+    /// 1, 2). Applies live, through the pass-through's own re-apply.
+    @Published var passThroughChannels: ChannelPair?
     @Published var channel: MeterChannel = .right
     /// True when SDR is supported (the tuner library is linked) -- gates the
     /// SDR input option.
@@ -197,6 +211,11 @@ final class MeterViewModel: ObservableObject {
     private var engine: MeterAudioEngine?
     private var deviceID: AudioDeviceID?
     private var priorDeviceRate: Double?
+    /// Hot-plug subscription (device list and default devices); alive for
+    /// the view model's lifetime. Only the production init creates it --
+    /// no test constructs a MeterViewModel.
+    private var deviceObservation: AudioDeviceObservation?
+    private var restartPending = false
     private var captureRate: Double = 192_000
     private var sdrSource: SDRLibraryInputSource?
     private var timer: Timer?
@@ -215,6 +234,10 @@ final class MeterViewModel: ObservableObject {
 
     init() {
         refreshDevices()
+        deviceObservation = AudioDevices.startObserving { [weak self] in
+            // Delivered on the main queue; re-list, never re-select.
+            MainActor.assumeIsolated { self?.refreshDevices() }
+        }
         // Show the correct SDR controls before capture: the backend auto-prefers
         // SDRplay when an RSP is attached, so reflect that up front.
         sdrIsSDRplay = SDRLibraryInputSource.sdrplayPresent()
@@ -255,14 +278,31 @@ final class MeterViewModel: ObservableObject {
         }
     }
 
+    /// Re-list every Core Audio device (one HAL pass) and split it into the
+    /// input and output pickers. Runs at init, on Rescan, after a stop and
+    /// on hot-plug. It never changes a selection: a selected device that
+    /// vanished stays selected (the selector says "Not connected") and one
+    /// that came back is re-resolved under its new AudioDeviceID. Only a
+    /// run with nothing ever selected picks the preferred default input.
     func refreshDevices() {
-        inputDevices = (try? AudioDevices.inputDevices()) ?? []
-        outputDevices = (try? AudioDevices.outputDevices()) ?? []
-        if selectedInputID == nil {
+        allDevices = (try? AudioDevices.list()) ?? []
+        inputDevices = allDevices.filter { $0.hasInput }
+        outputDevices = allDevices.filter { $0.hasOutput }
+        lastDeviceScan = Date()
+        if selectedInputID == nil, inputUIDMemo.isEmpty {
             selectedInputID = Self.preferredDefaultInput(inputDevices)
                 ?? AudioDevices.defaultInputDeviceID()
                 ?? inputDevices.first?.id
         }
+        Self.reresolve(&selectedInputID, memo: &inputUIDMemo, in: inputDevices)
+        Self.reresolve(&selectedOutputID, memo: &outputUIDMemo, in: outputDevices)
+        Self.reresolve(&selectedMPXOutID, memo: &mpxOutUIDMemo, in: outputDevices)
+    }
+
+    /// The Devices popover's Rescan: audio devices and SDR units.
+    func rescanDevices() {
+        refreshDevices()
+        refreshSDRDevices()
     }
 
     /// Default to a device that can actually carry an MPX composite. The
@@ -272,11 +312,72 @@ final class MeterViewModel: ObservableObject {
     private static func preferredDefaultInput(_ devices: [AudioDevice]) -> AudioDeviceID? {
         var fallback: AudioDeviceID?
         for dev in devices {
-            let rates = AudioDevices.availableNominalSampleRates(deviceID: dev.id)
+            let rates = dev.availableSampleRates
             if rates.contains(where: { abs($0 - 192_000) < 1.0 }) { return dev.id }
             if fallback == nil, rates.contains(where: { $0 >= 128_000 }) { fallback = dev.id }
         }
         return fallback
+    }
+
+    // MARK: - Device selection by UID (the selector's currency)
+    //
+    // The engine and the rest of this view model select by the transient
+    // AudioDeviceID; the device selector and the saved settings use the
+    // stable UID. Each bridge remembers the UID it was last given, so an
+    // unplugged device still reads as "that device, not connected" instead
+    // of silently becoming the default, and a hot-plug refresh re-resolves
+    // the same device under its new ID without changing the selection.
+
+    private var inputUIDMemo = ""
+    private var outputUIDMemo = ""
+    private var mpxOutUIDMemo = ""
+
+    /// The input device's UID; "" only before anything was ever selected.
+    var selectedInputUID: String {
+        get { Self.uid(of: selectedInputID, in: inputDevices, memo: inputUIDMemo) }
+        set {
+            inputUIDMemo = newValue
+            if let dev = inputDevices.first(where: { $0.uid == newValue }) {
+                selectedInputID = dev.id
+            }
+        }
+    }
+
+    /// The monitor device's UID; "" = the system default output.
+    var selectedOutputUID: String {
+        get { Self.uid(of: selectedOutputID, in: outputDevices, memo: outputUIDMemo) }
+        set {
+            outputUIDMemo = newValue
+            selectedOutputID = outputDevices.first { $0.uid == newValue }?.id
+        }
+    }
+
+    /// The MPX pass-through device's UID; "" = the system default output.
+    var selectedMPXOutUID: String {
+        get { Self.uid(of: selectedMPXOutID, in: outputDevices, memo: mpxOutUIDMemo) }
+        set {
+            mpxOutUIDMemo = newValue
+            selectedMPXOutID = outputDevices.first { $0.uid == newValue }?.id
+        }
+    }
+
+    private static func uid(of id: AudioDeviceID?, in devices: [AudioDevice], memo: String) -> String {
+        guard let id else { return memo }
+        return devices.first { $0.id == id }?.uid ?? memo
+    }
+
+    /// Keeps an ID selection and its UID memo describing the same device.
+    /// The memo is the identity once known: it is looked up first (the
+    /// device may be back under a new ID); otherwise a resolvable ID fills
+    /// the memo in.
+    private static func reresolve(
+        _ id: inout AudioDeviceID?, memo: inout String, in devices: [AudioDevice]
+    ) {
+        if !memo.isEmpty, let dev = devices.first(where: { $0.uid == memo }) {
+            id = dev.id
+        } else if let current = id, let dev = devices.first(where: { $0.id == current }) {
+            memo = dev.uid
+        }
     }
 
     // MARK: - Persistence (UserDefaults: ~/Library/Preferences/<bundle>.plist)
@@ -306,6 +407,10 @@ final class MeterViewModel: ObservableObject {
         static let signalCal = "meter.signalCalibrationDB"
         static let inputUID = "meter.selectedInputUID"
         static let outputUID = "meter.selectedOutputUID"
+        // Channel pairs in the INI/CLI form ("1,2", "3" = mono); absent = 1, 2.
+        static let inputChannels = "meter.inputChannels"
+        static let outputChannels = "meter.outputChannels"
+        static let mpxPassChannels = "meter.mpxPassOutputChannels"
         static let sdrDeviceID = "meter.selectedSDRDeviceID"
         static let mpxPass = "meter.mpxPassEnabled"
         static let mpxPassUID = "meter.mpxPassOutputUID"
@@ -350,13 +455,19 @@ final class MeterViewModel: ObservableObject {
         if d.object(forKey: Keys.signalCal) != nil {
             signalCalibrationDB = d.double(forKey: Keys.signalCal)
         }
+        // A saved input that is not attached keeps the default pick (the
+        // meter must be able to start); a saved output that is not attached
+        // stays selected and reads "Not connected" until it is back.
         if let uid = d.string(forKey: Keys.inputUID),
-           let dev = inputDevices.first(where: { $0.uid == uid }) {
-            selectedInputID = dev.id
+           inputDevices.contains(where: { $0.uid == uid }) {
+            selectedInputUID = uid
         }
         if let uid = d.string(forKey: Keys.outputUID) {
-            selectedOutputID = outputDevices.first(where: { $0.uid == uid })?.id
+            selectedOutputUID = uid
         }
+        inputChannels = ChannelPair.parse(d.string(forKey: Keys.inputChannels))
+        monitorChannels = ChannelPair.parse(d.string(forKey: Keys.outputChannels))
+        passThroughChannels = ChannelPair.parse(d.string(forKey: Keys.mpxPassChannels))
         // SDR unit: keep the saved identity even if not currently attached
         // (same keep-the-selection convention as the audio devices).
         selectedSDRID = d.string(forKey: Keys.sdrDeviceID)
@@ -371,7 +482,17 @@ final class MeterViewModel: ObservableObject {
             monitorBallistics = d.bool(forKey: Keys.monitorBallistics)
         }
         if let uid = d.string(forKey: Keys.mpxPassUID) {
-            selectedMPXOutID = outputDevices.first(where: { $0.uid == uid })?.id
+            selectedMPXOutUID = uid
+        }
+    }
+
+    /// Stores a UID / pair string, or removes the key for "" / nil (the
+    /// system default, channels 1, 2).
+    private static func store(_ d: UserDefaults, _ key: String, _ value: String?) {
+        if let value, !value.isEmpty {
+            d.set(value, forKey: key)
+        } else {
+            d.removeObject(forKey: key)
         }
     }
 
@@ -400,14 +521,13 @@ final class MeterViewModel: ObservableObject {
         d.set(sdrIQRateKHz, forKey: Keys.iqRate)
         d.set(signalUnit.rawValue, forKey: Keys.signalUnit)
         d.set(signalCalibrationDB, forKey: Keys.signalCal)
-        if let id = selectedInputID, let dev = inputDevices.first(where: { $0.id == id }) {
-            d.set(dev.uid, forKey: Keys.inputUID)
+        if !selectedInputUID.isEmpty {
+            d.set(selectedInputUID, forKey: Keys.inputUID)
         }
-        if let id = selectedOutputID, let dev = outputDevices.first(where: { $0.id == id }) {
-            d.set(dev.uid, forKey: Keys.outputUID)
-        } else {
-            d.removeObject(forKey: Keys.outputUID)   // nil = system default
-        }
+        Self.store(d, Keys.outputUID, selectedOutputUID)   // "" = system default
+        Self.store(d, Keys.inputChannels, inputChannels?.iniValue)
+        Self.store(d, Keys.outputChannels, monitorChannels?.iniValue)
+        Self.store(d, Keys.mpxPassChannels, passThroughChannels?.iniValue)
         if let id = selectedSDRID {
             d.set(id, forKey: Keys.sdrDeviceID)
         } else {
@@ -419,11 +539,7 @@ final class MeterViewModel: ObservableObject {
         d.set(preemphasisUS, forKey: Keys.preemphasisUS)
         d.set(forceRDS, forKey: Keys.forceRDS)
         d.set(monitorBallistics, forKey: Keys.monitorBallistics)
-        if let id = selectedMPXOutID, let dev = outputDevices.first(where: { $0.id == id }) {
-            d.set(dev.uid, forKey: Keys.mpxPassUID)
-        } else {
-            d.removeObject(forKey: Keys.mpxPassUID)
-        }
+        Self.store(d, Keys.mpxPassUID, selectedMPXOutUID)
     }
 
     // MARK: - Capture lifecycle
@@ -450,19 +566,20 @@ final class MeterViewModel: ObservableObject {
             pilotRefKHz: Float(pilotRefKHz),
             fullScaleKHz: audioAbsoluteCal ? Float(audioFullScaleKHz) : nil,
             preemphasisUS: preemphasisUS,
-            input: AUHALInputSource(deviceID: id,
+            input: AUHALInputSource(deviceID: id, channels: inputChannels,
                                     maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
         do {
-            let fmt = try eng.start(monitorDeviceID: selectedOutputID)
+            let fmt = try eng.start(monitorDeviceID: selectedOutputID, monitorChannels: monitorChannels)
             captureRate = fmt.sampleRate
             engine = eng
             running = true
             statusText = String(format: "Capturing %.0f kHz", fmt.sampleRate / 1000)
-            if let w = prep.warning { statusText += " — \(w)" }
+            if let w = prep.warning { statusText += " -- \(w)" }
             if mpxPassEnabled {
                 eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID,
-                                      gainDB: mpxPassGainDB)
+                                      channels: passThroughChannels, gainDB: mpxPassGainDB)
             }
+            appendRoutingNotes(from: eng)
             if !dcBlockEnabled { eng.setDCBlock(false) }
             if forceRDS { eng.setForceRDS(true) }
             startTimer()
@@ -513,7 +630,7 @@ final class MeterViewModel: ObservableObject {
             preemphasisUS: preemphasisUS,
             input: source)
         do {
-            _ = try eng.start(monitorDeviceID: selectedOutputID)
+            _ = try eng.start(monitorDeviceID: selectedOutputID, monitorChannels: monitorChannels)
             engine = eng
             sdrSource = source
             sdrIsSDRplay = source.isSDRplay
@@ -523,11 +640,12 @@ final class MeterViewModel: ObservableObject {
             running = true
             let radio = source.isSDRplay ? "SDRplay" : "RTL-SDR"
             statusText = String(format: "Tuned %.2f MHz (%@, abs cal)", frequencyMHz, radio)
-            if let selectionNote { statusText += " — \(selectionNote)" }
+            if let selectionNote { statusText += " -- \(selectionNote)" }
             if mpxPassEnabled {
                 eng.setMPXPassThrough(enabled: true, deviceID: selectedMPXOutID,
-                                      gainDB: mpxPassGainDB)
+                                      channels: passThroughChannels, gainDB: mpxPassGainDB)
             }
+            appendRoutingNotes(from: eng)
             if !dcBlockEnabled { eng.setDCBlock(false) }
             if forceRDS { eng.setForceRDS(true) }
             startTimer()
@@ -535,6 +653,16 @@ final class MeterViewModel: ObservableObject {
             statusText = error.localizedDescription
             source.stop()
             engine = nil
+        }
+    }
+
+    /// A chosen pair the device does not have is not a start failure (the
+    /// path runs on channels 1, 2), but the operator asked for something
+    /// else: say so in the status line, where a failure would be reported.
+    private func appendRoutingNotes(from eng: MeterAudioEngine) {
+        let notes = [eng.inputChannelNote, eng.monitorChannelNote, eng.passThroughChannelNote]
+        for note in notes.compactMap({ $0 }) {
+            statusText += " -- \(note)"
         }
     }
 
@@ -554,8 +682,10 @@ final class MeterViewModel: ObservableObject {
         // Blank the dashboard: a stopped meter must not keep showing the last
         // captured frame as if it were live (audit C5).
         telemetry.reset()
-        // Devices are all free now: refresh the picker with a full scan.
+        // Devices are all free now: refresh the pickers with a full scan
+        // (the audio list also picks up the restored nominal rates).
         refreshSDRDevices()
+        refreshDevices()
     }
 
     /// SDR unit changed: reopen on the chosen device (device open is not a
@@ -585,34 +715,50 @@ final class MeterViewModel: ObservableObject {
         engine?.setForceRDS(forceRDS)
     }
 
-    /// MPX pass-through toggled or its device changed: applies live.
+    /// MPX pass-through toggled, or its device, channels or gain changed:
+    /// applies live.
     func applyMPXPassChange() {
         saveSettings()
-        let failure = engine?.setMPXPassThrough(
+        guard let engine else { return }
+        let failure = engine.setMPXPassThrough(
             enabled: mpxPassEnabled, deviceID: selectedMPXOutID,
-            gainDB: mpxPassGainDB)
+            channels: passThroughChannels, gainDB: mpxPassGainDB)
         if let failure {
             // Do not leave the toggle lit over a dead player (audit C12).
             mpxPassEnabled = false
             statusText = "MPX pass-through failed: \(failure)"
             saveSettings()
+        } else if let note = engine.passThroughChannelNote {
+            statusText = "MPX pass-through: \(note)"
         }
     }
 
-    /// Monitor output device changed: swap just the monitor, live -- the
-    /// capture, analysis, and recording are untouched.
+    /// Monitor output device or channels changed: swap just the monitor,
+    /// live -- the capture, analysis, and recording are untouched.
     func applyOutputDeviceChange() {
         saveSettings()
-        if let failure = engine?.setMonitorDevice(selectedOutputID) {
+        guard let engine else { return }
+        if let failure = engine.setMonitorDevice(selectedOutputID, channels: monitorChannels) {
             statusText = "Monitor output failed: \(failure)"
+        } else if let note = engine.monitorChannelNote {
+            statusText = "Monitor: \(note)"
         }
     }
 
     /// Apply a control change (device/channel/monitor/ref) by restarting.
+    /// Deferred to the next main-actor turn and coalesced: choosing a device
+    /// in the selector can reset its channel pair in the same transaction,
+    /// and the two onChange handlers must reopen the device once, not twice.
     func restartIfRunning() {
-        guard running else { return }
-        stop()
-        start()
+        guard running, !restartPending else { return }
+        restartPending = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.restartPending = false
+            guard self.running else { return }
+            self.stop()
+            self.start()
+        }
     }
 
     /// Frequency changed: live-retune the running tuner (no glitch, no device
@@ -715,7 +861,7 @@ final class MeterViewModel: ObservableObject {
             // The dead handle is deliberately abandoned (closing it would
             // crash in libusb), which keeps the unit's USB claim until the
             // dongle is replugged or the app restarts -- say so.
-            statusText = "SDR stopped: device lost — replug the unit before "
+            statusText = "SDR stopped: device lost -- replug the unit before "
                 + "reusing it (its USB claim is held until replug or app restart)"
             return
         }
@@ -1128,7 +1274,7 @@ final class MeterViewModel: ObservableObject {
         // line explains itself with the live evidence instead of blanks.
         let rds: String
         if s.rdsGated {
-            rds = String(format: "no usable RDS — BER %.0f%% · %.1f kHz",
+            rds = String(format: "no usable RDS -- BER %.0f%%, %.1f kHz",
                          s.recentBlockErrorRate * 100, s.rdsDevKHz)
         } else {
             rds = "\(r.synced ? "sync" : "----")  PI \(pi)"

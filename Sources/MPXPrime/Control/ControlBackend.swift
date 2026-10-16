@@ -1,4 +1,5 @@
 import Foundation
+import MPXPrimeCore
 
 // Shared contract between the control server (REST routes) and whatever owns
 // the engine: the headless runtime (macOS + Linux) or the macOS GUI view
@@ -182,6 +183,11 @@ struct ControlDevice: Codable, Sendable {
     var name: String
     var canInput: Bool
     var canOutput: Bool
+    /// Device channel counts per direction, so a picker can say
+    /// "Scarlett 18i8 (8 out)" and the channel fields have a range to
+    /// validate against. 0 = unknown (Linux ALSA PCMs do not say).
+    var inputChannels: Int = 0
+    var outputChannels: Int = 0
 }
 
 /// GET /api/devices payload: the pickable input/output lists plus which id
@@ -197,6 +203,11 @@ struct ControlDevices: Codable, Sendable {
     /// old payloads decodable.
     var selectedMonitor: String = ""
     var monitorEnabled: Bool = false
+    /// The `*_channels` keys as the INI spells them (one-based "3,4", "3"
+    /// for mono, "" for the device's first pair).
+    var selectedInputChannels: String = ""
+    var selectedOutputChannels: String = ""
+    var selectedMonitorChannels: String = ""
     /// Platform note the UI shows next to the pickers (e.g. Linux PCM-name
     /// convention). Empty on macOS.
     var note: String
@@ -238,6 +249,11 @@ protocol ControlledEngine: AnyObject {
     func applyRuntimeConfig(_ config: AppConfig)
     func applyRDSRuntimeConfig(_ config: AppConfig)
     var controlMeters: ControlMeters? { get }
+    /// The meters as one consumer sees them: its own peaks since its own
+    /// previous read (`MeterPeakReader`), so the GUI, each meter stream and
+    /// the status tick never take each other's peaks. Default: the shared
+    /// reader, i.e. `controlMeters`.
+    func controlMeters(reader: MeterPeakReader) -> ControlMeters?
     var rdsLiveSnapshotForControl: BasicRDSCoder.LiveSnapshot? { get }
     /// Live scope/spectrum snapshot for /api/telemetry. Default nil: an
     /// engine without a scope tap (ALSA today) simply reports no telemetry
@@ -264,12 +280,16 @@ extension ControlledEngine {
 
 extension ControlledEngine {
     func controlTelemetry(windowMS: Double) -> ControlTelemetry? { nil }
+    func controlMeters(reader: MeterPeakReader) -> ControlMeters? { controlMeters }
 }
 
 /// What the REST routes need from the run mode that owns the engine.
 protocol ControlBackend: Sendable {
     func status() async -> ControlStatus
     func meters() async -> ControlMeters?
+    /// `meters()` for one identified consumer (a meter stream): its peaks
+    /// are its own. Default: the shared reader, i.e. `meters()`.
+    func meters(reader: MeterPeakReader) async -> ControlMeters?
     func rds() async -> ControlRDS
     func devices() async -> ControlDevices
     func configSections() async throws -> [String: [String: String]]
@@ -304,4 +324,8 @@ protocol ControlBackend: Sendable {
     /// rendering is currently enabled, so the client can warn if pushes will
     /// not appear. artist/title drive the RT / PS / RT+ templates.
     func setNowPlaying(artist: String, title: String, display: String) async -> Bool
+}
+
+extension ControlBackend {
+    func meters(reader: MeterPeakReader) async -> ControlMeters? { await meters() }
 }

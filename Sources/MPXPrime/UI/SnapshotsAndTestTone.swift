@@ -13,24 +13,11 @@ import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Test Tone tab -- a first-class sidebar stage that drives the
-/// engine's tone source. Enable replaces the audio input live; the
-/// rest of the chain (AGC, multiband, clippers, encoder, BS.412)
-/// processes the tone normally so operators can observe response at
-/// calibrated input levels (default -20 dBFS, broadcast line
-/// reference). Three signal types -- sine for level / separation /
-/// encoder-bandwidth tests, pink and white noise for broadband
-/// response checks. Stereo modes cover the operator's diagnostic
-/// needs (mono / L=-R / L-only / R-only).
-///
-/// All controls are live-applicable via the existing RuntimeConfig
-/// path; no engine restart required when toggling enable, type,
-/// mode, frequency, or level.
 /// Named-snapshot manager. 8 fixed slots saved to `<configPath>.snapshots.json`
-/// alongside the INI. Each slot row: name field + Save (capture current
-/// config into this slot, overwrites) + Load (apply this slot's config
-/// to the live engine) + Clear (delete this slot). The saved-at
-/// timestamp reads "saved <date>" once the slot is occupied.
+/// alongside the INI. Each slot row: name field, then the actions in task
+/// order -- Load (the common one, prominent), Save (capture the current
+/// config into this slot, overwrites) and a More menu for Import, Export and
+/// Clear. The saved-at timestamp reads "Saved <date>" once the slot is used.
 ///
 /// Snapshots are heavier than format profiles (full config capture vs
 /// per-stage preset bundle) and meant for "Saturday Night vs Morning
@@ -47,53 +34,40 @@ struct SnapshotsView: View {
     /// Unmissable summary of which preset is live (or that the config is custom).
     @ViewBuilder private var activePresetBanner: some View {
         let modified = model.activeSnapshotModified
+        InsetTile(highlighted: activePresetName != nil) {
         HStack(spacing: 8) {
             if let name = activePresetName {
                 Image(systemName: modified ? "pencil.circle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(modified ? Color.orange : Color.accentColor)
                     .accessibilityHidden(true)
-                Text(modified ? "Active preset: \(name)  (edited since loaded)"
+                Text(modified ? "Active preset: \(name) (edited since loading)"
                               : "Active preset: \(name)")
                     .fontWeight(.semibold)
             } else {
                 Image(systemName: "circle.dashed")
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("No preset loaded - the live configuration isn't tied to a saved preset.")
+                Text("No preset loaded: the live configuration is not tied to a saved preset.")
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
         .font(.callout)
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(activePresetName == nil
-                      ? Color.secondary.opacity(0.08)
-                      : (modified ? Color.orange : Color.accentColor).opacity(0.12))
-        )
+        }
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Card(title: "Presets") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        activePresetBanner
-                        ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
-                            SnapshotSlotRow(model: model, slot: slot)
-                            if slot < MPXPrimeViewModel.snapshotSlotCount - 1 {
-                                Divider().opacity(0.4)
-                            }
-                        }
+        // One card: the page title already says Presets.
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                activePresetBanner
+                ForEach(0..<MPXPrimeViewModel.snapshotSlotCount, id: \.self) { slot in
+                    SnapshotSlotRow(model: model, slot: slot)
+                    if slot < MPXPrimeViewModel.snapshotSlotCount - 1 {
+                        Divider().opacity(0.4)
                     }
                 }
-
-                TabHelpBox(text: "Eight named presets capturing the full configuration. Save the current setup into a slot, load it back later -- survives app restart. Heavier than Format Profiles: a preset captures every per-stage setting and RDS field, not just the DSP bundle.")
             }
-            .padding(20)
-            .frame(maxWidth: 1120, alignment: .topLeading)
         }
     }
 }
@@ -136,7 +110,7 @@ struct SnapshotSlotRow: View {
             HStack(spacing: 6) {
                 if isActive {
                     Label(
-                        model.activeSnapshotModified ? "Loaded - edited" : "Loaded",
+                        model.activeSnapshotModified ? "Loaded, Edited" : "Loaded",
                         systemImage: model.activeSnapshotModified
                             ? "pencil.circle.fill" : "checkmark.circle.fill"
                     )
@@ -144,11 +118,11 @@ struct SnapshotSlotRow: View {
                     .foregroundStyle(model.activeSnapshotModified ? Color.orange : Color.accentColor)
                 }
                 if let snap = snapshot {
-                    Text("saved \(Self.relativeDateString(snap.savedAt))")
+                    Text("Saved \(Self.relativeDateString(snap.savedAt))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("empty")
+                    Text("Empty")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -156,8 +130,17 @@ struct SnapshotSlotRow: View {
         }
     }
 
+    /// Task order: Load is what an operator does most (the prominent
+    /// action), Save next, the file and delete actions in a menu.
     private var actionButtons: some View {
         HStack(spacing: 8) {
+            Button("Load") {
+                model.loadSnapshot(slot: slot)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(snapshot == nil)
+            .help("Apply this slot's saved settings to the live engine. Devices, level calibration and the operating mode stay as installed. A setting that needs a restart shows Restart to Apply.")
+
             Button("Save") {
                 // Capture the current full config into this slot under the
                 // field's name (saveSnapshot trims + defaults when empty).
@@ -165,30 +148,29 @@ struct SnapshotSlotRow: View {
                 // onChange(of: snapshot?.name) sync keeps the field correct.
                 model.saveSnapshot(slot: slot, name: draftName)
             }
-            .help("Capture the current full configuration into this slot. Overwrites any existing preset here.")
+            .buttonStyle(.bordered)
+            .help("Capture the current configuration into this slot. Overwrites any preset here.")
 
-            Button("Import...") {
-                importPreset()
+            Menu("More") {
+                Button("Import\u{2026}") {
+                    importPreset()
+                }
+                .help("Load a preset from an MPX Prime Studio .ini file into this slot (overwrites). Does not apply it: use Load for that.")
+                Button("Export\u{2026}") {
+                    exportPreset()
+                }
+                .disabled(snapshot == nil)
+                .help("Save this preset to a file: a standard MPX Prime Studio .ini you can share or load with --config.")
+                Divider()
+                Button("Clear\u{2026}", role: .destructive) {
+                    confirmingClear = true
+                }
+                .disabled(snapshot == nil)
+                .help("Delete this slot. This cannot be undone.")
             }
-            .help("Load a preset from an MPX Prime Studio .ini file into this slot (overwrites). Does not apply it -- use Load for that.")
-
-            Button("Load") {
-                model.loadSnapshot(slot: slot)
-            }
-            .disabled(snapshot == nil)
-            .help("Apply this slot's saved configuration to the live engine. Restart-required fields surface a pending-apply prompt.")
-
-            Button("Export...") {
-                exportPreset()
-            }
-            .disabled(snapshot == nil)
-            .help("Save this preset to a file (a standard MPX Prime Studio .ini you can share or load with --config).")
-
-            Button("Clear", role: .destructive) {
-                confirmingClear = true
-            }
-            .disabled(snapshot == nil)
-            .help("Delete this slot. Cannot be undone.")
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityLabel("More actions for preset \(slot + 1)")
         }
         .controlSize(.small)
     }
@@ -204,10 +186,6 @@ struct SnapshotSlotRow: View {
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? Color.accentColor.opacity(0.10) : Color.clear)
-        )
         .onAppear {
             draftName = snapshot?.name ?? ""
         }
@@ -288,13 +266,22 @@ struct SnapshotSlotRow: View {
     }
 }
 
+/// Test Tone page: a line-up generator that REPLACES the input and bypasses
+/// the processing chain (AGC, EQ, multiband, enhancers, clippers, limiters and
+/// Final Drive), so its level arrives at the output unchanged; a sine is
+/// pre-compensated for the pre-emphasis curve, so the expected deviation is
+/// what a modulation monitor reads. Sine for level, separation and
+/// bandwidth tests; pink and white noise for broadband checks. Every control
+/// applies live.
 struct TestToneView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
-    private static let frequencyPresets: [Double] = [
+    static let frequencyPresets: [Double] = [
         50, 100, 400, 1_000, 5_000, 10_000, 12_000, 15_000
     ]
 
+    /// The tone replaces the input: source_mode, with the view model's
+    /// mirror kept in step by `applyLiveTestToneIfRunning`.
     private var isEnabled: Binding<Bool> {
         Binding(
             get: { model.config.sourceMode.lowercased() == "tone" },
@@ -305,207 +292,42 @@ struct TestToneView: View {
         )
     }
 
-    private var typeBinding: Binding<String> {
-        Binding(
-            get: { model.config.testToneType.lowercased() },
-            set: {
-                model.config.testToneType = $0
-                model.applyLiveTestToneIfRunning()
-            }
-        )
-    }
-
-    private var modeBinding: Binding<String> {
-        Binding(
-            get: { model.config.testToneMode.lowercased() },
-            set: {
-                model.config.testToneMode = $0
-                model.applyLiveTestToneIfRunning()
-            }
-        )
-    }
-
-    private var freqBinding: Binding<Double> {
-        Binding(
-            get: { model.config.testToneFreq },
-            set: {
-                model.config.testToneFreq = $0
-                model.applyLiveTestToneIfRunning()
-            }
-        )
-    }
-
-    private var levelBinding: Binding<Double> {
-        Binding(
-            get: { model.config.testToneLevelDB },
-            set: {
-                model.config.testToneLevelDB = $0
-                model.applyLiveTestToneIfRunning()
-            }
-        )
-    }
-
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                enableCard
-                signalCard
-                if typeBinding.wrappedValue == "sine" {
-                    frequencyCard
-                }
-                levelCard
-                statusCard
-
-                TabHelpBox(text: "Internal signal generator that replaces the audio input. Sine for level / separation / encoder-bandwidth tests; pink and white noise for broadband response checks. Four stereo modes (mono / L=-R / left-only / right-only) cover common diagnostic needs. The rest of the chain (AGC, multiband, clippers, BS.412, encoder) processes the tone normally so you can observe each stage's response at calibrated input levels.")
-            }
-            .padding(20)
-            .frame(maxWidth: 1120, alignment: .topLeading)
-        }
-    }
-
-    // MARK: - Cards
-
-    private var enableCard: some View {
-        Card(title: "Test Tone Source") {
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle(isOn: isEnabled) {
-                    Text("Enable Test Tone").font(.body)
-                }
+        // One card: the page title already says Test Tone.
+        Card {
+            Toggle("Enable Test Tone", isOn: isEnabled)
                 .toggleStyle(.switch)
+                .help("Replaces the input with the tone, live. Turn it off to put the programme back.")
+            SettingPicker("Type", setting: model.setting(\.testToneType, .live)) {
+                Text("Sine").tag("sine")
+                Text("Pink Noise").tag("pink")
+                Text("White Noise").tag("white")
             }
-        }
-    }
-
-    private var signalCard: some View {
-        Card(title: "Signal") {
-            VStack(alignment: .leading, spacing: 12) {
-                LabeledContent("Type") {
-                    Picker("Type", selection: typeBinding) {
-                        Text("Sine").tag("sine")
-                        Text("Pink").tag("pink")
-                        Text("White").tag("white")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(maxWidth: 320)
-                }
-
-                LabeledContent("Stereo mode") {
-                    Picker("Stereo mode", selection: modeBinding) {
-                        Text("Mono").tag("mono")
-                        Text("L=-R").tag("stereo")
-                        Text("Left").tag("left")
-                        Text("Right").tag("right")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(maxWidth: 380)
-                }
+            .pickerStyle(.segmented)
+            SettingPicker("Stereo Mode", setting: model.setting(\.testToneMode, .live),
+                          tooltip: "Mono: the same signal on both channels. L=-R: left and right in anti-phase (pure stereo difference). Left or Right: one channel only, for separation checks.") {
+                Text("Mono").tag("mono")
+                Text("L=-R").tag("stereo")
+                Text("Left").tag("left")
+                Text("Right").tag("right")
             }
-        }
-    }
-
-    private var frequencyCard: some View {
-        Card(title: "Frequency") {
-            VStack(alignment: .leading, spacing: 12) {
-                LabeledContent("Frequency (Hz)") {
-                    TextField(
-                        "Frequency",
-                        value: freqBinding,
-                        format: .number.precision(.fractionLength(0...2))
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 120)
-                    .labelsHidden()
-                }
-
-                HStack(spacing: 8) {
-                    Text("Presets")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ForEach(Self.frequencyPresets, id: \.self) { freq in
-                        let isActive = abs(freqBinding.wrappedValue - freq) < 0.5
-                        Button(presetLabel(for: freq)) {
-                            freqBinding.wrappedValue = freq
-                        }
-                        .buttonStyle(.bordered)
-                        // Tint the preset matching the current frequency so the
-                        // active selection is visible at a glance.
-                        .tint(isActive ? BroadcastStyle.accent : nil)
-                    }
-                }
+            .pickerStyle(.segmented)
+            if model.config.testToneType.lowercased() == "sine" {
+                TestToneFrequencyRow(model: model)
             }
-        }
-    }
-
-    private var levelCard: some View {
-        Card(title: "Output Level") {
-            VStack(alignment: .leading, spacing: 8) {
-                LabeledContent {
-                    Slider(
-                        value: levelBinding,
-                        in: -60.0 ... 0.0,
-                        step: 0.5
-                    )
-                    .accessibilityLabel("Output level")
-                    .accessibilityValue(
-                        Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB)))
-                } label: {
-                    Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB))
-                        .font(.system(.body, design: .monospaced))
-                        .frame(width: 96, alignment: .leading)
-                }
-                Text(
-                    "Calibration source: 0 dBFS = 100% of the audio modulation "
-                    + "left after the pilot/RDS reservation. The tone bypasses "
-                    + "AGC, EQ, multiband, enhancers, clippers, limiters and Final "
-                    + "Drive, and a sine is pre-compensated for the pre-emphasis "
-                    + "curve, so the deviation below is what a modulation monitor "
-                    + "reads at any frequency."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                Text(expectedDeviationText)
+            DoubleSliderRow(
+                title: "Tone Level",
+                setting: model.setting(\.testToneLevelDB, .live),
+                range: -60...0,
+                format: "%.1f dBFS",
+                tooltip: "0 dBFS is 100% of the audio modulation left after the pilot and RDS reservation. -20 dBFS is the usual line-up reference.",
+                defaultValue: AppConfig().testToneLevelDB)
+            if ChainFeature.finalStage.applies(in: model.config.operatingMode) {
+                Text(Self.expectedDeviationText(model.config))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Expected deviation")
-            }
-        }
-    }
-
-    private var statusCard: some View {
-        Card(title: "Status") {
-            VStack(alignment: .leading, spacing: 6) {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                    GridRow {
-                        Text("Source").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
-                        Text(isEnabled.wrappedValue ? "Tone (active)" : "Input (test tone disabled)")
-                            .font(BroadcastStyle.valueReadout)
-                            .foregroundStyle(isEnabled.wrappedValue ? BroadcastStyle.safeGreen : .primary)
-                    }
-                    GridRow {
-                        Text("Type").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
-                        Text(typeBinding.wrappedValue.capitalized).font(BroadcastStyle.valueReadout)
-                    }
-                    GridRow {
-                        Text("Mode").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
-                        Text(modeLabel(modeBinding.wrappedValue)).font(BroadcastStyle.valueReadout)
-                    }
-                    if typeBinding.wrappedValue == "sine" {
-                        GridRow {
-                            Text("Frequency").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
-                            Text(String(format: "%.1f Hz", model.config.testToneFreq))
-                                .font(BroadcastStyle.valueReadout)
-                                .monospacedDigit()
-                        }
-                    }
-                    GridRow {
-                        Text("Level").font(BroadcastStyle.scaleLabel).foregroundStyle(.secondary).textCase(.uppercase)
-                        Text(String(format: "%+0.1f dBFS", model.config.testToneLevelDB))
-                            .font(BroadcastStyle.valueReadout)
-                            .monospacedDigit()
-                    }
-                }
+                    .help("What a modulation monitor should read for this level: the audio deviation plus the pilot and RDS on top.")
             }
         }
     }
@@ -515,8 +337,7 @@ struct TestToneView: View {
     /// is the audio-composite headroom after the pilot/RDS reservation (the
     /// same arithmetic as `MPXGenerator.makeFinalCompositeThresholds` with
     /// 0 dB output gain). Pilot and RDS add on top at their injection levels.
-    private var expectedDeviationText: String {
-        let c = model.config
+    static func expectedDeviationText(_ c: AppConfig) -> String {
         let outputGain = max(1.0, pow(10.0, c.outputGainDB / 20.0))
         let rdsAmplitude = c.enRDS && !c.monoMode ? c.rdsLevel / 75.0 : 0.0
         let pilotAmplitude = c.monoMode ? 0.0 : c.pilotLevel
@@ -524,28 +345,49 @@ struct TestToneView: View {
         let audioKHz = c.mpxDeviationKHz * budget * pow(10.0, c.testToneLevelDB / 20.0)
         let subcarrierKHz = c.mpxDeviationKHz * (pilotAmplitude + rdsAmplitude)
         return String(
-            format: "Expected: %.1f kHz audio deviation (+ %.1f kHz pilot/RDS = %.1f kHz peak)",
+            format: "Expected: %.1f kHz audio + %.1f kHz pilot and RDS = %.1f kHz peak",
             audioKHz, subcarrierKHz, audioKHz + subcarrierKHz)
     }
 
-    private func presetLabel(for freq: Double) -> String {
+    /// "50 Hz", "1 kHz", "12 kHz": every number with its unit.
+    static func presetLabel(for freq: Double) -> String {
         if freq >= 1_000 {
             let kHz = freq / 1_000.0
-            if kHz == kHz.rounded() {
-                return "\(Int(kHz))k"
-            } else {
-                return String(format: "%.1fk", kHz)
+            return kHz == kHz.rounded() ? "\(Int(kHz)) kHz" : String(format: "%.1f kHz", kHz)
+        }
+        return "\(Int(freq)) Hz"
+    }
+}
+
+/// The sine's frequency: an exact number typed in, with one-click presets.
+struct TestToneFrequencyRow: View {
+    @ObservedObject var model: MPXPrimeViewModel
+
+    var body: some View {
+        let setting = model.setting(\.testToneFreq, .live)
+        LabeledContent("Frequency") {
+            HStack(spacing: 6) {
+                TextField("Frequency", value: setting.binding,
+                          format: .number.precision(.fractionLength(0...2)))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 100)
+                    .labelsHidden()
+                Text("Hz").foregroundStyle(.secondary)
             }
         }
-        return "\(Int(freq))"
-    }
-
-    private func modeLabel(_ mode: String) -> String {
-        switch mode {
-        case "stereo": return "Stereo (L=-R)"
-        case "left":   return "Left only"
-        case "right":  return "Right only"
-        default:       return "Mono"
+        .help("20 Hz to 20 kHz.")
+        HStack(spacing: 6) {
+            ForEach(TestToneView.frequencyPresets, id: \.self) { freq in
+                let isActive = abs(setting.binding.wrappedValue - freq) < 0.5
+                Button(TestToneView.presetLabel(for: freq)) {
+                    setting.binding.wrappedValue = freq
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                // Tint the preset matching the current frequency so the
+                // active selection is visible at a glance.
+                .tint(isActive ? BroadcastStyle.accent : nil)
+            }
         }
     }
 }

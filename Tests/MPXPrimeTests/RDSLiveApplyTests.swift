@@ -325,11 +325,25 @@ struct RDSLiveApplyTests {
         // from the baseline. AF lives in block C only on selected
         // segments per Method A.
         var sawDifferentBlockC = false
+        var blockCWords: [Int] = []
         for _ in 0..<8 {
             let g = RDSGroupDecoder.decode(coder.buildGroup0(versionB: false))
-            if g.block3 != baseline { sawDifferentBlockC = true; break }
+            if g.block3 != baseline { sawDifferentBlockC = true }
+            blockCWords.append(g.block3)
         }
         #expect(sawDifferentBlockC)
+        // The exact Method A codes (IEC 62106 Annex: AF code = (f - 87.5 MHz)
+        // / 0.1 MHz, count code 224 + N): "98.8, 106.6" is the count 226 with
+        // 113, then 191 with the filler 205. "Different from the baseline"
+        // alone passed wrong codes or a wrong count byte
+        // (test-suite review 2026-10 finding 13).
+        #expect(blockCWords.contains((226 << 8) | 113),
+                "no block C carried count 226 + AF 113 (98.8 MHz): \(blockCWords.map { String($0, radix: 16) })")
+        #expect(blockCWords.contains((191 << 8) | 205),
+                "no block C carried AF 191 (106.6 MHz) + filler 205: \(blockCWords.map { String($0, radix: 16) })")
+        let unexpected = blockCWords.filter { $0 != (226 << 8) | 113 && $0 != (191 << 8) | 205 }
+        #expect(unexpected.isEmpty,
+                "Method A emitted block C words outside the two-entry list: \(unexpected.map { String($0, radix: 16) })")
     }
 
     // MARK: - Schedule (group sequence)

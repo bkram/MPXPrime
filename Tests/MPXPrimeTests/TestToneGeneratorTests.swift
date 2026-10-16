@@ -82,6 +82,7 @@ struct TestToneGeneratorTests {
         cfg.audioCompositeSoftClipEnabled = false
         cfg.encoderFIREnabled = false
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false
         cfg.primeBassEnabled = false
@@ -179,51 +180,44 @@ struct TestToneGeneratorTests {
             "Composite peak for −40 dBFS sine should be in [−43, −37] dBFS; got \(peakDB)")
     }
 
-    @Test func whiteNoiseProducesBoundedRandomOutput() {
-        // White noise should fill the buffer with non-trivial random
-        // content. Verify: not constant (more than just one value
-        // present), bounded by ~level (peak no more than 6 dB above
-        // configured level — uniform [-1,+1] white scaled by toneLevel).
-        let cfg = makeMinimalToneConfig(levelDB: -20.0, toneType: "white")
-        let composite = renderTone(config: cfg, frames: warmupFrames + measureFrames)
-
+    /// Peak, RMS and distinct-value count over the whole measurement window.
+    private func noiseStats(_ composite: [Float]) -> (peak: Float, rms: Double, distinct: Int) {
         var peak: Float = 0.0
+        var acc = 0.0
         var distinctSamples = Set<Int32>()
         for i in warmupFrames..<composite.count {
-            let v = abs(composite[i])
-            if v > peak { peak = v }
-            // Count distinct quantised samples to verify it's not stuck
-            distinctSamples.insert(Int32(composite[i] * 10_000.0))
-            if distinctSamples.count > 100 { break }
+            peak = max(peak, abs(composite[i]))
+            acc += Double(composite[i]) * Double(composite[i])
+            if distinctSamples.count <= 100 { distinctSamples.insert(Int32(composite[i] * 10_000.0)) }
         }
-        #expect(distinctSamples.count > 50,
-            "White noise should produce many distinct values; got \(distinctSamples.count) in window")
-        // Peak amplitude bounded — uniform [-1,+1] scaled by 0.1 = peaks
-        // up to 0.1; small headroom for chain-side pre-emphasis biquad
-        // and sumLevel.
-        #expect(peak < 0.2,
-            "White noise peak at −20 dBFS should be bounded under 0.2; got \(peak)")
+        return (peak, sqrt(acc / Double(composite.count - warmupFrames)), distinctSamples.count)
     }
 
-    @Test func pinkNoiseProducesBoundedRandomOutput() {
-        // Pink noise: similar constraints. The Paul Kellet recipe is
-        // scaled to ~±1 in our wrapper so −20 dBFS pink should peak
-        // under ~0.2.
-        let cfg = makeMinimalToneConfig(levelDB: -20.0, toneType: "pink")
-        let composite = renderTone(config: cfg, frames: warmupFrames + measureFrames)
-
-        var peak: Float = 0.0
-        var distinctSamples = Set<Int32>()
-        for i in warmupFrames..<composite.count {
-            let v = abs(composite[i])
-            if v > peak { peak = v }
-            distinctSamples.insert(Int32(composite[i] * 10_000.0))
-            if distinctSamples.count > 100 { break }
-        }
-        #expect(distinctSamples.count > 50,
-            "Pink noise should produce many distinct values; got \(distinctSamples.count) in window")
-        #expect(peak < 0.3,
-            "Pink noise peak at −20 dBFS should be bounded under 0.3; got \(peak)")
+    /// White and pink noise: random, bounded, AND at the configured level.
+    /// The old checks (peak under 0.2 / 0.3, over a window that stopped
+    /// after 100 distinct values) passed noise 40 dB low
+    /// (test-suite review 2026-10 finding 13). The level is pinned
+    /// two ways: the RMS at -20 dBFS is not tens of dB down (40 dB low reads
+    /// about 5e-4), and -20 vs -40 dBFS differ by 20 dB.
+    @Test(arguments: [("white", Float(0.2)), ("pink", Float(0.3))])
+    func noiseProducesBoundedRandomOutputAtItsLevel(toneType: String, peakBound: Float) {
+        let hot = noiseStats(renderTone(config: makeMinimalToneConfig(levelDB: -20.0, toneType: toneType),
+                                        frames: warmupFrames + measureFrames))
+        let quiet = noiseStats(renderTone(config: makeMinimalToneConfig(levelDB: -40.0, toneType: toneType),
+                                          frames: warmupFrames + measureFrames))
+        let stepDB = 20.0 * log10(hot.rms / max(quiet.rms, 1e-12))
+        print(String(format: "[tone noise] %@: -20 dBFS RMS %.4f peak %.3f, -40 dBFS RMS %.5f, step %.2f dB",
+                     toneType, hot.rms, hot.peak, quiet.rms, stepDB))
+        #expect(hot.distinct > 50,
+            "\(toneType) noise should produce many distinct values; got \(hot.distinct)")
+        // Uniform [-1, +1] scaled by 0.1 peaks at 0.1; headroom for the
+        // pre-emphasis biquad and sumLevel.
+        #expect(hot.peak < peakBound,
+            "\(toneType) noise peak at -20 dBFS should be bounded under \(peakBound); got \(hot.peak)")
+        #expect(hot.rms > 0.01,
+            "\(toneType) noise at -20 dBFS has RMS \(hot.rms): far below its level")
+        #expect(abs(stepDB - 20.0) < 1.0,
+            "\(toneType) noise -20 vs -40 dBFS differ by \(stepDB) dB, not 20")
     }
 
     // MARK: - Calibration semantics (0.45)
@@ -284,6 +278,7 @@ struct TestToneGeneratorTests {
         lean.preEncodeAudioLimiterEnabled = false
         lean.multibandEnabled = false
         lean.widebandAGCEnabled = false
+        lean.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         #expect(abs(steadyStatePeakDB(loud) - reference) < 0.05)
         #expect(abs(steadyStatePeakDB(lean) - reference) < 0.05)
     }

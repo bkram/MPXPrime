@@ -52,10 +52,12 @@ struct DeviationReadoutTests {
 
     @Test func outputTrimIsDividedBackOut() {
         // A composite metered post -6 dB trim reads the modulation-domain
-        // figure once the engine's reference scale (10^(+6/20)) is applied.
+        // figure through the scale both engines use (not one computed here).
         let trimmedPeak: Float = 0.5 * powf(10.0, -6.0 / 20.0)
         let kHz = DeviationReadout.kilohertz(
-            compositePeak: trimmedPeak, modulationReferenceScale: powf(10.0, 6.0 / 20.0))
+            compositePeak: trimmedPeak,
+            modulationReferenceScale: OutputWiring.modulationReferenceScale(
+                outputGainDB: -6.0, mode: .mpxComposite))
         #expect(abs(kHz - 37.5) < 0.01)
     }
 }

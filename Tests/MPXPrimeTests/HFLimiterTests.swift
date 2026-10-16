@@ -6,7 +6,7 @@ import Testing
 
 // Pre-emphasis-aware HF limiter (program-controlled pre-emphasis, Orban
 // US 4,103,243 topology): rides only the boost component `pre - flat`.
-// The invariants pinned here are the ones docs/hf-limiter-review.md found
+// The invariants pinned here are the ones the HF limiter review found
 // broken or unguarded in 2026-10: the bass-immunity gate, the cap on the
 // removal, the opposite-sign case, the de-emphasised floor, the absence of
 // gain ripple, the stereo image and the split top-octave ceiling.

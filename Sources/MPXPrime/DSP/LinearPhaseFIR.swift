@@ -62,7 +62,8 @@ func kaiserSincLowpassCoefficients(
     cutoffHz: Float,
     sampleRate: Float,
     stopBandDB: Float,
-    transitionHz: Float
+    transitionHz: Float,
+    maxTaps: Int = 2_049
 ) -> [Float] {
     let sr = max(8_000.0 as Float, sampleRate)
     let nyq = sr * 0.5
@@ -72,7 +73,8 @@ func kaiserSincLowpassCoefficients(
     let transition = max(40.0, min(transitionHz, nyq - fc - 50.0))
     let attenuation = max(21.0, stopBandDB)
     let N = kaiserSincLowpassTapCount(
-        cutoffHz: cutoffHz, sampleRate: sampleRate, stopBandDB: stopBandDB, transitionHz: transitionHz)
+        cutoffHz: cutoffHz, sampleRate: sampleRate, stopBandDB: stopBandDB, transitionHz: transitionHz,
+        maxTaps: maxTaps)
 
     let beta: Float
     if attenuation > 50 {
@@ -115,13 +117,17 @@ func kaiserSincLowpassCoefficients(
 
 /// The (odd) tap count `kaiserSincLowpassCoefficients` will produce for
 /// these parameters -- the standard Kaiser order estimate
-/// N ~ (A - 8) / (2.285 * 2 pi * df / fs), clamped to 63...2049. Exposed so
-/// multi-kernel designs can size a shared length before designing.
+/// N ~ (A - 8) / (2.285 * 2 pi * df / fs), clamped to 63...`maxTaps`
+/// (2049 unless a caller needs a narrower transition at a high rate; an odd
+/// value). Past the clamp the kernel is shorter than the design asks for and
+/// the transition widens in proportion. Exposed so multi-kernel designs can
+/// size a shared length before designing.
 func kaiserSincLowpassTapCount(
     cutoffHz: Float,
     sampleRate: Float,
     stopBandDB: Float,
-    transitionHz: Float
+    transitionHz: Float,
+    maxTaps: Int = 2_049
 ) -> Int {
     let sr = max(8_000.0 as Float, sampleRate)
     let nyq = sr * 0.5
@@ -131,7 +137,7 @@ func kaiserSincLowpassTapCount(
     let normalizedTransition = transition / sr
     let rawN = Int(ceilf((attenuation - 8.0) / (2.285 * 2.0 * .pi * normalizedTransition)))
     // Odd length gives a sample-centred symmetric kernel (exact linear phase).
-    return max(63, min(2_049, rawN | 1))
+    return max(63, min(max(63, maxTaps | 1), rawN | 1))
 }
 
 struct LinearPhaseFIRLowpass {
@@ -148,6 +154,9 @@ struct LinearPhaseFIRLowpass {
     private var writeIdx: Int = 0
     private var lengthTaps: Int = 0
     private var halfLength: Int = 0
+    /// Non-zero span of the (possibly zero-padded) kernel, see `trimmedDotWindow`.
+    private var dotStart: Int = 0
+    private var dotCount: Int = 0
 
     var tapCount: Int { lengthTaps }
     var groupDelaySamples: Int { halfLength }
@@ -161,13 +170,15 @@ struct LinearPhaseFIRLowpass {
         sampleRate: Float,
         stopBandDB: Float = 82.0,
         transitionHz: Float = 1_500.0,
-        padToTaps: Int = 0
+        padToTaps: Int = 0,
+        maxTaps: Int = 2_049
     ) {
         var kernel = kaiserSincLowpassCoefficients(
             cutoffHz: cutoffHz,
             sampleRate: sampleRate,
             stopBandDB: stopBandDB,
-            transitionHz: transitionHz
+            transitionHz: transitionHz,
+            maxTaps: maxTaps
         )
         if padToTaps > kernel.count, (padToTaps - kernel.count) % 2 == 0 {
             let pad = [Float](repeating: 0.0, count: (padToTaps - kernel.count) / 2)
@@ -179,6 +190,28 @@ struct LinearPhaseFIRLowpass {
         delayL = [Float](repeating: 0.0, count: lengthTaps * 2)
         delayR = [Float](repeating: 0.0, count: lengthTaps * 2)
         writeIdx = 0
+        (dotStart, dotCount) = Self.trimmedDotWindow(kernel: coeffs)
+    }
+
+    /// The part of a zero-padded kernel the dot product has to read. The
+    /// multiband splitters pad every crossover's kernel to the LONGEST one
+    /// (one shared group delay), so the upper crossovers are mostly zeros.
+    /// The window starts at a multiple of 32 and spans a multiple of 32, so
+    /// every non-zero tap lands in the same SIMD accumulator lane, in the
+    /// same order, as in the full-length dot: the Linux shim's result is
+    /// bit-identical (the skipped products are exact zeros). A kernel with
+    /// fewer than 31 zeros at an end keeps the full window.
+    static func trimmedDotWindow(kernel: [Float]) -> (Int, Int) {
+        let n = kernel.count
+        guard let first = kernel.firstIndex(where: { $0 != 0 }),
+              let last = kernel.lastIndex(where: { $0 != 0 }) else { return (0, n) }
+        // The full-length dot covers indices below 32 * (n / 32) in its
+        // unrolled loop; the trimmed one must keep every non-zero tap there.
+        guard last < 32 * (n / 32) else { return (0, n) }
+        let start = (first / 32) * 32
+        let count = ((last - start) / 32 + 1) * 32
+        guard start + count <= 32 * (n / 32), count < n else { return (0, n) }
+        return (start, count)
     }
 
     mutating func reset() {
@@ -203,16 +236,16 @@ struct LinearPhaseFIRLowpass {
         // [writeIdx + 1, writeIdx + lengthTaps]. Symmetric Kaiser-sinc
         // coefficients mean indexing direction is moot: we can hand
         // the contiguous slice to vDSP_dotpr directly.
-        let startIdx = writeIdx + 1
+        let startIdx = writeIdx + 1 + dotStart
         var outL: Float = 0
         var outR: Float = 0
-        let n = vDSP_Length(lengthTaps)
+        let n = vDSP_Length(dotCount)
         coeffs.withUnsafeBufferPointer { coeffPtr in
             // baseAddress is non-nil for non-empty pre-allocated arrays (vDSP idiom).
             // swiftlint:disable force_unwrapping
             delayL.withUnsafeBufferPointer { delayPtr in
                 vDSP_dotpr(
-                    coeffPtr.baseAddress!, 1,
+                    coeffPtr.baseAddress!.advanced(by: dotStart), 1,
                     delayPtr.baseAddress!.advanced(by: startIdx), 1,
                     &outL,
                     n
@@ -220,7 +253,7 @@ struct LinearPhaseFIRLowpass {
             }
             delayR.withUnsafeBufferPointer { delayPtr in
                 vDSP_dotpr(
-                    coeffPtr.baseAddress!, 1,
+                    coeffPtr.baseAddress!.advanced(by: dotStart), 1,
                     delayPtr.baseAddress!.advanced(by: startIdx), 1,
                     &outR,
                     n
@@ -232,6 +265,28 @@ struct LinearPhaseFIRLowpass {
         writeIdx += 1
         if writeIdx >= lengthTaps { writeIdx = 0 }
         return (outL, outR)
+    }
+
+    /// One channel only: the left half of `process(left:right:)` with the
+    /// right delay line left untouched. For a mono signal that used to be
+    /// fed to both channels with one output discarded (the composite
+    /// bandwidth FIR); bit-identical to `.process(left: x, right: x).0`.
+    mutating func processMono(_ x: Float) -> Float {
+        guard lengthTaps > 0 else { return x }
+        delayL[writeIdx] = x
+        delayL[writeIdx + lengthTaps] = x
+        let startIdx = writeIdx + 1 + dotStart
+        var out: Float = 0
+        let n = vDSP_Length(dotCount)
+        coeffs.withUnsafeBufferPointer { coeffPtr in
+            delayL.withUnsafeBufferPointer { delayPtr in
+                // swiftlint:disable:next force_unwrapping
+                vDSP_dotpr(coeffPtr.baseAddress!.advanced(by: dotStart), 1, delayPtr.baseAddress!.advanced(by: startIdx), 1, &out, n)
+            }
+        }
+        writeIdx += 1
+        if writeIdx >= lengthTaps { writeIdx = 0 }
+        return out
     }
 }
 
@@ -279,14 +334,22 @@ struct LinearPhaseFIRDecimator {
     private var decimateFactor: Int = 1
     private var pushSinceLastEmit: Int = 0
     private var lastOutput: Float = 0.0
+    /// Consecutive exact-zero inputs: a window of zeros dots to exactly +0,
+    /// so the emit skips the dot product (bit-identical; the composite
+    /// clipper's residual is all zeros whenever it is not clipping).
+    private var zeroRun: Int = 0
 
     var tapCount: Int { lengthTaps }
     /// Group delay measured in OS-rate samples (kernel midpoint).
     var groupDelayOSSamples: Int { halfLength }
     /// Group delay measured in host-rate (post-decimation) samples,
-    /// rounded to the nearest integer. The nearest-integer rounding
-    /// yields a ±0.5 OS-sample residual phase offset, which at typical
-    /// 8× rates is sub-microsecond — negligible at audio frequencies.
+    /// rounded to the nearest integer. The rounding leaves a residual of up
+    /// to +/- decimateFactor / 2 OS samples, i.e. up to +/- 0.5 HOST sample
+    /// (2.6 us at 192 kHz: 36 degrees at 38 kHz) -- not the "+/- 0.5
+    /// OS-sample" this comment used to claim. Fine for audio-band
+    /// alignment; anything that must be phase-exact at the composite's
+    /// subcarrier frequencies sums the delays in OS samples instead (as
+    /// `CompositeClipper` does with `groupDelayOSSamples`).
     var groupDelayHostSamples: Int {
         guard decimateFactor > 0 else { return 0 }
         return (halfLength + decimateFactor / 2) / decimateFactor
@@ -314,6 +377,7 @@ struct LinearPhaseFIRDecimator {
         self.decimateFactor = factor
         pushSinceLastEmit = 0
         lastOutput = 0.0
+        zeroRun = 0
     }
 
     mutating func reset() {
@@ -322,6 +386,7 @@ struct LinearPhaseFIRDecimator {
         writeIdx = 0
         pushSinceLastEmit = 0
         lastOutput = 0.0
+        zeroRun = 0
     }
 
     /// Push one OS-rate sample. Returns the most-recent decimated
@@ -336,9 +401,14 @@ struct LinearPhaseFIRDecimator {
         delay[writeIdx + lengthTaps] = x
         writeIdx += 1
         if writeIdx >= lengthTaps { writeIdx = 0 }
+        zeroRun = x == 0.0 ? zeroRun + 1 : 0
         pushSinceLastEmit += 1
         if pushSinceLastEmit >= decimateFactor {
             pushSinceLastEmit = 0
+            if zeroRun >= lengthTaps {
+                lastOutput = 0.0
+                return lastOutput
+            }
             // Read the contiguous lengthTaps-length window starting at
             // writeIdx and dot it against the symmetric Kaiser-sinc
             // coefficients via vDSP_dotpr.
@@ -407,7 +477,8 @@ struct LinearPhaseFIRInterpolator {
     /// Group delay measured in OS-rate (output) samples = kernel midpoint.
     var groupDelayOSSamples: Int { max(0, (totalTaps - 1) / 2) }
     /// Group delay measured in input-rate samples, rounded to nearest integer.
-    /// The ±0.5 OS-sample residual is sub-microsecond at typical rates.
+    /// The residual is up to +/- interpolateFactor / 2 OS samples (+/- 0.5
+    /// input sample); phase-exact callers use `groupDelayOSSamples`.
     var groupDelayInputSamples: Int {
         guard interpolateFactor > 0 else { return 0 }
         return (groupDelayOSSamples + interpolateFactor / 2) / interpolateFactor
@@ -615,12 +686,22 @@ struct LinearPhaseMultibandSplitter5 {
         max(30.0, fc - (transitionHz(forCrossover: fc) * 0.5))
     }
 
+    /// Kernel length limit. 2049 taps cover the 120 Hz floor transition at
+    /// the 48 kHz audio domain (~893 taps at 40 dB) with room to spare, but
+    /// with the dual-rate boundary off the audio domain runs at the MPX rate
+    /// and the same transition needs ~3,570 taps at 192 kHz: clamped to 2049
+    /// the lowest crossover's transition widened from 120 Hz to ~209 Hz
+    /// (levelling review). Above 96 kHz the limit is 4097, which designs it
+    /// as specified up to 220 kHz.
+    static func maxTaps(sampleRate: Float) -> Int { sampleRate > 96_000.0 ? 4_097 : 2_049 }
+
     /// Longest natural kernel across the crossovers -- the shared tap count.
     static func sharedTapCount(crossovers: [Float], sampleRate: Float, stopBandDB: Float) -> Int {
         crossovers.reduce(0) { longest, fc in
             max(longest, kaiserSincLowpassTapCount(
                 cutoffHz: designCutoffHz(forCrossover: fc), sampleRate: sampleRate,
-                stopBandDB: stopBandDB, transitionHz: transitionHz(forCrossover: fc)))
+                stopBandDB: stopBandDB, transitionHz: transitionHz(forCrossover: fc),
+                maxTaps: maxTaps(sampleRate: sampleRate)))
         }
     }
 
@@ -634,7 +715,7 @@ struct LinearPhaseMultibandSplitter5 {
         func configure(_ lp: inout LinearPhaseFIRLowpass, _ fc: Float) {
             lp.configure(cutoffHz: Self.designCutoffHz(forCrossover: fc), sampleRate: sampleRate,
                          stopBandDB: stopBandDB, transitionHz: Self.transitionHz(forCrossover: fc),
-                         padToTaps: taps)
+                         padToTaps: taps, maxTaps: Self.maxTaps(sampleRate: sampleRate))
         }
         configure(&lp1, x1Hz)
         configure(&lp2, x2Hz)
@@ -710,12 +791,13 @@ struct LinearPhaseMultibandSplitter3 {
     ) {
         typealias Design = LinearPhaseMultibandSplitter5
         let taps = Design.sharedTapCount(crossovers: [lowHz, highHz], sampleRate: sampleRate, stopBandDB: stopBandDB)
+        let maxTaps = Design.maxTaps(sampleRate: sampleRate)
         lp1.configure(cutoffHz: Design.designCutoffHz(forCrossover: lowHz), sampleRate: sampleRate,
                       stopBandDB: stopBandDB, transitionHz: Design.transitionHz(forCrossover: lowHz),
-                      padToTaps: taps)
+                      padToTaps: taps, maxTaps: maxTaps)
         lp2.configure(cutoffHz: Design.designCutoffHz(forCrossover: highHz), sampleRate: sampleRate,
                       stopBandDB: stopBandDB, transitionHz: Design.transitionHz(forCrossover: highHz),
-                      padToTaps: taps)
+                      padToTaps: taps, maxTaps: maxTaps)
         precondition(lp1.tapCount == taps && lp2.tapCount == taps)
         halfLength = lp1.groupDelaySamples
         let bufLen = max(1, halfLength + 1)

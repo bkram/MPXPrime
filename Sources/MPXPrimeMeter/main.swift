@@ -16,39 +16,34 @@ private func handleSigint(_ signal: Int32) { gStop = 1 }
 
 // MARK: - Helpers
 
-private func nominalSampleRate(deviceID: AudioDeviceID) -> Double? {
-    var addr = AudioObjectPropertyAddress(
-        mSelector: kAudioDevicePropertyNominalSampleRate,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
-    )
-    var rate: Float64 = 0
-    var size = UInt32(MemoryLayout<Float64>.size)
-    let status = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &rate)
-    guard status == noErr, rate > 0 else { return nil }
-    return rate
-}
-
 private func printUsage() {
     print("""
     MPX Prime Meter -- FM MPX composite analyzer (headless)
 
     Usage:
       MPXPrimeMeter --list-devices
-      MPXPrimeMeter [--device <index|uid|name|default>] [--seconds N]
+      MPXPrimeMeter [--device <index|uid|name|default>] [--channels <l,r>] [--seconds N]
       MPXPrimeMeter --selftest [--seconds N]
 
     Options:
-      --list-devices     List audio input devices and exit.
+      --list-devices     List audio input devices (channels, transport, rate,
+                         UID) and exit.
       --device <spec>    Input device: list index, device UID, a substring of
                          the name, or "default" (default: system default input).
-      --channel <ch>     Which channel carries the composite: left | right |
+      --channels <l,r>   Which device channels to capture, one-based: "3,4"
+                         on a multichannel interface, "3" alone for mono on
+                         channel 3 (default: 1,2). The lower number is left.
+      --channel <ch>     Which of those carries the composite: left | right |
                          mix (default: left). Many USB DACs feed it on right.
       --no-monitor       Do not play the decoded audio (monitor is ON by
                          default in live mode -- you hear what a receiver hears).
       --monitor-device <spec>
                          Output device for the monitor (index|uid|name);
                          default: system default output.
+      --monitor-channels <l,r>
+                         Which output channels of the monitor device play the
+                         decoded audio, one-based (default: 1,2); a single
+                         number plays left and right summed on that channel.
       --monitor-gain <dB>  Monitor gain in dB (default: 0).
       --pilot-ref-khz <kHz>
                          Pilot deviation used to calibrate the kHz readouts
@@ -91,8 +86,9 @@ private func printUsage() {
       --help             Show this help.
 
     Feed the station composite (tuner MPX out / SDR demod / loopback) to one
-    input channel and select it with --channel. RDS needs the device running
-    at >= 128 kHz (57 kHz subcarrier); 192 kHz is recommended.
+    input channel: pick the device channels with --channels and the one that
+    carries it with --channel. RDS needs the device running at >= 128 kHz
+    (57 kHz subcarrier); 192 kHz is recommended.
     """)
 }
 
@@ -293,9 +289,11 @@ private func listDevices() -> Int32 {
         let defaultID = AudioDevices.defaultInputDeviceID()
         print("Input devices:")
         for (i, d) in devices.enumerated() {
-            let rate = nominalSampleRate(deviceID: d.id).map { String(format: "%.0f Hz", $0) } ?? "?"
+            let rate = d.nominalSampleRate > 0 ? String(format: "%.0f Hz", d.nominalSampleRate) : "?"
             let mark = (d.id == defaultID) ? " (default)" : ""
-            print("  [\(i)] \(d.name)\(mark)  ch=\(d.inputChannels)  rate=\(rate)  uid=\(d.uid)")
+            let transport = d.transport.isEmpty ? "?" : d.transport
+            print("  [\(i)] \(d.name)\(mark)  ch=\(d.inputChannels)  transport=\(transport)"
+                + "  rate=\(rate)  uid=\(d.uid)")
         }
         return 0
     } catch {
@@ -337,9 +335,11 @@ private func resolveOutputDevice(_ spec: String?) -> AudioDeviceID? {
 
 private func runLive(
     deviceSpec: String?,
+    channels: ChannelPair?,
     channel: MeterChannel,
     monitor: Bool,
     monitorDeviceSpec: String?,
+    monitorChannels: ChannelPair?,
     monitorGainDB: Float,
     pilotRefKHz: Float,
     fullScaleKHz: Float?,
@@ -365,16 +365,22 @@ private func runLive(
         monitorEnabled: monitor, monitorGain: gainLinear, pilotRefKHz: pilotRefKHz,
         fullScaleKHz: fullScaleKHz, preemphasisUS: preemphasisUS,
         wavURL: wavURL,
-        input: AUHALInputSource(deviceID: deviceID,
+        input: AUHALInputSource(deviceID: deviceID, channels: channels,
                                 maxFramesPerSlice: MeterAudioEngine.maxSliceFrames))
     var captureRate = rate
     do {
-        let fmt = try engine.start(monitorDeviceID: monitorDeviceID)
+        let fmt = try engine.start(monitorDeviceID: monitorDeviceID, monitorChannels: monitorChannels)
         captureRate = fmt.sampleRate
         if abs(fmt.sampleRate - rate) > 1.0 {
             print(String(format: "WARNING: device opened at %.0f Hz, not the requested %.0f Hz.",
                          fmt.sampleRate, rate))
         }
+        // A pair the device does not have is not a failure (capture runs on
+        // channels 1, 2) but the operator asked for something else.
+        for note in [engine.inputChannelNote, engine.monitorChannelNote].compactMap({ $0 }) {
+            print("WARNING: \(note)")
+        }
+        let pair = (channels ?? .stereoDefault).label.lowercased()
         let mon = monitor ? "monitor ON" : "monitor off"
         let rec = wavPath.map { " recording -> \($0)." } ?? ""
         // Name the calibration convention actually in effect: --full-scale-khz
@@ -382,8 +388,8 @@ private func runLive(
         // numbers were pilot-referenced when absolute was asked for.
         let cal = fullScaleKHz.map { String(format: "absolute cal 0 dBFS = %.0f kHz", $0) }
             ?? String(format: "pilot ref %.2f kHz", pilotRefKHz)
-        print(String(format: "Capturing %.0f Hz, %d ch, composite on %@ channel. %@. %@, de-emphasis %d us.%@ Ctrl-C to stop.",
-                     fmt.sampleRate, fmt.channels, channel.rawValue, mon, cal,
+        print(String(format: "Capturing %.0f Hz, %d ch, %@, composite on %@ channel. %@. %@, de-emphasis %d us.%@ Ctrl-C to stop.",
+                     fmt.sampleRate, fmt.channels, pair, channel.rawValue, mon, cal,
                      preemphasisUS, rec))
     } catch {
         FileHandle.standardError.write(Data("Failed to start capture: \(error)\n".utf8))
@@ -410,6 +416,7 @@ private func runPipe(
     channel: MeterChannel,
     monitor: Bool,
     monitorDeviceSpec: String?,
+    monitorChannels: ChannelPair?,
     monitorGainDB: Float,
     pilotRefKHz: Float,
     fullScaleKHz: Float?,
@@ -428,7 +435,8 @@ private func runPipe(
         fullScaleKHz: fullScaleKHz, preemphasisUS: preemphasisUS,
         wavURL: wavURL, input: source)
     do {
-        try engine.start(monitorDeviceID: monitorDeviceID)
+        try engine.start(monitorDeviceID: monitorDeviceID, monitorChannels: monitorChannels)
+        if let note = engine.monitorChannelNote { print("WARNING: \(note)") }
         let mon = monitor ? "monitor ON" : "monitor off"
         let rec = wavPath.map { " recording -> \($0)." } ?? ""
         let cal = fullScaleKHz.map { String(format: "abs cal FS=%.0f kHz", $0) }
@@ -520,6 +528,23 @@ private func parseValue(_ args: [String], _ flag: String) -> String? {
     return args[idx + 1]
 }
 
+/// `--channels 3,4` / `--monitor-channels 7`: a one-based pair, or nil when
+/// the flag is absent. A value that does not parse is an error, not silently
+/// channels 1, 2 -- the operator typed something and must be told.
+private func parseChannelPair(_ args: [String], _ flag: String) -> Result<ChannelPair?, PairError> {
+    guard let text = parseValue(args, flag) else { return .success(nil) }
+    guard let pair = ChannelPair.parse(text) else { return .failure(PairError(flag: flag, text: text)) }
+    return .success(pair)
+}
+
+private struct PairError: Error {
+    let flag: String
+    let text: String
+    var message: String {
+        "\(flag) \"\(text)\" is not a channel pair: give one or two one-based numbers, e.g. 3,4 or 3."
+    }
+}
+
 /// Launch the SwiftUI dashboard window (blocks until the app quits). When
 /// `sdrFreqMHz` is set, the window opens pre-tuned to that SDR frequency and
 /// starts capturing immediately (used by scripts/run-meter.sh --gui).
@@ -536,9 +561,9 @@ private func runGUI(sdrFreqMHz: Double?) -> Int32 {
 // Headless capture/control flags. Their presence selects a CLI mode; their
 // absence (or an explicit --gui) opens the window.
 private let liveFlags = [
-    "--device", "--channel", "--seconds", "--no-monitor",
-    "--monitor-device", "--monitor-gain", "--wav", "--pilot-ref-khz",
-    "--full-scale-khz", "--deemphasis", "--monitor-dev"
+    "--device", "--channels", "--channel", "--seconds", "--no-monitor",
+    "--monitor-device", "--monitor-channels", "--monitor-gain", "--wav",
+    "--pilot-ref-khz", "--full-scale-khz", "--deemphasis", "--monitor-dev"
 ]
 
 /// `--monitor-dev`: show the monitor-ballistics deviation on the DEV line.
@@ -555,10 +580,18 @@ private func parseDeemphasisUS(_ args: [String]) -> Int {
 let args = CommandLine.arguments
 let userArgs = Array(args.dropFirst())
 showMonitorDev = args.contains("--monitor-dev")
+private let captureChannels = parseChannelPair(args, "--channels")
+private let monitorChannelsArg = parseChannelPair(args, "--monitor-channels")
 let exitCode: Int32
 if args.contains("--help") || args.contains("-h") {
     printUsage()
     exitCode = 0
+} else if case .failure(let bad) = captureChannels {
+    FileHandle.standardError.write(Data("\(bad.message)\n".utf8))
+    exitCode = 2
+} else if case .failure(let bad) = monitorChannelsArg {
+    FileHandle.standardError.write(Data("\(bad.message)\n".utf8))
+    exitCode = 2
 } else if args.contains("--list-devices") {
     exitCode = listDevices()
 } else if args.contains("--selftest") {
@@ -568,6 +601,7 @@ if args.contains("--help") || args.contains("-h") {
         channel: parseChannel(args),
         monitor: !args.contains("--no-monitor"),
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
+        monitorChannels: (try? monitorChannelsArg.get()) ?? nil,
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
         fullScaleKHz: parseValue(args, "--full-scale-khz").flatMap { Float($0) },
@@ -584,9 +618,11 @@ if args.contains("--help") || args.contains("-h") {
 } else {
     exitCode = runLive(
         deviceSpec: parseDevice(args),
+        channels: (try? captureChannels.get()) ?? nil,
         channel: parseChannel(args),
         monitor: !args.contains("--no-monitor"),
         monitorDeviceSpec: parseValue(args, "--monitor-device"),
+        monitorChannels: (try? monitorChannelsArg.get()) ?? nil,
         monitorGainDB: parseValue(args, "--monitor-gain").flatMap { Float($0) } ?? 0.0,
         pilotRefKHz: parseValue(args, "--pilot-ref-khz").flatMap { Float($0) } ?? 6.75,
         fullScaleKHz: parseValue(args, "--full-scale-khz").flatMap { Float($0) },

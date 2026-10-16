@@ -157,7 +157,7 @@ struct AGCDetectorTests {
         // target and pushes MORE gain up to compensate. The unweighted
         // AGC sees full power and adds less gain. This mirrors how
         // pros avoid over-lifting quiet sub-bass content.
-        let amplitude: Float = 0.05  // below target
+        let amplitude: Float = 0.12  // 0.05 asked both AGCs for more than the 12 dB max once the detector read true power  // below target
         var weighted = makeAGC(kWeighting: true)
         var unweighted = makeAGC(kWeighting: false)
         let w = runSine(&weighted, freq: 80.0, amplitude: amplitude, seconds: 5.0)
@@ -210,18 +210,38 @@ struct AGCDetectorTests {
             return agc.telemetry.gainDB
         }
 
-        // With program-dependent release on, busy program should end
-        // up with a HIGHER gain (slower release = hasn't finished
-        // pulling gain down / hasn't finished restoring) compared to
-        // flat program that raced through the release.
+        // With program-dependent release on, busy program should end up
+        // with a LOWER gain than flat program: after the burst pulls the
+        // gain down, the quieter ramp is a RELEASE (gain rising back
+        // toward target), and a slower release on busy program has not
+        // finished restoring, while flat program raced through it. (The
+        // comment here used to say "HIGHER", contradicting its own
+        // "hasn't finished restoring"; measured 2026-10-15: busy -1.83 dB,
+        // flat +6.31 dB.)
         let busyDependent = runMode(busy: true, programDependentRelease: true)
         let flatDependent = runMode(busy: false, programDependentRelease: true)
 
-        // Difference must be at least 0.5 dB — anything less and the
-        // feature isn't doing anything meaningful.
-        let diff = abs(busyDependent - flatDependent)
-        #expect(diff > 0.5,
-            "Program-dependent release should produce a measurable difference between busy (\(busyDependent)) and flat (\(flatDependent)) program gain after the test sequence; diff \(diff) dB")
+        // At least 0.5 dB, and IN THAT DIRECTION: `abs(diff) > 0.5` also
+        // passed an inverted release law (test-suite review 2026-10
+        // finding 14).
+        print(String(format: "[AGC PDR] busy %+.2f dB, flat %+.2f dB", busyDependent, flatDependent))
+        #expect(flatDependent > busyDependent + 0.5,
+            "Program-dependent release must leave busy program LOWER (slower release) than flat: busy \(busyDependent) dB, flat \(flatDependent) dB")
+        // The busy/flat gap is mostly programme content, so it cannot by
+        // itself show WHICH way the feature acts (an inverted law kept it,
+        // mutation-checked 2026-10-16). Against the same programme with the
+        // feature off: busy program must restore more slowly, and by more
+        // than flat program does (measured 2026-10-16: busy 4.74 dB slower,
+        // flat 2.64 dB -- the burst-to-ramp transition reads as some density
+        // on flat program too).
+        let busyPlain = runMode(busy: true, programDependentRelease: false)
+        let flatPlain = runMode(busy: false, programDependentRelease: false)
+        print(String(format: "[AGC PDR] busy on %+.2f / off %+.2f dB, flat on %+.2f / off %+.2f dB",
+                     busyDependent, busyPlain, flatDependent, flatPlain))
+        #expect(busyPlain > busyDependent + 0.5,
+            "PDR must slow the release on busy program: on \(busyDependent) dB, off \(busyPlain) dB")
+        #expect(busyPlain - busyDependent > flatPlain - flatDependent + 0.5,
+            "PDR must slow busy program more than flat: busy \(busyPlain - busyDependent) dB, flat \(flatPlain - flatDependent) dB")
     }
 
     @Test func programDependentReleaseActuallyAffectsGainTrajectory() {
@@ -256,6 +276,11 @@ struct AGCDetectorTests {
 
         let on = runBusy(programDependentRelease: true)
         let off = runBusy(programDependentRelease: false)
+        print(String(format: "[AGC PDR toggle] on %+.2f dB, off %+.2f dB", on, off))
+        // Direction: PDR SLOWS the release on busy program, so with it on
+        // the gain has restored less (measured on -1.83, off +2.91 dB).
+        #expect(off > on + 0.5,
+            "PDR on must restore busy program more slowly: on \(on) dB, off \(off) dB")
         #expect(abs(on - off) > 0.5,
             "Toggling program-dependent release on the SAME busy program should change the ending gain; on=\(on), off=\(off), diff=\(abs(on - off))")
     }
@@ -288,6 +313,34 @@ struct AGCDetectorTests {
         let t = agc.telemetry
         #expect(t.gainDB >= -8.0 - 0.1 && t.gainDB <= 8.0 + 0.1,
             "AGC gain \(t.gainDB) dB escaped clamps [-8, 8]")
+        // It also moved: an AGC stuck at 0 dB passes the clamp check alone
+        // (test-suite review 2026-10 finding 15). The full floor is
+        // `gainRidesToItsFloorOnAHotSine`.
+        #expect(t.gainDB < -3.0,
+            "2 s of a -0.4 dBFS sine left the AGC at \(t.gainDB) dB: it did not ride down at all")
+    }
+
+    // The sine is 12.6 dB over the -16 dB target, so the desired gain clamps
+    // to the -8 dB floor. Until 2026-10-16 the AGC froze once inside its 3 dB
+    // window and stayed at -5.00 dB for good (levelling review
+    // 2026-10 finding 4). Now the attack brings it inside the window
+    // quickly and the gain then creeps the rest of the way at 10x the release
+    // time (Optimod-style window), so it reaches the floor within ~30 s.
+    @Test
+    func gainRidesToItsFloorOnAHotSine() {
+        var agc = makeAGC(kWeighting: true, minGainDB: -8.0, maxGainDB: 8.0)
+        let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+        var gainAt2s: Float = 0.0
+        for i in 0..<Int(Double(sampleRate) * 30.0) {
+            let s = Float(0.95 * sin(omega * Double(i)))
+            _ = agc.process(left: s, right: s)
+            if i == Int(Double(sampleRate) * 2.0) { gainAt2s = agc.telemetry.gainDB }
+        }
+        let gainDB = agc.telemetry.gainDB
+        #expect(gainAt2s <= -4.9,
+            "after 2 s the attack must have brought the gain inside its window (\(gainAt2s) dB)")
+        #expect(gainDB < -7.5,
+            "30 s of a sine 12.6 dB over target left the AGC at \(gainDB) dB instead of at its -8 dB floor: it froze inside its window")
     }
 
     // MARK: - KWeightingFilter unit characterisation

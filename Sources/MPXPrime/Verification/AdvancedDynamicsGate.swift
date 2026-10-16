@@ -620,9 +620,16 @@ func advancedDynamicsIdempotencyDeltaDB(config: AppConfig) -> Float {
         }
     }
 
+    // The second pass gets the first pass's SETTLED output (from 2 s on):
+    // re-processing means running already-levelled programme through again,
+    // not the first pass's own start-up ramp, which a fresh second stage
+    // would chase and then have to climb back from. What remains is bounded
+    // by the hold window, inside which the stage deliberately leaves
+    // near-target programme alone.
+    let settleStart = Int(sampleRate * 2.0)
     var second = makeLeveler()
     var secondSumSq: Double = 0.0
-    for i in 0..<frames {
+    for i in settleStart..<frames {
         let (l, r) = second.process(left: firstOutL[i], right: firstOutR[i])
         if i >= measureStart {
             secondSumSq += Double((l * l) + (r * r)) * 0.5

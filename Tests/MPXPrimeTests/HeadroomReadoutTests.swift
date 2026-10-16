@@ -19,7 +19,7 @@ struct HeadroomReadoutTests {
     @Test(arguments: AppConfig.OperatingMode.allCases)
     func compositeRowsExistOnlyWhereAComposite(mode: AppConfig.OperatingMode) {
         let visible = HeadroomReadout.visible(in: mode)
-        let composite: [HeadroomReadout] = [.compositeGR, .safetyGR, .safetyClip, .bs412Budget, .mpxPower, .bs412GR]
+        let composite: [HeadroomReadout] = [.compositeGR, .safetyGR, .safetyClip, .compositeBudget, .mpxPower, .bs412GR]
         for row in composite {
             #expect(visible.contains(row) == (mode == .mpx),
                     "\(row.rawValue) visible=\(visible.contains(row)) in \(mode.rawValue)")

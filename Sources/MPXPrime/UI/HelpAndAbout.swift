@@ -69,52 +69,31 @@ func CodeBlock(_ text: String) -> some View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
 }
 
-struct InlineRestartRequiredNote: View {
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "arrow.clockwise.circle")
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Restart Required")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(text)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.top, 2)
-    }
-}
-
+/// The input-level rule (the operator guide's, in one place) and the
+/// restart list, which is DERIVED from the engine (`RestartClassKeys`), never
+/// written by hand.
 struct HelpInputLevelsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Recommended operating targets for the current MPX Prime FM chain. Feed it clean, consistent program audio and let the processor create the final density.")
+            Text("Feed the chain clean, consistent programme audio and let the processor create the final density.")
                 .foregroundStyle(.secondary)
                 .font(.callout)
 
             GroupBox {
                 HStack(spacing: 18) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Normal Peaks")
+                        Text("Nominal Level")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("-12 to -6 dBFS")
+                        Text("-12 dBFS")
                             .font(.body.weight(.semibold))
                     }
                     Divider().frame(height: 28)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Occasional Peaks")
+                        Text("Programme Peaks")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("up to -3 dBFS")
+                        Text("-12 to -6 dBFS")
                             .font(.body.weight(.semibold))
                     }
                     Spacer()
@@ -127,28 +106,52 @@ struct HelpInputLevelsView: View {
                 .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• US nominal input alignment: around -20 dBFS")
-                Text("• Europe (EBU R68) style alignment: around -18 dBFS")
-                Text("• Do not hold the source at -2 dBFS all the time")
-                Text("• If the input already looks slammed, back it down and let the chain work")
-                Text("• Wideband AGC is a platform leveler, not the final loudness stage")
-                Text("• Final Drive is the main loudness control before the composite clipper")
-                Text("• MPX Output Level is for final exciter or interface calibration")
-                Text("• Levels are peak safety meters — judge loudness on a real receiver, not on the screen")
-                Text("If you hit 0 dBFS, reduce input gain or Final Drive and re-check pre-emphasis behavior.")
+                Text("- Set Input Gain on Audio I/O so busy programme peaks between -12 and -6 dBFS on the Post meters.")
+                Text("- Do not hold the source near 0 dBFS; if the input already looks slammed, back it down and let the chain work.")
+                Text("- The AGC is a platform leveller, not the final loudness stage.")
+                Text("- Final Drive is the main loudness control, ahead of the composite clipper.")
+                Text("- MPX Output Level and Line Output are for exciter or interface calibration.")
+                Text("- The meters show peak safety: judge loudness on a real receiver, not on the screen.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
 
-            Text("Restart-Required Settings")
+            Text("Settings That Need a Restart")
                 .font(.headline)
                 .padding(.top, 4)
 
-            InlineRestartRequiredNote(text: kRestartRequiredSettingsListText)
+            HelpRestartListView()
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: 860, alignment: .leading)
+    }
+}
+
+/// The restart-class INI keys, derived from the engine's live-apply structs.
+/// Building the list takes about a second, so it is computed off the main
+/// thread and the view shows a placeholder until it arrives.
+struct HelpRestartListView: View {
+    @State private var keys: [String]?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("A change to one of these takes effect after an engine restart: the status bar shows Restart to Apply. Everything else applies live.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let keys {
+                CodeBlock(keys.joined(separator: "\n"))
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Building the list")
+            }
+        }
+        .task {
+            guard keys == nil else { return }
+            keys = await Task.detached(priority: .utility) { RestartClassKeys.all }.value
+        }
     }
 }
 
@@ -159,7 +162,7 @@ struct HelpRDSTextView: View {
                 .foregroundStyle(.secondary)
                 .font(.callout)
 
-            Text("Quick start")
+            Text("Quick Start")
                 .font(.headline)
                 .padding(.top, 4)
 
@@ -171,15 +174,15 @@ struct HelpRDSTextView: View {
 
             // MARK: Timing
 
-            Text("Timing prefixes")
+            Text("Timing Prefixes")
                 .font(.headline)
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• `Ns:Text` — show `Text` for `N` seconds. Fractional accepted: `1.5s:Text`")
-                Text("• `Nt:Text` — transmit-count. Show `Text` for `N` full transmissions of the field, then advance. Useful when you want the receiver to see the message a known number of times rather than for a fixed wall-clock duration.")
-                Text("• Untimed text that fits in one chunk holds for 10 s before repeating.")
-                Text("• Untimed text that splits into multiple chunks rotates at a default per-chunk duration. For PS, the default is the **PS Frame** slider in the RDS tab (default 3 s); for Radiotext / PTYN / Long PS, the default is 2.5 s.")
+                Text("- `Ns:Text` -- show `Text` for `N` seconds. Fractional accepted: `1.5s:Text`")
+                Text("- `Nt:Text` -- transmit-count. Show `Text` for `N` full transmissions of the field, then advance. Useful when you want the receiver to see the message a known number of times rather than for a fixed wall-clock duration.")
+                Text("- Untimed text that fits in one chunk holds for 10 s before repeating.")
+                Text("- Untimed text that splits into multiple chunks rotates at a default per-chunk duration. For PS, the default is **PS Frame Time** on the RDS Identity page (default 3 s); for Radiotext / PTYN / Long PS, the default is 2.5 s.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
@@ -191,27 +194,27 @@ struct HelpRDSTextView: View {
 
             // MARK: Separators
 
-            Text("Segment separators")
+            Text("Segment Separators")
                 .font(.headline)
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• `/` separates segments at the top level. Escape as `\\/` to transmit a literal slash.")
-                Text("• Inline whitespace-separated timed tokens also work: `1s:A 2s:B 3s:C` reads as three segments.")
+                Text("- `/` separates segments at the top level. Escape as `\\/` to transmit a literal slash.")
+                Text("- Inline whitespace-separated timed tokens also work: `1s:A 2s:B 3s:C` reads as three segments.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
 
             // MARK: Scroll
 
-            Text("Scrolling (PS only)")
+            Text("Scrolling (PS Only)")
                 .font(.headline)
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• `<Text` scrolls left, `>Text` scrolls right. Each marker advances by one character per full PS transmission.")
-                Text("• Repeat the marker for faster scroll: `<<Text` moves two chars per tick, `<<<Text` three.")
-                Text("• Scroll markers are parser-level only on Radiotext — RT transmits too slowly (~5.8 s per cycle) for scrolling to be useful.")
+                Text("- `<Text` scrolls left, `>Text` scrolls right. Each marker advances by one character per full PS transmission.")
+                Text("- Repeat the marker for faster scroll: `<<Text` moves two chars per tick, `<<<Text` three.")
+                Text("- Scroll markers are parser-level only on Radiotext -- RT transmits too slowly (~5.8 s per cycle) for scrolling to be useful.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
@@ -220,13 +223,13 @@ struct HelpRDSTextView: View {
 
             // MARK: Escapes
 
-            Text("Escaping special characters")
+            Text("Escaping Special Characters")
                 .font(.headline)
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• `\\<`  `\\>`  `\\|`  `\\:`  `\\/`  `\\\\` — transmit the special char literally instead of treating it as a marker.")
-                Text("• `||` is accepted for Stereotool compatibility but is a no-op: word-wrap is always on.")
+                Text("- `\\<`  `\\>`  `\\|`  `\\:`  `\\/`  `\\\\` -- transmit the special char literally instead of treating it as a marker.")
+                Text("- `||` is accepted for Stereotool compatibility but is a no-op: word-wrap is always on.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
@@ -235,23 +238,23 @@ struct HelpRDSTextView: View {
 
             // MARK: External content
 
-            Text("External content")
+            Text("External Content")
                 .font(.headline)
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• `\\R\"path\"` — load file, force uppercase.")
-                Text("• `\\r\"path\"` — load file, preserve case.")
-                Text("• `\\F\"path\"` / `\\f\"path\"` — Stereotool-compatible aliases for `\\R` / `\\r`.")
-                Text("• `\\w\"url\"` — fetch text from a URL. MPX Prime extension, not in Stereotool.")
-                Text("File content re-enters the parser, so timing markers inside a loaded file are honored.")
+                Text("- `\\R\"path\"` -- load file, force uppercase.")
+                Text("- `\\r\"path\"` -- load file, preserve case.")
+                Text("- `\\F\"path\"` / `\\f\"path\"` -- Stereotool-compatible aliases for `\\R` / `\\r`.")
+                Text("- `\\w\"url\"` -- fetch text from a URL. MPX Prime extension, not in Stereotool.")
+                Text("File content re-enters the parser, so timing markers inside a loaded file are honoured.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
 
             // MARK: Now Playing
 
-            Text("Now Playing macros (Radiotext)")
+            Text("Now Playing Macros (Radiotext)")
                 .font(.headline)
                 .padding(.top, 8)
 
@@ -263,33 +266,33 @@ Now: {now_playing}
 """)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• `{now_playing}` and `{display}` use the script display text")
-                Text("• `{artist}` and `{title}` are preferred for RT+ tagging")
-                Text("• When the now-playing script is enabled, RT+ tags are derived from structured script output automatically")
+                Text("- `{now_playing}` and `{display}` use the script display text")
+                Text("- `{artist}` and `{title}` are preferred for RT+ tagging")
+                Text("- When the now-playing script is enabled, RT+ tags are derived from structured script output automatically")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
 
             // MARK: Field limits
 
-            Text("Field widths and transmission cadence")
+            Text("Field Widths and Transmission Cadence")
                 .font(.headline)
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("• PS is 8 chars wide. One full PS transmission = 4 group-0 blocks.")
-                Text("• Radiotext 2A is 64 chars wide (16 segments); 2B is 32 chars (16 segments).")
-                Text("• PTYN is 8 chars wide (2 segments).")
-                Text("• Long PS is 32 chars wide (8 segments).")
-                Text("• Overlong text is word-wrapped and cycled; chunks inherit their segment's timing.")
-                Text("• In Mono Mode pilot and RDS are suppressed — transmitted RDS text is disabled until Mono Mode is turned off.")
+                Text("- PS is 8 chars wide. One full PS transmission = 4 group-0 blocks.")
+                Text("- Radiotext 2A is 64 chars wide (16 segments); 2B is 32 chars (16 segments).")
+                Text("- PTYN is 8 chars wide (2 segments).")
+                Text("- Long PS is 32 chars wide (8 segments).")
+                Text("- Overlong text is word-wrapped and cycled; chunks inherit their segment's timing.")
+                Text("- In Mono Mode pilot and RDS are suppressed -- transmitted RDS text is disabled until Mono Mode is turned off.")
             }
             .foregroundStyle(.secondary)
             .font(.callout)
 
             // MARK: Examples
 
-            Text("More examples")
+            Text("More Examples")
                 .font(.headline)
                 .padding(.top, 8)
 
@@ -311,7 +314,7 @@ Now: {now_playing}
 
 /// macOS-style About panel (cf. Music.app / Final Cut): app icon, name,
 /// a confident one-line description, version, then a compact highlight of
-/// what the processor actually does — it ships a patent-grade chain, full
+/// what the processor actually does -- it ships a patent-grade chain, full
 /// RDS, and a verification harness, so the About should say so rather than
 /// undersell it. The full disclaimer is NOT restated here: README.md
 /// (intended-use / not-certified) and LICENSE (AGPL-3.0, no warranty) are
@@ -334,7 +337,7 @@ struct AboutSectionView: View {
     private let capabilities: [Capability] = [
         Capability(
             symbol: "dot.radiowaves.right",
-            text: "True FM stereo encoding — constant-amplitude pilot with post-clipper subcarrier injection"),
+            text: "True FM stereo encoding -- constant-amplitude pilot with post-clipper subcarrier injection"),
         Capability(
             symbol: "slider.horizontal.3",
             text: "Linear-phase multiband, look-ahead limiting, PrimeBass enhancement, pre-emphasis-aware HF clipping"),
@@ -343,7 +346,7 @@ struct AboutSectionView: View {
             text: "Differential composite clipper with cross-domain IM cancellation and BS.412 MPX-power control"),
         Capability(
             symbol: "antenna.radiowaves.left.and.right",
-            text: "Full RDS encoder — PS, RadioText, RT+, AF, CT, PTY and Long PS, all live-apply"),
+            text: "Full RDS encoder -- PS, RadioText, RT+, AF, CT, PTY and Long PS, all live-apply"),
         Capability(
             symbol: "chart.bar.xaxis",
             text: "Real-time meters, scope and spectrum, plus offline receiver-model verification")
@@ -363,14 +366,14 @@ struct AboutSectionView: View {
                 VStack(spacing: 4) {
                     Text("MPX Prime Studio")
                         .font(.title.weight(.semibold))
-                    Text("Professional FM stereo processing and RDS encoding — free and open source")
+                    Text("Professional FM stereo processing and RDS encoding -- free and open source")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("Version \(AppConfig.appVersion) · AGPL-3.0")
+                Text("Version \(AppConfig.appVersion) - AGPL-3.0")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -395,22 +398,22 @@ struct AboutSectionView: View {
                 HStack(spacing: 18) {
                     Link("View on GitHub", destination: kProjectURL)
                     Link("User Manual", destination: kManualURL)
-                    Link("License", destination: kLicenseURL)
+                    Link("Licence", destination: kLicenseURL)
                 }
                 .font(.callout)
 
                 // Single source of truth for the full disclaimer is README.md
                 // (intended-use / not-certified) + LICENSE (AGPL-3.0, no
                 // warranty). The About only carries README's canonical key
-                // phrase plus pointers — do not restate the full text here.
-                Text("Experimental and not certified -- no conformity or compliance is promised. See the README for intended use and the AGPL-3.0 license for terms (provided without warranty).")
+                // phrase plus pointers -- do not restate the full text here.
+                Text("Experimental and not certified -- no conformity or compliance is promised. See the README for intended use and the AGPL-3.0 licence for terms (provided without warranty).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)
 
-                Text("Copyright © 2026 Bkram Developments")
+                Text("Copyright (c) 2026 Bkram Developments")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -421,34 +424,8 @@ struct AboutSectionView: View {
     }
 }
 
-struct PendingApplyCard: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        // Empty view — never shown
-        EmptyView()
-
-        // Or completely remove the if and Card, leaving just:
-        // EmptyView()
-    }
-    //     if model.runtimeApplyPending {
-    //         Card(title: "Apply Pending") {
-    //             HStack {
-    //                 Text("Changes were saved. Restart runtime to apply them to audio output.")
-    //                     .foregroundStyle(.secondary)
-    //                 Spacer()
-    //                 Button("Apply Now") {
-    //                     model.applyPendingRuntimeChanges()
-    //                 }
-    //                 .buttonStyle(.borderedProminent)
-    //             }
-    //         }
-    //         .hidden()
-    //     }
-}
-
 // Conditional `.help()` so an empty/nil tooltip does not clear tooltips set
-// elsewhere in the subtree — SwiftUI interprets `.help("")` as "remove help".
+// elsewhere in the subtree -- SwiftUI interprets `.help("")` as "remove help".
 struct TooltipIfPresent: ViewModifier {
     let text: String?
     func body(content: Content) -> some View {

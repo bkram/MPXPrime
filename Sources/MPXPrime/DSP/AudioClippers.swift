@@ -108,8 +108,15 @@ enum BandWaveshaper {
 
 // MARK: - Bass Clipper (4x oversampled)
 struct BassClipper {
-    private var splitL = LinkwitzRiley4()
-    private var splitR = LinkwitzRiley4()
+    // LR4 split at the OS rate in DOUBLE precision (`LR4Section`). The Float
+    // RBJ design (`LinkwitzRiley4`) was fine at the default 192 kHz OS rate,
+    // but with the dual-rate boundary off (768 kHz OS) its 150 Hz section had
+    // +0.33 dB of DC gain per section, so the low band ran ~0.6 dB hot and LP +
+    // HP no longer summed to an allpass (2026-10 levelling review, item 9).
+    private var lowL = LR4Section()
+    private var lowR = LR4Section()
+    private var highL = LR4Section()
+    private var highR = LR4Section()
     private var thresholdLin: Float = 0.8
     private var drive: Float = 1.0
     private var knee: Float = BandWaveshaper.defaultKnee
@@ -132,8 +139,10 @@ struct BassClipper {
         knee kneeFraction: Float = BandWaveshaper.defaultKnee
     ) {
         let osRate = sampleRate * Float(Self.factor)
-        splitL.configure(cutoffHz: crossoverHz, sampleRate: osRate)
-        splitR.configure(cutoffHz: crossoverHz, sampleRate: osRate)
+        lowL.configureLowpass(cutoffHz: crossoverHz, sampleRate: osRate)
+        lowR.configureLowpass(cutoffHz: crossoverHz, sampleRate: osRate)
+        highL.configureHighpass(cutoffHz: crossoverHz, sampleRate: osRate)
+        highR.configureHighpass(cutoffHz: crossoverHz, sampleRate: osRate)
         thresholdLin = powf(10.0, min(0.0, thresholdDB) / 20.0)
         drive = max(0.1, drv)
         knee = min(0.95, max(0.05, kneeFraction))
@@ -155,12 +164,10 @@ struct BassClipper {
             let t = step * Float(i + 1)
             let upL = (i == f - 1) ? left : lagL.interpolate(t: t, cur: left)
             let upR = (i == f - 1) ? right : lagR.interpolate(t: t, cur: right)
-            let sL = splitL.process(upL)
-            let sR = splitR.process(upR)
-            lowBatch[i] = sL.low
-            lowBatch[i + f] = sR.low
-            highBatch[i] = sL.high
-            highBatch[i + f] = sR.high
+            lowBatch[i] = lowL.process(upL)
+            lowBatch[i + f] = lowR.process(upR)
+            highBatch[i] = highL.process(upL)
+            highBatch[i + f] = highR.process(upR)
         }
 
         // Phase 2: batched clipBass via vvtanhf on 8 elements (4 L-low +
@@ -218,7 +225,7 @@ struct BassClipper {
 // (Orban, "Transmission Audio Processing").
 //
 // Detector, feed-forward and stereo-linked, in two parts (2026-10,
-// docs/hf-limiter-review.md finding 1):
+// the HF limiter review finding 1):
 //
 // 1. The PROGRAM GATE decides whether the overshoot is the boost's to fix.
 //    Two peak-hold envelopes -- the pre-emphasised peak and the boost
@@ -273,13 +280,20 @@ struct HFLimiter {
     private var holdSamples: Int = 1
     private var holdCounter: Int = 0
     private(set) var gain: Float = 1.0
-    // Program gate envelopes (peak hold, `gateHoldMS`, then the release).
-    private var peakEnvelope: Float = 0.0
-    private var boostEnvelope: Float = 0.0
+    // Program gate envelopes (peak hold, `gateHoldMS`, then the release),
+    // one pair PER CHANNEL: each channel's gate decides whether that
+    // channel's overshoot is its own boost's to fix (F7, below).
+    private var peakEnvelopeL: Float = 0.0
+    private var boostEnvelopeL: Float = 0.0
+    private var peakHoldCounterL: Int = 0
+    private var boostHoldCounterL: Int = 0
+    private var peakEnvelopeR: Float = 0.0
+    private var boostEnvelopeR: Float = 0.0
+    private var peakHoldCounterR: Int = 0
+    private var boostHoldCounterR: Int = 0
     private var gateHoldSamples: Int = 1
-    private var peakHoldCounter: Int = 0
-    private var boostHoldCounter: Int = 0
-    /// Whether the program gate was open on the last sample (test-visible).
+    /// Whether either channel's program gate was open on the last sample
+    /// (test-visible).
     private(set) var gateOpen: Bool = false
     // Top-octave share detector: LR4 highpass on the boost, one-pole power
     // envelopes of the top band and of the whole boost.
@@ -298,7 +312,7 @@ struct HFLimiter {
     /// stage only ever starts a ride it can finish; a peak the boost cannot
     /// bring down to the threshold is left to the broadband limiter (Dolby
     /// US 4,498,055 "modulation control"; finding 1 of
-    /// docs/hf-limiter-review.md). Below 1 the ride floors on bass-driven
+    /// the HF limiter review). Below 1 the ride floors on bass-driven
     /// peaks with a moderate hat -- the audible HF duck at the beat rate.
     static let boostExcessFraction: Float = 1.0
     /// Hold of the gate's envelopes: a half period of 33 Hz, so one kick
@@ -362,10 +376,14 @@ struct HFLimiter {
     mutating func reset() {
         gain = 1.0
         holdCounter = 0
-        peakEnvelope = 0.0
-        boostEnvelope = 0.0
-        peakHoldCounter = 0
-        boostHoldCounter = 0
+        peakEnvelopeL = 0.0
+        boostEnvelopeL = 0.0
+        peakHoldCounterL = 0
+        boostHoldCounterL = 0
+        peakEnvelopeR = 0.0
+        boostEnvelopeR = 0.0
+        peakHoldCounterR = 0
+        boostHoldCounterR = 0
         gateOpen = false
         topPower = 0.0
         boostPower = 0.0
@@ -424,21 +442,35 @@ struct HFLimiter {
         topShare = boostPower > 1e-12 ? min(1.0, sqrtf(topPower / boostPower)) : 0.0
         let threshold = thresholdLin + ((topThresholdLin - thresholdLin) * Self.topWeight(share: topShare))
 
-        // Program gate: is this overshoot the boost's to fix?
-        let peak = max(fabsf(emphasizedL), fabsf(emphasizedR))
-        let boostAbs = max(fabsf(boostL), fabsf(boostR))
-        Self.peakHold(&peakEnvelope, &peakHoldCounter, peak,
+        // Program gate, PER CHANNEL: is this channel's overshoot its own
+        // boost's to fix? Until 2026-10 one gate compared the louder
+        // channel's boost with the louder channel's excess, so a bass peak
+        // just over the threshold in R opened the gate on L's hat, R's own
+        // tiny boost projection then floored R's target, and the linked gain
+        // cut L's HF by 5-7 dB for a peak the boost could never fix
+        // (peak-control review F7). Each channel now gates its own target;
+        // the link takes the more demanding of the gated targets.
+        Self.peakHold(&peakEnvelopeL, &peakHoldCounterL, fabsf(emphasizedL),
                       holdSamples: gateHoldSamples, releaseCoeff: releaseCoeff)
-        Self.peakHold(&boostEnvelope, &boostHoldCounter, boostAbs,
+        Self.peakHold(&boostEnvelopeL, &boostHoldCounterL, fabsf(boostL),
                       holdSamples: gateHoldSamples, releaseCoeff: releaseCoeff)
-        gateOpen = boostEnvelope >= Self.boostExcessFraction * (peakEnvelope - threshold)
+        Self.peakHold(&peakEnvelopeR, &peakHoldCounterR, fabsf(emphasizedR),
+                      holdSamples: gateHoldSamples, releaseCoeff: releaseCoeff)
+        Self.peakHold(&boostEnvelopeR, &boostHoldCounterR, fabsf(boostR),
+                      holdSamples: gateHoldSamples, releaseCoeff: releaseCoeff)
+        let gateL = boostEnvelopeL >= Self.boostExcessFraction * (peakEnvelopeL - threshold)
+        let gateR = boostEnvelopeR >= Self.boostExcessFraction * (peakEnvelopeR - threshold)
+        gateOpen = gateL || gateR
 
         // Stereo link: one gain, the more demanding channel's.
         var target: Float = 1.0
-        if gateOpen {
-            target = min(
-                Self.channelTarget(emphasized: emphasizedL, boost: boostL, threshold: threshold, minGain: minGain),
-                Self.channelTarget(emphasized: emphasizedR, boost: boostR, threshold: threshold, minGain: minGain))
+        if gateL {
+            target = Self.channelTarget(emphasized: emphasizedL, boost: boostL,
+                                        threshold: threshold, minGain: minGain)
+        }
+        if gateR {
+            target = min(target, Self.channelTarget(emphasized: emphasizedR, boost: boostR,
+                                                    threshold: threshold, minGain: minGain))
         }
         if target < gain {
             gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * target)
@@ -458,36 +490,89 @@ struct HFLimiter {
 }
 
 // MARK: - Distortion-Cancelled Clipper (L/R domain, 8x oversampled)
+// Clips the L/R pair at 8x, then removes the clipping distortion BELOW
+// `cancelFreqHz` again, where it is most audible and least masked:
+//
+//     e   = clipped - up                    (OS rate, the clipping error)
+//     out = x delayed + e_host delayed - LP(e_host)
+//
+// `e_host` is the error decimated by a linear-phase Kaiser FIR; LP is a
+// linear-phase Kaiser lowpass at the host rate with -6 dB at the cancellation
+// frequency, and `e_host delayed` is matched to LP's group delay. The
+// distortion that remains is `e * (1 - LP)` with a ZERO-PHASE `1 - LP`, which
+// is between 0 and 1 (plus the 60 dB ripple) at every frequency: the stage can
+// only remove distortion, never add it. Until 2026-10 the error went through
+// an LR4 lowpass (-180 degrees at its corner), so `1 - LP` peaked at +4.3 dB
+// at 1.56 kHz: the stage made distortion WORSE from 0.7 to 3.8 kHz
+// (peak-control review F4). The wanted signal rides a delay-matched bypass
+// (differential topology) instead of the decimator.
+//
+// Curve: the `BandWaveshaper` soft knee with its asymptote AT the ceiling
+// (the old curve passed everything to the ceiling, then joined a tanh with a
+// slope kink and overshot to 1.05 x ceiling). Decimator: Kaiser FIR, flat to
+// 0.4 x host rate and 80 dB down from the host Nyquist, so nothing folds into
+// the band (the old 12th-order Butterworth at 0.45 x host rate was only
+// -21 dB at the first folding frequency).
 struct DistortionCancelledClipper {
     private var ceiling: Float = 0.95
-    private var errorLPL = Biquad()
-    private var errorLPR = Biquad()
-    private var errorLP2L = Biquad()
-    private var errorLP2R = Biquad()
+    private var knee: Float = BandWaveshaper.defaultKnee
     private var lagL = Lagrange4Interp()
     private var lagR = Lagrange4Interp()
-    private var decimL = BiquadCascade6()
-    private var decimR = BiquadCascade6()
+    private var decimL = LinearPhaseFIRDecimator()
+    private var decimR = LinearPhaseFIRDecimator()
+    /// OS-rate pad so the decimator's delay is a whole number of host samples.
+    private var padL: [Float] = []
+    private var padR: [Float] = []
+    private var padIndex: Int = 0
+    /// Host-rate lowpass of the decimated error (both channels).
+    private var errorLP = LinearPhaseFIRLowpass()
+    /// The decimated error, delayed by the lowpass's group delay.
+    private var errorDelayL: [Float] = [0.0]
+    private var errorDelayR: [Float] = [0.0]
+    private var errorDelayIndex: Int = 0
+    /// The wanted signal, delayed by decimator + lowpass.
+    private var bypassL: [Float] = [0.0]
+    private var bypassR: [Float] = [0.0]
+    private var bypassIndex: Int = 0
     private static let factor: Int = 8
-    // Stack-allocated batch buffers for vvtanhf-accelerated hardClip.
-    // 16 elements = 8 oversample steps × L+R. At 16 elements vvtanhf is
-    // ~9× faster than scalar tanhf per the TanhBatchSizeBench.
+    // Batch buffers for vvtanhf: 8 oversample steps x L+R.
     private var upBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
-    private var clipBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
     private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
     private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: factor * 2)
 
+    /// Host-rate samples of delay this stage adds to L/R.
+    var latencySamples: Int { bypassL.count }
+
     mutating func configure(sampleRate: Float, ceilingDB: Float, cancelFreqHz: Float) {
         ceiling = powf(10.0, min(0.0, ceilingDB) / 20.0)
-        let osRate = sampleRate * Float(Self.factor)
-        let q: Float = 0.7071068
-        errorLPL.configureLowpass(cutoffHz: cancelFreqHz, sampleRate: osRate, q: q)
-        errorLPR.configureLowpass(cutoffHz: cancelFreqHz, sampleRate: osRate, q: q)
-        errorLP2L.configureLowpass(cutoffHz: cancelFreqHz, sampleRate: osRate, q: q)
-        errorLP2R.configureLowpass(cutoffHz: cancelFreqHz, sampleRate: osRate, q: q)
-        let cutoff = min(sampleRate * 0.45, (osRate * 0.5) - 1_000.0)
-        decimL.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
-        decimR.configureLowpass(cutoffHz: max(12_000.0, cutoff), sampleRate: osRate)
+        let sr = max(8_000.0, sampleRate)
+        let osRate = sr * Float(Self.factor)
+        decimL.configure(cutoffHz: 0.4 * sr, sampleRateOS: osRate, decimateFactor: Self.factor,
+                         stopBandDB: 80.0, transitionHz: 0.1 * sr)
+        decimR.configure(cutoffHz: 0.4 * sr, sampleRateOS: osRate, decimateFactor: Self.factor,
+                         stopBandDB: 80.0, transitionHz: 0.1 * sr)
+        // The Lagrange section is causal with zero delay (its last OS sample
+        // IS the host sample), so only the decimator delays the error.
+        let osDelay = decimL.groupDelayOSSamples
+        let pad = (Self.factor - (osDelay % Self.factor)) % Self.factor
+        padL = [Float](repeating: 0.0, count: pad)
+        padR = [Float](repeating: 0.0, count: pad)
+        padIndex = 0
+        let decimHost = (osDelay + pad) / Self.factor
+        // -6 dB at the cancellation frequency, transition half of it.
+        let fc = clampf(cancelFreqHz, 100.0, 0.25 * sr)
+        let transition = max(200.0, 0.5 * fc)
+        errorLP.configure(cutoffHz: fc - (0.5 * transition), sampleRate: sr,
+                          stopBandDB: 60.0, transitionHz: transition)
+        let lpHalf = errorLP.groupDelaySamples
+        errorDelayL = [Float](repeating: 0.0, count: max(1, lpHalf))
+        errorDelayR = [Float](repeating: 0.0, count: max(1, lpHalf))
+        errorDelayIndex = 0
+        bypassL = [Float](repeating: 0.0, count: max(1, decimHost + lpHalf))
+        bypassR = [Float](repeating: 0.0, count: max(1, decimHost + lpHalf))
+        bypassIndex = 0
+        lagL = Lagrange4Interp()
+        lagR = Lagrange4Interp()
     }
 
     @inline(__always)
@@ -496,21 +581,18 @@ struct DistortionCancelledClipper {
         let f = Self.factor
         let step = 1.0 / Float(f)
 
-        // Phase 1: pre-compute 8 OS upL + 8 OS upR (no filter state advances
-        // here — Lagrange interp reads from h-state but doesn't write).
+        // Phase 1: 8 OS upL + 8 OS upR (Lagrange reads state, writes none).
         for i in 0..<f {
             let t = step * Float(i + 1)
             upBatch[i] = (i == f - 1) ? left : lagL.interpolate(t: t, cur: left)
             upBatch[i + f] = (i == f - 1) ? right : lagR.interpolate(t: t, cur: right)
         }
 
-        // Phase 2: batched hardClip via vvtanhf on 16 elements (~9× faster
-        // than 16 scalar tanhf calls on Apple Silicon).
+        // Phase 2: batched soft knee via vvtanhf on 16 elements.
         let cl = ceiling
-        let kn = max(0.01, ceiling * 0.15)
-        let amplitude = ceiling * 0.05
+        let kn = knee
         for i in 0..<(f * 2) {
-            clipExcessBatch[i] = (fabsf(upBatch[i]) - cl) / kn
+            clipExcessBatch[i] = BandWaveshaper.tanhArgument(driven: upBatch[i], threshold: cl, knee: kn)
         }
         var n = Int32(f * 2)
         clipExcessBatch.withUnsafeMutableBufferPointer { exPtr in
@@ -521,31 +603,52 @@ struct DistortionCancelledClipper {
                 // swiftlint:enable force_unwrapping
             }
         }
-        for i in 0..<(f * 2) {
-            let up = upBatch[i]
-            let ax = fabsf(up)
-            if ax <= cl {
-                clipBatch[i] = up
-            } else {
-                clipBatch[i] = copysignf(cl + amplitude * clipTanhBatch[i], up)
-            }
-        }
 
-        // Phase 3: per-OS-step error-cancel filtering and decimation.
-        var outL: Float = 0
-        var outR: Float = 0
+        // Phase 3: the clipping error, padded and decimated.
+        var eL: Float = 0
+        var eR: Float = 0
+        let padLen = padL.count
         for i in 0..<f {
             let upL = upBatch[i]
             let upR = upBatch[i + f]
-            let clL = clipBatch[i]
-            let clR = clipBatch[i + f]
-            let fErrL = errorLP2L.process(errorLPL.process(clL - upL))
-            let fErrR = errorLP2R.process(errorLPR.process(clR - upR))
-            outL = decimL.process(clL - fErrL)
-            outR = decimR.process(clR - fErrR)
+            var errL = BandWaveshaper.shaped(driven: upL, tanhValue: clipTanhBatch[i],
+                                             threshold: cl, knee: kn) - upL
+            var errR = BandWaveshaper.shaped(driven: upR, tanhValue: clipTanhBatch[i + f],
+                                             threshold: cl, knee: kn) - upR
+            if padLen > 0 {
+                let dL = padL[padIndex]
+                let dR = padR[padIndex]
+                padL[padIndex] = errL
+                padR[padIndex] = errR
+                padIndex += 1
+                if padIndex >= padLen { padIndex = 0 }
+                errL = dL
+                errR = dR
+            }
+            eL = decimL.push(errL)
+            eR = decimR.push(errR)
         }
         lagL.advance(left)
         lagR.advance(right)
-        return (outL, outR)
+
+        // Phase 4: cancel the error below the cancellation frequency.
+        let (lowL, lowR) = errorLP.process(left: eL, right: eR)
+        // (The Kaiser lowpass has at least 63 taps, so its delay is >= 31.)
+        let delayedEL = errorDelayL[errorDelayIndex]
+        let delayedER = errorDelayR[errorDelayIndex]
+        errorDelayL[errorDelayIndex] = eL
+        errorDelayR[errorDelayIndex] = eR
+        errorDelayIndex += 1
+        if errorDelayIndex >= errorDelayL.count { errorDelayIndex = 0 }
+
+        // Phase 5: bypass.
+        let xL = bypassL[bypassIndex]
+        let xR = bypassR[bypassIndex]
+        bypassL[bypassIndex] = left
+        bypassR[bypassIndex] = right
+        bypassIndex += 1
+        if bypassIndex >= bypassL.count { bypassIndex = 0 }
+
+        return (xL + (delayedEL - lowL), xR + (delayedER - lowR))
     }
 }

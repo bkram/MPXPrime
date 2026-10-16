@@ -112,6 +112,56 @@ struct CompositeClipperStereoSeparationTests {
         return out
     }
 
+    /// Run the clipper at the shipped settings with `stereoGuard` and report
+    /// the largest gain reduction it applied after the warm-up, so a test can
+    /// prove the clipper was WORKING on its signal (test-suite review
+    /// 2026-10 finding 3: at 0.95 hard-panned the composite peak sits at
+    /// the -1 dB knee and the guard had nothing to protect).
+    private func runClipperMeasuringGR(_ mpx: [Float], stereoGuard: Float) -> (out: [Float], maxGRDB: Float) {
+        var clip = CompositeClipper()
+        let cfg = AppConfig()
+        clip.configure(
+            sampleRate: sampleRate,
+            thresholdDB: Float(cfg.compositeClipperThresholdDB),
+            ceilingDB: Float(cfg.compositeClipperCeilingDB),
+            cancelAudio: cfg.compositeClipperCancelAudio,
+            stereoGuard: stereoGuard,
+            cancelPilot: cfg.compositeClipperCancelPilot,
+            cancelRDS: cfg.compositeClipperCancelRDS
+        )
+        var out = [Float](repeating: 0, count: mpx.count)
+        var maxGR: Float = 0.0
+        for i in 0..<mpx.count {
+            out[i] = clip.process(mpx[i])
+            if i >= warmupFrames { maxGR = max(maxGR, clip.gainReductionDB) }
+        }
+        return (out, maxGR)
+    }
+
+    /// Hard-pan a tone into L, encode, drive the composite 6 dB over the
+    /// clipper (as `stereoGuardShareControlsSubcarrierClipping` does) and
+    /// return the (L-R) sideband deltas through the clipper at the shipped
+    /// guard (1.0) and with the guard off (0.0, full composite clipping --
+    /// the old "HF stereo collapse"). The guard-off render is the negative
+    /// control: if the two match, the measurement cannot see the guard.
+    private func overdrivenSidebandDeltas(toneHz: Float, lowerHz: Float, upperHz: Float)
+        -> (guardedLower: Float, guardedUpper: Float, unguardedLower: Float, unguardedUpper: Float, maxGRDB: Float) {
+        let frames = warmupFrames + fftSize
+        let left = SineGenerator.generate(freqHz: toneHz, amplitude: 0.95,
+                                          sampleRate: sampleRate, frameCount: frames)
+        let right = [Float](repeating: 0, count: frames)
+        let mpx = encodeComposite(left: left, right: right).map { $0 * 2.0 }
+        let guarded = runClipperMeasuringGR(mpx, stereoGuard: Float(AppConfig().compositeClipperStereoGuard))
+        let unguarded = runClipperMeasuringGR(mpx, stereoGuard: 0.0)
+        let lowerIn = binDB(mpx, at: lowerHz)
+        let upperIn = binDB(mpx, at: upperHz)
+        return (binDB(guarded.out, at: lowerHz) - lowerIn,
+                binDB(guarded.out, at: upperHz) - upperIn,
+                binDB(unguarded.out, at: lowerHz) - lowerIn,
+                binDB(unguarded.out, at: upperHz) - upperIn,
+                guarded.maxGRDB)
+    }
+
     // MARK: - Tests
 
     /// The stereo guard share decides whether the clipper touches the L-R
@@ -144,77 +194,63 @@ struct CompositeClipperStereoSeparationTests {
 
     @Test func clipperPreservesLowFrequencySubcarrierSidebands() {
         // Hard-pan 1 kHz into L. Encoding produces (L-R) subcarrier
-        // sidebands at 38k ± 1k = 37 kHz and 39 kHz, both at the same
+        // sidebands at 38k +/- 1k = 37 kHz and 39 kHz, both at the same
         // amplitude. The clipper must keep those sideband magnitudes
-        // intact — a receiver demodulating the composite recovers (L-R)
-        // from those sidebands, and any attenuation here turns directly
-        // into reduced stereo separation.
-        let frames = warmupFrames + fftSize
-        let left = SineGenerator.generate(freqHz: 1_000.0, amplitude: 0.95,
-                                          sampleRate: sampleRate, frameCount: frames)
-        let right = [Float](repeating: 0, count: frames)
-        let mpx = encodeComposite(left: left, right: right)
-        let clipped = runClipperAtDefaults(mpx)
-
-        let sb37In = binDB(mpx, at: 37_000.0)
-        let sb37Out = binDB(clipped, at: 37_000.0)
-        let sb39In = binDB(mpx, at: 39_000.0)
-        let sb39Out = binDB(clipped, at: 39_000.0)
-        print(String(format: "(L-R) sidebands @ 1 kHz audio:  37 kHz Δ %+.2f dB,  39 kHz Δ %+.2f dB",
-                     sb37Out - sb37In, sb39Out - sb39In))
-        #expect(abs(sb37Out - sb37In) < 1.0,
-            "37 kHz (L-R) sideband must be preserved within 1 dB; got Δ \(sb37Out - sb37In) dB")
-        #expect(abs(sb39Out - sb39In) < 1.0,
-            "39 kHz (L-R) sideband must be preserved within 1 dB; got Δ \(sb39Out - sb39In) dB")
+        // intact WHILE IT IS CLIPPING -- a receiver demodulating the
+        // composite recovers (L-R) from those sidebands, and any
+        // attenuation here turns directly into reduced stereo separation.
+        let d = overdrivenSidebandDeltas(toneHz: 1_000.0, lowerHz: 37_000.0, upperHz: 39_000.0)
+        print(String(format: "(L-R) sidebands @ 1 kHz, 6 dB over: guard on 37k %+.2f / 39k %+.2f dB, guard off %+.2f / %+.2f dB, clipper GR %.1f dB",
+                     d.guardedLower, d.guardedUpper, d.unguardedLower, d.unguardedUpper, d.maxGRDB))
+        #expect(d.maxGRDB > 1.0, "the clipper must be working on this signal; GR \(d.maxGRDB) dB")
+        // ~1 dB at 6 dB overdrive is the LR4 guard's own band-edge loss
+        // (measured -1.00 dB at 39 kHz with the guard on, -3.93 dB off).
+        #expect(abs(d.guardedLower) < 1.5 && abs(d.guardedUpper) < 1.5,
+            "37/39 kHz (L-R) sidebands must be preserved within 1.5 dB while clipping; got \(d.guardedLower) / \(d.guardedUpper) dB")
+        #expect(d.unguardedUpper < d.guardedUpper - 1.0,
+            "negative control: guard off must clip the sideband; got \(d.unguardedUpper) vs \(d.guardedUpper) dB")
     }
 
-    @Test func clipperPreservesHighFrequencySubcarrierSidebands() {
+    // Measured 2026-10-15 with the clipper 6 dB over: guard on 28k -2.41 / 48k -4.80 dB, guard off -3.86 / -3.40 dB. The guard
+    // loses the band-edge sidebands while clipping (worse than no guard at
+    // 14 kHz): the non-phase-coherent guard-band substitution of
+    // peak-control review 2026-10 F3.
+    @Test
+    func clipperPreservesHighFrequencySubcarrierSidebands() {
         // The load-bearing test: hard-pan 10 kHz into L. Sidebands land
-        // at 28 kHz and 48 kHz — well inside 23–53 kHz, where the OLD
+        // at 28 kHz and 48 kHz -- well inside 23-53 kHz, where the OLD
         // cascaded-LR4 reconstruction attenuated them by ~12 dB at the
         // 23/53 kHz corners. With single-LR4 cutoffs at 22 and 53 kHz,
-        // the 28/48 kHz region sits in the passband and is preserved.
-        let frames = warmupFrames + fftSize
-        let left = SineGenerator.generate(freqHz: 10_000.0, amplitude: 0.95,
-                                          sampleRate: sampleRate, frameCount: frames)
-        let right = [Float](repeating: 0, count: frames)
-        let mpx = encodeComposite(left: left, right: right)
-        let clipped = runClipperAtDefaults(mpx)
-
-        let sb28In = binDB(mpx, at: 28_000.0)
-        let sb28Out = binDB(clipped, at: 28_000.0)
-        let sb48In = binDB(mpx, at: 48_000.0)
-        let sb48Out = binDB(clipped, at: 48_000.0)
-        print(String(format: "(L-R) sidebands @ 10 kHz audio:  28 kHz Δ %+.2f dB,  48 kHz Δ %+.2f dB",
-                     sb28Out - sb28In, sb48Out - sb48In))
-        #expect(abs(sb28Out - sb28In) < 2.0,
-            "28 kHz (L-R) sideband must be preserved within 2 dB; got Δ \(sb28Out - sb28In) dB")
-        #expect(abs(sb48Out - sb48In) < 2.0,
-            "48 kHz (L-R) sideband must be preserved within 2 dB; got Δ \(sb48Out - sb48In) dB")
+        // the 28/48 kHz region sits in the passband and is preserved --
+        // checked with the clipper driven 6 dB over, not grazing.
+        let d = overdrivenSidebandDeltas(toneHz: 10_000.0, lowerHz: 28_000.0, upperHz: 48_000.0)
+        print(String(format: "(L-R) sidebands @ 10 kHz, 6 dB over: guard on 28k %+.2f / 48k %+.2f dB, guard off %+.2f / %+.2f dB, clipper GR %.1f dB",
+                     d.guardedLower, d.guardedUpper, d.unguardedLower, d.unguardedUpper, d.maxGRDB))
+        #expect(d.maxGRDB > 1.0, "the clipper must be working on this signal; GR \(d.maxGRDB) dB")
+        #expect(abs(d.guardedLower) < 2.0 && abs(d.guardedUpper) < 2.0,
+            "28/48 kHz (L-R) sidebands must be preserved within 2 dB while clipping; got \(d.guardedLower) / \(d.guardedUpper) dB")
+        #expect(d.unguardedLower < d.guardedLower - 1.0,
+            "negative control: guard off must clip the sideband; got \(d.unguardedLower) vs \(d.guardedLower) dB")
     }
 
-    @Test func clipperPreservesEdgeOfBandSubcarrierSidebands() {
-        // 14 kHz panned content modulates to 24 kHz and 52 kHz — close
+    // Measured 2026-10-15 with the clipper 6 dB over: guard on 24k -4.71 / 52k -4.98 dB, guard off -3.30 / -2.57 dB. The guard
+    // loses the band-edge sidebands while clipping (worse than no guard at
+    // 14 kHz): the non-phase-coherent guard-band substitution of
+    // peak-control review 2026-10 F3.
+    @Test
+    func clipperPreservesEdgeOfBandSubcarrierSidebands() {
+        // 14 kHz panned content modulates to 24 kHz and 52 kHz -- close
         // to the 23 / 53 kHz subcarrier edges. With cascaded-LR4 these
         // were attenuated ~9 dB; with single-LR4 they're well within
-        // the passband.
-        let frames = warmupFrames + fftSize
-        let left = SineGenerator.generate(freqHz: 14_000.0, amplitude: 0.95,
-                                          sampleRate: sampleRate, frameCount: frames)
-        let right = [Float](repeating: 0, count: frames)
-        let mpx = encodeComposite(left: left, right: right)
-        let clipped = runClipperAtDefaults(mpx)
-
-        let sb24In = binDB(mpx, at: 24_000.0)
-        let sb24Out = binDB(clipped, at: 24_000.0)
-        let sb52In = binDB(mpx, at: 52_000.0)
-        let sb52Out = binDB(clipped, at: 52_000.0)
-        print(String(format: "(L-R) sidebands @ 14 kHz audio:  24 kHz Δ %+.2f dB,  52 kHz Δ %+.2f dB",
-                     sb24Out - sb24In, sb52Out - sb52In))
-        #expect(abs(sb24Out - sb24In) < 3.0,
-            "24 kHz (L-R) sideband must be preserved within 3 dB; got Δ \(sb24Out - sb24In) dB")
-        #expect(abs(sb52Out - sb52In) < 3.0,
-            "52 kHz (L-R) sideband must be preserved within 3 dB; got Δ \(sb52Out - sb52In) dB")
+        // the passband, with the clipper driven 6 dB over.
+        let d = overdrivenSidebandDeltas(toneHz: 14_000.0, lowerHz: 24_000.0, upperHz: 52_000.0)
+        print(String(format: "(L-R) sidebands @ 14 kHz, 6 dB over: guard on 24k %+.2f / 52k %+.2f dB, guard off %+.2f / %+.2f dB, clipper GR %.1f dB",
+                     d.guardedLower, d.guardedUpper, d.unguardedLower, d.unguardedUpper, d.maxGRDB))
+        #expect(d.maxGRDB > 1.0, "the clipper must be working on this signal; GR \(d.maxGRDB) dB")
+        #expect(abs(d.guardedLower) < 3.0 && abs(d.guardedUpper) < 3.0,
+            "24/52 kHz (L-R) sidebands must be preserved within 3 dB while clipping; got \(d.guardedLower) / \(d.guardedUpper) dB")
+        #expect(d.unguardedLower < d.guardedLower - 1.0,
+            "negative control: guard off must clip the sideband; got \(d.unguardedLower) vs \(d.guardedLower) dB")
     }
 
     @Test func clipperPreservesAudioBandFundamental() {

@@ -1,82 +1,75 @@
 // macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
 #if os(macOS)
 
-import Accelerate
-import AppKit
-import AVFoundation
-import Combine
-import CoreAudio
-import Darwin
 import Foundation
 import MPXPrimeCore
 import MPXPrimeUI
 import SwiftUI
-import UniformTypeIdentifiers
 
+/// On Air > Monitoring: what is on air, read-only. The page's title,
+/// subtitle, padding and help box come from `StageContentView`. Transport
+/// and bypass live in the toolbar, the Control menu and the status bar;
+/// stage settings live on the Sound pages. Cards, top to bottom: Levels
+/// (the same ladder meters as the Levels window), Output (titled with the
+/// operating mode), Headroom, Subcarriers (MPX Output), Signal Chain
+/// (read-only), Stream Health and, in MPX Output, RDS On Air.
 struct MonitoringDashboardView: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                transportPanel
-                metricsPanels
-                chainPanel
-                // No RDS in processed-audio output (no subcarrier carries it).
-                if !model.processedAudioOutputActive {
-                    rdsPanel
-                }
+        VStack(alignment: .leading, spacing: PageLayout.cardSpacing) {
+            LevelsCardView(model: model)
+            metricsPanels
+            chainPanel
+            streamPanel
+            // No RDS in processed-audio output (no subcarrier carries it).
+            if ChainFeature.rds.applies(in: model.config.operatingMode) {
+                rdsPanel
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
-    /// Three side-by-side cards with the live broadcast metrics
-    /// (previously crammed into the persistent top status strip):
-    /// MPX peak / deviation / modulation, headroom across the peak-
-    /// control stages, and subcarrier injection levels. Card layout
-    /// matches the rdsPanel grid pattern (uppercase secondary label
-    /// in the left column, monospaced value on the right). Wraps to
-    /// stacked layout on narrow windows via `ViewThatFits`.
+    // MARK: - Output, Headroom, Subcarriers
+
+    /// Side by side when the window is wide, stacked when it is not.
     private var metricsPanels: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                mpxPanel.frame(maxWidth: .infinity)
+                outputPanel.frame(maxWidth: .infinity)
                 headroomPanel.frame(maxWidth: .infinity)
-                // Pilot/RDS injection is composite-only; in processed-audio the
-                // panel would be all N/A, so omit it.
-                if !model.processedAudioOutputActive {
+                if hasSubcarriers {
                     subcarriersPanel.frame(maxWidth: .infinity)
                 }
             }
             VStack(alignment: .leading, spacing: 12) {
-                mpxPanel
+                outputPanel
                 headroomPanel
-                if !model.processedAudioOutputActive {
+                if hasSubcarriers {
                     subcarriersPanel
                 }
             }
         }
     }
 
-    private var mpxPanel: some View {
-        // In processed-audio mode there is no composite: deviation / modulation /
-        // audio-composite peak are all meaningless. Show the output level and the
-        // (still-valid) stereo image instead.
-        Card(title: model.processedAudioOutputActive ? "Output" : "MPX") {
+    /// Pilot and RDS exist only where a composite is generated.
+    private var hasSubcarriers: Bool { ChainFeature.stereoCoder.applies(in: model.config.operatingMode) }
+
+    private var outputPanel: some View {
+        // Titled with the operating mode as the Audio I/O picker spells it.
+        Card(title: model.config.operatingMode.title, style: .meter) {
             LiveObservationView(telemetry: model.telemetry) { _ in
                 if model.processedAudioOutputActive {
                     metricsGrid([
-                        ("OUTPUT", model.outputText.ifEmpty("—")),
-                        ("STEREO IMAGE", model.stereoImageText)
+                        ("Output", model.outputText.ifEmpty("-")),
+                        ("Stereo Image", Self.plainDetail(model.stereoImageText))
                     ])
                 } else {
                     metricsGrid([
-                        ("OUTPUT", model.outputText.ifEmpty("—")),
-                        ("AUDIO COMPOSITE", audioCompositeText),
-                        ("DEVIATION", String(format: "%5.1f kHz", model.estimatedDeviationPeakKHz)),
-                        ("MODULATION", modulationText)
+                        ("Output", model.outputText.ifEmpty("-")),
+                        ("Audio Composite", audioCompositeText),
+                        ("Deviation", String(format: "%5.1f kHz", model.estimatedDeviationPeakKHz)),
+                        ("Modulation", modulationText),
+                        ("Stereo Image", Self.plainDetail(model.stereoImageText))
                     ])
                 }
             }
@@ -86,42 +79,77 @@ struct MonitoringDashboardView: View {
     private var headroomPanel: some View {
         // Which rows exist in which mode is `HeadroomReadout`'s table, shared
         // with the tests; this view only knows how to render each row.
-        Card(title: "Headroom") {
+        Card(title: "Headroom", style: .meter) {
             LiveObservationView(telemetry: model.telemetry) { _ in
                 metricsGrid(HeadroomReadout.visible(in: model.config.operatingMode).map(headroomRow))
             }
         }
     }
 
-    private func headroomRow(_ readout: HeadroomReadout) -> (String, String) {
+    /// Row label for each headroom readout, named after the stage it reads
+    /// (the `Stage` name table) or the quantity it measures.
+    static func headroomLabel(_ readout: HeadroomReadout) -> String {
         switch readout {
-        case .preEncodeGR: return ("PRE-ENCODE GR", grText(model.preEncodeLimiterGainReductionDBValue))
-        case .compositeGR: return ("COMPOSITE GR", grText(model.compositeClipperGainReductionDBValue))
-        case .safetyGR: return ("SAFETY GR", grText(model.safetyLimiterGainReductionDBValue))
-        case .safetyClip: return ("SAFETY CLIP", grText(model.safetyClipDBValue))
-        case .bs412Budget: return ("BS.412 BUDGET", budgetText)
-        case .mpxPower: return ("MPX POWER", mpxPowerText)
-        case .bs412GR: return ("BS.412 GR", grText(model.bs412StatusValue.gainReductionDB))
-        case .badInput: return ("BAD INPUT", badInputText)
+        case .preEncodeGR: return "\(Stage.processingLimiter.label) GR"
+        case .compositeGR: return "\(Stage.processingCompositeClipper.label) GR"
+        case .safetyGR: return "Safety Limiter GR"
+        case .safetyClip: return "Safety Clip"
+        // NOT a BS.412 quantity: the peak headroom left between the audio
+        // composite plus the pilot / RDS reservation and full scale
+        // (`MPXGenerator.makeCompositeCalibration`, -20 log10(audio peak +
+        // reserved)). BS.412 multiplex power is the next row.
+        case .compositeBudget: return "Composite Budget"
+        case .mpxPower: return "Multiplex Power"
+        case .bs412GR: return "\(Stage.processingBS412.label) GR"
+        case .badInput: return "Bad Input"
         }
     }
 
+    private func headroomRow(_ readout: HeadroomReadout) -> (String, String) {
+        let value: String
+        switch readout {
+        case .preEncodeGR: value = grText(model.preEncodeLimiterGainReductionDBValue)
+        case .compositeGR: value = grText(model.compositeClipperGainReductionDBValue)
+        case .safetyGR: value = grText(model.safetyLimiterGainReductionDBValue)
+        case .safetyClip: value = grText(model.safetyClipDBValue)
+        case .compositeBudget: value = budgetText
+        case .mpxPower: value = mpxPowerText
+        case .bs412GR: value = grText(model.bs412StatusValue.gainReductionDB)
+        case .badInput: value = badInputText
+        }
+        return (Self.headroomLabel(readout), value)
+    }
+
     private var subcarriersPanel: some View {
-        Card(title: "Subcarriers") {
+        Card(title: "Subcarriers", style: .meter) {
             LiveObservationView(telemetry: model.telemetry) { _ in
                 metricsGrid([
-                    ("PILOT", String(format: "%5.1f%%", model.pilotInjectionPercentValue)),
-                    ("RDS", String(format: "%5.1f%%", model.rdsInjectionPercentValue)),
-                    ("STEREO IMAGE", model.stereoImageText)
+                    ("Pilot", Self.subcarrierText(
+                        percent: Double(model.pilotInjectionPercentValue),
+                        deviationKHz: model.config.mpxDeviationKHz)),
+                    ("RDS", Self.subcarrierText(
+                        percent: Double(model.rdsInjectionPercentValue),
+                        deviationKHz: model.config.mpxDeviationKHz))
                 ])
             }
         }
+    }
+
+    /// A subcarrier injection in kHz with its share of the deviation
+    /// second: "6.8 kHz (9.0%)". The engine reports the injection as a
+    /// percentage of the composite, which the generator scales to the
+    /// configured deviation (AGENTS.md "Deviation readout scale"), so the
+    /// deviation it takes is that share of `mpx_deviation_khz`.
+    static func subcarrierText(percent: Double, deviationKHz: Double) -> String {
+        let p = max(0.0, percent)
+        return String(format: "%.1f kHz (%.1f%%)", p / 100.0 * max(0.0, deviationKHz), p)
     }
 
     private func metricsGrid(_ rows: [(String, String)]) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
             ForEach(rows, id: \.0) { row in
                 GridRow {
+                    // Title Case source strings, drawn as small caps.
                     Text(row.0)
                         .font(BroadcastStyle.scaleLabel)
                         .foregroundStyle(.secondary)
@@ -138,43 +166,41 @@ struct MonitoringDashboardView: View {
         }
     }
 
-    /// Audio-composite peak in dBFS. Linear-to-dBFS with a -120 dBFS
-    /// floor so the readout settles to a fixed string when silent
-    /// rather than reading "-inf".
+    /// Audio-composite peak in dBFS, with a -120 dBFS floor so the readout
+    /// settles to a fixed string when silent rather than reading "-inf".
     private var audioCompositeText: String {
         let v = Double(model.audioCompositePeakLinear)
         guard v > 1e-6 else { return "-120.0 dBFS" }
         return String(format: "%6.1f dBFS", 20.0 * log10(v))
     }
 
-    /// Modulation percentage: peak deviation as a fraction of the
-    /// configured target. References `mpx_deviation_khz` from config
-    /// (not the 75 kHz regulatory line) — operators with custom
-    /// deviation targets read 100% at their chosen setpoint.
+    /// Peak deviation as a share of the configured deviation, so an operator
+    /// with a custom target reads 100% at their chosen setpoint.
     private var modulationText: String {
         let peak = Double(model.estimatedDeviationPeakKHz)
         let target = max(1.0, model.config.mpxDeviationKHz)
         return String(format: "%6.1f%%", (peak / target) * 100.0)
     }
 
-    /// Budget margin + state. ON shown in tail when BS.412 is engaged;
-    /// otherwise the numeric value alone (so OFF reads "+0.0 dB" with
-    /// no implication that BS.412 is active).
+    /// Composite budget margin plus its state (Safe / Tight / Risk) while
+    /// the engine runs; the number alone when stopped.
     private var budgetText: String {
-        let margin = Double(model.compositeBudgetMarginDBValue)
-        let state = model.compositeBudgetStateText
-        let core = String(format: "%+5.1f dB", margin)
-        return state.isEmpty || state == "Off" ? core : "\(core) · \(state)"
+        Self.budgetText(marginDB: Double(model.compositeBudgetMarginDBValue),
+                        state: model.compositeBudgetStateText)
     }
 
-    /// ITU-R BS.412 complete-multiplex power. Never a bare number before a
-    /// full 60 s window exists, and never a compliance reading while Test
-    /// Tone suspends control -- the operator sees the priming progress or
-    /// the suspension instead.
+    static func budgetText(marginDB: Double, state: String) -> String {
+        let core = String(format: "%+5.1f dB", marginDB)
+        return state.isEmpty || state == "Off" ? core : "\(core) - \(state)"
+    }
+
+    /// ITU-R BS.412 multiplex power. Never a bare number before a full 60 s
+    /// window exists, and never a compliance reading while Test Tone
+    /// suspends control.
     private var mpxPowerText: String {
         let status = model.bs412StatusValue
-        if status.controlSuspended { return "suspended (tone)" }
-        if status.unachievable { return "pilot/RDS over budget" }
+        if status.controlSuspended { return "Suspended (tone)" }
+        if status.unachievable { return "Pilot and RDS over budget" }
         guard status.powerValid else {
             return String(format: "%.0f / 60 s", Double(status.secondsObserved))
         }
@@ -183,195 +209,135 @@ struct MonitoringDashboardView: View {
         return status.overCeiling ? "\(core) - over" : core
     }
 
-    /// NaN / Inf arriving from the source. "none" is the normal reading;
-    /// anything else means something upstream is broken, even though the
-    /// chain itself replaced them with silence and carried on.
+    /// NaN / Inf arriving from the source. "None" is the normal reading.
     private var badInputText: String {
         let count = model.nonFiniteInputSamplesValue
-        return count == 0 ? "none" : String(count)
+        return count == 0 ? "None" : String(count)
     }
 
     private func grText(_ valueDB: Float) -> String {
-        // 5-char numeric field (covers " 0.0".."16.0", and "-NN.N") so the GR
-        // readout stays a constant width as gain reduction varies.
+        // Fixed-width field so the readout does not resize as GR varies.
         let db = Double(valueDB)
         return String(format: "%5.1f dB", db < 0.05 ? 0.0 : db)
     }
 
-    // MARK: - Panel A: Transport + Devices
+    // MARK: - Signal chain (read-only)
 
-    private var transportPanel: some View {
-        Card(title: "Transport") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Button {
-                        model.startOrStopTransport()
-                    } label: {
-                        HStack {
-                            // Decorative — the adjacent "Start" / "Stop"
-                            // text conveys the action to VoiceOver.
-                            Image(systemName: model.isRunning ? "stop.fill" : "play.fill")
-                                .accessibilityHidden(true)
-                            Text(model.isRunning ? "Stop" : "Start")
-                        }
-                        .frame(maxWidth: .infinity)
+    /// The chain as read-only chips (dimmed when the stage is off) and the
+    /// levelling engine's live state. Configuring the chain is the Sound
+    /// Overview's job; this card only shows it.
+    private var chainPanel: some View {
+        Card(title: "Signal Chain", style: .meter) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    Chip(text: "IN")
+                    ForEach(Stage.signalChain.filter { model.isStageVisible($0) }, id: \.self) { stage in
+                        let off = model.isStageEnabled(stage) == false
+                        Chip(text: stage.chipLabel ?? stage.label)
+                            .opacity(off ? 0.4 : 1.0)
+                            .help(stage.label + (off ? " (off)" : ""))
+                            .accessibilityLabel(stage.label)
+                            .accessibilityValue(off ? "off" : "on")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isBusy)
-                    .keyboardShortcut(.return, modifiers: [.command])
-
-                    Button {
-                        model.toggleBypass()
-                    } label: {
-                        HStack {
-                            // Decorative — the adjacent "Bypass On / Off"
-                            // text conveys the action to VoiceOver.
-                            Image(systemName: model.processingBypass ? "bolt.slash.fill" : "bolt.fill")
-                                .accessibilityHidden(true)
-                            Text(model.processingBypass ? "Bypass On" : "Bypass Off")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy)
-                    .keyboardShortcut("b", modifiers: [.command])
+                    Chip(text: "OUT")
                 }
-
+            }
+            LiveObservationView(telemetry: model.telemetry) { _ in
                 FlowStatusRow(items: [
-                    ("Source", inputName, model.isRunning ? .green : .secondary.opacity(0.75)),
-                    ("Output", outputName, model.isRunning ? .green : .secondary.opacity(0.75)),
-                    ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75))
+                    // Advanced Dynamics REPLACES the AGC, so the pill switches
+                    // identity rather than showing a bypassed AGC.
+                    model.advancedDynamicsActive
+                        ? (Stage.processingAdvancedDynamics.label, levellingText(model.advancedDynamicsDetailText,
+                                                                               "Density", "Gain"), .green)
+                        : (Stage.processingAGC.label, levellingText(model.agcDetailText, "Detector", "Gain"),
+                           agcDotColor)
                 ])
-
-                // Input levels — visible here so the operator can
-                // adjust source gain without leaving the dashboard.
-                // Same data the BroadcastStatusBar shows numerically,
-                // but rendered as proper L/R meter bars with peak hold.
-                inputLevelsTile
-
-                HStack(alignment: .top, spacing: 12) {
-                    streamTile
-                    bufferTile
-                    dropoutsTile
-                }
             }
         }
     }
 
-    private var inputLevelsTile: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Input")
-                    .font(BroadcastStyle.chipLabel)
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Spacer()
-                Text("Adjust source level so peaks sit between -12 and -6 dBFS")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            LiveObservationView(telemetry: model.telemetry) { t in
-                VStack(alignment: .leading, spacing: 6) {
-                    MeterRow(
-                        label: "L",
-                        valueText: t.inputLText.meterCurrentOnly,
-                        level: t.inputLLevel,
-                        peakLevel: t.inputLPeakHoldLevel,
-                        scaleStyle: .dbfs
-                    )
-                    MeterRow(
-                        label: "R",
-                        valueText: t.inputRText.meterCurrentOnly,
-                        level: t.inputRLevel,
-                        peakLevel: t.inputRPeakHoldLevel,
-                        scaleStyle: .dbfs
-                    )
-                }
-            }
-        }
-        .padding(10)
-        .background(BroadcastStyle.meterSurface.opacity(0.65))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
+    private func levellingText(_ detail: String, _ first: String, _ second: String) -> String {
+        let a = Self.parseDetail(detail, key: first) ?? "-"
+        let b = Self.parseDetail(detail, key: second) ?? "-"
+        return "\(first) \(a), \(second.lowercased()) \(b)"
     }
 
-    private var streamTile: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Stream")
-                .font(BroadcastStyle.chipLabel)
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            LiveObservationView(telemetry: model.telemetry) { _ in
-                Text(streamRateText)
-                    .font(BroadcastStyle.valueReadout)
-            }
+    private var agcDotColor: Color {
+        switch model.agcStateText.lowercased() {
+        case "off": return .secondary.opacity(0.75)
+        case "gate": return .orange
+        default: return .green
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(BroadcastStyle.meterSurface.opacity(0.65))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
     }
 
-    private var bufferTile: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Buffer")
-                    .font(BroadcastStyle.chipLabel)
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Spacer()
-                LiveObservationView(telemetry: model.telemetry) { _ in
-                    Text(delayText)
-                        .font(BroadcastStyle.valueReadout)
-                        .foregroundStyle(.secondary)
+    // MARK: - Stream health
+
+    private var streamPanel: some View {
+        Card(title: "Stream Health", style: .meter) {
+            FlowStatusRow(items: [
+                ("Source", inputName, model.isRunning ? .green : .secondary.opacity(0.75)),
+                ("Output", outputName, model.isRunning ? .green : .secondary.opacity(0.75)),
+                ("Monitor", monitorChipText, model.monitorEnabled ? .green : .secondary.opacity(0.75))
+            ])
+            HStack(alignment: .top, spacing: 12) {
+                InsetTile {
+                    tileTitle("Stream")
+                    LiveObservationView(telemetry: model.telemetry) { t in
+                        Text(Self.rateText(inputHz: t.streamSummary.inputHz, renderHz: t.streamSummary.renderHz,
+                                           blockFrames: t.streamSummary.blockFrames))
+                            .font(BroadcastStyle.valueReadout)
+                            .lineLimit(1)
+                    }
                 }
-            }
-            LiveObservationView(telemetry: model.telemetry) { _ in
-                ProgressView(value: bufferFill)
-                    .progressViewStyle(.linear)
-                    .tint(bufferTint)
-                    .frame(maxWidth: .infinity)
+                InsetTile {
+                    HStack {
+                        tileTitle("Buffer")
+                        Spacer()
+                        LiveObservationView(telemetry: model.telemetry) { _ in
+                            Text(delayText)
+                                .font(BroadcastStyle.valueReadout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    LiveObservationView(telemetry: model.telemetry) { _ in
+                        ProgressView(value: bufferFill)
+                            .progressViewStyle(.linear)
+                            .tint(bufferTint)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                InsetTile {
+                    tileTitle("Dropouts (10 s)")
+                    LiveObservationView(telemetry: model.telemetry) { t in
+                        HStack(spacing: 12) {
+                            dropoutPill(label: "Over", count: t.streamHealth.overflowsRecent)
+                            dropoutPill(label: "Under", count: t.streamHealth.underflowsRecent)
+                        }
+                    }
+                }
+                .help("Totals since engine start: \(model.streamSummary.overflowsTotal) overflows, \(model.streamSummary.underflowsTotal) underflows.")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(BroadcastStyle.meterSurface.opacity(0.65))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
     }
 
-    private var dropoutsTile: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Dropouts (10 s)")
-                .font(BroadcastStyle.chipLabel)
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            LiveObservationView(telemetry: model.telemetry) { t in
-                HStack(spacing: 12) {
-                    dropoutPill(label: "OVR", count: t.streamHealth.overflowsRecent)
-                    dropoutPill(label: "UND", count: t.streamHealth.underflowsRecent)
-                }
-            }
+    private func tileTitle(_ text: String) -> some View {
+        Text(text)
+            .font(BroadcastStyle.chipLabel)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+    }
+
+    /// "48 -> 192 kHz, block 512" while the input is resampled, else
+    /// "192 kHz, block 512"; "-" when stopped. Rates in kHz, as the status bar.
+    static func rateText(inputHz: Int, renderHz: Int, blockFrames: Int) -> String {
+        func kHz(_ hz: Int) -> String {
+            hz % 1_000 == 0 ? "\(hz / 1_000)" : String(format: "%.1f", Double(hz) / 1_000.0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(BroadcastStyle.meterSurface.opacity(0.65))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
-        .help("Cumulative totals: \(model.streamHealth.overflowsTotal) overflows / \(model.streamHealth.underflowsTotal) underflows since engine start.")
+        if inputHz > 0, renderHz > 0, inputHz != renderHz {
+            return "\(kHz(inputHz)) -> \(kHz(renderHz)) kHz, block \(blockFrames)"
+        }
+        let effective = max(renderHz, inputHz)
+        return effective > 0 ? "\(kHz(effective)) kHz, block \(blockFrames)" : "-"
     }
 
     private func dropoutPill(label: String, count: Int) -> some View {
@@ -379,7 +345,7 @@ struct MonitoringDashboardView: View {
             ? BroadcastStyle.safeGreen
             : (count < 3 ? BroadcastStyle.tightAmber : BroadcastStyle.overRed)
         // Distinct symbol per state so the cue is shape + colour, not colour
-        // alone (WCAG 2.1 / Differentiate-Without-Color).
+        // alone.
         let symbol = count == 0
             ? "checkmark.circle.fill"
             : (count < 3 ? "exclamationmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -395,63 +361,37 @@ struct MonitoringDashboardView: View {
             Text("\(count)")
                 .font(BroadcastStyle.valueReadout)
         }
-        // Symbol + colour carry the state visually; mirror it in words for
-        // VoiceOver.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue("\(count), \(state)")
     }
 
-    // MARK: - Panel B: DSP chain (3-pill context strip + 13-stage grid)
-
-    private var chainPanel: some View {
-        Card(title: "Signal Chain") {
-            VStack(alignment: .leading, spacing: 12) {
-                LiveObservationView(telemetry: model.telemetry) { _ in
-                    FlowStatusRow(items: [
-                        // Advanced Dynamics REPLACES the AGC, so the pill
-                        // switches identity rather than showing a bypassed
-                        // AGC next to the stage that owns the dynamics.
-                        model.advancedDynamicsActive
-                            ? ("Adv Dyn", advDynPillText, .green)
-                            : ("AGC", agcPillText, agcDotColor),
-                        ("Stereo", stereoPillText, .secondary.opacity(0.75)),
-                        ("Pre-Lim GR", preLimText, preLimDotColor)
-                    ])
-                }
-
-                ProcessingOverviewGrid(model: model, embedded: true)
-            }
-        }
-    }
-
-    // MARK: - Panel C: RDS
+    // MARK: - RDS on air
 
     private var rdsPanel: some View {
-        Card(title: "RDS") {
+        Card(title: "RDS On Air", style: .meter) {
             LiveObservationView(telemetry: model.telemetry) { _ in
-              VStack(alignment: .leading, spacing: 10) {
-                FlowStatusRow(items: [
-                    ("PS", model.rdsPS.ifEmpty("—"), .secondary.opacity(0.75)),
-                    ("PI", model.rdsPI.ifEmpty("—"), .secondary.opacity(0.75)),
-                    ("PTY", model.rdsPTY.ifEmpty("—"), .secondary.opacity(0.75))
-                ])
-
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                    ForEach(rdsRowsFiltered, id: \.0) { row in
-                        GridRow {
-                            Text(row.0)
-                                .font(BroadcastStyle.scaleLabel)
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                            Text(row.1)
-                                .font(BroadcastStyle.valueReadout)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    FlowStatusRow(items: [
+                        ("PS", model.rdsPS.ifEmpty("-"), .secondary.opacity(0.75)),
+                        ("PI", model.rdsPI.ifEmpty("-"), .secondary.opacity(0.75)),
+                        ("PTY", model.rdsPTY.ifEmpty("-"), .secondary.opacity(0.75))
+                    ])
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                        ForEach(rdsRowsFiltered, id: \.0) { row in
+                            GridRow {
+                                Text(row.0)
+                                    .font(BroadcastStyle.scaleLabel)
+                                    .foregroundStyle(.secondary)
+                                    .textCase(.uppercase)
+                                Text(row.1)
+                                    .font(BroadcastStyle.valueReadout)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                 }
-              }
             }
         }
     }
@@ -459,44 +399,24 @@ struct MonitoringDashboardView: View {
     // MARK: - Computed values
 
     private var inputName: String {
-        guard !model.selectedInputUID.isEmpty else { return "—" }
-        return model.inputDevices.first(where: { $0.uid == model.selectedInputUID })?.name ?? "—"
+        guard !model.selectedInputUID.isEmpty else { return "-" }
+        return model.inputDevices.first(where: { $0.uid == model.selectedInputUID })?.name ?? "-"
     }
 
     private var outputName: String {
-        guard !model.selectedOutputUID.isEmpty else { return "—" }
-        return model.outputDevices.first(where: { $0.uid == model.selectedOutputUID })?.name ?? "—"
-    }
-
-    private var monitorName: String {
-        guard model.monitorEnabled, !model.selectedMonitorUID.isEmpty else { return "—" }
-        return model.outputDevices.first(where: { $0.uid == model.selectedMonitorUID })?.name ?? "—"
+        guard !model.selectedOutputUID.isEmpty else { return "-" }
+        return model.outputDevices.first(where: { $0.uid == model.selectedOutputUID })?.name ?? "-"
     }
 
     private var monitorChipText: String {
-        if !model.monitorEnabled { return "Off" }
-        return monitorName
+        guard model.monitorEnabled else { return "Off" }
+        guard !model.selectedMonitorUID.isEmpty else { return "-" }
+        return model.outputDevices.first(where: { $0.uid == model.selectedMonitorUID })?.name ?? "-"
     }
 
-    private var streamRateText: String {
-        let h = model.streamHealth
-        if h.inputHz > 0, h.renderHz > 0, h.inputHz != h.renderHz {
-            return "\(h.inputHz) → \(h.renderHz) Hz · block \(h.blockFrames)"
-        }
-        let effective = max(h.renderHz, h.inputHz)
-        if effective > 0 {
-            return "\(effective) Hz · block \(h.blockFrames)"
-        }
-        return "—"
-    }
-
+    /// The low-passed buffer fill (~10 s), so the bar shows the trend; a
+    /// real underflow shows in the Dropouts tile within one tick.
     private var bufferFill: Double {
-        // Display the low-passed buffer fill (~10 s time constant) so
-        // the bar shows trend rather than tick-by-tick wobble. The
-        // underlying `streamHealth.ringFill` and `inputBufferValue`
-        // still update at full rate for any caller that needs the
-        // instantaneous reading; a real underflow surfaces in the
-        // `Dropouts` tile within one tick.
         max(0.0, min(1.0, model.bufferFillSmoothed))
     }
 
@@ -510,325 +430,47 @@ struct MonitoringDashboardView: View {
     }
 
     private var delayText: String {
-        guard let delayMS = model.streamHealth.estimatedDelayMS else { return "—" }
+        guard let delayMS = model.streamHealth.estimatedDelayMS else { return "-" }
         if delayMS >= 100.0 { return String(format: "%.0f ms", delayMS) }
         if delayMS >= 10.0 { return String(format: "%.1f ms", delayMS) }
         return String(format: "%.2f ms", delayMS)
     }
 
-    private var agcPillText: String {
-        // Detector + gain on one line, parsed from the existing
-        // `agcDetailText` ("Detector X dB • Gain Y dB").
-        let detector = parseDetail(model.agcDetailText, key: "Detector") ?? "—"
-        let gain = parseDetail(model.agcDetailText, key: "Gain") ?? "—"
-        return "\(detector) → \(gain)"
-    }
-
-    private var agcDotColor: Color {
-        switch model.agcStateText.lowercased() {
-        case "off": return .secondary.opacity(0.75)
-        case "gate": return .orange
-        default: return .green
-        }
-    }
-
-    private var advDynPillText: String {
-        // Density + per-band gains on one line, parsed from
-        // `advancedDynamicsDetailText` ("Density X dB • Gain a/b/c/d/e dB").
-        let density = parseDetail(model.advancedDynamicsDetailText, key: "Density") ?? "—"
-        let gains = parseDetail(model.advancedDynamicsDetailText, key: "Gain") ?? "—"
-        return "\(density) → \(gains)"
-    }
-
-    private var stereoPillText: String {
-        // "Corr +X.XX • Side Y.YYx" from stereoImageText.
-        let corr = parseDetail(model.stereoImageText, key: "Corr") ?? "—"
-        let side = parseDetail(model.stereoImageText, key: "Side") ?? "—"
-        return "\(corr) · \(side)"
-    }
-
-    private var preLimText: String {
-        String(format: "%5.1f dB", Double(model.preEncodeLimiterGainReductionDBValue))
-    }
-
-    private var preLimDotColor: Color {
-        let gr = Double(model.preEncodeLimiterGainReductionDBValue)
-        if gr < 0.5 { return .green }
-        if gr < 3.0 { return .orange }
-        return .red
-    }
-
-    /// Drop empty / placeholder RDS rows so the table doesn't render
-    /// "PTYN: —" or "Long PS: —" lines that just clutter the panel.
+    /// Drop empty / placeholder RDS rows so the table does not render
+    /// "PTYN: -" lines.
     private var rdsRowsFiltered: [(String, String)] {
         model.rdsRows.filter { _, value in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !trimmed.isEmpty && trimmed != "—"
+            return !trimmed.isEmpty && trimmed != "-" && trimmed != "\u{2014}"
         }
     }
 
-    /// Pull a single value out of a "Key1 V1 • Key2 V2" detail string.
-    private func parseDetail(_ text: String, key: String) -> String? {
-        let parts = text.split(separator: "•")
-        for p in parts {
-            let trimmed = p.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix(key) {
-                return trimmed.replacingOccurrences(of: "\(key) ", with: "")
+    /// Detail strings from the view model separate their fields with a
+    /// bullet or a vertical bar ("Detector -12.0 dB | Gain 3.0 dB").
+    private static let detailSeparators = CharacterSet(charactersIn: "\u{2022}|")
+
+    /// Pull a single value out of a "Key1 V1 | Key2 V2" detail string.
+    static func parseDetail(_ text: String, key: String) -> String? {
+        for part in text.components(separatedBy: detailSeparators) {
+            let trimmed = part.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix(key + " ") {
+                return String(trimmed.dropFirst(key.count + 1))
             }
         }
         return nil
     }
-}
 
-struct DashboardMetricGrid<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 260, maximum: 420), spacing: 12)],
-            alignment: .leading,
-            spacing: 12
-        ) {
-            content
-        }
+    /// A detail string with its separators as plain commas, for display.
+    static func plainDetail(_ text: String) -> String {
+        text.components(separatedBy: detailSeparators)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 }
 
-struct FlowStatusRow: View {
-    let items: [(title: String, value: String, color: Color)]
-
-    var body: some View {
-        ViewThatFits(in: .vertical) {
-            HStack(spacing: 8) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    DSPStatusPill(title: item.title, value: item.value, color: item.color)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    DSPStatusPill(title: item.title, value: item.value, color: item.color)
-                }
-            }
-        }
-    }
-}
-
-struct DSPStatusPill: View {
-    let title: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 8) {
-            BroadcastStyle.ledHalo(for: color)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(BroadcastStyle.chipLabel)
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Text(value)
-                    .font(BroadcastStyle.chipValue)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BroadcastStyle.meterSurface.opacity(0.70))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
-        // Read as one item ("AGC, On") instead of LED + two text fragments.
-        // The value text already states the status word, so it is not
-        // color-only; this only fixes the fragmentation.
-        .accessibilityElement(children: .combine)
-    }
-}
-
-struct DSPMetricGroupCard: View {
-    let title: String
-    let subtitle: String
-    let rows: [(String, String)]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                ForEach(rows.indices, id: \.self) { i in
-                    GridRow {
-                        Text(rows[i].0)
-                            .font(BroadcastStyle.scaleLabel)
-                            .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
-                        Text(rows[i].1)
-                            .font(BroadcastStyle.valueReadout)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BroadcastStyle.meterSurface.opacity(0.65))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(BroadcastStyle.panelBorder, lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
-    }
-}
-
-struct DSPStateIndicator: View {
-    let title: String
-    let dotColor: Color
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("\(title):")
-                .foregroundStyle(.secondary)
-            Circle()
-                .fill(dotColor)
-                .frame(width: 7, height: 7)
-        }
-    }
-}
-
-struct RuntimeCardView: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "Runtime") {
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("State") {
-                    Text(model.isRunning ? "Running" : "Not running")
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Source") {
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { model.sourceMode },
-                            set: {
-                                model.sourceMode = $0
-                                model.persistBasicConfig()
-                            }
-                        )
-                    ) {
-                        Text("input").tag("input")
-                        Text("tone").tag("tone")
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-                LabeledContent("Input") {
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { model.selectedInputUID },
-                            set: {
-                                model.selectedInputUID = $0
-                                model.persistBasicConfig()
-                            }
-                        )
-                    ) {
-                        ForEach(model.inputDevices, id: \.uid) { d in
-                            Text(d.name).tag(d.uid)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-                LabeledContent("Output") {
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { model.selectedOutputUID },
-                            set: {
-                                model.selectedOutputUID = $0
-                                model.persistBasicConfig()
-                            }
-                        )
-                    ) {
-                        ForEach(model.outputDevices, id: \.uid) { d in
-                            Text(d.name).tag(d.uid)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-
-                Toggle(
-                    "Enable Monitor Output",
-                    isOn: Binding(
-                        get: { model.monitorEnabled },
-                        set: {
-                            model.monitorEnabled = $0
-                            model.persistBasicConfig()
-                        }
-                    ))
-
-                if model.monitorEnabled {
-                    LabeledContent("Monitor Output Device (Decoded MPX Simulation)") {
-                        Picker(
-                            "",
-                            selection: Binding(
-                                get: { model.selectedMonitorUID },
-                                set: {
-                                    model.selectedMonitorUID = $0
-                                    model.persistBasicConfig()
-                                }
-                            )
-                        ) {
-                            ForEach(model.outputDevices, id: \.uid) { d in
-                                Text(d.name).tag(d.uid)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .accessibilityLabel("Monitor output device decoded MPX simulation")
-                    }
-                }
-
-                Divider()
-                LiveObservationView(telemetry: model.telemetry) { _ in
-                    Text(model.runtimeText)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                LiveObservationView(telemetry: model.telemetry) { _ in
-                    ProgressView(value: model.inputBufferValue, total: max(1.0, model.inputBufferMax))
-                        .tint(
-                            model.inputBufferValue >= model.inputBufferCritical
-                                ? .red
-                                : (model.inputBufferValue >= model.inputBufferWarning
-                                    ? .yellow : .green))
-                }
-                LiveObservationView(telemetry: model.telemetry) { _ in
-                    Text(model.inputRingText)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .controlSize(.regular)
-        }
-    }
-}
-
-/// Terminal-style monospaced plate showing what's actually going out on
-/// the air right now — PS window, Radiotext, PTYN, Long PS, plus the PI
-/// / PTY / AID chips. Reads from `model.rdsRows`, which is sourced from
+/// Monospaced plate showing what is going out on air right now: PS
+/// window, Radiotext, PTYN, Long PS. Reads from `model.rdsRows`, which is sourced from
 /// the running coder's live snapshot via `updateRDSFields`.
 struct RDSLivePreviewPlate: View {
     @ObservedObject var model: MPXPrimeViewModel
@@ -860,280 +502,139 @@ struct RDSLivePreviewPlate: View {
     }
 }
 
+/// Prime Mixer ladder meters for what the operator sets levels by: the
+/// input (before or after Input Gain, the same switch as the Audio I/O Input
+/// card) and the output -- a stereo pair for the processed feed (FM / HD / AM
+/// Output), one bar for the composite plus the deviation ladder in MPX
+/// Output. One meter family (`LadderMeterView`, -60 to 0 dBFS) on the
+/// Monitoring page, in the Levels window and on Audio I/O.
 struct LevelsCardView: View {
     @ObservedObject var model: MPXPrimeViewModel
+    /// The card title; the Levels window passes "" because its own header
+    /// already says Levels.
+    var title: String = "Levels"
+    /// The Pre / Post switch inside the card; the Levels window puts it in
+    /// its header instead, where every monitoring window keeps its source.
+    var showsSourcePicker: Bool = true
+    @AppStorage(LevelsCardView.inputPostGainKey) private var inputPostGain = true
+
+    static let inputPostGainKey = "audioIO.inputMetersPostGain"
+    private static let meterHeight: CGFloat = 300
 
     var body: some View {
-        Card(title: "Levels", style: .meter) {
-            LiveObservationView(telemetry: model.telemetry) { _ in
-              HStack(alignment: .center, spacing: 12) {
-                VerticalMeterStrip(
-                    label: "IN L",
-                    valueText: model.inputLText.meterCurrentOnly,
-                    level: model.inputLLevel,
-                    peakLevel: model.inputLPeakHoldLevel,
-                    scale: .dbfs
-                )
-                VerticalMeterStrip(
-                    label: "IN R",
-                    valueText: model.inputRText.meterCurrentOnly,
-                    level: model.inputRLevel,
-                    peakLevel: model.inputRPeakHoldLevel,
-                    scale: .dbfs
-                )
-                VerticalMeterStrip(
-                    label: "AGC L",
-                    valueText: model.agcOutputLText.meterCurrentOnly,
-                    level: model.agcOutputLLevel,
-                    peakLevel: model.agcOutputLPeakHoldLevel,
-                    scale: .dbfs
-                )
-                VerticalMeterStrip(
-                    label: "AGC R",
-                    valueText: model.agcOutputRText.meterCurrentOnly,
-                    level: model.agcOutputRLevel,
-                    peakLevel: model.agcOutputRPeakHoldLevel,
-                    scale: .dbfs
-                )
-                VerticalMeterStrip(
-                    label: model.processedAudioOutputActive ? "OUT" : "MPX",
-                    valueText: model.outputText.meterCurrentOnly,
-                    level: model.outputLevel,
-                    peakLevel: model.outputPeakHoldLevel,
-                    scale: .dbfs
-                )
-                // Modulation/deviation is a composite-domain quantity. In
-                // processed-audio output there is no FM composite, so the MOD
-                // (kHz deviation) meter is meaningless — hide it.
-                if !model.processedAudioOutputActive {
-                    VerticalMeterStrip(
-                        label: "MOD",
-                        valueText: model.modulationText,
-                        level: model.modulationLevel,
-                        peakLevel: model.modulationPeakHoldLevel,
-                        scale: .modulationKHz(fullScale: 100, limit: model.config.mpxDeviationKHz)
-                    )
+        Card(title: title, style: .meter) {
+            VStack(alignment: .leading, spacing: 10) {
+                if showsSourcePicker {
+                    InputSourcePicker()
                 }
-                // GR + SAFE removed in 0.30 — peak-control gain-reduction
-                // data is already surfaced by the Monitoring tab's Headroom
-                // card (PRE-ENCODE / COMPOSITE / SAFETY GR + BS.412 budget)
-                // and per-stage in the Signal Chain strip. The detached
-                // Levels window is now purely VU-style level metering.
-                Spacer(minLength: 0)
-              }
-              .frame(height: 340)
-              // Group the strips under one named VoiceOver container so the
-              // cluster is announced as a unit ("Level meters, …") and the
-              // user can navigate into the individual strips for readings,
-              // instead of landing on disconnected strips with no context.
-              .accessibilityElement(children: .contain)
-              .accessibilityLabel(
-                model.processedAudioOutputActive
-                    ? "Level meters: input L and R, AGC output L and R, output"
-                    : "Level meters: input L and R, AGC output L and R, MPX output, modulation")
-            }
-        }
-    }
-}
-
-struct MeterRow: View {
-    enum ScaleStyle: Equatable {
-        case dbfs
-        case modulation100kHz(limitKHz: Double)
-        case none
-    }
-
-    let label: String
-    let valueText: String
-    let level: Double
-    let peakLevel: Double?
-    let scaleStyle: ScaleStyle
-
-    init(
-        label: String, valueText: String, level: Double, peakLevel: Double? = nil,
-        showsDBScale: Bool = false,
-        scaleStyle: ScaleStyle? = nil
-    ) {
-        self.label = label
-        self.valueText = valueText
-        self.level = level
-        self.peakLevel = peakLevel
-        if let scaleStyle {
-            self.scaleStyle = scaleStyle
-        } else {
-            self.scaleStyle = showsDBScale ? .dbfs : .none
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label).foregroundStyle(.secondary)
-                Spacer()
-                Text(valueText)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    // Fixed footprint so a per-tick value change (e.g.
-                    // "-6.2 dB" -> "-12.4 dB") repaints in place instead of
-                    // resizing and re-solving the enclosing stack layout.
-                    .frame(width: 68, alignment: .trailing)
-            }
-            MeterBar(level: level, peakLevel: peakLevel, scaleStyle: scaleStyle)
-        }
-        .font(.callout)
-        // Collapse the label / readout / bar into one VoiceOver element so it
-        // announces "<name>, <value>" rather than two stray text fragments
-        // with a meaningless bar in between.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue(valueText)
-    }
-}
-
-struct MeterBar: View {
-    let level: Double
-    let peakLevel: Double?
-    let scaleStyle: MeterRow.ScaleStyle
-
-    private struct ScaleTick: Identifiable {
-        let position: Double
-        let label: String
-
-        var id: String { "\(label)-\(position)" }
-    }
-
-    private static func dbfsScalePosition(_ db: Double) -> Double {
-        let floorDB = -36.0
-        let clampedDB = min(0.0, max(floorDB, db))
-        let norm = max(0.0, min(1.0, (clampedDB - floorDB) / -floorDB))
-        return norm
-    }
-
-    private var scaleTicks: [ScaleTick] {
-        switch scaleStyle {
-        case .dbfs:
-            return [
-                ScaleTick(position: Self.dbfsScalePosition(-36.0), label: "-36"),
-                ScaleTick(position: Self.dbfsScalePosition(-24.0), label: "-24"),
-                ScaleTick(position: Self.dbfsScalePosition(-12.0), label: "-12"),
-                ScaleTick(position: Self.dbfsScalePosition(-6.0), label: "-6"),
-                ScaleTick(position: Self.dbfsScalePosition(-3.0), label: "-3"),
-                ScaleTick(position: Self.dbfsScalePosition(0.0), label: "0 dBFS")
-            ]
-        case .modulation100kHz:
-            return [
-                ScaleTick(position: 0.0, label: "0"),
-                ScaleTick(position: 0.25, label: "25"),
-                ScaleTick(position: 0.5, label: "50"),
-                ScaleTick(position: 0.75, label: "75"),
-                ScaleTick(position: 1.0, label: "100 kHz")
-            ]
-        case .none:
-            return []
-        }
-    }
-
-    private var meterTint: Color {
-        switch scaleStyle {
-        case .modulation100kHz(let limitKHz):
-            return BroadcastStyle.tint(forLevel: level, limitNorm: limitKHz / 100.0)
-        case .dbfs, .none:
-            return BroadcastStyle.tint(forLevel: level)
-        }
-    }
-
-    private var targetLevel: Double? {
-        switch scaleStyle {
-        case .modulation100kHz(let limitKHz):
-            return max(0.0, min(1.0, limitKHz / 100.0))
-        case .dbfs, .none:
-            return nil
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Drawn in a Canvas, not laid-out subviews: the fill width / peak / target
-            // change every frame, and a `.frame(width:)` tracking the level would
-            // re-run Auto Layout on every update at the refresh rate (the cause of the
-            // long-run GUI stall). A Canvas just repaints.
-            Canvas { ctx, size in
-                let w = size.width
-                let h = size.height
-                let radius: CGFloat = 3
-                let track = Path(roundedRect: CGRect(x: 0, y: 0, width: w, height: h),
-                                 cornerRadius: radius, style: .continuous)
-                ctx.fill(track, with: .color(Color.secondary.opacity(0.18)))
-                for tick in scaleTicks {
-                    let x = tick.position * w
-                    ctx.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: h)),
-                             with: .color(Color.primary.opacity(0.15)))
-                }
-                let fw = max(0.0, min(1.0, level)) * w
-                if fw > 0.5 {
-                    ctx.fill(
-                        Path(roundedRect: CGRect(x: 0, y: 0, width: fw, height: h),
-                             cornerRadius: radius, style: .continuous),
-                        with: .color(meterTint.opacity(0.75)))
-                }
-                if let target = targetLevel {
-                    let x = min(max(0.0, (max(0.0, min(1.0, target)) * w) - 1.0), max(0.0, w - 2.0))
-                    ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)),
-                             with: .color(Color.accentColor.opacity(0.95)))
-                }
-                if let peak = peakLevel {
-                    let x = min(max(0.0, (max(0.0, min(1.0, peak)) * w) - 1.0), max(0.0, w - 2.0))
-                    ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)),
-                             with: .color(Color.primary.opacity(0.98)))
-                }
-            }
-            .frame(height: 14)
-            if scaleStyle != .none {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        ForEach(scaleTicks) { tick in
-                            Text(tick.label)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .fixedSize()
-                                .position(
-                                    x: min(
-                                        max(12.0, tick.position * geo.size.width),
-                                        max(12.0, geo.size.width - 24.0)
-                                    ),
-                                    y: 7.0
-                                )
+                LiveObservationView(telemetry: model.telemetry) { t in
+                    HStack(alignment: .top, spacing: 18) {
+                        group(
+                            "Input",
+                            inputPostGain ? [t.inputPostLeft, t.inputPostRight] : [t.inputPreLeft, t.inputPreRight],
+                            labels: ["L", "R"], scale: .dbfs)
+                        if model.processedAudioOutputActive {
+                            group(model.config.operatingMode.title, [t.outputLeft, t.outputRight], labels: ["L", "R"], scale: .dbfs)
+                        } else {
+                            group(model.config.operatingMode.title, [t.outputLeft], labels: [""], scale: .dbfs)
+                            // Deviation is a composite quantity: MPX Output only.
+                            group("Deviation", [t.modulation], labels: [""], scale: deviationScale)
                         }
+                        Spacer(minLength: 0)
                     }
+                    .frame(height: Self.meterHeight + 36, alignment: .top)
+                    // One named VoiceOver container; the bars inside carry
+                    // their own readings.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(
+                        model.processedAudioOutputActive
+                            ? "Level meters: input, output left and right"
+                            : "Level meters: input, MPX output, deviation")
                 }
-                .frame(height: 14)
             }
         }
-        .transaction { txn in
-            txn.animation = nil
+    }
+
+    private var deviationScale: LadderMeterScale {
+        .deviation(fullScaleKHz: 100, limitKHz: max(1, model.config.mpxDeviationKHz))
+    }
+
+    /// A ladder with its title and the held peak of its loudest bar beneath.
+    /// The readout has a fixed width, so a new value repaints in place.
+    private func group(
+        _ title: String, _ readings: [LadderMeterReading], labels: [String], scale: LadderMeterScale
+    ) -> some View {
+        let held = readings.map(\.heldPeakDBFS).max() ?? -.infinity
+        return VStack(spacing: 4) {
+            LadderMeterView(readings: readings, labels: labels, scale: scale, height: Self.meterHeight)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(LadderMeterView.readout(held, scale: scale))
+                .font(.system(.caption2, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 76)
         }
     }
 }
 
-struct MonitoringWindowHeader: View {
+/// The input meters' source: Pre (as the device delivers it) or Post (after
+/// Input Gain). One stored setting shared by every input meter.
+struct InputSourcePicker: View {
+    @AppStorage(LevelsCardView.inputPostGainKey) private var inputPostGain = true
+
+    var body: some View {
+        Picker("Input meters", selection: $inputPostGain) {
+            Text("Pre").tag(false)
+            Text("Post").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Input meters. Pre: what the input device delivers. Post: after Input Gain, "
+            + "the level the processing receives.")
+    }
+}
+
+/// The one header every monitoring window uses: title and subtitle on the
+/// left, the window's controls right-aligned (source first, then options).
+struct MonitoringWindowHeader<Controls: View>: View {
     let title: String
     let subtitle: String
+    let controls: Controls
+
+    init(title: String, subtitle: String, @ViewBuilder controls: () -> Controls) {
+        self.title = title
+        self.subtitle = subtitle
+        self.controls = controls()
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.title2.weight(.semibold))
-            Text(subtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 12) {
+                controls
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension MonitoringWindowHeader where Controls == EmptyView {
+    init(title: String, subtitle: String) {
+        self.init(title: title, subtitle: subtitle) { EmptyView() }
     }
 }
 
 /// Bar-style 1/3-octave RTA visualization. Used for the Audio Spectrum
-/// window — more representative of how pro broadcast processors
+/// window -- more representative of how pro broadcast processors
 /// (Optimod / Omnia / Stereotool) show audio program spectrum than a
 /// line/area FFT plot. Same underlying `dbBins` source as
 /// `MPXSpectrumView`; this view just remaps to ISO 1/3-octave bands and
@@ -1202,7 +703,7 @@ struct AudioBarSpectrumView: View {
                 // Filter ISO bands by display Nyquist so we don't draw
                 // bars whose center is beyond the actual analyzed range.
                 // Inclusive comparison: a 16 kHz band at exactly maxHz
-                // still shows — the upper half of its 1/3-octave window
+                // still shows -- the upper half of its 1/3-octave window
                 // extends past maxHz but its lower half (14.25-16 kHz)
                 // has valid FFT data and the bar reflects that energy.
                 let displayMaxHz = max(1_000.0, maxHz)
@@ -1218,7 +719,7 @@ struct AudioBarSpectrumView: View {
                 )
 
                 // For each ISO band, pull max of FFT bins falling in
-                // [center * 2^(-1/6), center * 2^(1/6)] — standard
+                // [center * 2^(-1/6), center * 2^(1/6)] -- standard
                 // 1/3-octave window.
                 let binCount = dbBins.count
                 let oneSixthOctave = pow(2.0, 1.0 / 6.0)
@@ -1249,7 +750,7 @@ struct AudioBarSpectrumView: View {
                     for b in lowBin...highBin where dbBins[b] > maxDB {
                         maxDB = dbBins[b]
                     }
-                    // Floor for visual readability — a 1-pixel sliver at
+                    // Floor for visual readability -- a 1-pixel sliver at
                     // -100 is invisible; cap at -98 so very-quiet bands
                     // still show a faint base.
                     maxDB = max(-98.0, maxDB)
@@ -1319,7 +820,7 @@ struct AudioBarSpectrumView: View {
             .font(.system(.caption, design: .monospaced).weight(.medium))
             .foregroundStyle(.secondary)
         }
-        // Discrete updates — no implicit interpolation between frames
+        // Discrete updates -- no implicit interpolation between frames
         // (matches the line spectrum's transaction modifier; prevents
         // animation queue buildup at 30 Hz refresh).
         .transaction { txn in
@@ -1338,60 +839,54 @@ struct AudioBarSpectrumView: View {
     }
 }
 
-struct KeyValueGrid: View {
-    let rows: [(String, String)]
+struct FlowStatusRow: View {
+    let items: [(title: String, value: String, color: Color)]
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-            ForEach(rows.indices, id: \.self) { i in
-                GridRow {
-                    Text(rows[i].0)
-                        .foregroundStyle(.secondary)
-                    Text(rows[i].1)
-                        .textSelection(.enabled)
+        ViewThatFits(in: .vertical) {
+            HStack(spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    DSPStatusPill(title: item.title, value: item.value, color: item.color)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    DSPStatusPill(title: item.title, value: item.value, color: item.color)
+                }
+            }
         }
-        .font(.callout)
     }
 }
 
-/// One-paragraph help block shown at the top of each Processing detail
-/// tab (everything except the Overview grid). Intentionally muted /
-/// secondary styling so it reads as documentation rather than a control;
-/// stays out of the way once the operator knows the stage but is there
-/// when they need to anchor.
-struct TabHelpBox: View {
-    let text: String
+struct DSPStatusPill: View {
+    let title: String
+    let value: String
+    let color: Color
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            // Decorative info-icon — the Text alongside it carries the
-            // entire content to VoiceOver. Hide the icon from the
-            // accessibility tree so screen readers don't announce
-            // "info circle" before every tab help block.
-            Image(systemName: "info.circle")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-                .accessibilityHidden(true)
-            Text(text)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        InsetTile {
+            pill
         }
-        .padding(12)
+        // Read as one item ("AGC, On") instead of LED + two text fragments.
+        .accessibilityElement(children: .combine)
+    }
+
+    private var pill: some View {
+        HStack(spacing: 8) {
+            BroadcastStyle.ledHalo(for: color)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(BroadcastStyle.chipLabel)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(value)
+                    .font(BroadcastStyle.chipValue)
+                    .textSelection(.enabled)
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.secondary.opacity(0.07))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 0.5)
-        )
     }
 }
 

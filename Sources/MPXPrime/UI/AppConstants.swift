@@ -13,29 +13,66 @@ import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Sizes
-let kWindowWidth: CGFloat = 860
-let kWindowHeight: CGFloat = 440
-let kWindowMinWidth: CGFloat = 760
-let kWindowMinHeight: CGFloat = 380
-// Six 64 pt meter strips (~444 pt) + card/window padding fit comfortably in
-// ~560 pt; the prior 860/760 defaults left half the window empty (the meters
-// are left-aligned, not stretched).
-let kLevelsWindowWidth: CGFloat = 560
-let kLevelsWindowHeight: CGFloat = 560
-let kLevelsWindowMinWidth: CGFloat = 480
-let kLevelsWindowMinHeight: CGFloat = 460
+/// The detached monitoring windows: ONE table for their titles and sizes,
+/// in toolbar and Window-menu order. Default and minimum sizes fit the
+/// window's own content (`MonitoringWindows.swift`) with 20 pt padding.
+enum MonitoringWindowKind: CaseIterable {
+    case levels, audioSpectrum, mpxSpectrum, scopes
+
+    var title: String {
+        switch self {
+        case .levels: return "Levels"
+        case .audioSpectrum: return "Audio Spectrum"
+        case .mpxSpectrum: return "MPX Spectrum"
+        case .scopes: return "Scopes"
+        }
+    }
+
+    /// Default content size.
+    var size: CGSize {
+        switch self {
+        // Three ladder groups (input, output, deviation) of about 80 pt,
+        // 300 pt meters under the header.
+        case .levels: return CGSize(width: 400, height: 500)
+        // Two stacked stereo bar spectra.
+        case .audioSpectrum: return CGSize(width: 900, height: 640)
+        case .mpxSpectrum, .scopes: return CGSize(width: 860, height: 440)
+        }
+    }
+
+    var minSize: CGSize {
+        switch self {
+        case .levels: return CGSize(width: 360, height: 470)
+        case .audioSpectrum: return CGSize(width: 700, height: 520)
+        case .mpxSpectrum, .scopes: return CGSize(width: 760, height: 380)
+        }
+    }
+}
+
+// Spellings the window code uses, all read from the table above.
+let kWindowWidth: CGFloat = MonitoringWindowKind.scopes.size.width
+let kWindowHeight: CGFloat = MonitoringWindowKind.scopes.size.height
+let kWindowMinWidth: CGFloat = MonitoringWindowKind.scopes.minSize.width
+let kWindowMinHeight: CGFloat = MonitoringWindowKind.scopes.minSize.height
+let kLevelsWindowWidth: CGFloat = MonitoringWindowKind.levels.size.width
+let kLevelsWindowHeight: CGFloat = MonitoringWindowKind.levels.size.height
+let kLevelsWindowMinWidth: CGFloat = MonitoringWindowKind.levels.minSize.width
+let kLevelsWindowMinHeight: CGFloat = MonitoringWindowKind.levels.minSize.height
+let kAudioSpectrumWindowWidth: CGFloat = MonitoringWindowKind.audioSpectrum.size.width
+let kAudioSpectrumWindowHeight: CGFloat = MonitoringWindowKind.audioSpectrum.size.height
+let kAudioSpectrumWindowMinWidth: CGFloat = MonitoringWindowKind.audioSpectrum.minSize.width
+let kAudioSpectrumWindowMinHeight: CGFloat = MonitoringWindowKind.audioSpectrum.minSize.height
 let kMPXPrimeIconSymbol = "\u{1F3A7}"
-let kScopesWindowTitle = "Scopes"
-let kMPXSpectrumWindowTitle = "MPX Spectrum"
-let kAudioSpectrumWindowTitle = "Audio Spectrum"
-let kLevelsWindowTitle = "Levels"
+let kScopesWindowTitle = MonitoringWindowKind.scopes.title
+let kMPXSpectrumWindowTitle = MonitoringWindowKind.mpxSpectrum.title
+let kAudioSpectrumWindowTitle = MonitoringWindowKind.audioSpectrum.title
+let kLevelsWindowTitle = MonitoringWindowKind.levels.title
 // Window-frame autosave keys (UserDefaults).
 let kMainWindowAutosaveName = "MPXPrimeStudio.MainWindow"
 let kScopesWindowAutosaveName = "MPXPrimeStudio.ScopesWindow"
 let kSpectrumWindowAutosaveName = "MPXPrimeStudio.SpectrumWindow"
-let kPreMPXSpectrumWindowAutosaveName = "MPXPrimeStudio.PreMPXSpectrumWindow"
-let kLevelsWindowAutosaveName = "MPXPrimeStudio.LevelsWindow"
+let kPreMPXSpectrumWindowAutosaveName = "MPXPrimeStudio.AudioSpectrumWindow.v2"
+let kLevelsWindowAutosaveName = "MPXPrimeStudio.LevelsWindow.v2"
 let kAboutWindowAutosaveName = "MPXPrimeStudio.AboutWindow"
 let kHelpWindowAutosaveName = "MPXPrimeStudio.HelpWindow"
 let kSettingsWindowAutosaveName = "MPXPrimeStudio.SettingsWindow"
@@ -44,9 +81,6 @@ let kSettingsWindowAutosaveName = "MPXPrimeStudio.SettingsWindow"
 let kProjectURL = URL(string: "https://github.com/bkram/MPXPrime")!
 let kManualURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md")!
 let kLicenseURL = URL(string: "https://github.com/bkram/MPXPrime/blob/main/LICENSE")!
-let kRestartRequiredSettingsListText =
-    "Restart required for sample rate, block size, source mode, monitor output routing, input/output/monitor device changes, mono mode, pre-emphasis, sum/diff levels, program lowpass, and other encoder-structure changes."
-
 func makeMPXPrimeAppIcon(size: CGFloat = 512) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
     image.lockFocus()

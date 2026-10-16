@@ -109,5 +109,24 @@ struct MonitorRenderParityTests {
         for i in tail..<frames { peak = max(peak, max(abs(monL[i]), abs(monR[i]))) }
         #expect(peak > 0.01, "the monitor tap produced silence (peak \(peak))")
         #expect(monL.allSatisfy { $0.isFinite } && monR.allSatisfy { $0.isFinite })
+
+        // Channel identity: L carries 700 Hz, R carries 1100 Hz. A swapped
+        // or mono decode passes the peak check above
+        // (test-suite review 2026-10 finding 13).
+        func amplitude(_ x: [Float], _ hz: Double) -> Double {
+            let w = 2.0 * Double.pi * hz / 192_000.0
+            var s = 0.0, c = 0.0
+            for i in tail..<frames {
+                s += Double(x[i]) * sin(w * Double(i))
+                c += Double(x[i]) * cos(w * Double(i))
+            }
+            return 2.0 * hypot(s, c) / Double(frames - tail)
+        }
+        let leftOwn = amplitude(monL, 700.0), leftOther = amplitude(monL, 1_100.0)
+        let rightOwn = amplitude(monR, 1_100.0), rightOther = amplitude(monR, 700.0)
+        let sepL = 20.0 * log10(max(leftOwn, 1e-12) / max(leftOther, 1e-12))
+        let sepR = 20.0 * log10(max(rightOwn, 1e-12) / max(rightOther, 1e-12))
+        #expect(sepL > 20.0, "monitor L carries R's 1100 Hz only \(sepL) dB below its own 700 Hz: swap or mono")
+        #expect(sepR > 20.0, "monitor R carries L's 700 Hz only \(sepR) dB below its own 1100 Hz: swap or mono")
     }
 }

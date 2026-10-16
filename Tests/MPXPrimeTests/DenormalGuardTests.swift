@@ -8,58 +8,72 @@ import MPXPrimeNative
 // for the rationale and the v0.30.2 / "white noise after a couple of
 // songs" bug report that motivated it.
 //
-// Test strategy: feed a denormal-producing operation through the
-// arithmetic path and verify the result is exactly zero after the
-// guard is enabled. Without FTZ, the result is a denormal (very small
-// non-zero value). With FTZ, the result is zero. The denormal is
-// produced by repeatedly halving a small float — Float has ~24-bit
-// mantissa, so 1e-30 / 2^n where n>>120 quickly enters denormal range
-// (< 1.175e-38).
+// Test strategy: build a REAL subnormal at run time (half the smallest
+// normal Float, through a value the compiler cannot fold) on a FRESH thread
+// and check the arithmetic produces a non-zero subnormal before the guard
+// (the control) and exactly zero after it. The old test multiplied 1e-30 by
+// (1e-5)^10 = 1e-80, which is below the smallest subnormal (1.4e-45) and
+// underflows to 0.0 with or without flush-to-zero, so an empty
+// `mpx_enable_flush_to_zero()` passed (test-suite review 2026-10
+// finding 11). The FP control register is per-thread, so the check runs on
+// its own thread: enabling FTZ on a shared test-pool thread would leak into
+// every other test scheduled there.
+
+private final class FloatPairBox: @unchecked Sendable {
+    var value: (Float, Float) = (.nan, .nan)
+}
+
+/// Run `body` on a new thread and wait for its result.
+private func onFreshThread(_ body: @escaping @Sendable () -> (Float, Float)) -> (Float, Float) {
+    let box = FloatPairBox()
+    let done = DispatchSemaphore(value: 0)
+    let thread = Thread {
+        box.value = body()
+        done.signal()
+    }
+    thread.start()
+    done.wait()
+    return box.value
+}
+
+/// A runtime 0.5 the optimiser cannot see through: the product below must be
+/// computed by the FPU, not folded at compile time.
+@inline(never)
+private func opaqueHalf() -> Float {
+    Float(ProcessInfo.processInfo.processorCount > 0 ? 0.5 : 0.25)
+}
+
+/// Half the smallest normal Float: 5.9e-39, a subnormal.
+private func subnormalProduct() -> Float {
+    Float.leastNormalMagnitude * opaqueHalf()
+}
 
 @Suite("Denormal guard")
 struct DenormalGuardTests {
 
-    /// Force a denormal Float and check the arithmetic path treats it
-    /// the way FTZ would (i.e., it cleanly flushes to zero on use).
-    /// Implementation detail: a denormal float multiplied by another
-    /// denormal float will underflow to zero on x86 with FTZ on,
-    /// whereas without FTZ it stays as a denormal value (very slow path
-    /// on Intel). The test relies on a specific multiplication pattern
-    /// to avoid the compiler folding it at build time.
     @Test func flushToZeroSilencesDenormalArithmetic() {
-        // Enable the flag on this thread.
-        mpx_enable_flush_to_zero()
-
-        // Build a denormal-range Float at runtime to defeat constant
-        // folding. Float min normal ~ 1.175e-38; values smaller than
-        // that and non-zero are denormal.
-        var x: Float = 1.0e-30
-        for _ in 0..<10 {
-            // Use a runtime variable so the compiler can't fold.
-            x *= 1.0e-5
+        let (before, after) = onFreshThread { () -> (Float, Float) in
+            let before = subnormalProduct()
+            mpx_enable_flush_to_zero()
+            let after = subnormalProduct()
+            return (before, after)
         }
-        // Now multiply by another small value to force the result
-        // through the FP slow path. With FTZ on, the result flushes
-        // to zero; without it, it stays denormal.
-        let denormProduct: Float = x * 1.0e-10
-
-        // With FTZ on the result is exactly zero. Without FTZ the
-        // result is a denormal (~1e-90 etc.) — NON-zero.
-        #expect(denormProduct == 0.0,
-                "mpx_enable_flush_to_zero() did not silence denormal arithmetic — got \(denormProduct). The audio thread will still hit the Intel denormal-slow-path and produce dropouts after long sessions.")
+        // Control: without the guard the product is a genuine subnormal, so
+        // the measurement can see the flag.
+        #expect(before != 0.0 && before.isSubnormal,
+                "control failed: \(before) is not a subnormal, so the check below cannot fail")
+        #expect(after == 0.0,
+                "mpx_enable_flush_to_zero() did not silence denormal arithmetic -- got \(after). The audio thread will still hit the denormal slow path and produce dropouts after long sessions.")
     }
 
-    /// Sanity check that the helper is callable repeatedly without
-    /// side effects. It will be invoked on every render callback (per
-    /// the AudioOutputEngine wiring) so confirming it's free of state
-    /// matters for real-time safety.
-    @Test func helperIsIdempotentAndCheap() {
-        for _ in 0..<1000 {
-            mpx_enable_flush_to_zero()
+    /// The helper runs at the top of every render callback, so repeated calls
+    /// must leave the flag set and normal arithmetic untouched.
+    @Test func helperIsIdempotentAndLeavesNormalArithmeticAlone() {
+        let (flushed, normal) = onFreshThread { () -> (Float, Float) in
+            for _ in 0..<1000 { mpx_enable_flush_to_zero() }
+            return (subnormalProduct(), Float.leastNormalMagnitude * (opaqueHalf() * 2.0))
         }
-        // No assertion beyond "didn't crash" — the cost is measured
-        // separately via Instruments if needed (~1 ns per call on
-        // M1 Pro, ~3 ns on Coffee Lake-H, well below the per-callback
-        // budget either way).
+        #expect(flushed == 0.0, "after 1000 calls the flag is no longer effective: \(flushed)")
+        #expect(normal == Float.leastNormalMagnitude, "FTZ changed a NORMAL result: \(normal)")
     }
 }

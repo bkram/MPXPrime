@@ -25,7 +25,7 @@ import os
 /// Stereo-linked 4x oversampled true-peak limiter used by
 /// `PreEncodeAudioLimiter` on L/R before stereo encoding. Shared gain
 /// envelope driven by `max(|L_os|, |R_os|)` at OS rate; per-channel
-/// Lagrange interpolation and linear-phase FIR decimation.
+/// linear-phase FIR interpolation and decimation.
 ///
 /// Operating on independent audio channels (no multiplexed subcarrier),
 /// the trailing tanh ceiling is normal soft-knee limiter behaviour.
@@ -48,7 +48,7 @@ struct StereoLinkedOversampledPeakLimiter {
     // Precomputed soft-knee width (ceiling - threshold, floored at 1e-4).
     // Depends only on configure() inputs, so it is computed once there
     // instead of per over-threshold sample in clipToCeiling.
-    private var ceilingKnee: Float = 1e-4
+    private(set) var ceilingKnee: Float = 1e-4
 
     // Shared envelope state (the load-bearing change vs the prior pair
     // of independent OversampledPeakLimiters: same gain for both L/R).
@@ -58,13 +58,15 @@ struct StereoLinkedOversampledPeakLimiter {
     private var holdSamples: Int = 0
     private var holdCounter: Int = 0
 
-    // Per-channel Lagrange-4 interpolator state
-    private var lPrev3: Float = 0.0
-    private var lPrev2: Float = 0.0
-    private var lPrev1: Float = 0.0
-    private var rPrev3: Float = 0.0
-    private var rPrev2: Float = 0.0
-    private var rPrev1: Float = 0.0
+    // Per-channel 1:4 interpolator: linear-phase Kaiser FIR (polyphase).
+    // Until 2026-10 this was a causal 4-point Lagrange with no image filter:
+    // 15 kHz imaged at 33 kHz only 16 dB down and 10 kHz at -29 dB, and the
+    // detector settled a steady 14 kHz tone 0.58 dB UNDER the threshold
+    // (peak-control review F9).
+    private var lInterp = LinearPhaseFIRInterpolator()
+    private var rInterp = LinearPhaseFIRInterpolator()
+    private var lOS: [Float] = [0.0, 0.0, 0.0, 0.0]
+    private var rOS: [Float] = [0.0, 0.0, 0.0, 0.0]
     // Per-channel 4:1 decimator: linear-phase Kaiser FIR designed at the OS
     // rate (see configure). Until 0.45 this was a 6th-order Butterworth at
     // 0.30 x host rate -- 14.4 kHz at the 48 kHz audio domain, i.e. -2.3 dB
@@ -74,7 +76,6 @@ struct StereoLinkedOversampledPeakLimiter {
     private var rDecim = LinearPhaseFIRDecimator()
     private var lResidualClipper = AcceleratedBandlimitedResidualClipper()
     private var rResidualClipper = AcceleratedBandlimitedResidualClipper()
-    private var initialized: Bool = false
 
     // Look-ahead: audio-rate delay so the detector sees the incoming peak
     // before it reaches the gain stage, letting the attack ramp engage
@@ -115,7 +116,10 @@ struct StereoLinkedOversampledPeakLimiter {
         self.releaseMS = max(8.0, releaseMS)
         self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
         ceiling = oversampledLimiterCeiling(threshold: self.threshold)
-        ceilingKnee = max(1e-4, ceiling - threshold)
+        // The CLAMPED threshold: the argument may lie outside 0.75...0.995
+        // (AppConfig accepts 0.5...0.999), and a knee measured from it is
+        // either far too wide (a slope kink at the join) or a hard clip.
+        ceilingKnee = max(1e-4, ceiling - self.threshold)
 
         let attackS = 0.00025 as Float
         let relS = max(0.008, Double(self.releaseMS) * 0.001)
@@ -124,8 +128,6 @@ struct StereoLinkedOversampledPeakLimiter {
         holdSamples = max(1, Int((0.004 * sr).rounded()))
         holdCounter = 0
         gain = 1.0
-        lPrev3 = 0.0; lPrev2 = 0.0; lPrev1 = 0.0
-        rPrev3 = 0.0; rPrev2 = 0.0; rPrev1 = 0.0
         // Decimator doubling as the post-limiter 15 kHz band-limit in the
         // PRE-EMPHASISED domain (Orban: "band-limit slightly above 15 kHz,
         // embedded before the composite stage"). The encoder FIR (14.9 kHz,
@@ -141,6 +143,14 @@ struct StereoLinkedOversampledPeakLimiter {
         // (wider) program bandwidth, which is why this is a parameter now.
         let passband = clampf(passbandHz, 10_000.0, max(10_000.0, sampleRate * 0.42))
         let transitionHz = max(1_500.0, sampleRate / 32.0)
+        // Interpolator: flat over the same passband, image of its edge
+        // (host rate - passband) in the stopband. Anything between the two is
+        // removed by the decimator anyway.
+        let interpTransition = max(1_500.0, sampleRate - (2.0 * passband))
+        lInterp.configure(cutoffHz: passband, sampleRateOS: sr, interpolateFactor: 4,
+                          stopBandDB: 80.0, transitionHz: interpTransition)
+        rInterp.configure(cutoffHz: passband, sampleRateOS: sr, interpolateFactor: 4,
+                          stopBandDB: 80.0, transitionHz: interpTransition)
         lDecim.configure(cutoffHz: passband, sampleRateOS: sr, decimateFactor: 4,
                          stopBandDB: 80.0, transitionHz: transitionHz)
         rDecim.configure(cutoffHz: passband, sampleRateOS: sr, decimateFactor: 4,
@@ -178,8 +188,6 @@ struct StereoLinkedOversampledPeakLimiter {
         hfDetectorR.configureHighpass(cutoffHz: hfCutoff, sampleRate: sampleRate)
         hfDetectorL.reset()
         hfDetectorR.reset()
-
-        initialized = false
     }
 
     mutating func process(left: Float, right: Float) -> (Float, Float) {
@@ -214,30 +222,17 @@ struct StereoLinkedOversampledPeakLimiter {
             }
         }
 
-        if !initialized {
-            initialized = true
-            lPrev3 = procL; lPrev2 = procL; lPrev1 = procL
-            rPrev3 = procR; rPrev2 = procR; rPrev1 = procR
-            let (qL, qR) = stereoStep(lOS: procL, rOS: procR, futurePeakHint: futurePeak)
-            return (decimate(qL, qL, qL, qL, ch: .left),
-                    decimate(qR, qR, qR, qR, ch: .right))
+        // 4x upsample both channels (polyphase Kaiser FIR).
+        lOS.withUnsafeMutableBufferPointer { o in
+            // swiftlint:disable:next force_unwrapping
+            lInterp.push(procL, into: o.baseAddress!)
         }
-
-        // 4x upsample both channels via Lagrange interp.
-        let l1 = interpolateLagrange4(t: 0.25, current: procL,
-                                      p3: lPrev3, p2: lPrev2, p1: lPrev1)
-        let l2 = interpolateLagrange4(t: 0.50, current: procL,
-                                      p3: lPrev3, p2: lPrev2, p1: lPrev1)
-        let l3 = interpolateLagrange4(t: 0.75, current: procL,
-                                      p3: lPrev3, p2: lPrev2, p1: lPrev1)
-        let l4 = procL
-        let r1 = interpolateLagrange4(t: 0.25, current: procR,
-                                      p3: rPrev3, p2: rPrev2, p1: rPrev1)
-        let r2 = interpolateLagrange4(t: 0.50, current: procR,
-                                      p3: rPrev3, p2: rPrev2, p1: rPrev1)
-        let r3 = interpolateLagrange4(t: 0.75, current: procR,
-                                      p3: rPrev3, p2: rPrev2, p1: rPrev1)
-        let r4 = procR
+        rOS.withUnsafeMutableBufferPointer { o in
+            // swiftlint:disable:next force_unwrapping
+            rInterp.push(procR, into: o.baseAddress!)
+        }
+        let l1 = lOS[0], l2 = lOS[1], l3 = lOS[2], l4 = lOS[3]
+        let r1 = rOS[0], r2 = rOS[1], r3 = rOS[2], r4 = rOS[3]
 
         // Stereo-linked gain step at each OS position. Same gain
         // applied to both channels each step. The future-peak hint biases
@@ -250,9 +245,6 @@ struct StereoLinkedOversampledPeakLimiter {
 
         let outL = decimate(qL1, qL2, qL3, qL4, ch: .left)
         let outR = decimate(qR1, qR2, qR3, qR4, ch: .right)
-
-        lPrev3 = lPrev2; lPrev2 = lPrev1; lPrev1 = procL
-        rPrev3 = rPrev2; rPrev2 = rPrev1; rPrev1 = procR
         return (outL, outR)
     }
 
@@ -262,8 +254,20 @@ struct StereoLinkedOversampledPeakLimiter {
     }
 
     /// Host-rate samples of delay this stage adds to the L/R path: the
-    /// look-ahead delay line plus the decimator's group delay.
-    var latencySamples: Int { lookaheadSamples + lDecim.groupDelayHostSamples }
+    /// look-ahead delay line, the interpolator's and the decimator's group
+    /// delay and, when it is in the path, the band-limited residual
+    /// clipper's (an OS-rate FIR). The OS delays are summed BEFORE the
+    /// rounding to host samples: rounding the decimator alone (321 OS = 80.25
+    /// host) and leaving the residual clipper out (16 OS = 4 host)
+    /// under-reported the latency (peak-control review F14).
+    var latencySamples: Int {
+        let residualOS = bandlimitedResidualEnabled ? lResidualClipper.groupDelaySamples : 0
+        // The interpolator's last output of a step is (centre - 3) OS
+        // samples behind the input it was pushed with.
+        let interpOS = max(0, lInterp.groupDelayOSSamples - 3)
+        let osDelay = interpOS + lDecim.groupDelayOSSamples + residualOS
+        return lookaheadSamples + Int((Float(osDelay) / 4.0).rounded())
+    }
 
     @inline(__always)
     private mutating func stereoStep(lOS: Float, rOS: Float, futurePeakHint: Float = 0.0) -> (Float, Float) {
@@ -293,17 +297,6 @@ struct StereoLinkedOversampledPeakLimiter {
         let yL = lOS * gain
         let yR = rOS * gain
         return (clipToCeiling(yL, ch: .left), clipToCeiling(yR, ch: .right))
-    }
-
-    @inline(__always)
-    private func interpolateLagrange4(t: Float, current: Float,
-                                      p3: Float, p2: Float, p1: Float) -> Float {
-        // Causal 4-point Lagrange reconstruction between p1 and current.
-        let l0 = -((t + 1.0) * t * (t - 1.0)) / 6.0
-        let l1 = ((t + 2.0) * t * (t - 1.0)) * 0.5
-        let l2 = -((t + 2.0) * (t + 1.0) * (t - 1.0)) * 0.5
-        let l3 = ((t + 2.0) * (t + 1.0) * t) / 6.0
-        return (p3 * l0) + (p2 * l1) + (p1 * l2) + (current * l3)
     }
 
     private enum Channel { case left, right }
@@ -399,28 +392,178 @@ struct PreEncodeAudioLimiter {
     var latencySamples: Int { limiter.latencySamples }
 }
 
+/// Step-free look-ahead gain for a limiter that knows, through a sliding-window
+/// detector, the gain each sample will need when it leaves its delay line.
+///
+/// Feed it the window-minimum required gain (`target`) once per sample. The
+/// target is first passed through an instant-attack / hold / release follower
+/// (`held <= target` always), then averaged by two cascaded moving averages
+/// whose combined span is `rampSamples + 1`. The result is a gain that starts
+/// moving `rampSamples` before the peak leaves the line, follows a smooth
+/// S-shaped (piecewise-quadratic) ramp, and arrives at the required value
+/// exactly when the peak does -- with no step anywhere.
+///
+/// Why this is a bound and not just a smoother: every `held` value inside the
+/// averaging span was taken from a detector window that still contained the
+/// exiting sample, as long as `rampSamples <= lookahead`, so each of them is
+/// at most that sample's required gain, and so is their average. The previous
+/// design (a one-pole attack plus a hard floor `gain = min(gain, target)`
+/// written back into the state) met the bound by jumping: the moment a larger
+/// peak entered the window the gain stepped to the new target in one sample,
+/// a -1.36 dB step that spread -66 dBc of spill above 60 kHz on a 1.6x level
+/// jump (2026-10 peak-control review, F6). Nothing filters behind the final
+/// limiter, so that spill went on air.
+///
+/// The running sums are Double and re-summed from the ring on every wrap, so
+/// they cannot drift. No allocation after `configure`.
+struct LookaheadGainRamp {
+    private var ring1: [Float] = [1.0]
+    private var ring2: [Float] = [1.0]
+    private var length1: Int = 1
+    private var length2: Int = 1
+    private var index1: Int = 0
+    private var index2: Int = 0
+    private var sum1: Double = 1.0
+    private var sum2: Double = 1.0
+    private var held: Float = 1.0
+    private var holdSamples: Int = 0
+    private var holdCounter: Int = 0
+    private var releaseCoeff: Float = 0.0
+    private(set) var rampSamples: Int = 0
+    /// The gain on the last sample.
+    private(set) var gain: Float = 1.0
+
+    /// A released gain above this snaps to unity, so an idle stage is an
+    /// exact delay.
+    static let unitySnap: Float = 0.999_999
+
+    /// Box lengths for a ramp: two boxes of lengths m1, m2 span
+    /// m1 + m2 - 1 = ramp + 1 samples.
+    private static func boxLengths(_ ramp: Int) -> (Int, Int) {
+        ((ramp / 2) + 1, ramp - (ramp / 2) + 1)
+    }
+
+    /// - Parameter capacityRampSamples: the longest ramp `resize` may later
+    ///   ask for without allocating (defaults to `rampSamples`).
+    mutating func configure(rampSamples: Int, holdSamples: Int, releaseCoeff: Float,
+                            capacityRampSamples: Int? = nil) {
+        let ramp = max(0, rampSamples)
+        let capacity = max(ramp, capacityRampSamples ?? ramp)
+        let (c1, c2) = Self.boxLengths(capacity)
+        if ring1.count < c1 { ring1 = [Float](repeating: 1.0, count: c1) }
+        if ring2.count < c2 { ring2 = [Float](repeating: 1.0, count: c2) }
+        self.rampSamples = ramp
+        (length1, length2) = Self.boxLengths(ramp)
+        self.holdSamples = max(0, holdSamples)
+        self.releaseCoeff = releaseCoeff
+        reset()
+    }
+
+    mutating func reset() {
+        for i in 0..<ring1.count { ring1[i] = 1.0 }
+        for i in 0..<ring2.count { ring2[i] = 1.0 }
+        index1 = 0
+        index2 = 0
+        sum1 = Double(length1)
+        sum2 = Double(length2)
+        held = 1.0
+        holdCounter = 0
+        gain = 1.0
+    }
+
+    /// Live change of the ramp length within the configured capacity, with
+    /// no allocation: both boxes restart filled with the current gain, so the
+    /// output is continuous across the change.
+    mutating func resize(rampSamples: Int, holdSamples: Int) {
+        let (c1, c2) = (ring1.count, ring2.count)
+        var ramp = max(0, rampSamples)
+        while ramp > 0 {
+            let (m1, m2) = Self.boxLengths(ramp)
+            if m1 <= c1 && m2 <= c2 { break }
+            ramp -= 1
+        }
+        self.rampSamples = ramp
+        (length1, length2) = Self.boxLengths(ramp)
+        self.holdSamples = max(0, holdSamples)
+        let g = gain
+        for i in 0..<length1 { ring1[i] = g }
+        for i in 0..<length2 { ring2[i] = g }
+        index1 = 0
+        index2 = 0
+        sum1 = Double(g) * Double(length1)
+        sum2 = Double(g) * Double(length2)
+        held = min(held, g)
+    }
+
+    /// Push the required gain for the window that ends with this sample;
+    /// returns the gain to apply to the sample leaving the line now.
+    @inline(__always)
+    mutating func push(_ target: Float) -> Float {
+        if target < held {
+            held = target
+            holdCounter = holdSamples
+        } else if holdCounter > 0 {
+            holdCounter -= 1
+        } else {
+            held = (releaseCoeff * held) + ((1.0 - releaseCoeff) * target)
+            if held > Self.unitySnap && target >= 1.0 { held = 1.0 }
+        }
+        let a = Self.boxPush(held, ring: &ring1, length: length1, index: &index1, sum: &sum1)
+        let b = Self.boxPush(a, ring: &ring2, length: length2, index: &index2, sum: &sum2)
+        gain = b
+        return b
+    }
+
+    @inline(__always)
+    private static func boxPush(_ x: Float, ring: inout [Float], length n: Int, index: inout Int,
+                                sum: inout Double) -> Float {
+        if n <= 1 {
+            return x
+        }
+        sum += Double(x) - Double(ring[index])
+        ring[index] = x
+        index += 1
+        if index >= n {
+            index = 0
+            // Exact re-sum once per cycle: no long-run drift.
+            var exact: Double = 0.0
+            for k in 0..<n { exact += Double(ring[k]) }
+            sum = exact
+        }
+        return Float(sum / Double(n))
+    }
+}
+
 /// Final-MPX look-ahead limiter (the safety gain ride behind the composite
 /// clipper). Since 0.45 (chain review A1b) the detector is a sliding-window
 /// maximum over every sample inside the delay line, so the required gain is
-/// known `lookaheadSamples` before the peak leaves the line and the attack
-/// (time constant = window / 4) has settled by then; a hard floor guarantees
-/// the exiting sample never exceeds the threshold. The previous design fed an
-/// instantaneous |x| into a 0.35 ms one-pole, which on program whose peaks
-/// move faster than 0.35 ms tracked a blurred target and leaked: Music - Loud
-/// reported 0.02 dB of GR while 0.87 dB of dense program reached the 1x safety
-/// shaper (2.7 dB on a hot chain riding 5.8 dB) -- `--verify-final-ride`.
+/// known `lookaheadSamples` before the peak leaves the line. Since 2026-10
+/// (peak-control review F6) that target drives a `LookaheadGainRamp`: the gain
+/// ramps smoothly over the whole look-ahead and reaches the required value
+/// exactly when the peak exits, with no one-sample step. A floor on the OUTPUT
+/// sample (never on the gain state) absorbs Float rounding only. The previous
+/// design fed an instantaneous |x| into a 0.35 ms one-pole, which on program
+/// whose peaks move faster than 0.35 ms tracked a blurred target and leaked:
+/// Music - Loud reported 0.02 dB of GR while 0.87 dB of dense program reached
+/// the 1x safety shaper (2.7 dB on a hot chain riding 5.8 dB) --
+/// `--verify-final-ride`.
 struct LookaheadLimiter {
     var enabled: Bool = false
     var threshold: Float = 0.98
     var lookaheadSamples: Int = 0
     var delayLine: [Float] = []
     var writeIndex: Int = 0
-    var gain: Float = 1.0
-    var attackCoeff: Float = 0.0
-    var releaseCoeff: Float = 0.0
-    var holdSamples: Int = 0
-    var holdCounter: Int = 0
+    private var ramp = LookaheadGainRamp()
     private var windowMax = SlidingWindowMax()
+
+    /// Gain applied to the last sample (1 = no reduction).
+    var gain: Float { ramp.gain }
+
+    /// Host-rate samples of delay the stage adds while it runs. Zero when it
+    /// is disabled: it then returns its input untouched, and a caller that
+    /// aligns the pilot with the audio must not count a delay that is not in
+    /// the path (F12).
+    var latencySamples: Int { enabled ? lookaheadSamples : 0 }
 
     mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool) {
         self.enabled = enabled
@@ -438,20 +581,15 @@ struct LookaheadLimiter {
         // still inside it (lookaheadSamples + 1 values).
         windowMax.configure(windowLength: lookaheadSamples + 1)
 
-        // Attack settles to 98% within the look-ahead window; without
-        // look-ahead fall back to the 0.35 ms feedback attack.
-        let attackS = lookaheadSamples > 0 ? Float(lookaheadSamples) / (4.0 * sr) : 0.00035
+        // The ramp spans the whole look-ahead (the longest span that is still
+        // a bound, see `LookaheadGainRamp`). Without look-ahead it degenerates
+        // to an instant gain on the current sample. Short hold after the last
+        // attack so successive peaks do not release between them; ~95 ms
+        // release.
         let releaseS = 0.095 as Float
-        attackCoeff = expf(-1.0 / (attackS * sr))
-        releaseCoeff = expf(-1.0 / (releaseS * sr))
-        // Short hold after the last attack so successive peaks do not release
-        // between them; the windowed detector already holds the gain for as
-        // long as the peak is inside the line.
-        holdSamples = Int((0.004 * sr).rounded())
-        holdCounter = 0
-        if !enabled {
-            gain = 1.0
-        }
+        ramp.configure(rampSamples: lookaheadSamples,
+                       holdSamples: Int((0.004 * sr).rounded()),
+                       releaseCoeff: expf(-1.0 / (releaseS * sr)))
     }
 
     mutating func process(_ x: Float) -> Float {
@@ -473,20 +611,14 @@ struct LookaheadLimiter {
         if peakAhead > threshold {
             targetGain = threshold / max(1e-9, peakAhead)
         }
-        targetGain = clampf(targetGain, 0.0, 1.0)
-
-        if targetGain < gain {
-            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * targetGain)
-            holdCounter = holdSamples
-        } else if holdCounter > 0 {
-            holdCounter -= 1
-        } else {
-            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * targetGain)
+        let g = ramp.push(clampf(targetGain, 0.0, 1.0))
+        // Output floor for Float rounding only (the ramp is a bound by
+        // construction); it never feeds back into the gain state.
+        let y = delayed * g
+        if fabsf(y) > threshold {
+            return copysignf(threshold, y)
         }
-        // Floor: whatever the smoother's residual lag, the exiting sample must
-        // not exceed the threshold (the shaper behind us runs at 1x).
-        gain = min(gain, targetGain)
-        return delayed * gain
+        return y
     }
 
     var gainReductionDB: Float {

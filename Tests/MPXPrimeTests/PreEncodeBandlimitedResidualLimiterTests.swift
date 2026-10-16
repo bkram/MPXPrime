@@ -451,6 +451,7 @@ struct PreEncodeBandlimitedResidualLimiterTests {
         cfg.compositeClipperCancelPilot = true
         cfg.compositeClipperCancelRDS = true
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.multibandEnabled = false
         cfg.multibandLimiterEnabled = false
         cfg.downwardExpanderEnabled = false

@@ -353,6 +353,9 @@ struct BS412ComplianceGuard {
     private var impossibleRun = 0
     private var activeHoldSamples = 1
     private var activeHold = 0
+    private var wasEnforcing = false
+    private var enforcedCeilingDBr: Float = 0.0
+    private(set) var historyForgivenCount = 0
 
     mutating func configure(sampleRate: Float, subcarrierReserveMeanSquare: Float) {
         let sr = max(8_000.0, sampleRate)
@@ -400,6 +403,7 @@ struct BS412ComplianceGuard {
         unachievable = false
         active = false
         activeHold = 0
+        wasEnforcing = false
     }
 
     /// Pass one sample through the budget. `audio` is the reducible
@@ -419,6 +423,11 @@ struct BS412ComplianceGuard {
         if remainingSamples <= 0 {
             beginBlock(ceilingDBr: ceilingDBr)
         }
+        if enforcing && (!wasEnforcing || ceilingDBr < enforcedCeilingDBr) {
+            forgiveUncontrolledHistory(ceilingDBr: ceilingDBr)
+        }
+        wasEnforcing = enforcing
+        enforcedCeilingDBr = ceilingDBr
 
         var emitted = a + s
         if enforcing {
@@ -466,19 +475,50 @@ struct BS412ComplianceGuard {
         return high
     }
 
-    private mutating func beginBlock(ceilingDBr: Float) {
-        let ceiling = BS412.meanSquare(forDBr: ceilingDBr - Self.internalMarginDB)
-        let windowLimit = Double(ceiling) * Double(windowSamples)
-        // The window after this block: every real slot except the one about
-        // to be replaced, plus this block, plus a reserve for each slot that
-        // still holds nothing.
+    private func windowLimit(ceilingDBr: Float) -> Double {
+        Double(BS412.meanSquare(forDBr: ceilingDBr - Self.internalMarginDB)) * Double(windowSamples)
+    }
+
+    /// The window after the current block, less the block itself: every real
+    /// slot except the one about to be replaced, plus a reserve for each slot
+    /// that still holds nothing.
+    private var pastEnergy: Double {
         let observedAfter = min(blocksPerWindow, observedBlocks + (observedBlocks < blocksPerWindow ? 1 : 0))
         let unobservedAfter = max(0, blocksPerWindow - observedAfter)
-        let past = (sum - Double(ring[index]))
+        return (sum - Double(ring[index]))
             + (Double(reservePerBlock) * Double(unobservedAfter))
-        remainingBlockEnergy = Float(max(0.0, windowLimit - past))
+    }
+
+    private mutating func beginBlock(ceilingDBr: Float) {
+        remainingBlockEnergy = Float(max(0.0, windowLimit(ceilingDBr: ceilingDBr) - pastEnergy))
         remainingSamples = BS412.decimation
         blockEnergy = 0.0
+    }
+
+    /// Called when enforcement starts, or the ceiling is lowered while it
+    /// runs. History the guard did not control (the stage was off, or held a
+    /// higher ceiling) may already have spent more than the window allows.
+    /// Paying that debt back is only possible by muting the audio until the
+    /// over-budget minute has aged out -- up to 60 s of silence on dense
+    /// programme, which is what happened when BS.412 was switched on behind
+    /// Advanced Dynamics. Already-transmitted audio cannot be un-transmitted,
+    /// so a window straddling the switch is over the ceiling whatever the
+    /// guard does; muting buys nothing. The guard therefore forgives such
+    /// history: it restarts from the cold-start state (unobserved slots
+    /// charged with the subcarrier reserve), in which every window lying
+    /// wholly after the switch is still proved. History that fits the new
+    /// budget is kept, so control stays informed when it can.
+    private mutating func forgiveUncontrolledHistory(ceilingDBr: Float) {
+        let limit = windowLimit(ceilingDBr: ceilingDBr)
+        let blockShare = limit / Double(max(1, blocksPerWindow))
+        guard pastEnergy + Double(blockEnergy) > limit - blockShare else { return }
+        observedBlocks = 0
+        sum = 0.0
+        for i in 0..<ring.count { ring[i] = 0.0 }
+        historyForgivenCount += 1
+        if remainingSamples > 0 {
+            remainingBlockEnergy = Float(max(0.0, limit - pastEnergy - Double(blockEnergy)))
+        }
     }
 
     private mutating func endBlock(ceilingDBr: Float) {

@@ -37,6 +37,7 @@ struct PostInjectionClampTests {
         cfg.outputGainDB = outputGainDB
         cfg.processingBypass = false
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.multibandEnabled = false
         cfg.multibandLimiterEnabled = false
         cfg.downwardExpanderEnabled = false

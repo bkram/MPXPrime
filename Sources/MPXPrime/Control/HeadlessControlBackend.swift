@@ -94,6 +94,10 @@ actor HeadlessControlBackend: ControlBackend {
         engine?.controlMeters
     }
 
+    func meters(reader: MeterPeakReader) -> ControlMeters? {
+        engine?.controlMeters(reader: reader)
+    }
+
     func telemetry(windowMS: Double) -> ControlTelemetry? {
         engine?.controlTelemetry(windowMS: windowMS)
     }
@@ -204,6 +208,9 @@ actor HeadlessControlBackend: ControlBackend {
             selectedOutput: config.outputDeviceUID ?? "",
             selectedMonitor: config.monitorDeviceUID ?? "",
             monitorEnabled: config.monitorEnabled,
+            selectedInputChannels: AppConfig.channelsINIValue(config.inputChannels),
+            selectedOutputChannels: AppConfig.channelsINIValue(config.outputChannels),
+            selectedMonitorChannels: AppConfig.channelsINIValue(config.monitorChannels),
             note: note)
     }
 
@@ -490,8 +497,12 @@ actor HeadlessControlBackend: ControlBackend {
         + "and dropouts follow. Turn off the heaviest optional stages first (SSB Stereo, then the "
         + "multiband) -- see the operator guide's CPU budget section."
     private var overloadWatch = RenderLoadWatch()
+    /// The 5 s status tick reads the meters as its own consumer, so it never
+    /// takes the peaks a dashboard poll or stream is waiting for.
+    private let statusMeterReader = MeterPeakReader.make()
     private func updateRenderLoadNote() {
-        let raise = overloadWatch.observe(engine?.controlMeters?.renderLoadPercent)
+        let raise = overloadWatch.observe(
+            engine?.controlMeters(reader: statusMeterReader)?.renderLoadPercent)
         let has = notes.contains(Self.renderOverloadNote)
         if raise, !has { notes.append(Self.renderOverloadNote) }
         if !raise, has { notes.removeAll { $0 == Self.renderOverloadNote } }
@@ -608,23 +619,19 @@ extension AudioOutputEngine: ControlledEngine {
     var renderSampleRateForControl: Double? { renderSampleRate }
 
     /// Scope waveforms straight from the engine's meter histories + an MPX
-    /// spectrum computed here with the shared MPXSpectrumAnalyzer. Called at
-    /// the dashboard's poll rate (4-7 Hz), not per tick: a fresh 4096-point
-    /// vDSP FFT per request is sub-millisecond and keeps this reentrant
-    /// (no shared analyzer state to lock).
+    /// spectrum from the engine's cached `ControlTelemetrySpectrum` (one FFT
+    /// setup and scratch buffer for the engine's life; it used to build a
+    /// fresh analyzer and FFT setup per request).
     func controlTelemetry(windowMS: Double) -> ControlTelemetry? {
         let clampedWindow = max(1.0, min(100.0, windowMS))
         let scopes = scopeSnapshot(windowMS: clampedWindow)
         guard !scopes.output.isEmpty else { return nil }
-        var scratch = [Float](repeating: 0.0, count: 4096)
-        let raw = outputSignalWindow(into: &scratch, frameCount: 4096)
-        let spectrum = MPXSpectrumAnalyzer().compute(
-            samples: scratch,
-            validCount: raw.count,
-            sampleRate: raw.sampleRate,
-            displayBins: 256,
-            maxDisplayHz: 96_000.0
-        )
+        let spectrum = controlTelemetrySpectrum.compute(
+            displayBins: 256, maxDisplayHz: 96_000.0
+        ) { scratch in
+            let raw = outputSignalWindow(into: &scratch, frameCount: ControlTelemetrySpectrum.frameCount)
+            return (raw.count, raw.sampleRate)
+        }
         func decimate(_ src: [Float], to n: Int = 160) -> [Float] {
             guard src.count > n else { return src }
             return (0..<n).map { src[($0 * src.count) / n] }
@@ -640,8 +647,10 @@ extension AudioOutputEngine: ControlledEngine {
         )
     }
 
-    var controlMeters: ControlMeters? {
-        let m = meters
+    var controlMeters: ControlMeters? { controlMeters(reader: .shared) }
+
+    func controlMeters(reader: MeterPeakReader) -> ControlMeters? {
+        let m = meters(for: reader)
         // Ring-transport diagnostics: the level meters cannot distinguish
         // loud static from loud program (both peg the peak/deviation reads),
         // so clock-drift dropout is invisible there. These counters are the
@@ -693,18 +702,50 @@ extension AudioOutputEngine: ControlledEngine {
         currentRDSLiveSnapshot
     }
 }
+
+/// The /api/telemetry MPX spectrum: one analyzer (and so one FFT setup) and
+/// one scratch window per engine, reused by every request under a lock --
+/// the GUI backend and the headless actor both call it, the first from the
+/// main actor, the second from the actor's executor.
+final class ControlTelemetrySpectrum: @unchecked Sendable {
+    static let frameCount = 4096
+    private let lock = NSLock()
+    private let analyzer = MPXSpectrumAnalyzer()
+    private var scratch = [Float](repeating: 0.0, count: ControlTelemetrySpectrum.frameCount)
+
+    /// `fill` copies the newest samples into the scratch window and returns
+    /// how many are valid and at what rate.
+    func compute(
+        displayBins: Int,
+        maxDisplayHz: Double,
+        fill: (inout [Float]) -> (count: Int, sampleRate: Double)
+    ) -> (dbBins: [Float], maxHz: Double, nyquistHz: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        let raw = fill(&scratch)
+        return analyzer.compute(
+            samples: scratch,
+            validCount: raw.count,
+            sampleRate: raw.sampleRate,
+            displayBins: displayBins,
+            maxDisplayHz: maxDisplayHz
+        )
+    }
+}
 #else
 extension ALSAAudioEngine: ControlledEngine {
-    var controlMeters: ControlMeters? {
-        let peaks = peakMeters
+    var controlMeters: ControlMeters? { controlMeters(reader: .shared) }
+
+    func controlMeters(reader: MeterPeakReader) -> ControlMeters? {
+        let peaks = peakMeters(for: reader)
         let xruns = xrunCounts
         let state = fullMeterState
         return ControlMeters(
             inputLeftPeak: peaks.inputL,
             inputRightPeak: peaks.inputR,
             outputPeak: peaks.output,
-            deviationKHzPeak: state.deviationKHzPeak,
-            dacPeakDBFS: state.dacPeak > 0.0 ? 20.0 * log10f(state.dacPeak) : -120.0,
+            deviationKHzPeak: peaks.deviationKHz,
+            dacPeakDBFS: peaks.dac > 0.0 ? 20.0 * log10f(peaks.dac) : -120.0,
             agcGainDB: state.agcGainDB,
             advancedDynamicsActive: state.advancedDynamicsActive,
             advancedDynamicsBandGainsDB: state.advancedDynamicsActive

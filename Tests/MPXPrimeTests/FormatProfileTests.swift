@@ -38,7 +38,7 @@ struct FormatProfileTests {
         PresetCatalog.formatProfiles.filter { $0.id != "custom" }
     }
 
-    /// The HF limiter rule (docs/hf-limiter-review.md, finding 2): the main
+    /// The HF limiter rule (the HF limiter review, finding 2): the main
     /// threshold sits 0.5 dB above the profile's pre-encode limiter
     /// threshold, rounded to 0.1 dB; the top-octave threshold 1 dB under that.
     private func expectedHFThreshold(forPreEncode threshold: Double) -> Double {
@@ -169,17 +169,16 @@ struct FormatProfileTests {
         #expect(model.config.multibandLimiterEnabled == true)
         #expect(model.config.parametricEQEnabled == false)
         #expect(model.config.phaseRotationEnabled == false)
-        #expect(model.config.advancedDynamicsEnabled == false)
+        #expect(model.config.advancedDynamicsEnabled == true)
     }
 
     @Test func profilesOwnTheFullGainStructure() {
         // The 2026-08 rework contract: NO profile may leave the safety
         // soft-clips as the de-facto peak controller. Every profile turns
         // the AGC, the pre-encode limiter, the composite clipper, and the
-        // final safety limiter on -- from any prior state. 2026-10: every
-        // profile also switches Advanced Dynamics OFF (with it on, the AGC
-        // and multiband settings the profile writes are bypassed and the
-        // levelling does not change), lands the AGC target its final-stage
+        // final safety limiter on -- from any prior state. 2026-10-15: every
+        // profile levels with Advanced Dynamics (target = the profile's AGC
+        // target, density from its multiband intensity), lands the AGC target its final-stage
         // preset names, and fans the HF limiter thresholds out from its
         // pre-encode threshold (+0.5 dB, top octave 1 dB tighter).
         let model = makeViewModel()
@@ -189,7 +188,8 @@ struct FormatProfileTests {
             model.config.preEncodeAudioLimiterEnabled = false
             model.config.limitMPX = false
             model.config.compositeClipperEnabled = false
-            model.config.advancedDynamicsEnabled = true
+            model.config.advancedDynamicsEnabled = false
+            model.config.advancedDynamicsTargetDB = -30.0
             model.config.widebandAGCTargetDB = -30.0
             model.applyFormatProfile(id)
             #expect(model.config.widebandAGCEnabled, "\(id): AGC must be on")
@@ -197,8 +197,12 @@ struct FormatProfileTests {
             #expect(model.config.limitMPX, "\(id): safety limiter must be on")
             #expect(model.config.compositeClipperEnabled, "\(id): composite clipper must be on")
             #expect(model.config.compositeClipperLookaheadMS > 1.0, "\(id): clipper look-ahead expected")
-            #expect(model.config.advancedDynamicsEnabled == false,
-                "\(id): a profile defines the regular chain; Advanced Dynamics must be off after it")
+            #expect(model.config.advancedDynamicsEnabled,
+                "\(id): every profile levels with Advanced Dynamics")
+            #expect(model.config.advancedDynamicsTargetDB == model.config.widebandAGCTargetDB - 2.0,
+                "\(id): the leveller target is the profile's AGC target less 2 dB (loudness parity with the classic chain)")
+            #expect(model.config.advancedDynamicsDensity == profile.multibandIntensity.levelerDensity,
+                "\(id): the leveller density follows the profile's intensity")
 
             let finalStage = PresetCatalog.finalStagePresets.first(where: { $0.id == profile.finalStagePresetID })
             #expect(finalStage != nil, "\(id): final-stage preset \(profile.finalStagePresetID) missing")
@@ -278,7 +282,7 @@ struct FormatProfileTests {
         #expect(model.config.primeBassEnabled == false,
             "speech profile must disable PrimeBass")
         #expect(abs(model.config.monoBassFreqHz - 140.0) < 1e-6)  // speech: mono below 140 Hz
-        #expect(abs(model.config.finalDriveDB - 4.5) < 1e-6)
+        #expect(abs(model.config.finalDriveDB - 4.3) < 1e-6)
     }
 
     @Test func speechMultibandIsFastAndDense() {

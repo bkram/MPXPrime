@@ -1,4 +1,4 @@
-// MPXPrimeUI — shared SwiftUI components for the MPX Prime transmit GUI and
+// MPXPrimeUI -- shared SwiftUI components for the MPX Prime transmit GUI and
 // the MPX Prime Meter window. All views here are Canvas-based and
 // signal-agnostic (they take plain [Float]/Double + display scalars, never
 // app-specific view models), so both apps can render the same scopes,

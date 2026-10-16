@@ -16,7 +16,10 @@ import MPXPrimeAcceleration
 // SIMD cost (~3-5 ns). Scalar tanhf is ~25-40 ns per call. The break-even
 // point is somewhere between batch size 4 and 16.
 
-@Suite("vvtanhf batch-size break-even")
+// Opt-in (MPXPRIME_BENCH=1): about 70 M tanh calls and no assertion, so it
+// cost default-suite time and proved nothing there (finding 16).
+@Suite("vvtanhf batch-size break-even",
+       .enabled(if: ProcessInfo.processInfo.environment["MPXPRIME_BENCH"] != nil))
 struct TanhBatchSizeBench {
 
     @Test func benchmarkScalarVsVDSPAtVariousBatchSizes() {

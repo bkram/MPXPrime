@@ -15,17 +15,23 @@ import Testing
     /// Decode a canonical 24-bit PCM WAV into per-channel float arrays.
     private func readWav(_ url: URL) throws -> (rate: Int, channels: Int, frames: Int, ch: [[Float]]) {
         let d = try Data(contentsOf: url)
-        func u32(_ o: Int) -> Int { Int(d[o]) | Int(d[o+1])<<8 | Int(d[o+2])<<16 | Int(d[o+3])<<24 }
-        func u16(_ o: Int) -> Int { Int(d[o]) | Int(d[o+1])<<8 }
-        #expect(Array(d[0..<4]) == Array("RIFF".utf8))
-        #expect(Array(d[8..<12]) == Array("WAVE".utf8))
+        // Typed helpers: the inline `Array(d[0..<4]) == Array("RIFF".utf8)`
+        // checks and untyped shift chains made this the slowest function in
+        // the test target to type-check (about 0.6 s).
+        func byte(_ o: Int) -> Int { Int(d[o]) }
+        func tag(_ o: Int) -> [UInt8] { [UInt8](d[o..<(o + 4)]) }
+        func ascii(_ s: String) -> [UInt8] { [UInt8](s.utf8) }
+        func u32(_ o: Int) -> Int { byte(o) | (byte(o + 1) << 8) | (byte(o + 2) << 16) | (byte(o + 3) << 24) }
+        func u16(_ o: Int) -> Int { byte(o) | (byte(o + 1) << 8) }
+        #expect(tag(0) == ascii("RIFF"))
+        #expect(tag(8) == ascii("WAVE"))
         // Canonical writer: fmt at 12 (16-byte body), data at 36. No padding chunks.
-        #expect(Array(d[12..<16]) == Array("fmt ".utf8))
+        #expect(tag(12) == ascii("fmt "))
         let channels = u16(22)
         let rate = u32(24)
         let bits = u16(34)
         #expect(bits == 24)
-        #expect(Array(d[36..<40]) == Array("data".utf8))
+        #expect(tag(36) == ascii("data"))
         let dataBytes = u32(40)
         let dataStart = 44
         #expect(dataStart + dataBytes <= d.count)
@@ -35,7 +41,7 @@ import Testing
         for f in 0..<frames {
             for c in 0..<channels {
                 let o = dataStart + (f * channels + c) * 3
-                var v = Int(d[o]) | Int(d[o+1])<<8 | Int(d[o+2])<<16
+                var v: Int = byte(o) | (byte(o + 1) << 8) | (byte(o + 2) << 16)
                 if v & 0x800000 != 0 { v -= 0x1000000 }
                 ch[c][f] = Float(v) / 8_388_608.0
             }

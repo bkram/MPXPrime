@@ -30,7 +30,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 300.0
             config.multibandHighReleaseMS = 225.0
             config.multibandKneeDB = 3.6
-            config.multibandLinkStrength = 0.52
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         },
         VerificationPresetSweep(id: "5_chr", title: "5B CHR/EDM") { config in
@@ -55,7 +55,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 240.0
             config.multibandHighReleaseMS = 180.0
             config.multibandKneeDB = 2.6
-            config.multibandLinkStrength = 0.48
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         },
         VerificationPresetSweep(id: "5_rock", title: "5B Rock") { config in
@@ -80,7 +80,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 240.0
             config.multibandHighReleaseMS = 175.0
             config.multibandKneeDB = 2.5
-            config.multibandLinkStrength = 0.46
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         },
         VerificationPresetSweep(id: "5_talk", title: "5B Talk") { config in
@@ -106,7 +106,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 180.0
             config.multibandHighReleaseMS = 140.0
             config.multibandKneeDB = 5.2
-            config.multibandLinkStrength = 0.46
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         },
         VerificationPresetSweep(id: "5_news", title: "5B News") { config in
@@ -131,7 +131,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 400.0
             config.multibandHighReleaseMS = 320.0
             config.multibandKneeDB = 4.3
-            config.multibandLinkStrength = 0.64
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         },
         VerificationPresetSweep(id: "5_urban", title: "5B Urban") { config in
@@ -156,7 +156,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 220.0
             config.multibandHighReleaseMS = 155.0
             config.multibandKneeDB = 2.2
-            config.multibandLinkStrength = 0.42
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         },
         VerificationPresetSweep(id: "5_dance", title: "5B Dance") { config in
@@ -181,7 +181,7 @@ func keyMultibandPresetSweeps() -> [VerificationPresetSweep] {
             config.multibandMidReleaseMS = 215.0
             config.multibandHighReleaseMS = 150.0
             config.multibandKneeDB = 2.0
-            config.multibandLinkStrength = 0.40
+            config.multibandLinkStrength = 1.0
             config.multibandReleaseProgramDependent = true
         }
     ]
@@ -236,17 +236,22 @@ func runPresetSweepVerification(
 
     let baselineURL = defaultPresetBaselinePath()
     var loadedBaseline: VerifierBaselineFile?
+    var baselineAvailability = BaselineAvailability.loaded
     if !captureBaseline {
-        if FileManager.default.fileExists(atPath: baselineURL.path) {
-            do {
-                let loaded = try loadVerifierBaseline(from: baselineURL)
-                loadedBaseline = loaded
+        // Under --baseline-strict an unusable baseline is a WARN, not a
+        // silent fall-back to the physical limits (VerifierVerdict.swift).
+        let attempt = classifyBaselineLoad { try loadVerifierBaseline(from: baselineURL) }
+        loadedBaseline = attempt.value
+        baselineAvailability = attempt.availability
+        switch attempt.availability {
+        case .loaded:
+            if let loaded = attempt.value {
                 print("Baseline: \(baselineURL.lastPathComponent) (captured \(loaded.capturedAt))")
-            } catch {
-                print("Baseline: failed to load (\(error))")
             }
-        } else {
-            print("Baseline: none — run --verify-presets --capture-baseline to create.")
+        case .missing:
+            print("Baseline: none at \(baselineURL.path) - run --verify-presets --capture-baseline to create.")
+        case .unreadable(let reason):
+            print("Baseline: failed to load (\(reason))")
         }
     }
 
@@ -347,6 +352,10 @@ func runPresetSweepVerification(
             for finding in drift { print("- \(finding.formattedLine)") }
             worstExit = max(worstExit, strictBaseline ? 2 : 1)
         }
+    }
+    if !captureBaseline, baselineAvailabilityExit(baselineAvailability, strict: strictBaseline) > 0 {
+        print("Result: WARN - --baseline-strict has no usable preset baseline (\(baselineAvailability.note)).")
+        worstExit = max(worstExit, baselineAvailabilityExit(baselineAvailability, strict: strictBaseline))
     }
     return worstExit
 }

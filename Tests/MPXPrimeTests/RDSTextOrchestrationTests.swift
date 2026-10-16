@@ -41,10 +41,12 @@ struct RDSTextOrchestrationTests {
     // MARK: - Seconds timing
 
     @Test func singleSecondsSegment() {
+        // 7 s, not 10: 10.0 is also the parser's fallback duration, so a
+        // parser that ignored the seconds passed (finding 15).
         let out = BasicRDSCoder.parseTimedSequence(
-            "10s:Hi", width: 8, uppercase: false, center: false)
+            "7s:Hi", width: 8, uppercase: false, center: false)
         #expect(out.count == 1)
-        #expect(out[0].duration == 10.0)
+        #expect(out[0].duration == 7.0)
         #expect(out[0].transmits == 0)
     }
 

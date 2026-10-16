@@ -2,6 +2,7 @@ import Foundation
 import HTTPTypes
 import Hummingbird
 import Logging
+import MPXPrimeCore
 import NIOCore
 
 // The remote-control HTTP server: REST API under /api/* plus the embedded
@@ -153,6 +154,11 @@ struct APIKeyMiddleware<Context: RequestContext>: RouterMiddleware {
 }
 
 enum ControlServer {
+    /// Meter stream rate while the engine is stopped: enough to notice a
+    /// start within half a second, without encoding 20 lines a second of
+    /// "not running".
+    static let stoppedStreamHz: Double = 2.0
+
     /// Build the router; separated from run() so tests can drive it via
     /// hummingbird-testing without opening sockets.
     static func buildRouter(
@@ -181,24 +187,34 @@ enum ControlServer {
         // the stream after N lines (curl, tests); a closed connection ends it
         // through the writer's error. Read it with fetch + ReadableStream so
         // the API-key header still applies; EventSource cannot send one.
+        // Each stream is its own meter reader, so its peaks are not taken by
+        // the GUI or by another stream. While the engine is stopped there is
+        // nothing to show but the "not running" line, so it is sent at
+        // `stoppedStreamHz` instead of the requested rate.
         router.get("/api/meters/stream") { request, _ -> Response in
             let hz = min(30.0, max(5.0, request.uri.queryParameters.get("hz").flatMap(Double.init) ?? 20.0))
             let frames = request.uri.queryParameters.get("frames").flatMap(Int.init)
             let interval = UInt64(1_000_000_000.0 / hz)
+            let stoppedInterval = UInt64(1_000_000_000.0 / stoppedStreamHz)
             var headers = HTTPFields()
             headers[.contentType] = "application/x-ndjson"
             headers[.cacheControl] = "no-store"
             let body = ResponseBody { writer in
                 let encoder = JSONEncoder()
+                let reader = MeterPeakReader.make()
+                let stoppedLine = Data("{\"error\":\"engine not running\"}".utf8)
                 var sent = 0
                 // One hour at most: a client that never closes still ends.
                 let deadline = ContinuousClock.now + .seconds(3600)
                 while ContinuousClock.now < deadline, !Task.isCancelled {
                     let line: Data
-                    if let meters = await backend.meters() {
+                    let running: Bool
+                    if let meters = await backend.meters(reader: reader) {
                         line = try encoder.encode(meters)
+                        running = true
                     } else {
-                        line = Data("{\"error\":\"engine not running\"}".utf8)
+                        line = stoppedLine
+                        running = false
                     }
                     var buffer = ByteBuffer()
                     buffer.writeBytes(line)
@@ -206,7 +222,7 @@ enum ControlServer {
                     try await writer.write(buffer)
                     sent += 1
                     if let frames, sent >= frames { break }
-                    try await Task.sleep(nanoseconds: interval)
+                    try await Task.sleep(nanoseconds: running ? interval : stoppedInterval)
                 }
                 try await writer.finish(nil)
             }

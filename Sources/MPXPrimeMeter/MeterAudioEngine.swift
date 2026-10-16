@@ -19,7 +19,7 @@ enum MeterChannel: String {
 ///
 /// The composite is mono on the selected `channel`. The decoders assume the
 /// configured `sampleRate` matches the device format (192 kHz for a real
-/// composite — RDS at 57 kHz needs Nyquist > 57 kHz, so >= 128 kHz).
+/// composite -- RDS at 57 kHz needs Nyquist > 57 kHz, so >= 128 kHz).
 final class MeterAudioEngine: @unchecked Sendable {
     /// Callers constructing an `AUHALInputSource` must pass this as its
     /// `maxFramesPerSlice` -- the `.mix` scratch is sized from it, and a larger
@@ -154,8 +154,12 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// pilot-referenced (nil) deviation scaling.
     func setFullScaleKHz(_ k: Float?) { analysis.setFullScaleKHz(k) }
 
+    /// `monitorChannels` picks the monitor device's output pair (nil = 1, 2;
+    /// a single channel plays (L+R)/2 on it). A pair the device does not
+    /// have falls back to 1, 2 and the reason is in `monitorChannelNote`.
     @discardableResult
-    func start(monitorDeviceID: AudioDeviceID? = nil) throws -> (sampleRate: Double, channels: Int) {
+    func start(monitorDeviceID: AudioDeviceID? = nil, monitorChannels: ChannelPair? = nil)
+        throws -> (sampleRate: Double, channels: Int) {
         let ring = self.ring
         let channel = self.channel
         let scratch = self.mixScratch
@@ -209,7 +213,7 @@ final class MeterAudioEngine: @unchecked Sendable {
 
         if monitorEnabled {
             let mon = RingBufferPlayer(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
-            try mon.start(outputDeviceID: monitorDeviceID)
+            try mon.start(outputDeviceID: monitorDeviceID, channels: monitorChannels)
             monitor = mon
         }
 
@@ -270,8 +274,12 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// the pass-through stops (the Studio MPX-output convention).
     /// Returns a human-readable reason when the pass-through could not start
     /// (audit C12: it used to fail silently with the toggle still lit).
+    /// `channels` picks the device's output pair (nil = 1, 2); a pair the
+    /// device does not have falls back with the reason in
+    /// `passThroughChannelNote`.
     @discardableResult
     func setMPXPassThrough(enabled: Bool, deviceID: AudioDeviceID?,
+                           channels: ChannelPair? = nil,
                            gainDB: Double = 0) -> String? {
         // Tear down the current player + restore the prior device rate.
         mpxPassOn.store(false, ordering: .relaxed)
@@ -301,7 +309,7 @@ final class MeterAudioEngine: @unchecked Sendable {
         let gain = Float(pow(10.0, gainDB / 20.0))
         let mon = RingBufferPlayer(ring: mpxRing, sampleRate: Double(sampleRate), gain: gain)
         do {
-            try mon.start(outputDeviceID: deviceID)
+            try mon.start(outputDeviceID: deviceID, channels: channels)
             mpxMonitor = mon
             mpxPassOn.store(true, ordering: .relaxed)
             return nil
@@ -320,19 +328,38 @@ final class MeterAudioEngine: @unchecked Sendable {
     /// Returns a human-readable reason when the new device could not be
     /// started, so the caller can say so instead of going quiet (audit C12).
     @discardableResult
-    func setMonitorDevice(_ deviceID: AudioDeviceID?) -> String? {
+    func setMonitorDevice(_ deviceID: AudioDeviceID?, channels: ChannelPair? = nil) -> String? {
         monitor?.stop()
         monitor = nil
         guard monitorEnabled else { return nil }
         let mon = RingBufferPlayer(ring: monitorRing, sampleRate: Double(sampleRate), gain: monitorGain)
         do {
-            try mon.start(outputDeviceID: deviceID)
+            try mon.start(outputDeviceID: deviceID, channels: channels)
             monitor = mon
             return nil
         } catch {
             return error.localizedDescription
         }
     }
+
+    // MARK: - Channel routing notes
+    //
+    // Each is nil when the requested pair was applied as asked (or nothing
+    // was asked). Non-nil is not a failure -- the path runs on channels 1, 2
+    // -- but the operator asked for something else and must be told, in the
+    // same place a start failure is reported.
+
+    /// Why the capture pair differs from what was asked, from the AUHAL
+    /// source; nil for the SDR / stdin sources, which have no device pair.
+    var inputChannelNote: String? {
+        (input as? AUHALInputSource)?.channelNote
+    }
+
+    /// Why the monitor's output pair differs from what was asked.
+    var monitorChannelNote: String? { monitor?.channelNote }
+
+    /// Why the MPX pass-through's output pair differs from what was asked.
+    var passThroughChannelNote: String? { mpxMonitor?.channelNote }
 
     func snapshot() -> MeterSnapshot {
         lock.lock()

@@ -32,6 +32,7 @@ struct ProcessedAudioOutputTests {
         cfg.limitMPX = true
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.primeBassEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false
@@ -290,7 +291,9 @@ struct ProcessedAudioOutputTests {
             peak = max(peak, abs(out.right[i]))
         }
         #expect(peak <= 1.0, "no output overs allowed, peak=\(peak)")
-        #expect(peak >= 0.9, "hot program should reach near full scale (limiter ceiling normalized to 0 dBFS), peak=\(peak)")
+        // The CEILING maps to full scale (2026-10 peak-control review, F5), so
+        // a steady sine held at the 0.85 threshold reads 0.85 / 0.9475.
+        #expect(peak >= 0.88, "hot program should reach near full scale (limiter ceiling normalized to 0 dBFS), peak=\(peak)")
     }
 
     // 5. Config flag round-trips through the INI.
@@ -507,11 +510,16 @@ struct ProcessedAudioOutputTests {
         // moves every composite baseline. The 48 kHz case is the production
         // audio rate operators get; 96 kHz is the rate the rest of this suite
         // renders at (the ripple sits at half the normalised frequency there).
+        // 2026-10 (peak-control review F9): the limiter now interpolates with
+        // a Kaiser FIR and is flat (0.000 dB, 1-18 kHz, both rates). At 96 kHz
+        // the path with the limiter OFF reads -0.33 dB at 17 kHz (measured on
+        // the pre-F9 tree too), which the Lagrange's +0.17 dB there used to
+        // offset; 17 kHz at 96 kHz is therefore held to 0.4 dB.
         struct Row { let hz: Double; let tol48: Double; let tol96: Double }
         let rows = [Row(hz: 100, tol48: 0.15, tol96: 0.15), Row(hz: 300, tol48: 0.1, tol96: 0.1),
                     Row(hz: 3_000, tol48: 0.1, tol96: 0.1), Row(hz: 8_000, tol48: 0.25, tol96: 0.15),
                     Row(hz: 12_000, tol48: 0.45, tol96: 0.2), Row(hz: 15_000, tol48: 0.35, tol96: 0.2),
-                    Row(hz: 17_000, tol48: 0.3, tol96: 0.3), Row(hz: 18_000, tol48: 0.6, tol96: 0.8)]
+                    Row(hz: 17_000, tol48: 0.3, tol96: 0.4), Row(hz: 18_000, tol48: 0.6, tol96: 0.8)]
         for sr in [48_000.0, 96_000.0] {
             let cfg = digitalConfig(sampleRate: sr)
             let amp: Float = 0.05

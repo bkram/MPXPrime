@@ -27,9 +27,14 @@
  *  10. the levelling engine selector on the Overview WORKS: only the engine in
  *      use has its pages listed (sidebar, overview grid), nothing is ghosted,
  *      and switching engines flips them both ways;
- *  11. "Apply recommended" on the Overview WORKS: with a Format Profile
+ *  11. "Re-apply Profile" on the Overview WORKS: with a Format Profile
  *      selected one click POSTs that profile to /api/presets and re-reads the
- *      config; with `custom` selected the button is disabled and says why.
+ *      config; with `custom` selected the button is disabled and says why;
+ *  12. the target layout (UI layout review 2026-10): the Overview carries
+ *      the Format Profile picker, Identity carries Long PS, Loudness and
+ *      Output carries neither pilot nor RDS injection, Bands offers no
+ *      2-band choice, both limiter thresholds read in dBFS, and the status
+ *      strip names the mode as the app does ("MPX Output").
  *
  * Usage: scripts/check-webui.sh   (installs jsdom into .webui-check/ once)
  */
@@ -407,14 +412,15 @@ async function runModeUnguarded(mode) {
           if (st && !st.enable && c.querySelector(".switch")) fail(mode, where, `overview card "${c.dataset.page}" has a switch but the stage has no enable key`);
           if (st && st.enable && !c.querySelector(".switch")) fail(mode, where, `overview card "${c.dataset.page}" has no switch`);
         }
-        // The Monitoring signal chain follows the same choice.
+        // The Monitoring signal chain (the pill strip) follows the same choice.
         page.showPage("monitoring");
         await settle();
-        const chain = cardIds();
+        const chain = [...content().querySelectorAll("#pills .pill[data-page]")].map(n => n.dataset.page);
+        if (content().querySelector(".ovgrid")) fail(mode, where, "Monitoring still repeats the stage card grid");
         for (const e of lv.engines) {
           for (const id of e.pages || []) {
-            const st = schema.model.stages.find(s => s.id === id);
-            if (e === cur && st && st.summary && !chain.includes(id)) fail(mode, where, `signal chain shows no card for "${id}" though its engine is in use`);
+            const pilled = schema.model.pills.some(([, pid]) => pid === id);
+            if (e === cur && pilled && !chain.includes(id)) fail(mode, where, `signal chain shows no pill for "${id}" though its engine is in use`);
             if (e !== cur && chain.includes(id)) fail(mode, where, `signal chain still shows "${id}" of the engine not in use`);
           }
         }
@@ -459,7 +465,9 @@ async function runModeUnguarded(mode) {
     page.showPage("overview");
     await settle();
     const button = content().querySelector("#recommended #applyRecommended");
-    if (!button) fail(mode, "recommended", "the Overview shows no Apply recommended button");
+    if (!button) fail(mode, "recommended", "the Overview shows no Re-apply Profile button");
+    else if (button.textContent !== "Re-apply Profile") fail(mode, "recommended", `the button reads "${button.textContent}"`);
+    if (!content().querySelector("#recommended #profileSelect")) fail(mode, "recommended", "the Overview shows no Format Profile picker");
     else {
       if (button.disabled) fail(mode, "recommended", `the button is disabled though "${profileId}" is selected`);
       const caption = content().querySelector("#recommended .subtitle");
@@ -491,6 +499,39 @@ async function runModeUnguarded(mode) {
       page.syncAll();
       await settle();
     }
+  }
+
+  // (12) the target layout.
+  {
+    const keysOn = (id) => { page.showPage(id); return [...content().querySelectorAll("[data-key]")].map(e => e.dataset.key); };
+    if (inMode(["mpx"])) {
+      const fin = keysOn("finalStage");
+      for (const k of ["pilot_level", "rds_level", "mpx_deviation_khz", "processing_bypass"]) {
+        if (fin.includes(k)) fail(mode, "layout", `Loudness and Output still shows ${k}`);
+      }
+      if (!keysOn("rdsIdentity").includes("ps_long_32")) fail(mode, "layout", "Identity does not carry the Long PS");
+      if (!keysOn("interfaces").includes("mpx_deviation_khz")) fail(mode, "layout", "Audio I/O does not carry Composite Deviation in MPX Output");
+    } else if (keysOn("interfaces").includes("mpx_deviation_khz")) {
+      fail(mode, "layout", "Audio I/O shows Composite Deviation outside MPX Output");
+    }
+    const core = keysOn("core");
+    for (const k of ["processing_bypass", "preemphasis_us"]) if (core.includes(k)) fail(mode, "layout", `Basics still shows ${k}`);
+    if (inMode(["mpx", "fm"]) && !keysOn("interfaces").includes("preemphasis_us")) fail(mode, "layout", "Audio I/O does not carry Pre-emphasis");
+    page.showPage("limiter");
+    await settle();
+    const thr = content().querySelector('[data-key="pre_encode_threshold"] .rvalue');
+    if (!thr || !/dBFS/.test(thr.textContent)) fail(mode, "layout", `Audio Limiter threshold reads "${thr ? thr.textContent : "nothing"}", not dBFS`);
+    // Bands: 3 or 5, never 2 (the user dropped 2-band).
+    if (!page.pageHiddenInMode("multiband")) {
+      page.showPage("multiband");
+      await settle();
+      const bands = [...content().querySelectorAll('[data-key="multiband_mode"] button')].map(b => b.dataset.v);
+      if (bands.join(",") !== "3,5") fail(mode, "layout", `Bands offers ${bands.join(",")}`);
+    }
+    await page.loadConfig();
+    page.syncAll();
+    if ($("cMode").textContent.indexOf(" Output") < 0) fail(mode, "layout", `status MODE reads "${$("cMode").textContent}"`);
+    drainErrors("layout");
   }
 
   // (5-6) switch the operating mode from the Audio I/O page, to every other

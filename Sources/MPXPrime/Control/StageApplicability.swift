@@ -35,19 +35,20 @@ enum NavigationSection: String, CaseIterable, Sendable {
 }
 
 /// How the Sound section groups the stage pages: by what the stage does to
-/// the signal, in signal order. `pageIDs` are the dashboard's stage page ids
-/// (the GUI maps them to `Stage` cases). One stage id appears in exactly one
-/// group.
+/// the signal, in the order the signal meets them (`Stage.signalChain`).
+/// `pageIDs` are the dashboard's stage page ids (the GUI maps them to `Stage`
+/// cases). One stage id appears in exactly one group.
 enum StageGroup: String, CaseIterable, Sendable {
-    case input, levelling, tone, dynamics, peakControl, transmission
+    case input, levelling, eq, dynamics, bass, peakControl, transmission
 
     var title: String {
         switch self {
         case .input: return "Input"
         case .levelling: return "Levelling"
-        case .tone: return "Tone"
+        case .eq: return "EQ"
         case .dynamics: return "Dynamics"
-        case .peakControl: return "Peak control"
+        case .bass: return "Bass"
+        case .peakControl: return "Peak Control"
         case .transmission: return "Transmission"
         }
     }
@@ -56,18 +57,20 @@ enum StageGroup: String, CaseIterable, Sendable {
         switch self {
         case .input: return ["core", "phaseRotator"]
         case .levelling: return ["agc", "advanced_dynamics"]
-        case .tone: return ["parametricEQ", "primeBass"]
+        case .eq: return ["parametricEQ"]
         // The Expander and the Band Limiter both run per band INSIDE the
         // multiband stage (after the band compressors), so they sit with it.
         case .dynamics: return ["multiband", "expander", "mbLimiter"]
-        case .peakControl: return ["bassClipper", "dcClipper", "hfLimiter", "limiter"]
+        // PrimeBass runs after the multiband, and the Bass Clipper after it.
+        case .bass: return ["primeBass", "bassClipper"]
+        case .peakControl: return ["dcClipper", "hfLimiter", "limiter"]
         case .transmission: return ["stereoCoder", "compositeClipper", "bs412", "finalStage"]
         }
     }
 
-    /// The Sound section's own pages ahead of the groups: the landing grid and
-    /// the Format Profile ("start here").
-    static let soundLandingPageIDs = ["overview", "profile"]
+    /// The Sound section's own page ahead of the groups: the Overview, which
+    /// also holds the Format Profile choice ("start here").
+    static let soundLandingPageIDs = ["overview"]
 }
 
 /// The levelling engine: the regular AGC + Multiband chain (with the per-band
@@ -140,6 +143,7 @@ enum AdvancedControls {
         "mpx_clipper_cancel_pilot",
         "mpx_clipper_cancel_rds",
         "mpx_clipper_lookahead_ms",
+        "mpx_clipper_oversampling",
         "mpx_clipper_stereo_guard",
         "mpx_ssb_stereo_amount",
         "multiband_high_attack_ms",
@@ -184,7 +188,10 @@ enum HeadroomReadout: String, CaseIterable, Sendable {
     case compositeGR
     case safetyGR
     case safetyClip
-    case bs412Budget
+    /// The composite PEAK margin against its ceiling ("Composite Budget" on
+    /// the card). Not a BS.412 quantity: it was misnamed `bs412Budget`
+    /// until 2026-10.
+    case compositeBudget
     case mpxPower
     case bs412GR
     case badInput
@@ -198,7 +205,7 @@ enum HeadroomReadout: String, CaseIterable, Sendable {
             return true
         case .compositeGR:
             return ChainFeature.compositeClipper.applies(in: mode)
-        case .safetyGR, .safetyClip, .bs412Budget:
+        case .safetyGR, .safetyClip, .compositeBudget:
             return ChainFeature.finalStage.applies(in: mode)
         case .mpxPower, .bs412GR:
             return ChainFeature.bs412.applies(in: mode)

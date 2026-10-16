@@ -330,6 +330,89 @@ struct StereoLinkwitzRiley4 {
     }
 }
 
+/// IIR (Linkwitz-Riley 4) multiband crossovers for the low-latency monitor
+/// path, ALLPASS-COMPENSATED so the bands sum to an allpass (flat
+/// magnitude). The bands are split as a tree -- band 1 = LP1, the rest = HP1
+/// split again -- and each LR4 pair sums to a 2nd-order allpass
+/// (LP + HP = AP, Q = 1/sqrt 2, exact under the shared bilinear design).
+/// Without compensation the sum is LP1 + HP1 (LP2 + HP2 (...)), which is
+/// not an allpass: -0.81 dB at 119 Hz on 90 / 350 / 1800 / 6800 Hz, -0.18 dB
+/// at 422 Hz on 320 / 2550 Hz (review 2026-10-15, finding 7). Here every
+/// lower band also passes the allpasses of every crossover above it, so the
+/// sum is AP1 AP2 AP3 AP4.
+struct StereoIIRMultibandSplitter5 {
+    private var split1 = StereoLinkwitzRiley4()
+    private var split2 = StereoLinkwitzRiley4()
+    private var split3 = StereoLinkwitzRiley4()
+    private var split4 = StereoLinkwitzRiley4()
+    // Compensation: band 1 through AP2, AP3, AP4; band 2 through AP3, AP4;
+    // band 3 through AP4. Index [channel].
+    private var b1ap2 = [Biquad](repeating: Biquad(), count: 2)
+    private var b1ap3 = [Biquad](repeating: Biquad(), count: 2)
+    private var b1ap4 = [Biquad](repeating: Biquad(), count: 2)
+    private var b2ap3 = [Biquad](repeating: Biquad(), count: 2)
+    private var b2ap4 = [Biquad](repeating: Biquad(), count: 2)
+    private var b3ap4 = [Biquad](repeating: Biquad(), count: 2)
+
+    mutating func configure(x1Hz: Float, x2Hz: Float, x3Hz: Float, x4Hz: Float, sampleRate: Float) {
+        split1.configure(cutoffHz: x1Hz, sampleRate: sampleRate)
+        split2.configure(cutoffHz: x2Hz, sampleRate: sampleRate)
+        split3.configure(cutoffHz: x3Hz, sampleRate: sampleRate)
+        split4.configure(cutoffHz: x4Hz, sampleRate: sampleRate)
+        for c in 0..<2 {
+            b1ap2[c].configureAllpass(freqHz: x2Hz, sampleRate: sampleRate)
+            b1ap3[c].configureAllpass(freqHz: x3Hz, sampleRate: sampleRate)
+            b1ap4[c].configureAllpass(freqHz: x4Hz, sampleRate: sampleRate)
+            b2ap3[c].configureAllpass(freqHz: x3Hz, sampleRate: sampleRate)
+            b2ap4[c].configureAllpass(freqHz: x4Hz, sampleRate: sampleRate)
+            b3ap4[c].configureAllpass(freqHz: x4Hz, sampleRate: sampleRate)
+        }
+    }
+
+    /// Bands 1...5 as (left, right), the shape `LinearPhaseMultibandSplitter5`
+    /// returns.
+    mutating func process(left: Float, right: Float)
+        -> ((Float, Float), (Float, Float), (Float, Float), (Float, Float), (Float, Float)) {
+        let s1 = split1.process(left: left, right: right)
+        let s2 = split2.process(left: s1.0.1, right: s1.1.1)
+        let s3 = split3.process(left: s2.0.1, right: s2.1.1)
+        let s4 = split4.process(left: s3.0.1, right: s3.1.1)
+        let b1L = b1ap4[0].process(b1ap3[0].process(b1ap2[0].process(s1.0.0)))
+        let b1R = b1ap4[1].process(b1ap3[1].process(b1ap2[1].process(s1.1.0)))
+        let b2L = b2ap4[0].process(b2ap3[0].process(s2.0.0))
+        let b2R = b2ap4[1].process(b2ap3[1].process(s2.1.0))
+        let b3L = b3ap4[0].process(s3.0.0)
+        let b3R = b3ap4[1].process(s3.1.0)
+        return ((b1L, b1R), (b2L, b2R), (b3L, b3R), (s4.0.0, s4.1.0), (s4.0.1, s4.1.1))
+    }
+}
+
+/// Three-band counterpart of `StereoIIRMultibandSplitter5`: band 1 passes
+/// the second crossover's allpass, so the sum is AP1 AP2.
+struct StereoIIRMultibandSplitter3 {
+    private var split1 = StereoLinkwitzRiley4()
+    private var split2 = StereoLinkwitzRiley4()
+    private var b1ap2 = [Biquad](repeating: Biquad(), count: 2)
+
+    mutating func configure(x1Hz: Float, x2Hz: Float, sampleRate: Float) {
+        split1.configure(cutoffHz: x1Hz, sampleRate: sampleRate)
+        split2.configure(cutoffHz: x2Hz, sampleRate: sampleRate)
+        for c in 0..<2 {
+            b1ap2[c].configureAllpass(freqHz: x2Hz, sampleRate: sampleRate)
+        }
+    }
+
+    /// Bands 1...3 as (left, right), the shape `LinearPhaseMultibandSplitter3`
+    /// returns.
+    mutating func process(left: Float, right: Float) -> ((Float, Float), (Float, Float), (Float, Float)) {
+        let s1 = split1.process(left: left, right: right)
+        let s2 = split2.process(left: s1.0.1, right: s1.1.1)
+        let b1L = b1ap2[0].process(s1.0.0)
+        let b1R = b1ap2[1].process(s1.1.0)
+        return ((b1L, b1R), (s2.0.0, s2.1.0), (s2.0.1, s2.1.1))
+    }
+}
+
 struct ProgramLowpass {
     var left = BiquadCascade6()
     var right = BiquadCascade6()
@@ -378,7 +461,7 @@ struct EnvelopeFollower {
 /// detector; mid/upper frequencies get a gentle shelf boost so their
 /// perceptually loud content (vocals, sibilance, cymbals) reads hot.
 ///
-/// This doesn't need to be bit-identical to BS.1770 — the goal is
+/// This doesn't need to be bit-identical to BS.1770 -- the goal is
 /// simply a rate-flexible, perceptually-weighted detector that sees
 /// what humans hear, not what a flat RMS calculation sees. The
 /// audio-path signal is untouched; these filters only feed the AGC's
@@ -388,10 +471,10 @@ struct KWeightingFilter {
     private var shelf = Biquad()
 
     mutating func configure(sampleRate: Float) {
-        // RLB high-pass — roll off below ~38 Hz so sub-audible rumble
+        // RLB high-pass -- roll off below ~38 Hz so sub-audible rumble
         // doesn't bias the detector.
         hpf.configureHighpass(cutoffHz: 38.0, sampleRate: sampleRate, q: 0.5)
-        // Head-simulator shelf — +4 dB above ~1.5 kHz lifts the
+        // Head-simulator shelf -- +4 dB above ~1.5 kHz lifts the
         // perceptually loud register into the detector's view.
         shelf.configureHighShelf(gainDB: 4.0, cutoffHz: 1_500.0, sampleRate: sampleRate)
     }

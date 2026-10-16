@@ -23,7 +23,7 @@ import os
 ///
 /// RT-safety: the input render callback runs on the AU's real-time
 /// HAL I/O thread. The frame-sink closure is invoked synchronously
-/// from that thread — callers must keep the closure body
+/// from that thread -- callers must keep the closure body
 /// allocation-free and lock-free. Refcon uses `passUnretained`; the
 /// lifetime invariant is that `stop()` always runs before `deinit`,
 /// so `self` stays alive while the unit is initialized.
@@ -31,7 +31,7 @@ public final class InputAUHAL {
     /// Frame sink invoked from the AUHAL render thread after each
     /// successful `AudioUnitRender`. Pointers point into the
     /// pre-allocated buffer list and are valid only for the duration
-    /// of the call — sinks must copy or push to a ring before
+    /// of the call -- sinks must copy or push to a ring before
     /// returning.
     public typealias FrameSink = (
         _ left: UnsafePointer<Float>,
@@ -42,10 +42,20 @@ public final class InputAUHAL {
     public struct Format {
         public let deviceSampleRate: Double
         public let deviceChannelCount: Int
+        /// The device channels actually mapped into the stereo client
+        /// format (zero-based), after `ChannelPair.resolve`.
+        public let channels: ChannelPair
+        /// Why `channels` differs from what was requested, or nil.
+        public let channelNote: String?
 
-        public init(deviceSampleRate: Double, deviceChannelCount: Int) {
+        public init(
+            deviceSampleRate: Double, deviceChannelCount: Int,
+            channels: ChannelPair = .stereoDefault, channelNote: String? = nil
+        ) {
             self.deviceSampleRate = deviceSampleRate
             self.deviceChannelCount = deviceChannelCount
+            self.channels = channels
+            self.channelNote = channelNote
         }
     }
 
@@ -72,10 +82,13 @@ public final class InputAUHAL {
     private var bufferList: UnsafeMutableAudioBufferListPointer?
     private var maxFramesPerSlice: Int = 4096
     private var running: Bool = false
+    /// Set by `configure`, reported in `Format` by `start`.
+    private var appliedChannels: ChannelPair = .stereoDefault
+    private var channelNote: String?
 
     /// Set this before calling `start()`. Once start succeeds the AU
     /// can fire callbacks at any time, so changing the sink afterward
-    /// is racy — replace by stop+restart instead.
+    /// is racy -- replace by stop+restart instead.
     public var frameSink: FrameSink?
 
     public var isRunning: Bool { running }
@@ -84,11 +97,22 @@ public final class InputAUHAL {
 
     /// Open and start an AUHAL pinned to `deviceID`. Returns the
     /// device's native format (sample rate + channel count) so the
-    /// caller can wire up rate-conversion machinery.
+    /// caller can wire up rate-conversion machinery, plus the device
+    /// channels that feed the stereo client format.
+    ///
+    /// `channels` picks which device channels become left and right
+    /// (zero-based; a mono pair duplicates one channel into both). nil
+    /// is channels 1 and 2 -- the behaviour every caller had before
+    /// the parameter existed. A pair the device does not have falls
+    /// back to that default and says so in `Format.channelNote`.
     @discardableResult
-    public func start(deviceID: AudioDeviceID, maxFramesPerSlice: Int = 4096) throws -> Format {
+    public func start(
+        deviceID: AudioDeviceID, channels: ChannelPair? = nil, maxFramesPerSlice: Int = 4096
+    ) throws -> Format {
         precondition(unit == nil, "InputAUHAL.start called twice without stop()")
         self.maxFramesPerSlice = max(1024, maxFramesPerSlice)
+        appliedChannels = .stereoDefault
+        channelNote = nil
 
         // 1. Find + instantiate the AUHAL component.
         var desc = AudioComponentDescription(
@@ -112,7 +136,7 @@ public final class InputAUHAL {
         // From here on, any failure must dispose the unit before
         // throwing so we don't leak it.
         do {
-            try configure(unit: unit, deviceID: deviceID)
+            try configure(unit: unit, deviceID: deviceID, channels: channels)
         } catch {
             AudioComponentInstanceDispose(unit)
             self.unit = nil
@@ -139,12 +163,14 @@ public final class InputAUHAL {
         // ring and compute resample ratios.
         let actual = try readDeviceFormat(unit: unit)
         Self.log.info(
-            "AUHAL input started deviceID=\(deviceID, privacy: .public) deviceRate=\(actual.deviceSampleRate, privacy: .public) deviceChannels=\(actual.deviceChannelCount, privacy: .public)"
+            "AUHAL input started deviceID=\(deviceID, privacy: .public) deviceRate=\(actual.deviceSampleRate, privacy: .public) deviceChannels=\(actual.deviceChannelCount, privacy: .public) channels=\(actual.channels.iniValue, privacy: .public)"
         )
         return actual
     }
 
-    private func configure(unit: AudioUnit, deviceID: AudioDeviceID) throws {
+    private func configure(
+        unit: AudioUnit, deviceID: AudioDeviceID, channels requested: ChannelPair?
+    ) throws {
         // 2. EnableIO on input bus 1.
         var enableInput: UInt32 = 1
         try check("EnableIO input", AudioUnitSetProperty(
@@ -167,7 +193,7 @@ public final class InputAUHAL {
             UInt32(MemoryLayout<UInt32>.size)
         ))
 
-        // 4. CurrentDevice. Must come AFTER EnableIO — TN2091:
+        // 4. CurrentDevice. Must come AFTER EnableIO -- TN2091:
         //    "devices can only be set to the AUHAL after enabling IO".
         //    Reversing this order silently misroutes input.
         var device = deviceID
@@ -201,7 +227,7 @@ public final class InputAUHAL {
         // 6. Set client format on output scope element 1: Float32,
         //    planar (non-interleaved), 2 channels (stereo), at the
         //    DEVICE'S sample rate. AUHAL's built-in converter does
-        //    packing / format only — NOT sample-rate conversion.
+        //    packing / format only -- NOT sample-rate conversion.
         //    Asking for 192k from a 48k device fails with
         //    kAudioUnitErr_FormatNotSupported (-10868) at Initialize.
         //    External SRC happens downstream in the consumer.
@@ -216,7 +242,7 @@ public final class InputAUHAL {
             UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         ))
 
-        // 7. MaxFramesPerSlice — pre-size internal buffers for the
+        // 7. MaxFramesPerSlice -- pre-size internal buffers for the
         //    worst case. Display-sleep wake can deliver a single
         //    larger slice than steady state.
         var mfps = UInt32(self.maxFramesPerSlice)
@@ -229,11 +255,24 @@ public final class InputAUHAL {
             UInt32(MemoryLayout<UInt32>.size)
         ))
 
-        // 8. ChannelMap — only when the device differs from our
-        //    target stereo layout. -1 = silence; n = device channel
-        //    index. Stereo devices use the implicit 1:1 mapping.
+        // 8. ChannelMap -- which device channels feed the two client
+        //    channels. -1 = silence; n = device channel index. The
+        //    operator's pair is resolved against the device's real
+        //    channel count first, so a pair the device lacks becomes
+        //    channels 1, 2 plus a note rather than an AU error.
+        //    A 2-channel device with the default pair keeps the
+        //    implicit 1:1 mapping (no property set), as before; a
+        //    multichannel device always gets an explicit map, as
+        //    before (it used to be [0, 1] unconditionally).
+        let resolved = ChannelPair.resolve(
+            requested: requested, channelCount: deviceChannels, role: "Input")
+        appliedChannels = resolved.pair
+        channelNote = resolved.note
+        if let note = resolved.note {
+            Self.log.notice("\(note, privacy: .public)")
+        }
         if deviceChannels == 1 {
-            // Mono device → duplicate into both client channels.
+            // Mono device -> duplicate into both client channels.
             var map: [Int32] = [0, 0]
             let mapBytes = UInt32(MemoryLayout<Int32>.size * map.count)
             try map.withUnsafeMutableBufferPointer { buffer in
@@ -247,9 +286,12 @@ public final class InputAUHAL {
                     mapBytes
                 ))
             }
-        } else if deviceChannels > 2 {
-            // Multichannel device → take the first two channels.
-            var map: [Int32] = [0, 1]
+            Self.log.info("AUHAL channel map [0, 0] (1-channel device)")
+        } else if deviceChannels > 2 || resolved.pair != .stereoDefault {
+            // Multichannel device, or a non-default pair on a stereo
+            // device (mono on channel 2, or a swapped pair) -> explicit
+            // map to the chosen device channels.
+            var map: [Int32] = [Int32(resolved.pair.left), Int32(resolved.pair.right)]
             let mapBytes = UInt32(MemoryLayout<Int32>.size * map.count)
             try map.withUnsafeMutableBufferPointer { buffer in
                 guard let base = buffer.baseAddress else { return }
@@ -262,9 +304,12 @@ public final class InputAUHAL {
                     mapBytes
                 ))
             }
+            Self.log.info(
+                "AUHAL channel map [\(resolved.pair.left, privacy: .public), \(resolved.pair.right, privacy: .public)] on a \(deviceChannels, privacy: .public)-channel device"
+            )
         }
 
-        // 9. SetInputCallback — refCon points at self via
+        // 9. SetInputCallback -- refCon points at self via
         //    passUnretained. Lifetime invariant: stop() runs before
         //    deinit, so self stays alive while the unit is active.
         let refCon = Unmanaged.passUnretained(self).toOpaque()
@@ -281,7 +326,7 @@ public final class InputAUHAL {
             UInt32(MemoryLayout<AURenderCallbackStruct>.size)
         ))
 
-        // 10. AudioUnitInitialize — consume all the properties we
+        // 10. AudioUnitInitialize -- consume all the properties we
         //     just set, allocate the AU's internal buffers.
         try check("AudioUnitInitialize", AudioUnitInitialize(unit))
 
@@ -304,7 +349,9 @@ public final class InputAUHAL {
         ))
         return Format(
             deviceSampleRate: fmt.mSampleRate,
-            deviceChannelCount: Int(fmt.mChannelsPerFrame)
+            deviceChannelCount: Int(fmt.mChannelsPerFrame),
+            channels: appliedChannels,
+            channelNote: channelNote
         )
     }
 
@@ -360,7 +407,7 @@ public final class InputAUHAL {
             unit,
             actionFlags,
             timeStamp,
-            1,                 // bus 1 — input AUHAL renders to bus 1
+            1,                 // bus 1 -- input AUHAL renders to bus 1
             frameCount,
             bufferList.unsafeMutablePointer
         )
@@ -453,7 +500,7 @@ private let auhalInputProc: AURenderCallback = {
     // callback. CoreAudio's input thread is a separate high-priority
     // thread; MXCSR / FPCR are per-thread, so we set them here too.
     // See MPXPrimeNative.h for the rationale (denormal accumulation
-    // → x86 slow path → audio dropout → "white noise after a couple
+    // -> x86 slow path -> audio dropout -> "white noise after a couple
     // of songs" on Intel).
     mpx_enable_flush_to_zero()
     let state = Unmanaged<InputAUHAL>.fromOpaque(inRefCon)

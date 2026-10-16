@@ -13,64 +13,46 @@ import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Coarse engine-side gate for metering and analysis capture: which kind of
+/// page is on screen. Not shown to the operator (the sidebar shows `Stage`).
 enum AppSection: String, CaseIterable, Identifiable {
-    case monitoring = "Monitoring"
-    case processing = "Processing"
-    case rds = "RDS"
+    case monitoring
+    case processing
+    case rds
+
+    var id: String { rawValue }
+}
+
+/// The Sound pages, keyed by the dashboard's page id. Every operator-facing
+/// string (title, reset button, help) comes from `Stage`, the one name table;
+/// this enum only selects which page view to draw.
+enum ProcessingTab: String, CaseIterable, Identifiable {
+    case overview
+    case core
+    case phaseRotator
+    case agc
+    case parametricEQ
+    case multiband
+    case advancedDynamics = "advanced_dynamics"
+    case expander
+    case mbLimiter
+    case primeBass
+    case bassClipper
+    case dcClipper
+    case hfLimiter
+    case limiter
+    case stereoCoder
+    case compositeClipper
+    case bs412
+    case finalStage
 
     var id: String { rawValue }
 
-    var icon: String {
-        switch self {
-        case .monitoring: return "waveform"
-        case .processing: return "slider.horizontal.3"
-        case .rds: return "dot.radiowaves.left.and.right"
-        }
-    }
-
-    var detailTitle: String { rawValue }
-
-    var detailSubtitle: String {
-        switch self {
-        case .monitoring:
-            return "Overview and live status"
-        case .processing:
-            return "DSP controls and presets"
-        case .rds:
-            return "Program service and carrier settings"
-        }
-    }
-}
-
-enum ProcessingTab: String, CaseIterable, Identifiable {
-    case overview = "Overview"
-    case formatProfile = "Profile"
-    case core = "Basics"
-    case phaseRotator = "Phase Rot"
-    case agc = "AGC"
-    case parametricEQ = "PEQ"
-    case multiband = "Multiband"
-    case advancedDynamics = "Adv Dyn"
-    case expander = "Expander"
-    case mbLimiter = "Band Limiter"
-    case primeBass = "PrimeBass"
-    case bassClipper = "Bass Clip"
-    case dcClipper = "Audio Clip"
-    case hfLimiter = "HF Limiter"
-    case limiter = "Audio Limiter"
-    case stereoCoder = "Stereo Coder"
-    case compositeClipper = "Comp Clip"
-    case bs412 = "BS.412"
-    case finalStage = "Loudness and Output"
-
-    /// Inverse of `Stage.legacyProcessingTab`. Cards in the
-    /// Processing Overview grid use this to jump the unified
-    /// `selectedStage` to the corresponding sidebar row when the
-    /// chevron button is clicked.
+    /// Inverse of `Stage.legacyProcessingTab`. Cards in the Sound Overview
+    /// grid use this to jump the sidebar selection to the stage's page.
     var stage: Stage {
         switch self {
         case .overview: return .processingOverview
-        case .formatProfile: return .processingFormatProfile
         case .core: return .processingCore
         case .phaseRotator: return .processingPhaseRotator
         case .agc: return .processingAGC
@@ -91,217 +73,57 @@ enum ProcessingTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Short paragraph explaining what the stage on this tab does and how
-    /// it fits into the chain. Shown as a header block above the tab's
-    /// controls — anchors the operator without forcing them to read
-    /// documentation. Brief by design (1-3 sentences, ASCII-only).
-    var helpText: String {
-        switch self {
-        case .overview:
-            return "Bird's-eye view of every processing stage with its current state and one telling metric. Click a card's chevron to jump into its detail tab."
-        case .formatProfile:
-            return "Pick a station format to atomically apply matched multiband, final-stage, PrimeBass, mono bass, and composite-clipper settings. Per-stage knobs stay editable afterwards. Pick `Custom` to keep your manual tuning."
-        case .core:
-            return "Global engine controls: bypass, mono mode, input/output gains, pre-emphasis, audio HPF, program lowpass, HF trim. Most settings here are restart-required."
-        case .phaseRotator:
-            return "4-pole allpass chain that reduces waveform asymmetry — especially on voice — by 3-4 dB without changing tonal balance. Frees headroom for downstream dynamics stages."
-        case .agc:
-            return "Wideband Automatic Gain Control with optional K-weighted (BS.1770-style) detector and program-dependent release. Long-term level riding that brings quiet and loud sources to a similar perceived level before the multiband stage."
-        case .parametricEQ:
-            return "4-band parametric EQ (low shelf + 2 peaks + high shelf) applied in L/R domain before the multiband stage. Pre-multiband tonal shaping."
-        case .multiband:
-            return "Multiband compressor splitting L/R into 3 or 5 frequency bands (linear-phase FIR on TX path, LR4 IIR on monitor path), each with its own gain ride. Loudness lever and tonal control combined."
-        case .advancedDynamics:
-            return "Single-stage leveler that replaces the AGC and Multiband stages with one fused 5-band stage, so leveling and density shaping can never fight. Set the sound you want (target, balance, density) - the stage adapts its own speed to the programme."
-        case .expander:
-            return "Per-band downward expander — pulls gain down when a band falls below threshold. Gates background noise floor while leaving programme content intact."
-        case .mbLimiter:
-            return "Per-band fast peak limiter sitting after the multiband compressor. Catches band-internal peaks before recombination, preserves the multiband target while controlling overshoots."
-        case .primeBass:
-            return "Bass enhancement via MaxxBass-style harmonic synthesis plus dynamic envelope extension. Adds perceived bass while reducing true-peak LF amplitude — saves headroom downstream. Mono Bass on the same tab sums L and R below a chosen frequency so sub-bass side energy cannot eat deviation or break mono compatibility."
-        case .bassClipper:
-            return "4x oversampled clipper targeting LF transients before the chain. Useful when PrimeBass / multiband still leave kicks pushing into downstream limiters."
-        case .dcClipper:
-            return "8x oversampled distortion-cancelled clipper on the audio band. Cleans up audio-band peaks before pre-emphasis adds HF boost."
-        case .hfLimiter:
-            return "Pre-emphasis-aware HF control after pre-emphasis: gain-riding, removes part of the pre-emphasis boost only while an HF transient overshoots and the boost is what overshoots (no clipping distortion; on in every profile). The top octave above 13 kHz has its own, tighter ceiling."
-        case .limiter:
-            return "Pre-encode L/R peak limiter — 4x oversampled true-peak, stereo-linked — with default-on look-ahead and an HF-subband transient detector. Catches HF transients that slip past everything upstream after pre-emphasis."
-        case .bs412:
-            return "ITU-R BS.412 rolling-average MPX power limiter for European regulatory compliance (DE / AT / CH / SE / CZ / SI). Slow gain ride over a ~60 s window. Off in NL, US, UK, FR, ES, IT and most other countries."
-        case .stereoCoder:
-            return "The pilot-locked stereo encoder: L+R plus L-R on the 38 kHz subcarrier, pilot and RDS injected after all peak control. Hosts the optional SSB Stereo mode, which leans the subcarrier toward single-sideband to reclaim composite headroom ahead of the clipper."
-        case .compositeClipper:
-            return "16x oversampled differential composite clipper on the assembled MPX composite. Protects pilot / stereo / RDS guard bands from clipper distortion via delta-based per-band substitution. Primary loudness lever."
-        case .finalStage:
-            return "Output gain, MPX deviation cap (75 kHz universal), final-MPX safety limiter with look-ahead, composite budget governor (keeps pilot / RDS injection constant), deviation telemetry."
-        }
-    }
-
-    var id: String { rawValue }
-
-    var resetButtonTitle: String {
-        switch self {
-        case .overview:
-            return "Reset All Processing"
-        case .formatProfile:
-            return "Reset Format Profile"
-        case .core:
-            return "Reset Core Tab"
-        case .agc:
-            return "Reset AGC Tab"
-        case .phaseRotator:
-            return "Reset Phase Rotator Tab"
-        case .parametricEQ:
-            return "Reset PEQ Tab"
-        case .primeBass:
-            return "Reset PrimeBass Tab"
-        case .multiband:
-            return "Reset Multiband Tab"
-        case .advancedDynamics:
-            return "Reset Advanced Dynamics Tab"
-        case .mbLimiter:
-            return "Reset Band Limiter Tab"
-        case .expander:
-            return "Reset Expander Tab"
-        case .bassClipper:
-            return "Reset Bass Clipper Tab"
-        case .dcClipper:
-            return "Reset Audio Clipper Tab"
-        case .hfLimiter:
-            return "Reset HF Limiter Tab"
-        case .limiter:
-            return "Reset Audio Limiter Tab"
-        case .bs412:
-            return "Reset BS.412 Tab"
-        case .stereoCoder:
-            return "Reset Stereo Coder Tab"
-        case .compositeClipper:
-            return "Reset Composite Clipper Tab"
-        case .finalStage:
-            return "Reset Loudness and Output Tab"
-        }
-    }
-
-    var resetStatusText: String {
-        switch self {
-        case .overview:
-            return "Reset every processing tab to defaults"
-        case .formatProfile:
-            return "Reset format profile to default (Community Radio)"
-        case .core:
-            return "Reset processing core tab to defaults"
-        case .agc:
-            return "Reset AGC tab to defaults"
-        case .phaseRotator:
-            return "Reset phase rotator tab to defaults"
-        case .parametricEQ:
-            return "Reset parametric EQ tab to defaults"
-        case .primeBass:
-            return "Reset PrimeBass tab to defaults"
-        case .multiband:
-            return "Reset Multiband tab to defaults"
-        case .advancedDynamics:
-            return "Reset Advanced Dynamics tab to defaults"
-        case .mbLimiter:
-            return "Reset multiband limiter tab to defaults"
-        case .expander:
-            return "Reset expander tab to defaults"
-        case .bassClipper:
-            return "Reset bass clipper tab to defaults"
-        case .dcClipper:
-            return "Reset audio clipper tab to defaults"
-        case .hfLimiter:
-            return "Reset HF limiter tab to defaults"
-        case .limiter:
-            return "Reset audio limiter tab to defaults"
-        case .bs412:
-            return "Reset BS.412 tab to defaults"
-        case .stereoCoder:
-            return "Reset stereo coder tab to defaults"
-        case .compositeClipper:
-            return "Reset composite clipper tab to defaults"
-        case .finalStage:
-            return "Reset Loudness and Output tab to defaults"
-        }
-    }
+    var helpText: String { stage.helpText }
+    var resetButtonTitle: String { stage.resetButtonTitle }
+    var resetStatusText: String { stage.resetStatusText }
 }
 
+/// The RDS pages, keyed by the dashboard's page id. Strings come from
+/// `Stage`, as for `ProcessingTab`.
 enum RDSTab: String, CaseIterable, Identifiable {
-    case control = "Status"
-    case program = "Program"
-    case radiotext = "Radiotext"
-    case longPS = "Long PS"
-    case af = "AF"
-    case schedule = "Schedule"
-    case carrier = "Carrier"
+    case control = "rdsStatus"
+    case program = "rdsIdentity"
+    case radiotext = "rdsRadiotext"
+    case af = "rdsAF"
+    case schedule = "rdsSchedule"
+    case carrier = "rdsSubcarrier"
 
     var id: String { rawValue }
 
-    var resetButtonTitle: String {
+    var stage: Stage {
         switch self {
-        case .control: return "Reset Status Tab"
-        case .program: return "Reset Program Tab"
-        case .radiotext: return "Reset Radiotext Tab"
-        case .longPS: return "Reset Long PS Tab"
-        case .af: return "Reset AF Tab"
-        case .schedule: return "Reset Schedule Tab"
-        case .carrier: return "Reset Carrier Tab"
+        case .control: return .rdsControl
+        case .program: return .rdsProgram
+        case .radiotext: return .rdsRadiotext
+        case .af: return .rdsAF
+        case .schedule: return .rdsSchedule
+        case .carrier: return .rdsCarrier
         }
     }
 
-    var resetStatusText: String {
-        switch self {
-        case .control: return "Reset RDS status tab to defaults"
-        case .program: return "Reset RDS program tab to defaults"
-        case .radiotext: return "Reset RDS radiotext tab to defaults"
-        case .longPS: return "Reset RDS long PS tab to defaults"
-        case .af: return "Reset RDS AF tab to defaults"
-        case .schedule: return "Reset RDS schedule tab to defaults"
-        case .carrier: return "Reset RDS carrier tab to defaults"
-        }
-    }
+    var helpText: String { stage.helpText }
+    var resetButtonTitle: String { stage.resetButtonTitle }
+    var resetStatusText: String { stage.resetStatusText }
 
-    /// Short paragraph explaining what the controls on this tab cover.
-    /// Mirrors the `ProcessingTab.helpText` pattern; shown via the shared
-    /// `TabHelpBox` above the tab's controls so operators can anchor
-    /// without leaving the screen for documentation.
-    var helpText: String {
-        switch self {
-        case .control:
-            return "Master enable for the RDS subcarrier plus a live snapshot of what's currently on air (PS, RT, PTYN, Long PS). All RDS data fields here apply live — no engine restart required."
-        case .program:
-            return "Programme identification: PI code (RDI/EBU-assigned, NL prefix `8`), PTY genre code, optional PTYN extended programme type name, ECC (`E3` for NL), LIC (`1D` for Dutch), plus 4 PS banks and the runtime TP / TA / MS / DI flags. All live-apply."
-        case .radiotext:
-            return "64-character RadioText (Group 2A) plus RT+ tagging (Group 3A + 11A) for now-playing metadata. Manual buffers cycle on a timer; dynamic mode expands `{title} / {artist} / {now_playing}` macros from the now-playing script. Spec: EN 50067 + TR 307."
-        case .longPS:
-            return "32-character Long PS via Group 15A (IEC 62106-2:2018). Receivers that decode 15A show the full name; legacy receivers ignore the group and keep using the 8-char PS bank. Pairs with the basic PS bank — don't replace, augment."
-        case .af:
-            return "Alternative Frequencies (AF). Method A: flat list of all frequencies in the network. Method B: pairs each alternative with the tuned frequency so receivers can group regional variants. Max 25 frequencies for Method A, 12 pairs for Method B (EN 50067 Sec 3.2.1.6.4)."
-        case .schedule:
-            return "Group sequence (which RDS groups go on air and in what order) plus scheduler policy (auto / standard / custom). Clock-Time enable (Group 4A, minute-aligned MJD) and timezone offset for CT broadcasts also live here."
-        case .carrier:
-            return "RDS subcarrier physical-layer settings: injection level as % of total FM deviation (2.7 % default = 2 kHz, ITU-R BS.450 spec range 1.3-10 %). Carrier is fixed at 57 kHz locked to 3x pilot per EN 50067 Sec 2.1.4. Restart required."
-        }
-    }
+    /// Only the subcarrier's physical layer (`rds_level`) needs an engine
+    /// restart; every other RDS page's keys apply live.
+    var resetNeedsRestart: Bool { self == .carrier }
 }
 
-/// Unified flat selection used by the sidebar list.
-/// One case per top-level + sub-tab from the legacy AppSection / ProcessingTab
-/// / RDSTab enums. The view model derives the legacy enums from `selectedStage`
-/// so existing per-tab views (which still bind to selectedProcessingTab /
-/// selectedRDSTab internally for their reset buttons) keep working during the
-/// phased migration. Eventually those legacy enums become removable.
+/// Unified flat selection used by the sidebar list, and THE name table: a
+/// page's sidebar label is its master name, and the page title, the reset
+/// button, the Overview card, the signal-flow chip, the help box and the web
+/// dashboard's page (`schema.json`, held equal by `LayoutNameTableTests`) all
+/// derive from the tables below. Never spell a stage's name anywhere else.
 enum Stage: String, CaseIterable, Identifiable {
-    // Monitoring
+    // On Air
     case monitoring
 
-    // Audio I/O — devices, operating mode, level calibration
+    // Setup
     case audioIO
 
-    // Processing
+    // Sound
     case processingOverview
-    case processingFormatProfile
     case processingCore
     case processingPhaseRotator
     case processingAGC
@@ -320,16 +142,15 @@ enum Stage: String, CaseIterable, Identifiable {
     case processingBS412
     case processingFinalStage
 
-    // RDS — Control is the primary landing; the rest are detail tabs.
+    // RDS -- Status is the landing page.
     case rdsControl
     case rdsProgram
     case rdsRadiotext
-    case rdsLongPS
     case rdsAF
     case rdsSchedule
     case rdsCarrier
 
-    // Tools
+    // Setup (Test Tone) and Presets and System
     case testTone
     case snapshots
 
@@ -361,7 +182,7 @@ enum Stage: String, CaseIterable, Identifiable {
             return .onAir
         case .audioIO, .testTone:
             return .setup
-        case .rdsControl, .rdsProgram, .rdsRadiotext, .rdsLongPS,
+        case .rdsControl, .rdsProgram, .rdsRadiotext,
              .rdsAF, .rdsSchedule, .rdsCarrier:
             return .rds
         case .snapshots:
@@ -371,32 +192,25 @@ enum Stage: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The dashboard's page id for this stage, so the sidebar can lay the
+    /// The dashboard's page id for this stage (`schema.json`), so both front
+    /// ends name the same page the same way.
+    var schemaPageID: String {
+        if let tab = legacyProcessingTab { return tab.rawValue }
+        if let tab = legacyRDSTab { return tab.rawValue }
+        switch self {
+        case .monitoring: return "monitoring"
+        case .audioIO: return "interfaces"
+        case .testTone: return "testTone"
+        case .snapshots: return "presets"
+        default: return rawValue
+        }
+    }
+
+    /// The Sound stage for a dashboard page id, so the sidebar can lay the
     /// Sound section out from `StageGroup.pageIDs` -- the same order the
     /// dashboard shows.
     static func stage(forSchemaPage id: String) -> Stage? {
-        switch id {
-        case "overview": return .processingOverview
-        case "profile": return .processingFormatProfile
-        case "core": return .processingCore
-        case "phaseRotator": return .processingPhaseRotator
-        case "agc": return .processingAGC
-        case "parametricEQ": return .processingParametricEQ
-        case "multiband": return .processingMultiband
-        case "advanced_dynamics": return .processingAdvancedDynamics
-        case "expander": return .processingExpander
-        case "mbLimiter": return .processingMBLimiter
-        case "primeBass": return .processingPrimeBass
-        case "bassClipper": return .processingBassClipper
-        case "dcClipper": return .processingDCClipper
-        case "hfLimiter": return .processingHFLimiter
-        case "limiter": return .processingLimiter
-        case "stereoCoder": return .processingStereoCoder
-        case "compositeClipper": return .processingCompositeClipper
-        case "bs412": return .processingBS412
-        case "finalStage": return .processingFinalStage
-        default: return nil
-        }
+        ProcessingTab(rawValue: id)?.stage
     }
 
     /// The Sound section's rows in dashboard order: landing pages, then each
@@ -435,23 +249,16 @@ enum Stage: String, CaseIterable, Identifiable {
     /// Control/StageApplicability.swift (shared with the dashboard); this is
     /// its GUI face, keyed by the dashboard page id the stage answers to.
     var levellingEngine: LevellingEngine? {
-        switch self {
-        case .processingAGC, .processingMultiband, .processingExpander, .processingMBLimiter:
-            return .regular
-        case .processingAdvancedDynamics:
-            return .advanced
-        default:
-            return nil
-        }
+        LevellingEngine.engine(forPage: schemaPageID)
     }
 
-    /// Sidebar row label.
+    /// Master name: sidebar row, page title, Overview card, reset button and
+    /// the dashboard's page title.
     var label: String {
         switch self {
         case .monitoring: return "Monitoring"
         case .audioIO: return "Audio I/O"
         case .processingOverview: return "Overview"
-        case .processingFormatProfile: return "Format Profile"
         case .processingCore: return "Basics"
         case .processingAGC: return "AGC"
         case .processingPhaseRotator: return "Phase Rotator"
@@ -472,7 +279,6 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsControl: return "Status"
         case .rdsProgram: return "Identity"
         case .rdsRadiotext: return "Radiotext"
-        case .rdsLongPS: return "Long PS"
         case .rdsAF: return "Alt. Frequencies"
         case .rdsSchedule: return "Schedule"
         case .rdsCarrier: return "Subcarrier"
@@ -481,13 +287,56 @@ enum Stage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The short form for the signal-flow strip (app) and the chain pills
+    /// (dashboard), or nil for a stage the strip does not draw: the Expander
+    /// and the Band Limiter run per band INSIDE the multiband stage.
+    var chipLabel: String? {
+        switch self {
+        case .processingCore: return "Basics"
+        case .processingPhaseRotator: return "Phase"
+        case .processingAGC: return "AGC"
+        case .processingParametricEQ: return "EQ"
+        case .processingMultiband: return "Multiband"
+        case .processingAdvancedDynamics: return "Adv Dyn"
+        case .processingPrimeBass: return "PrimeBass"
+        case .processingBassClipper: return "Bass Clip"
+        case .processingDCClipper: return "Audio Clip"
+        case .processingHFLimiter: return "HF Lim"
+        case .processingLimiter: return "Audio Lim"
+        case .processingStereoCoder: return "Coder"
+        case .processingCompositeClipper: return "Comp Clip"
+        case .processingBS412: return "BS.412"
+        case .processingFinalStage: return "Output"
+        default: return nil
+        }
+    }
+
+    /// The stages the signal-flow strip draws, in chain order (the order
+    /// `MPXGenerator.processProgramStereo` runs them, then the composite).
+    static let signalChain: [Stage] = [
+        .processingCore,
+        .processingPhaseRotator,
+        .processingAGC,
+        .processingParametricEQ,
+        .processingMultiband,
+        .processingAdvancedDynamics,
+        .processingPrimeBass,
+        .processingBassClipper,
+        .processingDCClipper,
+        .processingHFLimiter,
+        .processingLimiter,
+        .processingStereoCoder,
+        .processingCompositeClipper,
+        .processingBS412,
+        .processingFinalStage
+    ]
+
     /// SF Symbols icon used in the sidebar row.
     var icon: String {
         switch self {
         case .monitoring: return "waveform"
         case .audioIO: return "cable.connector.horizontal"
         case .processingOverview: return "square.grid.2x2"
-        case .processingFormatProfile: return "tag"
         case .processingCore: return "slider.horizontal.3"
         case .processingAGC: return "gauge.with.needle"
         case .processingPhaseRotator: return "arrow.triangle.2.circlepath"
@@ -508,7 +357,6 @@ enum Stage: String, CaseIterable, Identifiable {
         case .rdsControl: return "switch.2"
         case .rdsProgram: return "dot.radiowaves.left.and.right"
         case .rdsRadiotext: return "text.bubble"
-        case .rdsLongPS: return "text.alignleft"
         case .rdsAF: return "list.dash"
         case .rdsSchedule: return "calendar.badge.clock"
         case .rdsCarrier: return "antenna.radiowaves.left.and.right"
@@ -517,44 +365,120 @@ enum Stage: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Detail title shown in the content header (was `AppSection.detailTitle`).
+    /// Page title in the content header: the sidebar label, exactly.
     var detailTitle: String { label }
 
-    /// Detail subtitle shown beneath the title.
+    /// One plain sentence under the page title saying what the page is for
+    /// (also the dashboard page's `sub`).
     var detailSubtitle: String {
         switch self {
-        case .monitoring: return "Overview and live status"
-        case .audioIO: return "Devices, operating mode, and level calibration"
-        case .processingOverview: return "DSP chain status at a glance"
-        case .processingFormatProfile: return "Station Format selector (atomic per-format DSP bundle)"
-        case .processingCore: return "Bypass, mono, gains, HPF, LPF, HF trim"
-        case .processingAGC: return "Wideband AGC with K-weighting"
-        case .processingPhaseRotator: return "Allpass phase rotator"
-        case .processingParametricEQ: return "4-band parametric EQ"
-        case .processingPrimeBass: return "Post-multiband bass enhancement and mono bass"
-        case .processingMultiband: return "3 / 5-band multiband compressor"
-        case .processingAdvancedDynamics: return "Single-stage leveler (replaces AGC + Multiband)"
-        case .processingMBLimiter: return "Per-band fast peak limiter"
-        case .processingExpander: return "Per-band downward expander"
-        case .processingBassClipper: return "Pre-clip the low band before the chain"
-        case .processingDCClipper: return "Audio-band peak clipper"
-        case .processingHFLimiter: return "Program-controlled pre-emphasis (gain-riding HF limiter)"
-        case .processingLimiter: return "Pre-encode peak limiter on L/R audio (4x oversampled)"
-        case .processingBS412: return "ITU-R BS.412 MPX power limiter"
-        case .processingStereoCoder: return "Pilot-locked stereo encoder (SSB option)"
-        case .processingCompositeClipper: return "16x oversampled composite clipper"
-        case .processingFinalStage: return "Final drive, MPX safety, budget, deviation"
-        case .rdsControl: return "Master enable + live snapshot of what's on air"
-        case .rdsProgram: return "Identification: PI, PTY, PTYN, ECC, PS banks, runtime flags"
-        case .rdsRadiotext: return "Radiotext + RT+ tagging"
-        case .rdsLongPS: return "32-character Long PS (15A)"
-        case .rdsAF: return "Alternative frequencies (AF)"
-        case .rdsSchedule: return "Group sequence, scheduler policy, clock"
-        case .rdsCarrier: return "Injection level, subcarrier frequency, pulse shaping"
-        case .testTone: return "Sine, pink, or white — replaces audio input when enabled"
-        case .snapshots: return "Named presets — save / recall the full configuration"
+        case .monitoring: return "Live levels, headroom and stream health."
+        case .audioIO: return "Operating mode, devices and level calibration."
+        case .processingOverview: return "Format profile, levelling engine and every stage at a glance."
+        case .processingCore: return "Mono, input filters and HF trim."
+        case .processingAGC: return "Slow wideband levelling ahead of the multiband."
+        case .processingPhaseRotator: return "Makes voice waveforms more symmetrical."
+        case .processingParametricEQ: return "Four-band tone shaping ahead of the dynamics."
+        case .processingPrimeBass: return "Bass enhancement and mono bass."
+        case .processingMultiband: return "3-band or 5-band compressor."
+        case .processingAdvancedDynamics: return "Single-stage leveller that replaces AGC and Multiband."
+        case .processingMBLimiter: return "Per-band peak limiter after the multiband."
+        case .processingExpander: return "Per-band downward expander."
+        case .processingBassClipper: return "Clips low-frequency peaks."
+        case .processingDCClipper: return "Clips audio-band peaks before pre-emphasis."
+        case .processingHFLimiter: return "Controls high frequencies after pre-emphasis."
+        case .processingLimiter: return "True-peak limiter ahead of the stereo coder."
+        case .processingBS412: return "ITU-R BS.412 multiplex power limiter."
+        case .processingStereoCoder: return "Pilot-locked stereo encoder with an SSB option."
+        case .processingCompositeClipper: return "Clips the composite while protecting pilot, stereo and RDS."
+        case .processingFinalStage: return "Final drive, broadcast preset and safety limiter."
+        case .rdsControl: return "Turn RDS on and see what is on air."
+        case .rdsProgram: return "Station code, programme type and station name."
+        case .rdsRadiotext: return "Radiotext messages, RT+ and now playing."
+        case .rdsAF: return "Other frequencies that carry this programme."
+        case .rdsSchedule: return "Group sequence and clock time."
+        case .rdsCarrier: return "RDS injection level."
+        case .testTone: return "Line-up tone that replaces the input."
+        case .snapshots: return "Eight slots that save and recall the whole sound."
         }
     }
+
+    /// What the page is for, shown in the `TabHelpBox` at the bottom of every
+    /// page (and as the dashboard page's `help`). One source: never restate
+    /// it in a card caption. Mechanism and standards go in control tooltips.
+    var helpText: String {
+        switch self {
+        case .monitoring:
+            return "Everything on air at a glance: levels, modulation, gain reduction, subcarriers and stream health. The Levels, Spectrum and Scopes windows show the same signals larger."
+        case .audioIO:
+            return "Choose the operating mode, the input and output devices and the listening monitor, then calibrate the levels. Input Gain, Output Level and Line Output are rig calibration, remembered per device: profiles, presets and page resets never change them. Device, channel, sample-rate and block-size changes restart the engine."
+        case .processingOverview:
+            return "Pick the station's Format Profile and the levelling engine, then check every stage at a glance. Click a card to open its page; the switch on a card turns the stage on or off."
+        case .processingCore:
+            return "Basic programme conditioning ahead of the dynamics: mono mode, the input high-pass filter, the programme lowpass and an HF trim shelf. Bypass is in the toolbar; pre-emphasis is on Audio I/O."
+        case .processingPhaseRotator:
+            return "An all-pass phase rotator that makes asymmetrical waveforms, voice especially, more symmetrical without changing the tonal balance. That frees 3 to 4 dB of headroom for the dynamics stages that follow."
+        case .processingAGC:
+            return "Wideband automatic gain control: rides the long-term level so quiet and loud sources reach the multiband at a similar loudness. It sets the platform; it is not the final loudness stage."
+        case .processingParametricEQ:
+            return "Four-band parametric EQ (low shelf, two peaking bands, high shelf) on left and right, ahead of the multiband. Use it for station-wide tonal shaping."
+        case .processingMultiband:
+            return "Multiband compressor that splits the programme into 3 or 5 bands, each with its own gain ride. It is the main control for loudness and tonal density."
+        case .processingAdvancedDynamics:
+            return "A single-stage leveller that replaces both the AGC and the multiband compressor with one 5-band stage, so levelling and density shaping never fight. Set the sound you want (target, balance, density); the stage adapts its own speed to the programme."
+        case .processingExpander:
+            return "Per-band downward expander: lowers the gain when a band falls below the threshold, so background noise is not lifted while programme material passes untouched."
+        case .processingMBLimiter:
+            return "Fast per-band peak limiter after the multiband compressor. It catches peaks inside each band before the bands are recombined, so the multiband can be driven harder without overshoot."
+        case .processingPrimeBass:
+            return "PrimeBass adds perceived bass through harmonic synthesis while lowering the true low-frequency peak, which saves headroom downstream. Mono Bass sums left and right below a chosen frequency so sub-bass side energy cannot waste deviation or upset mono compatibility."
+        case .processingBassClipper:
+            return "Oversampled clipper on the low band, after PrimeBass. Use it when kick drums and bass lines still push into the limiters that follow."
+        case .processingDCClipper:
+            return "Oversampled audio-band clipper with distortion cancellation. It cleans up audio peaks before pre-emphasis adds its high-frequency boost."
+        case .processingHFLimiter:
+            return "Rides only the pre-emphasis boost: when a cymbal or hi-hat overshoots after pre-emphasis, it briefly loses part of its boost instead of the Audio Limiter pulling the whole mix down. Gain-riding, so it adds no clipping distortion. The top octave above 13 kHz has its own, tighter threshold."
+        case .processingLimiter:
+            return "Oversampled true-peak limiter on left and right, linked, with look-ahead and a high-frequency transient detector. It catches the peaks that get past every stage upstream before the audio is encoded."
+        case .processingBS412:
+            return "Holds the average multiplex power over any 60 seconds at or below the ITU-R BS.412 limit. A standards implementation for regulators that enforce BS.412; leave it off where it does not apply."
+        case .processingStereoCoder:
+            return "The stereo encoder: L+R plus L-R on the 38 kHz subcarrier, with the pilot and RDS added after all peak control. Stereo encoding is always on; the optional SSB mode leans the subcarrier towards single sideband to reclaim composite headroom ahead of the clipper."
+        case .processingCompositeClipper:
+            return "Oversampled clipper on the assembled composite and the main loudness control in MPX Output. It keeps clipping distortion out of the pilot, the stereo subcarrier and the RDS band so receivers decode cleanly."
+        case .processingFinalStage:
+            return "Final Drive sets how hard the audio hits the composite clipper: the primary loudness control. The Broadcast Preset sets the AGC target and Final Drive together. The safety limiter on the final multiplex catches what remains while pilot and RDS stay at a constant level. Deviation and output level are on Audio I/O."
+        case .rdsControl:
+            return "Turns the RDS subcarrier on or off and shows what is on air now. TA, TP and MS are the switches an operator changes during the day. Every RDS setting applies live."
+        case .rdsProgram:
+            return "Who the station is: the PI code from your broadcasting authority, the programme type (PTY), the extended country code (ECC), four 8-character station names (PS) and the 32-character Long PS. Language, PIN, PTYN and decoder information are under Advanced. Everything applies live."
+        case .rdsRadiotext:
+            return "Up to 64 characters of Radiotext, with RT+ tags so receivers can show artist and title. Manual messages rotate on a timer; the now-playing script fills the {artist} and {title} macros."
+        case .rdsAF:
+            return "Alternative frequencies let a receiver move to a stronger transmitter carrying the same programme. Method A lists every frequency in the network (up to 25); Method B pairs each alternative with the tuned frequency (up to 12 pairs)."
+        case .rdsSchedule:
+            return "Which RDS groups go on air and how often, and the clock time (CT) with its time zone. Automatic scheduling follows the standard group rates for the features you enable."
+        case .rdsCarrier:
+            return "How much deviation the 57 kHz RDS subcarrier takes. 2.0 kHz is typical; the subcarrier is locked to three times the pilot. A change applies after an engine restart."
+        case .testTone:
+            return "A line-up generator for calibrating levels and deviation. While it is on, the tone replaces the input and bypasses the processing chain, so its level arrives at the output unchanged."
+        case .snapshots:
+            return "Save the current settings to one of eight slots and load them back later. Devices, level calibration and the operating mode stay as installed."
+        }
+    }
+
+    /// Pages with settings of their own to put back. Monitoring shows only,
+    /// Audio I/O is rig calibration (never reset by a page button), Presets
+    /// holds slots and the Overview's choices each have their own control.
+    var hasReset: Bool {
+        switch self {
+        case .monitoring, .audioIO, .processingOverview, .snapshots: return false
+        default: return true
+        }
+    }
+
+    var resetButtonTitle: String { "Reset \(label)" }
+    var resetStatusText: String { "\(label) reset to defaults" }
 
     /// Maps to the legacy AppSection enum so existing `selectedSection`-gated
     /// code (engine analysis capture, monitoring spectrum updates) keeps
@@ -572,45 +496,14 @@ enum Stage: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Maps to the legacy ProcessingTab enum (nil for non-processing stages).
-    /// Used to drive the existing per-tab views and their reset buttons.
+    /// Maps to the ProcessingTab enum (nil for non-Sound stages).
     var legacyProcessingTab: ProcessingTab? {
-        switch self {
-        case .processingOverview: return .overview
-        case .processingFormatProfile: return .formatProfile
-        case .processingCore: return .core
-        case .processingAGC: return .agc
-        case .processingPhaseRotator: return .phaseRotator
-        case .processingParametricEQ: return .parametricEQ
-        case .processingPrimeBass: return .primeBass
-        case .processingMultiband: return .multiband
-        case .processingAdvancedDynamics: return .advancedDynamics
-        case .processingMBLimiter: return .mbLimiter
-        case .processingExpander: return .expander
-        case .processingBassClipper: return .bassClipper
-        case .processingDCClipper: return .dcClipper
-        case .processingHFLimiter: return .hfLimiter
-        case .processingLimiter: return .limiter
-        case .processingBS412: return .bs412
-        case .processingStereoCoder: return .stereoCoder
-        case .processingCompositeClipper: return .compositeClipper
-        case .processingFinalStage: return .finalStage
-        default: return nil
-        }
+        ProcessingTab.allCases.first { $0.stage == self }
     }
 
-    /// Maps to the legacy RDSTab enum (nil for non-RDS stages).
+    /// Maps to the RDSTab enum (nil for non-RDS stages).
     var legacyRDSTab: RDSTab? {
-        switch self {
-        case .rdsControl: return .control
-        case .rdsProgram: return .program
-        case .rdsRadiotext: return .radiotext
-        case .rdsLongPS: return .longPS
-        case .rdsAF: return .af
-        case .rdsSchedule: return .schedule
-        case .rdsCarrier: return .carrier
-        default: return nil
-        }
+        RDSTab.allCases.first { $0.stage == self }
     }
 }
 
@@ -625,7 +518,7 @@ enum MonitoringBufferHealth: String {
     case bad = "Dropouts"
 }
 
-struct MonitoringStreamHealth {
+struct MonitoringStreamHealth: Equatable {
     var isRunning: Bool = false
     var inputName: String = "None"
     var renderHz: Int = 0
@@ -656,7 +549,7 @@ struct MonitoringStreamHealth {
         // Time-based "buffer dangerously empty" warning. The input ring
         // capacity is intentionally oversized (~1 s) to absorb extreme
         // jitter; steady-state fill is ~100 ms / 6 % of capacity. The
-        // useful threshold is "less than 20 ms of audio buffered" — past
+        // useful threshold is "less than 20 ms of audio buffered" -- past
         // that point, any callback that overruns its deadline will
         // underflow. Capacity-relative thresholds (e.g. < 15 %) trip
         // continuously at all healthy operating points and are noise.

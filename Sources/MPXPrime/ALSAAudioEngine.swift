@@ -235,9 +235,10 @@ struct ALSAMeterState {
     var rdsPercent: Float = 0
     var budgetMarginDB: Float = 0
     var overBudget = false
-    var deviationKHzPeak: Float = 0
-    /// Peak presented to the converter (post output gain + line output).
-    var dacPeak: Float = 0
+    /// The scales the reader turns its own output peak into deviation and
+    /// DAC peak with (the peak itself is per reader, see `peakMeters(for:)`).
+    var modulationReferenceScale: Float = 1
+    var lineOutputScale: Float = 1
     /// Worst render-thread busy share of a period in the last publish window, percent.
     var renderLoadPct: Float = 0
 }
@@ -272,12 +273,15 @@ final class ALSAAudioEngine: @unchecked Sendable {
     private let runtimeConfigPending = ManagedAtomic<Bool>(false)
     private let rdsRuntimeConfigPending = ManagedAtomic<Bool>(false)
 
-    // Minimal meters (milestone 1): per-period peaks published for the
-    // remote API. Written by the audio threads, read at a few Hz.
+    // Peaks for the remote API: each period's peak is max-folded per reader
+    // (lock-free, by the audio threads) and HELD until that reader takes it,
+    // so a 20 Hz stream sees every period, not the one that happened to be
+    // last, and two dashboard tabs do not take each other's peaks.
     private let meterLock = OSAllocatedUnfairLock()
-    private var meterInputLeftPeak: Float = 0
-    private var meterInputRightPeak: Float = 0
-    private var meterOutputPeak: Float = 0
+    private let peakReaders = MultiReaderPeakAccumulator(channels: 3)
+    private static let peakInputLeft = 0
+    private static let peakInputRight = 1
+    private static let peakOutput = 2
     // Full meter set, read from the generator's thread-safe status
     // accessors on the render thread (same pattern as the macOS engine's
     // updateOutputMeters) every few periods.
@@ -290,7 +294,21 @@ final class ALSAAudioEngine: @unchecked Sendable {
     /// nil when the render thread runs SCHED_FIFO; otherwise the operator-facing
     /// reason it does not, surfaced through /api/status notes.
     private(set) var realtimeSchedulingNote: String?
-    var schedulingNoteForControl: String? { realtimeSchedulingNote }
+    /// Why the composite carries fewer services than configured: a render
+    /// rate below `MPXGenerator.minimumStereoSampleRate` (or the RDS
+    /// minimum) leaves stereo and RDS off -- the macOS engine reports the same
+    /// note as a routing note. Set once at init (ALSA opens the configured
+    /// rate exactly); nil when the rate carries everything.
+    let compositeRateNote: String?
+    /// The headless backend copies this into /api/status notes. It carries
+    /// the composite-rate note as well as the scheduling one until the
+    /// control protocol grows a routing-note accessor of its own.
+    var schedulingNoteForControl: String? {
+        let parts = [realtimeSchedulingNote, compositeRateNote].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+    /// S16 dither state; render thread only.
+    private var pcmConverter = PCMSampleConverter(seed: 0x2545_F491)
     /// The second (listening) output: its own PCM and thread, fed one period
     /// at a time from the render loop through a lock-free ring. Parity with
     /// the macOS engine's MonitorOutput; see ALSAMonitorOutput.swift.
@@ -330,17 +348,19 @@ final class ALSAAudioEngine: @unchecked Sendable {
         self.outputMode = outputMode
         self.sampleRate = config.sampleRate
         self.useInputSource = config.sourceMode.lowercased() == "input"
-        self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
-        // Modulation-domain deviation: divide output_gain_db back out of the
-        // metered composite (composite mode only) -- same fix as the macOS
-        // engine, see AudioOutputEngine.modulationReferenceScale.
-        self.modulationReferenceScale = outputMode == .mpxComposite
-            ? powf(10.0, -Float(config.outputGainDB) / 20.0) : 1.0
+        // Line trim and modulation-domain deviation scale: the same
+        // OutputWiring functions the macOS engine calls (review finding 10).
+        self.lineOutputScale = OutputWiring.lineOutputScale(
+            lineOutputDBFS: Float(config.mpxLineOutputDBFS), mode: outputMode)
+        self.modulationReferenceScale = OutputWiring.modulationReferenceScale(
+            outputGainDB: Float(config.outputGainDB), mode: outputMode)
         let inputUID = config.inputDeviceUID ?? ""
         let outputUID = config.outputDeviceUID ?? ""
         self.inputDeviceName = inputUID.isEmpty ? "default" : inputUID
         self.outputDeviceName = outputUID.isEmpty ? "default" : outputUID
         self.startConfig = config
+        self.compositeRateNote = outputMode == .mpxComposite
+            ? MPXGenerator.compositeRateNote(sampleRate: config.sampleRate) : nil
         // `blocksize` IS the ALSA period here. Until 0.50 the engine opened
         // with a hard-coded 2048 x 8 whatever the operator set, so the one
         // latency-vs-safety knob the GUI and dashboard offer did nothing on
@@ -369,6 +389,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
             "[ALSA] output '\(out.device)': \(out.formatName) \(out.channels)ch "
                 + "\(rate) Hz, period \(out.periodFrames), buffer \(out.bufferFrames)\n",
             stderr)
+        if let note = compositeRateNote {
+            fputs("[ALSA] note: \(note)\n", stderr)
+        }
         if out.device.hasPrefix("plughw") || out.device == "default" {
             fputs(
                 "[ALSA] note: plug-layer device; alsa-lib may sample-rate-convert "
@@ -502,11 +525,27 @@ final class ALSAAudioEngine: @unchecked Sendable {
         generator.currentRDSLiveSnapshot()
     }
 
-    /// Peaks are per-period (no hold/decay smoothing in milestone 1).
+    /// The reader's peaks since its previous read (no decay smoothing), with
+    /// the deviation and DAC peak derived from ITS output peak.
+    func peakMeters(for reader: MeterPeakReader)
+        -> (inputL: Float, inputR: Float, output: Float, deviationKHz: Float, dac: Float) {
+        let take = peakReaders.take(reader, now: ProcessInfo.processInfo.systemUptime)
+        let state = fullMeterState
+        let output = take.peaks[Self.peakOutput]
+        return (
+            take.peaks[Self.peakInputLeft],
+            take.peaks[Self.peakInputRight],
+            output,
+            DeviationReadout.kilohertz(
+                compositePeak: output, modulationReferenceScale: state.modulationReferenceScale),
+            OutputWiring.dacPeak(compositePeak: output, lineOutputScale: state.lineOutputScale)
+        )
+    }
+
+    /// The shared reader's peaks (a plain /api/meters poll).
     var peakMeters: (inputL: Float, inputR: Float, output: Float) {
-        meterLock.lock()
-        defer { meterLock.unlock() }
-        return (meterInputLeftPeak, meterInputRightPeak, meterOutputPeak)
+        let p = peakMeters(for: .shared)
+        return (p.inputL, p.inputR, p.output)
     }
 
     var xrunCounts: (render: Int, capture: Int) {
@@ -523,10 +562,10 @@ final class ALSAAudioEngine: @unchecked Sendable {
             runtimeConfigLock.unlock()
             if let runtime {
                 generator.applyRuntimeConfig(runtime)
-                if outputMode == .mpxComposite {
-                    lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
-                    modulationReferenceScale = powf(10.0, -runtime.outputGainDB / 20.0)
-                }
+                lineOutputScale = OutputWiring.lineOutputScale(
+                    lineOutputDBFS: runtime.mpxLineOutputDBFS, mode: outputMode)
+                modulationReferenceScale = OutputWiring.modulationReferenceScale(
+                    outputGainDB: runtime.outputGainDB, mode: outputMode)
                 // Source flip is honoured only when the capture path exists
                 // (capture PCM is opened at start; adding one mid-run is a
                 // restart-class change on Linux).
@@ -563,10 +602,7 @@ final class ALSAAudioEngine: @unchecked Sendable {
             let m = abs(renderLeft[i])
             if m > outPeak { outPeak = m }
         }
-        if meterLock.lockIfAvailable() {
-            meterOutputPeak = outPeak
-            meterLock.unlock()
-        }
+        peakReaders.record(channel: Self.peakOutput, peak: outPeak)
     }
 
     /// Read the generator's meter surface (the exact accessors the macOS
@@ -602,11 +638,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
         state.overBudget = cal.overBudget
         state.renderLoadPct = renderLoadWindowPeak
         renderLoadWindowPeak = 0
+        state.modulationReferenceScale = modulationReferenceScale
+        state.lineOutputScale = lineOutputScale
         if meterLock.lockIfAvailable() {
-            state.deviationKHzPeak = DeviationReadout.kilohertz(
-                compositePeak: meterOutputPeak, modulationReferenceScale: modulationReferenceScale)
-            state.dacPeak = meterOutputPeak
-                * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
             meterState = state
             meterLock.unlock()
         }
@@ -629,11 +663,8 @@ final class ALSAAudioEngine: @unchecked Sendable {
             if l > inL { inL = l }
             if r > inR { inR = r }
         }
-        if meterLock.lockIfAvailable() {
-            meterInputLeftPeak = inL
-            meterInputRightPeak = inR
-            meterLock.unlock()
-        }
+        peakReaders.record(channel: Self.peakInputLeft, peak: inL)
+        peakReaders.record(channel: Self.peakInputRight, peak: inR)
     }
 
     // MARK: - Render loop (playback pacing)
@@ -750,8 +781,9 @@ final class ALSAAudioEngine: @unchecked Sendable {
         let frames = out.periodFrames
         let ch = out.channels
         // Line output calibration folds into the DAC conversion (peaks were
-        // already published in the composite domain).
-        let line = outputMode == .mpxComposite ? lineOutputScale : 1.0
+        // already published in the composite domain). Exactly 1 outside
+        // composite mode (OutputWiring.lineOutputScale).
+        let line = lineOutputScale
         // Scale FIRST, clamp to full scale AFTER: with positive line gain the
         // pre-clamped value times the scale would overflow the integer
         // formats (and send >FS floats to the DAC).
@@ -770,11 +802,10 @@ final class ALSAAudioEngine: @unchecked Sendable {
             }
             return writeInterleaved(out, out.floatBuf, frames)
         case SND_PCM_FORMAT_S32_LE:
-            let scale: Double = 2_147_483_520.0
             for i in 0..<frames {
-                let l = Int32(Double(lined(renderLeft[i])) * scale)
+                let l = PCMSampleConverter.s32(lined(renderLeft[i]))
                 if ch == 2 {
-                    let r = Int32(Double(lined(renderRight[i])) * scale)
+                    let r = PCMSampleConverter.s32(lined(renderRight[i]))
                     out.int32Buf[2 * i] = l
                     out.int32Buf[2 * i + 1] = r
                 } else {
@@ -783,11 +814,11 @@ final class ALSAAudioEngine: @unchecked Sendable {
             }
             return writeInterleaved(out, out.int32Buf, frames)
         default:
-            let scale: Double = 32_767.0
+            // Rounded with TPDF dither (`PCMSampleConverter`); it truncated.
             for i in 0..<frames {
-                let l = Int16(Double(lined(renderLeft[i])) * scale)
+                let l = pcmConverter.s16(lined(renderLeft[i]))
                 if ch == 2 {
-                    let r = Int16(Double(lined(renderRight[i])) * scale)
+                    let r = pcmConverter.s16(lined(renderRight[i]))
                     out.int16Buf[2 * i] = l
                     out.int16Buf[2 * i + 1] = r
                 } else {

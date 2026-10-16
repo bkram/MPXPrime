@@ -63,6 +63,47 @@ struct RDSStreamDecoderTests {
         #expect(RDSStreamDecoder.syndrome(block(3)) == RDSStreamDecoder.syndrome(0x1B4)) // D
     }
 
+    @Test func versionBGroupsCarryTheStandardCPrimeOffset() {
+        // The oracle is the standard, not the code: IEC 62106 Annex A gives
+        // the offset words A 0x0FC, B 0x198, C 0x168, C' 0x350, D 0x1B4. The
+        // encoder, the decoder and the test helper all carried C' = 0x1E0, so
+        // every round trip passed while real receivers rejected block 3 of
+        // every version-B group (0B, 2B). A valid block's remainder syndrome
+        // equals its offset word, so block 3 of a 0B group must read 0x350.
+        let coder = BasicRDSCoder(config: makeConfig(), sampleRate: 192_000.0)
+        let group = coder.buildGroup0(versionB: true)
+        func block(_ slot: Int) -> Int {
+            var v = 0
+            for i in 0..<26 { v = (v << 1) | Int(group[slot * 26 + i]) }
+            return v
+        }
+        #expect(RDSStreamDecoder.syndrome(block(0)) == 0x0FC)
+        #expect(RDSStreamDecoder.syndrome(block(1)) == 0x198)
+        #expect(RDSStreamDecoder.syndrome(block(2)) == 0x350, "block 3 of a version-B group must use C' = 0x350")
+        #expect(RDSStreamDecoder.syndrome(block(3)) == 0x1B4)
+        #expect(RDSStreamDecoder.offsetCp == 0x350)
+    }
+
+    @Test func versionBGroupMatchesAnIndependentReference() {
+        // Known-answer blocks computed OUTSIDE this code base (Python,
+        // polynomial division by g(x) = x^10 + x^8 + x^7 + x^5 + x^4 + x^3 + 1
+        // per IEC 62106 Annex B, offsets A 0x0FC, C' 0x350, D 0x1B4): the
+        // syndrome check above uses the decoder's own syndrome routine, so
+        // this pins the full 26-bit words. First 0B group of PI 0x1234,
+        // PS "HELLO" (centred: " HELLO  "): block 1 = PI + A, block 3 = PI + C', block
+        // 4 = " H" + D.
+        let coder = BasicRDSCoder(config: makeConfig(), sampleRate: 192_000.0)
+        let group = coder.buildGroup0(versionB: true)
+        func block(_ slot: Int) -> Int {
+            var v = 0
+            for i in 0..<26 { v = (v << 1) | Int(group[slot * 26 + i]) }
+            return v
+        }
+        #expect(block(0) == 0x48D06A, "block 1 (PI 0x1234 + A) is \(String(block(0), radix: 16))")
+        #expect(block(2) == 0x48D3C6, "block 3 (PI 0x1234 + C') is \(String(block(2), radix: 16))")
+        #expect(block(3) == 0x81212F, "block 4 (\" H\" + D) is \(String(block(3), radix: 16))")
+    }
+
     @Test(arguments: [0, 13, 26, 37, 51, 70])
     func acquiresSyncAndRecoversFieldsFromAnyStartPhase(junk: Int) {
         let coder = BasicRDSCoder(config: makeConfig(), sampleRate: 192_000.0)

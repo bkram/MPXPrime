@@ -51,14 +51,18 @@ struct LineOutputCalibrationTests {
     }
 
     @Test func theTrimAppliedAndTheTrimMeteredAreTheSameNumber() {
-        // dacPeakDBFS divides by this scale to report the electrical headroom,
-        // so the two must be derived identically from the same key.
+        // The DAC Peak readout and the DAC write both use the scale both
+        // engines take from OutputWiring (review finding 10: this test used
+        // to compute the scale itself, so the engines' copy was never run).
         var cfg = AppConfig()
         cfg.mpxLineOutputDBFS = -6.0
-        let expected = powf(10.0, Float(cfg.mpxLineOutputDBFS) / 20.0)
-        let out = render(scale: expected, sample: 1.0)
-        #expect(abs(out.left[0] - expected) < 1e-6)
-        #expect(abs(20.0 * log10(Double(out.left[0])) - cfg.mpxLineOutputDBFS) < 0.01)
+        let scale = OutputWiring.lineOutputScale(
+            lineOutputDBFS: Float(cfg.mpxLineOutputDBFS), mode: .mpxComposite)
+        let out = render(scale: scale, sample: 1.0)
+        #expect(abs(20.0 * log10(Double(out.left[0])) - cfg.mpxLineOutputDBFS) < 0.01,
+                "the DAC got \(out.left[0]) for a full-scale composite at \(cfg.mpxLineOutputDBFS) dBFS")
+        let metered = OutputWiring.dacPeak(compositePeak: 1.0, lineOutputScale: scale)
+        #expect(metered == out.left[0], "DAC Peak reads \(metered), the DAC got \(out.left[0])")
     }
 }
 #endif

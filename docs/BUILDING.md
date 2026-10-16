@@ -52,6 +52,38 @@ swift build -c release     # release
 > `swift build -c release` followed by running
 > `.build/release/MPXPrime`, or use the DMG produced by `scripts/build-release.sh`.
 
+### Fast rebuilds
+
+On an M1 Pro an incremental `swift build --build-tests` after editing one
+encoder file takes about 10 s, and very little of that is compiling the file
+(`MPXGenerator.swift` compiles in 1.1 s in a debug build). About 2 s is SwiftPM
+loading the package -- more on the first build in a new shell, when it
+re-evaluates every dependency manifest, so build from a long-lived terminal --
+and the rest is emitting module interfaces and building the encoder target a
+second time for the tests. Build the tests only when you are about to run them;
+`swift build` is enough while iterating on the app. A release build is bound by
+one serial whole-module optimisation job of about 45 s.
+
+Keep type-checking cheap:
+
+- Give a stored property an explicit type when its initialiser is not a
+  literal (`let telemetry: LiveTelemetry = LiveTelemetry()`); otherwise every
+  file that uses the type re-checks the expression. That one line cost 4 s of
+  CPU per build across 14 jobs.
+- In SwiftUI, move long ternaries, `String(format:)` chains and `+`-joined
+  help strings out of the view builder into small typed helpers or
+  `static let` constants (the Meter's `metricsSection` went from 2.8 s to under
+  0.1 s this way).
+
+To find slow spots, build into a separate scratch path (the flags force a full
+rebuild) and fix anything reported in our sources:
+
+```bash
+swift build --scratch-path /tmp/mpx-typecheck \
+  -Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=200 \
+  -Xswiftc -Xfrontend -Xswiftc -warn-long-function-bodies=200
+```
+
 ## Run
 
 `scripts/run.sh` builds a release `MPXPrime` and runs it; every argument is
@@ -286,8 +318,10 @@ swift run MPXPrime --verify --baseline-strict
 ```
 
 Exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN, `3` =
-FAIL (post-injection composite overshoot; checked first so a TIGHT finding can
-never mask it), `64` = usage error -- most often `Tests/Verification/Verification.ini` not
+FAIL (post-injection composite overshoot). The exit code is the strongest of all
+findings, so a TIGHT can never mask a WARN or FAIL; a worst 4x true peak above
+0 dBFS is TIGHT and above +0.25 dBFS WARN; `--baseline-strict` with a missing,
+undecodable or other-schema baseline exits 2. `64` = usage error -- most often `Tests/Verification/Verification.ini` not
 findable because the gate was not run from the repo root.
 
 ### What the report contains

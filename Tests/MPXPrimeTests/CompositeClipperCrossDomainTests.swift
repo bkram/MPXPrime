@@ -175,11 +175,20 @@ struct CompositeClipperCrossDomainTests {
         let realMClean = binDB(cleanMReport, around: mFreq)
         let realSClean = binDB(cleanSReport, around: sFreq)
 
-        let leakMintoSClean = binDB(cleanSReport, around: mFreq)
-        let leakSintoMClean = binDB(cleanMReport, around: sFreq)
+        // Probe where an odd-order clipper's cross-domain products land: the
+        // cubic M^2*S term in the S channel at 2m + s, M*S^2 in the M channel
+        // at m + 2s. The probes used to be m in S and s in M, which no odd
+        // nonlinearity of any order reaches (they need an even total order);
+        // the leakage seen there came from the clipper's own artefacts (the
+        // residual 1/8 sample off the bypass and the Lagrange images, 2026-10
+        // peak-control review F8/F9) and vanished with them.
+        let mixInS = (2.0 * mFreq) + sFreq
+        let mixInM = mFreq + (2.0 * sFreq)
+        let leakMintoSClean = binDB(cleanSReport, around: mixInS)
+        let leakSintoMClean = binDB(cleanMReport, around: mixInM)
 
-        let leakMintoSClipped = binDB(clipSReport, around: mFreq)
-        let leakSintoMClipped = binDB(clipMReport, around: sFreq)
+        let leakMintoSClipped = binDB(clipSReport, around: mixInS)
+        let leakSintoMClipped = binDB(clipMReport, around: mixInM)
 
         let deltaMintoS = leakMintoSClipped - leakMintoSClean
         let deltaSintoM = leakSintoMClipped - leakSintoMClean

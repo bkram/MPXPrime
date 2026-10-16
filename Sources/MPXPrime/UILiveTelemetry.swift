@@ -1,6 +1,7 @@
 // macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
 #if os(macOS)
 
+import MPXPrimeCore
 import Observation
 import SwiftUI
 
@@ -33,6 +34,10 @@ final class LiveTelemetry {
     var inputBufferCritical: Double = 0.9
     var bufferFillSmoothed: Double = 0.0
     var streamHealth: MonitoringStreamHealth = .stopped
+    /// The slow-changing part of `streamHealth`, a property of its own so
+    /// the always-visible header chips and the dropout tooltip observe only
+    /// it: `streamHealth` changes every tick with the ring fill.
+    var streamSummary = MonitoringStreamSummary()
 
     var inputLLevel: Double = 0.0
     var inputRLevel: Double = 0.0
@@ -54,10 +59,23 @@ final class LiveTelemetry {
     var outputText: String = "-inf dBFS"
     var modulationText: String = "0.0 kHz"
 
+    /// Audio I/O input ladder meters, before and after Input Gain.
+    var inputPreLeft = LadderMeterReading.silent
+    var inputPreRight = LadderMeterReading.silent
+    var inputPostLeft = LadderMeterReading.silent
+    var inputPostRight = LadderMeterReading.silent
+    /// Levels window ladder meters: AGC out, output (L / R outside MPX
+    /// mode, the composite on `outputLeft` in MPX mode), deviation.
+    var agcLeft = LadderMeterReading.silent
+    var agcRight = LadderMeterReading.silent
+    var outputLeft = LadderMeterReading.silent
+    var outputRight = LadderMeterReading.silent
+    var modulation = LadderMeterReading.silent
+
     var limiterStateText: String = "Off"
-    var limiterDetailText: String = "Drive 0.0 dB • GR 0.0 dB • Safe 0.0 dB • Peak -inf dBFS"
+    var limiterDetailText: String = "Drive 0.0 dB | GR 0.0 dB | Safe 0.0 dB | Peak -inf dBFS"
     var compositeBudgetStateText: String = "Off"
-    var compositeCalibrationText: String = "Pilot 0.0% • RDS 0.0% • Audio -inf dBFS • Margin 0.0 dB"
+    var compositeCalibrationText: String = "Pilot 0.0% | RDS 0.0% | Audio -inf dBFS | Margin 0.0 dB"
     var estimatedDeviationPeakKHz: Float = 0.0
     var pilotInjectionPercentValue: Float = 0.0
     var rdsInjectionPercentValue: Float = 0.0
@@ -73,16 +91,16 @@ final class LiveTelemetry {
     var safetyLimiterGainReductionDBValue: Float = 0.0
     /// dB the 1x safety soft clip had to absorb (decaying peak); 0.0 = idle, as designed.
     var safetyClipDBValue: Float = 0.0
-    var stereoImageText: String = "Corr +1.00 • Side 0.00x"
+    var stereoImageText: String = "Corr +1.00 | Side 0.00x"
     /// Peak presented to the converter (post output gain + line output),
     /// shown on the Audio I/O Output card. "--" while stopped.
     var dacPeakText: String = "--"
     var agcStateText: String = "Off"
-    var agcDetailText: String = "Detector -inf dB • Gain 0.0 dB"
+    var agcDetailText: String = "Detector -inf dB | Gain 0.0 dB"
     /// Advanced Dynamics leveler: when active it REPLACES the AGC (and the
     /// dashboard's AGC pill switches identity to it).
     var advancedDynamicsActive: Bool = false
-    var advancedDynamicsDetailText: String = "Density 0.0 dB • Gain 0.0/0.0/0.0/0.0/0.0 dB"
+    var advancedDynamicsDetailText: String = "Density 0.0 dB | Gain 0.0/0.0/0.0/0.0/0.0 dB"
     var multibandStateText: String = "Off"
     var primeBassStateText: String = "Off"
 
@@ -105,6 +123,30 @@ final class LiveTelemetry {
     var preMPXSpectrumRightDB: [Float] = Array(repeating: -100.0, count: 128)
     var preMPXSpectrumMaxHz: Double = 16_000.0
     var preMPXSpectrumNyquistHz: Double = 0.0
+}
+
+/// Source, rates and dropout totals: changes on start / stop / a dropout,
+/// never with the ring fill.
+struct MonitoringStreamSummary: Equatable {
+    var isRunning = false
+    var inputName = "None"
+    var renderHz = 0
+    var inputHz = 0
+    var blockFrames = 0
+    var overflowsTotal = 0
+    var underflowsTotal = 0
+
+    init() {}
+
+    init(_ health: MonitoringStreamHealth) {
+        isRunning = health.isRunning
+        inputName = health.inputName
+        renderHz = health.renderHz
+        inputHz = health.inputHz
+        blockFrames = health.blockFrames
+        overflowsTotal = health.overflowsTotal
+        underflowsTotal = health.underflowsTotal
+    }
 }
 
 // `LiveTelemetryView` (the generic isolation wrapper) now lives in the shared

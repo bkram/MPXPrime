@@ -19,6 +19,7 @@ func runVerificationHarness(
     stereoGuardSweep: Bool = false,
     finalRideIsolation: Bool = false,
     primeBassGate: Bool = false,
+    primeBassSweep: Bool = false,
     programAB: Bool = false,
     programABPath: String = "",
     programABProfile: String = "music_clean",
@@ -38,6 +39,12 @@ func runVerificationHarness(
             durationSeconds: durationSeconds,
             csvPath: programABCSV
         )
+    }
+    if primeBassSweep {
+        print("MPX Prime PrimeBass Control-Range Sweep")
+        print("Render: \(Int(config.sampleRate)) Hz - Duration \(String(format: "%.1f", max(1.5, min(durationSeconds, 4.0)))) s per scenario")
+        print("")
+        return runPrimeBassSweep(baseConfig: config, durationSeconds: durationSeconds)
     }
     if primeBassGate {
         print("MPX Prime PrimeBass Verification")
@@ -157,17 +164,23 @@ func runVerificationHarness(
     // duration); the default sweep keeps default.json. Both platform-suffixed.
     let baselineURL = longRun ? defaultLongRunBaselinePath() : defaultVerifierBaselinePath()
     var loadedBaseline: VerifierBaselineFile?
+    var baselineAvailability = BaselineAvailability.loaded
     if !captureBaseline {
-        if FileManager.default.fileExists(atPath: baselineURL.path) {
-            do {
-                let loaded = try loadVerifierBaseline(from: baselineURL)
-                loadedBaseline = loaded
+        // A missing, undecodable or other-schema baseline is reported here
+        // and, under --baseline-strict, fails the run (WARN) instead of
+        // silently falling back to the physical limits.
+        let attempt = classifyBaselineLoad { try loadVerifierBaseline(from: baselineURL) }
+        loadedBaseline = attempt.value
+        baselineAvailability = attempt.availability
+        switch attempt.availability {
+        case .loaded:
+            if let loaded = attempt.value {
                 print("Baseline: \(baselineURL.lastPathComponent) (captured \(loaded.capturedAt))")
-            } catch {
-                print("Baseline: failed to load (\(error))")
             }
-        } else {
-            print("Baseline: none — run with --capture-baseline to create.")
+        case .missing:
+            print("Baseline: none at \(baselineURL.path) - run with --capture-baseline to create.")
+        case .unreadable(let reason):
+            print("Baseline: failed to load (\(reason))")
         }
     }
 
@@ -184,6 +197,7 @@ func runVerificationHarness(
     var worstMargin: Float = .greatestFiniteMagnitude
     var worstPostInjectionOvershoot: Float = 0.0
     var worstTruePeakOvershootDB: Float = 0.0
+    var worstTruePeakAbs: Float = 0.0
     var anyOverBudget = false
     var scenarioMetrics: [(VerificationScenario, VerificationMetrics)] = []
     var qualityWarnings: [String] = []
@@ -207,6 +221,7 @@ func runVerificationHarness(
         worstMargin = min(worstMargin, metrics.minBudgetMarginDB)
         worstPostInjectionOvershoot = max(worstPostInjectionOvershoot, metrics.maxPostInjectionOvershoot)
         worstTruePeakOvershootDB = max(worstTruePeakOvershootDB, truePeakOvershootDB(metrics: metrics))
+        worstTruePeakAbs = max(worstTruePeakAbs, metrics.truePeakAbs)
         anyOverBudget = anyOverBudget || metrics.overBudget
         qualityWarnings.append(
             contentsOf: qualityFindings(scenario: scenario, metrics: metrics).map { "\(scenario.name): \($0)" }
@@ -329,6 +344,7 @@ func runVerificationHarness(
     print("Worst composite margin: \(String(format: "%.1f", worstMargin)) dB")
     print("Worst post-injection overshoot: \(String(format: "%.6f", worstPostInjectionOvershoot))")
     print("Worst inter-sample (4x true-peak) overshoot: \(String(format: "%.2f", worstTruePeakOvershootDB)) dB")
+    print("Worst 4x true peak: \(dbfsString(worstTruePeakAbs)) dBFS")
     print("Composite budget exceeded: \(anyOverBudget ? "yes" : "no")")
 
     if !baselineDrift.isEmpty {
@@ -338,59 +354,34 @@ func runVerificationHarness(
         }
     }
 
-    // Post-injection overshoot is checked FIRST and is a HARD failure
-    // (exit 3): the subcarrier budget being violated after injection means
-    // the composite is out of spec regardless of any softer finding. It
-    // used to sit behind the quality/signature branches, where a
-    // coinciding TIGHT finding masked it down to exit 1.
-    let naturalResult: Int32
+    // Every rule is evaluated on its own and the exit code is the STRONGEST
+    // (`compositeVerdict`, Verification/VerifierVerdict.swift): post-injection
+    // overshoot FAIL (3), then the WARN rules (over budget, safety limiter
+    // above 4 dB, margin below -0.25 dB, true peak above +0.25 dBFS, strict
+    // baseline drift or an unusable strict baseline), then TIGHT. The old
+    // if / else-if ladder tested the quality warnings before the WARN rules,
+    // so a coinciding TIGHT masked an over-budget composite.
     if !qualityWarnings.isEmpty {
         print("Quality warnings:")
         for warning in qualityWarnings { print("- \(warning)") }
     }
-    if worstPostInjectionOvershoot > 1e-4 { naturalResult = 3
-    } else if !qualityWarnings.isEmpty { naturalResult = 1
-    } else if anyOverBudget { naturalResult = 2
-    // Since 0.45 the final look-ahead limiter is the designed stage that
-    // rides the composite clipper's guard-band overshoot (the protected
-    // pilot / stereo / RDS bands are restored to the clean input, so the
-    // clipper alone cannot bound the peak). ~1.5 dB on bright_dense is its
-    // normal duty, not a safety event; the old 0.25 / 1.0 dB bounds date
-    // from when it sat idle behind the shaper.
-    // 0.45 A1b: the limiter's detector is now a windowed look-ahead with a gain
-    // floor, so its reported GR is the TRUE overshoot it removes (the old
-    // detector under-reported by the amount it leaked to the shaper). The
-    // hot Verification.ini config reads 2.6 dB honestly; bounds moved 2/3 -> 3/4.
-    } else if worstSafety > 4.0 { naturalResult = 2
-    } else if worstMargin < -0.25 { naturalResult = 2
-    } else if worstMargin < 0.0 || worstSafety > 3.0 { naturalResult = 1
-    } else { naturalResult = 0 }
-
-    let result: Int32
-    if baselineDrift.isEmpty { result = naturalResult } else if strictBaseline { result = max(naturalResult, 2) } else { result = max(naturalResult, 1) }
-
-    switch result {
-    case 3:
-        print("Result: FAIL - post-injection composite overshoot (subcarrier budget violated after pilot/RDS injection).")
-    case 2:
-        if strictBaseline && !baselineDrift.isEmpty {
-            print("Result: WARN - stored-baseline drift in --baseline-strict mode.")
-        } else if worstSafety > 1.0 {
-            print("Result: WARN - safety limiter is doing significant work.")
-        } else if anyOverBudget || worstPostInjectionOvershoot > 1e-4 {
-            print("Result: WARN - post-injection composite budget exceeded.")
-        } else {
-            print("Result: WARN - composite budget exceeded on at least one scenario.")
-        }
-    case 1:
-        if !qualityWarnings.isEmpty {
-            print("Result: TIGHT - composite safety is OK, but decoded-audio quality drift exceeded expected bounds.")
-        } else if !baselineDrift.isEmpty {
-            print("Result: TIGHT - stored-baseline drift detected (use --baseline-strict to fail the run).")
-        } else {
-            print("Result: TIGHT - verification stayed close to the composite budget limit.")
-        }
-    default:
+    let verdictInputs = CompositeVerdictInputs(
+        worstPostInjectionOvershoot: worstPostInjectionOvershoot,
+        qualityWarningCount: qualityWarnings.count,
+        anyOverBudget: anyOverBudget,
+        worstSafetyGRDB: worstSafety,
+        worstBudgetMarginDB: worstMargin,
+        worstTruePeakDBFS: worstTruePeakAbs > 1e-9 ? 20.0 * log10f(worstTruePeakAbs) : -.infinity,
+        baselineDriftCount: baselineDrift.count,
+        baselineUnavailable: !captureBaseline && !baselineAvailability.isUsable,
+        strictBaseline: strictBaseline
+    )
+    let findings = compositeVerdictFindings(verdictInputs)
+    let result = findings.first?.level ?? 0
+    if let strongest = findings.first {
+        print("Result: \(strongest.message)")
+        for other in findings.dropFirst() { print("  also: \(other.message)") }
+    } else {
         print(
             longRun
                 ? "Result: OK - no obvious long-run compliance or safety regression."

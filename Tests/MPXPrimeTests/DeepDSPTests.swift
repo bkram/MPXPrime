@@ -507,6 +507,7 @@ struct DeepCounteractTests {
         // Disable everything; the pair's configure closures turn on
         // exactly the stages under test.
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.multibandEnabled = false
         cfg.bassClipperEnabled = false
         cfg.dcClipperEnabled = false
@@ -697,6 +698,7 @@ struct DeepPerStageTests {
         cfg.preemphasisUS = 0
         cfg.limitMPX = false
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false
         cfg.primeBassEnabled = false
@@ -724,7 +726,17 @@ struct DeepPerStageTests {
     }
 
     @Test func parametricEQAlone() {
-        let cfg = Self.solo { $0.parametricEQEnabled = true }
+        // Non-zero gains: with every band at 0 dB the stage is an identity
+        // and this case exercised nothing (finding 16). The frequency
+        // response itself is pinned in the default suite by
+        // StageCoverageTests.parametricEQFollowsTheCookbookWithNonZeroGains.
+        let cfg = Self.solo {
+            $0.parametricEQEnabled = true
+            $0.peqB1GainDB = 4.0
+            $0.peqB2GainDB = 6.0
+            $0.peqB3GainDB = -6.0
+            $0.peqB4GainDB = -4.0
+        }
         let out = deepRender(config: cfg, program: .hfRichPop)
         DeepInvariants.assertAllFinite(out, where: "parametricEQ")
         DeepInvariants.assertCompositePeakBounded(out, where: "parametricEQ")

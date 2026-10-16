@@ -57,6 +57,15 @@ enum MultibandPresetIntensity: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// The Advanced Dynamics density a profile at this intensity uses.
+    var levelerDensity: Double {
+        switch self {
+        case .light: return 0.35
+        case .normal: return 0.5
+        case .heavy: return 0.7
+        }
+    }
+
     var title: String {
         switch self {
         case .light: return "Light"
@@ -123,47 +132,46 @@ enum PresetCatalog {
             x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 20,
             lowReleaseMS: 310, midThresholdDB: -21, midRatio: 2.0, midAttackMS: 14,
             midReleaseMS: 235, highThresholdDB: -19, highRatio: 1.6, highAttackMS: 8,
-            highReleaseMS: 165, kneeDB: 2.4, linkStrength: 0.42, releaseProgramDependent: true),
+            highReleaseMS: 165, kneeDB: 2.4, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_rock", title: "3B Rock", mode: 3, lowHz: 310, highHz: 2550, x1Hz: nil, x2Hz: nil,
             x3Hz: nil, x4Hz: nil, lowThresholdDB: -21, lowRatio: 2.1, lowAttackMS: 22,
             lowReleaseMS: 325, midThresholdDB: -19, midRatio: 1.9, midAttackMS: 14,
             midReleaseMS: 245, highThresholdDB: -18, highRatio: 1.55, highAttackMS: 9,
-            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 0.44, releaseProgramDependent: true),
+            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_ac", title: "3B AC/Pop", mode: 3, lowHz: 320, highHz: 2650, x1Hz: nil, x2Hz: nil,
             x3Hz: nil, x4Hz: nil, lowThresholdDB: -19, lowRatio: 1.9, lowAttackMS: 24,
             lowReleaseMS: 340, midThresholdDB: -17, midRatio: 1.7, midAttackMS: 16,
             midReleaseMS: 260, highThresholdDB: -16, highRatio: 1.4, highAttackMS: 10,
-            highReleaseMS: 190, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true),
+            highReleaseMS: 190, kneeDB: 3.0, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_country", title: "3B Country", mode: 3, lowHz: 300, highHz: 2450, x1Hz: nil,
             x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -21, lowRatio: 2.2, lowAttackMS: 22,
             lowReleaseMS: 320, midThresholdDB: -19, midRatio: 1.9, midAttackMS: 15,
             midReleaseMS: 250, highThresholdDB: -17, highRatio: 1.5, highAttackMS: 10,
-            highReleaseMS: 185, kneeDB: 2.6, linkStrength: 0.42, releaseProgramDependent: true),
+            highReleaseMS: 185, kneeDB: 2.6, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_talk", title: "3B Talk", mode: 3, lowHz: 360, highHz: 3200, x1Hz: nil, x2Hz: nil,
             x3Hz: nil, x4Hz: nil, lowThresholdDB: -15, lowRatio: 1.5, lowAttackMS: 36,
             lowReleaseMS: 440, midThresholdDB: -14, midRatio: 1.4, midAttackMS: 30,
             midReleaseMS: 360, highThresholdDB: -13, highRatio: 1.22, highAttackMS: 20,
-            highReleaseMS: 290, kneeDB: 4.0, linkStrength: 0.62, releaseProgramDependent: true),
+            highReleaseMS: 290, kneeDB: 4.0, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_urban", title: "3B Urban", mode: 3, lowHz: 250, highHz: 2200, x1Hz: nil,
             x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -24, lowRatio: 2.7, lowAttackMS: 16,
             lowReleaseMS: 280, midThresholdDB: -22, midRatio: 2.4, midAttackMS: 11,
             midReleaseMS: 210, highThresholdDB: -20, highRatio: 1.9, highAttackMS: 6,
-            highReleaseMS: 145, kneeDB: 2.1, linkStrength: 0.38, releaseProgramDependent: true),
+            highReleaseMS: 145, kneeDB: 2.1, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_dance", title: "3B Dance", mode: 3, lowHz: 240, highHz: 2100, x1Hz: nil,
             x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -26, lowRatio: 2.9, lowAttackMS: 14,
             lowReleaseMS: 260, midThresholdDB: -24, midRatio: 2.6, midAttackMS: 10,
             midReleaseMS: 200, highThresholdDB: -22, highRatio: 2.0, highAttackMS: 5,
-            highReleaseMS: 135, kneeDB: 1.9, linkStrength: 0.34, releaseProgramDependent: true),
+            highReleaseMS: 135, kneeDB: 1.9, linkStrength: 1.0, releaseProgramDependent: true),
         // Italo / disco / synthwave pump. Tempo-synced low-band release
         // (~60 ms = 12% of a 120-BPM quarter note) gives audible kick-driven
-        // ducking; bright high band stays glossy. Tighter linkStrength widens
-        // the bass image.
+        // ducking; bright high band stays glossy.
         .init(
             id: "3_italo", title: "3B Italo / Pump", mode: 3, lowHz: 240, highHz: 2100,
             x1Hz: nil, x2Hz: nil, x3Hz: nil, x4Hz: nil,
@@ -173,49 +181,49 @@ enum PresetCatalog {
             midReleaseMS: 130,
             highThresholdDB: -18, highRatio: 1.3, highAttackMS: 4,
             highReleaseMS: 100,
-            kneeDB: 1.5, linkStrength: 0.30, releaseProgramDependent: true),
+            kneeDB: 1.5, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_news", title: "3B News", mode: 3, lowHz: 360, highHz: 3200, x1Hz: nil, x2Hz: nil,
             x3Hz: nil, x4Hz: nil, lowThresholdDB: -15, lowRatio: 1.4, lowAttackMS: 38,
             lowReleaseMS: 480, midThresholdDB: -14, midRatio: 1.35, midAttackMS: 30,
             midReleaseMS: 390, highThresholdDB: -13, highRatio: 1.25, highAttackMS: 22,
-            highReleaseMS: 320, kneeDB: 4.0, linkStrength: 0.62, releaseProgramDependent: true),
+            highReleaseMS: 320, kneeDB: 4.0, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_jazz", title: "3B Jazz", mode: 3, lowHz: 330, highHz: 2800, x1Hz: nil, x2Hz: nil,
             x3Hz: nil, x4Hz: nil, lowThresholdDB: -18, lowRatio: 1.7, lowAttackMS: 30,
             lowReleaseMS: 420, midThresholdDB: -17, midRatio: 1.55, midAttackMS: 24,
             midReleaseMS: 330, highThresholdDB: -16, highRatio: 1.35, highAttackMS: 16,
-            highReleaseMS: 250, kneeDB: 3.2, linkStrength: 0.52, releaseProgramDependent: true),
+            highReleaseMS: 250, kneeDB: 3.2, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "3_classic", title: "3B Classical", mode: 3, lowHz: 360, highHz: 3400, x1Hz: nil,
             x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -14, lowRatio: 1.35, lowAttackMS: 42,
             lowReleaseMS: 520, midThresholdDB: -13, midRatio: 1.3, midAttackMS: 36,
             midReleaseMS: 430, highThresholdDB: -12, highRatio: 1.2, highAttackMS: 26,
-            highReleaseMS: 340, kneeDB: 4.6, linkStrength: 0.66, releaseProgramDependent: true),
+            highReleaseMS: 340, kneeDB: 4.6, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_chr", title: "5B CHR/EDM", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 320,
             x3Hz: 1600, x4Hz: 6200, lowThresholdDB: -23, lowRatio: 2.25, lowAttackMS: 20,
             lowReleaseMS: 320, midThresholdDB: -21, midRatio: 1.9, midAttackMS: 13,
             midReleaseMS: 240, highThresholdDB: -19, highRatio: 1.6, highAttackMS: 8,
-            highReleaseMS: 180, kneeDB: 2.6, linkStrength: 0.48, releaseProgramDependent: true),
+            highReleaseMS: 180, kneeDB: 2.6, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_rock", title: "5B Rock", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 340,
             x3Hz: 1550, x4Hz: 6100, lowThresholdDB: -21, lowRatio: 2.1, lowAttackMS: 20,
             lowReleaseMS: 320, midThresholdDB: -19, midRatio: 1.85, midAttackMS: 13,
             midReleaseMS: 240, highThresholdDB: -18, highRatio: 1.55, highAttackMS: 8,
-            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 0.46, releaseProgramDependent: true),
+            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_ac", title: "5B AC/Pop", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 350,
             x3Hz: 1800, x4Hz: 6800, lowThresholdDB: -17.5, lowRatio: 1.75, lowAttackMS: 28,
             lowReleaseMS: 375, midThresholdDB: -16.0, midRatio: 1.55, midAttackMS: 19,
             midReleaseMS: 300, highThresholdDB: -14.5, highRatio: 1.28, highAttackMS: 13,
-            highReleaseMS: 225, kneeDB: 3.6, linkStrength: 0.52, releaseProgramDependent: true),
+            highReleaseMS: 225, kneeDB: 3.6, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_classic", title: "5B Classical/Jazz", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90,
             x2Hz: 360, x3Hz: 1700, x4Hz: 6500, lowThresholdDB: -17, lowRatio: 1.5, lowAttackMS: 36,
             lowReleaseMS: 450, midThresholdDB: -16, midRatio: 1.4, midAttackMS: 30,
             midReleaseMS: 360, highThresholdDB: -15, highRatio: 1.25, highAttackMS: 20,
-            highReleaseMS: 280, kneeDB: 4.5, linkStrength: 0.60, releaseProgramDependent: true),
+            highReleaseMS: 280, kneeDB: 4.5, linkStrength: 1.0, releaseProgramDependent: true),
         // Talk density (2026-10 format-profile review, finding 1): real
         // ratios and a fast release, the way Orban NEWS-TALK and Omnia Talk
         // run it. The old 1.24 / 1.18 / 1.08 at 360-560 ms was the slowest
@@ -226,19 +234,19 @@ enum PresetCatalog {
             x3Hz: 2200, x4Hz: 7600, lowThresholdDB: -14, lowRatio: 1.8, lowAttackMS: 25,
             lowReleaseMS: 220, midThresholdDB: -13, midRatio: 1.7, midAttackMS: 18,
             midReleaseMS: 180, highThresholdDB: -12, highRatio: 1.5, highAttackMS: 12,
-            highReleaseMS: 140, kneeDB: 5.2, linkStrength: 0.46, releaseProgramDependent: true),
+            highReleaseMS: 140, kneeDB: 5.2, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_urban", title: "5B Urban", mode: 5, lowHz: nil, highHz: nil, x1Hz: 85, x2Hz: 300,
             x3Hz: 1300, x4Hz: 5400, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 18,
             lowReleaseMS: 295, midThresholdDB: -21, midRatio: 2.0, midAttackMS: 12,
             midReleaseMS: 220, highThresholdDB: -19, highRatio: 1.7, highAttackMS: 7,
-            highReleaseMS: 155, kneeDB: 2.2, linkStrength: 0.42, releaseProgramDependent: true),
+            highReleaseMS: 155, kneeDB: 2.2, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_dance", title: "5B Dance", mode: 5, lowHz: nil, highHz: nil, x1Hz: 80, x2Hz: 290,
             x3Hz: 1200, x4Hz: 5000, lowThresholdDB: -24, lowRatio: 2.5, lowAttackMS: 16,
             lowReleaseMS: 285, midThresholdDB: -22, midRatio: 2.1, midAttackMS: 11,
             midReleaseMS: 215, highThresholdDB: -20, highRatio: 1.75, highAttackMS: 6,
-            highReleaseMS: 150, kneeDB: 2.0, linkStrength: 0.40, releaseProgramDependent: true),
+            highReleaseMS: 150, kneeDB: 2.0, linkStrength: 1.0, releaseProgramDependent: true),
         // Italo / disco / synthwave pump. The 5-band variant linearly
         // interpolates band 2 from low+mid, so the low values are pushed
         // hard to make band 2 (the kick band, 80–280 Hz) aggressive enough
@@ -254,25 +262,25 @@ enum PresetCatalog {
             midReleaseMS: 130,
             highThresholdDB: -18, highRatio: 1.3, highAttackMS: 4,
             highReleaseMS: 100,
-            kneeDB: 1.5, linkStrength: 0.30, releaseProgramDependent: true),
+            kneeDB: 1.5, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_news", title: "5B News", mode: 5, lowHz: nil, highHz: nil, x1Hz: 110, x2Hz: 450,
             x3Hz: 2100, x4Hz: 7600, lowThresholdDB: -15, lowRatio: 1.4, lowAttackMS: 40,
             lowReleaseMS: 500, midThresholdDB: -14, midRatio: 1.35, midAttackMS: 34,
             midReleaseMS: 400, highThresholdDB: -13, highRatio: 1.25, highAttackMS: 24,
-            highReleaseMS: 320, kneeDB: 4.3, linkStrength: 0.64, releaseProgramDependent: true),
+            highReleaseMS: 320, kneeDB: 4.3, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_jazz", title: "5B Jazz", mode: 5, lowHz: nil, highHz: nil, x1Hz: 95, x2Hz: 360,
             x3Hz: 1600, x4Hz: 6200, lowThresholdDB: -18, lowRatio: 1.65, lowAttackMS: 32,
             lowReleaseMS: 430, midThresholdDB: -17, midRatio: 1.5, midAttackMS: 26,
             midReleaseMS: 340, highThresholdDB: -16, highRatio: 1.35, highAttackMS: 17,
-            highReleaseMS: 260, kneeDB: 3.4, linkStrength: 0.54, releaseProgramDependent: true),
+            highReleaseMS: 260, kneeDB: 3.4, linkStrength: 1.0, releaseProgramDependent: true),
         .init(
             id: "5_oldies", title: "5B Oldies", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90,
             x2Hz: 340, x3Hz: 1450, x4Hz: 5600, lowThresholdDB: -20, lowRatio: 1.8, lowAttackMS: 26,
             lowReleaseMS: 360, midThresholdDB: -18, midRatio: 1.7, midAttackMS: 18,
             midReleaseMS: 280, highThresholdDB: -17, highRatio: 1.45, highAttackMS: 11,
-            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 0.48, releaseProgramDependent: true)
+            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 1.0, releaseProgramDependent: true)
     ]
 
     private static func clamp(_ v: Double, min lo: Double, max hi: Double) -> Double {
@@ -311,14 +319,8 @@ enum PresetCatalog {
         config.multibandPresetID = id
         config.multibandIntensity = intensity.rawValue
 
-        if let lowHz = preset.lowHz {
-            config.multibandLowHz = lowHz
-            config.multibandX1Hz = lowHz
-        }
-        if let highHz = preset.highHz {
-            config.multibandHighHz = highHz
-            config.multibandX2Hz = highHz
-        }
+        if let lowHz = preset.lowHz { config.multibandX1Hz = lowHz }
+        if let highHz = preset.highHz { config.multibandX2Hz = highHz }
         if let x1Hz = preset.x1Hz { config.multibandX1Hz = x1Hz }
         if let x2Hz = preset.x2Hz { config.multibandX2Hz = x2Hz }
         if let x3Hz = preset.x3Hz { config.multibandX3Hz = x3Hz }
@@ -392,7 +394,7 @@ enum PresetCatalog {
         .init(id: "speech", title: "Speech / Talk",
               agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 100.0,
               agcReleaseMS: 750.0, agcMaxGainDB: 10.0, agcMinGainDB: -8.0,
-              finalDriveDB: 4.5, preEncodeAudioLimiterEnabled: true),
+              finalDriveDB: 4.3, preEncodeAudioLimiterEnabled: true),
         // Classical (2026-10 review, finding 3): a gentle 2:1-style ride with
         // no pianissimo lift. Orban CLASSICAL runs its AGC near 0 dB gain
         // reduction and BBC classical distribution keeps an LRA of 15 LU;
@@ -500,7 +502,7 @@ enum PresetCatalog {
         // (`FormatProfileTests.defaultProfileMatchesShippingDefaults`) holds
         // the two equal key for key.
         .init(id: "music_clean", title: "Music — Clean",
-              summary: "The default: transparent leveling, honest peaks, low clipper work, bass clipper idling at the defaults. For stations that value fidelity over loudness.",
+              summary: "The default: transparent levelling, honest peaks, low clipper work, bass clipper idling at the defaults. For stations that value fidelity over loudness.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
               primeBassPresetID: "ac", monoBassFreqHz: 140.0,
@@ -558,12 +560,17 @@ enum PresetCatalog {
               parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
               bandLimiterEnabled: true),
         .init(id: "speech", title: "Speech / Talk",
-              summary: "Voice-optimized: phase rotator for waveform symmetry, fast-release talk multiband for density, speech final stage, conservative drive.",
+              summary: "Voice-optimised: phase rotator for waveform symmetry, fast-release talk multiband for density, speech final stage, conservative drive.",
               multibandPresetID: "5_talk", multibandIntensity: .normal,
               finalStagePresetID: "speech", primeBassEnabled: false,
               primeBassPresetID: "talk", monoBassFreqHz: 140.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 4.5,
+              // 4.3 dB (was 4.5): since Advanced Dynamics creeps to its target
+              // inside the hold window instead of resting up to half a window
+              // short of a lift, speech reaches the clipper a little hotter;
+              // at 4.5 dB the hi-hat HF SINAD fell from 20.1 to 20.0 dB, onto
+              // the 20 dB `--verify-hf-transients` gate. 4.3 dB reads 20.4 dB.
+              finalDriveDB: 4.3,
               agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
@@ -662,13 +669,26 @@ enum PresetCatalog {
         config.multibandLimiterThresholdDB = -3.0
         config.multibandLimiterAttackMS = 0.5
         config.multibandLimiterReleaseMS = 50.0
-        // A profile defines the regular AGC + Multiband chain. Under Advanced
-        // Dynamics the AGC and multiband settings just written are bypassed
-        // and the levelling would not change (2026-10 review, finding 6), so
-        // the Levelling choice is reset here. It is deliberately NOT an
-        // installation-preserved key (InstallationKeys.swift): snapshots and
-        // profiles carry it, the way they carry the rest of the sound.
-        config.advancedDynamicsEnabled = false
+        // Levelling (2026-10-15): every profile runs Advanced Dynamics, the
+        // one-stage leveller, so the operator has one set of levelling
+        // controls. The profile carries its levelling character into it:
+        // the AGC target its final-stage preset names becomes the leveller
+        // target, its multiband intensity the leveller density, with a
+        // neutral tilt. The AGC + multiband settings written above stay in
+        // the config for the classic chain (Advanced Dynamics off). It is
+        // deliberately NOT an installation-preserved key
+        // (InstallationKeys.swift): snapshots and profiles carry it, the way
+        // they carry the rest of the sound.
+        config.advancedDynamicsEnabled = true
+        // 2 dB below the AGC target: the leveller keeps the programme's
+        // spectrum where the classic multiband compressed it, so at the same
+        // target it fed the final stage about 2 dB hotter (PrimeBass IMD on
+        // Music - Loud -51 dB vs -85 dB on the classic chain; -2 dB restores it).
+        config.advancedDynamicsTargetDB = config.widebandAGCTargetDB - 2.0
+        config.advancedDynamicsDensity = profile.multibandIntensity.levelerDensity
+        config.advancedDynamicsLowOffsetDB = 0.0
+        config.advancedDynamicsMidOffsetDB = 0.0
+        config.advancedDynamicsHighOffsetDB = 0.0
         return profile.title
     }
 }

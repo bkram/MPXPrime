@@ -24,7 +24,7 @@ import Testing
     mpx_clipper_cancel_audio = True
     hf_clipper_enabled = True
     advanced_dynamics_enabled = True
-    final_drive_db = 8.0
+    final_drive_db = 5.0
     input_gain_db = -3.98
     pilot_level = 0.09
     mpx_deviation_khz = 70.0
@@ -60,7 +60,7 @@ import Testing
         #expect(cfg.compositeClipperEnabled)
         #expect(cfg.compositeClipperCancelAudio == false)
         #expect(cfg.hfLimiterEnabled)
-        #expect(cfg.advancedDynamicsEnabled == false)
+        #expect(cfg.advancedDynamicsEnabled == true)
         // input_gain_db is calibration-class since 0.50 (per-device memory,
         // Audio I/O): the legacy reset PRESERVES the operator's source
         // staging (3.98 in the fixture) instead of wiping it.

@@ -34,7 +34,10 @@ import Foundation
 // longer than its own budget, the host is overloaded and the full-chain
 // comparisons are allowed to be looser (the budget auto-scales).
 
-@Suite("DSP throughput")
+// `.serialized`: these are wall-clock ratios, and running them in parallel
+// with each other made one measurement the other's load (the CI failures
+// recorded below; finding 16).
+@Suite("DSP throughput", .serialized)
 struct DSPThroughputTests {
 
     // Match the user's real-world config: 192 kHz, 2048 block, everything on.
@@ -114,7 +117,18 @@ struct DSPThroughputTests {
 
     // MARK: - Measurement helpers
 
-    private func measureThroughput(config: AppConfig) -> (wallSeconds: Double, audioSeconds: Double) {
+    /// CPU time the calling thread has used, in seconds. Unlike the wall
+    /// clock it stops while the thread is preempted, so other work on the
+    /// machine (the rest of the parallel suite, a busy CI runner) cannot
+    /// inflate it; only the render's own cost can.
+    private static func threadCPUSeconds() -> Double {
+        var ts = timespec()
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts)
+        return Double(ts.tv_sec) + Double(ts.tv_nsec) / 1e9
+    }
+
+    private func measureThroughput(config: AppConfig)
+        -> (wallSeconds: Double, cpuSeconds: Double, audioSeconds: Double) {
         let gen = MPXGenerator(config: config, sampleRate: Double(sampleRate))
         let totalFrames = Int(Double(sampleRate) * durationSeconds)
         var (left, right) = generateHeavyStereo(frames: totalFrames)
@@ -136,6 +150,9 @@ struct DSPThroughputTests {
 
         let clock = ContinuousClock()
         let start = clock.now
+        // The render loop has no suspension point, so it stays on this thread
+        // and the thread's CPU clock covers exactly the render.
+        let cpuStart = Self.threadCPUSeconds()
         left.withUnsafeMutableBufferPointer { lBuf in
             right.withUnsafeMutableBufferPointer { rBuf in
                 var offset = 0
@@ -152,17 +169,19 @@ struct DSPThroughputTests {
                 }
             }
         }
+        let cpuSeconds = Self.threadCPUSeconds() - cpuStart
         let elapsed = clock.now - start
         return (
             wallSeconds: Double(elapsed.components.seconds)
                 + Double(elapsed.components.attoseconds) / 1e18,
+            cpuSeconds: cpuSeconds,
             audioSeconds: Double(totalFrames) / Double(sampleRate)
         )
     }
 
     // MARK: - Tests
 
-    // Absolute wall-clock budget: calibrated for the Tier-1 macOS dev
+    // Absolute budget: calibrated for the Tier-1 macOS dev
     // hardware. A low-power Linux test host (debug builds)
     // cannot meet it and would fail spuriously; the relative-ratio
     // throughput tests below still run there. Use --bench on a release
@@ -172,28 +191,58 @@ struct DSPThroughputTests {
     // with every other test green (the whole run took 157 s against 47 s
     // locally), so the test is skipped whenever CI is set. The relative
     // comparisons below stay on.
+    //
+    // It measures the render thread's CPU TIME, not wall time (2026-10-16):
+    // in a full local run at load average 8-10 the wall clock counted the
+    // time this thread sat preempted behind the rest of the parallel suite,
+    // and the test failed while passing alone. CPU time is what the
+    // real-time budget is actually spent from, and contention cannot
+    // inflate it. The render runs on its own thread at the render thread's
+    // quality of service, so a busy scheduler does not park it on an
+    // efficiency core either. Measured 2026-10-16, debug build, hikari,
+    // twelve CPU hogs (load average 13-18): on a default-QoS thread the wall
+    // clock read up to 1.30 x real time and CPU time 0.55-0.61; on this
+    // thread both read 0.54-0.55, the same as on an idle machine.
     #if os(macOS)
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["CI"] == nil,
-                   "absolute wall-clock budget is calibrated for Tier-1 dev hardware, not a shared runner"))
+    // Opt-in (MPXPRIME_BENCH), like the other absolute benchmarks: inside the
+    // parallel default suite even the render thread's CPU time inflates (it
+    // read 0.89 x real time in a full run on 2026-10-16, 0.55 alone three
+    // times in a row): with every core busy the thread can be placed on an
+    // efficiency core and shares caches. An absolute budget cannot be measured
+    // there; the relative-cost checks above stay in the default run.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MPXPRIME_BENCH"] != nil
+                   && ProcessInfo.processInfo.environment["CI"] == nil,
+                   "absolute CPU budget: opt-in with MPXPRIME_BENCH, calibrated for Tier-1 dev hardware"))
     func bypassChainStaysWellInsideBudget() {
         // processingBypass=true disables the DSP path, so this is effectively
         // the floor: input gain + MPX encoding + pilot/RDS injection only.
-        // If this ever exceeds budget, the test-runner host is so overloaded
-        // the other tests can't be trusted.
-        var cfg = makeHeavyConfig()
-        cfg.processingBypass = true
-        var result = measureThroughput(config: cfg)
-        // Contention only ever INFLATES a wall-clock measurement, so a single
-        // run over budget is re-measured once and the better run counts (the
-        // shared CI macOS runner read 0.82 against a 0.75 bound with every
-        // other test green; a machine that is genuinely too slow fails twice).
-        if result.wallSeconds / result.audioSeconds >= budgetFraction * 2.5 {
-            let again = measureThroughput(config: cfg)
-            if again.wallSeconds < result.wallSeconds { result = again }
+        // Over budget means that floor itself got more expensive.
+        let cfg: AppConfig = {
+            var c = makeHeavyConfig()
+            c.processingBypass = true
+            return c
+        }()
+        final class Box: @unchecked Sendable {
+            var result: (wallSeconds: Double, cpuSeconds: Double, audioSeconds: Double)?
         }
-        let ratio = result.wallSeconds / result.audioSeconds
+        let box = Box()
+        let finished = DispatchSemaphore(value: 0)
+        let thread = Thread { [self] in
+            box.result = measureThroughput(config: cfg)
+            finished.signal()
+        }
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        finished.wait()
+        guard let result = box.result else {
+            Issue.record("the measurement thread returned nothing")
+            return
+        }
+        let ratio = result.cpuSeconds / result.audioSeconds
+        print(String(format: "Bypass chain: %.3f s CPU, %.3f s wall for %.1f s of audio (CPU %.2f x real time)",
+                     result.cpuSeconds, result.wallSeconds, result.audioSeconds, ratio))
         #expect(ratio < budgetFraction * 2.5,
-            "bypass chain wall \(result.wallSeconds) s / audio \(result.audioSeconds) s = \(ratio) -- even the bypass path is near the real-time deadline twice in a row, runner is overloaded")
+            "bypass chain used \(result.cpuSeconds) s of CPU for \(result.audioSeconds) s of audio = \(ratio) x real time (wall \(result.wallSeconds) s) -- the bypass path itself got slower")
     }
     #endif
 

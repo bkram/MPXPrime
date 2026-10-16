@@ -4,10 +4,13 @@ import Foundation
 
 // Phase 1 lookahead for the pre-encode L/R limiter. Two contracts:
 //
-// 1. lookahead_ms = 0 must be bit-identical to the no-lookahead path.
-//    This is the regression guard — changing the default config or
-//    leaving lookahead disabled in a preset must not perturb existing
-//    baselines / verifier results.
+// 1. lookahead_ms = 0 must not change. This is the regression guard --
+//    changing the default config or leaving lookahead disabled in a preset
+//    must not perturb existing baselines / verifier results. It is pinned
+//    against a STORED golden output (captured 2026-10-15): the old check
+//    compared `configure(...)` with `configure(..., lookaheadMS: 0.0)`, and
+//    0.0 is the parameter's default, so both sides were the same call
+//    (test-suite review 2026-10 finding 8).
 //
 // 2. lookahead_ms > 0 must measurably reduce peak overshoot on a
 //    synthetic HF transient that hits a feedback-only limiter hard.
@@ -24,27 +27,11 @@ struct PreEncodeLookaheadTests {
 
     // MARK: - Phase 1.1: lookahead = 0 is bit-identical
 
-    @Test func zeroLookaheadIsBitIdenticalToLegacyPath() {
-        var legacy = StereoLinkedOversampledPeakLimiter()
-        var lookahead = StereoLinkedOversampledPeakLimiter()
-        legacy.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0)
-        lookahead.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
-                            lookaheadMS: 0.0)
-
-        // Hot mix: HF tone + transient burst, the kind of signal the
-        // feedback-only limiter has to work hard on. Bit-identical
-        // output verifies the lookahead == 0 short-circuit.
-        let frames = 4096
-        let f1: Float = 7_000.0
-        for i in 0..<frames {
-            let phase = 2.0 * Float.pi * f1 * Float(i) / sampleRate
-            var x = 0.9 * sinf(phase)
-            if i % 256 == 0 { x += 0.8 }   // transient burst every ~1.3 ms
-            let (legL, legR) = legacy.process(left: x, right: x)
-            let (lhL, lhR) = lookahead.process(left: x, right: x)
-            #expect(legL == lhL, "L channel diverges at sample \(i): legacy=\(legL) vs lookahead=\(lhL)")
-            #expect(legR == lhR, "R channel diverges at sample \(i): legacy=\(legR) vs lookahead=\(lhR)")
-        }
+    @Test func zeroLookaheadMatchesTheFrozenGolden() {
+        var limiter = StereoLinkedOversampledPeakLimiter()
+        limiter.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
+                          lookaheadMS: 0.0)
+        expectMatchesGolden(&limiter, golden: Self.zeroLookaheadGolden, label: "lookahead 0")
     }
 
     // MARK: - Phase 1.2: lookahead > 0 reduces peak overshoot on a transient
@@ -296,32 +283,98 @@ struct PreEncodeLookaheadTests {
             "HF-only should produce >1 dB GR on a 6 kHz transient at threshold 0.85; got \(grHFOnly) dB")
     }
 
-    @Test func phase2HFOnlyOffMatchesBroadbandLookahead() {
-        // Regression guard: with lookaheadHFOnly = false, behavior must be
-        // bit-identical to Phase 1 (broadband detector).
-        let frames = 2_048
-        var inputL = [Float](repeating: 0.0, count: frames)
-        var inputR = [Float](repeating: 0.0, count: frames)
-        let f: Float = 5_000.0
-        for i in 0..<frames {
-            let phase = 2.0 * Float.pi * f * Float(i) / sampleRate
-            let v = 1.1 * sinf(phase)
-            inputL[i] = v
-            inputR[i] = v
+    @Test func broadbandLookaheadMatchesTheFrozenGolden() {
+        // Phase 2 regression guard: with lookaheadHFOnly = false the
+        // detector is the Phase 1 broadband one. Pinned against a stored
+        // golden for the same reason as the zero-lookahead case: the old
+        // comparison passed `lookaheadHFOnly: false`, the default, on one
+        // side only, so both sides were the same call.
+        var limiter = StereoLinkedOversampledPeakLimiter()
+        limiter.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
+                          lookaheadMS: 1.0, lookaheadHFOnly: false)
+        expectMatchesGolden(&limiter, golden: Self.broadbandLookaheadGolden, label: "broadband 1 ms")
+    }
+
+    // MARK: - Golden fixture
+
+    struct Golden {
+        let sumSquaresL: Double
+        let sumSquaresR: Double
+        /// Output at frames 64, 192, ..., 4032 (stride 128).
+        let left: [Float]
+        let right: [Float]
+    }
+
+    /// Hot HF tone plus a transient every 256 samples on L, a 3 kHz tone on
+    /// R (different per channel so a channel swap or a broken stereo link
+    /// shows), 4096 frames at 192 kHz, threshold 0.85, release 50 ms.
+    /// Tolerance 1e-4 per sample and 1e-5 relative on the energy: far above
+    /// Float / libm differences between platforms (~1e-7), far below what a
+    /// one-sample delay (up to 0.18 on the 7 kHz tone) or a changed detector
+    /// time constant moves.
+    private func expectMatchesGolden(_ limiter: inout StereoLinkedOversampledPeakLimiter,
+                                     golden: Golden, label: String) {
+        var outL = [Float](repeating: 0.0, count: 4096)
+        var outR = [Float](repeating: 0.0, count: 4096)
+        for i in 0..<4096 {
+            let phase = 2.0 * Float.pi * 7_000.0 * Float(i) / sampleRate
+            var x = 0.9 * sinf(phase)
+            if i % 256 == 0 { x += 0.8 }
+            let y = 0.6 * sinf(2.0 * Float.pi * 3_000.0 * Float(i) / sampleRate)
+            (outL[i], outR[i]) = limiter.process(left: x, right: y)
         }
-
-        var p1 = StereoLinkedOversampledPeakLimiter()
-        var p2default = StereoLinkedOversampledPeakLimiter()
-        p1.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
-                     lookaheadMS: 1.0)
-        p2default.configure(sampleRate: sampleRate, threshold: 0.85, releaseMS: 50.0,
-                            lookaheadMS: 1.0, lookaheadHFOnly: false)
-
-        for i in 0..<frames {
-            let (l1, r1) = p1.process(left: inputL[i], right: inputR[i])
-            let (l2, r2) = p2default.process(left: inputL[i], right: inputR[i])
-            #expect(l1 == l2, "Phase 2 with HF-only=false diverges at sample \(i): \(l1) vs \(l2)")
-            #expect(r1 == r2, "Phase 2 with HF-only=false diverges at sample \(i): \(r1) vs \(r2)")
+        var sumL = 0.0, sumR = 0.0
+        for v in outL { sumL += Double(v) * Double(v) }
+        for v in outR { sumR += Double(v) * Double(v) }
+        #expect(abs(sumL - golden.sumSquaresL) < golden.sumSquaresL * 1e-5,
+                "\(label): L energy \(sumL) vs golden \(golden.sumSquaresL)")
+        #expect(abs(sumR - golden.sumSquaresR) < golden.sumSquaresR * 1e-5,
+                "\(label): R energy \(sumR) vs golden \(golden.sumSquaresR)")
+        for (k, frame) in stride(from: 64, to: 4096, by: 128).enumerated() {
+            #expect(abs(outL[frame] - golden.left[k]) < 1e-4,
+                    "\(label): L[\(frame)] = \(outL[frame]), golden \(golden.left[k])")
+            #expect(abs(outR[frame] - golden.right[k]) < 1e-4,
+                    "\(label): R[\(frame)] = \(outR[frame]), golden \(golden.right[k])")
         }
     }
+
+    static let zeroLookaheadGolden = Golden(
+        sumSquaresL: 1409.3393833015314,
+        sumSquaresR: 626.9841929433202,
+        left: [
+        0.0019705, -0.8048582, 0.0806973, 0.7058573, -0.7742012, 0.0770906,
+        0.7074779, -0.7767791, 0.0790517, 0.6912844, -0.7603441, 0.0758737,
+        0.6969923, -0.7660820, 0.0781902, 0.6827590, -0.7510026, 0.0749538,
+        0.6885201, -0.7567677, 0.0773789, 0.6747754, -0.7422544, 0.0740858,
+        0.6805820, -0.7480388, 0.0766315, 0.6672929, -0.7340172, 0.0732816,
+        0.6731413, -0.7398523
+        ],
+        right: [
+        -0.0013871, -0.4477667, -0.4429175, -0.4358382, -0.4346043, -0.4331177,
+        -0.4325705, -0.4320937, -0.4317190, -0.4268111, -0.4268078, -0.4261482,
+        -0.4261494, -0.4261474, -0.4261338, -0.4215461, -0.4215441, -0.4209663,
+        -0.4209658, -0.4209660, -0.4209522, -0.4166167, -0.4166166, -0.4161166,
+        -0.4161153, -0.4161123, -0.4160995, -0.4119889, -0.4119866, -0.4115563,
+        -0.4115564, -0.4115561
+        ])
+
+    static let broadbandLookaheadGolden = Golden(
+        sumSquaresL: 1279.6054453965794,
+        sumSquaresR: 569.257043250182,
+        left: [
+        0.0000000, -0.0000000, 0.0786642, 0.7037316, -0.7708409, 0.0762817,
+        0.6908162, -0.7689611, 0.0743516, 0.6866847, -0.7547843, 0.0746830,
+        0.6765954, -0.7531121, 0.0728159, 0.6726978, -0.7400337, 0.0732197,
+        0.6635191, -0.7385412, 0.0714062, 0.6598456, -0.7264199, 0.0718750,
+        0.6514423, -0.7250838, 0.0700907, 0.6479594, -0.7138088, 0.0706038,
+        0.6402291, -0.7126282
+        ],
+        right: [
+        0.0000000, 0.0000000, -0.4411590, -0.4345016, -0.4284533, -0.4284474,
+        -0.4277534, -0.4277520, -0.4278400, -0.4239734, -0.4194874, -0.4194821,
+        -0.4189349, -0.4189342, -0.4190181, -0.4153356, -0.4112505, -0.4112469,
+        -0.4108280, -0.4108260, -0.4109056, -0.4073961, -0.4036483, -0.4036428,
+        -0.4033399, -0.4033394, -0.4034172, -0.4000666, -0.3966013, -0.3965974,
+        -0.3964041, -0.3964060
+        ])
 }

@@ -222,8 +222,12 @@ func runMultibandCouplingComparison(
     if usefulCount == 0 {
         warnings.append("enabled path did not measurably reduce mid/high energy on the comparison scenarios")
     }
+    // Wall time is reported, not judged: on a shared or busy machine it
+    // measures the host, and it used to turn the gate TIGHT on its own
+    // (test-suite review 2026-10 finding 16). DSPThroughputTests
+    // own the relative cost budgets.
     if costRatio > 1.25 {
-        warnings.append("enabled path cost ratio \(String(format: "%.2fx", costRatio)) exceeds 1.25x")
+        print("Note: enabled path cost ratio \(String(format: "%.2fx", costRatio)) exceeds 1.25x (wall time, informational).")
     }
     if warnings.isEmpty {
         print("Result: OK - coupling stayed safe and measurably shaped upper-band energy.")
@@ -273,7 +277,7 @@ func ssbQuadraturePeakCostDB(amount: Float) -> Float {
 /// SSB Stereo compatibility gate: the fixed lower-sideband SSB / VSB
 /// encoder against classic DSB. It makes NO loudness claim: the
 /// composite-peak reclaim is printed for information only (0.00 dB
-/// measured, docs/ssb-stereo-review.md -- SSB cannot lower a composite
+/// measured, the SSB stereo review -- SSB cannot lower a composite
 /// peak). It FAILs (exit 1) when SSB breaks compatibility:
 /// - the composite budget or the output correlation on program;
 /// - coherent separation (below 20 dB, or more than 6 dB under DSB);

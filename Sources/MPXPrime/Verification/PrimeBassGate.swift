@@ -383,7 +383,9 @@ func runPrimeBassVerification(
 /// are on-minus-off energy deltas, 60-120 Hz = the harmonic band of a
 /// 30-60 Hz fundamental, 120-500 Hz = the upper series, 500-2000 Hz = the
 /// midrange that intermodulation products land in ("mud").
-private func printPrimeBassProgramMaterial(path: String, config enabledConfig: AppConfig) {
+private func printPrimeBassProgramMaterial(
+    path: String, config enabledConfig: AppConfig, excerptSeconds: Double = 30.0
+) {
     let files = programABInputFiles(path: path)
     guard !files.isEmpty else {
         print("Program material: no decodable audio files at \(path); real-music rows skipped.")
@@ -393,7 +395,6 @@ private func printPrimeBassProgramMaterial(path: String, config enabledConfig: A
     var disabledConfig = enabledConfig
     disabledConfig.primeBassEnabled = false
     let sampleRate = max(8_000.0, enabledConfig.sampleRate)
-    let excerptSeconds = 30.0
     print("Program material (\(path), \(files.count) file(s), \(Int(excerptSeconds)) s excerpts, Music - Loud, on minus off):")
     print("Track                                     Crest off  Crest on  d60-120  d120-500  d500-2k  Peak dB")
     print("----------------------------------------  ---------  --------  -------  --------  -------  -------")
@@ -464,3 +465,219 @@ private func printPrimeBassProgramMaterial(path: String, config enabledConfig: A
     print("")
 }
 #endif
+
+// MARK: - Control-range sweep (--sweep-primebass)
+//
+// Where does each PrimeBass control stop doing something useful? Moves one
+// control at a time from the shipped defaults and measures, on the same
+// on-minus-off decoded difference as the gate:
+//   steady 50 Hz at -20 and -10 dBFS  2 F0, 3 F0 and the whole 2..5 F0
+//                                     series re the fundamental, the 25 Hz
+//                                     subharmonic, peak growth
+//   plucked bass line, -10 dBFS peak  the added harmonic layer (80-500 Hz)
+//                                     re the dry bass (30-80 Hz), midrange
+//                                     spill (500-2000 Hz) re the dry bass,
+//                                     peak growth
+// The Amount table adds a "guard" column: how far the series sits below a
+// straight scale-up from the lowest Amount row, i.e. how much the +1.5 dB
+// peak guard is holding the stage back. A control setting the guard has to
+// fight, or one that moves nothing, is outside the useful range.
+// Real-music rows (when $MPXPRIME_MUSIC_DIR exists) repeat the Amount sweep
+// on Music - Loud: on-minus-off band energy, peak change, crest.
+// Informational only: no thresholds, exit 0.
+
+private struct PrimeBassSweepTone {
+    let second: Double
+    let third: Double
+    let series: Double
+    let sub: Double
+    let peakGrowth: Double
+}
+
+private struct PrimeBassSweepPluck {
+    let layer: Double
+    let spill: Double
+    let peakGrowth: Double
+}
+
+/// Plucked bass line: four 0.5 s notes (41.2, 55.0, 49.0, 73.4 Hz) struck at
+/// `peak` and decaying with a 0.25 s time constant, 2 ms attack and 5 ms
+/// release ramps so the note boundaries do not click. The stage's level,
+/// transient and peak followers see onsets and decays as on a real bass.
+private func primeBassPluckedLine(peak: Double) -> (Int, Double) -> (Float, Float) {
+    let notes = [41.2, 55.0, 49.0, 73.4]
+    let noteLength = 0.5
+    return { frame, rate in
+        let t = Double(frame) / rate
+        let index = Int(t / noteLength) % notes.count
+        let local = t.truncatingRemainder(dividingBy: noteLength)
+        let ramp = min(1.0, local / 0.002, (noteLength - local) / 0.005)
+        let v = Float(peak * ramp * exp(-local / 0.25) * sin(2.0 * Double.pi * notes[index] * local))
+        return (v, v)
+    }
+}
+
+private func primeBassSweepTone(
+    _ enabled: AppConfig, amplitude: Double, durationSeconds: Double
+) -> PrimeBassSweepTone {
+    var disabled = enabled
+    disabled.primeBassEnabled = false
+    let f0 = 50.0
+    let sampleRate = max(8_000.0, enabled.sampleRate)
+    let tone: (Int, Double) -> (Float, Float) = { frame, rate in
+        let v = Float(amplitude * sin(2.0 * Double.pi * f0 * Double(frame) / rate))
+        return (v, v)
+    }
+    let on = renderPrimeBassScenario(config: enabled, durationSeconds: durationSeconds, sample: tone)
+    let off = renderPrimeBassScenario(config: disabled, durationSeconds: durationSeconds, sample: tone)
+    let n = on.mono.count
+    var diff = [Float](repeating: 0.0, count: n)
+    for i in 0..<n { diff[i] = on.mono[i] - off.mono[i] }
+    let specOff = hannPowerSpectrum(off.mono, start: 0, fftSize: n)
+    let specDiff = hannPowerSpectrum(diff, start: 0, fftSize: n)
+    let fundamental = primeBassToneLevelDB(specOff, sampleRate: sampleRate, fftSize: n, hz: f0)
+    func line(_ hz: Double) -> Double {
+        primeBassToneLevelDB(specDiff, sampleRate: sampleRate, fftSize: n, hz: hz)
+    }
+    var seriesPower = 0.0
+    for order in 2...5 { seriesPower += pow(10.0, line(Double(order) * f0) / 10.0) }
+    return PrimeBassSweepTone(
+        second: line(2.0 * f0) - fundamental,
+        third: line(3.0 * f0) - fundamental,
+        series: 10.0 * log10(max(1e-30, seriesPower)) - fundamental,
+        sub: line(0.5 * f0) - fundamental,
+        peakGrowth: primeBassDB(primeBassPeak(on.mono) / max(1e-30, primeBassPeak(off.mono))))
+}
+
+private func primeBassSweepPluck(_ enabled: AppConfig, durationSeconds: Double) -> PrimeBassSweepPluck {
+    var disabled = enabled
+    disabled.primeBassEnabled = false
+    let sampleRate = max(8_000.0, enabled.sampleRate)
+    let line = primeBassPluckedLine(peak: 0.316)
+    let on = renderPrimeBassScenario(config: enabled, durationSeconds: durationSeconds, sample: line)
+    let off = renderPrimeBassScenario(config: disabled, durationSeconds: durationSeconds, sample: line)
+    let n = on.mono.count
+    var diff = [Float](repeating: 0.0, count: n)
+    for i in 0..<n { diff[i] = on.mono[i] - off.mono[i] }
+    let specOff = hannPowerSpectrum(off.mono, start: 0, fftSize: n)
+    let specDiff = hannPowerSpectrum(diff, start: 0, fftSize: n)
+    let bass = bandPower(specOff, sampleRate: sampleRate, fftSize: n, lowHz: 30.0, highHz: 80.0)
+    let layer = bandPower(specDiff, sampleRate: sampleRate, fftSize: n, lowHz: 80.0, highHz: 500.0)
+    let spill = bandPower(specDiff, sampleRate: sampleRate, fftSize: n, lowHz: 500.0, highHz: 2_000.0)
+    return PrimeBassSweepPluck(
+        layer: 10.0 * log10(max(1e-30, layer) / max(1e-30, bass)),
+        spill: 10.0 * log10(max(1e-30, spill) / max(1e-30, bass)),
+        peakGrowth: primeBassDB(primeBassPeak(on.mono) / max(1e-30, primeBassPeak(off.mono))))
+}
+
+private func primeBassSweepTable(
+    title: String,
+    base: AppConfig,
+    values: [Double],
+    durationSeconds: Double,
+    showGuard: Bool = false,
+    apply: (inout AppConfig, Double) -> Void
+) {
+    print(title)
+    var header = "  value | -20 dBFS: 2F0    3F0  series  sub25   peak | -10 dBFS: series   peak"
+        + " | pluck: layer  spill   peak"
+    if showGuard { header += " | guard" }
+    print(header)
+    var reference: (value: Double, series: Double)?
+    for value in values {
+        var config = base
+        apply(&config, value)
+        let quiet = primeBassSweepTone(config, amplitude: 0.1, durationSeconds: durationSeconds)
+        let loud = primeBassSweepTone(config, amplitude: 0.316, durationSeconds: durationSeconds)
+        let pluck = primeBassSweepPluck(config, durationSeconds: max(durationSeconds, 2.0))
+        func f(_ v: Double, _ width: Int) -> String { leftPadded(String(format: "%.1f", v), width: width) }
+        var row = "\(leftPadded(String(format: "%.2f", value), width: 7)) |"
+            + "           \(f(quiet.second, 5))  \(f(quiet.third, 5))  \(f(quiet.series, 6))  \(f(quiet.sub, 5))"
+            + "  \(f(quiet.peakGrowth, 5)) |"
+            + "           \(f(loud.series, 6))  \(f(loud.peakGrowth, 5)) |"
+            + "        \(f(pluck.layer, 5))  \(f(pluck.spill, 5))  \(f(pluck.peakGrowth, 5))"
+        if showGuard {
+            if let ref = reference, value > 0.0, ref.value > 0.0 {
+                let predicted = ref.series + 20.0 * log10(value / ref.value)
+                row += " | \(f(predicted - quiet.series, 5))"
+            } else {
+                row += " |   ref"
+            }
+            if reference == nil, value > 0.0 { reference = (value, quiet.series) }
+        }
+        print(row)
+    }
+    print("")
+}
+
+func runPrimeBassSweep(baseConfig: AppConfig, durationSeconds: Double) -> Int32 {
+    let duration = max(1.5, min(durationSeconds, 4.0))
+    print("PrimeBass control-range sweep: one control at a time from the shipped defaults, on-minus-off")
+    print("decoded mono. dB columns: 2F0 / 3F0 / series (2..5 F0) / sub25 are re the fundamental; peak is")
+    print("decoded peak growth; pluck layer is the added 80-500 Hz energy re the dry 30-80 Hz bass, spill")
+    print("the added 500-2000 Hz energy re the same. guard = series below a straight scale-up from the first")
+    print("Amount row (how hard the +1.5 dB peak guard holds the stage back).")
+    print("")
+
+    var defaults = AppConfig()
+    defaults.sampleRate = baseConfig.sampleRate
+    defaults.sourceMode = "input"
+    defaults.enRDS = false
+    defaults.primeBassEnabled = true
+
+    var loud = AppConfig()
+    loud.sampleRate = baseConfig.sampleRate
+    loud.sourceMode = "input"
+    loud.enRDS = false
+    _ = PresetCatalog.applyFormatProfile(id: "music_loud", to: &loud)
+    loud.primeBassEnabled = true
+
+    let amounts = [0.05, 0.1, 0.15, 0.22, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
+    primeBassSweepTable(
+        title: "Amount (defaults: \(primeBassKnobSummary(defaults)))",
+        base: defaults, values: amounts, durationSeconds: duration, showGuard: true
+    ) { $0.primeBassAmount = $1 }
+    primeBassSweepTable(
+        title: "Amount (Music - Loud: \(primeBassKnobSummary(loud)))",
+        base: loud, values: amounts, durationSeconds: duration, showGuard: true
+    ) { $0.primeBassAmount = $1 }
+    primeBassSweepTable(
+        title: "Harmonics", base: defaults, values: [0.0, 0.1, 0.18, 0.3, 0.5, 0.7, 1.0],
+        durationSeconds: duration
+    ) { $0.primeBassHarmonics = $1 }
+    primeBassSweepTable(
+        title: "Drive", base: defaults, values: [0.0, 0.2, 0.5, 0.78, 1.0, 1.5, 2.0, 2.5],
+        durationSeconds: duration
+    ) { $0.primeBassDrive = $1 }
+    primeBassSweepTable(
+        title: "Density", base: defaults, values: [0.0, 0.25, 0.45, 0.75, 1.0],
+        durationSeconds: duration
+    ) { $0.primeBassDensity = $1 }
+    primeBassSweepTable(
+        title: "Frequency (Hz; test tone 50 Hz, pluck 41-73 Hz)", base: defaults,
+        values: [40.0, 55.0, 70.0, 95.0, 120.0, 150.0, 180.0, 220.0],
+        durationSeconds: duration
+    ) { $0.primeBassFreqHz = $1 }
+    primeBassSweepTable(
+        title: "Subharmonics (enabled)", base: defaults, values: [0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0],
+        durationSeconds: duration
+    ) {
+        $0.primeBassSubharmonicsEnabled = true
+        $0.primeBassSubharmonicsAmount = $1
+    }
+
+    #if canImport(AVFoundation)
+    if let musicDir = ProcessInfo.processInfo.environment["MPXPRIME_MUSIC_DIR"], !musicDir.isEmpty,
+        FileManager.default.fileExists(atPath: musicDir) {
+        for amount in [0.1, 0.2, 0.34, 0.5, 0.75, 1.0] {
+            var config = loud
+            config.primeBassAmount = amount
+            print("Music - Loud, amount \(String(format: "%.2f", amount)):")
+            printPrimeBassProgramMaterial(path: musicDir, config: config, excerptSeconds: 15.0)
+        }
+    } else {
+        print("Program material: MPXPRIME_MUSIC_DIR not set or missing; real-music rows skipped.")
+    }
+    #endif
+    return 0
+}

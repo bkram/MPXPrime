@@ -1,116 +1,70 @@
 // macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
 #if os(macOS)
 
-import Accelerate
-import AppKit
-import AVFoundation
-import Combine
-import CoreAudio
-import Darwin
 import Foundation
 import MPXPrimeCore
 import MPXPrimeUI
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// Dedicated tab hosting the top-level Station Format picker. Moved out
-/// of the Processing -> Overview grid so the grid stays focused on per-
-/// stage status; the format selector gets its own breathing room and
-/// can show the full per-profile summary plus the standard tab help
-/// box without crowding the dashboard.
-struct ProcessingFormatProfileTab: View {
-    @ObservedObject var model: MPXPrimeViewModel
-
-    var body: some View {
-        Card(title: "Station Format") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("Profile")
-                        .foregroundStyle(.secondary)
-                    Picker("Station Format", selection: model.formatProfileBinding()) {
-                        ForEach(MPXPrimeViewModel.formatProfiles) { profile in
-                            Text(profile.title).tag(profile.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    Spacer()
-                }
-                Text(model.currentFormatProfileSummary)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
+// The Sound stage pages. Each page is only its cards: `StageContentView`
+// draws the title, subtitle, reset button and help box from the `Stage` name
+// table. Conventions (docs/ui-style-guide.md):
+//   - a page with one card draws it without a title; a card title never
+//     repeats the page title
+//   - every config value is bound through `model.setting(...)` (or the dB /
+//     percent variants), so the restart badge follows the disposition the
+//     engine actually has (`LayoutRestartBadgeTests`)
+//   - levels and thresholds in dB, 0-1 amounts as percent
+//   - set-once controls fold into `AdvancedGroup` (`AdvancedControls.keys`)
+//   - mechanism and standards in tooltips, not labels
 
 struct ProcessingCoreTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-      VStack(alignment: .leading, spacing: 16) {
-        Card(title: "Basics") {
-            Toggle("Bypass Processing", isOn: Binding(
-                get: { model.processingBypass },
-                set: { _ in model.toggleBypass() }
-            ))
+        Card {
             // AM Output is mono by construction (L+R are summed ahead of the
             // chain), so the toggle has nothing to switch there.
             if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
-                Toggle("Mono Mode", isOn: model.configBinding(\.monoMode))
-                Text(model.processedAudioOutputActive
-                    ? "Mono Mode sums L+R to mono. The full DSP chain still runs; the processed output is identical on both channels."
-                    : "Mono Mode transmits true mono composite. The full DSP chain (AGC, multiband, clippers, limiters) still runs; only the 19 kHz pilot, 38 kHz stereo subcarrier, and RDS are suppressed at composite assembly.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                SettingToggle(
+                    "Mono Mode", setting: model.setting(\.monoMode, .restart),
+                    tooltip: model.processedAudioOutputActive
+                        ? "Sums left and right to mono. The full chain still runs; the processed output is identical on both channels."
+                        : "Transmits a true mono composite. The full chain still runs; only the 19 kHz pilot, the 38 kHz stereo subcarrier and RDS are left out of the composite.")
             }
-            // Pre-emphasis: shown where it is THIS control that owns it --
-            // under MPX Output. FM Output puts the same picker on Audio I/O
-            // next to the coder-ownership question, HD forces it off, and AM
-            // has its own NRSC picker (see `ChainFeature.preemphasis`).
-            if !model.config.operatingMode.isAudioOutput {
-                Picker("Pre-emphasis", selection: model.configBinding(\.preemphasisUS)) {
-                    Text("Off").tag(0)
-                    Text("50 us").tag(50)
-                    Text("75 us").tag(75)
-                }
-                .pickerStyle(.segmented)
-            }
-            // Input Gain / MPX Output Level / Line Output moved to the Audio
-            // I/O section (0.50): they are rig CALIBRATION, remembered per
-            // device -- not part of the sound, so they left the DSP tabs.
-            Text("Input gain and output/line level calibration live in the sidebar's Audio I/O section (remembered per device). Loudness belongs to AGC target, Final Drive, and the composite clipper.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            DoubleSliderRow(title: "HPF", value: model.configBinding(\.hpfHz), range: 10...180, format: "%.0f Hz",
-                tooltip: "High-pass filter cutoff on the L/R input. Removes DC, rumble, and very-low-end energy that would otherwise eat headroom downstream. 30 Hz is the ITU-R BS.450 audio-bandwidth lower bound; raise to 50-80 Hz for ground-loop or rumble-heavy sources.")
-            DisclosureGroup("Advanced") {
-            DoubleSliderRow(title: "HF Trim", value: model.configBinding(\.hfTrimDB), range: -12...12, format: "%.1f dB",
-                tooltip: "Pre-multiband shelf cut/boost at HF Trim Freq. Negative values tame harsh sources before they hit the multiband; positive values brighten dull material. Apply sparingly -- global tonal shaping is the Parametric EQ stage's job.")
-            DoubleSliderRow(title: "HF Trim Freq", value: model.configBinding(\.hfTrimHz), range: 1_000...12_000, format: "%.0f Hz",
-                tooltip: "Centre frequency for the HF Trim shelf above. 4 kHz default targets vocal presence and cymbal sheen.")
-            DoubleSliderRow(title: "Program Lowpass", value: model.configBinding(\.programLowpassHz), range: 8_000...(model.config.processedAudioDigitalDelivery ? 20_000 : 16_000), format: "%.0f Hz",
-                tooltip: model.config.operatingMode == .am
-                    ? "Audio-bandwidth lowpass. In AM Output the narrower of this and the AM Bandwidth setting (Audio I/O) applies, so leave it wide and set the bandwidth there."
-                    : model.processedAudioOutputActive
-                    ? "Audio-bandwidth lowpass on the L/R output. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM; 16 kHz default. This band-limits the feed to your external coder. Lower for narrower bandwidth (talk)."
-                    : "Audio-bandwidth lowpass applied before stereo encoding. ITU-R BS.450 specifies 30 Hz - 15 kHz for FM stereo; 16 kHz default leaves room for the encoder FIR rolloff into the 17-19 kHz pilot guard. Lower for narrower bandwidth (talk, AM-style), higher only if your modulator FIR can cope.")
+            DoubleSliderRow(
+                title: "High-Pass Filter", setting: model.setting(\.hpfHz, .restart),
+                range: 10...180, format: "%.0f Hz",
+                tooltip: "Cut-off of the high-pass filter on the input. Removes DC, rumble and very low frequencies that would waste headroom downstream. 30 Hz is the ITU-R BS.450 lower audio limit; raise it to 50-80 Hz for sources with hum or rumble.",
+                defaultValue: model.resetValue(\.hpfHz))
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "HF Trim", setting: model.setting(\.hfTrimDB, .restart),
+                    range: -12...12, format: "%.1f dB",
+                    tooltip: "High-frequency shelf ahead of the multiband. Negative values tame harsh sources; positive values brighten dull ones. Use it sparingly: station-wide tone shaping is the Parametric EQ's job.",
+                    defaultValue: model.resetValue(\.hfTrimDB))
+                DoubleSliderRow(
+                    title: "HF Trim Frequency", setting: model.setting(\.hfTrimHz, .restart),
+                    range: 1_000...12_000, format: "%.0f Hz",
+                    tooltip: "Centre frequency of the HF Trim shelf. The 4 kHz default targets vocal presence and cymbal sheen.",
+                    defaultValue: model.resetValue(\.hfTrimHz))
+                DoubleSliderRow(
+                    title: "Programme Lowpass", setting: model.setting(\.programLowpassHz, .restart),
+                    range: 8_000...(model.config.processedAudioDigitalDelivery ? 20_000 : 16_000), format: "%.0f Hz",
+                    tooltip: lowpassTooltip,
+                    defaultValue: model.resetValue(\.programLowpassHz))
             }
         }
-        Card(title: "Engine -- Filters") {
-            Toggle("Encoder Lowpass: linear-phase FIR", isOn: model.configBinding(\.encoderFIREnabled))
-                .help("Audio-bandwidth (15 kHz) lowpass. On (default): Kaiser-windowed linear-phase FIR, >80 dB stop-band, ~1.67 ms latency at 192 kHz. Off: 12th-order Butterworth cascade, ~0.2 ms latency, ~40 dB stop-band. Monitor mode always uses Butterworth. Restart-required.")
-            Toggle("Multiband Crossovers: linear-phase FIR", isOn: model.configBinding(\.multibandFIREnabled))
-                .help("Multiband splitters. On (default): Kaiser-windowed FIR splitters, sum-to-flat at -155 dB, all bands share group delay (no transient smear / inter-band pumping), ~5.3 ms latency at 192 kHz. Off: IIR Linkwitz-Riley 4th-order cascade, low latency but with the IIR-LR4 phase artefacts. Monitor mode always uses LR4. Restart-required.")
-            Text(model.processedAudioOutputActive
-                ? "Both filters apply to the processed L/R output (the encoder lowpass is the 15 kHz band-limit). Restart engine to apply."
-                : "Both toggles affect the transmit (composite) path. Restart engine to apply.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    }
+
+    private var lowpassTooltip: String {
+        if model.config.operatingMode == .am {
+            return "Audio bandwidth. In AM Output the narrower of this and the AM Bandwidth on Audio I/O applies, so leave this wide and set the bandwidth there."
         }
-      }
+        if model.processedAudioOutputActive {
+            return "Audio bandwidth of the processed output. ITU-R BS.450 specifies 30 Hz to 15 kHz for FM; the 16 kHz default band-limits the feed to your external coder. Lower it for talk."
+        }
+        return "Audio bandwidth ahead of the stereo encoder. ITU-R BS.450 specifies 30 Hz to 15 kHz for FM stereo; the 16 kHz default leaves room for the encoder filter's roll-off before the 19 kHz pilot. Lower it for talk."
     }
 }
 
@@ -118,29 +72,45 @@ struct ProcessingAGCTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Wideband AGC") {
-            Toggle("Enable Wideband AGC", isOn: model.configBinding(\.widebandAGCEnabled, runtimeDisposition: .live))
-            DoubleSliderRow(title: "Platform Target", value: model.configBinding(\.widebandAGCTargetDB, runtimeDisposition: .live), range: -36 ... -6, format: "%.1f dB",
-                tooltip: "Target average level the AGC drives toward. Lower = more gain reduction on loud program; higher = less AGC action. Not the final loudness target.")
-            DisclosureGroup("Advanced") {
-            DoubleSliderRow(title: "Attack", value: model.configBinding(\.widebandAGCAttackMS, runtimeDisposition: .live), range: 1...500, format: "%.1f ms",
-                tooltip: "How quickly the AGC pulls gain down when the signal exceeds the target. Faster = tighter control but more pumping on transients.")
-            DoubleSliderRow(title: "Release", value: model.configBinding(\.widebandAGCReleaseMS, runtimeDisposition: .live), range: 40...5000, format: "%.1f ms",
-                tooltip: "How quickly the AGC restores gain when the signal drops below target. Slower = smoother, less noise pumping during quiet passages. Range extended to 5 s for true platform-leveling.")
-            DoubleSliderRow(title: "Max Gain", value: model.configBinding(\.widebandAGCMaxGainDB, runtimeDisposition: .live), range: 0...24, format: "%.1f dB",
-                tooltip: "Upper limit on how much gain the AGC will add to quiet material. Too high lifts noise and hiss during silences.")
-            DoubleSliderRow(title: "Min Gain", value: model.configBinding(\.widebandAGCMinGainDB, runtimeDisposition: .live), range: -24...0, format: "%.1f dB",
-                tooltip: "Lower limit on how much the AGC will attenuate loud material before downstream stages take over.")
-            Toggle("K-Weighted Detector", isOn: model.configBinding(\.widebandAGCKWeightingEnabled, runtimeDisposition: .live))
-                .help("BS.1770-flavoured pre-filter on the detector sidechain (HPF ~38 Hz + high-shelf +4 dB @ ~1.5 kHz). Tracks perceived loudness instead of flat RMS -- bass rumble no longer pulls the AGC down unfairly; bright content reads hotter. Audio path is untouched. Default on.")
-            Toggle("Program-Dependent Release", isOn: model.configBinding(\.widebandAGCReleaseProgramDependent, runtimeDisposition: .live))
-                .help("Slow release up to 3x on busy program (dense voice, music with many transients), speed back to the configured rate on flat program. Reduces pumping without forcing slow defaults. Default on.")
-            Toggle("Bass-Desensitised Sidechain", isOn: model.configBinding(\.widebandAGCBassDesensitizeEnabled, runtimeDisposition: .live))
-                .help("Low-shelf-cuts the LF band out of the detector sidechain so a kick / heavy bass line can't drive the loudness reading and pump the whole chain (US 4,249,042 + US 3,790,896: also recovers fast from brief reductions). Audio path is untouched. Trade-off: very bass-heavy program reads quieter, so the AGC adds more gain. Default off.")
+        Card {
+            SettingToggle("Enable AGC", setting: model.setting(\.widebandAGCEnabled, .live))
+                .toggleStyle(.switch)
+            DoubleSliderRow(
+                title: "Target Level", setting: model.setting(\.widebandAGCTargetDB, .live),
+                range: -36 ... -6, format: "%.1f dB",
+                tooltip: "The average level the AGC rides towards. Lower means more gain reduction on loud programme; higher means less AGC action. This is the level platform for the multiband, not the final loudness.",
+                defaultValue: model.resetValue(\.widebandAGCTargetDB))
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Attack", setting: model.setting(\.widebandAGCAttackMS, .live),
+                    range: 1...500, format: "%.1f ms",
+                    tooltip: "How quickly the AGC pulls the gain down when the programme rises above the target. Faster means tighter control but more pumping on transients.",
+                    defaultValue: model.resetValue(\.widebandAGCAttackMS))
+                DoubleSliderRow(
+                    title: "Release", setting: model.setting(\.widebandAGCReleaseMS, .live),
+                    range: 40...5000, format: "%.0f ms",
+                    tooltip: "How quickly the AGC restores the gain when the programme falls below the target. Slower is smoother, with less noise pumping in quiet passages.",
+                    defaultValue: model.resetValue(\.widebandAGCReleaseMS))
+                DoubleSliderRow(
+                    title: "Max Gain", setting: model.setting(\.widebandAGCMaxGainDB, .live),
+                    range: 0...24, format: "%.1f dB",
+                    tooltip: "The most gain the AGC adds to quiet material. Too high lifts noise and hiss in silences.",
+                    defaultValue: model.resetValue(\.widebandAGCMaxGainDB))
+                DoubleSliderRow(
+                    title: "Min Gain", setting: model.setting(\.widebandAGCMinGainDB, .live),
+                    range: -24...0, format: "%.1f dB",
+                    tooltip: "The most the AGC attenuates loud material before the stages downstream take over.",
+                    defaultValue: model.resetValue(\.widebandAGCMinGainDB))
+                SettingToggle(
+                    "K-Weighted Detector", setting: model.setting(\.widebandAGCKWeightingEnabled, .live),
+                    tooltip: "Weights the detector like ITU-R BS.1770 (high-pass near 38 Hz, +4 dB shelf above 1.5 kHz), so it follows perceived loudness rather than flat RMS. The audio itself is not filtered. On by default.")
+                SettingToggle(
+                    "Programme-Dependent Release", setting: model.setting(\.widebandAGCReleaseProgramDependent, .live),
+                    tooltip: "Slows the release up to three times on dense programme and returns to the set rate on sparse programme. Less pumping without slow defaults. On by default.")
+                SettingToggle(
+                    "Ignore Bass in Detector", setting: model.setting(\.widebandAGCBassDesensitizeEnabled, .live),
+                    tooltip: "Cuts the low frequencies out of the detector so a kick drum or heavy bass line cannot drive the level reading and pump the whole chain (after US 4,249,042 and US 3,790,896). The audio itself is not filtered. Very bass-heavy programme then reads quieter, so the AGC adds more gain. Off by default.")
             }
-            Text("Wideband AGC should establish a stable average level platform. It is not the final loudness stage.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -149,51 +119,70 @@ struct ProcessingPrimeBassTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "PrimeBass") {
-            Picker("Preset", selection: Binding(
-                get: { self.model.config.primeBassPresetID },
-                set: { newValue in
-                    self.model.config.primeBassPresetID = newValue
-                    self.model.applyPrimeBassPreset(id: newValue)
+        VStack(alignment: .leading, spacing: PageLayout.cardSpacing) {
+            Card(title: "Enhancement") {
+                Picker("Preset", selection: Binding(
+                    get: { self.model.config.primeBassPresetID },
+                    set: { newValue in
+                        self.model.config.primeBassPresetID = newValue
+                        self.model.applyPrimeBassPreset(id: newValue)
+                    }
+                )) {
+                    ForEach(model.primeBassPresetChoices) { preset in
+                        Text(preset.title).tag(preset.id)
+                    }
                 }
-            )) {
-                ForEach(model.primeBassPresetChoices) { preset in
-                    Text(preset.title).tag(preset.id)
-                }
-            }
-            .pickerStyle(.menu)
-            Toggle("Enable PrimeBass", isOn: model.configBinding(\.primeBassEnabled, runtimeDisposition: .live))
-            DoubleSliderRow(title: "Amount", value: model.configBinding(\.primeBassAmount, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
-                tooltip: "Overall strength of the low-band enhancement. Higher values emphasize bass; too high introduces pumping and obvious low-frequency coloration.")
-            DoubleSliderRow(title: "Frequency", value: model.configBinding(\.primeBassFreqHz, runtimeDisposition: .live), range: 40...180, format: "%.1f Hz",
-                tooltip: "Corner frequency of the low-band enhancement. Lower frequencies emphasize sub-bass, higher frequencies emphasize upper bass.")
-            DisclosureGroup("Advanced") {
-            DoubleSliderRow(title: "Harmonics", value: model.configBinding(\.primeBassHarmonics, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
-                tooltip: "Adds restrained harmonic overtones so bass remains audible on small speakers that can't reproduce the fundamental.")
-            DoubleSliderRow(title: "Drive", value: model.configBinding(\.primeBassDrive, runtimeDisposition: .live), range: 0.2...2.0, format: "%.2f",
-                tooltip: "Input level into the nonlinear enhancement stage. Higher drive increases harmonics intensity and perceived density.")
-            DoubleSliderRow(title: "Density", value: model.configBinding(\.primeBassDensity, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
-                tooltip: "Smoothing of the enhancement envelope. Higher density reduces attack transients in the low band for a more sustained feel.")
-            Toggle("Enable Subharmonics", isOn: model.configBinding(\.primeBassSubharmonicsEnabled, runtimeDisposition: .live))
-            DoubleSliderRow(title: "Subharmonics", value: model.configBinding(\.primeBassSubharmonicsAmount, runtimeDisposition: .live), range: 0...1.0, format: "%.2f",
-                tooltip: "Synthesizes an octave-below reinforcement for fundamentals. Use sparingly -- easily over-emphasizes sub-40 Hz content.")
-                .disabled(!model.config.primeBassSubharmonicsEnabled)
-            }
-        }
-        // Mono Bass moved here from the removed Stereo Widener tab (0.50):
-        // both are post-multiband bass-domain image controls.
-        if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
-            Card(title: "Mono Bass") {
-                Toggle("Mono Bass", isOn: model.configBinding(\.monoBassEnabled, runtimeDisposition: .live))
-                    .help("Sums L and R to mono below the crossover. Sub-bass side energy eats deviation for no audible width and breaks mono compatibility on FM -- every shipped profile keeps this on.")
+                .pickerStyle(.menu)
+                SettingToggle("Enable PrimeBass", setting: model.setting(\.primeBassEnabled, .live))
+                    .toggleStyle(.switch)
                 DoubleSliderRow(
-                    title: "Bass Mono Freq",
-                    value: model.configBinding(\.monoBassFreqHz, runtimeDisposition: .live),
-                    range: 70...220,
-                    format: "%.0f Hz",
-                    tooltip: "Below this frequency, L and R side energy is summed to mono. 110-140 Hz is the usual range; profiles use 140 Hz (clean/speech/classical) and 115 Hz (loud)."
-                )
-                .disabled(!model.config.monoBassEnabled)
+                    title: "Amount", setting: model.percentSetting(\.primeBassAmount, .live),
+                    range: 0...50, format: "%.0f%%",
+                    tooltip: "Strength of the bass enhancement. Too much brings pumping and an obvious low-frequency colour.",
+                    defaultValue: model.resetValue(\.primeBassAmount) * 100)
+                DoubleSliderRow(
+                    title: "Frequency", setting: model.setting(\.primeBassFreqHz, .live),
+                    range: 40...120, format: "%.0f Hz",
+                    tooltip: "Corner frequency of the enhancement. Lower emphasises sub-bass; higher emphasises upper bass.",
+                    defaultValue: model.resetValue(\.primeBassFreqHz))
+                AdvancedGroup {
+                    DoubleSliderRow(
+                        title: "Harmonics", setting: model.percentSetting(\.primeBassHarmonics, .live),
+                        range: 0...50, format: "%.0f%%",
+                        tooltip: "Adds restrained overtones so the bass stays audible on small speakers that cannot reproduce the fundamental (harmonic synthesis after the MaxxBass principle).",
+                        defaultValue: model.resetValue(\.primeBassHarmonics) * 100)
+                    DoubleSliderRow(
+                        title: "Drive", setting: model.percentSetting(\.primeBassDrive, .live),
+                        range: 20...150, format: "%.0f%%",
+                        tooltip: "Level into the harmonic generator. More drive gives stronger harmonics and a denser bass.",
+                        defaultValue: model.resetValue(\.primeBassDrive) * 100)
+                    DoubleSliderRow(
+                        title: "Density", setting: model.percentSetting(\.primeBassDensity, .live),
+                        range: 0...100, format: "%.0f%%",
+                        tooltip: "Smooths the enhancement envelope. Higher density softens low-frequency attacks for a more sustained feel.",
+                        defaultValue: model.resetValue(\.primeBassDensity) * 100)
+                    SettingToggle("Enable Subharmonics", setting: model.setting(\.primeBassSubharmonicsEnabled, .live))
+                    DoubleSliderRow(
+                        title: "Subharmonic Amount", setting: model.percentSetting(\.primeBassSubharmonicsAmount, .live),
+                        range: 0...40, format: "%.0f%%",
+                        tooltip: "Adds reinforcement an octave below the fundamental. Use sparingly: it easily overdoes content below 40 Hz.",
+                        defaultValue: model.resetValue(\.primeBassSubharmonicsAmount) * 100)
+                    .disabled(!model.config.primeBassSubharmonicsEnabled)
+                }
+            }
+            // Mono Bass sits here because both are bass-domain controls.
+            if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
+                Card(title: "Mono Bass") {
+                    SettingToggle(
+                        "Enable Mono Bass", setting: model.setting(\.monoBassEnabled, .live),
+                        tooltip: "Sums left and right to mono below the chosen frequency. Sub-bass side energy wastes deviation for no audible width and upsets mono compatibility on FM; every shipped profile keeps this on.")
+                    DoubleSliderRow(
+                        title: "Mono Below", setting: model.setting(\.monoBassFreqHz, .live),
+                        range: 70...220, format: "%.0f Hz",
+                        tooltip: "Below this frequency left and right are summed to mono. 110-140 Hz is usual; the profiles use 140 Hz (clean, speech, classical) and 115 Hz (loud).",
+                        defaultValue: model.resetValue(\.monoBassFreqHz))
+                    .disabled(!model.config.monoBassEnabled)
+                }
             }
         }
     }
@@ -202,9 +191,12 @@ struct ProcessingPrimeBassTab: View {
 struct ProcessingMultibandTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
+    /// The band counts the engine runs (AppConfig folds anything else onto
+    /// 3). The dashboard offers the same two (`LayoutSoundTests`).
+    static let bandChoices = [3, 5]
+
     var body: some View {
-        Card(title: "Multiband Dynamics") {
-            // Preset / intensity / enable / mode -- common to all bands.
+        Card {
             Picker("Preset", selection: Binding(
                 get: { self.model.config.multibandPresetID },
                 set: { newValue in
@@ -217,6 +209,7 @@ struct ProcessingMultibandTab: View {
                     Text(preset.title).tag(preset.id)
                 }
             }
+            .pickerStyle(.menu)
             Picker("Intensity", selection: Binding(
                 get: { MultibandPresetIntensity(rawValue: self.model.config.multibandIntensity) ?? .normal },
                 set: { newValue in
@@ -229,103 +222,147 @@ struct ProcessingMultibandTab: View {
                 }
             }
             .pickerStyle(.segmented)
-            Toggle("Enable Multiband", isOn: model.configBinding(\.multibandEnabled, runtimeDisposition: .live))
-            Picker("Mode", selection: model.configBinding(\.multibandMode, runtimeDisposition: .live)) {
-                Text("2-band").tag(2)
-                Text("3-band").tag(3)
-                Text("5-band").tag(5)
-            }
-
-            Divider().padding(.vertical, 6)
-
-            // Per-band detail editor -- replaces the previous 12-slider
-            // Low/Mid/High wall with an active-band picker that
-            // re-targets a single set of controls. Visible widget count
-            // drops from 12 to 4 (plus the picker). The non-active
-            // bands' values aren't lost -- switching the picker just
-            // re-binds the controls.
-            Picker("Active Band", selection: $model.activeMultibandBand) {
-                Text("Low").tag(0)
-                Text("Mid").tag(1)
-                Text("High").tag(2)
+            SettingToggle("Enable Multiband", setting: model.setting(\.multibandEnabled, .live))
+                .toggleStyle(.switch)
+            SettingPicker("Bands", setting: model.setting(\.multibandMode, .live)) {
+                ForEach(Self.bandChoices, id: \.self) { count in
+                    Text("\(count) Bands").tag(count)
+                }
             }
             .pickerStyle(.segmented)
 
+            Divider().padding(.vertical, 6)
+
+            // One set of per-band controls, re-targeted by the Active Band
+            // picker. The engine stores three sets (low, mid, high); with 5
+            // bands, bands 2 and 4 take the values halfway between their
+            // neighbours (MPXGenerator's five-band set-up), so the picker
+            // names the band each set drives.
+            Picker("Active Band", selection: $model.activeMultibandBand) {
+                ForEach(Array(activeBandTitles.enumerated()), id: \.offset) { index, title in
+                    Text(title).tag(index)
+                }
+            }
+            .pickerStyle(.segmented)
+            if model.config.multibandMode == 5 {
+                Text("With 5 bands, bands 2 and 4 take the values halfway between their neighbours.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             switch model.activeMultibandBand {
             case 0:
-                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.multibandLowThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
-                    tooltip: "Low band compression threshold. Material above this level is attenuated by the ratio.")
-                DoubleSliderRow(title: "Ratio", value: model.configBinding(\.multibandLowRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
-                    tooltip: "Low band compression ratio. 1:1 = no compression; higher ratios flatten dynamics more aggressively.")
+                bandRows(threshold: \.multibandLowThresholdDB, ratio: \.multibandLowRatio,
+                         thresholdTip: "Low band compression threshold. Programme above it is reduced by the ratio.",
+                         ratioTip: "Low band compression ratio. 1:1 is no compression; higher ratios flatten the dynamics more.")
             case 2:
-                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.multibandHighThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
-                    tooltip: "High band compression threshold. Material above this level is attenuated by the ratio.")
-                DoubleSliderRow(title: "Ratio", value: model.configBinding(\.multibandHighRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
-                    tooltip: "High band compression ratio. Controls sibilance and cymbal energy.")
+                bandRows(threshold: \.multibandHighThresholdDB, ratio: \.multibandHighRatio,
+                         thresholdTip: "High band compression threshold. Programme above it is reduced by the ratio.",
+                         ratioTip: "High band compression ratio. Controls sibilance and cymbal energy.")
             default:
-                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.multibandMidThresholdDB, runtimeDisposition: .live), range: (-40)...(-6), format: "%.1f dB",
-                    tooltip: "Mid band compression threshold. Material above this level is attenuated by the ratio.")
-                DoubleSliderRow(title: "Ratio", value: model.configBinding(\.multibandMidRatio, runtimeDisposition: .live), range: 1...8, format: "%.2f",
-                    tooltip: "Mid band compression ratio. Vocals and leads live here -- moderate values (2:1 - 4:1) are typical.")
+                bandRows(threshold: \.multibandMidThresholdDB, ratio: \.multibandMidRatio,
+                         thresholdTip: "Mid band compression threshold. Programme above it is reduced by the ratio.",
+                         ratioTip: "Mid band compression ratio. Vocals live here; 2:1 to 4:1 is typical.")
             }
 
             Divider().padding(.vertical, 6)
 
-            // Output / common -- apply across all bands.
-            DoubleSliderRow(title: "Makeup", value: model.configBinding(\.multibandMakeupDB, runtimeDisposition: .live), range: -12...18, format: "%.1f dB",
-                tooltip: "Overall gain applied after multiband processing. Set to offset average level loss from compression; not a loudness control.")
+            DoubleSliderRow(
+                title: "Makeup", setting: model.setting(\.multibandMakeupDB, .live),
+                range: -12...18, format: "%.1f dB",
+                tooltip: "Gain after the multiband, to make up the average level the compression takes away. Not a loudness control.",
+                defaultValue: model.resetValue(\.multibandMakeupDB))
 
-            // Time constants, knee, link and the detector options: what an
-            // operator sets once, folded (AdvancedControls -- the dashboard
-            // folds the same keys).
-            DisclosureGroup("Advanced") {
+            AdvancedGroup {
                 switch model.activeMultibandBand {
                 case 0:
-                    DoubleSliderRow(title: "Attack", value: model.configBinding(\.multibandLowAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f ms",
-                        tooltip: "Low band attack time. Slow attacks preserve transients; fast attacks tighten the low end.")
-                    DoubleSliderRow(title: "Release", value: model.configBinding(\.multibandLowReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f ms",
-                        tooltip: "Low band release time. Longer release prevents bass pumping at the cost of average-level recovery speed.")
+                    timeRows(attack: \.multibandLowAttackMS, release: \.multibandLowReleaseMS,
+                             attackTip: "Low band attack. Slow attacks keep transients; fast attacks tighten the low end.",
+                             releaseTip: "Low band release. Longer release avoids bass pumping at the cost of slower level recovery.")
                 case 2:
-                    DoubleSliderRow(title: "Attack", value: model.configBinding(\.multibandHighAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f ms",
-                        tooltip: "High band attack time. Fast attack tames sibilance; slow attack preserves air.")
-                    DoubleSliderRow(title: "Release", value: model.configBinding(\.multibandHighReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f ms",
-                        tooltip: "High band release time. Shorter release brightens; longer release keeps the top smooth.")
+                    timeRows(attack: \.multibandHighAttackMS, release: \.multibandHighReleaseMS,
+                             attackTip: "High band attack. Fast attack tames sibilance; slow attack keeps air.",
+                             releaseTip: "High band release. Shorter release brightens; longer keeps the top smooth.")
                 default:
-                    DoubleSliderRow(title: "Attack", value: model.configBinding(\.multibandMidAttackMS, runtimeDisposition: .live), range: 1...120, format: "%.1f ms",
-                        tooltip: "Mid band attack time. Slower values preserve vocal consonants; faster values increase density.")
-                    DoubleSliderRow(title: "Release", value: model.configBinding(\.multibandMidReleaseMS, runtimeDisposition: .live), range: 40...1200, format: "%.0f ms",
-                        tooltip: "Mid band release time. Typical vocal release; shorter = more density, longer = more transparent.")
+                    timeRows(attack: \.multibandMidAttackMS, release: \.multibandMidReleaseMS,
+                             attackTip: "Mid band attack. Slower values keep vocal consonants; faster values increase density.",
+                             releaseTip: "Mid band release. Shorter means more density; longer is more transparent.")
                 }
-                Text("Attack and Release follow the Active Band picker above.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                DoubleSliderRow(title: "Knee", value: model.configBinding(\.multibandKneeDB, runtimeDisposition: .live), range: 0...12, format: "%.1f dB",
-                    tooltip: "Width of the soft transition around each band's threshold. Larger knee = gentler onset of compression.")
+                DoubleSliderRow(
+                    title: "Knee", setting: model.setting(\.multibandKneeDB, .live),
+                    range: 0...12, format: "%.1f dB",
+                    tooltip: "Width of the soft transition around each band's threshold. A wider knee starts compressing more gently.",
+                    defaultValue: model.resetValue(\.multibandKneeDB))
                 if ChainFeature.stereoProgram.applies(in: model.config.operatingMode) {
-                    DoubleSliderRow(title: "Link", value: model.configBinding(\.multibandLinkStrength, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                        tooltip: "How much gain reduction is shared across bands. 0 = independent (dense), 1 = linked (preserves spectral balance).")
+                    DoubleSliderRow(
+                        title: "Stereo Link", setting: model.percentSetting(\.multibandLinkStrength, .live),
+                        range: 0...100, format: "%.0f%%",
+                        tooltip: "How much the left and right channels share one gain reduction in each band. 0 = each channel compressed on its own, 1 = fully linked (stereo image held exactly).",
+                        defaultValue: model.resetValue(\.multibandLinkStrength) * 100)
                 }
-                Toggle("Program-dependent Release", isOn: model.configBinding(\.multibandReleaseProgramDependent, runtimeDisposition: .live))
-                Toggle("Transient-aware Attack", isOn: model.configBinding(\.multibandTransientAwareAttackEnabled, runtimeDisposition: .live))
-                    .help("Uses a peak/RMS hybrid detector and briefly slows attack on percussive fronts so kicks and snares are not over-squashed.")
-                Toggle("Inter-band Coupling", isOn: model.configBinding(\.multibandInterBandCouplingEnabled, runtimeDisposition: .live))
-                    .help("Low-band gain reduction gently lowers upper-band thresholds so bass-heavy passages stay tonally glued.")
+                SettingToggle("Programme-Dependent Release", setting: model.setting(\.multibandReleaseProgramDependent, .live))
+                SettingToggle(
+                    "Transient-Aware Attack", setting: model.setting(\.multibandTransientAwareAttackEnabled, .live),
+                    tooltip: "Uses a peak/RMS detector and briefly slows the attack on percussive fronts, so kicks and snares are not over-squashed.")
+                SettingToggle(
+                    "Inter-Band Coupling", setting: model.setting(\.multibandInterBandCouplingEnabled, .live),
+                    tooltip: "Low-band gain reduction gently lowers the upper bands' thresholds, so bass-heavy passages stay tonally glued.")
             }
 
-            // Crossovers -- operator-rare; collapsed by default. Once
-            // the FabFilter-style spectrum-with-drag-handles editor
-            // ships, this group disappears entirely.
-            DisclosureGroup("Crossovers") {
-                DoubleSliderRow(title: "X1 (Low / Low-Mid)", value: model.configBinding(\.multibandX1Hz, runtimeDisposition: .live), range: 30...300, format: "%.0f Hz",
-                    tooltip: "Low / Low-Mid crossover frequency. Separates kick/bass from low-mid body.")
-                DoubleSliderRow(title: "X2 (Low-Mid / Mid)", value: model.configBinding(\.multibandX2Hz, runtimeDisposition: .live), range: 120...1200, format: "%.0f Hz",
-                    tooltip: "Low-Mid / Mid crossover frequency. Separates body from upper-vocal and presence region.")
-                DoubleSliderRow(title: "X3 (Mid / High-Mid)", value: model.configBinding(\.multibandX3Hz, runtimeDisposition: .live), range: 600...4000, format: "%.0f Hz",
-                    tooltip: "Mid / High-Mid crossover frequency. Separates vocal presence from upper consonants and sibilance.")
-                DoubleSliderRow(title: "X4 (High-Mid / High)", value: model.configBinding(\.multibandX4Hz, runtimeDisposition: .live), range: 2500...12000, format: "%.0f Hz",
-                    tooltip: "High-Mid / High crossover frequency. Separates sibilance region from air / top-end.")
+            AdvancedGroup("Crossovers") {
+                crossoverRow("X1 (Low / Low-Mid)", \.multibandX1Hz, 30...300,
+                             "Low / low-mid crossover. Separates kick and bass from the low-mid body.")
+                crossoverRow("X2 (Low-Mid / Mid)", \.multibandX2Hz, 120...1200,
+                             "Low-mid / mid crossover. Separates the body from the upper vocal and presence region.")
+                crossoverRow("X3 (Mid / High-Mid)", \.multibandX3Hz, 600...4000,
+                             "Mid / high-mid crossover. Separates vocal presence from upper consonants and sibilance.")
+                crossoverRow("X4 (High-Mid / High)", \.multibandX4Hz, 2500...12000,
+                             "High-mid / high crossover. Separates the sibilance region from the air.")
             }
         }
+    }
+
+    private var activeBandTitles: [String] {
+        model.config.multibandMode == 5
+            ? ["Low (Band 1)", "Mid (Band 3)", "High (Band 5)"]
+            : ["Low", "Mid", "High"]
+    }
+
+    @ViewBuilder
+    private func bandRows(threshold: WritableKeyPath<AppConfig, Double>, ratio: WritableKeyPath<AppConfig, Double>,
+                          thresholdTip: String, ratioTip: String) -> some View {
+        DoubleSliderRow(
+            title: "Threshold", setting: model.setting(threshold, .live),
+            range: (-40)...(-6), format: "%.1f dB", tooltip: thresholdTip,
+            defaultValue: model.resetValue(threshold))
+        DoubleSliderRow(
+            title: "Ratio", setting: model.setting(ratio, .live),
+            range: 1...8, format: "%.1f:1", tooltip: ratioTip,
+            defaultValue: model.resetValue(ratio))
+    }
+
+    @ViewBuilder
+    private func timeRows(attack: WritableKeyPath<AppConfig, Double>, release: WritableKeyPath<AppConfig, Double>,
+                          attackTip: String, releaseTip: String) -> some View {
+        DoubleSliderRow(
+            title: "Attack", setting: model.setting(attack, .live),
+            range: 1...120, format: "%.1f ms", tooltip: attackTip,
+            defaultValue: model.resetValue(attack))
+        DoubleSliderRow(
+            title: "Release", setting: model.setting(release, .live),
+            range: 40...1200, format: "%.0f ms", tooltip: releaseTip,
+            defaultValue: model.resetValue(release))
+        Text("Attack and Release follow the Active Band.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func crossoverRow(_ title: String, _ keyPath: WritableKeyPath<AppConfig, Double>,
+                              _ range: ClosedRange<Double>, _ tip: String) -> some View {
+        DoubleSliderRow(
+            title: title, setting: model.setting(keyPath, .live),
+            range: range, format: "%.0f Hz", tooltip: tip,
+            defaultValue: model.resetValue(keyPath))
     }
 }
 
@@ -333,54 +370,42 @@ struct ProcessingLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Audio Limiter") {
-            Toggle("Enable Pre-Encode Limiter", isOn: model.configBinding(\.preEncodeAudioLimiterEnabled, runtimeDisposition: .live))
-            let disabled = !model.config.preEncodeAudioLimiterEnabled
+        let disabled = !model.config.preEncodeAudioLimiterEnabled
+        Card {
+            SettingToggle("Enable Audio Limiter", setting: model.setting(\.preEncodeAudioLimiterEnabled, .live))
+                .toggleStyle(.switch)
             DoubleSliderRow(
-                title: "Threshold",
-                value: model.configBinding(\.preEncodeThreshold, runtimeDisposition: .live),
-                range: 0.5...0.999,
-                format: "%.3f",
-                tooltip: "Linear ceiling for the 4x oversampled true-peak limiter (0.5..0.999). 0.95 = -0.45 dBFS, 0.85 = -1.41 dBFS. Lower = more headroom for downstream stages, more limiting on peaks."
+                title: "Threshold", setting: model.dbSetting(\.preEncodeThreshold, .live),
+                range: -6.0 ... -0.01, format: "%.1f dBFS",
+                tooltip: "Ceiling of the oversampled true-peak limiter. Lower leaves more headroom for the stages that follow and limits more peaks.",
+                defaultValue: MPXPrimeViewModel.dBFS(fromLinear: model.resetValue(\.preEncodeThreshold))
             ).disabled(disabled)
             DoubleSliderRow(
-                title: "Release",
-                value: model.configBinding(\.preEncodeReleaseMS, runtimeDisposition: .live),
-                range: 10...200,
-                format: "%.0f ms",
-                tooltip: "Release time of the limiter envelope. Faster (lower ms) recovers loudness quicker but may pump; slower is cleaner but holds gain reduction longer."
+                title: "Release", setting: model.setting(\.preEncodeReleaseMS, .live),
+                range: 10...200, format: "%.0f ms",
+                tooltip: "Release of the limiter. Faster recovers loudness sooner but may pump; slower is cleaner but holds the gain reduction longer.",
+                defaultValue: model.resetValue(\.preEncodeReleaseMS)
             ).disabled(disabled)
             DoubleSliderRow(
-                title: "Look-ahead",
-                value: model.configBinding(\.preEncodeLookaheadMS, runtimeDisposition: .restart),
-                range: 0...5,
-                format: "%.2f ms",
-                tooltip: "Look-ahead time so the limiter's gain ramp engages before the peak reaches the gain stage. 0 ms = feedback-only behavior. 1-2 ms recommended for cleaner HF transient handling on pre-emphasized content (cymbals, sibilance, percussion edges). Adds equivalent latency to the chain. Restart-required.",
-                restartRequired: true
+                title: "Look-Ahead", setting: model.setting(\.preEncodeLookaheadMS, .restart),
+                range: 0...5, format: "%.2f ms",
+                tooltip: "Lets the gain start falling before the peak arrives. 0 ms is feedback only; 1-2 ms handles high-frequency transients on pre-emphasised programme (cymbals, sibilance) more cleanly. Adds the same latency to the chain.",
+                defaultValue: model.resetValue(\.preEncodeLookaheadMS)
             ).disabled(disabled)
-            DisclosureGroup("Advanced") {
-                Toggle(
-                    "Reduce Clipping Distortion",
-                    isOn: model.configBinding(\.preEncodeBandlimitedResidualEnabled, runtimeDisposition: .live)
-                )
-                .help("Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Off keeps the classic behavior.")
-                .disabled(disabled)
-                Toggle(isOn: model.configBinding(\.preEncodeLookaheadHFOnly, runtimeDisposition: .restart)) {
-                    HStack(spacing: 6) {
-                        Text("High-Frequency Transient Look-ahead")
-                        RestartBadge()
-                    }
-                }
-                .help("Engages look-ahead only on high-frequency transients (where pre-emphasis concentrates peaks), leaving low-frequency punch untouched. Requires Look-ahead above 0. Restart-required.")
-                .disabled(disabled || model.config.preEncodeLookaheadMS <= 0.0)
+            AdvancedGroup {
+                SettingToggle(
+                    "Reduce Clipping Distortion", setting: model.setting(\.preEncodeBandlimitedResidualEnabled, .live),
+                    tooltip: "Shapes the limiter's clipping residual to suppress aliasing and intermodulation, instead of the classic soft ceiling. Off keeps the classic behaviour.")
+                SettingToggle(
+                    "Look-Ahead on HF Transients Only", setting: model.setting(\.preEncodeLookaheadHFOnly, .restart),
+                    tooltip: "Uses the look-ahead only on high-frequency transients, where pre-emphasis concentrates the peaks, and leaves low-frequency punch untouched. Needs a Look-Ahead above 0.")
+                .disabled(model.config.preEncodeLookaheadMS <= 0.0)
                 DoubleSliderRow(
-                    title: "HF Detector Cutoff",
-                    value: model.configBinding(\.preEncodeLookaheadHFCutoffHz, runtimeDisposition: .restart),
-                    range: 1_000...12_000,
-                    format: "%.0f Hz",
-                    tooltip: "High-pass cutoff for the HF transient look-ahead detector. 4 kHz default; lower (2-3 kHz) catches more vocal sibilance, higher (6-8 kHz) targets cymbals / hi-hats only. Restart-required.",
-                    restartRequired: true
-                ).disabled(disabled || !model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
+                    title: "HF Detector Cutoff", setting: model.setting(\.preEncodeLookaheadHFCutoffHz, .restart),
+                    range: 1_000...12_000, format: "%.0f Hz",
+                    tooltip: "High-pass cut-off of the transient detector. 4 kHz by default; lower (2-3 kHz) catches more sibilance, higher (6-8 kHz) only cymbals and hi-hats.",
+                    defaultValue: model.resetValue(\.preEncodeLookaheadHFCutoffHz)
+                ).disabled(!model.config.preEncodeLookaheadHFOnly || model.config.preEncodeLookaheadMS <= 0.0)
             }
             .disabled(disabled)
         }
@@ -391,49 +416,53 @@ struct ProcessingFinalStageTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-      VStack(alignment: .leading, spacing: 16) {
-        Card(title: "Loudness and Output") {
-            Picker("Broadcast Preset", selection: Binding(
-                get: { self.model.config.finalStagePresetID },
-                set: { newValue in
-                    self.model.config.finalStagePresetID = newValue
-                    self.model.applyFinalStagePreset(id: newValue)
+        VStack(alignment: .leading, spacing: PageLayout.cardSpacing) {
+            Card(title: "Loudness") {
+                Picker("Broadcast Preset", selection: Binding(
+                    get: { self.model.config.finalStagePresetID },
+                    set: { newValue in
+                        self.model.config.finalStagePresetID = newValue
+                        self.model.applyFinalStagePreset(id: newValue)
+                    }
+                )) {
+                    ForEach(model.finalStagePresetChoices) { preset in
+                        Text(preset.title).tag(preset.id)
+                    }
                 }
-            )) {
-                ForEach(model.finalStagePresetChoices) { preset in
-                    Text(preset.title).tag(preset.id)
-                }
+                .pickerStyle(.menu)
+                .help("Sets the AGC target and Final Drive together.")
+                DoubleSliderRow(
+                    title: "Final Drive", setting: model.setting(\.finalDriveDB, .live),
+                    range: 0...12, format: "%.1f dB",
+                    tooltip: "Drive into the composite clipper: the primary loudness control. More drive is louder and clips more; sustained heavy gain reduction means too hot.",
+                    defaultValue: model.resetValue(\.finalDriveDB))
             }
-            .pickerStyle(.menu)
-            DoubleSliderRow(
-                title: "Final Drive",
-                value: model.configBinding(\.finalDriveDB, runtimeDisposition: .live),
-                range: 0...12,
-                format: "%.1f dB",
-                tooltip: "Drive into the composite clipper. The primary loudness control. Higher drive = hotter, more clipping; sustained high attenuation means too hot."
-            )
-            DoubleSliderRow(title: "Composite Deviation", value: model.configBinding(\.mpxDeviationKHz, runtimeDisposition: .live), range: 40...90, format: "%.1f kHz",
-                tooltip: "Target peak FM deviation. 75 kHz = ITU-R BS.450 / US FM; 50 kHz = some European reduced-deviation mandates.")
-            Text("Broadcast Preset updates AGC platform and final-stage drive together. Final Drive feeds the composite clipper before MPX Output Level calibration. Composite Deviation sets the peak target for the final FM modulator.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        Card(title: "Final-MPX Safety Limiter") {
-            Toggle("Enable Safety Limiter", isOn: model.configBinding(\.limitMPX))
-                .help("Look-ahead peak limiter on the final MPX (audio composite + safety net). Pilot and RDS bypass this stage to keep subcarriers at constant amplitude. Restart-required.")
-            let disabled = !model.config.limitMPX
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.limitThreshold), range: 0.5...0.999, format: "%.3f",
-                    tooltip: "Linear ceiling for the safety limiter (0.5..0.999). 0.98 = -0.18 dBFS. Below this the limiter doesn't engage; above it the look-ahead reduces gain to keep peaks under the ceiling.").disabled(disabled)
-                Toggle("Enable Look-Ahead", isOn: model.configBinding(\.limitLookaheadEnabled))
-                    .help("Look-ahead delay so the limiter sees future peaks and applies gain reduction smoothly before the peak arrives. Off makes the limiter purely reactive (more overshoot).")
+            Card(title: "Safety Limiter") {
+                SettingToggle(
+                    "Enable Safety Limiter", setting: model.setting(\.limitMPX, .restart),
+                    tooltip: "Look-ahead peak limiter on the final multiplex, the last safety net. Pilot and RDS bypass it so the subcarriers stay at a constant level.")
+                    .toggleStyle(.switch)
+                let disabled = !model.config.limitMPX
+                AdvancedGroup {
+                    DoubleSliderRow(
+                        title: "Threshold", setting: model.dbSetting(\.limitThreshold, .restart),
+                        range: -6.0 ... -0.01, format: "%.1f dBFS",
+                        tooltip: "Ceiling of the safety limiter. Below it the limiter does nothing; above it the look-ahead lowers the gain to keep peaks under the ceiling.",
+                        defaultValue: MPXPrimeViewModel.dBFS(fromLinear: model.resetValue(\.limitThreshold))
+                    ).disabled(disabled)
+                    SettingToggle(
+                        "Enable Look-Ahead", setting: model.setting(\.limitLookaheadEnabled, .restart),
+                        tooltip: "Lets the limiter see peaks coming and reduce the gain smoothly before they arrive. Off makes it purely reactive, with more overshoot.")
                     .disabled(disabled)
-                DoubleSliderRow(title: "Look-Ahead", value: model.configBinding(\.limitLookaheadMS), range: 0...20, format: "%.1f ms",
-                    tooltip: "How far ahead the limiter looks before responding. 5 ms is standard; longer = smoother gain reduction at the cost of latency.").disabled(disabled || !model.config.limitLookaheadEnabled)
+                    DoubleSliderRow(
+                        title: "Look-Ahead", setting: model.setting(\.limitLookaheadMS, .restart),
+                        range: 0...20, format: "%.1f ms",
+                        tooltip: "How far ahead the limiter looks. 5 ms is standard; longer is smoother at the cost of latency.",
+                        defaultValue: model.resetValue(\.limitLookaheadMS)
+                    ).disabled(disabled || !model.config.limitLookaheadEnabled)
+                }
             }
-            .disabled(disabled)
         }
-      }
     }
 }
 
@@ -441,19 +470,16 @@ struct ProcessingPhaseRotatorTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Phase Rotator") {
-            Toggle("Enable Phase Rotator", isOn: model.configBinding(\.phaseRotationEnabled, runtimeDisposition: .live))
+        Card {
+            SettingToggle("Enable Phase Rotator", setting: model.setting(\.phaseRotationEnabled, .live))
+                .toggleStyle(.switch)
             DoubleSliderRow(
-                title: "Frequency",
-                value: model.configBinding(\.phaseRotationFreqHz, runtimeDisposition: .live),
-                range: 50...500,
-                format: "%.1f Hz",
-                tooltip: "Center frequency of the 4-pole allpass chain. 200 Hz is typical; lower values target male voice, higher values target female voice."
+                title: "Frequency", setting: model.setting(\.phaseRotationFreqHz, .live),
+                range: 50...500, format: "%.0f Hz",
+                tooltip: "Centre frequency of the 4-pole all-pass chain. 200 Hz is typical; lower values suit male voices, higher values female voices.",
+                defaultValue: model.resetValue(\.phaseRotationFreqHz)
             )
             .disabled(!model.config.phaseRotationEnabled)
-            Text("4-pole allpass chain reduces waveform asymmetry (especially voice) by 3\u{2013}4 dB, giving free headroom to downstream dynamics stages.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -462,38 +488,51 @@ struct ProcessingParametricEQTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Parametric EQ") {
-            Toggle("Enable Parametric EQ", isOn: model.configBinding(\.parametricEQEnabled, runtimeDisposition: .live))
-            let disabled = !model.config.parametricEQEnabled
-
-            Text("Band 1 \u{2014} Low Shelf").font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
-            DoubleSliderRow(title: "Freq", value: model.configBinding(\.peqB1FreqHz, runtimeDisposition: .live), range: 20...500, format: "%.0f Hz",
-                tooltip: "Low shelf corner frequency. Content below this frequency is boost/cut by the shelf gain.").disabled(disabled)
-            DoubleSliderRow(title: "Gain", value: model.configBinding(\.peqB1GainDB, runtimeDisposition: .live), range: -12...12, format: "%.1f dB",
-                tooltip: "Boost or cut applied below the shelf frequency. Positive adds warmth; negative tightens bass.").disabled(disabled)
-
-            Text("Band 2 \u{2014} Peaking").font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
-            DoubleSliderRow(title: "Freq", value: model.configBinding(\.peqB2FreqHz, runtimeDisposition: .live), range: 100...5000, format: "%.0f Hz",
-                tooltip: "Center frequency of this peaking band.").disabled(disabled)
-            DoubleSliderRow(title: "Gain", value: model.configBinding(\.peqB2GainDB, runtimeDisposition: .live), range: -12...12, format: "%.1f dB",
-                tooltip: "Boost or cut at the center frequency.").disabled(disabled)
-            DoubleSliderRow(title: "Q", value: model.configBinding(\.peqB2Q, runtimeDisposition: .live), range: 0.1...10, format: "%.2f",
-                tooltip: "Bandwidth of the peaking filter. Low Q = broad / musical; high Q = narrow / surgical.").disabled(disabled)
-
-            Text("Band 3 \u{2014} Peaking").font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
-            DoubleSliderRow(title: "Freq", value: model.configBinding(\.peqB3FreqHz, runtimeDisposition: .live), range: 500...12000, format: "%.0f Hz",
-                tooltip: "Center frequency of this peaking band.").disabled(disabled)
-            DoubleSliderRow(title: "Gain", value: model.configBinding(\.peqB3GainDB, runtimeDisposition: .live), range: -12...12, format: "%.1f dB",
-                tooltip: "Boost or cut at the center frequency.").disabled(disabled)
-            DoubleSliderRow(title: "Q", value: model.configBinding(\.peqB3Q, runtimeDisposition: .live), range: 0.1...10, format: "%.2f",
-                tooltip: "Bandwidth of the peaking filter. Low Q = broad / musical; high Q = narrow / surgical.").disabled(disabled)
-
-            Text("Band 4 \u{2014} High Shelf").font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
-            DoubleSliderRow(title: "Freq", value: model.configBinding(\.peqB4FreqHz, runtimeDisposition: .live), range: 1000...16000, format: "%.0f Hz",
-                tooltip: "High shelf corner frequency. Content above this frequency is boost/cut by the shelf gain.").disabled(disabled)
-            DoubleSliderRow(title: "Gain", value: model.configBinding(\.peqB4GainDB, runtimeDisposition: .live), range: -12...12, format: "%.1f dB",
-                tooltip: "Boost or cut applied above the shelf frequency. Positive adds air; negative dulls harshness.").disabled(disabled)
+        let disabled = !model.config.parametricEQEnabled
+        VStack(alignment: .leading, spacing: PageLayout.cardSpacing) {
+            Card {
+                SettingToggle("Enable Parametric EQ", setting: model.setting(\.parametricEQEnabled, .live))
+                    .toggleStyle(.switch)
+            }
+            Card(title: "Band 1: Low Shelf") {
+                freq(\.peqB1FreqHz, 20...500, "Corner frequency of the low shelf. Programme below it is boosted or cut by the shelf gain.")
+                gain(\.peqB1GainDB, "Boost or cut below the shelf frequency. Positive adds warmth; negative tightens the bass.")
+            }
+            .disabled(disabled)
+            Card(title: "Band 2: Peaking") {
+                freq(\.peqB2FreqHz, 100...5000, "Centre frequency of this peaking band.")
+                gain(\.peqB2GainDB, "Boost or cut at the centre frequency.")
+                q(\.peqB2Q)
+            }
+            .disabled(disabled)
+            Card(title: "Band 3: Peaking") {
+                freq(\.peqB3FreqHz, 500...12000, "Centre frequency of this peaking band.")
+                gain(\.peqB3GainDB, "Boost or cut at the centre frequency.")
+                q(\.peqB3Q)
+            }
+            .disabled(disabled)
+            Card(title: "Band 4: High Shelf") {
+                freq(\.peqB4FreqHz, 1000...16000, "Corner frequency of the high shelf. Programme above it is boosted or cut by the shelf gain.")
+                gain(\.peqB4GainDB, "Boost or cut above the shelf frequency. Positive adds air; negative softens harshness.")
+            }
+            .disabled(disabled)
         }
+    }
+
+    private func freq(_ kp: WritableKeyPath<AppConfig, Double>, _ range: ClosedRange<Double>, _ tip: String) -> some View {
+        DoubleSliderRow(title: "Frequency", setting: model.setting(kp, .live), range: range, format: "%.0f Hz",
+                        tooltip: tip, defaultValue: model.resetValue(kp))
+    }
+
+    private func gain(_ kp: WritableKeyPath<AppConfig, Double>, _ tip: String) -> some View {
+        DoubleSliderRow(title: "Gain", setting: model.setting(kp, .live), range: -12...12, format: "%.1f dB",
+                        tooltip: tip, defaultValue: model.resetValue(kp))
+    }
+
+    private func q(_ kp: WritableKeyPath<AppConfig, Double>) -> some View {
+        DoubleSliderRow(title: "Q", setting: model.setting(kp, .live), range: 0.1...10, format: "%.2f",
+                        tooltip: "Bandwidth of the peaking filter. Low Q is broad and musical; high Q is narrow and surgical.",
+                        defaultValue: model.resetValue(kp))
     }
 }
 
@@ -501,33 +540,32 @@ struct ProcessingMultibandLimiterTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Multiband Limiter") {
-            Toggle("Enable Multiband Limiter", isOn: model.configBinding(\.multibandLimiterEnabled, runtimeDisposition: .live))
+        let disabled = !model.config.multibandLimiterEnabled
+        Card {
+            SettingToggle("Enable Band Limiter", setting: model.setting(\.multibandLimiterEnabled, .live))
+                .toggleStyle(.switch)
             DoubleSliderRow(
-                title: "Threshold",
-                value: model.configBinding(\.multibandLimiterThresholdDB, runtimeDisposition: .live),
-                range: -20...0,
-                format: "%.1f dB",
-                tooltip: "Per-band brick-wall limit threshold. Instantaneous peaks above this level are clipped regardless of the compressor ratio."
+                title: "Threshold", setting: model.setting(\.multibandLimiterThresholdDB, .live),
+                range: -20...0, format: "%.1f dB",
+                tooltip: "Per-band peak ceiling. Peaks above it are held down whatever the compressor ratio.",
+                defaultValue: model.resetValue(\.multibandLimiterThresholdDB)
             )
-            .disabled(!model.config.multibandLimiterEnabled)
-            DisclosureGroup("Advanced") {
-            DoubleSliderRow(
-                title: "Attack",
-                value: model.configBinding(\.multibandLimiterAttackMS, runtimeDisposition: .live),
-                range: 0.01...10,
-                format: "%.2f ms",
-                tooltip: "Limiter attack in ms. Sub-ms attack catches fast transients cleanly at the cost of some distortion."
-            )
-            .disabled(!model.config.multibandLimiterEnabled)
-            DoubleSliderRow(
-                title: "Release",
-                value: model.configBinding(\.multibandLimiterReleaseMS, runtimeDisposition: .live),
-                range: 10...500,
-                format: "%.1f ms",
-                tooltip: "Limiter release in ms. Short release = more density; long release = more transparent."
-            )
-            .disabled(!model.config.multibandLimiterEnabled)
+            .disabled(disabled)
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Attack", setting: model.setting(\.multibandLimiterAttackMS, .live),
+                    range: 0.01...10, format: "%.2f ms",
+                    tooltip: "Limiter attack. Sub-millisecond attack catches fast transients cleanly at the cost of some distortion.",
+                    defaultValue: model.resetValue(\.multibandLimiterAttackMS)
+                )
+                .disabled(disabled)
+                DoubleSliderRow(
+                    title: "Release", setting: model.setting(\.multibandLimiterReleaseMS, .live),
+                    range: 10...500, format: "%.0f ms",
+                    tooltip: "Limiter release. Short release means more density; long release is more transparent.",
+                    defaultValue: model.resetValue(\.multibandLimiterReleaseMS)
+                )
+                .disabled(disabled)
             }
         }
     }
@@ -537,18 +575,31 @@ struct ProcessingExpanderTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Downward Expander") {
-            Toggle("Enable Expander", isOn: model.configBinding(\.downwardExpanderEnabled, runtimeDisposition: .live))
-            let disabled = !model.config.downwardExpanderEnabled
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.expanderThresholdDB, runtimeDisposition: .live), range: -60...(-20), format: "%.1f dB",
-                tooltip: "Level below which gain starts to reduce. Set just above the noise floor of the program material.").disabled(disabled)
-            DoubleSliderRow(title: "Ratio", value: model.configBinding(\.expanderRatio, runtimeDisposition: .live), range: 1...8, format: "%.1f:1",
-                tooltip: "Gain reduction ratio below threshold. Higher ratio = deeper attenuation of quiet material.").disabled(disabled)
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Attack", value: model.configBinding(\.expanderAttackMS, runtimeDisposition: .live), range: 0.1...100, format: "%.1f ms",
-                    tooltip: "Time to re-open the gate once program re-exceeds the threshold. Fast attack preserves initial transients.").disabled(disabled)
-                DoubleSliderRow(title: "Release", value: model.configBinding(\.expanderReleaseMS, runtimeDisposition: .live), range: 10...2000, format: "%.0f ms",
-                    tooltip: "Time to close the gate once program falls below the threshold. Longer release avoids chattering on sustained-but-quiet sources.").disabled(disabled)
+        let disabled = !model.config.downwardExpanderEnabled
+        Card {
+            SettingToggle("Enable Expander", setting: model.setting(\.downwardExpanderEnabled, .live))
+                .toggleStyle(.switch)
+            DoubleSliderRow(
+                title: "Threshold", setting: model.setting(\.expanderThresholdDB, .live),
+                range: -60...(-20), format: "%.1f dB",
+                tooltip: "Level below which the gain starts to fall. Set it just above the noise floor of the programme.",
+                defaultValue: model.resetValue(\.expanderThresholdDB)).disabled(disabled)
+            DoubleSliderRow(
+                title: "Ratio", setting: model.setting(\.expanderRatio, .live),
+                range: 1...8, format: "%.1f:1",
+                tooltip: "Expansion ratio below the threshold. A higher ratio attenuates quiet material more deeply.",
+                defaultValue: model.resetValue(\.expanderRatio)).disabled(disabled)
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Attack", setting: model.setting(\.expanderAttackMS, .live),
+                    range: 0.1...100, format: "%.1f ms",
+                    tooltip: "Time to open again once the programme rises above the threshold. Fast attack keeps the first transient.",
+                    defaultValue: model.resetValue(\.expanderAttackMS)).disabled(disabled)
+                DoubleSliderRow(
+                    title: "Release", setting: model.setting(\.expanderReleaseMS, .live),
+                    range: 10...2000, format: "%.0f ms",
+                    tooltip: "Time to close once the programme falls below the threshold. Longer release avoids chattering on quiet sustained sources.",
+                    defaultValue: model.resetValue(\.expanderReleaseMS)).disabled(disabled)
             }
         }
     }
@@ -558,16 +609,26 @@ struct ProcessingBassClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Bass Clipper") {
-            Toggle("Enable Bass Clipper", isOn: model.configBinding(\.bassClipperEnabled, runtimeDisposition: .live))
-            let disabled = !model.config.bassClipperEnabled
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.bassClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                tooltip: "Clipping threshold for the low band. Lower = more aggressive bass clipping, reducing bass-induced IMD in downstream stages.").disabled(disabled)
-            DoubleSliderRow(title: "Drive", value: model.configBinding(\.bassClipperDrive, runtimeDisposition: .live), range: 0.5...3, format: "%.2f",
-                tooltip: "Pre-clipping gain applied to the low band. Higher drive increases density but also clipping distortion.").disabled(disabled)
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Crossover", value: model.configBinding(\.bassClipperCrossoverHz, runtimeDisposition: .live), range: 60...300, format: "%.0f Hz",
-                    tooltip: "Crossover frequency isolating the low band for clipping. Content below this is clipped independently; above passes unmodified.").disabled(disabled)
+        let disabled = !model.config.bassClipperEnabled
+        Card {
+            SettingToggle("Enable Bass Clipper", setting: model.setting(\.bassClipperEnabled, .live))
+                .toggleStyle(.switch)
+            DoubleSliderRow(
+                title: "Threshold", setting: model.setting(\.bassClipperThresholdDB, .live),
+                range: -12...0, format: "%.1f dB",
+                tooltip: "Clipping threshold for the low band. Lower clips the bass harder and reduces bass-induced intermodulation in the stages that follow.",
+                defaultValue: model.resetValue(\.bassClipperThresholdDB)).disabled(disabled)
+            DoubleSliderRow(
+                title: "Drive", setting: model.percentSetting(\.bassClipperDrive, .live),
+                range: 50...300, format: "%.0f%%",
+                tooltip: "Gain into the clipper on the low band. More drive increases density and clipping distortion.",
+                defaultValue: model.resetValue(\.bassClipperDrive) * 100).disabled(disabled)
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Crossover", setting: model.setting(\.bassClipperCrossoverHz, .live),
+                    range: 60...300, format: "%.0f Hz",
+                    tooltip: "Splits off the low band for clipping. Below it is clipped; above it passes untouched.",
+                    defaultValue: model.resetValue(\.bassClipperCrossoverHz)).disabled(disabled)
             }
         }
     }
@@ -580,21 +641,38 @@ struct ProcessingHFLimiterTab: View {
         // The HF limiter rides the pre-emphasis BOOST, so with nothing to
         // ride it is an identity whatever these say (`ChainFeature.hfLimiter`).
         if ChainFeature.hfLimiter.applies(in: model.config.operatingMode) {
-            Card(title: "HF Limiter") {
-                Toggle("Enable HF Limiter", isOn: model.configBinding(\.hfLimiterEnabled, runtimeDisposition: .live))
-                    .help("Gain-riding HF control: rides only the pre-emphasis boost, so overshooting cymbals / hi-hats briefly lose part of their boost instead of being clipped (Optimod HF-limiter topology, Orban US 4,103,243, expired). Peaks the boost did not cause are left to the Audio Limiter.")
-                let limiterDisabled = !model.config.hfLimiterEnabled
-                DoubleSliderRow(title: "Threshold", value: model.configBinding(\.hfLimiterThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                    tooltip: "Pre-emphasised L/R peak that starts the HF gain ride. Sits 0.5 dB ABOVE the Audio Limiter threshold (US 4,103,243), so the ride only acts on HF excess the broadband limiter would otherwise clip.").disabled(limiterDisabled)
-                DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Top Threshold", value: model.configBinding(\.hfLimiterTopThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                    tooltip: "The same ceiling for boost above 13 kHz (cymbals, the top octave); 1 dB under Threshold by default. The detector slides between the two with the share of the boost above 13 kHz.").disabled(limiterDisabled)
-                DoubleSliderRow(title: "Attack", value: model.configBinding(\.hfLimiterAttackMS, runtimeDisposition: .live), range: 0.2...20, format: "%.2f ms",
-                    tooltip: "How fast the boost is pulled down. 1-3 ms: the Audio Limiter's look-ahead catches what leaks during the attack.").disabled(limiterDisabled)
-                DoubleSliderRow(title: "Release", value: model.configBinding(\.hfLimiterReleaseMS, runtimeDisposition: .live), range: 5...500, format: "%.0f ms",
-                    tooltip: "How fast full pre-emphasis returns. 10-50 ms keeps the HF dip brief; longer values trade sparkle for density.").disabled(limiterDisabled)
-                DoubleSliderRow(title: "Max Reduction", value: model.configBinding(\.hfLimiterMaxReductionDB, runtimeDisposition: .live), range: 1...24, format: "%.1f dB",
-                    tooltip: "Cap on how much of the pre-emphasis boost may be removed. The stage can never cut HF below the flat (un-emphasised) program level.").disabled(limiterDisabled)
+            let disabled = !model.config.hfLimiterEnabled
+            Card {
+                SettingToggle(
+                    "Enable HF Limiter", setting: model.setting(\.hfLimiterEnabled, .live),
+                    tooltip: "Rides only the pre-emphasis boost, so overshooting cymbals and hi-hats briefly lose part of their boost instead of being clipped (the Optimod HF-limiter topology, Orban US 4,103,243, expired). Peaks the boost did not cause are left to the Audio Limiter.")
+                    .toggleStyle(.switch)
+                DoubleSliderRow(
+                    title: "Threshold", setting: model.setting(\.hfLimiterThresholdDB, .live),
+                    range: -12...0, format: "%.1f dB",
+                    tooltip: "Pre-emphasised peak that starts the HF ride. It sits 0.5 dB above the Audio Limiter's threshold, so the ride only acts on HF excess the limiter would otherwise clip.",
+                    defaultValue: model.resetValue(\.hfLimiterThresholdDB)).disabled(disabled)
+                AdvancedGroup {
+                    DoubleSliderRow(
+                        title: "Top Threshold", setting: model.setting(\.hfLimiterTopThresholdDB, .live),
+                        range: -12...0, format: "%.1f dB",
+                        tooltip: "The same ceiling for boost above 13 kHz (cymbals, the top octave); 1 dB under Threshold by default. The detector slides between the two with the share of the boost above 13 kHz.",
+                        defaultValue: model.resetValue(\.hfLimiterTopThresholdDB)).disabled(disabled)
+                    DoubleSliderRow(
+                        title: "Attack", setting: model.setting(\.hfLimiterAttackMS, .live),
+                        range: 0.2...20, format: "%.2f ms",
+                        tooltip: "How fast the boost is pulled down. 1-3 ms: the Audio Limiter's look-ahead catches what leaks during the attack.",
+                        defaultValue: model.resetValue(\.hfLimiterAttackMS)).disabled(disabled)
+                    DoubleSliderRow(
+                        title: "Release", setting: model.setting(\.hfLimiterReleaseMS, .live),
+                        range: 5...500, format: "%.0f ms",
+                        tooltip: "How fast the full pre-emphasis returns. 10-50 ms keeps the HF dip brief; longer trades sparkle for density.",
+                        defaultValue: model.resetValue(\.hfLimiterReleaseMS)).disabled(disabled)
+                    DoubleSliderRow(
+                        title: "Max Reduction", setting: model.setting(\.hfLimiterMaxReductionDB, .live),
+                        range: 1...24, format: "%.1f dB",
+                        tooltip: "Limit on how much of the pre-emphasis boost may be removed. The stage never cuts the highs below the flat, un-emphasised level.",
+                        defaultValue: model.resetValue(\.hfLimiterMaxReductionDB)).disabled(disabled)
                 }
             }
         }
@@ -605,31 +683,49 @@ struct ProcessingAdvancedDynamicsTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Advanced Dynamics") {
-            // No enable toggle here: the Levelling engine picker on the Sound
-            // overview is the one switch, and this page exists only while it
-            // says Advanced Dynamics -- a toggle that makes its own page
-            // vanish is not a control an operator can reason about.
-            // Usage tip (the shared help box below already explains WHAT the
-            // stage is; this is the how-to-drive-it line).
-            Text("Advanced Dynamics is the active levelling engine (chosen on the Sound Overview page). Start with the defaults, then raise Density for a more competitive sound. Band layout follows the Multiband page's crossovers; switch to AGC + Multiband on the Overview to edit them.")
+        Card {
+            // No enable toggle: the Levelling engine picker on the Overview is
+            // the one switch, and this page exists only while it says
+            // Advanced Dynamics. One usage tip (the help box says what it is).
+            Text("Start with the defaults, then raise Density for a more competitive sound. The bands follow the Multiband crossovers; to edit them, switch to AGC + Multiband on the Overview.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DoubleSliderRow(title: "Target Level", value: model.configBinding(\.advancedDynamicsTargetDB, runtimeDisposition: .live), range: -30...(-6), format: "%.1f dB",
-                tooltip: "The level every band is brought toward. Lower = more headroom and gentler sound; higher = denser and louder into the clippers.")
-            DoubleSliderRow(title: "Density", value: model.configBinding(\.advancedDynamicsDensity, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "How tightly the leveler holds program at target. Higher = tighter hold window and faster leveling (denser, more processed); lower = more dynamics left intact.")
-            DoubleSliderRow(title: "Bass Balance", value: model.configBinding(\.advancedDynamicsLowOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
-                tooltip: "Low-band target offset relative to Target Level. The five bands interpolate between the Bass / Mid / Treble anchors, setting the on-air tonal balance.")
-            DoubleSliderRow(title: "Mid Balance", value: model.configBinding(\.advancedDynamicsMidOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
-                tooltip: "Mid-band target offset relative to Target Level.")
-            DoubleSliderRow(title: "Treble Balance", value: model.configBinding(\.advancedDynamicsHighOffsetDB, runtimeDisposition: .live), range: -12...6, format: "%.1f dB",
-                tooltip: "High-band target offset relative to Target Level. The default -9 dB approximates a natural music spectrum; raise it for a brighter on-air sound.")
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Speed", value: model.configBinding(\.advancedDynamicsSpeed, runtimeDisposition: .live), range: 0.25...4, format: "%.2fx",
-                    tooltip: "Overall time-constant scale. The stage adapts its own attack/release to the programme; this scales that adaptive behavior faster or slower.")
-                DoubleSliderRow(title: "Max Boost", value: model.configBinding(\.advancedDynamicsMaxGainDB, runtimeDisposition: .live), range: 0...24, format: "%.1f dB",
-                    tooltip: "Maximum lift applied to quiet program per band. The reduction side is fixed at 24 dB, so the total range absorbs large in-song level jumps.")
+            DoubleSliderRow(
+                title: "Target Level", setting: model.setting(\.advancedDynamicsTargetDB, .live),
+                range: -30...(-6), format: "%.1f dB",
+                tooltip: "The level every band is brought towards. Lower means more headroom and a gentler sound; higher is denser and louder into the clippers.",
+                defaultValue: model.resetValue(\.advancedDynamicsTargetDB))
+            DoubleSliderRow(
+                title: "Density", setting: model.percentSetting(\.advancedDynamicsDensity, .live),
+                range: 0...100, format: "%.0f%%",
+                tooltip: "How tightly the leveller holds the programme at the target. Higher is denser and more processed; lower leaves more dynamics intact.",
+                defaultValue: model.resetValue(\.advancedDynamicsDensity) * 100)
+            DoubleSliderRow(
+                title: "Bass Balance", setting: model.setting(\.advancedDynamicsLowOffsetDB, .live),
+                range: -6...6, format: "%.1f dB",
+                tooltip: "Low-band target relative to Target Level. The five bands interpolate between the Bass, Mid and Treble anchors, setting the tonal balance on air.",
+                defaultValue: model.resetValue(\.advancedDynamicsLowOffsetDB))
+            DoubleSliderRow(
+                title: "Mid Balance", setting: model.setting(\.advancedDynamicsMidOffsetDB, .live),
+                range: -6...6, format: "%.1f dB",
+                tooltip: "Mid-band target relative to Target Level.",
+                defaultValue: model.resetValue(\.advancedDynamicsMidOffsetDB))
+            DoubleSliderRow(
+                title: "Treble Balance", setting: model.setting(\.advancedDynamicsHighOffsetDB, .live),
+                range: -6...6, format: "%.1f dB",
+                tooltip: "High-band target relative to Target Level. The default approximates a natural music spectrum; raise it for a brighter sound on air.",
+                defaultValue: model.resetValue(\.advancedDynamicsHighOffsetDB))
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Speed", setting: model.setting(\.advancedDynamicsSpeed, .live),
+                    range: 0.25...4, format: "%.2fx",
+                    tooltip: "Scales every time constant. The stage adapts its own attack and release to the programme; this makes that faster or slower.",
+                    defaultValue: model.resetValue(\.advancedDynamicsSpeed))
+                DoubleSliderRow(
+                    title: "Max Boost", setting: model.setting(\.advancedDynamicsMaxGainDB, .live),
+                    range: 0...24, format: "%.1f dB",
+                    tooltip: "The most gain added to quiet programme per band. The reduction side is fixed at 24 dB, so the range absorbs large level jumps within a song.",
+                    defaultValue: model.resetValue(\.advancedDynamicsMaxGainDB))
             }
         }
     }
@@ -639,14 +735,21 @@ struct ProcessingDCClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Audio Clipper") {
-            Toggle("Enable Audio Clipper", isOn: model.configBinding(\.dcClipperEnabled, runtimeDisposition: .live))
-            let disabled = !model.config.dcClipperEnabled
-            DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.dcClipperCeilingDB, runtimeDisposition: .live), range: -6...0, format: "%.1f dB",
-                tooltip: "Clipping ceiling for the distortion-cancelled clipper. Lower ceiling = more audible density but more clipping artifacts.").disabled(disabled)
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "Cancel Freq", value: model.configBinding(\.dcClipperCancelFreqHz, runtimeDisposition: .live), range: 500...4000, format: "%.0f Hz",
-                    tooltip: "Cutoff of the LF error-extraction filter. Clipping distortion below this frequency is subtracted; above, it is left for masking.").disabled(disabled)
+        let disabled = !model.config.dcClipperEnabled
+        Card {
+            SettingToggle("Enable Audio Clipper", setting: model.setting(\.dcClipperEnabled, .live))
+                .toggleStyle(.switch)
+            DoubleSliderRow(
+                title: "Ceiling", setting: model.setting(\.dcClipperCeilingDB, .live),
+                range: -6...0, format: "%.1f dB",
+                tooltip: "Clipping ceiling. A lower ceiling is denser but brings more clipping artefacts.",
+                defaultValue: model.resetValue(\.dcClipperCeilingDB)).disabled(disabled)
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Cancellation Frequency", setting: model.setting(\.dcClipperCancelFreqHz, .live),
+                    range: 500...4000, format: "%.0f Hz",
+                    tooltip: "Clipping distortion below this frequency is cancelled (subtracted by a low-pass error filter); above it, it is left to be masked by the programme.",
+                    defaultValue: model.resetValue(\.dcClipperCancelFreqHz)).disabled(disabled)
             }
         }
     }
@@ -656,11 +759,14 @@ struct ProcessingBS412Tab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "BS.412 MPX Power Limiter") {
-            Toggle("Enable BS.412", isOn: model.configBinding(\.bs412Enabled, runtimeDisposition: .live))
-            let disabled = !model.config.bs412Enabled
-            DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.bs412CeilingDBr, runtimeDisposition: .live), range: -10...0, format: "%.1f dBr",
-                tooltip: "Average power of the complete multiplex, pilot and RDS included, over any 60 seconds. 0 dBr IS the ITU-R BS.412 limit (the power of a sine at 19 kHz deviation); set it lower only to keep a margin below the limit. Required for regulatory compliance in DE, AT, CH, SE, CZ, SI and others.").disabled(disabled)
+        Card {
+            SettingToggle("Enable BS.412", setting: model.setting(\.bs412Enabled, .live))
+                .toggleStyle(.switch)
+            DoubleSliderRow(
+                title: "Ceiling", setting: model.setting(\.bs412CeilingDBr, .live),
+                range: -10...0, format: "%.1f dBr",
+                tooltip: "Average power of the complete multiplex, pilot and RDS included, over any 60 seconds. 0 dBr is the ITU-R BS.412 limit (the power of a sine at 19 kHz deviation); set it lower only to keep a margin below the limit.",
+                defaultValue: model.resetValue(\.bs412CeilingDBr)).disabled(!model.config.bs412Enabled)
         }
     }
 }
@@ -669,28 +775,30 @@ struct ProcessingStereoCoderTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Stereo Encoder") {
-            // Pilot Level moved here from the Settings window (0.50): it is
-            // stereo-encoder structure, not Audio I/O. Range follows ITU-R
-            // BS.450-4 / FCC 73.322 (8-10% deviation); 0-12% for headroom,
-            // 0 = mute. Composite-only (no pilot in processed audio).
+        Card {
+            // Pilot level follows ITU-R BS.450 (8-10% of deviation); 0-12%
+            // leaves room either side, and 0 mutes it. Composite only.
             if !model.processedAudioOutputActive {
                 DoubleSliderRow(
-                    title: "Pilot Level", value: model.pilotLevelPercentBinding(),
-                    range: 0...12, format: "%.1f %%",
-                    restartRequired: true)
+                    title: "Pilot Level", setting: model.percentSetting(\.pilotLevel, .live),
+                    range: 0...12, format: "%.1f%%",
+                    tooltip: "Pilot injection as a share of the deviation. ITU-R BS.450 specifies 8-10%; 9% is usual.",
+                    defaultValue: model.resetValue(\.pilotLevel) * 100.0)
                 .disabled(model.config.monoMode)
             }
-            Toggle("SSB Stereo Encoder", isOn: model.configBinding(\.ssbStereoEnabled, runtimeDisposition: .live))
-                .help("Leans the 38 kHz stereo subcarrier toward single-sideband, opportunistically keeping whichever sideband currently peaks lower -- reclaims composite headroom before the clipper works. Independent of the Composite Clipper's enable.")
-            // Disclaimer caption (the Advanced Dynamics pattern) instead of
-            // folding the controls away: the tab exists for this option.
-            Text("Standard receivers decode SSB stereo fine (measured 81+ dB separation); phase-imperfect radios may lose a little separation, so A/B on your own receivers. Stereo encoding itself is always active; this only changes how the subcarrier is assembled.")
+            SettingToggle(
+                "Enable SSB Stereo", setting: model.setting(\.ssbStereoEnabled, .live),
+                tooltip: "Leans the 38 kHz stereo subcarrier towards single sideband, keeping whichever sideband currently peaks lower, to reclaim composite headroom ahead of the clipper. Independent of the Composite Clipper.")
+            // A safety one-liner: receivers differ.
+            Text("Standard receivers decode SSB stereo fine (81 dB separation measured); a receiver with an imperfect phase response may lose a little separation, so check it on your own receivers.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DisclosureGroup("Advanced") {
-                DoubleSliderRow(title: "SSB Amount", value: model.configBinding(\.ssbStereoAmount, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                    tooltip: "How far the stereo subcarrier leans toward single-sideband. 0 = classic double-sideband (no effect), 1 = full SSB (maximum headroom reclaim, maximum receiver sensitivity). Start around 0.5-0.7.")
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "SSB Amount", setting: model.percentSetting(\.ssbStereoAmount, .live),
+                    range: 0...100, format: "%.0f%%",
+                    tooltip: "How far the subcarrier leans towards single sideband. 0% is classic double sideband; 100% is full SSB (most headroom, most receiver-sensitive). Start around 50-70%.",
+                    defaultValue: model.resetValue(\.ssbStereoAmount) * 100)
                     .disabled(!model.config.ssbStereoEnabled)
             }
         }
@@ -701,42 +809,70 @@ struct ProcessingCompositeClipperTab: View {
     @ObservedObject var model: MPXPrimeViewModel
 
     var body: some View {
-        Card(title: "Composite Clipper") {
-            Toggle("Enable Composite Clipper", isOn: model.configBinding(\.compositeClipperEnabled, runtimeDisposition: .live))
-            let disabled = !model.config.compositeClipperEnabled
-            DoubleSliderRow(title: "Threshold", value: model.configBinding(\.compositeClipperThresholdDB, runtimeDisposition: .live), range: -12...0, format: "%.1f dB",
-                tooltip: "Onset of composite-level soft clipping on the audio composite (not pilot/RDS). Primary loudness lever when engaged.").disabled(disabled)
-            DoubleSliderRow(title: "Ceiling", value: model.configBinding(\.compositeClipperCeilingDB, runtimeDisposition: .live), range: -6...0, format: "%.1f dB",
-                tooltip: "Maximum output level after composite clipping. Must stay below 0 dBFS to leave headroom for pilot/RDS injection.").disabled(disabled)
-            DisclosureGroup("Advanced") {
-            DoubleSliderRow(title: "Look-ahead", value: model.configBinding(\.compositeClipperLookaheadMS, runtimeDisposition: .live), range: 0...5, format: "%.1f ms",
-                tooltip: "Predictive peak shaving. 0.0 disables; 2.0 ms = recommended preset. Sliding-window-max detector + half-cosine attack + 200 Hz smoother bound overshoots tighter than the soft-clip alone, at the cost of N ms added chain latency. Hardcoded internals: 1.5 ms attack, 80 ms release, 200 Hz smoothing.").disabled(disabled)
-            LabeledContent("Look-ahead GR") {
-                LiveObservationView(telemetry: model.telemetry) { t in
-                    Text(String(format: "%5.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Divider()
-            Text("Subcarrier Protection")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Toggle("Protect Audio Highs", isOn: model.configBinding(\.compositeClipperCancelAudio, runtimeDisposition: .live))
-                .help("Off (default): full clipping in the audio band for maximum loudness. On: subtracts in-band clip residual to keep highs cleaner, at the cost of some peak control / loudness. Enable when high-frequency harshness is the bigger concern.")
-                .disabled(disabled)
-            Toggle("Protect Stereo Pilot", isOn: model.configBinding(\.compositeClipperCancelPilot, runtimeDisposition: .live))
-                .help("Removes clipping distortion from the 19 kHz pilot region so the receiver decodes stereo cleanly. Leave on except for diagnostic A/B.")
-                .disabled(disabled)
-            DoubleSliderRow(title: "Protect Stereo Subcarrier", value: model.configBinding(\.compositeClipperStereoGuard, runtimeDisposition: .live), range: 0...1, format: "%.2f",
-                tooltip: "How much of the clipper's distortion is kept out of the 22-53 kHz stereo (L-R) subcarrier. 1.00 restores the whole subcarrier: best HF stereo separation, but the clipper then only ever clips the mono share of a peak and the Final-MPX limiter rides the rest. 0.00 clips the full composite the way Orban / Omnia / Stereo Tool do: most loudness, least HF separation on dense program. The shipped value comes from the --verify-stereo-guard sweep.").disabled(disabled)
-            Toggle("Protect RDS", isOn: model.configBinding(\.compositeClipperCancelRDS, runtimeDisposition: .live))
-                .help("Removes clipping distortion from the 57 kHz RDS region so receivers don't see clipper noise summed with the RDS subcarrier. Leave on except for diagnostic A/B.")
-                .disabled(disabled)
-            }
-            Text("Tip: leave the composite clipper off when loudness isn't critical -- it trades peak control for stereo image and HF cleanliness. If you do enable it, turning on \"Protect Audio Highs\" recovers HF detail at the cost of some loudness.")
+        let disabled = !model.config.compositeClipperEnabled
+        Card {
+            SettingToggle("Enable Composite Clipper", setting: model.setting(\.compositeClipperEnabled, .live))
+                .toggleStyle(.switch)
+            DoubleSliderRow(
+                title: "Threshold", setting: model.setting(\.compositeClipperThresholdDB, .live),
+                range: -12...0, format: "%.1f dB",
+                tooltip: "Onset of soft clipping on the audio composite (not the pilot or RDS). The main loudness control while the clipper is on.",
+                defaultValue: model.resetValue(\.compositeClipperThresholdDB)).disabled(disabled)
+            DoubleSliderRow(
+                title: "Ceiling", setting: model.setting(\.compositeClipperCeilingDB, .live),
+                range: -6...0, format: "%.1f dB",
+                tooltip: "Highest level after clipping. It stays below 0 dBFS to leave room for the pilot and RDS.",
+                defaultValue: model.resetValue(\.compositeClipperCeilingDB)).disabled(disabled)
+            // Replaces the old "leave it off" tip: every Format Profile turns
+            // the clipper on, and the app warns when both peak controllers
+            // are off. This is the one actionable line the help box lacks.
+            Text("Every Format Profile turns the composite clipper on. If the highs sound harsh, turn on Protect Audio Highs under Advanced: cleaner highs for a little loudness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            AdvancedGroup {
+                DoubleSliderRow(
+                    title: "Look-Ahead", setting: model.setting(\.compositeClipperLookaheadMS, .live),
+                    range: 0...5, format: "%.1f ms",
+                    tooltip: "Predictive peak shaving ahead of the clipper. 0 ms is off; 2 ms is the recommended preset. Holds overshoot tighter than soft clipping alone, at the cost of the same added latency.",
+                    defaultValue: model.resetValue(\.compositeClipperLookaheadMS)).disabled(disabled)
+                LabeledContent("Look-Ahead Gain Reduction") {
+                    LiveObservationView(telemetry: model.telemetry) { t in
+                        Text(String(format: "%5.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                SettingPicker(
+                    "Oversampling", setting: model.setting(\.compositeClipperOversampling, .live),
+                    tooltip: "16x is the usual choice. 8x halves this stage's processor load for slightly more aliasing (older Macs); 32x doubles it for slightly less."
+                ) {
+                    Text("8x").tag(8)
+                    Text("16x").tag(16)
+                    Text("32x").tag(32)
+                }
+                .pickerStyle(.segmented)
+                Text("Protection")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+                SettingToggle(
+                    "Protect Audio Highs", setting: model.setting(\.compositeClipperCancelAudio, .live),
+                    tooltip: "Off (default): full clipping in the audio band for the most loudness. On: removes the clipping distortion in the audio band for cleaner highs, at the cost of some peak control and loudness.")
+                .disabled(disabled)
+                SettingToggle(
+                    "Protect Stereo Pilot", setting: model.setting(\.compositeClipperCancelPilot, .live),
+                    tooltip: "Keeps clipping distortion out of the 19 kHz pilot region so receivers decode stereo cleanly. Leave it on except for an A/B test.")
+                .disabled(disabled)
+                DoubleSliderRow(
+                    title: "Protect Stereo Subcarrier", setting: model.percentSetting(\.compositeClipperStereoGuard, .live),
+                    range: 0...100, format: "%.0f%%",
+                    tooltip: "How much of the clipping distortion is kept out of the 22-53 kHz stereo subcarrier. 100% leaves the subcarrier untouched: best high-frequency separation, but the clipper then only clips the mono share of a peak and the safety limiter rides the rest. 0% clips the full composite as most processors do: most loudness, least separation on dense programme.",
+                    defaultValue: model.resetValue(\.compositeClipperStereoGuard) * 100).disabled(disabled)
+                SettingToggle(
+                    "Protect RDS", setting: model.setting(\.compositeClipperCancelRDS, .live),
+                    tooltip: "Keeps clipping distortion out of the 57 kHz RDS region so receivers do not see clipper noise on the RDS subcarrier. Leave it on except for an A/B test.")
+                .disabled(disabled)
+            }
         }
     }
 }

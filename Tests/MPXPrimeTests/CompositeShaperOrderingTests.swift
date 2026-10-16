@@ -32,6 +32,7 @@ import Testing
         config.limitLookaheadEnabled = true
         config.limitLookaheadMS = 5.0
         config.widebandAGCEnabled = false
+        config.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         config.multibandEnabled = false
         config.preEncodeAudioLimiterEnabled = false
         return config
@@ -67,9 +68,12 @@ import Testing
     }
 
     @Test func shaperIsIdleWhenTheCompositeClipperRuns() {
-        // With the clipper active, toggling the shaper off must not change a
-        // single sample: the clipper's budget-referenced ceiling keeps the
-        // audio composite below the shaper's threshold at all times.
+        // With the clipper active, toggling the shaper off must leave the
+        // composite essentially unchanged: the clipper's budget-referenced
+        // ceiling keeps the audio composite below the shaper's threshold.
+        // Not bit-identical (the comment used to say "not a single sample"
+        // while the bound allowed -40 dB; finding 15): measured 2026-10-15
+        // max delta 0.002, -79 dB relative. Bound -60 dB.
         let frames = 96_000
         var withShaper = hotConfig()
         withShaper.audioCompositeSoftClipEnabled = true
@@ -92,7 +96,8 @@ import Testing
             signalPower += Double(b[i] * b[i])
         }
         let relativeDB = 10.0 * log10(max(1e-30, deltaPower) / max(1e-30, signalPower))
-        #expect(relativeDB < -40.0,
+        print(String(format: "[shaper idle] max delta %.3g, relative %.1f dB", maxDelta, relativeDB))
+        #expect(relativeDB < -60.0,
                 "shaper action \(relativeDB) dB relative to the composite (max delta \(maxDelta) at sample \(worstIndex): with \(a[worstIndex]) without \(b[worstIndex])) -- it is no longer a safety net behind the clipper. Budget inputs: \(budgetDescription(shaperGenerator))")
     }
 

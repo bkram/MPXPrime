@@ -141,7 +141,7 @@
   .rds-live .ps { font-size:24px; letter-spacing:0.14em; color:var(--blue); }
   .rds-live .rt { font-size:12px; color:var(--dim); margin-top:5px; min-height:16px; }
   .formgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:14px; max-width:1280px; align-items:start; }
-  .fcard h2 { font-size:11px; letter-spacing:0.12em; color:var(--dim); text-transform:uppercase; padding:10px 0 4px; }
+  .fcard h2 { font-size:13px; font-weight:600; color:var(--dim); padding:10px 0 4px; }
   .row input[type=text] { flex:1; max-width:460px; width:auto; }
   .tabtn { border:1px solid var(--line); background:var(--card2); color:var(--text); border-radius:8px; padding:10px 18px; font-size:13px; font-weight:600; width:100%; cursor:pointer; }
   .tabtn.on { background:var(--amber); border-color:var(--amber); color:#1c1c1e; }
@@ -164,12 +164,13 @@
   <div class="cell"><div class="k">Source</div><div class="v" id="cSource">-</div></div>
   <div class="cell"><div class="k">Rate</div><div class="v" id="cRate">-</div></div>
   <div class="cell"><div class="k">Mode</div><div class="v" id="cMode">-</div></div>
+  <div class="cell" id="cMonCell" hidden><div class="k">Monitor</div><div class="v">On</div></div>
   <div class="cell" id="cWarnCell" hidden><div class="k">RDS Warning</div><div class="v amber" id="cWarn"></div></div>
   <div id="stripSpacer"></div>
   <div id="stripBtns">
-    <span class="badge" id="restartBadge" hidden>restart pending</span>
-    <button id="btnBypass">Bypass</button>
+    <span class="badge" id="restartBadge" hidden>Restart to Apply</span>
     <button class="blue" id="btnStartStop">Start</button>
+    <button id="btnBypass">Bypass</button>
     <button id="btnRestart">Restart</button>
   </div>
 </div>
@@ -229,6 +230,9 @@ const DISPOSITION_TEXT = {
   none: "saved",
   unchanged: "unchanged"
 };
+// The Interfaces channel fields: their effective (normalised) value comes
+// back through /api/devices like the device selections do.
+const CHANNEL_KEYS = ["input_channels", "output_channels", "monitor_channels"];
 async function patchKey(key, value, silent) {
   try {
     const r = await api("/api/config", { method:"PATCH", body:JSON.stringify({ [key]: value }) });
@@ -241,11 +245,11 @@ async function patchKey(key, value, silent) {
     if (o.disposition === "restartRequired") {
       try { await loadConfig(); } catch (e) {}
     }
-    if (key.endsWith("_device_uid")) {
+    if (key.endsWith("_device_uid") || CHANNEL_KEYS.includes(key)) {
       try { await loadDevices(); } catch (e) {}
     }
     if (!silent) {
-      toast((SCHEMA[key]?.label || key.replace(/_/g, " ")) + ": " + (DISPOSITION_TEXT[o.disposition] || o.disposition));
+      toast((defFor(key)?.label || key.replace(/_/g, " ")) + ": " + (DISPOSITION_TEXT[o.disposition] || o.disposition));
     }
     // ALWAYS re-sync: a mode switch, a server-side clamp and a recalled
     // calibration are all invisible otherwise (they are not `unchanged`).
@@ -266,10 +270,11 @@ async function configDefaults() {
 }
 /* Reset every key on a page to factory defaults, in one PATCH. */
 function resetTabButton(keys, title) {
+  // "Reset" plus the page title, as on the native app's pages.
   const wrap = document.createElement("div");
   wrap.style.cssText = "text-align:right;padding:10px 0";
   const b = document.createElement("button");
-  b.textContent = "Reset This Tab";
+  b.textContent = "Reset " + title;
   b.onclick = async () => {
     try {
       const defs = await configDefaults();
@@ -277,7 +282,7 @@ function resetTabButton(keys, title) {
       for (const k of keys) {
         if (k in defs && String(cfg[k]) !== String(defs[k])) patch[k] = defs[k];
       }
-      if (!Object.keys(patch).length) { toast("already at defaults"); return; }
+      if (!Object.keys(patch).length) { toast(title + " is already at its defaults"); return; }
       if (!confirm("Reset " + Object.keys(patch).length + " setting(s) on '" + title + "' to factory defaults?")) return;
       const r = await api("/api/config", { method:"PATCH", body:JSON.stringify(patch) });
       const pending = r.outcomes.some(o => o.disposition === "restartRequired");
@@ -301,6 +306,16 @@ async function loadConfig() {
    so the dashboard follows a mode change before the restart. */
 const currentMode = () => (cfg.operating_mode || "mpx");
 const inCurrentMode = (modes) => !modes || modes.indexOf(currentMode()) >= 0;
+/* A widget can carry per-mode `variants` (label, range) -- e.g. the output
+   level is an attenuation-only "MPX Output Level" in MPX Output and a +/-18 dB
+   "Output Level" elsewhere, as in the native app. The first variant whose
+   `modes` include the current mode is merged over the base definition. */
+function defFor(key) {
+  const def = SCHEMA[key];
+  if (!def || !def.variants) return def;
+  const v = def.variants.find(x => inCurrentMode(x.modes));
+  return v ? { ...def, ...v, modes: def.modes } : def;
+}
 /* Does a composite exist at all in this mode? Sourced from the schema's
    `compositeModes` (ChainFeature.finalStage), never spelled out in JS. */
 const compositeMode = () => inCurrentMode(MODEL.compositeModes);
@@ -381,8 +396,8 @@ function collapsedSections() {
   try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "[]")); } catch (e) { return new Set(); }
 }
 function pageDef(id) {
-  if (id === "monitoring") return { id, title: "Monitoring" };
-  if (id === "overview") return { id, title: "Overview" };
+  if (id === "monitoring") return { id, title: MODEL.monitoringTitle || "Monitoring", sub: MODEL.monitoringSub, help: MODEL.monitoringHelp };
+  if (id === "overview") return { id, title: MODEL.overviewTitle || "Overview", sub: MODEL.overviewSub, help: MODEL.overviewHelp };
   return MODEL.stages.find(p => p.id === id) || MODEL.rds.find(p => p.id === id) || MODEL.tools.find(p => p.id === id) || null;
 }
 function pageVisible(id) { return !!pageDef(id) && !pageHiddenInMode(id); }
@@ -428,7 +443,7 @@ function searchMatches(q) {
   if (needle.length < 2) return [];
   const out = [];
   for (const key of Object.keys(SCHEMA)) {
-    const def = SCHEMA[key];
+    const def = defFor(key);
     if (!inCurrentMode(def.modes)) continue;
     const pid = pageForKey(key);
     if (!pid || !pageVisible(pid)) continue;
@@ -515,37 +530,48 @@ function refreshSidebarDots() {
 
 /* ---------------- widgets ---------------- */
 function sliderRow(key) {
-  const def = SCHEMA[key];
+  const def = defFor(key);
   const row = document.createElement("div");
   row.className = "row";
   row.dataset.key = key;
   row.insertAdjacentHTML("beforeend", `<div class="rlabel">${def.label}</div>`);
   const input = document.createElement("input");
   input.type = "range";
-  input.min = def.min; input.max = def.max; input.step = def.step;
+  // `transform: "db20"`: the INI stores a linear level (a limiter threshold,
+  // 0.5-0.999) but the operator reads and moves it in dBFS, like every other
+  // level. The slider runs in dB; the PATCH writes the linear value back.
+  const db = def.transform === "db20";
+  const toUI = db ? (v) => 20 * Math.log10(Math.max(1e-6, Number(v))) : (v) => Number(v);
+  const toRaw = db ? (d) => Math.min(def.max, Math.max(def.min, Math.pow(10, Number(d) / 20))).toFixed(4) : (d) => String(d);
+  if (db) { input.min = toUI(def.min).toFixed(2); input.max = toUI(def.max).toFixed(2); input.step = def.step; }
+  else { input.min = def.min; input.max = def.max; input.step = def.step; }
   const val = document.createElement("div");
   val.className = "rvalue";
   // Optional display scale: the slider/value are in raw INI units, but the
-  // readout shows value*scale (e.g. pilot fraction 0.08 -> "8.0 %"). The
-  // PATCH still writes the raw value.
-  const scale = def.scale ?? 1;
-  const fmtv = (v) => (Number(v) * scale).toFixed(def.decimals ?? 1) + (def.unit || "");
+  // readout shows value*scale (e.g. pilot fraction 0.08 -> "8.0%"). The
+  // PATCH still writes the raw value. `readout2` adds a second reading in
+  // brackets (RDS injection: "2.0 kHz (2.7%)").
+  const scale = db ? 1 : (def.scale ?? 1);
+  const r2 = def.readout2;
+  const fmtv = (v) => (Number(v) * scale).toFixed(def.decimals ?? 1) + (def.unit || "")
+    + (r2 ? " (" + (Number(v) * r2.scale).toFixed(r2.decimals ?? 1) + (r2.unit || "") + ")" : "");
   // A numeric twin of the range (CSS shows it on phones only): raw INI
   // units, so it is skipped for display-scaled sliders where the two would
   // disagree on what a number means.
-  const num = scale === 1 ? document.createElement("input") : null;
+  const num = (scale === 1 && !db) ? document.createElement("input") : null;
   if (num) { num.type = "number"; num.className = "numin"; num.min = def.min; num.max = def.max; num.step = def.step; num.setAttribute("aria-label", def.label); }
   input.oninput = () => { val.textContent = fmtv(input.value); if (num) num.value = input.value; };
-  input.onchange = () => patchKey(key, String(input.value));
+  input.onchange = () => patchKey(key, toRaw(input.value));
   if (num) num.onchange = () => { input.value = num.value; val.textContent = fmtv(num.value); patchKey(key, String(num.value)); };
   row.appendChild(input);
   if (num) row.appendChild(num);
   row.appendChild(val);
-  row._sync = (v) => { if (v != null && v !== "") { input.value = v; val.textContent = fmtv(v); if (num) num.value = v; } };
+  if (db) input.oninput = () => { val.textContent = fmtv(input.value); };
+  row._sync = (v) => { if (v != null && v !== "") { input.value = toUI(v); val.textContent = fmtv(toUI(v)); if (num) num.value = v; } };
   return row;
 }
 function checkRow(key) {
-  const def = SCHEMA[key];
+  const def = defFor(key);
   const lab = document.createElement("label");
   lab.className = "check";
   lab.dataset.key = key;
@@ -558,11 +584,25 @@ function checkRow(key) {
   return lab;
 }
 function segRow(key) {
-  const def = SCHEMA[key];
+  const def = defFor(key);
   const row = document.createElement("div");
   row.className = "row";
   row.dataset.key = key;
   row.insertAdjacentHTML("beforeend", `<div class="rlabel">${def.label}</div>`);
+  // `style: "menu"`: too many choices for a segmented control (the time zone
+  // in quarter hours) -- a pop-up menu, as in the native app.
+  if (def.style === "menu") {
+    const sel = document.createElement("select");
+    sel.setAttribute("aria-label", def.label);
+    for (const [value, label] of def.options) sel.appendChild(Object.assign(document.createElement("option"), { value, textContent: label }));
+    sel.onchange = () => patchKey(key, sel.value);
+    row.appendChild(sel);
+    row._sync = (v) => {
+      const hit = def.options.find(([value]) => String(v) === value || Number(v) === Number(value));
+      if (hit) sel.value = hit[0];
+    };
+    return row;
+  }
   const seg = document.createElement("div");
   seg.className = "seg";
   for (const [value, label] of def.options) {
@@ -579,7 +619,7 @@ function segRow(key) {
   return row;
 }
 function textRow(key) {
-  const def = SCHEMA[key];
+  const def = defFor(key);
   const row = document.createElement("div");
   row.className = "row";
   row.dataset.key = key;
@@ -593,7 +633,7 @@ function textRow(key) {
   return row;
 }
 function controlFor(key) {
-  const def = SCHEMA[key];
+  const def = defFor(key);
   if (!def) return null;
   /* One choke point for widget-level mode gating: a control with no function
      in this mode is not rendered anywhere (stage pages, Audio I/O cards,
@@ -648,6 +688,7 @@ function syncAll() {
   }
   refreshSidebarDots();
   updateBypassButton();
+  if ($("cMonCell")) $("cMonCell").hidden = !isTrue(cfg.monitor_enabled);
 }
 function helpBox(text) {
   const el = document.createElement("div");
@@ -666,6 +707,7 @@ function pillStrip(currentId) {
     p.className = "pill" + (id ? "" : " fixed");
     p.textContent = label;
     if (id) {
+      p.dataset.page = id;
       const st = MODEL.stages.find(s => s.id === id);
       if (st && st.enable && !isTrue(cfg[st.enable])) p.classList.add("dim");
       if (id === currentId) p.classList.add("cur");
@@ -728,7 +770,6 @@ function showPage(id) {
 function renderStage(c, s) {
   pageHeader(c, s.title, s.sub);
   c.appendChild(pillStrip(s.id));
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: s.title + " Settings" }));
   const head = s.presetKind ? presetPicker(s.presetKind) : null;
   // Two disclosure levels at most: the page shows what an operator moves
   // while listening; time constants, topology and set-once protections
@@ -762,7 +803,7 @@ function renderStage(c, s) {
 }
 function renderGeneric(c, p, isRDS) {
   pageHeader(c, p.title, p.sub);
-  if (p.special === "rdsStatus") return renderRDSStatus(c);
+  if (p.special === "rdsStatus") { renderRDSStatus(c, p); return; }
   if (p.special === "presets") return renderPresets(c);
   if (p.special === "advanced") return renderAdvanced(c);
   if (p.special === "about") return renderAbout(c);
@@ -770,14 +811,13 @@ function renderGeneric(c, p, isRDS) {
   if (p.cards) {
     const grid = document.createElement("div");
     grid.className = "formgrid";
+    const folded = [];
     for (const fc of p.cards) {
-      const cell = document.createElement("div");
-      cell.className = "fcard";
-      cell.insertAdjacentHTML("beforeend", `<h2>${fc.t}</h2>`);
-      cell.appendChild(card(fc.keys));
-      grid.appendChild(cell);
+      if (fc.advanced) { folded.push(fc); continue; }
+      grid.appendChild(formCard(fc));
     }
     c.appendChild(grid);
+    for (const fc of folded) c.appendChild(advancedCard(fc.keys));
     const cardKeys = p.cards.flatMap(fc => fc.keys);
     // RDS pages always offer a reset; a tools page opts in with `reset: true`
     // (Test Tone). Audio I/O deliberately never does: devices and level
@@ -790,7 +830,26 @@ function renderGeneric(c, p, isRDS) {
       c.appendChild(card(p.keys2.keys));
     }
   }
+  if (p.help) c.appendChild(helpBox(p.help));
   syncAll();
+}
+/* One titled card of a page. A card title names a part of the page; a page
+   with one card leaves it empty and the card draws without a heading. */
+function formCard(fc) {
+  const cell = document.createElement("div");
+  cell.className = "fcard";
+  if (fc.id) cell.dataset.card = fc.id;
+  if (fc.t) cell.appendChild(Object.assign(document.createElement("h2"), { textContent: fc.t }));
+  cell.appendChild(card(fc.keys));
+  return cell;
+}
+/* The collapsed Advanced group: set-once controls, closed by default. */
+function advancedCard(keys) {
+  const det = document.createElement("details");
+  det.className = "advcard";
+  det.appendChild(Object.assign(document.createElement("summary"), { textContent: "Advanced" }));
+  det.appendChild(card(keys));
+  return det;
 }
 /* The levelling engine selector: the same segmented control the operating
    mode uses on Audio I/O, in a card under the pill strip. One click patches
@@ -803,8 +862,8 @@ function levellingCard() {
   const el = document.createElement("div");
   el.className = "card cardpad";
   el.id = "levelling";
-  el.style.cssText = "margin:8px 0 14px";
-  el.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: lv.title || "Levelling", style:"margin-top:0" }));
+  el.style.cssText = "margin:0 0 14px";
+  el.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent: "Levelling Engine", style:"margin-top:0" }));
   const row = document.createElement("div");
   row.className = "row";
   row.style.cssText = "border-bottom:none;padding:4px 0";
@@ -831,53 +890,77 @@ function levellingCard() {
   }
   return el;
 }
-/* Apply recommended: one click re-applies the selected Format Profile's full
-   fan-out, the same POST the Profile page's picker makes. A profile owns stage
+/* The Format Profile, first card of the Overview: the station-format picker
+   (one POST fans the profile's stage settings out, as the native app's
+   picker does) and "Re-apply Profile", which puts the selected profile's
+   stage settings back after per-stage tuning drifted. A profile owns stage
    keys only; devices, levels, the operating mode, the control server and the
    calibration are not in it and stay. `custom` is the sentinel for bespoke
-   tuning: nothing to re-apply, so the button rests. */
-function recommendedCard() {
+   tuning: nothing to re-apply, so the button rests and says why. */
+function profileCard() {
+  const kind = MODEL.overviewPresetKind || "format_profile";
   const id = cfg.format_profile_id || "";
   const canApply = !!id && id !== "custom";
   const el = document.createElement("div");
   el.className = "card cardpad";
   el.id = "recommended";
-  el.style.cssText = "margin:0 0 14px";
-  el.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Recommended settings", style:"margin-top:0" }));
+  el.style.cssText = "margin:8px 0 14px";
+  el.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Format Profile", style:"margin-top:0" }));
+  const pick = document.createElement("div");
+  pick.className = "row";
+  pick.insertAdjacentHTML("beforeend", '<div class="rlabel">Profile</div>');
+  const sel = document.createElement("select");
+  sel.id = "profileSelect";
+  sel.setAttribute("aria-label", "Format Profile");
+  const ids = (presetLists[kind] || []).slice();
+  if (id && !ids.includes(id)) ids.unshift(id);
+  for (const pid of ids) sel.appendChild(Object.assign(document.createElement("option"), { value: pid, textContent: pid }));
+  sel.value = id;
+  sel.onchange = async () => {
+    try {
+      await api("/api/presets", { method:"POST", body:JSON.stringify({ kind, id: sel.value }) });
+      await loadConfig(); syncAll();
+      if (currentPage === "overview") showPage("overview");
+      toast("Format Profile '" + sel.value + "' applied live");
+    } catch (e) { toast("Format Profile failed: " + e.message, true); }
+  };
+  pick.appendChild(sel);
+  el.appendChild(pick);
   const row = document.createElement("div");
   row.className = "row";
   row.style.cssText = "border-bottom:none;padding:4px 0";
   const b = document.createElement("button");
   b.id = "applyRecommended";
-  b.textContent = "Apply recommended";
+  b.textContent = "Re-apply Profile";
   b.disabled = !canApply;
   b.onclick = async () => {
     try {
-      await api("/api/presets", { method:"POST", body:JSON.stringify({ kind:"format_profile", id }) });
+      await api("/api/presets", { method:"POST", body:JSON.stringify({ kind, id }) });
       await loadConfig(); syncAll();
       // The cards' summaries and switches are built at render time: redraw
       // so the re-applied values show (same as a card switch does).
       if (currentPage === "overview") showPage("overview");
-      toast("recommended settings of '" + id + "' applied live");
-    } catch (e) { toast("apply recommended failed: " + e.message, true); }
+      toast("Format Profile '" + id + "' re-applied live");
+    } catch (e) { toast("Re-apply Profile failed: " + e.message, true); }
   };
   row.appendChild(b);
   const cap = document.createElement("div");
   cap.className = "subtitle";
   cap.style.cssText = "margin:0";
   cap.textContent = canApply
-    ? "Re-applies the '" + id + "' profile's recommended stage settings; devices, levels and the operating mode are untouched."
-    : "Custom keeps your manual tuning; pick a Format Profile first";
+    ? "Re-applies the '" + id + "' profile's stage settings; devices, levels and the operating mode are untouched."
+    : "Custom keeps your manual tuning; pick a Format Profile to re-apply one.";
   row.appendChild(cap);
   el.appendChild(row);
   return el;
 }
 function renderOverview(c) {
-  pageHeader(c, "Overview", "DSP chain status at a glance");
+  const def = pageDef("overview");
+  pageHeader(c, def.title, def.sub);
   c.appendChild(pillStrip("overview"));
+  c.appendChild(profileCard());
   const lvCard = levellingCard();
   if (lvCard) c.appendChild(lvCard);
-  c.appendChild(recommendedCard());
   const grid = document.createElement("div");
   grid.className = "ovgrid";
   // One card per switchable stage, plus a stage a levelling engine owns
@@ -911,7 +994,7 @@ function renderOverview(c) {
     grid.appendChild(el);
   }
   c.appendChild(grid);
-  c.appendChild(helpBox(MODEL.overviewHelp));
+  c.appendChild(helpBox(def.help || MODEL.overviewHelp));
 }
 function kv(k, vId, initial) {
   return `<div class="kvrow"><span class="k">${k}</span><span class="v" id="${vId}">${initial ?? "-"}</span></div>`;
@@ -940,7 +1023,8 @@ function shortcutBar() {
   return bar;
 }
 function renderMonitoring(c) {
-  pageHeader(c, "Monitoring", "Overview and live status");
+  const def = pageDef("monitoring");
+  pageHeader(c, def.title, def.sub);
   c.appendChild(shortcutBar());
   const grid = document.createElement("div");
   grid.className = "mongrid";
@@ -949,8 +1033,8 @@ function renderMonitoring(c) {
   grid.innerHTML =
     `<div class="card cardpad"><div class="kvrow"><span class="k">Source</span><span class="v">${cfg.source_mode === "tone" ? "Test Tone" : srcName()}</span></div>` +
       `<div class="kvrow"><span class="k">Output</span><span class="v">${outName()}</span></div>` +
-      `<div class="hmeter"><div class="lab"><span>INPUT L</span><span id="monInLv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInL"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div>` +
-      `<div class="hmeter"><div class="lab"><span>INPUT R</span><span id="monInRv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInR"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div></div>` +
+      `<div class="hmeter"><div class="lab"><span>Input L</span><span id="monInLv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInL"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div>` +
+      `<div class="hmeter"><div class="lab"><span>Input R</span><span id="monInRv">-inf dBFS</span></div><div class="htrack"><div class="hfill" id="monInR"></div></div><div class="scale"><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>-3</span><span>0 dBFS</span></div></div></div>` +
     (compositeMode()
       ? `<div class="card cardpad"><div class="gtitle" style="margin-top:0">MPX</div>` +
           kv("Output", "monOut") + kv("Deviation", "monDev") + kv("Modulation", "monMod") + `</div>`
@@ -964,35 +1048,27 @@ function renderMonitoring(c) {
       kv("AGC Gain", "monAGC") + kv("Adv Dynamics", "monAdvDyn") + kv("DAC Peak", "monDAC") + `</div>` +
     (compositeMode() ?
       `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Subcarriers</div>` +
-      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + kv("Stereo Image", "monImg") + `</div>` : "") +
+      kv("Pilot", "monPilot") + kv("RDS", "monRDS") + kv("Budget Margin", "monMargin") + `</div>` : "") +
+    `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stereo Image</div>` + kv("Correlation", "monImg") + `</div>` +
     `<div class="card cardpad"><div class="gtitle" style="margin-top:0">Stream Health</div>` +
       kv("Uptime", "monUp") + kv("Ring Buffer", "monRing") + kv("Drops OVR/UND", "monDrops") + kv("Resample", "monResample") + kv("Xruns R/C", "monXruns") + kv("Render Load", "monLoad") + `</div>`;
   c.appendChild(grid);
+  // The signal chain as the read-only pill strip (the stage cards live on
+  // the Sound Overview; Monitoring repeats none of them).
   c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Signal Chain" }));
-  const chain = document.createElement("div");
-  chain.className = "ovgrid";
-  for (const s of MODEL.stages) {
-    if (!s.summary || !pageVisible(s.id)) continue;
-    const on = !s.enable || isTrue(cfg[s.enable]);
-    const el = document.createElement("div");
-    el.className = "ovcard";
-    el.dataset.page = s.id;
-    el.innerHTML = `<div class="ovhead"><span class="dot ${on ? "blue" : "off"}"></span>${s.title}<span class="chev">&rsaquo;</span></div><div class="ovsum">${summaryText(s.summary)}</div>`;
-    el.onclick = () => showPage(s.id);
-    chain.appendChild(el);
-  }
-  c.appendChild(chain);
+  c.appendChild(pillStrip("monitoring"));
+  if (def.help) c.appendChild(helpBox(def.help));
   pollMeters();
   // Like every other render: without this, sitting on Monitoring while the
   // mode changes elsewhere leaves the sidebar showing the old mode's pages.
   syncAll();
 }
-function renderRDSStatus(c) {
+function renderRDSStatus(c, p) {
   const grid = document.createElement("div");
   grid.className = "formgrid";
   const onAir = document.createElement("div");
   onAir.className = "fcard";
-  onAir.innerHTML = '<h2>On Air</h2>';
+  onAir.innerHTML = '<h2>On Air Now</h2>';
   const oc = document.createElement("div");
   oc.className = "card cardpad";
   oc.innerHTML = '<div class="rds-live"><div class="ps" id="rdsPS">--------</div><div class="rt" id="rdsRT"></div></div><div class="subtitle" id="rdsIds" style="margin:4px 0 2px"></div><div class="subtitle" id="rdsLPS"></div>';
@@ -1000,8 +1076,10 @@ function renderRDSStatus(c) {
   grid.appendChild(onAir);
   const quick = document.createElement("div");
   quick.className = "fcard";
-  quick.innerHTML = '<h2>Quick Control</h2>';
-  const qc = card(["en_rds", "tp"]);
+  quick.innerHTML = '<h2>Switches</h2>';
+  // The on-air switches: RDS itself, TP and MS, and TA as a big button
+  // (it goes on for the length of a traffic bulletin).
+  const qc = card(["en_rds", "tp", "ms"]);
   const taWrap = document.createElement("div");
   taWrap.style.cssText = "padding:10px 0";
   const ta = document.createElement("button");
@@ -1018,11 +1096,14 @@ function renderRDSStatus(c) {
   const idc = document.createElement("div");
   idc.className = "subtitle";
   idc.style.margin = "6px 0 4px";
-  idc.textContent = "TA forces a 0A group on air at the edge. Leave off outside announcements.";
+  idc.textContent = "Turn TA on for the length of a traffic announcement, then off again.";
   qc.appendChild(idc);
   quick.appendChild(qc);
   grid.appendChild(quick);
   c.appendChild(grid);
+  const keys = (p && p.cards ? p.cards.flatMap(fc => fc.keys) : []);
+  if (keys.length) c.appendChild(resetTabButton(keys, p.title));
+  if (p && p.help) c.appendChild(helpBox(p.help));
   syncAll();
   updateTAButton();
   pollRDS(true);
@@ -1031,7 +1112,7 @@ function updateTAButton() {
   const b = $("taQuick");
   if (!b) return;
   const on = isTrue(cfg.ta);
-  b.textContent = on ? "TA ACTIVE - click to end announcement" : "Activate TA (Traffic Announcement)";
+  b.textContent = on ? "Traffic Announcement On Air - Click to End" : "Start Traffic Announcement (TA)";
   b.classList.toggle("on", on);
 }
 function renderPresets(c) {
@@ -1152,36 +1233,40 @@ async function renderSnapshotSlots(host) {
     '<div class="subtitle" style="margin-top:6px">Slots are shared with the native GUI (same file next to the config). An exported slot is a complete MPX Prime INI, loadable via --config.</div>');
 }
 function renderInterfaces(c, p) {
-  const dev = document.createElement("div");
-  dev.className = "card cardpad";
-  dev.style.maxWidth = "640px";
-  dev.innerHTML =
-    '<div class="row"><div class="rlabel">Input Device</div><select id="devIn" style="max-width:340px"></select></div>' +
-    '<div id="mixIn"></div>' +
-    '<div class="row"><div class="rlabel">Output Device</div><select id="devOut" style="max-width:340px"></select></div>' +
-    '<div id="mixOut"></div>' +
-    '<div class="subtitle" id="devNote" style="margin-top:8px"></div>' +
-    '<div class="subtitle">Devices and sample rate are restart-class: choose, then press Restart.</div>';
-  c.appendChild(dev);
-  // Monitor output: its own picker + enable (the decoded-audio path).
-  const mon = document.createElement("div");
-  mon.className = "card cardpad";
-  mon.style.maxWidth = "640px";
-  mon.innerHTML =
-    '<div class="row"><div class="rlabel">Monitor Device</div><select id="devMon" style="max-width:340px"></select></div>';
-  mon.appendChild(card(["monitor_enabled", "monitor_gain_db"]));
+  // Same cards as the native Audio I/O page: Operating Mode, Input (device
+  // and gain), Output (device and levels), Monitor, Engine (Advanced folded).
+  const cards = {};
+  for (const fc of p.cards || []) cards[fc.id] = fc;
+  const devRow = (label, selId, chId, aria) =>
+    `<div class="row"><div class="rlabel">${label} Device</div><select id="${selId}" style="max-width:340px"></select></div>` +
+    `<div class="row"><div class="rlabel">${label} Channels</div><input type="text" id="${chId}" placeholder="1,2" style="max-width:90px" aria-label="${aria}"></div>`;
+  const grid = document.createElement("div");
+  grid.className = "formgrid";
+  if (cards.mode) grid.appendChild(formCard(cards.mode));
+  const input = formCard(cards.input || { t: "Input", keys: [] });
+  const inDev = document.createElement("div");
+  inDev.innerHTML = devRow("Input", "devIn", "chIn", "Input channels") + '<div id="mixIn"></div>';
+  input.querySelector(".card").prepend(inDev);
+  grid.appendChild(input);
+  const output = formCard(cards.output || { t: "Output", keys: [] });
+  const outDev = document.createElement("div");
+  outDev.innerHTML = devRow("Output", "devOut", "chOut", "Output channels") + '<div id="mixOut"></div>' +
+    '<div class="subtitle" id="devNote" style="margin-top:8px"></div>';
+  output.querySelector(".card").prepend(outDev);
+  output.querySelector(".card").appendChild(Object.assign(document.createElement("div"),
+    { className:"subtitle", textContent:"Device and channel changes restart the engine. Channels are one-based device channels, e.g. 3,4; one number is mono; empty is 1,2. Input Gain, Output Level and Line Output are rig calibration, remembered per device." }));
+  grid.appendChild(output);
+  // The listening monitor: a second output alongside the transmitter feed.
   if (inCurrentMode(MODEL.monitorModes)) {
-    c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Monitor (decoded audio)" }));
-    c.appendChild(mon);
+    const mon = formCard({ t: "Monitor", keys: ["monitor_enabled", "monitor_gain_db"] });
+    const monDev = document.createElement("div");
+    monDev.innerHTML = devRow("Monitor", "devMon", "chMon", "Monitor channels");
+    mon.querySelector(".card").prepend(monDev);
+    grid.appendChild(mon);
   }
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Mode & Levels" }));
-  c.appendChild(card(p.keys));
-  c.appendChild(Object.assign(document.createElement("div"),
-    { className:"subtitle", textContent:"Input Gain / Output Level / Line Output are rig calibration, remembered per device." }));
-  if (p.keys2 && p.keys2.keys.length) {
-    c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:p.keys2.title }));
-    c.appendChild(card(p.keys2.keys));
-  }
+  if (cards.engine) grid.appendChild(formCard(cards.engine));
+  c.appendChild(grid);
+  if (cards.engineAdvanced) c.appendChild(advancedCard(cards.engineAdvanced.keys));
   // Remote control: READ-ONLY. Editing the server's own bind/port/key from
   // the page it serves is a lockout footgun; change them in the INI or GUI.
   const rc = document.createElement("div");
@@ -1192,8 +1277,9 @@ function renderInterfaces(c, p) {
     `<div class="kvrow"><span class="k">Port</span><span class="v">${cfg.control_port || "8737"}</span></div>` +
     `<div class="kvrow"><span class="k">API Key</span><span class="v">${isTrue(cfg.control_enabled) ? (cfg.control_api_key ? "set" : "none (loopback only)") : "-"}</span></div>` +
     '<div class="subtitle" style="margin-top:6px">Read-only here: changing the server you are talking through risks locking yourself out. Edit in the INI or the native GUI; applies at next launch.</div>';
-  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (read-only)" }));
+  c.appendChild(Object.assign(document.createElement("div"), { className:"gtitle", textContent:"Remote Control (Read-Only)" }));
   c.appendChild(rc);
+  if (p.help) c.appendChild(helpBox(p.help));
   renderCardMixer();
   fillDeviceSelects();   // from cache: no empty pickers while the fetch runs
   loadDevices();         // then refresh in the background
@@ -1215,16 +1301,16 @@ function renderAbout(c) {
     '<div class="subtitle" style="margin-bottom:10px">Professional FM stereo processing and RDS encoding - free and open source</div>' +
     kv("Version", "aboutVersion", s.version || "-") +
     kv("Platform", "aboutPlatform", s.platform || "-") +
-    kv("Engine rate", "aboutRate", s.sampleRateHz ? (s.sampleRateHz / 1000).toFixed(0) + " kHz" : "-") +
-    kv("Operating mode", "aboutMode", MODE_LABEL[s.outputMode] || String(s.outputMode || "-").toUpperCase()) +
+    kv("Engine Rate", "aboutRate", s.sampleRateHz ? (s.sampleRateHz / 1000).toFixed(0) + " kHz" : "-") +
+    kv("Operating Mode", "aboutMode", modeTitle(s.outputMode)) +
     kv("Licence", "aboutLicence", "AGPL-3.0") +
     '<div class="subtitle" style="margin-top:10px">' +
       '<a href="https://github.com/bkram/MPXPrime" target="_blank" rel="noreferrer">View on GitHub</a> &middot; ' +
       '<a href="https://github.com/bkram/MPXPrime/blob/main/docs/studio-operator-guide.md" target="_blank" rel="noreferrer">Operator Guide</a> &middot; ' +
-      '<a href="https://github.com/bkram/MPXPrime/blob/main/LICENSE" target="_blank" rel="noreferrer">License</a>' +
+      '<a href="https://github.com/bkram/MPXPrime/blob/main/LICENSE" target="_blank" rel="noreferrer">Licence</a>' +
     '</div>' +
     '<div class="subtitle" style="margin-top:10px">Experimental and not certified - no conformity or compliance is promised. ' +
-      'See the README for intended use and the AGPL-3.0 license for terms (provided without warranty).</div>';
+      'See the README for intended use and the AGPL-3.0 licence for terms (provided without warranty).</div>';
   c.appendChild(card);
   pollStatus();
   syncAll();
@@ -1348,17 +1434,34 @@ function deviceName(id, list) {
    the fetch can be awaited where the caller needs fresh selections. */
 function fillDeviceSelects() {
   if (!deviceInfo) return;
-  const fill = (sel, list, selected, key) => {
+  // Option labels carry the channel count ("Scarlett 18i8 (8 out)") when the
+  // listing knows it; ALSA PCMs do not, and then the name stands alone.
+  const fill = (sel, list, selected, key, countKey, countWord) => {
     if (!sel) return;
     sel.innerHTML = "";
     sel.appendChild(Object.assign(document.createElement("option"), { value:"", textContent:"(system default)" }));
-    for (const dev of list) sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:dev.name }));
+    for (const dev of list) {
+      const n = Number(dev[countKey] || 0);
+      const label = n > 0 ? `${dev.name} (${n} ${countWord})` : dev.name;
+      sel.appendChild(Object.assign(document.createElement("option"), { value:dev.id, textContent:label }));
+    }
     sel.value = selected || "";
     sel.onchange = () => patchKey(key, sel.value);
   };
-  fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid");
-  fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid");
-  fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid");
+  // The channel fields hold the INI spelling (one-based "3,4", "3" = mono,
+  // "" = 1,2) and patch their key like the picker patches the uid; the
+  // server normalises ("4,3" comes back "3,4", "2,1" comes back "").
+  const fillChannels = (input, value, key) => {
+    if (!input) return;
+    input.value = value || "";
+    input.onchange = () => patchKey(key, input.value.trim());
+  };
+  fill($("devIn"), deviceInfo.inputs, deviceInfo.selectedInput, "input_device_uid", "inputChannels", "in");
+  fill($("devOut"), deviceInfo.outputs, deviceInfo.selectedOutput, "output_device_uid", "outputChannels", "out");
+  fill($("devMon"), deviceInfo.outputs, deviceInfo.selectedMonitor, "monitor_device_uid", "outputChannels", "out");
+  fillChannels($("chIn"), deviceInfo.selectedInputChannels, "input_channels");
+  fillChannels($("chOut"), deviceInfo.selectedOutputChannels, "output_channels");
+  fillChannels($("chMon"), deviceInfo.selectedMonitorChannels, "monitor_channels");
   if ($("devNote")) $("devNote").textContent = deviceInfo.note || "";
 }
 async function loadDevices() {
@@ -1370,7 +1473,12 @@ async function loadDevices() {
 const dbText = (v) => v == null ? "-" : (v <= 0.00001 ? "-inf" : (20*Math.log10(v)).toFixed(1));
 const dbPct = (v) => (v == null || v <= 0.00001) ? 0 : Math.max(0, Math.min(100, (20*Math.log10(v)+36)/36*100));
 const gr = (v, d=1) => v == null ? "-" : "-" + Math.abs(v).toFixed(d) + " dB";
-const MODE_LABEL = { mpx: "MPX", fm: "FM", hd: "HD", am: "AM", monitor: "MONITOR" };
+/* The operating mode as the app and the docs name it ("MPX Output"...), from
+   the schema's own operating_mode options so there is one spelling. */
+const modeTitle = (m) => {
+  const opt = (SCHEMA.operating_mode?.options || []).find(([v]) => v === m);
+  return opt ? opt[1] : (m ? String(m) : "-");
+};
 let recoveringConfig = false;
 async function pollStatus() {
   try {
@@ -1383,11 +1491,13 @@ async function pollStatus() {
       try { await loadConfig(); syncAll(); } catch (e) {} finally { recoveringConfig = false; }
     }
     $("cDot").classList.toggle("on", s.running);
-    $("cRun").textContent = s.running ? "RUNNING" : "STOPPED";
+    $("cRun").textContent = s.running ? "Running" : "Stopped";
     $("cRun").parentElement.classList.toggle("green", s.running);
     $("cSource").textContent = s.sourceMode === "tone" ? "Test Tone" : deviceName(deviceInfo?.selectedInput, "inputs");
     $("cRate").textContent = (s.sampleRateHz/1000).toFixed(0) + " kHz";
-    $("cMode").textContent = MODE_LABEL[s.outputMode] || String(s.outputMode || "").toUpperCase();
+    $("cMode").textContent = modeTitle(s.outputMode);
+    // The listening monitor is an indicator of its own, never a mode.
+    $("cMonCell").hidden = !isTrue(cfg.monitor_enabled);
     // A stopped engine with a note (e.g. missing audio device) takes
     // priority in the warning cell -- it is why the operator is here.
     const note = (!s.running && s.notes && s.notes.length) ? s.notes[0] : null;
@@ -1399,7 +1509,7 @@ async function pollStatus() {
     } else if (rateWarn) {
       $("cWarnCell").hidden = false;
       $("cWarnCell").querySelector(".k").textContent = "RDS Warning";
-      $("cWarn").textContent = "RATE < 192 kHz";
+      $("cWarn").textContent = "Rate < 192 kHz";
     } else {
       $("cWarnCell").hidden = true;
     }
@@ -1408,7 +1518,7 @@ async function pollStatus() {
     b.textContent = s.running ? "Stop" : "Start";
     b.className = s.running ? "red" : "blue";
   } catch (e) {
-    $("cRun").textContent = "OFFLINE";
+    $("cRun").textContent = "Offline";
     $("cDot").classList.remove("on");
   }
 }
@@ -1416,21 +1526,38 @@ async function pollStatus() {
 // publish rate) when the server offers it, and the 300 ms poll otherwise --
 // the poll keeps running as the fallback and steps aside while the stream is
 // alive. Both end in applyMeters, so the bars never depend on which one won.
+// A hidden tab (another tab in front, the window minimised) polls nothing
+// and closes the stream; showing it again resumes both at once. Without
+// this a forgotten tab streamed 20 lines a second for up to an hour.
 let meterStreamAlive = false;
+let meterStreamAbort = null;
+let meterStreamRetry = null;
+const pageHidden = () => document.visibilityState === "hidden";
 async function pollMeters() {
-  if (meterStreamAlive) return;
+  if (meterStreamAlive || pageHidden()) return;
   let m = null;
   try { m = await api("/api/meters"); } catch (e) {}
   applyMeters(m);
 }
+function scheduleMeterStream(ms) {
+  clearTimeout(meterStreamRetry);
+  meterStreamRetry = setTimeout(streamMeters, ms);
+}
 async function streamMeters() {
+  meterStreamRetry = null;
+  if (pageHidden() || meterStreamAbort) return;
+  const abort = typeof AbortController === "function" ? new AbortController() : null;
+  meterStreamAbort = abort || true;
   let res;
   try {
-    res = await fetch("/api/meters/stream?hz=20", { headers: headers(false) });
+    const opts = { headers: headers(false) };
+    if (abort) opts.signal = abort.signal;
+    res = await fetch("/api/meters/stream?hz=20", opts);
     if (!res.ok || !res.body || typeof res.body.getReader !== "function") throw new Error("no stream");
   } catch (e) {
     meterStreamAlive = false;
-    setTimeout(streamMeters, 5000);
+    meterStreamAbort = null;
+    if (!pageHidden()) scheduleMeterStream(5000);
     return;
   }
   meterStreamAlive = true;
@@ -1453,10 +1580,26 @@ async function streamMeters() {
       }
     }
   } catch (e) {}
-  // Stream ended (server restart, network): back to polling, retry the stream.
+  // Stream ended (server restart, network, or the page was hidden): back to
+  // polling and retry the stream -- unless hidden, when showing the page
+  // restarts it.
   meterStreamAlive = false;
-  setTimeout(streamMeters, 2000);
+  meterStreamAbort = null;
+  if (!pageHidden()) scheduleMeterStream(2000);
 }
+function onVisibilityChange() {
+  if (pageHidden()) {
+    clearTimeout(meterStreamRetry);
+    meterStreamRetry = null;
+    if (meterStreamAbort && meterStreamAbort !== true) meterStreamAbort.abort();
+  } else {
+    pollStatus();
+    pollMeters();
+    pollRDS(false);
+    streamMeters();
+  }
+}
+document.addEventListener("visibilitychange", onVisibilityChange);
 function applyMeters(m) {
   const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
   const setw = (id, pct) => { const el = $(id); if (el) el.style.width = pct + "%"; };
@@ -1518,8 +1661,10 @@ function applyMeters(m) {
     ? m.advancedDynamicsBandGainsDB.map(g => g.toFixed(1)).join("/") + " dB (density " +
       (m?.advancedDynamicsDensityDB != null ? m.advancedDynamicsDensityDB.toFixed(1) : "-") + " dB)"
     : "-");
-  set("monPilot", m?.pilotInjectionPercent != null ? m.pilotInjectionPercent.toFixed(1) + " %" : "-");
-  set("monRDS", m?.rdsInjectionPercent != null ? m.rdsInjectionPercent.toFixed(1) + " %" : "-");
+  // Injections in kHz (percent of 75 kHz in brackets), as on the RDS page.
+  const inj = (pct) => pct != null ? (pct * 0.75).toFixed(1) + " kHz (" + pct.toFixed(1) + "%)" : "-";
+  set("monPilot", inj(m?.pilotInjectionPercent));
+  set("monRDS", inj(m?.rdsInjectionPercent));
   const marginEl = $("monMargin");
   if (marginEl) {
     marginEl.textContent = m?.compositeBudgetMarginDB != null ? "+" + m.compositeBudgetMarginDB.toFixed(1) + " dB" : "-";
@@ -1527,7 +1672,7 @@ function applyMeters(m) {
     marginEl.style.color = m?.compositeOverBudget ? "var(--red)" : "";
     if (m?.compositeOverBudget) marginEl.textContent += "  OVER BUDGET";
   }
-  set("monImg", m?.stereoCorrelation != null ? "Corr " + (m.stereoCorrelation >= 0 ? "+" : "") + m.stereoCorrelation.toFixed(2) : "-");
+  set("monImg", m?.stereoCorrelation != null ? (m.stereoCorrelation >= 0 ? "+" : "") + m.stereoCorrelation.toFixed(2) : "-");
   // Stream health (macOS input source; fields null elsewhere).
   const up = statusInfo?.uptimeSeconds;
   set("monUp", up != null ? (up >= 3600 ? (up/3600).toFixed(1) + " h" : Math.round(up/60) + " min") : "-");
@@ -1572,21 +1717,21 @@ function updateBypassButton() {
   const b = $("btnBypass");
   if (!b) return;
   const on = isTrue(cfg.processing_bypass);
-  b.textContent = on ? "BYPASSED" : "Bypass";
+  b.textContent = on ? "Bypassed" : "Bypass";
   b.className = on ? "red" : "";
 }
 $("btnBypass").onclick = async () => {
   /* No confirmation: bypass is a deliberate engineer's action, the button
-     turns red and the status bar shows BYPASS. (Operator ruling 2026-09-05:
+     turns red and reads Bypassed. (Operator ruling 2026-09-05:
      "just do it, trust the engineer".) */
   const on = isTrue(cfg.processing_bypass);
   await patchKey("processing_bypass", on ? "False" : "True", true);
   updateBypassButton();
   if (statusInfo?.running) {
     await transport("restart");
-    toast(on ? "Bypass off - engine restarted" : "BYPASS ON - engine restarted");
+    toast(on ? "Processing on - engine restarted" : "Processing bypassed - engine restarted");
   } else {
-    toast(on ? "Bypass off (takes effect at start)" : "Bypass on (takes effect at start)");
+    toast(on ? "Processing on (takes effect at start)" : "Processing bypassed (takes effect at start)");
   }
 };
 $("btnStartStop").onclick = () => transport(statusInfo?.running ? "stop" : "start");
@@ -1626,9 +1771,9 @@ async function boot() {
 }
 boot();
 streamMeters();
-setInterval(pollStatus, 2000);
+setInterval(() => { if (!pageHidden()) pollStatus(); }, 2000);
 setInterval(pollMeters, 300);
-setInterval(() => pollRDS(false), 1000);
+setInterval(() => { if (!pageHidden()) pollRDS(false); }, 1000);
 </script>
 </body>
 </html>

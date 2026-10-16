@@ -105,13 +105,13 @@ final class MPXGenerator {
     }
 
     /// Composite-budget safety margin. The audio-composite ceiling is
-    /// computed as `effectiveThreshold - reserved - safetyMargin`,
-    /// where `effectiveThreshold = threshold/outputGain` and `reserved`
-    /// is the smoothed peak of pilot+RDS subcarriers. This leaves
-    /// ~2% of the budget unallocated as headroom against numerical
-    /// jitter, peak-tracking lag, and the lookahead limiter's small
-    /// overshoot. The final post-injection clamp is the last-resort
-    /// numeric guard; it should never engage for valid configs.
+    /// computed as `effectiveThreshold - reserved - safetyMargin`, where
+    /// `effectiveThreshold = threshold x min(1, deviation / 75 kHz) /
+    /// outputGain`, `reserved` is the pilot+RDS peak reservation and the
+    /// margin is scaled exactly like the threshold. This leaves ~2% of the
+    /// budget unallocated as headroom against numerical jitter and the
+    /// limiter's Float rounding. The final post-injection clamp is the
+    /// last-resort numeric guard; it should never engage for valid configs.
     private static let finalCompositeBudgetSafetyMargin: Float = 0.02
 
     private struct EncoderComplianceConfig {
@@ -133,6 +133,9 @@ final class MPXGenerator {
         /// calling a monitor change restart-class.
         let monitorEnabled: Bool
         let monitorDeviceUID: String
+        /// INI spelling of the monitor's device channels ("" = 1, 2); here
+        /// so a channel change on the monitor is live like its device.
+        let monitorChannels: String
         let monitorGainDB: Float
         /// 19 kHz pilot injection as a fraction of full deviation (0.08 = 8%).
         /// Live-applied as a gain on the pilot oscillator; no restart needed.
@@ -273,6 +276,7 @@ final class MPXGenerator {
             mpxLineOutputDBFS: Float(config.mpxLineOutputDBFS),
             monitorEnabled: config.monitorEnabled,
             monitorDeviceUID: config.monitorDeviceUID ?? "",
+            monitorChannels: AppConfig.channelsINIValue(config.monitorChannels),
             monitorGainDB: Float(config.monitorGainDB),
             pilotLevel: Float(config.pilotLevel),
             finalDriveDB: Float(config.finalDriveDB),
@@ -585,10 +589,22 @@ final class MPXGenerator {
     /// Composite amplitude 1.0 is this many kHz of deviation at EVERY
     /// `mpx_deviation_khz`: the whole composite is scaled by
     /// `mpx_deviation_khz / referenceDeviationKHz`, so the pilot stays at
-    /// 9 % of the chosen deviation and every kHz readout multiplies a
+    /// `pilot_level` of the chosen deviation (8 % by default) and every kHz
+    /// readout multiplies a
     /// composite peak by this constant (`DeviationReadout`).
     static let referenceDeviationKHz: Float = 75.0
     private var deviationScale: Float
+    /// `rds_level` is kHz of deviation (EN 50067 sec 1.4) at EVERY
+    /// `mpx_deviation_khz`. The coder emits it on the 75 kHz scale
+    /// (`rds_level / 75`) and the subcarriers are then scaled by
+    /// `deviationScale` with the rest of the composite, so the RDS sample is
+    /// multiplied by this first. Until 2026-10 it was not, and the injection
+    /// was `rds_level x mpx_deviation_khz / 75`: 1.33 kHz on air for 2.0 at a
+    /// 50 kHz setting, 0.67 kHz at 25 kHz -- under the standard's 1.0 kHz
+    /// minimum (review 2026-10 finding 5). Exactly 1.0 at 75 kHz. The pilot
+    /// is a share of the chosen deviation and keeps following it.
+    @inline(__always)
+    private var rdsLevelCompensation: Float { 1.0 / max(1e-3, deviationScale) }
     private let programLowpassHz: Float
 
     private var widebandAGCEnabled: Bool
@@ -640,7 +656,7 @@ final class MPXGenerator {
     private var primeBassFreqHz: Float
     // PrimeBass: psychoacoustic missing-fundamental enhancer (MaxxBass /
     // Larsen-Aarts topology), rewritten 2026-10-10 after
-    // docs/primebass-review.md. Mid channel only:
+    // the PrimeBass review. Mid channel only:
     //
     //   band = LR4 LP(F0) . LR4 HP(0.35 F0) (mid)       fundamental band
     //   env  = peak follower |band|, 1 ms / 150 ms, floor -60 dBFS
@@ -752,10 +768,11 @@ final class MPXGenerator {
     private var multibandMidReleaseMS: Float
     private var multibandHighReleaseMS: Float
 
-    private var mb3Split1 = StereoLinkwitzRiley4()
-    private var mb3Split2 = StereoLinkwitzRiley4()
-    // Linear-phase FIR splitter — used in TX mode in place of mb3Split1/2
-    // to keep transients time-coherent across bands.
+    // IIR (allpass-compensated LR4) splitter for the low-latency path; the
+    // bands sum to an allpass, so the magnitude is flat.
+    private var mb3IIRSplitter = StereoIIRMultibandSplitter3()
+    // Linear-phase FIR splitter — used in TX mode in place of the IIR
+    // splitter to keep transients time-coherent across bands.
     private var mb3FIRSplitter = LinearPhaseMultibandSplitter3()
     private var mbLowCompL = MonoCompressor()
     private var mbLowCompR = MonoCompressor()
@@ -764,12 +781,9 @@ final class MPXGenerator {
     private var mbHighCompL = MonoCompressor()
     private var mbHighCompR = MonoCompressor()
 
-    private var mb5Split1 = StereoLinkwitzRiley4()
-    private var mb5Split2 = StereoLinkwitzRiley4()
-    private var mb5Split3 = StereoLinkwitzRiley4()
-    private var mb5Split4 = StereoLinkwitzRiley4()
+    private var mb5IIRSplitter = StereoIIRMultibandSplitter5()
     // Linear-phase FIR splitter — used in TX mode in place of
-    // mb5Split1..4 to keep transients time-coherent across bands.
+    // mb5IIRSplitter to keep transients time-coherent across bands.
     private var mb5FIRSplitter = LinearPhaseMultibandSplitter5()
     private var mb5Comp1L = MonoCompressor()
     private var mb5Comp1R = MonoCompressor()
@@ -893,7 +907,8 @@ final class MPXGenerator {
         // The coder normalises its shaped output to unit peak before scaling,
         // so the nominal injection IS the peak; 1.25 covers that estimate
         // being taken over a finite test pattern.
-        let rdsPeak: Float = rdsSupported ? (1.25 * rdsInjectionPercent * 0.01) : 0.0
+        let rdsPeak: Float = rdsSupported
+            ? (1.25 * rdsInjectionPercent * 0.01 * rdsLevelCompensation) : 0.0
         // Deliberately NOT gated on mono mode or the stereo-services flag:
         // the reserve must bound whatever the next minute may carry, and
         // over-reserving only costs headroom in the first window.
@@ -930,6 +945,11 @@ final class MPXGenerator {
     // and surface any latency / bit-difference issues before Phase 2
     // starts migrating stages.
     private var dualRateBoundaryEnabled: Bool = false
+    /// `dual_rate_audio_domain_enabled` as configured: whether the boundary
+    /// is WANTED. `dualRateBoundaryEnabled` is whether it runs, which also
+    /// needs an integer ratio at the current MPX rate (re-derived by
+    /// `setSampleRate`) and not the processed-audio mode.
+    private var dualRateRequested: Bool = false
     private var dualRateAudioRate: Float = 48_000.0
     private var dualRateFactor: Int = 1
     // Processed-audio output mode: the render path emits the post-pre-encode-limiter
@@ -995,7 +1015,7 @@ final class MPXGenerator {
 
     private var monoBassEnabled: Bool
     private var monoBassFreqHz: Float
-    private var monoBassSideLP = Biquad()
+    private var monoBassFilter = MonoBassFilter()
     private var stereoProtectInputMidEnv: Float = 0.0
     private var stereoProtectInputSideEnv: Float = 0.0
     private var stereoProtectMidEnv: Float = 0.0
@@ -1003,7 +1023,7 @@ final class MPXGenerator {
     private var stereoProtectGain: Float = 1.0
     private var stereoProtectAttackCoeff: Float = 0.0
     private var stereoProtectReleaseCoeff: Float = 0.0
-    private var rdsCoder: BasicRDSCoder?
+    private let rdsCoder: BasicRDSCoder?
 
     private var preEncodeAudioLimiterEnabled: Bool
     private var preEncodeAudioLimiter = PreEncodeAudioLimiter()
@@ -1055,6 +1075,54 @@ final class MPXGenerator {
     private var stereoSubcarrierSupported: Bool = false
     private var rdsSupported: Bool = false
 
+    // MARK: Composite services a render rate can carry
+
+    /// The highest audio frequency that can reach the stereo encoder at a
+    /// significant level: the -80 dB point of the widest encoder lowpass
+    /// (the 16 kHz cap with pre-emphasis off; 14.6 / 14.9 kHz with it on).
+    static let stereoAudioBandEdgeHz = 17_500.0
+    /// RDS occupies 57 kHz +/- 2.4 kHz (EN 50067 sec 1.4).
+    static let rdsUpperBandEdgeHz = 59_400.0
+    /// Lowest render rate whose Nyquist frequency holds the upper L-R
+    /// sideband (38 kHz + the audio band edge = 55.5 kHz): 111 kHz. Below it
+    /// the sideband folds about Nyquist into the L-R band a receiver decodes
+    /// (at 96 kHz a 12 kHz L-only tone puts an 8 kHz L-R alias 6 dB under
+    /// the wanted L-R, review 2026-10 finding 4), so stereo -- and the pilot
+    /// that would announce it -- stay off and the composite is mono.
+    static let minimumStereoSampleRate = 2.0 * (38_000.0 + stereoAudioBandEdgeHz)
+    /// Lowest render rate whose Nyquist frequency holds the whole RDS band:
+    /// 118.8 kHz.
+    static let minimumRDSSampleRate = 2.0 * rdsUpperBandEdgeHz
+
+    struct CompositeRateSupport: Equatable {
+        var stereo: Bool
+        var rds: Bool
+    }
+
+    static func compositeRateSupport(sampleRate: Double) -> CompositeRateSupport {
+        CompositeRateSupport(
+            stereo: sampleRate >= minimumStereoSampleRate,
+            rds: sampleRate >= minimumRDSSampleRate)
+    }
+
+    /// The operator-facing note for a composite render rate that cannot
+    /// carry every service, nil when it can. Both engines report it.
+    static func compositeRateNote(sampleRate: Double) -> String? {
+        let support = compositeRateSupport(sampleRate: sampleRate)
+        let rate = Int(sampleRate.rounded())
+        if !support.stereo {
+            return "The composite renders at \(rate) Hz, too low for stereo and RDS "
+                + "(stereo needs at least \(Int(minimumStereoSampleRate)) Hz, RDS "
+                + "\(Int(minimumRDSSampleRate.rounded())) Hz): the pilot, stereo and RDS are off "
+                + "and the composite is mono. Use a 192 kHz output."
+        }
+        if !support.rds {
+            return "The composite renders at \(rate) Hz, too low for RDS (it needs at least "
+                + "\(Int(minimumRDSSampleRate.rounded())) Hz): RDS is off. Use a 192 kHz output."
+        }
+        return nil
+    }
+
     // Pre-emphasis runs in L/R domain immediately upstream of the pre-encode
     // limiter (canonical Optimod / Stereotool placement). The limiter then
     // peak-controls the HF-boosted signal before it crosses into composite
@@ -1071,6 +1139,35 @@ final class MPXGenerator {
     private var encoderHFGuardAttackCoeff: Float = 0.0
     private var encoderHFGuardReleaseCoeff: Float = 0.0
     private var encoderProgramFIR = LinearPhaseFIRLowpass()
+    /// Whether the 6th-order Butterworth program lowpass runs in the audio
+    /// path. It is the band-limit on the low-latency monitor path (no encoder
+    /// FIR) and stays in series with the FIR on the composite, where it is
+    /// -0.47 dB at 14 kHz on the 48 kHz audio domain (inside the +/-0.5 dB
+    /// spec) and where removing it moved `--verify-hf-transients` (speech hat
+    /// SINAD 20.1 -> 19.7 dB against a 20 dB gate, 2026-10-16). In the
+    /// processed-audio modes (FM / HD / AM Output) the encoder FIR alone is the
+    /// band-limit: the audio domain runs at the device rate there, and a
+    /// bilinear Butterworth's droop grows with the rate (-1.10 dB at 14 kHz at
+    /// 96 kHz, -1.24 dB at 192 kHz), which is what an external coder received.
+    private var programLowpassInPath: Bool { !useEncoderFIR || !audioOutputOnly }
+    /// The program lowpass as its 48 kHz-domain design, for a composite whose
+    /// audio domain runs at the full render rate (boundary off): see
+    /// `StridedProgramLowpass`. Used only with the encoder FIR on (it removes
+    /// the strided filter's images) and when that rate is an integer multiple
+    /// of `programLowpassReferenceRate`; otherwise `programLP` runs.
+    private var programLPStrided = StridedProgramLowpass()
+    /// The audio-domain rate the program lowpass is defined at: the configured
+    /// dual-rate audio rate (48 kHz default), whether or not the boundary is on.
+    private var programLowpassReferenceRate: Float = 48_000.0
+    /// Encoder FIR transition: flat to the encoder cutoff (14.9 kHz at 50 us),
+    /// -6 dB at cutoff + transition / 2, 82 dB down from cutoff + transition.
+    /// 1.5 kHz in series with the Butterworth; 1 kHz where the FIR is the only
+    /// band-limit, so the 15.5-16.4 kHz tail the Butterworth used to take
+    /// down stays below the old cascade (modelled on pre-emphasised white
+    /// noise: 15-23 kHz gap -30 dB against -22 dB for the cascade; 1.5 kHz
+    /// alone measured -32 dB composite spill against -36 dB on
+    /// `--verify-hf-transients`). 249 taps / 2.6 ms at 48 kHz, 991 at 192 kHz.
+    private var encoderFIRTransitionHz: Float { programLowpassInPath ? 1_500.0 : 1_000.0 }
     // Selects the TX-grade FIR over the low-latency Butterworth. Set by
     // AudioOutputEngine based on output mode (composite → FIR, monitor →
     // Butterworth) and the `encoderFirEnabled` config toggle.
@@ -1097,8 +1194,11 @@ final class MPXGenerator {
     private var postInjectionOvershootEnv: Float = 0.0
     private var postInjectionOvershootDecayCoeff: Float = 0.0
     private var subcarrierReservationEnv: Float = 0.0
-    private var subcarrierReservationAttackCoeff: Float = 0.0
+    /// Per-sample decay of the subcarrier presence and peak holds (~2 s).
     private var subcarrierReservationReleaseCoeff: Float = 0.0
+    private var pilotPresenceEnv: Float = 0.0
+    private var rdsPresenceEnv: Float = 0.0
+    private var subcarrierPeakHoldEnv: Float = 0.0
     private var lastProgramActivity: Float = 0.0
     private struct ProgramStereoState {
         var left: Float
@@ -1331,15 +1431,23 @@ final class MPXGenerator {
         let audioRateRequest = Float(max(8_000.0, config.dualRateAudioDomainRateHz))
         let factor = Int((self.sampleRate / audioRateRequest).rounded())
         let ratioIsClean = factor >= 2 && abs(self.sampleRate - Float(factor) * audioRateRequest) < 0.5
+        self.dualRateRequested = config.dualRateAudioDomainEnabled
         self.dualRateBoundaryEnabled = config.dualRateAudioDomainEnabled && ratioIsClean && !audioOutputOnly
         self.dualRateAudioRate = ratioIsClean ? audioRateRequest : self.sampleRate
+        self.programLowpassReferenceRate = audioRateRequest
         self.dualRateFactor = ratioIsClean ? factor : 1
 
         self.monoBassEnabled = config.monoBassEnabled
             && ChainFeature.stereoProgram.applies(in: mode)
         self.monoBassFreqHz = clampf(Float(config.monoBassFreqHz), 60.0, 250.0)
+        // The coder is built from the mode-gated config, as the live path
+        // (applyRDSRuntimeConfig) gates it: RDS exists only where a
+        // composite does, so an engine built in FM / HD / AM Output with
+        // en_rds on must not run an enabled coder.
+        var rdsConfig = config
+        rdsConfig.enRDS = config.enRDS && ChainFeature.rds.applies(in: mode)
         self.rdsCoder = BasicRDSCoder(
-            config: config,
+            config: rdsConfig,
             sampleRate: self.sampleRate,
             nowPlayingState: nowPlayingState
         )
@@ -1588,7 +1696,12 @@ final class MPXGenerator {
         let clipperDelayCapacity = compositeClipperEnabled
             ? compositeClipper.maxTotalDelayHostSamples : 0
         let compositeBandwidthDelay = audioCompositeBandwidthFIR.groupDelaySamples
-        let limiterDelay = limitEnabled ? lookaheadLimiter.lookaheadSamples : 0
+        // Only a limiter that RUNS delays the audio: with
+        // `limit_lookahead_enabled = false` the stage is configured disabled
+        // and returns its input with no delay, and counting its look-ahead
+        // here rotated the pilot against the audio's 38 kHz carrier (about
+        // 170 degrees at a 1.3 ms look-ahead; peak-control review F12).
+        let limiterDelay = limitEnabled ? lookaheadLimiter.latencySamples : 0
         // NB: the dual-rate boundary's decim+interp delay is NOT added
         // here. The boundary sits upstream of the stereo encoder; the
         // 38 kHz subcarrier embedded in the audio composite is generated
@@ -1743,7 +1856,8 @@ final class MPXGenerator {
             cutoffHz: effectiveEncoderLowpassHz(
                 configured: programLowpassHz, preemphasisUS: preemphasisUS,
                 digital: digitalDelivery),
-            sampleRate: audioRate
+            sampleRate: audioRate,
+            transitionHz: encoderFIRTransitionHz
         )
     }
 
@@ -1773,7 +1887,25 @@ final class MPXGenerator {
             return
         }
         sampleRate = sr
+        // The boundary's factor is a property of the MPX rate: 192 -> 96 kHz
+        // must go from 4 to 2 (it stayed at 4, so the audio domain ran at
+        // 24 kHz on 48 kHz coefficients), and a rate that is not an integer
+        // multiple of the audio rate turns the boundary off, as at
+        // construction. The resamplers are rebuilt for the new rate.
+        deriveDualRateBoundary()
+        configureDualRateBoundary()
         reconfigureStagesForCurrentRates()
+    }
+
+    /// The dual-rate factor, audio rate and on/off state for the current MPX
+    /// rate -- the same rule the initialiser applies.
+    private func deriveDualRateBoundary() {
+        let audioRateRequest = programLowpassReferenceRate
+        let factor = Int((sampleRate / audioRateRequest).rounded())
+        let ratioIsClean = factor >= 2 && abs(sampleRate - Float(factor) * audioRateRequest) < 0.5
+        dualRateBoundaryEnabled = dualRateRequested && ratioIsClean && !audioOutputOnly
+        dualRateAudioRate = ratioIsClean ? audioRateRequest : sampleRate
+        dualRateFactor = ratioIsClean ? factor : 1
     }
 
     /// Re-derive every stage's coefficients for the current MPX rate and
@@ -2392,8 +2524,11 @@ final class MPXGenerator {
         // notch: the 14.9 kHz encoder FIR's >80 dB stopband already covers
         // 19 kHz -- measured identical to 0.01 dB on the receiver gate.)
         programLP.configure(cutoffHz: config.programLowpassHz, sampleRate: audioRate)
+        programLPStrided.configure(cutoffHz: config.programLowpassHz, sampleRate: audioRate,
+                                   referenceRate: programLowpassReferenceRate)
         encoderProgramLP.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
-        encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate)
+        encoderProgramFIR.configure(cutoffHz: config.encoderLowpassHz, sampleRate: audioRate,
+                                    transitionHz: encoderFIRTransitionHz)
         // audioCompositeBandwidthFIR sits AFTER the stereo encoder on
         // the composite signal — it must stay at the MPX rate to cover
         // 0-55 kHz including the L-R subcarrier sidebands.
@@ -2459,6 +2594,7 @@ final class MPXGenerator {
         let thresholds = Self.makeFinalCompositeThresholds(
             outputGain: outputGain,
             threshold: threshold,
+            deviationScale: deviationScale,
             reserved: subcarrierReservationEnv
         )
         return CompositeCalibrationStatus(
@@ -2483,16 +2619,22 @@ final class MPXGenerator {
         // Overshoot envelope decays at ~50 ms so a single transient
         // doesn't immediately disappear from the meter.
         postInjectionOvershootDecayCoeff = expf(-1.0 / (0.050 * sr))
-        subcarrierReservationAttackCoeff = expf(-1.0 / (0.0005 * sr))
-        subcarrierReservationReleaseCoeff = expf(-1.0 / (0.012 * sr))
+        // Subcarrier reservation holds (instant attack, ~2 s release): see
+        // `updateSubcarrierReservation`. Over the ~12 ms between observing a
+        // subcarrier sample and injecting it the hold decays by 0.6 %, which
+        // the 0.02 budget margin covers many times over.
+        subcarrierReservationReleaseCoeff = expf(-1.0 / (2.0 * sr))
         encoderHFGuardEnv = 0.0
         encoderHFGuardGain = 1.0
         encoderHFGuardAttackCoeff = expf(-1.0 / (0.004 * sr))
         encoderHFGuardReleaseCoeff = expf(-1.0 / (0.080 * sr))
-        let nyquist = (sampleRate * 0.5) - 100.0
-        pilotSupported = nyquist > (pilotFreq + 100.0)
-        stereoSubcarrierSupported = nyquist > (subcarrierFreq + 100.0)
-        rdsSupported = nyquist > 57_100.0
+        // Which subcarriers this render rate can carry without aliasing
+        // (`compositeRateSupport`). The pilot announces stereo, so it goes
+        // with the stereo subcarrier.
+        let support = Self.compositeRateSupport(sampleRate: Double(sampleRate))
+        pilotSupported = support.stereo
+        stereoSubcarrierSupported = support.stereo
+        rdsSupported = support.rds
         // The BS.412 guard's reserve reads these flags. Its `configure` runs
         // earlier in both init and setSampleRate, when they are still false,
         // so a fresh generator reserved NOTHING until the first live apply
@@ -2548,7 +2690,7 @@ final class MPXGenerator {
         // boundary is on, otherwise at the engine's MPX rate.
         let sampleRate = audioDomainSampleRate
         let sr = max(8_000.0, sampleRate)
-        monoBassSideLP.configureLowpass(cutoffHz: monoBassFreqHz, sampleRate: sr, q: 0.7071068)
+        monoBassFilter.configure(cutoffHz: monoBassFreqHz, sampleRate: sr)
         stereoProtectInputMidEnv = 0.0
         stereoProtectInputSideEnv = 0.0
         stereoProtectMidEnv = 0.0
@@ -2632,21 +2774,25 @@ final class MPXGenerator {
         primeBassOddThirdInv = fabsf(b3) > 1e-6 ? 1.0 / b3 : 0.0
     }
 
-    private func configureMultibandFilters() {
-        // Audio-domain stage.
+    /// The crossovers the splitters actually use: the configured values
+    /// clamped to an ascending, Nyquist-safe set at the audio-domain rate.
+    /// The 3-band layout uses x1 / x2.
+    private var resolvedMultibandCrossovers: (x1: Float, x2: Float, x3: Float, x4: Float) {
         let sampleRate = audioDomainSampleRate
         let x1 = clampf(multibandX1Hz, 40.0, max(60.0, (sampleRate * 0.5) - 300.0))
         let x2 = clampf(multibandX2Hz, x1 + 40.0, max(x1 + 60.0, (sampleRate * 0.5) - 200.0))
         let x3 = clampf(multibandX3Hz, x2 + 80.0, max(x2 + 100.0, (sampleRate * 0.5) - 120.0))
         let x4 = clampf(multibandX4Hz, x3 + 120.0, max(x3 + 140.0, (sampleRate * 0.5) - 60.0))
+        return (x1, x2, x3, x4)
+    }
 
-        mb3Split1.configure(cutoffHz: x1, sampleRate: sampleRate)
-        mb3Split2.configure(cutoffHz: x2, sampleRate: sampleRate)
+    private func configureMultibandFilters() {
+        // Audio-domain stage.
+        let sampleRate = audioDomainSampleRate
+        let (x1, x2, x3, x4) = resolvedMultibandCrossovers
 
-        mb5Split1.configure(cutoffHz: x1, sampleRate: sampleRate)
-        mb5Split2.configure(cutoffHz: x2, sampleRate: sampleRate)
-        mb5Split3.configure(cutoffHz: x3, sampleRate: sampleRate)
-        mb5Split4.configure(cutoffHz: x4, sampleRate: sampleRate)
+        mb3IIRSplitter.configure(x1Hz: x1, x2Hz: x2, sampleRate: sampleRate)
+        mb5IIRSplitter.configure(x1Hz: x1, x2Hz: x2, x3Hz: x3, x4Hz: x4, sampleRate: sampleRate)
 
         // Linear-phase FIR splitters (TX mode). The splitter owns the
         // crossover design (per-crossover transition = fc, floor 120 Hz,
@@ -2658,6 +2804,9 @@ final class MPXGenerator {
             mb3FIRSplitter.configure(lowHz: x1, highHz: x2, sampleRate: sampleRate)
             mb5FIRSplitter.configure(x1Hz: x1, x2Hz: x2, x3Hz: x3, x4Hz: x4, sampleRate: sampleRate)
         }
+        // The band limiters' peak hold spans one period of each band's lower
+        // crossover, so a crossover edit re-designs them too.
+        configureMultibandLimiters()
     }
 
     /// Advanced Dynamics structure setup. Lazy: a disabled stage never
@@ -2676,6 +2825,7 @@ final class MPXGenerator {
         let x4 = clampf(multibandX4Hz, x3 + 120.0, max(x3 + 140.0, (sampleRate * 0.5) - 60.0))
         advancedDynamics.configureStructure(
             sampleRate: sampleRate, x1Hz: x1, x2Hz: x2, x3Hz: x3, x4Hz: x4)
+        advancedDynamics.setDetectorPreemphasis(tauUS: preemphasisUS)
         applyAdvancedDynamicsParameters()
         advancedDynamicsStructureConfigured = true
     }
@@ -2879,14 +3029,32 @@ final class MPXGenerator {
         let thr = multibandLimiterThresholdDB
         let atk = multibandLimiterAttackMS
         let rel = multibandLimiterReleaseMS
-        mbLimLow.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLimMid.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLimHigh.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLim5B1.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLim5B2.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLim5B3.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLim5B4.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
-        mbLim5B5.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel)
+        // Each limiter's peak hold spans one period of its band's LOWER
+        // edge (the resolved crossover below it; the bottom band keeps the
+        // 50 Hz default). Without it every band held for 20 ms, so the upper
+        // bands released at least 40 ms later than configured.
+        let (x1, x2, x3, x4) = resolvedMultibandCrossovers
+        let bottom = BandLimiter.defaultLowestFrequencyHz
+        func configure(_ limiter: inout BandLimiter, _ lowestHz: Float) {
+            limiter.configure(sampleRate: sampleRate, thresholdDB: thr, attackMS: atk, releaseMS: rel,
+                              lowestFrequencyHz: lowestHz)
+        }
+        configure(&mbLimLow, bottom)
+        configure(&mbLimMid, x1)
+        configure(&mbLimHigh, x2)
+        configure(&mbLim5B1, bottom)
+        configure(&mbLim5B2, x1)
+        configure(&mbLim5B3, x2)
+        configure(&mbLim5B4, x3)
+        configure(&mbLim5B5, x4)
+    }
+
+    /// Each classic band limiter's peak-hold length in samples, by band
+    /// (3-band layout, then 5-band). Test hook.
+    var multibandLimiterHoldSamples: (three: [Int], five: [Int]) {
+        ([mbLimLow.holdSamples, mbLimMid.holdSamples, mbLimHigh.holdSamples],
+         [mbLim5B1.holdSamples, mbLim5B2.holdSamples, mbLim5B3.holdSamples,
+          mbLim5B4.holdSamples, mbLim5B5.holdSamples])
     }
 
     private func configureDownwardExpanders() {
@@ -3174,8 +3342,15 @@ final class MPXGenerator {
                                     ceilingNegativeLinear: amNegativeCeiling,
                                     lookaheadMS: 2.0, enabled: true)
         } else {
-            truePeakGuard.configure(sampleRate: sampleRate, ceilingLinear: processedAudioCeiling,
-                                    lookaheadMS: 2.0, enabled: digitalDelivery)
+            // HD: the configured dBTP ceiling. FM processed audio: full scale.
+            // The FM feed used to have nothing between the make-up and the
+            // render clamp, so the limiter's decimation ringing (and the final
+            // loudness clipper's) was hard-clipped at 1x there (F5). The guard
+            // is a gain ride, so it holds full scale without clipping. It runs
+            // only in the audio-only render paths.
+            truePeakGuard.configure(sampleRate: sampleRate,
+                                    ceilingLinear: digitalDelivery ? processedAudioCeiling : 1.0,
+                                    lookaheadMS: 2.0, enabled: true)
         }
     }
 
@@ -3214,12 +3389,20 @@ final class MPXGenerator {
             return outputGain * ((processedAudioCeiling * margin) / max(0.1, limiterCeiling))
         }
         if processedAudioFinalClipActive {
-            // Peaks are capped by the final clipper; normalize its ceiling to full scale.
+            // Peaks are capped by the final clipper; normalize its ceiling to
+            // full scale. Its decimation filter can still ring a little over
+            // it; the output guard (a gain ride) takes that, never the clamp.
             let ceilLin = powf(10.0, Self.processedAudioFinalClipCeilingDB / 20.0)
             return outputGain / max(0.1, ceilLin)
         }
-        let ceilingNorm = preEncodeAudioLimiterEnabled ? (1.0 / max(0.1, preEncodeThreshold)) : 1.0
-        return outputGain * ceilingNorm
+        // FM: map the limiter's CEILING -- the bound it really imposes, knee
+        // included -- onto full scale, as HD and AM do. Until 2026-10 this
+        // mapped the THRESHOLD (`1 / preEncodeThreshold`), so the knee and
+        // the decimator's ringing landed up to +1.07 dBFS and the render clamp
+        // hard-clipped 0.78 % of the samples of dense programme 6 dB over
+        // threshold (peak-control review F5).
+        guard preEncodeAudioLimiterEnabled else { return outputGain }
+        return outputGain / max(0.1, oversampledLimiterCeiling(threshold: preEncodeThreshold))
     }
 
     /// Processed-audio output: emit the post-pre-encode-limiter L/R (the exact
@@ -3237,7 +3420,6 @@ final class MPXGenerator {
         let makeup = audioOnlyOutputMakeup()
         let finalClip = processedAudioFinalClipActive
         let mono = amDelivery
-        let guardActive = digitalDelivery || amDelivery
         for i in 0..<frameCount {
             // AM is a mono service: sum FIRST so every stage downstream levels,
             // compresses and limits the signal that actually goes on air.
@@ -3253,9 +3435,9 @@ final class MPXGenerator {
             }
             var madeUpL = l * makeup
             var madeUpR = r * makeup
-            if guardActive {
-                (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
-            }
+            // Every audio-only target runs the output guard: HD (true-peak
+            // ceiling), AM (asymmetric pair) and FM (full scale, F5).
+            (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
             let outL = clampf(madeUpL, -1.0, 1.0)
             let outR = clampf(madeUpR, -1.0, 1.0)
             writeAnalysisSample(
@@ -3309,9 +3491,7 @@ final class MPXGenerator {
             }
             var madeUpL = pl * makeup
             var madeUpR = pr * makeup
-            if digitalDelivery || amDelivery {
-                (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
-            }
+            (madeUpL, madeUpR) = truePeakGuard.process(left: madeUpL, right: madeUpR)
             let outL = clampf(madeUpL, -1.0, 1.0)
             let outR = clampf(madeUpR, -1.0, 1.0)
             writeAnalysisSample(
@@ -3642,9 +3822,22 @@ final class MPXGenerator {
 
         let postAGCLeft = left
         let postAGCRight = right
-        let programBand = programLP.process(left: left, right: right)
-        left = programBand.0
-        right = programBand.1
+        // Program lowpass only where `programLowpassInPath` says so: in the
+        // processed-audio modes the encoder FIR below is the band-limit (its
+        // cutoff is never above this one -- both derive from
+        // `programLowpassHz`, the encoder's capped lower). A composite whose
+        // audio domain runs at the full rate gets the 48 kHz-domain design
+        // (`programLPStrided`), so its response no longer depends on whether
+        // the dual-rate boundary is on
+        // (`DualRateHFResponseTests.dualRateOnMatchesOffNearEncoderCutoff`,
+        // `OutputResponseTests`).
+        if programLowpassInPath {
+            let programBand = (useEncoderFIR && programLPStrided.isStrided)
+                ? programLPStrided.process(left: left, right: right)
+                : programLP.process(left: left, right: right)
+            left = programBand.0
+            right = programBand.1
+        }
         let referenceLeft = left
         let referenceRight = right
 
@@ -3849,7 +4042,8 @@ final class MPXGenerator {
             rdsCoder?.updateRDSPilotSin(pilotOsc.s)
         }
         let rds =
-            (stereoServicesEnabled && rdsSupported) ? (rdsCoder?.nextSampleWithPilotLock() ?? 0.0)
+            (stereoServicesEnabled && rdsSupported)
+            ? (rdsCoder?.nextSampleWithPilotLock() ?? 0.0) * rdsLevelCompensation
             : 0.0
 
         return CompositeComponents(base: base, diff: diff, sub: sub, pilot: pilot, rds: rds)
@@ -3903,10 +4097,11 @@ final class MPXGenerator {
             delayedSubcarriers = subcarriers
             lastSubcarrierSample = sub
         }
-        let reserved = updateSubcarrierReservation(subcarriers)
+        let reserved = updateSubcarrierReservation(pilot: pilot, rds: rds)
         let thresholds = Self.makeFinalCompositeThresholds(
             outputGain: outputGain,
             threshold: threshold,
+            deviationScale: deviationScale,
             reserved: reserved
         )
 
@@ -3914,9 +4109,12 @@ final class MPXGenerator {
         // pilot/RDS subcarriers are added back into the final MPX waveform.
         // Calibration tone: the drive IS the budget, so a 0 dBFS tone sits at
         // exactly 100% of the available audio modulation (deviation is then
-        // `mpx_deviation_khz x budget x 10^(level/20)`, plus pilot/RDS).
-        let compositeBudget = max(0.05, thresholds.audioCeiling)
-        let driveNow = renderingCalibrationTone ? compositeBudget : finalDrive
+        // `75 kHz x budget x 10^(level/20)`, plus pilot/RDS; the budget already
+        // carries `mpx_deviation_khz`, so the composite's deviation scaling is
+        // divided back out of the tone's drive).
+        let compositeBudget = max(0.01, thresholds.audioCeiling)
+        let driveNow = renderingCalibrationTone
+            ? compositeBudget / max(1e-3, deviationScale) : finalDrive
         let rawAudioComposite: Float
         if ssbStereoEnabled && ssbStereoConfigured {
             // SSB Stereo: SSB-leaning stereo assembly. Base and diff ride
@@ -3976,10 +4174,7 @@ final class MPXGenerator {
         // has removed that un-cancelled HF residual. Shaping before the FIR
         // hard-clipped that residual at 1x rate (measured on a 12 dB
         // overdrive: ~-9 dB of shaper action relative to the composite).
-        audioComposite = audioCompositeBandwidthFIR.process(
-            left: audioComposite,
-            right: audioComposite
-        ).0
+        audioComposite = audioCompositeBandwidthFIR.processMono(audioComposite)
 
         // BS.412, part 1 of 2: the transparent rider. It observes the audio
         // BEFORE its own gain (feed-forward -- a loop closed around the
@@ -4008,8 +4203,9 @@ final class MPXGenerator {
         // ceiling in-band (probe: 1.18 vs a 0.966 ceiling on a 12 dB
         // overdrive; the 55 kHz FIR removes none of it). That excess is the
         // price of clean guards and must be taken by a gain ride, not a
-        // waveshaper: this limiter (5 ms look-ahead, 0.35 ms attack, hold,
-        // ~95 ms release) rides it down without IM. Until 0.45 it ran AFTER
+        // waveshaper: this limiter (5 ms look-ahead, a step-free ramp over
+        // the whole look-ahead, hold, ~95 ms release) rides it down without
+        // IM. Until 0.45 it ran AFTER
         // the shaper against an absolute 0.98 threshold -- above the
         // shaper's budget ceiling, so it never engaged in any profile.
         // Pilot and RDS are injected after all of this at constant
@@ -4139,15 +4335,47 @@ final class MPXGenerator {
         return output
     }
 
+    /// Headroom the audio composite leaves for pilot + RDS, in the composite
+    /// domain (deviation scaling applied).
+    ///
+    /// It reserves the subcarriers' known PEAK -- `pilot_level` plus the RDS
+    /// injection (the coder normalises its shaped output to unit peak) --
+    /// for each one that is actually on air, and never less than an
+    /// instant-attack, slow-release hold of the observed `|pilot + rds|`, so
+    /// a data pattern that peaks above the nominal injection is covered too.
+    /// The reservation is read from the UNDELAYED subcarriers while the audio
+    /// it bounds leaves the peak stages beside the DELAYED ones, so the
+    /// instant attack is ahead of every sample it has to cover.
+    ///
+    /// Until 2026-10 this was a 0.5 ms / 12 ms envelope of `|pilot + rds|`:
+    /// on a 19 kHz sine the attack never reached the crest (0.074 for a 0.08
+    /// pilot) and the RDS crests were barely seen, so the audio budget was
+    /// too large by the difference. At pilot 10 % / RDS 4 kHz and above --
+    /// inside the ranges `sanitize()` accepts -- the total multiplex crossed
+    /// full scale and the final clamp clipped the pilot and RDS
+    /// (peak-control review F2; verifier at 12 % / 7.5 kHz: 75.0 kHz,
+    /// post-injection overshoot 0.0136).
+    ///
+    /// The result is constant while the subcarrier configuration is, so the
+    /// budget the clipper and the limiter normalise onto does not wobble at
+    /// the RDS symbol rate. A component that goes off air releases its
+    /// reserve over seconds (presence hold), never stepping it down.
     @inline(__always)
-    private func updateSubcarrierReservation(_ subcarriers: Float) -> Float {
-        let subcarrierAbs = fabsf(subcarriers)
-        subcarrierReservationEnv = Self.smoothEnvelope(
-            current: subcarrierReservationEnv,
-            input: subcarrierAbs,
-            attackCoeff: subcarrierReservationAttackCoeff,
-            releaseCoeff: subcarrierReservationReleaseCoeff
-        )
+    private func updateSubcarrierReservation(pilot: Float, rds: Float) -> Float {
+        let decay = subcarrierReservationReleaseCoeff
+        pilotPresenceEnv = max(fabsf(pilot), pilotPresenceEnv * decay)
+        rdsPresenceEnv = max(fabsf(rds), rdsPresenceEnv * decay)
+        subcarrierPeakHoldEnv = max(fabsf(pilot + rds), subcarrierPeakHoldEnv * decay)
+        let pilotPeak = max(0.0, pilotLevel)
+        let rdsPeak = max(0.0, rdsInjectionPercent * 0.01) * rdsLevelCompensation
+        // Present (its own hold above a quarter of the nominal peak): the
+        // full nominal peak. Absent or fading out: four times the hold, which
+        // is continuous with the nominal value at the quarter point and
+        // decays to zero -- so turning a service off never steps the budget.
+        let pilotReserve = min(pilotPeak, 4.0 * pilotPresenceEnv)
+        let rdsReserve = min(rdsPeak, 4.0 * rdsPresenceEnv)
+        let peak = max(pilotReserve + rdsReserve, subcarrierPeakHoldEnv)
+        subcarrierReservationEnv = peak * deviationScale
         return subcarrierReservationEnv
     }
 
@@ -4164,6 +4392,7 @@ final class MPXGenerator {
     private static func makeFinalCompositeThresholds(
         outputGain: Float,
         threshold: Float,
+        deviationScale: Float,
         reserved: Float
     ) -> FinalCompositeThresholds {
         // Composite budget governor (per 2026-05 chain audit Finding
@@ -4183,10 +4412,31 @@ final class MPXGenerator {
         // reaches 0, audio is muted and `overBudget` is reported via
         // telemetry — the operator must lower outputGain or
         // subcarrier levels.
+        //
+        // Composite Deviation (`mpx_deviation_khz`) is the PEAK target, so it
+        // belongs in the budget: composite amplitude 1.0 is 75 kHz at every
+        // setting (`referenceDeviationKHz`), and a 50 kHz station's whole
+        // multiplex must peak at 50/75 of that. Until 2026-10 only the drive
+        // and the pilot/RDS amplitudes followed the setting while the budget
+        // stayed at the 75 kHz value, so the clipper and the final limiter
+        // normalised the audio back up to ~0.88 x 75 kHz at every setting:
+        // 70.8 kHz peaks at a 50 kHz setting on the verifier
+        // (peak-control review F1). Above 75 kHz the budget stays at full
+        // scale -- the +/-1.0 clamp is the hard bound of the digital domain.
+        // The safety margin scales like the threshold it is taken from: with
+        // the deviation (it guards against rounding and tracking error, which
+        // are proportional to the signal, so a 50 kHz composite stays exactly
+        // 2/3 of the 75 kHz one) and with the output gain (it is headroom
+        // under the +/-1.0 clamp, so in the pre-gain domain it is
+        // margin / gain like the threshold; taken whole it cost 0.16 of full
+        // scale at +18 dB and declared a silent pilot+RDS multiplex that
+        // peaks at 0.85 over budget once the reservation read the real
+        // subcarrier peak).
         let gain = max(1.0, outputGain)
-        let effectiveThreshold = threshold / gain
-        let allowedAudioAbs = max(0.0,
-            effectiveThreshold - reserved - Self.finalCompositeBudgetSafetyMargin)
+        let deviationShare = min(1.0, max(0.0, deviationScale))
+        let effectiveThreshold = threshold * deviationShare / gain
+        let margin = Self.finalCompositeBudgetSafetyMargin * deviationShare / gain
+        let allowedAudioAbs = max(0.0, effectiveThreshold - reserved - margin)
         let overBudget = allowedAudioAbs <= 0.0
         return FinalCompositeThresholds(
             effectiveThreshold: effectiveThreshold,
@@ -4320,12 +4570,7 @@ final class MPXGenerator {
     private static let stereoProtectWidthReference: Float = 0.5
 
     private func processMonoBass(left: Float, right: Float) -> (Float, Float) {
-        let mid = (left + right) * 0.5
-        let side = (left - right) * 0.5
-        let lowSide = monoBassSideLP.process(side)
-        let highSide = side - lowSide
-        let combinedSide = highSide
-        return (mid + combinedSide, mid - combinedSide)
+        monoBassFilter.process(left: left, right: right)
     }
 
     private func processPrimeBass(left: Float, right: Float) -> (Float, Float) {
@@ -4469,19 +4714,12 @@ final class MPXGenerator {
             midBandL = bands.1.0; midBandR = bands.1.1
             highBandL = bands.2.0; highBandR = bands.2.1
         } else {
-            // IIR LR4 cascade — monitor mode, low latency, allpass-flat
-            // sum but with per-crossover phase rotation.
-            let split1 = mb3Split1.process(left: left, right: right)
-            lowBandL = split1.0.0
-            lowBandR = split1.1.0
-            let highResidL = split1.0.1
-            let highResidR = split1.1.1
-
-            let split2 = mb3Split2.process(left: highResidL, right: highResidR)
-            midBandL = split2.0.0
-            midBandR = split2.1.0
-            highBandL = split2.0.1
-            highBandR = split2.1.1
+            // Allpass-compensated LR4 tree -- low latency; the bands sum to
+            // AP1 AP2 (flat magnitude, per-crossover phase rotation).
+            let bands = mb3IIRSplitter.process(left: left, right: right)
+            lowBandL = bands.0.0; lowBandR = bands.0.1
+            midBandL = bands.1.0; midBandR = bands.1.1
+            highBandL = bands.2.0; highBandR = bands.2.1
         }
 
         var lowOut = compressStereoBand(
@@ -4550,29 +4788,13 @@ final class MPXGenerator {
             b4L = bands.3.0; b4R = bands.3.1
             b5L = bands.4.0; b5R = bands.4.1
         } else {
-            let split1 = mb5Split1.process(left: left, right: right)
-            b1L = split1.0.0
-            b1R = split1.1.0
-            let rem1L = split1.0.1
-            let rem1R = split1.1.1
-
-            let split2 = mb5Split2.process(left: rem1L, right: rem1R)
-            b2L = split2.0.0
-            b2R = split2.1.0
-            let rem2L = split2.0.1
-            let rem2R = split2.1.1
-
-            let split3 = mb5Split3.process(left: rem2L, right: rem2R)
-            b3L = split3.0.0
-            b3R = split3.1.0
-            let rem3L = split3.0.1
-            let rem3R = split3.1.1
-
-            let split4 = mb5Split4.process(left: rem3L, right: rem3R)
-            b4L = split4.0.0
-            b4R = split4.1.0
-            b5L = split4.0.1
-            b5R = split4.1.1
+            // Allpass-compensated LR4 tree: the bands sum to AP1..AP4.
+            let bands = mb5IIRSplitter.process(left: left, right: right)
+            b1L = bands.0.0; b1R = bands.0.1
+            b2L = bands.1.0; b2R = bands.1.1
+            b3L = bands.2.0; b3R = bands.2.1
+            b4L = bands.3.0; b4R = bands.3.1
+            b5L = bands.4.0; b5R = bands.4.1
         }
 
         var o1 = compressStereoBand(
@@ -4638,16 +4860,14 @@ final class MPXGenerator {
         let absL = fabsf(left)
         let absR = fabsf(right)
         if multibandLinkStrength > 1e-4 {
-            // When link is enabled, drive both channels from one shared detector.
-            // This keeps gain reduction matched between L/R and prevents slow image collapse.
-            let sidechain = Self.makeLinkedBandSidechain(
-                absLeft: absL,
-                absRight: absR,
-                linkStrength: multibandLinkStrength
-            )
+            // Stereo link as an amount: each channel's detector blends from
+            // its own |x| (0) to the shared linked level (1, equal L/R gain
+            // reduction, image held exactly).
+            let sc = MultibandStereoLink.sidechains(
+                absLeft: absL, absRight: absR, amount: multibandLinkStrength)
             return (
-                leftComp.process(left, sidechainAbs: sidechain, thresholdBiasDB: thresholdBiasDB),
-                rightComp.process(right, sidechainAbs: sidechain, thresholdBiasDB: thresholdBiasDB)
+                leftComp.process(left, sidechainAbs: sc.left, thresholdBiasDB: thresholdBiasDB),
+                rightComp.process(right, sidechainAbs: sc.right, thresholdBiasDB: thresholdBiasDB)
             )
         }
         return (
@@ -4683,27 +4903,29 @@ final class MPXGenerator {
         ((a.0 + b.0 + c.0 + d.0 + e.0) * makeup, (a.1 + b.1 + c.1 + d.1 + e.1) * makeup)
     }
 
-    @inline(__always)
-    private static func makeLinkedBandSidechain(
-        absLeft: Float,
-        absRight: Float,
-        linkStrength: Float
-    ) -> Float {
-        let avgAbs = (absLeft + absRight) * 0.5
-        let linkedRMS = sqrtf(((absLeft * absLeft) + (absRight * absRight)) * 0.5)
-        return lerpf(avgAbs, linkedRMS, linkStrength)
-    }
+    /// The 1x budget safety net behind the composite clipper and the final
+    /// limiter: the `BandWaveshaper` soft knee, with its asymptote AT the
+    /// budget (`threshold`). Below `kneeStart x threshold` it is the identity;
+    /// above, the excess is compressed by a tanh scaled to the remaining
+    /// headroom, continuous in value and slope, so no input can leave above
+    /// the budget. Until 2026-10 the curve mapped the budget to `budget +
+    /// margin` (0.012 at a 0.85 budget, slope 1.18 at the join): any input
+    /// over the budget left over it, the governor behind hard-clamped it and
+    /// started its 1 ms / 120 ms ride -- a 1x hard clip plus a programme dip
+    /// whenever the shaper engaged (peak-control review F11). With the
+    /// limiter holding the budget, the knee touches limited crests by at most
+    /// 0.02 dB; the shaper's job is the impossible configurations.
+    static let softClipSafetyKneeStart: Float = 0.99
 
     static func softClipSafety(_ x: Float, threshold: Float) -> Float {
-        let thr = clampf(threshold, 0.5, 0.999)
+        let thr = clampf(threshold, 0.001, 0.999)
+        let x0 = thr * softClipSafetyKneeStart
         let ax = fabsf(x)
-        if ax <= thr {
+        if ax <= x0 {
             return x
         }
-        let margin = clampf(0.08 * (1.0 - thr), 0.004, 0.03)
-        let outMax = min(1.0, thr + margin)
-        let knee = max(1e-4, margin * 0.85)
-        let clipped = thr + ((outMax - thr) * tanhf((ax - thr) / knee))
+        let width = max(1e-6, thr - x0)
+        let clipped = min(thr, x0 + (width * tanhf((ax - x0) / width)))
         return copysignf(clipped, x)
     }
 }

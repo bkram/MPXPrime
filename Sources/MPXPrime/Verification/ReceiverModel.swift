@@ -728,6 +728,14 @@ func guardBandCancellationMetrics(
         cfg.dcClipperEnabled = false
         cfg.audioCompositeSoftClipEnabled = false
         cfg.preEncodeAudioLimiterEnabled = false
+        // The clipper's own look-ahead gain stage must be off too: it is a
+        // gain, not a clip, so with it on (2 ms, the default since the
+        // peak-control rework) it takes the whole overdrive as gain
+        // reduction (8.3 dB measured here, the clip itself 0.16 dB), there
+        // is no clipping residual for the guard to remove, and the depth
+        // read 0.0 dB with the guard working. With it off the clip takes the
+        // overdrive and the guard measures 30 dB on both bands.
+        cfg.compositeClipperLookaheadMS = 0.0
         // Push the clipper hard so the guard bands carry measurable IM.
         cfg.finalDriveDB = min(20.0, baseConfig.finalDriveDB + 8.0)
         return renderReceiverMPX(config: cfg, durationSeconds: durationSeconds) { frame, sampleRate in
@@ -1305,6 +1313,7 @@ func runReceiverModelVerification(
     let receiverBaselineURL = defaultReceiverBaselinePath()
     var receiverDrift: [BaselineDriftFinding] = []
     var captureNote: String?
+    var receiverBaselineAvailability = BaselineAvailability.loaded
     if captureBaseline {
         let file = ReceiverBaselineFile(
             schemaVersion: ReceiverBaselineFile.currentSchemaVersion,
@@ -1319,12 +1328,15 @@ func runReceiverModelVerification(
         } catch {
             captureNote = "Receiver baseline capture FAILED: \(error)"
         }
-    } else if FileManager.default.fileExists(atPath: receiverBaselineURL.path) {
-        do {
-            let stored = try loadReceiverBaseline(from: receiverBaselineURL)
+    } else {
+        // Missing / undecodable / other-schema: reported, and a WARN under
+        // --baseline-strict instead of a silent pass (VerifierVerdict.swift).
+        let attempt = classifyBaselineLoad { try loadReceiverBaseline(from: receiverBaselineURL) }
+        receiverBaselineAvailability = attempt.availability
+        if let stored = attempt.value {
             receiverDrift = compareReceiverMetrics(measured: receiverRecord, baseline: stored.metrics)
-        } catch {
-            print("Receiver baseline: failed to load (\(error))")
+        } else {
+            print("Receiver baseline: \(attempt.availability.note)")
         }
     }
 
@@ -1347,6 +1359,10 @@ func runReceiverModelVerification(
     // Exit code, mirroring the composite path: stored-baseline drift is a hard
     // WARN (2) under --baseline-strict, else TIGHT (1); inline warnings are
     // TIGHT (1); otherwise PASS (0).
+    if baselineAvailabilityExit(receiverBaselineAvailability, strict: strictBaseline) > 0 {
+        print("Result: WARN - --baseline-strict has no usable receiver baseline (\(receiverBaselineAvailability.note)).")
+        return 2
+    }
     if !receiverDrift.isEmpty {
         if strictBaseline {
             print("Result: WARN - stored receiver-baseline drift in --baseline-strict mode.")

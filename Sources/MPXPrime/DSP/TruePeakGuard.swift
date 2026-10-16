@@ -20,11 +20,14 @@ import Foundation
 /// channels are 4x interpolated with a Kaiser-sinc FIR, the largest of the
 /// eight interpolated magnitudes per sample is the detector value, a sliding
 /// window over the look-ahead delay finds the peak about to leave, and one
-/// shared gain (stereo-linked) rides both channels with attack = window / 4
-/// and a hard floor `gain = min(gain, target)`, so whatever the smoother's lag,
-/// the sample leaving the line never exceeds the ceiling on the interpolated
-/// estimate. Same detector-floor design as the final MPX `LookaheadLimiter`
-/// (chain review A1b), applied to L/R with a reconstruction-aware detector.
+/// shared gain (stereo-linked) rides both channels through a
+/// `LookaheadGainRamp`: a smooth ramp that reaches the required gain exactly
+/// when the peak leaves, so the sample leaving the line never exceeds the
+/// ceiling on the interpolated estimate and the gain never steps. Same design
+/// as the final MPX `LookaheadLimiter`, applied to L/R with a
+/// reconstruction-aware detector. (Until 2026-10 both wrote a hard floor
+/// `gain = min(gain, target)` back into the smoother state, which stepped the
+/// gain to each new target in one sample -- peak-control review F6.)
 ///
 /// Real-time safe: every buffer is allocated in `configure`.
 ///
@@ -55,11 +58,8 @@ struct StereoTruePeakGuard {
     private var writeIndex: Int = 0
     private var lookaheadSamples: Int = 0
     private var windowMax = SlidingWindowMax()
-    private var gain: Float = 1.0
-    private var attackCoeff: Float = 0.0
-    private var releaseCoeff: Float = 0.0
-    private var holdSamples: Int = 0
-    private var holdCounter: Int = 0
+    private var ramp = LookaheadGainRamp()
+    private var gain: Float { ramp.gain }
 
     /// Host-rate samples of delay this stage adds to L/R.
     var latencySamples: Int { lookaheadSamples }
@@ -102,12 +102,15 @@ struct StereoTruePeakGuard {
         }
         windowMax.configure(windowLength: lookaheadSamples + 1)
         windowMaxNegative.configure(windowLength: lookaheadSamples + 1)
-        let attackS = Float(lookaheadSamples) / (4.0 * sr)
-        attackCoeff = expf(-1.0 / (max(1e-5, attackS) * sr))
-        releaseCoeff = expf(-1.0 / (0.1 * sr))
-        holdSamples = Int((0.004 * sr).rounded())
-        holdCounter = 0
-        if !enabled { gain = 1.0 }
+        // The estimates for the sample leaving the line arrive up to the
+        // detector delay (plus one sample) after it entered, so a target
+        // averaged over more than `lookahead - detectorDelay - 1` samples
+        // could include windows that no longer hold those estimates. That is
+        // the longest ramp that is still a bound (see `LookaheadGainRamp`).
+        let rampSamples = max(0, lookaheadSamples - detectorDelay - 2)
+        ramp.configure(rampSamples: rampSamples,
+                       holdSamples: Int((0.004 * sr).rounded()),
+                       releaseCoeff: expf(-1.0 / (0.1 * sr)))
     }
 
     mutating func reset() {
@@ -115,8 +118,7 @@ struct StereoTruePeakGuard {
         writeIndex = 0
         windowMax.reset()
         windowMaxNegative.reset()
-        gain = 1.0
-        holdCounter = 0
+        ramp.reset()
     }
 
     @inline(__always)
@@ -160,17 +162,13 @@ struct StereoTruePeakGuard {
         if negativeAhead > ceilingNegative {
             target = min(target, ceilingNegative / max(1e-9, negativeAhead))
         }
-        if target < gain {
-            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * target)
-            holdCounter = holdSamples
-        } else if holdCounter > 0 {
-            holdCounter -= 1
-        } else {
-            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * target)
-        }
-        // Floor: the exiting sample never exceeds the ceiling on the estimate,
-        // whatever the smoother's residual lag.
-        gain = min(gain, target)
-        return (delayedL * gain, delayedR * gain)
+        let g = ramp.push(target)
+        // Output floor on the SAMPLE value for Float rounding only; it never
+        // feeds back into the gain state.
+        var outL = delayedL * g
+        var outR = delayedR * g
+        outL = min(ceiling, max(-ceilingNegative, outL))
+        outR = min(ceiling, max(-ceilingNegative, outR))
+        return (outL, outR)
     }
 }

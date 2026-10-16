@@ -9,7 +9,7 @@ import SwiftUI
 // readouts for every metric.
 //
 // All colours are dynamic (light/dark appearance aware) so the app stays
-// HIG-correct — we do not force a theme.
+// HIG-correct -- we do not force a theme.
 
 public enum BroadcastStyle {
 
@@ -48,27 +48,27 @@ public enum BroadcastStyle {
         dark: NSColor(calibratedRed: 0.74, green: 0.55, blue: 1.00, alpha: 1.0)
     )
 
-    /// App accent — used for targets and active-state highlights. Delegates
+    /// App accent -- used for targets and active-state highlights. Delegates
     /// to the user's system accent so the app respects "Use accent colour"
     /// preferences; falls back to a broadcast-friendly cyan.
     public static let accent = Color.accentColor
 
     // MARK: - Surfaces
 
-    /// Meter / readout plate — slightly darker than panel so heat-mapped
+    /// Meter / readout plate -- slightly darker than panel so heat-mapped
     /// meter fills and LED dots pop.
     public static let meterSurface = Color.adaptive(
         light: NSColor(calibratedRed: 0.94, green: 0.94, blue: 0.95, alpha: 1.0),
         dark: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
     )
 
-    /// Panel / Card body — sits atop the window content background.
+    /// Panel / Card body -- sits atop the window content background.
     public static let panelSurface = Color(nsColor: .controlBackgroundColor)
 
     // MARK: - Instrument displays
     // Scopes, spectrum, vectorscope, and trend graphs are deliberately DARK in
-    // both light and dark appearance — the convention for audio/SDR instruments
-    // (DAWs, SDR#, RDS Spy) — so the green/cyan traces stay legible. Their
+    // both light and dark appearance -- the convention for audio/SDR instruments
+    // (DAWs, SDR#, RDS Spy) -- so the green/cyan traces stay legible. Their
     // internal labels/grid must therefore use these fixed light tones, not the
     // semantic `.secondary` (which would vanish on dark in Light Mode). The
     // surrounding chrome (cards, toolbar, text) still adapts normally.
@@ -117,7 +117,7 @@ public enum BroadcastStyle {
     // MARK: - Typography
 
     /// Hero numeric readout. Used for values that an operator watches
-    /// continuously — input peak, MPX peak, deviation, limiter GR, budget
+    /// continuously -- input peak, MPX peak, deviation, limiter GR, budget
     /// margin. Large enough to read across a studio.
     public static let heroReadout: Font = .system(.title3, design: .monospaced).weight(.semibold)
 
@@ -128,7 +128,7 @@ public enum BroadcastStyle {
     /// Meter scale tick labels and chip micro-labels.
     public static let scaleLabel: Font = .system(.caption2, design: .monospaced)
 
-    /// Status chip label (small uppercase tag above a value — "IN L",
+    /// Status chip label (small uppercase tag above a value -- "IN L",
     /// "DEV", "GR", "BUDGET").
     public static let chipLabel: Font = .caption2.weight(.semibold)
 
@@ -162,9 +162,9 @@ public enum BroadcastStyle {
     // MARK: - Signal-state helper
     //
     // Small utility so meters, pills, and budget chips agree on the mapping
-    // from a normalised 0…1 level to a single paint colour. Thresholds
-    // match the current `MeterBar.meterTint` behaviour, but all four
-    // historical call sites now look up the colour here.
+    // from a normalised 0...1 level to a single paint colour. Used by the
+    // Meter app's `VerticalMeterStrip`; Studio's
+    // level meters use `LadderMeterView`'s own Prime Mixer colour rule.
 
     public static func tint(forLevel level: Double, limitNorm: Double? = nil) -> Color {
         if let limit = limitNorm {

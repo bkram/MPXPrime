@@ -8,7 +8,8 @@ import Foundation
 // 1. Overshoot bound — the headline claim. With lookahead enabled the
 //    output must stay within a tighter ceiling than soft-clip alone.
 // 2. Steady-state transparency — sub-threshold input must pass through
-//    bit-identical to the lookahead-delayed input (gain stays at 1.0).
+//    at its input level (gain stays at 1.0); within 1 dB, the FIR
+//    decimator's own passband ripple, not bit-identical.
 // 3. Pilot guard regression — the existing pilot-cleanliness threshold
 //    (-75 dBFS at 19 kHz) must hold with lookahead engaged.
 // 4. Cross-domain cancellation regression — the per-band cancellation
@@ -26,14 +27,14 @@ struct CompositeClipperLookaheadTests {
     private let sampleRate: Float = 192_000.0
 
     private func makeClipper(lookaheadMS: Float, thresholdDB: Float = -1.0,
-                             ceilingDB: Float = -0.3) -> CompositeClipper {
+                             ceilingDB: Float = -0.3, stereoGuard: Float = 1.0) -> CompositeClipper {
         var clip = CompositeClipper()
         clip.configure(
             sampleRate: sampleRate,
             thresholdDB: thresholdDB,
             ceilingDB: ceilingDB,
             cancelAudio: false,
-            stereoGuard: 1.0,
+            stereoGuard: stereoGuard,
             cancelPilot: true,
             cancelRDS: true,
             lookaheadMS: lookaheadMS
@@ -205,8 +206,11 @@ struct CompositeClipperLookaheadTests {
         let warmupFrames = 4_096
         let fftSize = frames - warmupFrames
 
-        // Hard-pan: L = 5 kHz, R = 0 → M = L/2, S = -L/2.
-        // Composite = M + S·sin(2π·38k·t) — sidebands at 33/43 kHz.
+        // Hard-pan: L = 5 kHz, R = 0 -> M = L/2, S = -L/2.
+        // Composite = M + S*sin(2 pi 38k t) -- sidebands at 33/43 kHz.
+        // Driven 6 dB over (x2): at the original 0.85 the composite peak
+        // sat at the -1 dB knee, the clipper barely acted and the guard had
+        // nothing to protect (test-suite review 2026-10 finding 3).
         var mpx = [Float](repeating: 0.0, count: frames)
         let wAudio = 2.0 * Float.pi * 5_000.0 / sampleRate
         let w38 = 2.0 * Float.pi * 38_000.0 / sampleRate
@@ -214,33 +218,45 @@ struct CompositeClipperLookaheadTests {
             let lAudio = 0.85 * sinf(Float(i) * wAudio)
             let m = 0.5 * lAudio
             let s = -0.5 * lAudio
-            mpx[i] = m + s * sinf(Float(i) * w38)
+            mpx[i] = 2.0 * (m + s * sinf(Float(i) * w38))
         }
 
-        var clip = makeClipper(lookaheadMS: lookaheadMS)
-        var out = [Float](repeating: 0.0, count: frames)
-        for i in 0..<frames {
-            out[i] = clip.process(mpx[i])
+        func run(stereoGuard: Float) -> (out: [Float], maxGRDB: Float) {
+            var clip = makeClipper(lookaheadMS: lookaheadMS, stereoGuard: stereoGuard)
+            var out = [Float](repeating: 0.0, count: frames)
+            var maxGR: Float = 0.0
+            for i in 0..<frames {
+                out[i] = clip.process(mpx[i])
+                if i >= warmupFrames {
+                    maxGR = max(maxGR, clip.gainReductionDB + clip.lookaheadGainReductionDB)
+                }
+            }
+            return (out, maxGR)
         }
+        let guarded = run(stereoGuard: 1.0)
+        let unguarded = run(stereoGuard: 0.0)
 
-        // Sidebands must be preserved within ~3 dB even with look-
-        // ahead (existing test threshold for HF sidebands per
-        // CompositeClipperStereoSeparationTests is 2-3 dB).
-        let sb33In = goertzelDBFS(mpx, startIdx: warmupFrames, length: fftSize,
-                                  freqHz: 33_000.0, sampleRate: sampleRate)
-        let sb33Out = goertzelDBFS(out, startIdx: warmupFrames, length: fftSize,
-                                   freqHz: 33_000.0, sampleRate: sampleRate)
-        let sb43In = goertzelDBFS(mpx, startIdx: warmupFrames, length: fftSize,
-                                  freqHz: 43_000.0, sampleRate: sampleRate)
-        let sb43Out = goertzelDBFS(out, startIdx: warmupFrames, length: fftSize,
-                                   freqHz: 43_000.0, sampleRate: sampleRate)
-        let d33 = sb33Out - sb33In
-        let d43 = sb43Out - sb43In
-        print(String(format: "[cross-domain] sidebands 33k Δ %+.2f, 43k Δ %+.2f dB", d33, d43))
-        #expect(abs(d33) < 3.0,
-            "33 kHz (L-R) sideband must be preserved within 3 dB; got Δ \(d33) dB")
-        #expect(abs(d43) < 3.0,
-            "43 kHz (L-R) sideband must be preserved within 3 dB; got Δ \(d43) dB")
+        func delta(_ out: [Float], _ hz: Float) -> Float {
+            goertzelDBFS(out, startIdx: warmupFrames, length: fftSize, freqHz: hz, sampleRate: sampleRate)
+                - goertzelDBFS(mpx, startIdx: warmupFrames, length: fftSize, freqHz: hz, sampleRate: sampleRate)
+        }
+        let d33 = delta(guarded.out, 33_000.0)
+        let d43 = delta(guarded.out, 43_000.0)
+        let d5 = delta(guarded.out, 5_000.0)
+        let u33 = delta(unguarded.out, 33_000.0)
+        print(String(format: "[cross-domain] 6 dB over: M 5k %+.2f dB, S sidebands 33k %+.2f, 43k %+.2f dB (guard off 33k %+.2f dB), GR %.1f dB",
+                     d5, d33, d43, u33, guarded.maxGRDB))
+        #expect(guarded.maxGRDB > 1.0,
+            "the clipper (soft clip + look-ahead) must be working on this signal; GR \(guarded.maxGRDB) dB")
+        // The look-ahead is a broadband gain: it lowers M and S together,
+        // which leaves the decoded image alone. What must hold is the M:S
+        // balance -- the cancellation identity applies the gain to the
+        // clipped path and the restored bands in lockstep, so a gain that
+        // leaked into one side only would move S against M.
+        #expect(abs(d33 - d5) < 1.5,
+            "33 kHz (L-R) sideband moved \(d33) dB against the mid's \(d5) dB: M/S balance broken")
+        #expect(abs(d43 - d5) < 1.5,
+            "43 kHz (L-R) sideband moved \(d43) dB against the mid's \(d5) dB: M/S balance broken")
     }
 
     // MARK: - 5. Latency reporting

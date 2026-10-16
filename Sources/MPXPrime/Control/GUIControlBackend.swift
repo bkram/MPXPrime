@@ -5,6 +5,7 @@
 #if os(macOS)
 
 import Foundation
+import MPXPrimeCore
 
 struct GUIControlBackend: ControlBackend {
     // The VM owns the server task; weak breaks the retain cycle
@@ -31,6 +32,10 @@ struct GUIControlBackend: ControlBackend {
 
     func meters() async -> ControlMeters? {
         try? await withVM { $0.remoteMeters() }
+    }
+
+    func meters(reader: MeterPeakReader) async -> ControlMeters? {
+        try? await withVM { $0.remoteMeters(reader: reader) }
     }
 
     func rds() async -> ControlRDS {

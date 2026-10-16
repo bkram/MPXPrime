@@ -44,10 +44,15 @@ that the Meter decodes are in the Studio manual's appendices
   auto-detects a dongle. Use `--sdr-freq <MHz>` to open the GUI pre-tuned.
 
 Headless flags beyond the ones used below (`--help` lists them all):
-`--list-devices`; `--device <spec>` (list index, UID or name substring);
-`--channel left|right|mix` (the CLI defaults to left, the GUI to right);
+`--list-devices` (with channel counts, transport, rate and UID);
+`--device <spec>` (list index, UID or name substring); `--channels <l,r>`
+(which device channels to capture, counted from 1: `3,4`, or `3` alone for
+mono; default `1,2`); `--channel left|right|mix` (which of those carries the
+composite; the CLI defaults to left, the GUI to right);
 `--sample-rate <Hz>` for `--stdin`; `--wav <path>` to record the decoded
 stereo to a 24-bit WAV; `--monitor-device <spec>` / `--monitor-gain <dB>`;
+`--monitor-channels <l,r>` (the monitor device's output channels; one number
+plays left and right summed on that channel);
 `--selftest` (synthesized composite, no hardware).
 
 The Meter **remembers your last-used settings** (frequency, input source, every SDR
@@ -177,8 +182,15 @@ remembered by device UID):
   digital full scale, but deviation beyond that then clips the DAC --
   leave ~1 dB of headroom (+5 dB covers peaks to ~84 kHz).
 
-- **Audio device** (`Source -> Audio`): pick the input carrying the composite
-  and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
+- **Audio device** (`Source -> Audio`): click the device button and pick the
+  interface carrying the composite and one or two of its channels (on a
+  multichannel interface, for example inputs 5 and 6). Then pick L / R / Mix:
+  L is the lower-numbered chosen channel, R the higher, and Mix averages
+  them; with a single channel chosen all three read it. The **Devices**
+  button next to it lists every interface with its channels, rate and bit
+  depth; plugging one in or out refreshes the lists by itself, and Rescan
+  does it by hand. The Monitor and MPX pass-through outputs choose their
+  device and channels the same way. The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
   >= 128 kHz, so the default input prefers a 192 kHz-capable device.
 - **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The frequency

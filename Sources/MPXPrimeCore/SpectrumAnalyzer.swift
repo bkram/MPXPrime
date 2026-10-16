@@ -23,6 +23,10 @@ public final class MPXSpectrumAnalyzer: @unchecked Sendable {
     private var magnitudesSq: [Float] = []
     private var spectrumDB: [Float] = []
     private var mapped: [Float] = []
+    /// Convert to dB only the FFT bins the display mapping can read (up to
+    /// the bin just past `maxDisplayHz`). Off = every bin, the pre-change
+    /// behaviour, kept so a test can prove the displayed result is identical.
+    var convertsOnlyDisplayedBins = true
 
     public init() {}
 
@@ -37,7 +41,8 @@ public final class MPXSpectrumAnalyzer: @unchecked Sendable {
         validCount: Int,
         sampleRate: Double,
         displayBins: Int,
-        maxDisplayHz: Double
+        maxDisplayHz: Double,
+        maxFFTSize fftCap: Int = 8192
     ) -> (dbBins: [Float], maxHz: Double, nyquistHz: Double) {
         let safeBins = max(64, displayBins)
         let nyquist = max(1_000.0, sampleRate * 0.5)
@@ -47,7 +52,7 @@ public final class MPXSpectrumAnalyzer: @unchecked Sendable {
             return (Array(repeating: -100.0, count: safeBins), maxHz, nyquist)
         }
 
-        let maxFFTSize = min(sampleCount, 8192)
+        let maxFFTSize = min(sampleCount, max(256, fftCap))
         let log2n = Int(floor(log2(Double(maxFFTSize))))
         let n = max(256, 1 << log2n)
         prepareBuffers(fftSize: n, displayBins: safeBins)
@@ -69,6 +74,17 @@ public final class MPXSpectrumAnalyzer: @unchecked Sendable {
         guard let fftSetup else {
             return (Array(repeating: -100.0, count: safeBins), maxHz, nyquist)
         }
+
+        // The display reads spectrumDB[i0] and [i0 + 1] at
+        // srcPos = (freq / nyquist) * (count - 1) for freq <= min(maxHz,
+        // nyquist), so no bin past floor(highest srcPos) + 1 is ever read.
+        // The Audio Spectrum shows 16 kHz of a 96 kHz Nyquist: converting
+        // only those bins skips ~83 % of the log10 work per FFT.
+        let sourceCount = max(1, n / 2)
+        let highestPos = (min(maxHz, nyquist) / nyquist) * Double(sourceCount - 1)
+        let convertCount = convertsOnlyDisplayedBins
+            ? max(1, min(sourceCount, Int(highestPos.rounded(.down)) + 2))
+            : sourceCount
 
         real.withUnsafeMutableBufferPointer { realBP in
             imag.withUnsafeMutableBufferPointer { imagBP in
@@ -93,7 +109,7 @@ public final class MPXSpectrumAnalyzer: @unchecked Sendable {
                 // — the highest visible bin is at index n/2-1, just
                 // below Nyquist.
                 imagBP[0] = 0
-                vDSP_zvmags(&split, 1, &magnitudesSq, 1, vDSP_Length(n / 2))
+                vDSP_zvmags(&split, 1, &magnitudesSq, 1, vDSP_Length(convertCount))
             }
         }
 
@@ -111,14 +127,13 @@ public final class MPXSpectrumAnalyzer: @unchecked Sendable {
             let dcAmp = sqrtf(max(0.0, magnitudesSq[0])) * cgScale
             spectrumDB[0] = max(-100.0, min(0.0, 20.0 * log10f(max(1e-9, dcAmp))))
         }
-        if magnitudesSq.count > 1 {
-            for k in 1..<magnitudesSq.count {
+        if convertCount > 1 {
+            for k in 1..<convertCount {
                 let amp = (2.0 * sqrtf(max(0.0, magnitudesSq[k]))) * cgScale
                 spectrumDB[k] = max(-100.0, min(0.0, 20.0 * log10f(max(1e-9, amp))))
             }
         }
 
-        let sourceCount = max(1, spectrumDB.count)
         for i in 0..<safeBins {
             let ratio = safeBins > 1 ? (Double(i) / Double(safeBins - 1)) : 0.0
             let freq = ratio * maxHz

@@ -4,7 +4,7 @@ import Testing
 @testable import MPXPrime
 
 // Invariants pinned by the Advanced Dynamics correctness review
-// (docs/advanced-dynamics-review.md, 2026-10-10): the attack law lives in
+// (2026-10-10): the attack law lives in
 // the time domain with per-band floors, dense program releases slower than
 // sparse program, adjacent band gains stay within the sync bound, a live
 // crossover change is continuous, the stereo gain is linked, one NaN sample
@@ -183,56 +183,23 @@ struct AdvancedDynamicsReviewTests {
     @Test func denseProgramReleasesSlowerThanSparse() {
         // Dense (steady, already-compressed) program must release SLOWER
         // than sparse, dynamic program, as the settings reference promises.
-        // Both levelers settle on the same four-tone bed (bands 1-4); the
-        // sparse one also carries loud bursts (4/s) in the otherwise empty
-        // top band, which drive the fast/slow envelopes apart without
-        // moving the bed bands (the top band's duck is bounded by its empty
-        // neighbour and never reaches band 1 through the sync chain). A
-        // target change (not a level change, which the density estimator
-        // itself reads as "sparse" for a second or two) then asks every
-        // band for +5 dB; band 1 (60 Hz, furthest from the bursts) must
-        // take longer to deliver 2.5 dB of it on the dense program. Failed
-        // before the fix: the slowdown grew WITH divergence.
-        func timeToLift(sparse: Bool) -> (seconds: Float, densityDB: Float) {
-            var leveler = makeLeveler()
-            let settle = Int(sampleRate * 5.0)
-            func sample(_ i: Int) -> Float {
-                let t = Float(i) / sampleRate
-                var x: Float = 0.0
-                for f in Self.bandCentreHz.prefix(4) { x += 0.08 * sinf(2.0 * Float.pi * f * t) }
-                if sparse {
-                    let env = powf(max(0.0, sinf(2.0 * Float.pi * 4.0 * t)), 24.0)
-                    x += 0.9 * env * sinf(2.0 * Float.pi * 9_000.0 * t)
-                }
-                return x
-            }
-            for i in 0..<settle {
-                let x = sample(i)
-                _ = leveler.process(left: x, right: x)
-            }
-            let densityDB = leveler.currentDensityDB
-            let gainBefore = leveler.bandGainsDBFixed.0
-            leveler.setParameters(
-                targetDB: -9.0, lowOffsetDB: 0.0, midOffsetDB: 0.0, highOffsetDB: 0.0,
-                maxGainDB: 18.0, density: 0.5, speed: 1.0)
-            let limit = Int(sampleRate * 6.0)
-            for i in 0..<limit {
-                let x = sample(settle + i)
-                _ = leveler.process(left: x, right: x)
-                if leveler.bandGainsDBFixed.0 - gainBefore >= 2.5 {
-                    return (Float(i) / sampleRate, densityDB)
-                }
-            }
-            return (Float(limit) / sampleRate, densityDB)
+        // Since 2026-10-15 every band rides the shared wideband gain, so a
+        // burst big enough to make a programme read "sparse" also moves that
+        // gain and confounds any timing taken through the audio path; the
+        // law is pinned on `liftCoefficient` itself, which the gain law
+        // calls. Failed before the 2026-10-10 fix: the slowdown grew WITH
+        // divergence.
+        let leveler = makeLeveler()
+        let sr = Float(sampleRate)
+        func timeConstant(_ coeff: Float) -> Float { -1.0 / (sr * logf(coeff)) }
+        for errorDB: Float in [3.0, 8.0, 20.0] {
+            let dense = timeConstant(leveler.liftCoefficient(errorDB: errorDB, densityDB: 0.0))
+            let sparse = timeConstant(leveler.liftCoefficient(errorDB: errorDB, densityDB: 4.0))
+            #expect(dense > sparse * 2.0,
+                "error \(errorDB) dB: dense lift tau \(dense) s, sparse \(sparse) s: dense must be much slower")
+            let middle = timeConstant(leveler.liftCoefficient(errorDB: errorDB, densityDB: 2.0))
+            #expect(middle > sparse && middle < dense, "the slowdown must fall monotonically with divergence")
         }
-        let dense = timeToLift(sparse: false)
-        let sparse = timeToLift(sparse: true)
-        print(String(format: "Advanced Dynamics release: dense %.2f s (density %.1f dB), sparse %.2f s (density %.1f dB)",
-                     dense.seconds, dense.densityDB, sparse.seconds, sparse.densityDB))
-        #expect(dense.densityDB < sparse.densityDB)
-        #expect(sparse.seconds < 5.9, "sparse program never delivered the lift")
-        #expect(dense.seconds > sparse.seconds * 1.3,
-            "dense program released in \(dense.seconds) s, sparse in \(sparse.seconds) s: dense must be slower")
     }
 
     @Test func bandDisparityIsBounded() {
@@ -245,7 +212,7 @@ struct AdvancedDynamicsReviewTests {
         // neighbour (band 2) is empty too, and an empty band constrains
         // nobody by design, so the 1/2 pair carries no audible balance.
         var leveler = makeLeveler(maxGainDB: 18.0)
-        let d = AdvancedDynamicsLeveler.bandSyncMaxDisparityDB
+        let d = AdvancedDynamicsLeveler.maxAdjacentBandDisparityDB
         let frames = Int(sampleRate * 6.0)
         var maxDisparity: Float = 0.0
         var maxSkirtDisparity: Float = 0.0
@@ -290,7 +257,7 @@ struct AdvancedDynamicsReviewTests {
             let x = 0.03 * sinf(2.0 * Float.pi * 760.0 * t)
             _ = leveler.process(left: x, right: x)
         }
-        let d = AdvancedDynamicsLeveler.bandSyncMaxDisparityDB
+        let d = AdvancedDynamicsLeveler.maxAdjacentBandDisparityDB
         #expect(leveler.bandGainsDBFixed.2 > d + 2.0,
             "a lone tone was lifted only \(leveler.bandGainsDBFixed.2) dB: empty neighbours capped it")
         // ...and the empty neighbours are pulled to within D of it (they

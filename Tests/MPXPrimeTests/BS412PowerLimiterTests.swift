@@ -36,6 +36,16 @@ struct BS412PowerLimiterTests {
         private(set) var windowsChecked = 0
         private(set) var guardEverActive = false
         private(set) var subcarriersUntouched = true
+        private(set) var spanEnergy: Double = 0.0
+        private(set) var spanSamples = 0
+
+        /// Multiplex power of everything emitted since the last call, dBr.
+        mutating func takeSpanDBr() -> Float {
+            let meanSquare = Float(spanEnergy / Double(max(1, spanSamples)))
+            spanEnergy = 0.0
+            spanSamples = 0
+            return BS412.dBr(forMeanSquare: meanSquare)
+        }
 
         mutating func resetWorstWindow() {
             worstWindowDBr = -.infinity
@@ -60,6 +70,8 @@ struct BS412PowerLimiterTests {
                 audio: ridden, subcarriers: subcarriers, ceilingDBr: ceilingDBr,
                 enforcing: enforcing)
             if guardStage.active { guardEverActive = true }
+            spanEnergy += Double(emitted) * Double(emitted)
+            spanSamples += 1
             // The fixed part must survive untouched: whatever the stage did,
             // the emitted sample minus the audio share must still be `s`.
             if subcarriers != 0.0 {
@@ -347,6 +359,89 @@ struct BS412PowerLimiterTests {
         #expect(r.windowsChecked > 0)
         #expect(r.worstWindowDBr <= 0.05,
                 "a window wholly after enabling reads \(r.worstWindowDBr) dBr")
+    }
+
+    /// Switching the stage on behind a minute of hot programme must ride the
+    /// audio down to the ceiling, not mute it. The guard used to inherit the
+    /// over-budget minute it had only been watching and could pay it back
+    /// only by silencing the audio until that minute aged out: measured on
+    /// the real chain behind Advanced Dynamics, the composite fell from
+    /// -12 dB RMS to the pilot alone (-27.5 dB) for the whole minute.
+    @Test func enablingBehindHotHistoryRidesInsteadOfMuting() {
+        var r = rig()
+        r.enforcing = false
+        let hot = amplitude(deviationKHz: 38.0)    // +6 dBr
+        var i = 0
+        func run(_ seconds: Float) {
+            for _ in 0..<Int(sampleRate * seconds) {
+                r.push(audio: sine(i, hz: 1_000.0, amp: hot), subcarriers: 0.0)
+                i += 1
+            }
+        }
+        run(65.0)
+        r.enforcing = true
+        _ = r.takeSpanDBr()
+        for second in 0..<60 {
+            run(1.0)
+            let dBr = r.takeSpanDBr()
+            // Second 0 includes the rider's 0.1 s attack from its informed
+            // start; every later second must sit at the ceiling.
+            if second > 0 {
+                #expect(dBr > -0.5, "second \(second) after enabling read \(dBr) dBr (muted)")
+            }
+            #expect(dBr < 0.5, "second \(second) after enabling read \(dBr) dBr")
+        }
+        #expect(r.guardStage.historyForgivenCount == 1)
+        // And the proof still holds for every window wholly after the switch.
+        r.resetWorstWindow()
+        run(70.0)
+        #expect(r.windowsChecked > 0)
+        #expect(r.worstWindowDBr <= 0.05, "a window wholly after enabling reads \(r.worstWindowDBr) dBr")
+    }
+
+    /// Lowering the ceiling live is the same debt: the minute already spent
+    /// at the old ceiling must not be paid back with silence.
+    @Test func loweringTheCeilingLiveRidesInsteadOfMuting() {
+        var r = rig(ceilingDBr: 0.0)
+        let hot = amplitude(deviationKHz: 38.0)
+        var i = 0
+        func run(_ seconds: Float) {
+            for _ in 0..<Int(sampleRate * seconds) {
+                r.push(audio: sine(i, hz: 1_000.0, amp: hot), subcarriers: 0.0)
+                i += 1
+            }
+        }
+        run(65.0)
+        r.ceilingDBr = -3.0
+        _ = r.takeSpanDBr()
+        for second in 0..<30 {
+            run(1.0)
+            let dBr = r.takeSpanDBr()
+            if second > 0 {
+                #expect(dBr > -3.5, "second \(second) after lowering read \(dBr) dBr (muted)")
+            }
+        }
+        run(30.0)    // the window now lies wholly after the change
+        r.resetWorstWindow()
+        run(70.0)
+        #expect(r.windowsChecked > 0)
+        #expect(r.worstWindowDBr <= -2.95, "a window wholly after lowering reads \(r.worstWindowDBr) dBr")
+    }
+
+    /// History that fits the budget is kept: the guard forgives only debt.
+    @Test func compliantHistoryIsKeptWhenEnabling() {
+        var r = rig()
+        r.enforcing = false
+        let quiet = amplitude(deviationKHz: 10.0)    // well under 0 dBr
+        for i in 0..<Int(sampleRate * 65.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: quiet), subcarriers: 0.0)
+        }
+        r.enforcing = true
+        for i in 0..<Int(sampleRate * 1.0) {
+            r.push(audio: sine(i, hz: 1_000.0, amp: quiet), subcarriers: 0.0)
+        }
+        #expect(r.guardStage.historyForgivenCount == 0)
+        #expect(r.guardStage.observedSeconds > 59.0)
     }
 
     @Test func aLivePilotIncreaseUpdatesTheGuardsReserve() {

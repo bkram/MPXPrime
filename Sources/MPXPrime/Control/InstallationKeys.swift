@@ -22,6 +22,7 @@ extension AppConfig {
     static let installationPreservedKeysBySection: [String: [String]] = [
         "INTERFACES": [
             "input_device_uid", "output_device_uid", "monitor_device_uid",
+            "input_channels", "output_channels", "monitor_channels",
             "input_device_name", "output_device_name", "monitor_device_name",
             "sample_rate", "blocksize",
             "operating_mode", "monitor_enabled", "monitor_gain_db",

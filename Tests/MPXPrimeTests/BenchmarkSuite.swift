@@ -17,10 +17,10 @@ import Foundation
 @Suite("Benchmark suite")
 struct BenchmarkSuite {
 
-    @Test func runBenchmarkIfRequested() {
-        guard ProcessInfo.processInfo.environment["MPXPRIME_BENCH"] != nil else {
-            return
-        }
+    // `.enabled(if:)` rather than an early return: a default run lists it as
+    // skipped instead of counting an empty pass (finding 16).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MPXPRIME_BENCH"] != nil))
+    func runBenchmarkIfRequested() {
         let report = BenchmarkRunner().run()
         print(report)
     }

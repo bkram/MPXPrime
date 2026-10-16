@@ -8,6 +8,7 @@ struct MPXAnalysisTapTests {
         var config = AppConfig()
         config.processingBypass = true
         config.widebandAGCEnabled = false
+        config.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         config.inputGainDB = 0.0
         config.monoMode = false
 
@@ -63,6 +64,7 @@ struct MPXAnalysisTapTests {
         var config = AppConfig()
         config.processingBypass = true
         config.widebandAGCEnabled = false
+        config.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         config.inputGainDB = 0.0
         config.monoMode = false
 

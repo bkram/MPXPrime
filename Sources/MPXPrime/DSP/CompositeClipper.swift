@@ -22,46 +22,46 @@ import FoundationNetworking   // URLSession/URLRequest on Linux corelibs
 import os
 #endif
 
-// MARK: - Composite Clipper (audio composite, 8x oversampled)
-// 8x oversampled tanh soft-clipper on the audio composite with per-band
-// distortion cancellation via signal substitution (Orban US 4,460,871 /
+// MARK: - Composite Clipper (audio composite, 8/16/32x oversampled)
+// Oversampled tanh soft-clipper on the audio composite in DIFFERENTIAL
+// topology (Orban US 6,337,999, expired 2022) with per-band protection of the
+// clipping residual (the delta-cancellation primitive of Orban US 4,460,871 /
 // 5,737,434, expired).
 //
-// Algorithm:
-//   At the oversampled rate, soft-clip the composite. Apply *single*
-//   LR4 splits at 15 kHz (audio crossover) and 53 kHz (stereo upper
-//   crossover) to BOTH clipped and original (`up`). Use the LR4
-//   sum-to-flat property to reconstruct:
-//     output = audio_chosen + stereo_chosen + above_53kHz_of_clipped
-//   where:
-//     audio_chosen   = LR4_LP_15(up)         if cancelAudio
-//                    = LR4_LP_15(clipped)    otherwise
-//     stereo_chosen  = HP_22(LR4_LP_53(clipped + stereoGuard * residual))
-//                      (stereoGuard 1 restores the whole L-R subcarrier as it
-//                      went in -- the clipper then only ever removes the mono
-//                      share of an M+S peak; 0 clips the full composite the
-//                      way Orban / Omnia / Stereo Tool do; in between blends)
-//     above_53kHz    = LR4_HP_53(clipped) (i.e. clipped - LR4_LP_53(clipped))
+// Signal flow (2026-10 peak-control review, F3 / F8 / F9 / F10):
 //
-// At the 53 kHz crossover, LR4_LP_53 + LR4_HP_53 sum to a magnitude-flat
-// allpass — so audio_chosen + stereo_chosen + above_53kHz reconstructs
-// either the full clipped (no cancellation) or a hybrid where the
-// audio/stereo subcarrier bands carry the original instead. Single-LR4
-// (4th-order, –6 dB at corner) replaces the original implementation's
-// cascaded-LR4 (8th-order, –12 dB at corner) to halve the band-edge
-// attenuation that was collapsing HF stereo image.
+//   x --(look-ahead delay x gain)--> xPath
+//   xPath --2x Kaiser FIR interpolator--> Lagrange-4 to factor x host rate
+//         --> soft clip --> residual = up - clipped --(pad)--> FIR decimator
+//         --> host-rate residual r
+//   r --guard FIR (linear phase)--> r_kept = r delayed - sum(w_b * band_b(r))
+//   out = xPath delayed - r_kept
 //
-// Stereo HP corner at 22 kHz (just below the 23 kHz subcarrier lower
-// edge) keeps the (L-R) lower sideband full amplitude. Stereo LP corner
-// at 53 kHz sits exactly on the upper subcarrier edge, so HF (L-R)
-// content modulating to ~52 kHz is at most –3 dB attenuated rather
-// than the previous –9 dB.
+// * Guard bands. One linear-phase Kaiser FIR at host rate removes the
+//   protected bands from the residual: audio 0-16 kHz (opt-in), pilot
+//   16-22 kHz, stereo subcarrier 22-54 kHz weighted by the 0...1 SHARE
+//   `mpx_clipper_stereo_guard`, RDS 54-60 kHz. Band edges sit in the gaps
+//   with a 2 kHz transition and 50 dB of depth, so 17-21, 23-53 and 55-59 kHz
+//   are protected in full. Until 2026-10 each guard subtracted an IIR band
+//   (LR4 / RBJ) from the residual: `r - BP(r)` is "r without the band" only
+//   if BP has zero phase across it, which an IIR does not, so the stereo
+//   guard left the residual at -2.4 dB at 30 kHz and AMPLIFIED it (+2.5 dB)
+//   at 23 and 53 kHz; S content above ~8 kHz was not protected at all. The
+//   FIR's group delay is added to the bypass and to `totalDelayHostSamples`.
+// * Alignment. The decimator's half-length is padded with an OS-rate delay
+//   so interpolator + decimator delay is a whole number of host samples; the
+//   bypass is that long exactly. It used to be rounded (146 OS = 9.125 host
+//   samples at 16x, bypass 9), leaving the residual 1/8 host sample late:
+//   -16 dB of uncancelled residual at 38 kHz.
+// * Interpolation. A 2x linear-phase Kaiser FIR, then the causal Lagrange-4
+//   to the full factor. Lagrange alone from the host rate imaged 53 kHz
+//   content at -21 dB (38 kHz at -32 dB) whatever the factor, so the clip
+//   decisions were taken on a waveform up to 9 % wrong; on the 2x stream the
+//   image is -44 dB.
 //
 // Pilot (19 kHz) and RDS (57 kHz) are injected post-clipper, so their
-// amplitudes bypass this stage. Clipper IM in the 17-21 kHz pilot guard
-// and 55-59 kHz RDS guard still rides under those clean subcarriers at
-// the receiver, so the pilot/RDS cancel flags actively subtract
-// bandpass-isolated residual energy before decimation.
+// amplitudes bypass this stage; the pilot and RDS guards keep clipper IM out
+// from under them.
 struct CompositeClipper {
     private var thresholdLin: Float = 0.708
     private var ceilingLin: Float = 0.944
@@ -69,155 +69,113 @@ struct CompositeClipper {
     /// Configured ceiling as a linear amplitude; the final stage normalises
     /// the audio composite so this ceiling lands exactly on the composite budget.
     var ceilingLinear: Float { ceilingLin }
-    private var lag = Lagrange4Interp()
-    /// Decimation filter for the OS-rate clipping residual. Replaced
-    /// the prior `BiquadCascade6` (12th-order Butterworth) with a
-    /// linear-phase Kaiser-windowed FIR — see `LinearPhaseFIRDecimator`
-    /// header for the rationale. Used in the differential-clipper
-    /// topology: only the *residual* (up − clipped) goes through
-    /// decimation; the wanted signal rides a 1× delay-matched bypass.
-    /// Inspired by Orban US 6,337,999 (expired 2022).
-    private var decimLP = LinearPhaseFIRDecimator()
-    /// Oversampling factor (8 / 16 / 32). Configurable since 0.31 via
-    /// `mpx_clipper_oversampling`. Changing it reconfigures the FIR
-    /// decimator, the Lagrange interpolator state, and the per-host
-    /// batch buffers — restart-required.
+
+    /// Oversampling factor (8 / 16 / 32), `mpx_clipper_oversampling`.
+    /// Applies live: a change re-runs `configure` (filters and batch buffers
+    /// re-sized for the new factor) and the generator re-times the pilot /
+    /// RDS delay to the clipper's new group delay.
     private var factor: Int = 16
-    /// Default factor used for stack-allocated batch sizing before
-    /// `configure()` runs. Keep aligned with the highest factor in the
-    /// valid set so the default-init buffers can hold the largest
-    /// configuration without reallocation if a caller later up-sizes.
+    /// Batch buffers are allocated for the largest factor before
+    /// `configure()` runs, so the audio thread never allocates.
     private static let defaultFactor: Int = 32
 
-    /// Host-rate bypass delay line. Holds the wanted (clean) input
-    /// delayed by the FIR's group delay so it aligns with the
-    /// decimated residual at output time. In the differential
-    /// topology the output is `bypassed − decimated(residual)`; the
-    /// decimator's stopband leakage and phase non-flatness only colour
-    /// the residual subtracted, not the wanted signal — fundamental
-    /// architectural improvement vs the prior "upsample → clip →
-    /// decimate" path where the wanted signal saw the decimator's
-    /// full phase response.
+    // === Interpolation: 2x Kaiser FIR, then Lagrange-4 on the 2x stream ===
+    private var interp = LinearPhaseFIRInterpolator()
+    private var lag = Lagrange4Interp()
+    private var interpPair: [Float] = [0.0, 0.0]
+    /// Lagrange basis weights for the `factor / 2` phases between two 2x
+    /// samples (t = (i + 1) / (factor / 2)).
+    private var lagBasis: [SIMD4<Float>] = Array(repeating: .zero, count: defaultFactor / 2)
+    /// OS-rate delay of the interpolation section: the last OS sample of a
+    /// host step represents the input this many OS samples ago.
+    private var interpDelayOS: Int = 0
+
+    // === Decimation of the residual ===
+    private var decimLP = LinearPhaseFIRDecimator()
+    /// OS-rate pad in front of the decimator: interpolator + pad + decimator
+    /// add up to a whole number of host samples.
+    private var padLine: [Float] = []
+    private var padIndex: Int = 0
+    /// Host samples from xPath to the decimated residual.
+    private var residualDelayHost: Int = 0
+
+    // === Guard bands: one linear-phase FIR on the host-rate residual ===
+    private var guardKernel: [Float] = []
+    private var guardLine: [Float] = []
+    private var guardIndex: Int = 0
+    /// Consecutive exact-zero samples written into `guardLine`.
+    private var guardZeroRun: Int = 0
+    private var guardTaps: Int = 0
+    private var guardHalf: Int = 0
+    /// Guard FIR transition (Hz) and depth (dB). The edges sit in the gaps
+    /// between the bands, so a 2 kHz transition protects every band in full.
+    static let guardTransitionHz: Float = 2_000.0
+    static let guardDepthDB: Float = 50.0
+    /// Band edges (Hz): audio | pilot | stereo | RDS.
+    static let guardEdgesHz: (audioPilot: Float, pilotStereo: Float, stereoRDS: Float, rdsTop: Float) =
+        (16_000.0, 22_000.0, 54_000.0, 60_000.0)
+
+    /// Host-rate bypass delay line: the wanted signal, delayed to line up
+    /// with the decimated, guarded residual.
     private var bypassDelay: [Float] = [0.0]
     private var bypassWriteIdx: Int = 0
 
-    // Per-band extraction filters run on the *residual* (up - clipped).
-    // The band cancellation needs bandpass(up) - bandpass(clipped); since
-    // every filter here is LTI, by superposition that equals
-    // bandpass(up - clipped) exactly. So one filter per band on the residual
-    // replaces the prior clipped+orig filter pair, halving the per-OS-step
-    // band-filter cost (the composite clipper is the single heaviest stage).
-    //
-    // Audio + stereo bands use LR4 splits (sum-to-flat at the shared
-    // crossover keeps substitution phase-coherent across their wide
-    // passbands).
-    private var residualAudio15 = LinkwitzRiley4()
-    private var residualStereo53 = LinkwitzRiley4()
-    private var residualStereoHP = LinkwitzRiley4()
-    // Pilot (19 kHz) and RDS (57 kHz) guards use RBJ bandpass biquads tuned
-    // to the subcarrier centre frequency. RBJ BPF has 0 dB peak and zero
-    // phase shift at fc, so subtracting BP(residual) cleanly cancels clipper
-    // IM at the protected centre. Wider LR4-style splits don't work here --
-    // the 17-21 kHz / 55-59 kHz windows are too narrow for a flat LR4
-    // passband, bounding achievable cancellation depth to a few dB.
-    private var residualPilotBP = Biquad()
-    private var residualRDSBP = Biquad()
-
     private var cancelAudio: Bool = false
-    /// 0...1 share of the 22-53 kHz clipping residual restored to the output
-    /// (`mpx_clipper_stereo_guard`). 1 = the pre-0.45 "Protect Stereo
-    /// Subcarrier" toggle on: the S subchannel passes untouched and only the
-    /// M share of each peak is clipped, so the composite overshoots the
-    /// ceiling and the Final-MPX limiter has to ride ~1.5 dB routinely.
-    /// 0 = full composite clipping (industry practice). Picked from the
-    /// `--verify-stereo-guard` sweep.
+    /// 0...1 share of the 22-54 kHz clipping residual restored to the output
+    /// (`mpx_clipper_stereo_guard`). 1: the S subchannel passes untouched and
+    /// only the M share of each peak is clipped; the Final-MPX limiter rides
+    /// the overshoot. 0: full composite clipping (industry practice).
     private var stereoGuard: Float = 1.0
-    // Pilot (19 kHz) and RDS (57 kHz) subcarriers are injected
-    // post-clipper. Even so, clipper IM in the 17–21 kHz pilot guard
-    // and 55–59 kHz RDS guard bands vector-sums with the cleanly-
-    // injected subcarriers at the receiver, corrupting pilot PLL lock
-    // and RDS BER. Cancellation here subtracts the bandpass-isolated
-    // clipper IM from the output before pilot/RDS injection.
     private var cancelPilot: Bool = true
     private var cancelRDS: Bool = true
 
-    // Soft-clip attenuation telemetry for the UI meter. This tracks the
-    // actual oversampled clip-kernel gain, not input/output peak ratio:
-    // the differential FIR path delays and band-cancels the output, so
-    // a direct peak ratio is not a valid gain-reduction measurement.
+    // Soft-clip attenuation telemetry for the UI meter: the oversampled
+    // clip-kernel gain, not an input/output peak ratio.
     private var clipGainEnv: Float = 1.0
     private var peakDecayCoeff: Float = 0.0
 
-    // Stack-allocated batch buffers for vvtanhf-accelerated soft-clipping.
-    // `factor` elements = one oversample step per host sample.
-    // Pre-allocated to `defaultFactor` so the audio thread never allocates
-    // even before configure() runs; resized to the active factor in configure().
+    // Batch buffers for vvtanhf-accelerated soft clipping, one oversample
+    // step per element.
     private var upBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipExcessBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     private var clipTanhBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
-    // Precomputed Lagrange basis weights per oversample phase. The
-    // interpolation fraction t = (i+1)/factor is fixed per phase, so these
-    // weights are constant; computing them once in configure() instead of
-    // re-evaluating the basis polynomials per host sample removes the
-    // clipper's largest scalar cost. Bit-identical to the inline path.
-    private var lagBasis: [SIMD4<Float>] = Array(repeating: .zero, count: defaultFactor)
 
     // === Look-ahead peak control (0.26) ===
-    // Predictive sidechain that knows the future peak amplitude over the
-    // next `lookaheadHostSamples` host samples. Multiplicative gain is
-    // applied at the input so the soft-clip kernel sees an already-shaved
-    // signal, mathematically bounding overshoots tighter than the soft-
-    // clip alone. Patent-clean: half-cosine attack from US 6,434,241
-    // (expired 2014); 200 Hz smoothing from US 5,737,434 (expired ~2017);
-    // sliding-window-max detector from public DSP literature
-    // (Signalsmith / musicdsp.org #274).
-    //
-    // Disabled when lookaheadHostSamples == 0; default OFF.
+    // Predictive sidechain that knows the peak over the next
+    // `lookaheadHostSamples` host samples. A gain applied at the input makes
+    // the clip kernel see an already-shaved signal. Sliding-window-max
+    // detector (Lemire deque) over the detector's own interpolated OS stream,
+    // so intersample peaks count. Disabled when the window is 0.
     private var lookaheadEnabled: Bool = false
     private var lookaheadHostSamples: Int = 0
     private var lookaheadDelay: [Float] = []
     private var lookaheadResizeScratch: [Float] = []
     private var lookaheadDelayWriteIdx: Int = 0
-
-    // Lemire monotonic deque (sliding-window max) over OS-rate samples.
-    // Operating at OS rate (`factor` × host) so the detector sees
-    // Lagrange-interpolated intersample peaks — closes the gap where a host-rate
-    // detector misses the 0.3-1.0 dB intersample peaks above |x| and
-    // lets them through after pre-clip gain scaling. deqValues /
-    // deqIndices are pre-allocated to the 5 ms maximum window at configure
-    // time; lookaheadHostSamples is the active logical window length.
-    // deqIndices stores the absolute OS-sample counter for expiry.
     private var deqValues: [Float] = []
     private var deqIndices: [Int] = []
     private var deqCapacity: Int = 0
     private var deqHead: Int = 0
     private var deqTail: Int = 0
     private var deqSampleCounter: Int = 0
-    // Parallel Lagrange-4 interpolator for the detector. Advances on
-    // un-delayed input `x` so the deque sees OS samples that the audio
-    // path will encounter `lookaheadHostSamples` host samples from now.
+    // The detector's own interpolator (same design as the audio path) on the
+    // UN-delayed input.
+    private var detInterp = LinearPhaseFIRInterpolator()
     private var detLag = Lagrange4Interp()
+    private var detPair: [Float] = [0.0, 0.0]
     private var detOSBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
-
-    // Gain state machine: exponential attack toward gTarget (rate tied
-    // to lookaheadHostSamples so gain reaches ~98% by the time the
-    // audio path catches up), hold for the window length, then
-    // exponential release at 80 ms time constant. The 200 Hz LP
-    // smoother on the gain envelope is the load-bearing pilot/RDS
-    // protection — modulation sidebands sit ≤200 Hz from carrier,
-    // 38+ dB down by 17 kHz so they cannot reach the protected pilot
-    // guard band.
-    private var lookaheadGain: Float = 1.0
-    private var lookaheadHoldRemaining: Int = 0
-    private var lookaheadAttackCoeff: Float = 0.0
+    // Gain: window-minimum target -> `LookaheadGainRamp` (instant-attack
+    // hold, 80 ms release, two cascaded moving averages spanning the window).
+    // The ramp arrives at the required gain exactly when the peak reaches the
+    // clip kernel. Until 2026-10 an exponential attack (time constant
+    // window / 4) followed by a 200 Hz one-pole reached only 81 % of the
+    // needed reduction on arrival (F10). The box cascade is also the better
+    // spectral guard: two 1 ms boxes are -46 dB at a 4 kHz offset where the
+    // 200 Hz one-pole was -26 dB, so the gain cannot move 15 kHz program
+    // into the pilot band.
+    private var ramp = LookaheadGainRamp()
     private var lookaheadReleaseCoeff: Float = 0.0
-    private var lookaheadLPCoeff: Float = 0.0
-    private var lookaheadLPState: Float = 1.0
-
-    // Telemetry — minimum lookahead-applied gain over a 50 ms decay
-    // envelope, mirroring peakInEnv/peakOutEnv. Surfaced via
-    // `lookaheadGainReductionDB` for the UI meter.
+    // Telemetry: minimum look-ahead gain with a 50 ms decay.
     private var lookaheadGainEnv: Float = 1.0
 
     mutating func configure(sampleRate: Float, thresholdDB: Float, ceilingDB: Float,
@@ -225,9 +183,7 @@ struct CompositeClipper {
                             cancelPilot: Bool = true, cancelRDS: Bool = true,
                             lookaheadMS: Float = 0.0,
                             oversamplingFactor: Int = 16) {
-        // Only accept 8 / 16 / 32. Clamp to the nearest valid value
-        // rather than rejecting — keeps callers simple and matches
-        // AppConfig.sanitize() which also clamps.
+        // Only accept 8 / 16 / 32 (AppConfig.sanitize() clamps the same way).
         let validFactor: Int
         switch oversamplingFactor {
         case ...8:        validFactor = 8
@@ -235,21 +191,15 @@ struct CompositeClipper {
         default:          validFactor = 32
         }
         self.factor = validFactor
-        // Resize batch buffers to match the active factor. Default-init
-        // size was `defaultFactor` (= 32, the max), so going to a smaller
-        // factor shrinks; going larger is a no-op shape-wise but the
-        // count change is needed so loop bounds match.
+        let half = validFactor / 2
         if upBatch.count != validFactor { upBatch = [Float](repeating: 0.0, count: validFactor) }
         if clipBatch.count != validFactor { clipBatch = [Float](repeating: 0.0, count: validFactor) }
         if clipExcessBatch.count != validFactor { clipExcessBatch = [Float](repeating: 0.0, count: validFactor) }
         if clipTanhBatch.count != validFactor { clipTanhBatch = [Float](repeating: 0.0, count: validFactor) }
         if detOSBatch.count != validFactor { detOSBatch = [Float](repeating: 0.0, count: validFactor) }
-        // Precompute the per-phase Lagrange basis weights (t = (i+1)/factor),
-        // matching the hot-loop's `step * Float(i + 1)` exactly so the
-        // interpolation stays bit-identical.
-        if lagBasis.count != validFactor { lagBasis = [SIMD4<Float>](repeating: .zero, count: validFactor) }
-        let basisStep = 1.0 / Float(validFactor)
-        for i in 0..<validFactor {
+        if lagBasis.count != half { lagBasis = [SIMD4<Float>](repeating: .zero, count: half) }
+        let basisStep = 1.0 / Float(half)
+        for i in 0..<half {
             lagBasis[i] = Lagrange4Interp.basisWeights(t: basisStep * Float(i + 1))
         }
 
@@ -257,15 +207,32 @@ struct CompositeClipper {
         let cMin: Float = thresholdLin + 0.02
         ceilingLin = clampf(powf(10.0, min(0.0, ceilingDB) / 20.0), cMin, 0.999)
         knee = max(1e-4, ceilingLin - thresholdLin)
-        let osRate = sampleRate * Float(self.factor)
-        // FIR decimator passband must contain the entire audio
-        // composite (0–53 kHz: M, S subcarrier sidebands at 38±15
-        // kHz). Cutoff at 53 kHz with a wide transition band — at the
-        // default OS rate 3.072 MHz (16× × 192 kHz, factor configurable
-        // to 8 / 16 / 32 since 0.30) the available stopband region is
-        // so wide that even a moderate transition gives ≥90 dB
-        // rejection at the first IM target (64 kHz). Kaiser-sinc
-        // designs to the stopBand target; tap count auto-sizes.
+        let sr = max(8_000.0, sampleRate)
+        let osRate = sr * Float(self.factor)
+
+        // 2x interpolator: passband the audio composite (0-53 kHz), stopband
+        // from the first image of 53 kHz (host rate - 53 kHz). 90 dB; the tap
+        // count floor (63) makes it far better than that at 192 kHz.
+        let composite: Float = min(53_000.0, sr * 0.45)
+        let interpTransition = max(2_000.0, sr - (2.0 * composite))
+        interp.configure(cutoffHz: composite, sampleRateOS: 2.0 * sr, interpolateFactor: 2,
+                         stopBandDB: 90.0, transitionHz: interpTransition)
+        detInterp.configure(cutoffHz: composite, sampleRateOS: 2.0 * sr, interpolateFactor: 2,
+                            stopBandDB: 90.0, transitionHz: interpTransition)
+        interpPair = [0.0, 0.0]
+        detPair = [0.0, 0.0]
+        lag = Lagrange4Interp()
+        detLag = Lagrange4Interp()
+        // Output p of a push at host step n is y[2n + p] ~ x(n + (p - c) / 2),
+        // c the kernel centre; the last one (p = 1) is (c - 1) / 2 host samples
+        // late, i.e. (c - 1) x factor / 2 OS samples. The causal Lagrange
+        // section adds none (its last point IS the 2x sample).
+        let centre = interp.groupDelayOSSamples
+        interpDelayOS = max(0, (centre - 1) * half)
+
+        // FIR decimator for the residual: passband the whole audio composite
+        // (0-53 kHz), stopband from 113 kHz with a 60 kHz transition (-6 dB
+        // at 83 kHz), 90 dB. Kaiser-sinc, tap count auto-sized (293 at 16x).
         let firPassband = clampf(53_000.0, 20_000.0, osRate * 0.45)
         let firTransition: Float = 60_000.0
         decimLP.configure(
@@ -275,39 +242,22 @@ struct CompositeClipper {
             stopBandDB: 90.0,
             transitionHz: firTransition
         )
-        // Bypass ring buffer length tracks the FIR's host-rate group
-        // delay so `bypassed - decimated(residual)` aligns sample-
-        // accurate. Length must be at least 1 to handle the (FIR-
-        // disabled) zero-delay case cleanly.
-        let bypassLen = max(1, decimLP.groupDelayHostSamples)
-        bypassDelay = [Float](repeating: 0.0, count: bypassLen)
-        bypassWriteIdx = 0
-
-        residualAudio15.configure(cutoffHz: 15_000.0, sampleRate: osRate)
-        // Stereo guard (22-53 kHz) cancellation also runs at HOST rate on the
-        // decimated residual. 53 kHz is the FIR passband edge -- the riskiest
-        // band for decimate<->bandpass commuting -- so this move is gated by the
-        // receiver separation @ 10/14 kHz, which exercise the stereo subcarrier.
-        residualStereo53.configure(cutoffHz: 53_000.0, sampleRate: sampleRate)
-        residualStereoHP.configure(cutoffHz: 22_000.0, sampleRate: sampleRate)
-        // Pilot guard: BPF centred at 19 kHz, Q=4 → ~4.75 kHz half-power
-        // bandwidth (17–21 kHz). RDS guard: BPF centred at 57 kHz, Q=14
-        // → ~4 kHz bandwidth (55–59 kHz). Q values keep the bandpasses
-        // from bleeding into the adjacent audio (≤15 kHz) and stereo
-        // (23–53 kHz) bands respectively.
-        // Pilot guard cancellation runs at HOST rate on the decimated residual
-        // (see process()) -- 19 kHz sits deep inside the FIR's 53 kHz passband,
-        // so decimate and bandpass commute and the per-OS-step filter is
-        // redundant. Configured at the host sample rate accordingly.
-        residualPilotBP.configureBandpass(freqHz: 19_000.0, sampleRate: sampleRate, q: 4.0)
-        residualRDSBP.configureBandpass(freqHz: 57_000.0, sampleRate: osRate, q: 14.0)
+        let osDelay = interpDelayOS + decimLP.groupDelayOSSamples
+        let pad = (self.factor - (osDelay % self.factor)) % self.factor
+        padLine = [Float](repeating: 0.0, count: pad)
+        padIndex = 0
+        residualDelayHost = (osDelay + pad) / self.factor
 
         self.cancelAudio = cancelAudio
         self.stereoGuard = clampf(stereoGuard, 0.0, 1.0)
         self.cancelPilot = cancelPilot
         self.cancelRDS = cancelRDS
+        configureGuard(sampleRate: sr)
 
-        let sr = max(8_000.0, sampleRate)
+        let bypassLen = max(1, residualDelayHost + guardHalf)
+        bypassDelay = [Float](repeating: 0.0, count: bypassLen)
+        bypassWriteIdx = 0
+
         peakDecayCoeff = expf(-1.0 / (0.050 * sr))
         clipGainEnv = 1.0
 
@@ -319,75 +269,105 @@ struct CompositeClipper {
         lookaheadEnabled = n > 0
         lookaheadDelay = [Float](repeating: 0.0, count: cap)
         lookaheadResizeScratch = [Float](repeating: 0.0, count: cap)
-        let maxWindowOS = cap * self.factor
-        deqCapacity = maxWindowOS + 2
+        deqCapacity = (cap + 1) * self.factor + 2
         deqValues = [Float](repeating: 0.0, count: deqCapacity)
         deqIndices = [Int](repeating: 0, count: deqCapacity)
         deqHead = 0
         deqTail = 0
         deqSampleCounter = 0
         lookaheadDelayWriteIdx = 0
-        detLag = Lagrange4Interp()
-
-        if lookaheadEnabled {
-            // Attack rate: reach ~98% of gTarget in `n` samples (4 time
-            // constants over the lookahead window). This lets the audio
-            // path's clip kernel see a fully-shaved signal by the time
-            // it catches up to the detected peak.
-            let attackTimeConstantSamples = max(1.0, Float(n) * 0.25)
-            lookaheadAttackCoeff = clampf(
-                1.0 - expf(-1.0 / attackTimeConstantSamples),
-                0.0, 1.0
-            )
-        } else {
-            lookaheadAttackCoeff = 0.0
-        }
-
-        // Release time constant: 80 ms (hardcoded). Smoothing 200 Hz
-        // single-pole IIR — keeps gain modulation sidebands ≤200 Hz from
-        // carrier so they cannot leak into the 17–21 kHz pilot guard
-        // band (38+ dB down by 17 kHz).
-        let releaseS: Float = 0.080
-        lookaheadReleaseCoeff = clampf(
-            1.0 - expf(-1.0 / (releaseS * sr)),
-            0.0, 1.0
-        )
-        let lpCutoffHz: Float = 200.0
-        lookaheadLPCoeff = clampf(1.0 - expf(-2.0 * .pi * lpCutoffHz / sr), 0.0, 1.0)
-
-        lookaheadGain = 1.0
-        lookaheadHoldRemaining = 0
-        lookaheadLPState = 1.0
+        // Release time constant: 80 ms (hardcoded).
+        lookaheadReleaseCoeff = expf(-1.0 / (0.080 * sr))
+        ramp.configure(rampSamples: rampSamples(window: n), holdSamples: n,
+                       releaseCoeff: lookaheadReleaseCoeff,
+                       capacityRampSamples: rampSamples(window: cap))
         lookaheadGainEnv = 1.0
     }
 
-    /// Total host-rate delay added by this clipper: lookahead window +
-    /// FIR group delay. Used by chain-latency reporting.
+    /// The longest gain ramp that still arrives in time: the detector sees
+    /// the input through its own interpolator (late by its group delay) and
+    /// the gain itself is interpolated with the audio path (smeared over the
+    /// kernel), so both are taken off the window.
+    private func rampSamples(window n: Int) -> Int {
+        let interpHost = (interpDelayOS + factor - 1) / factor
+        return max(0, n - (2 * interpHost) - 1)
+    }
+
+    /// Design the guard FIR for the enabled bands (allocates; configure only).
+    private mutating func configureGuard(sampleRate sr: Float) {
+        let edges = Self.guardEdgesHz
+        var bands: [(lo: Float, hi: Float, weight: Float)] = []
+        if cancelAudio { bands.append((0.0, edges.audioPilot, 1.0)) }
+        if cancelPilot { bands.append((edges.audioPilot, edges.pilotStereo, 1.0)) }
+        if stereoGuard > 0.0 { bands.append((edges.pilotStereo, edges.stereoRDS, stereoGuard)) }
+        if cancelRDS { bands.append((edges.stereoRDS, edges.rdsTop, 1.0)) }
+        guardKernel = Self.guardKernel(sampleRate: sr, bands: bands,
+                                       transitionHz: Self.guardTransitionHz,
+                                       depthDB: Self.guardDepthDB)
+        guardTaps = guardKernel.count
+        guardHalf = guardTaps > 0 ? (guardTaps - 1) / 2 : 0
+        guardLine = [Float](repeating: 0.0, count: guardTaps * 2)
+        guardIndex = 0
+        guardZeroRun = 0
+    }
+
+    /// Linear-phase "keep" kernel: a delta at the centre minus the weighted
+    /// sum of Kaiser-windowed band-pass kernels. Empty when no band applies.
+    /// Exposed for tests (the guard depth is measured on this kernel).
+    static func guardKernel(sampleRate: Float, bands: [(lo: Float, hi: Float, weight: Float)],
+                            transitionHz: Float, depthDB: Float) -> [Float] {
+        let sr = max(8_000.0, sampleRate)
+        let nyquist = sr * 0.5
+        let usable = bands.filter { $0.weight > 0.0 && $0.lo < nyquist - 1_000.0 && $0.hi > $0.lo }
+        guard !usable.isEmpty else { return [] }
+        let attenuation = max(21.0, depthDB)
+        let rawN = Int(ceilf((attenuation - 8.0) / (2.285 * 2.0 * .pi * (transitionHz / sr))))
+        let count = max(63, min(2_049, rawN | 1))
+        let beta: Float = attenuation > 50.0
+            ? 0.1102 * (attenuation - 8.7)
+            : (0.5842 * powf(attenuation - 21.0, 0.4)) + (0.07886 * (attenuation - 21.0))
+        let i0Beta = kaiserI0(beta)
+        let centre = (count - 1) / 2
+        var kernel = [Float](repeating: 0.0, count: count)
+        // Lowpass impulse response with cutoff f (Double for the long sums).
+        func lowpass(_ f: Double, _ m: Int) -> Double {
+            if m == 0 { return 2.0 * f / Double(sr) }
+            let mm = Double(m)
+            return sin(2.0 * Double.pi * f * mm / Double(sr)) / (Double.pi * mm)
+        }
+        for k in 0..<count {
+            let m = k - centre
+            var band: Double = 0.0
+            for b in usable {
+                let hi = min(Double(b.hi), Double(nyquist))
+                band += Double(b.weight) * (lowpass(hi, m) - lowpass(Double(b.lo), m))
+            }
+            let u = Float(2 * m) / Float(count - 1)
+            let window = kaiserI0(beta * sqrtf(max(0.0, 1.0 - (u * u)))) / i0Beta
+            let keep = (m == 0 ? 1.0 : 0.0) - (band * Double(window))
+            kernel[k] = Float(keep)
+        }
+        return kernel
+    }
+
+    /// Total host-rate delay added by this clipper: look-ahead window plus
+    /// interpolator, decimator and guard FIR group delay. The pilot/RDS
+    /// subcarrier delay is built from it.
     var totalDelayHostSamples: Int {
-        lookaheadHostSamples + decimLP.groupDelayHostSamples
+        lookaheadHostSamples + bypassDelay.count
     }
 
     /// Maximum delay this configured clipper can add without reallocating
-    /// during a live look-ahead resize. `configure()` preallocates the 5 ms
-    /// look-ahead delay capacity; `lookaheadHostSamples` is only the active
-    /// logical length.
+    /// during a live look-ahead resize.
     var maxTotalDelayHostSamples: Int {
-        lookaheadDelay.count + decimLP.groupDelayHostSamples
+        lookaheadDelay.count + bypassDelay.count
     }
 
-    /// Focused live-update for the look-ahead window size only. Skips the
-    /// FIR decimator / bypass delay / bandpass filter reconfiguration
-    /// that `configure(...)` does, and preserves the ducking state
-    /// (`lookaheadGain` / `lookaheadGainEnv` / `lookaheadLPState`) so a
-    /// GUI slider drag doesn't snap gain back to 1.0 on every tick.
-    ///
-    /// Logical buffer resizes preserve the time-ordered audio content in
-    /// `lookaheadDelay` without allocating: configure() preallocates the
-    /// maximum 5 ms host delay and OS-rate deque, while this method only
-    /// changes active lengths and copies within those buffers. The Lemire
-    /// deque is reset (it refills within `n` samples, while the gain envelope
-    /// is held by the LP smoother). Bandwidth, bypass, and all per-band
-    /// cancellation state are untouched.
+    /// Focused live update of the look-ahead window only. Keeps the gain
+    /// state (a slider drag must not snap the gain), resizes the delay within
+    /// the preallocated capacity without allocating, and resets the detector
+    /// deque (it refills within the window). Interpolators, decimator,
+    /// bypass and guard are untouched.
     mutating func setLookaheadMS(_ lookaheadMS: Float, sampleRate: Float) {
         let sr = max(8_000.0, sampleRate)
         let cap = Int((5.0 / 1000.0) * sr)
@@ -397,104 +377,90 @@ struct CompositeClipper {
         let oldEnabled = lookaheadEnabled
         let newEnabled = n > 0
 
-        if newEnabled {
-            // Preserve audio content in `lookaheadDelay`: read oldest-to-newest
-            // into preallocated scratch, then prepend zeros or drop the oldest
-            // to fit the new logical size. This keeps the live audio sample
-            // flowing through the resized pipeline without allocating or
-            // stepping the delay contents.
-            if n != oldN {
-                for i in 0..<n {
-                    lookaheadResizeScratch[i] = 0.0
-                }
-                if oldEnabled && oldN > 0 {
-                    let copyN = min(oldN, n)
-                    var srcIdx = (lookaheadDelayWriteIdx + oldN - copyN) % oldN
-                    let dstStart = n - copyN
-                    for i in 0..<copyN {
-                        lookaheadResizeScratch[dstStart + i] = lookaheadDelay[srcIdx]
-                        srcIdx = (srcIdx + 1) % oldN
-                    }
-                }
-                for i in 0..<n {
-                    lookaheadDelay[i] = lookaheadResizeScratch[i]
-                }
-                lookaheadDelayWriteIdx = 0
+        if newEnabled, n != oldN {
+            // Preserve audio content: read oldest-to-newest into scratch,
+            // then prepend zeros or drop the oldest to fit the new length.
+            for i in 0..<n {
+                lookaheadResizeScratch[i] = 0.0
             }
-
-            deqHead = 0
-            deqTail = 0
-            deqSampleCounter = 0
-            detLag = Lagrange4Interp()
-
-            let attackTimeConstantSamples = max(1.0, Float(n) * 0.25)
-            lookaheadAttackCoeff = clampf(
-                1.0 - expf(-1.0 / attackTimeConstantSamples),
-                0.0, 1.0
-            )
-        } else {
-            // Disabled. Keep the preallocated buffers and only reset logical
-            // state; gain envelopes stay at their current values and will
-            // decay naturally through the LP smoother when playback resumes.
-            lookaheadDelayWriteIdx = 0
-            deqHead = 0
-            deqTail = 0
-            deqSampleCounter = 0
-            detLag = Lagrange4Interp()
-            lookaheadAttackCoeff = 0.0
+            if oldEnabled && oldN > 0 {
+                let copyN = min(oldN, n)
+                var srcIdx = (lookaheadDelayWriteIdx + oldN - copyN) % oldN
+                let dstStart = n - copyN
+                for i in 0..<copyN {
+                    lookaheadResizeScratch[dstStart + i] = lookaheadDelay[srcIdx]
+                    srcIdx = (srcIdx + 1) % oldN
+                }
+            }
+            for i in 0..<n {
+                lookaheadDelay[i] = lookaheadResizeScratch[i]
+            }
         }
+        lookaheadDelayWriteIdx = 0
+        deqHead = 0
+        deqTail = 0
+        deqSampleCounter = 0
         lookaheadHostSamples = n
         lookaheadEnabled = newEnabled
-        // Do NOT reset lookaheadGain / lookaheadGainEnv / lookaheadLPState /
-        // lookaheadHoldRemaining — preserving them is the load-bearing
-        // anti-click property of this method.
+        ramp.resize(rampSamples: rampSamples(window: n), holdSamples: n)
     }
 
     /// Lookahead gain reduction in dB (positive = look-ahead is shaving
-    /// peaks). Tracked separately from `gainReductionDB` so operators can
-    /// distinguish predictive shaving (clean) from soft-clip shaving
-    /// (distortion-producing). Decayed at ~50 ms via lookaheadGainEnv.
+    /// peaks), decayed at ~50 ms. Separate from `gainReductionDB` so
+    /// operators can tell predictive shaving (clean) from soft clipping.
     var lookaheadGainReductionDB: Float {
         let g = max(1e-6, lookaheadGainEnv)
         return max(0.0, -20.0 * log10f(g))
     }
 
+    /// One host sample through the 2x FIR + Lagrange interpolator into `out`
+    /// (`factor` OS samples, chronological).
+    @inline(__always)
+    private static func upsample(_ x: Float, interp: inout LinearPhaseFIRInterpolator,
+                                 lag: inout Lagrange4Interp, pair: inout [Float],
+                                 basis: [SIMD4<Float>], half: Int, out: inout [Float]) {
+        pair.withUnsafeMutableBufferPointer { p in
+            // swiftlint:disable:next force_unwrapping
+            interp.push(x, into: p.baseAddress!)
+        }
+        if !lag.isPrimed { lag.prime(pair[0]) }
+        out.withUnsafeMutableBufferPointer { o in
+            for j in 0..<2 {
+                let y = pair[j]
+                let base = j * half
+                for i in 0..<(half - 1) {
+                    o[base + i] = lag.interpolate(weights: basis[i], cur: y)
+                }
+                o[base + half - 1] = y
+                lag.advance(y)
+            }
+        }
+    }
+
     @inline(__always)
     mutating func process(_ x: Float) -> Float {
+        let f = self.factor
+        let half = f / 2
+
         // === Phase 0: look-ahead peak control ===
-        // Push current input to the detector deque, read the delayed
-        // input the audio path will actually clip, compute pre-clip gain.
-        // When disabled (lookaheadHostSamples == 0): xPath = x, g = 1.0,
-        // bit-identical to the pre-look-ahead pipeline.
         let xPath: Float
-        let g: Float
         if lookaheadEnabled {
-            // 1. OS-rate sliding-window-max push. The detector's
-            //    Lagrange interpolator runs on the un-delayed input x;
-            //    we compute `factor` OS samples between the previous
-            //    host sample and x, then push each to the deque. This sees
-            //    Lagrange-interpolated intersample peaks that a
-            //    host-rate detector would miss.
-            if !detLag.isPrimed { detLag.prime(x) }
-            let f = self.factor
-            let stepDet = 1.0 / Float(f)
-            for i in 0..<f {
-                let t = stepDet * Float(i + 1)
-                detOSBatch[i] = (i == f - 1) ? x : detLag.interpolate(t: t, cur: x)
-            }
-            detLag.advance(x)
-            let nWindowOS = lookaheadHostSamples * f
+            // 1. Detector: interpolate the UN-delayed input and push every OS
+            //    sample into the sliding-window maximum. The window spans one
+            //    host sample more than the delay, so the OS interval the audio
+            //    path is about to clip (between the delayed sample and the one
+            //    before it) is always inside it (F10).
+            Self.upsample(x, interp: &detInterp, lag: &detLag, pair: &detPair,
+                          basis: lagBasis, half: half, out: &detOSBatch)
+            let nWindowOS = (lookaheadHostSamples + 1) * f
             for i in 0..<f {
                 let absV = fabsf(detOSBatch[i])
                 let curIdx = deqSampleCounter
-                // Expire from head: drop entries older than the window.
                 let oldestValidIdx = curIdx - nWindowOS + 1
                 while deqHead != deqTail && deqIndices[deqHead] < oldestValidIdx {
                     deqHead += 1
                     if deqHead >= deqCapacity { deqHead = 0 }
                 }
-                // Drop tail entries ≤ absV (can never be max while
-                // absV is in window).
                 while deqHead != deqTail {
                     let prevTail = deqTail == 0 ? deqCapacity - 1 : deqTail - 1
                     if deqValues[prevTail] <= absV {
@@ -510,96 +476,43 @@ struct CompositeClipper {
                 deqSampleCounter += 1
             }
 
-            // 2. Compute peak-ahead and target gain. peakAhead now
-            //    reflects worst-case OS-rate intersample peak in the
-            //    next n*factor OS samples — the actual peak the
-            //    soft-clip kernel will see.
+            // 2. Required gain over the window, ramped (see `ramp`).
             let peakAhead = (deqHead != deqTail) ? deqValues[deqHead] : 0.0
             let gTarget: Float = peakAhead > ceilingLin
                 ? ceilingLin / max(1e-6, peakAhead)
                 : 1.0
+            let g = ramp.push(gTarget)
+            lookaheadGainEnv = min(g, 1.0 - (1.0 - lookaheadGainEnv) * peakDecayCoeff)
 
-            // 3. Attack/hold/release state machine. Exponential attack
-            //    with rate tied to the lookahead window — the gain
-            //    chases gTarget down as long as the detector says peak
-            //    is above ceiling. Hold for window length once gain has
-            //    reached target, then exponential release (80 ms time
-            //    constant) toward gTarget = 1.0 when the peak passes.
-            if gTarget < lookaheadGain {
-                // Attack: chase gTarget exponentially. Hold counter
-                // resets whenever attack engages so a steady stream of
-                // peaks doesn't release between them.
-                let a = lookaheadAttackCoeff
-                lookaheadGain = (1.0 - a) * lookaheadGain + a * gTarget
-                lookaheadHoldRemaining = lookaheadHostSamples
-            } else if lookaheadHoldRemaining > 0 {
-                lookaheadHoldRemaining -= 1
-            } else {
-                // Release toward gTarget (typically 1.0 once peaks have
-                // passed). Exponential with 80 ms time constant.
-                let r = lookaheadReleaseCoeff
-                lookaheadGain = (1.0 - r) * lookaheadGain + r * gTarget
-            }
-
-            // 4. 200 Hz single-pole LP smoother on the gain envelope.
-            //    This is the load-bearing pilot/RDS protection: keeps
-            //    modulation sidebands ≤200 Hz from carrier so they cannot
-            //    reach the 17–21 kHz pilot guard or 55–59 kHz RDS guard.
-            lookaheadLPState += lookaheadLPCoeff * (lookaheadGain - lookaheadLPState)
-            g = lookaheadLPState
-
-            // Telemetry: track minimum smoothed gain over a 50 ms decay
-            // window (parallel to peakInEnv/peakOutEnv).
-            let decay = peakDecayCoeff
-            // For "minimum gain" envelope: use the inverse-of-max trick.
-            // 1.0 = no GR; smaller g = more GR. Decay: env *= decay (toward
-            // 1.0); attack: env = min(env, g).
-            lookaheadGainEnv = min(g, 1.0 - (1.0 - lookaheadGainEnv) * decay)
-
-            // 5. Read delayed input from lookahead delay ring.
+            // 3. Delayed input, gain applied before the interpolator, so the
+            //    clip kernel and the bypass see the same scaled signal.
             let dLen = lookaheadHostSamples
-            let xDelayed = dLen > 0 ? lookaheadDelay[lookaheadDelayWriteIdx] : x
+            let xDelayed = lookaheadDelay[lookaheadDelayWriteIdx]
             lookaheadDelay[lookaheadDelayWriteIdx] = x
             lookaheadDelayWriteIdx += 1
             if lookaheadDelayWriteIdx >= dLen { lookaheadDelayWriteIdx = 0 }
-            // Apply gain to the audio path. Multiplicative scaling at
-            // input means the entire downstream pipeline (Lagrange interp,
-            // soft-clip, per-band cancellation, decimation, bypass) sees
-            // a gain-scaled signal in lockstep — the (oBand − cBand)
-            // cancellation identity is preserved by linearity.
             xPath = xDelayed * g
         } else {
             xPath = x
-            g = 1.0
-            // Decay telemetry envelope toward 1.0 even when disabled, so
-            // a transient enable/disable doesn't leave the meter pinned.
+            // Decay the telemetry toward 1.0 so a disable does not pin it.
             lookaheadGainEnv = 1.0 - (1.0 - lookaheadGainEnv) * peakDecayCoeff
         }
 
-        if !lag.isPrimed { lag.prime(xPath) }
-        let f = self.factor
+        // === Phase 1: oversample the path ===
+        Self.upsample(xPath, interp: &interp, lag: &lag, pair: &interpPair,
+                      basis: lagBasis, half: half, out: &upBatch)
 
-        // Phase 1: pre-compute all `f` oversampled inputs via Lagrange interp.
-        // Lagrange state advances only at lag.advance(x) below, so this
-        // is safe to do as a batch up front.
-        // Write through an unsafe buffer pointer so the per-element store
-        // doesn't trip a copy-on-write uniqueness check each iteration
-        // (these are private, never-aliased scratch buffers). Bit-identical.
-        upBatch.withUnsafeMutableBufferPointer { ub in
-            for i in 0..<f {
-                ub[i] = (i == f - 1) ? xPath : lag.interpolate(weights: lagBasis[i], cur: xPath)
-            }
-        }
-
-        // Phase 2: batched soft-clip via vvtanhf. Replaces `f` scalar tanhf
-        // calls with one vvtanhf call on an `f`-element vector — reduces
-        // libm tanhf overhead and uses Apple Silicon's vector exp/log
-        // pipeline. Below-threshold samples bypass the tanh result entirely
-        // (the tanh is still computed in the batch but its result is
-        // discarded for those samples — the cost of the wasted compute is
-        // smaller than the cost of a per-element branch on the SIMD path).
+        // === Phase 2: batched soft clip (vvtanhf) ===
         let thr = thresholdLin
         let kn = knee
+        // Idle fast path (bit-identical): when no OS sample of this host
+        // sample exceeds the threshold the clip kernel is the identity, the
+        // residual is exactly zero and the tanh batch is never read.
+        var anyOver = false
+        upBatch.withUnsafeBufferPointer { ub in
+            for i in 0..<f where fabsf(ub[i]) > thr { anyOver = true; break }
+        }
+        if anyOver {
         clipExcessBatch.withUnsafeMutableBufferPointer { eb in
             for i in 0..<f {
                 eb[i] = (fabsf(upBatch[i]) - thr) / kn
@@ -614,7 +527,9 @@ struct CompositeClipper {
                 // swiftlint:enable force_unwrapping
             }
         }
+        }
         var sampleClipGain: Float = 1.0
+        if anyOver {
         clipBatch.withUnsafeMutableBufferPointer { cb in
             for i in 0..<f {
                 let up = upBatch[i]
@@ -628,83 +543,52 @@ struct CompositeClipper {
                 }
             }
         }
+        }
 
-        // Phase 3: per-OS-step band processing in differential-clipper
-        // topology (Orban US 6,337,999, expired 2022). Conventional
-        // upsample → clip → decimate places the wanted signal directly
-        // through the decimator, so the decimator's stopband leakage
-        // and phase non-flatness colour the output. Differential
-        // topology routes only the *clipping residual* through the
-        // decimator and a 1× delay-matched bypass carries the wanted
-        // signal:
-        //
-        //     residual_OS = up − clipped
-        //     output_HOST = bypass_delayed − decimate(residual_OS)
-        //
-        // For un-cancelled bands the residual passes through; for
-        // cancelled bands (pilot/stereo/RDS guards) we subtract that
-        // band's component from the residual *before* decimation so
-        // the clipper IM in those bands isn't reflected back to the
-        // output. Math identity:
-        //
-        //     classical = clipped + Σ band_delta(up, clipped)
-        //     differential = bypass − decimate(residual − Σ band_delta)
-        //
-        // Both reduce to `decimate(clipped + Σ band_delta)` when the
-        // FIR is unity-gain in passband, but differential keeps the
-        // decimator off the wanted-signal path entirely.
+        // === Phase 3: residual -> pad -> decimator (differential topology) ===
+        //     out_HOST = bypass_delayed - guard(decimate(up - clipped))
+        // Only the clipping residual sees the decimator; the wanted signal
+        // rides the delay-matched bypass.
         var residualDecimated: Float = 0.0
+        let padLen = padLine.count
         for i in 0..<f {
-            // Naked clipping residual. Each protected band subtracts its
-            // bandpass(residual) so the clipper IM in that band isn't
-            // reflected to the output. By LTI superposition,
-            // bandpass(residual) == bandpass(up) - bandpass(clipped), so a
-            // single filter per band on the residual is exact -- and an
-            // off band is skipped entirely (its filter would only need a
-            // few OS samples to settle on a later live enable, which is
-            // sub-millisecond and inaudible in a guard band).
-            let r0 = upBatch[i] - clipBatch[i]
-            var residual = r0
-            if cancelAudio {
-                residual -= residualAudio15.process(r0).low
+            var r: Float = anyOver ? upBatch[i] - clipBatch[i] : 0.0
+            if padLen > 0 {
+                let delayed = padLine[padIndex]
+                padLine[padIndex] = r
+                padIndex += 1
+                if padIndex >= padLen { padIndex = 0 }
+                r = delayed
             }
-            // Pilot + stereo guards handled at host rate after decimation (below).
-            if cancelRDS {
-                residual -= residualRDSBP.process(r0)
+            residualDecimated = decimLP.push(r)
+        }
+
+        // === Phase 4: guard bands (linear-phase FIR on the host residual) ===
+        if guardTaps > 0 {
+            guardLine[guardIndex] = residualDecimated
+            guardLine[guardIndex + guardTaps] = residualDecimated
+            guardIndex += 1
+            if guardIndex >= guardTaps { guardIndex = 0 }
+            // A window of exact zeros dots to exactly +0: skip it.
+            guardZeroRun = residualDecimated == 0.0 ? guardZeroRun + 1 : 0
+            var kept: Float = 0.0
+            let count = vDSP_Length(guardTaps)
+            if guardZeroRun < guardTaps {
+            guardKernel.withUnsafeBufferPointer { k in
+                guardLine.withUnsafeBufferPointer { d in
+                    // swiftlint:disable force_unwrapping
+                    vDSP_dotpr(k.baseAddress!, 1, d.baseAddress!.advanced(by: guardIndex), 1,
+                               &kept, count)
+                    // swiftlint:enable force_unwrapping
+                }
             }
+            }
+            residualDecimated = kept
+        }
 
-            // Push residual into FIR decimator. Returns the most-
-            // recent emitted decimated value; the value updates only
-            // on the f-th push of each host sample, so the value read
-            // after the loop is the freshly-decimated residual.
-            residualDecimated = decimLP.push(residual)
-        }
-        // Pilot (19 kHz) guard cancellation at host rate: 19 kHz is deep within
-        // the FIR's 53 kHz passband, so cancelling on the decimated residual
-        // once per host sample is equivalent to the former per-OS-step path by
-        // LTI commuting -- but ~factor x cheaper. Stereo and RDS stay at OS rate
-        // (stereo rides the FIR passband edge; RDS at 57 kHz is outside it).
-        if cancelPilot {
-            residualDecimated -= residualPilotBP.process(residualDecimated)
-        }
-        if stereoGuard > 0.0 {
-            let split = residualStereo53.process(residualDecimated)
-            residualDecimated -= stereoGuard * residualStereoHP.process(split.low).high
-        }
-        lag.advance(xPath)
-
-        // Bypass: read host-rate input from `groupDelayHostSamples`
-        // ago. With a length-N ring buffer (N = group delay), we read
-        // the slot we're about to overwrite — that value was written
-        // N samples ago. The N=1 special case (FIR group delay rounds
-        // to 0 host samples, e.g. on extremely short FIRs) gives
-        // zero-delay bypass, which is the correct degenerate
-        // behaviour. Bypass holds gain-scaled `xPath` so the
-        // differential math `out = bypassed − decimated(residual)`
-        // gives the gain-scaled clipped output (per the look-ahead
-        // multiplicative-scaling-at-input identity).
+        // === Phase 5: bypass ===
         let bypassLen = bypassDelay.count
-        let bypassed = bypassLen > 1 ? bypassDelay[bypassWriteIdx] : xPath
+        let bypassed = bypassDelay[bypassWriteIdx]
         bypassDelay[bypassWriteIdx] = xPath
         bypassWriteIdx += 1
         if bypassWriteIdx >= bypassLen { bypassWriteIdx = 0 }
@@ -712,7 +596,6 @@ struct CompositeClipper {
         let out = bypassed - residualDecimated
 
         clipGainEnv = min(sampleClipGain, 1.0 - (1.0 - clipGainEnv) * peakDecayCoeff)
-        _ = g  // silence unused-when-disabled warning
         return out
     }
 

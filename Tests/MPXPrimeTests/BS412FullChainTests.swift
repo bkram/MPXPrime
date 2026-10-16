@@ -45,6 +45,11 @@ struct BS412FullChainTests {
 
     /// Render `seconds` of programme and return the composite.
     private func render(_ cfg: AppConfig, seconds: Double) -> [Float] {
+        renderWithStatus(cfg, seconds: seconds).composite
+    }
+
+    /// Same, plus the generator's own BS.412 status at the end of the render.
+    private func renderWithStatus(_ cfg: AppConfig, seconds: Double) -> (composite: [Float], status: BS412Status) {
         let generator = MPXGenerator(config: cfg, sampleRate: sampleRate)
         let frames = Int(sampleRate * seconds)
         var left = [Float](repeating: 0.0, count: frames)
@@ -75,7 +80,7 @@ struct BS412FullChainTests {
                 }
             }
         }
-        return left
+        return (left, generator.bs412Status)
     }
 
     /// The Meter's reading of the same composite. Its absolute calibration is
@@ -98,20 +103,22 @@ struct BS412FullChainTests {
     @Test func theEncoderAndTheMeterAgreeOnCompleteMultiplexPower() {
         // 65 seconds: past the Recommendation's 60 s window on both sides.
         let cfg = config(ceilingDBr: 0.0, bs412: false)
-        let composite = render(cfg, seconds: 65.0)
-        let meter = meterPowerDBr(composite)
+        let rendered = renderWithStatus(cfg, seconds: 65.0)
+        let meter = meterPowerDBr(rendered.composite)
 
-        // Measure the same composite with the encoder's own meter, fed the
-        // way the chain feeds it.
-        var encoder = BS412MultiplexPowerMeter()
-        encoder.configure(sampleRate: Float(sampleRate))
-        for sample in composite { encoder.process(sample) }
-
-        #expect(encoder.windowValid, "65 s must validate a 60 s window")
-        #expect(abs(encoder.powerDBr - meter) < 0.2,
+        // The GENERATOR's own reading, as the chain taps it. Feeding the
+        // finished composite into a fresh `BS412MultiplexPowerMeter` (what
+        // this test used to do) could never see a meter tapped before
+        // pilot / RDS injection, which is the defect it claims to catch
+        // (test-suite review 2026-10 finding 16). The Meter's window
+        // is the last 60 s of the composite; the generator's is the same
+        // 60 s at the end of the render.
+        let status = rendered.status
+        #expect(status.powerValid, "65 s must validate a 60 s window")
+        #expect(abs(status.powerDBr - meter) < 0.2,
                 """
-                encoder reads \(encoder.powerDBr) dBr and the Meter reads \(meter) dBr \
-                on the same composite -- the two definitions have diverged
+                the generator reports \(status.powerDBr) dBr and the Meter reads \(meter) dBr \
+                on the same composite -- the encoder's tap or definition has diverged
                 """)
     }
 

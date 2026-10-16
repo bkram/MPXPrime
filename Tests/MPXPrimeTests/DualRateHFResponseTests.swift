@@ -58,6 +58,7 @@ struct DualRateHFResponseTests {
         cfg.limitMPX = true
         cfg.preEncodeAudioLimiterEnabled = true
         cfg.widebandAGCEnabled = false        // disable AGC so it doesn't slew on a steady tone
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.primeBassEnabled = false
         cfg.monoBassEnabled = false
         cfg.multibandEnabled = false          // disable multiband so the response is unshaped
@@ -76,6 +77,19 @@ struct DualRateHFResponseTests {
 
     private func renderToneToMPX(frequency: Double, dualRateOn: Bool, encoderFIR: Bool,
                                  amplitude amp: Float = 0.5) -> [Float] {
+        renderToneMeasuringGR(frequency: frequency, dualRateOn: dualRateOn, encoderFIR: encoderFIR,
+                              amplitude: amp).mpx
+    }
+
+    /// Same render, also returning the largest pre-encode and final-limiter
+    /// gain reduction seen after `measureFrom` (the Goertzel window): a
+    /// response comparison is only a response comparison while neither
+    /// limiter is pinning the output (test-suite review 2026-10
+    /// finding 5: at amplitude 0.5 both paths sat at the same 0.959 ceiling
+    /// from 4 kHz up, so the on/off delta compared two limited peaks).
+    private func renderToneMeasuringGR(frequency: Double, dualRateOn: Bool, encoderFIR: Bool,
+                                       amplitude amp: Float,
+                                       measureFrom: Int = 0) -> (mpx: [Float], maxGRDB: Float) {
         var cfg = baseConfig()
         cfg.dualRateAudioDomainEnabled = dualRateOn
         cfg.dualRateAudioDomainRateHz = 48_000.0
@@ -99,6 +113,7 @@ struct DualRateHFResponseTests {
         // Render in blockSize chunks; output goes back into the L array
         // (output is mono MPX — L and R receive identical mpx).
         let blocks = (totalFrames + blockSize - 1) / blockSize
+        var maxGR: Float = 0.0
         left.withUnsafeMutableBufferPointer { lBuf in
             right.withUnsafeMutableBufferPointer { rBuf in
                 var offset = 0
@@ -112,10 +127,14 @@ struct DualRateHFResponseTests {
                         right: rBuf.baseAddress!.advanced(by: offset)
                     )
                     offset += frames
+                    if offset > measureFrom {
+                        let status = gen.finalLimiterStatus
+                        maxGR = max(maxGR, status.preEncodeGainReductionDB, status.safetyGainReductionDB)
+                    }
                 }
             }
         }
-        return left
+        return (left, maxGR)
     }
 
     /// Goertzel single-bin magnitude (linear amplitude).
@@ -159,16 +178,27 @@ struct DualRateHFResponseTests {
         // Test frequencies safely inside the FIR's 14.9 kHz cutoff so
         // we're measuring the audio-domain chain's response, not the
         // encoder LP's natural rolloff.
-        let passbandFrequencies: [Double] = [1_000, 2_000, 4_000, 8_000, 10_000, 12_000]
+        // 12 kHz moved to `dualRateOnMatchesOffNearEncoderCutoff`: measured
+        // below the limiters it reads +0.50 dB on/off (2026-10-15), part of
+        // the same boundary-off HF deficit that test is blocked on.
+        let passbandFrequencies: [Double] = [1_000, 2_000, 4_000, 8_000, 10_000]
         // The boundary itself + bilinear warping at the lower rate add
         // sub-dB response variation. 0.5 dB is generous for the
         // passband.
         let passbandToleranceDB: Double = 0.5
 
         for f in passbandFrequencies {
-            let mpxOff = renderToneToMPX(frequency: f, dualRateOn: false, encoderFIR: true)
-            let mpxOn  = renderToneToMPX(frequency: f, dualRateOn: true,  encoderFIR: true)
+            // Amplitude 0.05 (as productionChainFollowsTheAnalogPreemphasisCurve):
+            // below every limiter even with the 12 kHz pre-emphasis boost.
             let skip = Int(0.5 * sampleRate)
+            let off = renderToneMeasuringGR(frequency: f, dualRateOn: false, encoderFIR: true,
+                                            amplitude: 0.05, measureFrom: skip)
+            let on = renderToneMeasuringGR(frequency: f, dualRateOn: true, encoderFIR: true,
+                                           amplitude: 0.05, measureFrom: skip)
+            #expect(off.maxGRDB == 0.0 && on.maxGRDB == 0.0,
+                    "a limiter acted inside the measurement window at \(Int(f)) Hz (off \(off.maxGRDB) dB, on \(on.maxGRDB) dB): the comparison would be of limited peaks")
+            let mpxOff = off.mpx
+            let mpxOn = on.mpx
             let magOff = goertzelMagnitude(buf: mpxOff, freqHz: f, sampleRate: sampleRate, startFrame: skip)
             let magOn  = goertzelMagnitude(buf: mpxOn,  freqHz: f, sampleRate: sampleRate, startFrame: skip)
             let dbOff = 20.0 * log10(max(1e-12, magOff))
@@ -213,13 +243,38 @@ struct DualRateHFResponseTests {
     /// encoder LP's 14.9 kHz compliance cutoff. Since 0.45 both rates use the
     /// same linear-phase FIR decimator and the analog-fitted pre-emphasis, so
     /// the on/off difference is a fraction of a dB (it was 2.5 dB before).
+    ///
+    /// Measured below the limiters (amplitude 0.05, 2026-10-15) the boundary-
+    /// OFF path reads 1.04 dB under the boundary-on path at 14 kHz and 0.50 dB
+    /// at 12 kHz; against the analogue pre-emphasis curve the off path is
+    /// 1.24 dB low at 14 kHz and the on path 0.2 dB. At amplitude 0.5 both
+    /// renders sat at the same limiter ceiling and the test passed by
+    /// comparing two limited peaks (test-suite review 2026-10
+    /// finding 5). The off path is the full-rate audio domain that the
+    /// processed-audio modes (fm / hd / am) use at the output device rate.
+    /// Root cause (2026-10-16, re-measured: 0.77 dB at 14 kHz on this tree):
+    /// the 6th-order Butterworth program lowpass at 15.3 kHz is bilinear, so
+    /// its droop depends on the rate it is designed at -- -0.47 dB at 14 kHz
+    /// on the 48 kHz domain, -1.24 dB at 192 kHz. The full-rate composite now
+    /// runs the 48 kHz design as H(z^4) (`StridedProgramLowpass`), identical
+    /// below 24 kHz; the processed-audio modes drop it and keep the encoder
+    /// FIR alone (`OutputResponseTests`).
     @Test func dualRateOnMatchesOffNearEncoderCutoff() {
-        let frequencies: [Double] = [13_000, 14_000, 15_000]
-        let toleranceDB: Double = 1.0
+        let frequencies: [Double] = [12_000, 13_000, 14_000, 15_000]
+        // Both paths now run the same program-lowpass response; measured
+        // on/off delta <= 0.001 dB at 10-15 kHz (2026-10-16), against 0.77 dB
+        // at 14 kHz before -- which the old 1.0 dB tolerance let through.
+        let toleranceDB: Double = 0.3
         for f in frequencies {
-            let mpxOff = renderToneToMPX(frequency: f, dualRateOn: false, encoderFIR: true)
-            let mpxOn  = renderToneToMPX(frequency: f, dualRateOn: true,  encoderFIR: true)
             let skip = Int(0.5 * sampleRate)
+            let off = renderToneMeasuringGR(frequency: f, dualRateOn: false, encoderFIR: true,
+                                            amplitude: 0.05, measureFrom: skip)
+            let on = renderToneMeasuringGR(frequency: f, dualRateOn: true, encoderFIR: true,
+                                           amplitude: 0.05, measureFrom: skip)
+            #expect(off.maxGRDB == 0.0 && on.maxGRDB == 0.0,
+                    "a limiter acted inside the measurement window at \(Int(f)) Hz (off \(off.maxGRDB) dB, on \(on.maxGRDB) dB)")
+            let mpxOff = off.mpx
+            let mpxOn = on.mpx
             let magOff = goertzelMagnitude(buf: mpxOff, freqHz: f, sampleRate: sampleRate, startFrame: skip)
             let magOn  = goertzelMagnitude(buf: mpxOn,  freqHz: f, sampleRate: sampleRate, startFrame: skip)
             let dbOff = 20.0 * log10(max(1e-12, magOff))
@@ -232,10 +287,10 @@ struct DualRateHFResponseTests {
 
     // MARK: - Full sweep markdown report (env-gated)
 
-    @Test func measureHFResponseDeltaIfRequested() {
-        guard ProcessInfo.processInfo.environment["MPXPRIME_HF_RESPONSE"] != nil else {
-            return
-        }
+    // Opt-in report. `.enabled(if:)` instead of an early return, so a
+    // default run lists it as skipped rather than counting an empty pass.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MPXPRIME_HF_RESPONSE"] != nil))
+    func measureHFResponseDeltaIfRequested() {
 
         var lines: [String] = []
         lines.append("# Dual-rate HF amplitude response (audio chain, full chain @ 192 kHz)")

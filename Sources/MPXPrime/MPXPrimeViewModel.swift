@@ -13,8 +13,23 @@ import MPXPrimeUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// A live hot-plug subscription the view model can end. `AudioDeviceObservation`
+/// (CoreAudio) is the production conformer; tests inject a stub through
+/// `MPXPrimeViewModel.init(configPath:deviceLister:deviceObserver:)` so a
+/// headless `swift test` never registers with the HAL.
+protocol DeviceObservationHandle: AnyObject, Sendable {
+    func cancel()
+}
+
+extension AudioDeviceObservation: DeviceObservationHandle {}
+
 @MainActor
 final class MPXPrimeViewModel: ObservableObject {
+    /// Starts watching for device arrivals / removals and default-device
+    /// changes, calling the handler (on the main queue) on each; returns the
+    /// handle that ends the subscription.
+    typealias DeviceObserverFactory = (@escaping @Sendable () -> Void) -> any DeviceObservationHandle
+
     private struct RuntimeSnapshot {
         var config: AppConfig
         var sourceMode: String
@@ -24,19 +39,24 @@ final class MPXPrimeViewModel: ObservableObject {
         var selectedInputUID: String
         var selectedOutputUID: String
         var selectedMonitorUID: String
+        var selectedInputChannels: ChannelPair?
+        var selectedOutputChannels: ChannelPair?
+        var selectedMonitorChannels: ChannelPair?
     }
 
-    // Active = main window foreground/key, not minimized, not fully
-    // occluded. Idle = app inactive / occluded / minimized. The idle
-    // rate stays > 0 so the meter ballistics state remains warm and the
-    // UI resumes immediately on bring-forward.
+    // Refresh tiers (see MonitoringRefreshPolicy): live while the app is
+    // frontmost and a view showing live values is visible; background
+    // while such a view is visible behind another app; quiet while the
+    // engine is stopped or nothing live is visible. The quiet rate stays
+    // > 0 so the meter ballistics state remains warm and the UI resumes
+    // immediately on bring-forward.
     //
     // Active rate held at 30 Hz: per-tick work in
     // `refreshMonitoringSnapshot` (5 String(format:) calls + 59
     // @Published writes + SwiftUI re-renders) runs on the main thread.
     // Pushing the timer to 60 Hz can preempt the audio render thread on
     // busy machines and cause input-ring / output-buffer drops.
-    // Inline spectrum bumped 12 → 24 Hz for a visible smoothness win
+    // Inline spectrum bumped 12 -> 24 Hz for a visible smoothness win
     // without doubling main-thread cost; windowed visualizers stay at
     // 30 Hz which is comfortably smooth for the dedicated detached
     // panels.
@@ -51,26 +71,33 @@ final class MPXPrimeViewModel: ObservableObject {
     #if arch(x86_64)
     private static let monitoringRefreshHzActive: Double = 20.0
     private static let monitoringRefreshHzIdle: Double = 12.0
-    private static let inlineMPXSpectrumRefreshHz: Double = 15.0
     private static let windowMPXSpectrumRefreshHz: Double = 20.0
     private static let windowPreMPXSpectrumRefreshHz: Double = 20.0
-    private static let inlineMPXSpectrumBins: Int = 256
     private static let windowMPXSpectrumBins: Int = 384
     private static let preMPXSpectrumBins: Int = 128
     #else
     private static let monitoringRefreshHzActive: Double = 30.0
-    // Idle rate (window occluded / app backgrounded / minimized). 20 Hz
-    // keeps VU meters visibly responsive when glancing at the window from
-    // another app while adjusting source levels. Well below the 60 Hz
+    // Background rate (app not frontmost, but a live view still visible).
+    // 20 Hz keeps VU meters visibly responsive when glancing at the window
+    // from another app while adjusting source levels. Well below the 60 Hz
     // preemption threshold for audio-thread safety.
     private static let monitoringRefreshHzIdle: Double = 20.0
-    private static let inlineMPXSpectrumRefreshHz: Double = 24.0
     private static let windowMPXSpectrumRefreshHz: Double = 30.0
     private static let windowPreMPXSpectrumRefreshHz: Double = 30.0
-    private static let inlineMPXSpectrumBins: Int = 384
     private static let windowMPXSpectrumBins: Int = 512
     private static let preMPXSpectrumBins: Int = 128
     #endif
+    /// Quiet rate: the engine is stopped, or nothing that draws live values
+    /// is visible. Enough for the transport state and the status chips; the
+    /// ballistics stay warm for the next view (`MonitoringRefreshPolicy`).
+    private static let monitoringRefreshHzQuiet: Double = 4.0
+    static let monitoringRefreshRates = MonitoringRefreshPolicy.Rates(
+        live: monitoringRefreshHzActive,
+        background: monitoringRefreshHzIdle,
+        quiet: monitoringRefreshHzQuiet)
+    /// A remote client that asked for meters / telemetry this recently
+    /// keeps the analyses it reads running even with no window showing them.
+    private static let remoteConsumerWindow: TimeInterval = 3.0
     private static let meterAttackMS: Float = 18.0
     private static let meterReleaseMS: Float = 110.0
     private static let audioPeakMeterAttackMS: Float = 1.0
@@ -126,7 +153,7 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
     /// Remembers the last visited stage per sidebar group so the
-    /// ⌘1-⌘4 "Go to <Section>" shortcuts restore the sub-tab the user
+    /// Cmd-1-Cmd-4 "Go to <Section>" shortcuts restore the sub-tab the user
     /// was last on in that group instead of always snapping to the
     /// group home. Seeded with each group's landing stage so a first
     /// jump lands somewhere sensible.
@@ -140,15 +167,20 @@ final class MPXPrimeViewModel: ObservableObject {
     /// Whether a given sidebar stage has a "currently active" concept and,
     /// if so, whether it is on. Returns nil for stages with no single
     /// enable toggle (Monitoring, Overview, Core, Format Profile, Final
-    /// Stage, Snapshots, RDS sub-tabs that inherit the master) — those
+    /// Stage, Snapshots, RDS sub-tabs that inherit the master) -- those
     /// rows never render an enabled-state dot. Mirrors Mail's pattern:
     /// only the section landing carries the badge.
     func isStageEnabled(_ stage: Stage) -> Bool? {
         switch stage {
-        case .monitoring, .audioIO, .processingOverview, .processingFormatProfile,
+        case .monitoring, .audioIO, .processingOverview,
              .processingCore, .processingFinalStage, .snapshots,
-             .rdsProgram, .rdsRadiotext, .rdsLongPS, .rdsAF,
+             .rdsProgram, .rdsRadiotext, .rdsAF,
              .rdsSchedule, .rdsCarrier:
+            return nil
+        // Stereo encoding is always on; its page's only switch is the SSB
+        // option, so a dot reading that flag would show "stereo off" in the
+        // default configuration. No dot, like every page without an enable.
+        case .processingStereoCoder:
             return nil
         // Advanced Dynamics has no enable of its own: the Levelling engine
         // picker is the one switch, and this row exists only while it says
@@ -171,7 +203,6 @@ final class MPXPrimeViewModel: ObservableObject {
         case .processingDCClipper: return config.dcClipperEnabled
         case .processingHFLimiter: return config.hfLimiterEnabled
         case .processingLimiter: return config.preEncodeAudioLimiterEnabled
-        case .processingStereoCoder: return config.ssbStereoEnabled
         case .processingCompositeClipper: return config.compositeClipperEnabled
         case .processingBS412: return config.bs412Enabled
         case .rdsControl: return config.enRDS
@@ -196,12 +227,7 @@ final class MPXPrimeViewModel: ObservableObject {
             selectedStage = target
         }
     }
-    /// Phase 3 inspector visibility. Toggleable from View > Inspector.
-    /// Defaults off so the redesign progressively reveals features —
-    /// users who don't need the advanced cancel toggles or per-band
-    /// detail panels never see the column.
-    @Published var inspectorVisible: Bool = false
-    /// Phase 4 active-band selector for the new Multiband editor —
+    /// Phase 4 active-band selector for the new Multiband editor --
     /// controls which band the per-band Threshold / Ratio / Attack /
     /// Release sliders re-target. 0 = Low, 1 = Mid, 2 = High.
     @Published var activeMultibandBand: Int = 1
@@ -212,7 +238,7 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var startBlockedMessage: String?
     @Published var pendingRuntimeApply: Bool = false
 
-    // Named snapshot slots — persistent operator-saved setups beyond
+    // Named snapshot slots -- persistent operator-saved setups beyond
     // format profiles. Stored on disk as JSON alongside the INI; survive
     // app upgrades. 8 fixed slots; nil = empty. Operator names each save
     // ("Morning Show", "Saturday Night", "Live Sports").
@@ -235,7 +261,7 @@ final class MPXPrimeViewModel: ObservableObject {
 
     /// Snapshot file path derived from the config file path. Sibling
     /// file with `.snapshots.json` suffix so each distinct config gets
-    /// its own snapshot file — important for `--config` overrides and
+    /// its own snapshot file -- important for `--config` overrides and
     /// for test isolation (concurrent tests with unique temp config
     /// paths get isolated snapshot files, not a shared one in the
     /// directory).
@@ -248,11 +274,23 @@ final class MPXPrimeViewModel: ObservableObject {
     @Published var processingBypass: Bool
     @Published var inputGainDB: Double
 
+    /// Every device the last scan found (the Devices popover); the two
+    /// filtered lists below feed the selectors.
+    @Published var allDevices: [AudioDevice] = []
     @Published var inputDevices: [AudioDevice] = []
     @Published var outputDevices: [AudioDevice] = []
+    /// When `allDevices` was last read from the lister (a rescan, a hot-plug
+    /// event or a config reload).
+    @Published var lastDeviceScan = Date()
     @Published var selectedInputUID: String = ""
     @Published var selectedOutputUID: String = ""
     @Published var selectedMonitorUID: String = ""
+    /// Which device channels carry each signal; nil is channels 1, 2 (the
+    /// INI default, written as an empty key). Input/output are restart-class
+    /// like their device UIDs; the monitor pair applies live.
+    @Published var selectedInputChannels: ChannelPair?
+    @Published var selectedOutputChannels: ChannelPair?
+    @Published var selectedMonitorChannels: ChannelPair?
 
     @Published var isRunning: Bool = false
     @Published var isTransitioning: Bool = false
@@ -260,7 +298,7 @@ final class MPXPrimeViewModel: ObservableObject {
     // Live monitoring telemetry lives on its own observable so a metering
     // tick does not invalidate the whole view model. These forward to it;
     // writer code in the update methods is unchanged. See LiveTelemetry.
-    let telemetry = LiveTelemetry()
+    let telemetry: LiveTelemetry = LiveTelemetry()
     var inputRingText: String { get { telemetry.inputRingText } set { telemetry.inputRingText = newValue } }
     var inputBufferValue: Double { get { telemetry.inputBufferValue } set { telemetry.inputBufferValue = newValue } }
     var inputBufferMax: Double { get { telemetry.inputBufferMax } set { telemetry.inputBufferMax = newValue } }
@@ -273,6 +311,10 @@ final class MPXPrimeViewModel: ObservableObject {
     /// needs the instantaneous reading.
     var bufferFillSmoothed: Double { get { telemetry.bufferFillSmoothed } set { telemetry.bufferFillSmoothed = newValue } }
     var streamHealth: MonitoringStreamHealth { get { telemetry.streamHealth } set { telemetry.streamHealth = newValue } }
+    /// The slow-changing part of `streamHealth` (source, rates, dropout
+    /// totals): what the always-visible header and tooltips read, so they do
+    /// not re-render on every tick's ring-fill change.
+    var streamSummary: MonitoringStreamSummary { get { telemetry.streamSummary } set { telemetry.streamSummary = newValue } }
 
     var inputLLevel: Double { get { telemetry.inputLLevel } set { telemetry.inputLLevel = newValue } }
     var inputRLevel: Double { get { telemetry.inputRLevel } set { telemetry.inputRLevel = newValue } }
@@ -307,13 +349,13 @@ final class MPXPrimeViewModel: ObservableObject {
     var audioCompositePeakLinear: Float { get { telemetry.audioCompositePeakLinear } set { telemetry.audioCompositePeakLinear = newValue } }
     var compositeBudgetMarginDBValue: Float { get { telemetry.compositeBudgetMarginDBValue } set { telemetry.compositeBudgetMarginDBValue = newValue } }
     /// Post-injection overshoot envelope (from `CompositeCalibrationStatus`).
-    /// Non-zero ⇒ pilot/RDS subcarriers are clipping at the final
-    /// ±1.0 clamp because audio + subcarrier × outputGain exceeds
+    /// Non-zero => pilot/RDS subcarriers are clipping at the final
+    /// +/-1.0 clamp because audio + subcarrier x outputGain exceeds
     /// budget. UI surfaces this as an over-budget warning so the
     /// operator can reduce outputGain / pilot / RDS levels.
     var postInjectionOvershootValue: Float { get { telemetry.postInjectionOvershootValue } set { telemetry.postInjectionOvershootValue = newValue } }
     /// True when the composite budget governor has muted the audio
-    /// path — outputGain × subcarrier reservation left no headroom.
+    /// path -- outputGain x subcarrier reservation left no headroom.
     var compositeOverBudget: Bool { get { telemetry.compositeOverBudget } set { telemetry.compositeOverBudget = newValue } }
     var compositeClipperGainReductionDBValue: Float { get { telemetry.compositeClipperGainReductionDBValue } set { telemetry.compositeClipperGainReductionDBValue = newValue } }
     var bs412StatusValue: BS412Status { get { telemetry.bs412StatusValue } set { telemetry.bs412StatusValue = newValue } }
@@ -355,32 +397,65 @@ final class MPXPrimeViewModel: ObservableObject {
     var preMPXSpectrumMaxHz: Double { get { telemetry.preMPXSpectrumMaxHz } set { telemetry.preMPXSpectrumMaxHz = newValue } }
     var preMPXSpectrumNyquistHz: Double { get { telemetry.preMPXSpectrumNyquistHz } set { telemetry.preMPXSpectrumNyquistHz = newValue } }
     @Published var preMPXSpectrumWindowVisible: Bool = false
+    /// Audio Spectrum source: true = after processing (the audio about to be
+    /// encoded, or leaving the output in FM / HD / AM Output), false = the
+    /// stereo input as it arrives. The window's Pre / Post switch sets it.
+    var audioSpectrumShowsProcessed: Bool = true {
+        didSet { if oldValue != audioSpectrumShowsProcessed { lastPreMPXSpectrumRefreshTime = nil } }
+    }
     @Published var levelsWindowVisible: Bool = false
 
     private let configPath: String
     private let nowPlayingState: NowPlayingState
     private let nowPlayingRunner: NowPlayingScriptRunner
     var config: AppConfig
-    private var runningEngine: AudioOutputEngine?
+    private var runningEngine: AudioOutputEngine? {
+        didSet {
+            // Start and stop move the timer between the quiet and the live
+            // tiers; only once the timer exists (tests never start it).
+            if (oldValue == nil) != (runningEngine == nil), monitorTimer != nil {
+                applyMonitoringRefreshRate()
+            }
+        }
+    }
+    /// The GUI's own meter-peak reader: the web meter stream reads through
+    /// its own, so neither takes the other's peaks.
+    private let guiMeterReader = MeterPeakReader.make()
+    /// Last remote /api/meters and /api/telemetry reads (main-actor uptime),
+    /// so the analyses they need keep running with no window open.
+    private var lastRemoteMetersRead: TimeInterval = -.infinity
+    private var lastRemoteTelemetryRead: TimeInterval = -.infinity
+    /// True once the stopped-engine branch has reset the displays; cleared
+    /// on the next running tick. Without it every stopped tick allocated and
+    /// wrote ~10 fresh arrays.
+    private var stoppedDisplaysReset = false
     private var controlServerTask: Task<Void, Never>?
     private var activeRuntimeSnapshot: RuntimeSnapshot?
     private var monitorTimer: Timer?
     private var lastMonitorRefreshTime: TimeInterval?
     private var engineStartReference: TimeInterval?
 
-    // Visibility state — drives the adaptive `monitorTimer` rate. The
-    // timer fires at `monitoringRefreshHzActive` only when all three
-    // are in the on-screen position; otherwise drops to
-    // `monitoringRefreshHzIdle` so the smoothing state stays warm
-    // without burning cycles when no pixels are being drawn.
-    private var appIsActive: Bool = true
-    private var mainWindowIsOccluded: Bool = false
-    private var mainWindowIsMinimized: Bool = false
+    // Visibility state -- drives the adaptive `monitorTimer` rate and which
+    // analyses run (MonitoringRefreshPolicy). Fed by the AppDelegate.
+    private(set) var visibility = MonitoringVisibility()
     private var lastAppliedRefreshHz: Double = 0.0
 
+    var monitoringRefreshTier: MonitoringRefreshPolicy.Tier {
+        MonitoringRefreshPolicy.tier(engineRunning: runningEngine != nil, visibility: visibility)
+    }
+
     private var desiredMonitoringRefreshHz: Double {
-        let onScreen = appIsActive && !mainWindowIsOccluded && !mainWindowIsMinimized
-        return onScreen ? Self.monitoringRefreshHzActive : Self.monitoringRefreshHzIdle
+        Self.monitoringRefreshRates.hz(for: monitoringRefreshTier)
+    }
+
+    /// What the visible views (and recent remote clients) need computed.
+    private var analysisNeeds: MonitoringRefreshPolicy.Needs {
+        let now = ProcessInfo.processInfo.systemUptime
+        return MonitoringRefreshPolicy.needs(
+            visibility: visibility,
+            monitoringPageSelected: selectedSection == .monitoring,
+            remoteTelemetryActive: now - lastRemoteTelemetryRead < Self.remoteConsumerWindow,
+            remoteMetersActive: now - lastRemoteMetersRead < Self.remoteConsumerWindow)
     }
 
     private var vuInputL: Float = 0.0
@@ -390,6 +465,18 @@ final class MPXPrimeViewModel: ObservableObject {
     private var vuOutput: Float = 0.0
     private var vuModulation: Float = 0.0
     private var peakHoldInputL = AudioPeakHoldState()
+    // Audio I/O ladder meters (Prime Mixer ballistics), pre and post Input Gain.
+    private var ladderPreL = LadderMeterBallistics()
+    private var ladderPreR = LadderMeterBallistics()
+    private var ladderPostL = LadderMeterBallistics()
+    private var ladderPostR = LadderMeterBallistics()
+    private var ladderAGCL = LadderMeterBallistics()
+    private var ladderAGCR = LadderMeterBallistics()
+    private var ladderOutL = LadderMeterBallistics()
+    private var ladderOutR = LadderMeterBallistics()
+    /// Fed kHz / the deviation limit; latches 2 % over it, so the clipper
+    /// holding the composite exactly at the limit does not light it.
+    private var ladderModulation = LadderMeterBallistics(clipThreshold: 1.02)
     private var peakHoldInputR = AudioPeakHoldState()
     private var peakHoldAGCOutputL = AudioPeakHoldState()
     private var peakHoldAGCOutputR = AudioPeakHoldState()
@@ -435,8 +522,23 @@ final class MPXPrimeViewModel: ObservableObject {
     /// audio HAL (and cannot provoke system dialogs about missing devices).
     private let deviceLister: () throws -> [AudioDevice]
 
+    /// The hot-plug subscription, alive for the view model's lifetime. The
+    /// handler captures `self` weakly, so dropping the view model releases
+    /// the handle, which cancels itself; `shutdown()` cancels it explicitly.
+    private var deviceObservation: (any DeviceObservationHandle)?
+
+    /// True while a hot-plug subscription is active. Only the app passes an
+    /// observer factory; a test-built view model never observes.
+    var isObservingDevices: Bool { deviceObservation != nil }
+
+    /// `deviceObserver` is the hot-plug source, injected like `deviceLister`
+    /// (the app passes `AudioDevices.startObserving`; tests pass nothing and
+    /// never register with CoreAudio). Each event re-lists the devices with
+    /// the same selection rules as a manual rescan: a remembered device that
+    /// disappeared is kept and reported, never silently replaced.
     init(configPath: String,
-         deviceLister: @escaping () throws -> [AudioDevice] = { try AudioDevices.list() }) {
+         deviceLister: @escaping () throws -> [AudioDevice] = { try AudioDevices.list() },
+         deviceObserver: DeviceObserverFactory? = nil) {
         self.configPath = configPath
         self.deviceLister = deviceLister
         let loadedConfig: AppConfig
@@ -473,6 +575,11 @@ final class MPXPrimeViewModel: ObservableObject {
         }
 
         refreshDevices()
+        if let deviceObserver {
+            deviceObservation = deviceObserver { [weak self] in
+                Task { @MainActor in self?.devicesDidChange() }
+            }
+        }
         nowPlayingRunner.updateConfig(loadedConfig)
         startConfigWatcher()
         if !migrationReport.isEmpty {
@@ -497,13 +604,7 @@ final class MPXPrimeViewModel: ObservableObject {
 
     var runtimeApplyPending: Bool { isRunning && pendingRuntimeApply }
 
-    var runtimeApplyButtonTitle: String { "Apply Restart" }
-
-    var runtimeApplyHintText: String {
-        "Pending changes affect engine, routing, or encoder structure and require a restart to take effect."
-    }
-
-    var restartRequiredSettingsListText: String { kRestartRequiredSettingsListText }
+    var runtimeApplyButtonTitle: String { "Restart to Apply" }
 
     var ptyChoices: [(Int, String)] {
         Self.ptyNames(rbds: config.rdsPtyRBDS).enumerated().map { ($0.offset, $0.element) }
@@ -561,20 +662,32 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func setAppActive(_ active: Bool) {
-        guard appIsActive != active else { return }
-        appIsActive = active
+        guard visibility.appActive != active else { return }
+        visibility.appActive = active
         applyMonitoringRefreshRate()
     }
 
     func setMainWindowOccluded(_ occluded: Bool) {
-        guard mainWindowIsOccluded != occluded else { return }
-        mainWindowIsOccluded = occluded
+        guard visibility.mainWindowOccluded != occluded else { return }
+        visibility.mainWindowOccluded = occluded
         applyMonitoringRefreshRate()
     }
 
     func setMainWindowMinimized(_ minimized: Bool) {
-        guard mainWindowIsMinimized != minimized else { return }
-        mainWindowIsMinimized = minimized
+        guard visibility.mainWindowMinimized != minimized else { return }
+        visibility.mainWindowMinimized = minimized
+        applyMonitoringRefreshRate()
+    }
+
+    /// A detached monitoring window became visible (opened, uncovered,
+    /// restored) or stopped being visible (closed, covered, miniaturised).
+    func setMonitoringWindowOnScreen(_ kind: MonitoringWindowKind, _ onScreen: Bool) {
+        guard visibility.windowsOnScreen.contains(kind) != onScreen else { return }
+        if onScreen {
+            visibility.windowsOnScreen.insert(kind)
+        } else {
+            visibility.windowsOnScreen.remove(kind)
+        }
         applyMonitoringRefreshRate()
     }
 
@@ -582,14 +695,23 @@ final class MPXPrimeViewModel: ObservableObject {
         monitorTimer?.invalidate()
         monitorTimer = nil
         lastMonitorRefreshTime = nil
+        deviceObservation?.cancel()
+        deviceObservation = nil
         nowPlayingRunner.stop()
         stopConfigWatcher()
         stopEngineIfNeeded()
     }
 
+    /// Re-reads every device from the injected lister and re-applies the
+    /// configured selections (device UIDs and channel pairs) to the new list.
     func refreshDevices() {
+        selectedInputChannels = Self.storedPair(config.inputChannels)
+        selectedOutputChannels = Self.storedPair(config.outputChannels)
+        selectedMonitorChannels = Self.storedPair(config.monitorChannels)
+        lastDeviceScan = Date()
         do {
             let devices = try deviceLister()
+            allDevices = devices
             inputDevices = devices.filter { $0.hasInput }
             outputDevices = devices.filter { $0.hasOutput }
             selectedInputUID = selectUID(uid: config.inputDeviceUID, name: config.inputDeviceName, from: inputDevices)
@@ -598,12 +720,33 @@ final class MPXPrimeViewModel: ObservableObject {
             warnAboutUnavailablePreferredDevices()
         } catch {
             statusText = "Device scan failed: \(error)"
+            allDevices = []
             inputDevices = []
             outputDevices = []
             selectedInputUID = ""
             selectedOutputUID = ""
             selectedMonitorUID = ""
         }
+    }
+
+    /// The manual counterpart of hot-plug: the Devices popover's Rescan.
+    func rescanDevices() {
+        refreshDevices()
+    }
+
+    /// Hot-plug event from the injected observer (a device appeared or went
+    /// away, or a system default moved). Re-lists with the usual selection
+    /// rules; the running engine is left alone -- a transmitter feed is never
+    /// moved unannounced, and a vanished device is reported by the scan.
+    private func devicesDidChange() {
+        refreshDevices()
+    }
+
+    /// Channels 1, 2 is the INI default and stays an empty key: a pair equal
+    /// to the stereo default is stored as nil so `input_channels = ` reads
+    /// the same whether the operator never touched it or clicked 1 and 2.
+    static func storedPair(_ pair: ChannelPair?) -> ChannelPair? {
+        pair == .stereoDefault ? nil : pair
     }
 
     /// Status note when a remembered device isn't present, so the user knows we
@@ -635,6 +778,7 @@ final class MPXPrimeViewModel: ObservableObject {
     func persistMonitorSettings() {
         config.monitorEnabled = monitorEnabled
         config.monitorDeviceUID = selectedMonitorUID.isEmpty ? nil : selectedMonitorUID
+        config.monitorChannels = Self.storedPair(selectedMonitorChannels)
         if let d = outputDevices.first(where: { $0.uid == selectedMonitorUID }) {
             config.monitorDeviceName = d.name
         }
@@ -653,6 +797,9 @@ final class MPXPrimeViewModel: ObservableObject {
         config.inputDeviceUID = selectedInputUID.isEmpty ? nil : selectedInputUID
         config.outputDeviceUID = selectedOutputUID.isEmpty ? nil : selectedOutputUID
         config.monitorDeviceUID = selectedMonitorUID.isEmpty ? nil : selectedMonitorUID
+        config.inputChannels = Self.storedPair(selectedInputChannels)
+        config.outputChannels = Self.storedPair(selectedOutputChannels)
+        config.monitorChannels = Self.storedPair(selectedMonitorChannels)
         // Remember the name only while the device is actually present, so an
         // unplugged device keeps its last-known name for re-matching.
         if let d = inputDevices.first(where: { $0.uid == selectedInputUID }) { config.inputDeviceName = d.name }
@@ -744,7 +891,7 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     /// Pilot tone level expressed as % of total FM deviation. ITU-R
-    /// BS.450 / FCC §73.322 / EN 50067 all specify 8-10 % deviation;
+    /// BS.450 / FCC sec. 73.322 / EN 50067 all specify 8-10 % deviation;
     /// pro processors display this in %. The INI key `pilot_level` stays
     /// as the linear amplitude fraction (0.0..0.12) for back-compat with
     /// the underlying audio math. Mapping: % = fraction * 100.
@@ -856,7 +1003,7 @@ final class MPXPrimeViewModel: ObservableObject {
     ///
     /// Per-stage knobs remain editable after a profile is applied; the
     /// stored `formatProfileID` is a cosmetic label (no "dirty" / modified
-    /// indicator in v1 — the operator can re-pick the profile to restore
+    /// indicator in v1 -- the operator can re-pick the profile to restore
     /// its defaults).
     func applyFormatProfile(_ id: String) {
         publishConfigChange()
@@ -892,7 +1039,7 @@ final class MPXPrimeViewModel: ObservableObject {
     // MARK: - Named snapshots
 
     /// Load persisted snapshots from disk into the in-memory `snapshots`
-    /// array. Called from init. Missing or corrupt file → silent reset
+    /// array. Called from init. Missing or corrupt file -> silent reset
     /// to empty slots (operator can still save new ones).
     func loadSnapshotsFromDisk() {
         // Delegates to the shared SnapshotStore (also used by the headless
@@ -928,7 +1075,7 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     /// Capture the current config into slot `slot` with the given name
-    /// (empty → "Preset N"). Writes the file immediately so a crash
+    /// (empty -> "Preset N"). Writes the file immediately so a crash
     /// doesn't lose the operator's save.
     func saveSnapshot(slot: Int, name: String) {
         guard (0..<snapshots.count).contains(slot) else { return }
@@ -986,7 +1133,7 @@ final class MPXPrimeViewModel: ObservableObject {
         case .appliedLive:
             statusText = "Loaded preset \"\(snapshot.name)\" - applied live."
         case .restartPending:
-            statusText = "Loaded preset \"\(snapshot.name)\". Restart-required changes are pending; use Apply Restart in Monitoring."
+            statusText = "Loaded preset \"\(snapshot.name)\". Some changes need a restart: click Restart to Apply in the status bar."
         case .storedWhileStopped:
             statusText = "Loaded preset \"\(snapshot.name)\"."
         }
@@ -1064,7 +1211,7 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     /// Rename an existing snapshot in place (doesn't touch the stored
-    /// config text — just the operator-facing label). Persists on
+    /// config text -- just the operator-facing label). Persists on
     /// every keystroke; the operator gets immediate save semantics
     /// without an explicit confirm button.
     func renameSnapshot(slot: Int, name: String) {
@@ -1140,6 +1287,9 @@ final class MPXPrimeViewModel: ObservableObject {
             defaults.outputDeviceUID = selectedOutputUID.isEmpty ? nil : selectedOutputUID
             defaults.monitorEnabled = monitorEnabled
             defaults.monitorDeviceUID = selectedMonitorUID.isEmpty ? nil : selectedMonitorUID
+            defaults.inputChannels = Self.storedPair(selectedInputChannels)
+            defaults.outputChannels = Self.storedPair(selectedOutputChannels)
+            defaults.monitorChannels = Self.storedPair(selectedMonitorChannels)
             defaults.inputDeviceName = config.inputDeviceName
             defaults.outputDeviceName = config.outputDeviceName
             defaults.monitorDeviceName = config.monitorDeviceName
@@ -1156,27 +1306,55 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// What a control's reset returns to: the value the ACTIVE Format Profile
+    /// sets, applied to the shipped defaults. A reset on a Music - Loud
+    /// station restores Music - Loud's 8 dB Final Drive, not Music - Clean's
+    /// 4 dB. Controls no profile touches (calibration levels, RDS, the
+    /// output-mode stages) and the "custom" profile fall back to the shipped
+    /// default, which is Music - Clean itself.
+    func resetValue(_ keyPath: KeyPath<AppConfig, Double>) -> Double {
+        // FM Output feeds an external stereo coder, which expects programme
+        // peaks at its reference level, not at digital full scale: -9 dBFS
+        // is the PROFline SFY's documented AES/EBU reference (and +6 dBu on
+        // an interface aligned to the German broadcast convention, +15 dBu
+        // at 0 dBFS). HD and AM Output keep full scale.
+        if keyPath == \AppConfig.outputGainDB, config.operatingMode == .fm {
+            return Self.fmCoderReferenceOutputDB
+        }
+        return resetReference()[keyPath: keyPath]
+    }
+
+    /// FM Output's Output Level reset value: peaks at -9 dBFS.
+    static let fmCoderReferenceOutputDB: Double = -9.0
+
+    func resetReference() -> AppConfig {
+        let id = config.formatProfileID
+        if let cached = resetReferenceCache, cached.id == id { return cached.config }
+        var reference = AppConfig()
+        _ = PresetCatalog.applyFormatProfile(id: id, to: &reference)
+        resetReferenceCache = (id, reference)
+        return reference
+    }
+
+    private var resetReferenceCache: (id: String, config: AppConfig)?
+
     func resetCurrentProcessingTabToDefaults() {
         publishConfigChange()
-        let defaults = AppConfig()
+        // A stage tab resets to the active profile's values, like each
+        // slider's own reset; the profile selector itself resets to the
+        // shipped profile.
+        let defaults = resetReference()
 
         switch selectedProcessingTab {
         case .overview:
-            // Overview has no detail parameters of its own — nothing to reset.
-            return
-        case .formatProfile:
-            // Reset the format profile selector to the shipping default
-            // (Community Radio); applies the matching per-stage settings
-            // atomically through `applyFormatProfile`.
-            applyFormatProfile(defaults.formatProfileID)
+            // The Overview's choices (Format Profile, levelling engine) each
+            // have their own control; the page has no reset button.
             return
         case .core:
-            // Input/output gain deliberately NOT reset: they are per-device
-            // rig calibration (Audio I/O section), not part of the sound.
-            processingBypass = defaults.processingBypass
-            config.processingBypass = defaults.processingBypass
+            // Only what the Basics page shows. Bypass (toolbar), pre-emphasis
+            // and the input/output gains (Audio I/O) are not on this page,
+            // so its reset never touches them.
             config.monoMode = defaults.monoMode
-            config.preemphasisUS = defaults.preemphasisUS
             config.hpfHz = defaults.hpfHz
             config.hfTrimDB = defaults.hfTrimDB
             config.hfTrimHz = defaults.hfTrimHz
@@ -1244,7 +1422,10 @@ final class MPXPrimeViewModel: ObservableObject {
         case .finalStage:
             config.finalStagePresetID = defaults.finalStagePresetID
             config.finalDriveDB = defaults.finalDriveDB
-            config.mpxDeviationKHz = defaults.mpxDeviationKHz
+            config.limitMPX = defaults.limitMPX
+            config.limitThreshold = defaults.limitThreshold
+            config.limitLookaheadEnabled = defaults.limitLookaheadEnabled
+            config.limitLookaheadMS = defaults.limitLookaheadMS
         case .stereoCoder:
             config.ssbStereoEnabled = defaults.ssbStereoEnabled
             config.ssbStereoAmount = defaults.ssbStereoAmount
@@ -1303,13 +1484,15 @@ final class MPXPrimeViewModel: ObservableObject {
         switch selectedProcessingTab {
         case .core:
             runtimeDisposition = .restart
-        case .overview, .formatProfile,
+        case .finalStage:
+            // The safety limiter's settings are restart-class.
+            runtimeDisposition = .restart
+        case .overview,
              .phaseRotator, .agc, .parametricEQ,
              .multiband, .advancedDynamics, .mbLimiter, .expander,
              .primeBass,
              .bassClipper, .dcClipper, .hfLimiter, .limiter,
-             .stereoCoder, .compositeClipper, .bs412,
-             .finalStage:
+             .stereoCoder, .compositeClipper, .bs412:
             runtimeDisposition = .live
         }
 
@@ -1328,19 +1511,31 @@ final class MPXPrimeViewModel: ObservableObject {
 
         switch selectedRDSTab {
         case .control:
-            // Control tab — operationally toggled state. Reset puts
-            // master + flags back to library defaults.
+            // Status: the on-air switches. Reset puts the master and the
+            // TA / TP / MS flags back to library defaults.
             config.enRDS = defaults.enRDS
             config.rdsTP = defaults.rdsTP
             config.rdsTA = defaults.rdsTA
             config.rdsMS = defaults.rdsMS
+        case .program:
+            // Identity: everything the page shows, Long PS and the Advanced
+            // group (LIC, PIN, PTYN, decoder information, ID) included.
+            config.rdsPI = defaults.rdsPI
+            config.rdsPtyRBDS = defaults.rdsPtyRBDS
+            config.rdsLIC = defaults.rdsLIC
+            config.rdsEnableID = defaults.rdsEnableID
+            config.rdsEnablePIN = defaults.rdsEnablePIN
+            config.rdsPINDay = defaults.rdsPINDay
+            config.rdsPINHour = defaults.rdsPINHour
+            config.rdsPINMinute = defaults.rdsPINMinute
             config.rdsDI_STEREO = defaults.rdsDI_STEREO
             config.rdsDI_HEAD = defaults.rdsDI_HEAD
             config.rdsDI_COMP = defaults.rdsDI_COMP
             config.rdsDI_DYN = defaults.rdsDI_DYN
-        case .program:
-            // enRDS lives on the Control tab; not reset here.
-            config.rdsPI = defaults.rdsPI
+            config.rdsLongPS32 = defaults.rdsLongPS32
+            config.rdsEnableLPS = defaults.rdsEnableLPS
+            config.rdsLPSCentered = defaults.rdsLPSCentered
+            config.rdsLPSCR = defaults.rdsLPSCR
             config.rdsECC = defaults.rdsECC
             config.rdsPTY = defaults.rdsPTY
             config.rdsPSA = defaults.rdsPSA
@@ -1378,11 +1573,6 @@ final class MPXPrimeViewModel: ObservableObject {
             config.rdsNowPlayingScript = defaults.rdsNowPlayingScript
             config.rdsNowPlayingPollSeconds = defaults.rdsNowPlayingPollSeconds
             config.rdsNowPlayingTimeoutSeconds = defaults.rdsNowPlayingTimeoutSeconds
-        case .longPS:
-            config.rdsLongPS32 = defaults.rdsLongPS32
-            config.rdsEnableLPS = defaults.rdsEnableLPS
-            config.rdsLPSCentered = defaults.rdsLPSCentered
-            config.rdsLPSCR = defaults.rdsLPSCR
         case .af:
             config.rdsEnableAF = defaults.rdsEnableAF
             config.rdsAFList = defaults.rdsAFList
@@ -1393,9 +1583,7 @@ final class MPXPrimeViewModel: ObservableObject {
             config.rdsSchedulerStandard = defaults.rdsSchedulerStandard
             config.rdsSchedulerStandardLPS = defaults.rdsSchedulerStandardLPS
             config.rdsEnableCT = defaults.rdsEnableCT
-            config.rdsEnableID = defaults.rdsEnableID
             config.rdsTZOffset = defaults.rdsTZOffset
-            config.rdsLIC = defaults.rdsLIC
         case .carrier:
             config.rdsLevel = defaults.rdsLevel
             config.rdsGaussianEnabled = defaults.rdsGaussianEnabled
@@ -1404,9 +1592,43 @@ final class MPXPrimeViewModel: ObservableObject {
         }
 
         updateNowPlayingRunner()
-        saveConfig(restartRequired: true)
-        applyPendingRuntimeChanges()
+        // Only the subcarrier's physical layer needs a restart; every other
+        // RDS page applies live, so resetting Radiotext must not restart the
+        // engine (it used to: every RDS reset dropped the audio for a restart).
+        if selectedRDSTab.resetNeedsRestart {
+            saveConfig(restartRequired: true)
+            applyPendingRuntimeChanges()
+        } else {
+            saveConfig(restartRequired: false)
+            applyLiveRDSConfigIfRunning()
+        }
         statusText = selectedRDSTab.resetStatusText
+    }
+
+    /// Test Tone page reset: the generator back to its defaults, and off.
+    func resetTestToneToDefaults() {
+        publishConfigChange()
+        let defaults = AppConfig()
+        config.sourceMode = defaults.sourceMode
+        config.testToneType = defaults.testToneType
+        config.testToneMode = defaults.testToneMode
+        config.testToneFreq = defaults.testToneFreq
+        config.testToneLevelDB = defaults.testToneLevelDB
+        applyLiveTestToneIfRunning()
+        statusText = Stage.testTone.resetStatusText
+    }
+
+    /// The reset button every page's scaffold draws (`Stage.hasReset`).
+    func resetPage(_ stage: Stage) {
+        if let tab = stage.legacyProcessingTab {
+            if selectedProcessingTab != tab { selectedProcessingTab = tab }
+            resetCurrentProcessingTabToDefaults()
+        } else if let tab = stage.legacyRDSTab {
+            if selectedRDSTab != tab { selectedRDSTab = tab }
+            resetCurrentRDSTabToDefaults()
+        } else if stage == .testTone {
+            resetTestToneToDefaults()
+        }
     }
 
     func loadConfigFromFile(_ path: String) {
@@ -1491,7 +1713,7 @@ final class MPXPrimeViewModel: ObservableObject {
 
     /// Push the current `config.testTone*` and `config.sourceMode`
     /// values to the running engine via live-apply. Used by the Test
-    /// Tone tab's bindings — every control there mutates the underlying
+    /// Tone tab's bindings -- every control there mutates the underlying
     /// AppConfig and then asks for the change to land on the running
     /// engine without restart. The view-model's own `sourceMode`
     /// mirror is updated first so `applyLiveRuntimeConfigIfRunning`'s
@@ -1520,6 +1742,9 @@ final class MPXPrimeViewModel: ObservableObject {
         sourceMode = newConfig.sourceMode
         monitorEnabled = newConfig.monitorEnabled
         inputGainDB = newConfig.inputGainDB
+        selectedInputChannels = Self.storedPair(newConfig.inputChannels)
+        selectedOutputChannels = Self.storedPair(newConfig.outputChannels)
+        selectedMonitorChannels = Self.storedPair(newConfig.monitorChannels)
         // Per-device calibration recall on a remote device/mode change --
         // explicitly patched level keys win over the recalled values. The
         // planes were classified from the PATCH, so a pure device change
@@ -1540,7 +1765,12 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func remoteTelemetry(windowMS: Double) -> ControlTelemetry? {
-        runningEngine?.controlTelemetry(windowMS: windowMS)
+        lastRemoteTelemetryRead = ProcessInfo.processInfo.systemUptime
+        guard let engine = runningEngine else { return nil }
+        // Turn the history taps on now: with no window showing scopes the
+        // GUI tick had them off, and the next poll must find fresh samples.
+        updateEngineAnalysisCapture(engine: engine)
+        return engine.controlTelemetry(windowMS: windowMS)
     }
 
     func remoteSnapshots() -> ControlSnapshots {
@@ -1603,21 +1833,33 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     func remoteMeters() -> ControlMeters? {
-        runningEngine?.controlMeters
+        remoteMeters(reader: .shared)
+    }
+
+    /// One remote consumer's meters (a web meter stream passes its own
+    /// reader, so it and the GUI meters never take each other's peaks).
+    func remoteMeters(reader: MeterPeakReader) -> ControlMeters? {
+        lastRemoteMetersRead = ProcessInfo.processInfo.systemUptime
+        return runningEngine?.controlMeters(reader: reader)
     }
 
     func remoteDevices() -> ControlDevices {
         ControlDevices(
             inputs: inputDevices.map {
-                ControlDevice(id: $0.uid, name: $0.name, canInput: true, canOutput: $0.hasOutput)
+                ControlDevice(id: $0.uid, name: $0.name, canInput: true, canOutput: $0.hasOutput,
+                              inputChannels: $0.inputChannels, outputChannels: $0.outputChannels)
             },
             outputs: outputDevices.map {
-                ControlDevice(id: $0.uid, name: $0.name, canInput: $0.hasInput, canOutput: true)
+                ControlDevice(id: $0.uid, name: $0.name, canInput: $0.hasInput, canOutput: true,
+                              inputChannels: $0.inputChannels, outputChannels: $0.outputChannels)
             },
             selectedInput: config.inputDeviceUID ?? "",
             selectedOutput: config.outputDeviceUID ?? "",
             selectedMonitor: selectedMonitorUID,
             monitorEnabled: monitorEnabled,
+            selectedInputChannels: config.inputChannels?.iniValue ?? "",
+            selectedOutputChannels: config.outputChannels?.iniValue ?? "",
+            selectedMonitorChannels: config.monitorChannels?.iniValue ?? "",
             note: "")
     }
 
@@ -1744,7 +1986,10 @@ final class MPXPrimeViewModel: ObservableObject {
             inputGainDB: inputGainDB,
             selectedInputUID: selectedInputUID,
             selectedOutputUID: selectedOutputUID,
-            selectedMonitorUID: selectedMonitorUID
+            selectedMonitorUID: selectedMonitorUID,
+            selectedInputChannels: selectedInputChannels,
+            selectedOutputChannels: selectedOutputChannels,
+            selectedMonitorChannels: selectedMonitorChannels
         )
     }
 
@@ -1757,6 +2002,9 @@ final class MPXPrimeViewModel: ObservableObject {
         selectedInputUID = snapshot.selectedInputUID
         selectedOutputUID = snapshot.selectedOutputUID
         selectedMonitorUID = snapshot.selectedMonitorUID
+        selectedInputChannels = snapshot.selectedInputChannels
+        selectedOutputChannels = snapshot.selectedOutputChannels
+        selectedMonitorChannels = snapshot.selectedMonitorChannels
         updateNowPlayingRunner()
     }
 
@@ -1845,12 +2093,17 @@ final class MPXPrimeViewModel: ObservableObject {
             sampleRate: runConfig.sampleRate,
             nowPlayingState: nowPlayingState
         )
+        // The channel pairs were just persisted into runConfig; a pair the
+        // device does not have falls back inside the engine, which reports
+        // it through its routing note like any other device-shape problem.
         let engine = AudioOutputEngine(
             generator: generator,
             config: runConfig,
             inputDeviceID: inputID,
             outputDeviceID: outputID,
-            outputMode: outputMode
+            outputMode: outputMode,
+            inputChannels: runConfig.inputChannels,
+            outputChannels: runConfig.outputChannels
         )
         overflowHistory.removeAll(keepingCapacity: true)
         lastOverflowTotal = 0
@@ -1938,6 +2191,17 @@ final class MPXPrimeViewModel: ObservableObject {
         }
     }
 
+    /// `assignIfChanged` for values that live only on `LiveTelemetry` (no
+    /// view-model forwarder): an unchanged @Observable write still notifies.
+    @inline(__always)
+    private func setTelemetry<T: Equatable>(
+        _ keyPath: ReferenceWritableKeyPath<LiveTelemetry, T>, _ value: T
+    ) {
+        if telemetry[keyPath: keyPath] != value {
+            telemetry[keyPath: keyPath] = value
+        }
+    }
+
     private func refreshMonitoringSnapshot() {
         let now = Date().timeIntervalSinceReferenceDate
         let activeHz = desiredMonitoringRefreshHz
@@ -1946,7 +2210,7 @@ final class MPXPrimeViewModel: ObservableObject {
             return
         }
 
-        // dt clamp for meter ballistics — independent of the active timer
+        // dt clamp for meter ballistics -- independent of the active timer
         // rate. Lower bound is 1/120 s (8.3 ms) so a hypothetical 120 Hz
         // tick can't push smoothing below the per-step floor; upper bound
         // is 250 ms so a long pause (e.g. app backgrounded) doesn't make
@@ -1971,6 +2235,8 @@ final class MPXPrimeViewModel: ObservableObject {
         var liveAGCOutputLeftPeak: Float = 0.0
         var liveAGCOutputRightPeak: Float = 0.0
         var liveOutputPeak: Float = 0.0
+        var liveOutputLeftPeak: Float = 0.0
+        var liveOutputRightPeak: Float = 0.0
         var liveDeviationKHz: Float = 0.0
         var hasCapture = false
         var agcDetectorDB: Float = -120.0
@@ -1997,26 +2263,30 @@ final class MPXPrimeViewModel: ObservableObject {
         var outputSideToMidRatio: Float = 0.0
         var health = MonitoringStreamHealth.stopped
 
+        let needs = analysisNeeds
         if let engine = runningEngine {
-            updateEngineAnalysisCapture(engine: engine)
+            stoppedDisplaysReset = false
+            updateEngineAnalysisCapture(engine: engine, needs: needs)
             let cap = engine.captureStats
+            // One transport snapshot per tick (it was fetched twice).
+            let transport = engine.transportSnapshot
             var runtime =
-                "Running · Render \(Int(engine.renderSampleRate)) Hz · Hardware \(Int(engine.hardwareSampleRate)) Hz"
+                "Running | Render \(Int(engine.renderSampleRate)) Hz | Hardware \(Int(engine.hardwareSampleRate)) Hz"
             if let inRate = engine.inputSampleRate {
-                runtime += " · Input \(Int(inRate)) Hz"
+                runtime += " | Input \(Int(inRate)) Hz"
             }
-            runtime += " · Source \(engine.sourceDescription)"
-            runtime += " · Applies \(engine.liveRuntimeApplyCount)"
-            runtime += " · Skipped \(engine.skippedRuntimeApplyCount)"
-            if let transport = engine.transportSnapshot {
+            runtime += " | Source \(engine.sourceDescription)"
+            runtime += " | Applies \(engine.liveRuntimeApplyCount)"
+            runtime += " | Skipped \(engine.skippedRuntimeApplyCount)"
+            if let transport {
                 runtime += String(
-                    format: " · Path %@ step %.4fx trim %.4f",
+                    format: " | Path %@ step %.4fx trim %.4f",
                     transport.resampleMode,
                     transport.sampleStep,
                     transport.ratioTrim
                 )
             }
-            runtimeText = runtime
+            assignIfChanged(\.runtimeText, runtime)
             health.isRunning = true
             health.inputName =
                 sourceMode.lowercased() == "tone"
@@ -2028,9 +2298,10 @@ final class MPXPrimeViewModel: ObservableObject {
             health.blockFrames = engine.blockSize
 
             if let stats = engine.inputStats {
-                if let transport = engine.transportSnapshot {
-                    inputRingText = String(
-                        format: "Input Ring: %d frames buffered · Prime %d · Target %d · Overflows %llu · Underflows %llu · %@ %.4fx trim %.4f",
+                let ringText: String
+                if let transport {
+                    ringText = String(
+                        format: "Input Ring: %d frames buffered | Prime %d | Target %d | Overflows %llu | Underflows %llu | %@ %.4fx trim %.4f",
                         stats.bufferedFrames,
                         engine.inputPrimeFrames,
                         engine.inputTargetFrames,
@@ -2041,14 +2312,15 @@ final class MPXPrimeViewModel: ObservableObject {
                         transport.ratioTrim
                     )
                 } else {
-                    inputRingText =
-                        "Input Ring: \(stats.bufferedFrames) frames buffered · Prime \(engine.inputPrimeFrames) · Target \(engine.inputTargetFrames) · Overflows \(stats.overflows) · Underflows \(stats.underflows)"
+                    ringText =
+                        "Input Ring: \(stats.bufferedFrames) frames buffered | Prime \(engine.inputPrimeFrames) | Target \(engine.inputTargetFrames) | Overflows \(stats.overflows) | Underflows \(stats.underflows)"
                 }
+                assignIfChanged(\.inputRingText, ringText)
                 let target = max(1, engine.inputTargetFrames)
-                inputBufferMax = Double(target * 2)
-                inputBufferWarning = Double(target)
-                inputBufferCritical = Double(target * 3 / 2)
-                inputBufferValue = Double(stats.bufferedFrames)
+                assignIfChanged(\.inputBufferMax, Double(target * 2))
+                assignIfChanged(\.inputBufferWarning, Double(target))
+                assignIfChanged(\.inputBufferCritical, Double(target * 3 / 2))
+                assignIfChanged(\.inputBufferValue, Double(stats.bufferedFrames))
 
                 // Low-pass the displayed buffer fill (~10 s time
                 // constant) so the Monitoring bar shows trend, not
@@ -2058,14 +2330,14 @@ final class MPXPrimeViewModel: ObservableObject {
                 // level wobble. Raw `inputBufferValue` is still
                 // updated above and the delay text (`delayText`)
                 // shows the instantaneous reading for any operator
-                // who needs it. Cost of the longer τ: a real buffer
+                // who needs it. Cost of the longer tau: a real buffer
                 // drop takes ~10 s to fully reflect on the bar; an
                 // underflow event would also show up in `Dropouts`
                 // tile much sooner, so this is OK.
                 let rawFill = Double(stats.bufferedFrames) / max(1.0, inputBufferMax)
                 let alpha = max(0.0, min(1.0, dt / (dt + 10.0)))
-                bufferFillSmoothed =
-                    (1.0 - alpha) * bufferFillSmoothed + alpha * rawFill
+                assignIfChanged(
+                    \.bufferFillSmoothed, (1.0 - alpha) * bufferFillSmoothed + alpha * rawFill)
 
                 let deltaOverflows =
                     stats.overflows >= lastOverflowTotal ? (stats.overflows - lastOverflowTotal) : 0
@@ -2088,18 +2360,18 @@ final class MPXPrimeViewModel: ObservableObject {
                 health.overflowsTotal = Int(min(UInt64(Int.max), stats.overflows))
                 health.underflowsTotal = Int(min(UInt64(Int.max), stats.underflows))
             } else {
-                inputRingText =
-                    "Input Ring: inactive (tone source) · Capture callbacks \(cap.callbacks)"
-                inputBufferValue = 0
-                inputBufferMax = 1
-                inputBufferWarning = 0.7
-                inputBufferCritical = 0.9
+                assignIfChanged(
+                    \.inputRingText, "Input Ring: inactive (tone source) | Capture callbacks \(cap.callbacks)")
+                assignIfChanged(\.inputBufferValue, 0)
+                assignIfChanged(\.inputBufferMax, 1)
+                assignIfChanged(\.inputBufferWarning, 0.7)
+                assignIfChanged(\.inputBufferCritical, 0.9)
                 overflowHistory.removeAll(keepingCapacity: true)
                 lastOverflowTotal = 0
                 lastUnderflowTotal = 0
             }
 
-            let meters = engine.meters
+            let meters = engine.meters(for: guiMeterReader)
             hasCapture = cap.callbacks > 0
             inputPeak = hasCapture ? meters.inputPeak : meters.outputPeak
             outputPeak = meters.outputPeak
@@ -2114,6 +2386,8 @@ final class MPXPrimeViewModel: ObservableObject {
             liveAGCOutputLeftPeak = meters.livePostAGCLeftPeak
             liveAGCOutputRightPeak = meters.livePostAGCRightPeak
             liveOutputPeak = meters.liveOutputPeak
+            liveOutputLeftPeak = meters.liveOutputLeftPeak
+            liveOutputRightPeak = meters.liveOutputRightPeak
             liveDeviationKHz = meters.liveDeviationKHzPeak
             agcDetectorDB = meters.agcDetectorDB
             agcGainDB = meters.agcGainDB
@@ -2144,17 +2418,27 @@ final class MPXPrimeViewModel: ObservableObject {
                 engineStartReference = now
             }
 
-            let scopesVisible = selectedSection == .monitoring || scopesWindowVisible
-            if scopesVisible {
+            // Scopes and spectra are computed only while a window that draws
+            // them is visible. The Monitoring page draws neither, so gating
+            // them on the selected section ran the scope smoothing and a
+            // 24-30 Hz FFT for nothing.
+            if needs.scopes {
                 updateScopes(engine: engine, inputPeak: inputPeak, outputPeak: outputPeak)
             }
-            if selectedSection == .monitoring || spectrumWindowVisible {
+            if needs.mpxSpectrum {
                 updateMPXSpectrum(engine: engine, now: now)
             }
-            if preMPXSpectrumWindowVisible {
+            if needs.audioSpectrum {
                 updatePreMPXSpectrum(engine: engine, now: now)
             }
         } else {
+            engineStartReference = nil
+            lastMonitorRefreshTime = now
+        }
+        // The stopped displays are written once per stop, not per tick (every
+        // stopped tick used to allocate and write ~10 fresh arrays).
+        if runningEngine == nil, !stoppedDisplaysReset {
+            stoppedDisplaysReset = true
             runtimeText = "Not running"
             inputRingText = "Input Ring: n/a"
             inputBufferValue = 0
@@ -2162,8 +2446,6 @@ final class MPXPrimeViewModel: ObservableObject {
             inputBufferWarning = 0.7
             inputBufferCritical = 0.9
             bufferFillSmoothed = 0.0
-            engineStartReference = nil
-            lastMonitorRefreshTime = now
             inputScopeLeft = Array(repeating: 0.0, count: 128)
             inputScopeRight = Array(repeating: 0.0, count: 128)
             outputScope = Array(repeating: 0.0, count: 128)
@@ -2186,18 +2468,14 @@ final class MPXPrimeViewModel: ObservableObject {
             preMPXSpectrumUpdateInFlight = false
             vuInputL = 0.0
             vuInputR = 0.0
+            resetLadderMeters()
             vuAGCOutputL = 0.0
             vuAGCOutputR = 0.0
             vuOutput = 0.0
             vuModulation = 0.0
             clearPeakHolds()
-            limiterDetailText = String(
-                format: "Drive %.1f dB • GR 0.0 dB • Max 0.0 dB • Safe 0.0 dB • Peak %@",
-                config.finalDriveDB,
-                Self.dbfsString(0.0)
-            )
             compositeBudgetStateText = "Off"
-            compositeCalibrationText = "Pilot 0.0% • RDS 0.0% • Audio -inf dBFS • Margin 0.0 dB"
+            compositeCalibrationText = "Pilot 0.0% | RDS 0.0% | Audio -inf dBFS | Margin 0.0 dB"
             estimatedDeviationPeakKHz = 0.0
             pilotInjectionPercentValue = 0.0
             rdsInjectionPercentValue = 0.0
@@ -2212,12 +2490,13 @@ final class MPXPrimeViewModel: ObservableObject {
             preEncodeLimiterGainReductionDBValue = 0.0
             safetyLimiterGainReductionDBValue = 0.0
             safetyClipDBValue = 0.0
-            stereoImageText = "Corr +1.00 • Side 0.00x"
+            stereoImageText = "Corr +1.00 | Side 0.00x"
             overflowHistory.removeAll(keepingCapacity: true)
             lastOverflowTotal = 0
             lastUnderflowTotal = 0
         }
-        streamHealth = health
+        assignIfChanged(\.streamHealth, health)
+        assignIfChanged(\.streamSummary, MonitoringStreamSummary(health))
 
         let modulationNorm = max(0.0, min(1.0, deviationKHz / 100.0))
         let inputLTarget = Self.levelMeterScale(currentInputLeftPeak)
@@ -2265,12 +2544,12 @@ final class MPXPrimeViewModel: ObservableObject {
             releaseMS: Self.meterReleaseMS
         )
 
-        inputLLevel = Double(max(0.0, min(1.0, vuInputL)))
-        inputRLevel = Double(max(0.0, min(1.0, vuInputR)))
-        agcOutputLLevel = Double(max(0.0, min(1.0, vuAGCOutputL)))
-        agcOutputRLevel = Double(max(0.0, min(1.0, vuAGCOutputR)))
-        outputLevel = Double(max(0.0, min(1.0, vuOutput)))
-        modulationLevel = Double(max(0.0, min(1.0, vuModulation)))
+        assignIfChanged(\.inputLLevel, Double(max(0.0, min(1.0, vuInputL))))
+        assignIfChanged(\.inputRLevel, Double(max(0.0, min(1.0, vuInputR))))
+        assignIfChanged(\.agcOutputLLevel, Double(max(0.0, min(1.0, vuAGCOutputL))))
+        assignIfChanged(\.agcOutputRLevel, Double(max(0.0, min(1.0, vuAGCOutputR))))
+        assignIfChanged(\.outputLevel, Double(max(0.0, min(1.0, vuOutput))))
+        assignIfChanged(\.modulationLevel, Double(max(0.0, min(1.0, vuModulation))))
 
         let inputLPeakHoldDB = updateAudioPeakHold(
             livePeakLinear: liveInputLeftPeak,
@@ -2297,49 +2576,72 @@ final class MPXPrimeViewModel: ObservableObject {
             state: &peakHoldOutput,
             dt: dt
         )
-        inputLPeakHoldLevel = Double(Self.levelMeterScale(dbfs: inputLPeakHoldDB))
-        inputRPeakHoldLevel = Double(Self.levelMeterScale(dbfs: inputRPeakHoldDB))
-        agcOutputLPeakHoldLevel = Double(Self.levelMeterScale(dbfs: agcOutputLPeakHoldDB))
-        agcOutputRPeakHoldLevel = Double(Self.levelMeterScale(dbfs: agcOutputRPeakHoldDB))
-        outputPeakHoldLevel = Double(Self.levelMeterScale(dbfs: outputPeakHoldDB))
-        modulationPeakHoldLevel = Double(
+        assignIfChanged(\.inputLPeakHoldLevel, Double(Self.levelMeterScale(dbfs: inputLPeakHoldDB)))
+        assignIfChanged(\.inputRPeakHoldLevel, Double(Self.levelMeterScale(dbfs: inputRPeakHoldDB)))
+        assignIfChanged(\.agcOutputLPeakHoldLevel, Double(Self.levelMeterScale(dbfs: agcOutputLPeakHoldDB)))
+        assignIfChanged(\.agcOutputRPeakHoldLevel, Double(Self.levelMeterScale(dbfs: agcOutputRPeakHoldDB)))
+        assignIfChanged(\.outputPeakHoldLevel, Double(Self.levelMeterScale(dbfs: outputPeakHoldDB)))
+        assignIfChanged(\.modulationPeakHoldLevel, Double(
             updatePeakHold(
                 livePeak: max(0.0, min(1.0, liveDeviationKHz / 100.0)),
                 state: &peakHoldModulation,
                 dt: dt
-            ))
+            )))
         let limiterGRPeakHold = updateLimiterGRPeakHold(
             liveValueDB: preEncodeAudioLimiterGainReductionDB,
             dt: dt
         )
 
-        inputLText = Self.peakMeterString(currentPeak: currentInputLeftPeak, peakHoldDB: inputLPeakHoldDB)
-        inputRText = Self.peakMeterString(currentPeak: currentInputRightPeak, peakHoldDB: inputRPeakHoldDB)
-        agcOutputLText = Self.peakMeterString(currentPeak: currentAGCOutputLeftPeak, peakHoldDB: agcOutputLPeakHoldDB)
-        agcOutputRText = Self.peakMeterString(currentPeak: currentAGCOutputRightPeak, peakHoldDB: agcOutputRPeakHoldDB)
-        outputText = Self.peakMeterString(currentPeak: currentOutputPeak, peakHoldDB: outputPeakHoldDB)
-        modulationText = String(format: "%5.1f kHz", deviationKHz)
-        estimatedDeviationPeakKHz = deviationKHz
-        pilotInjectionPercentValue = pilotInjectionPercent
-        rdsInjectionPercentValue = rdsInjectionPercent
-        audioCompositePeakLinear = audioCompositePeak
-        compositeBudgetMarginDBValue = compositeBudgetMarginDB
-        postInjectionOvershootValue = postInjectionOvershoot
-        self.compositeOverBudget = compositeOverBudget
-        compositeClipperGainReductionDBValue = compositeClipperGainReductionDB
-        bs412StatusValue = bs412
-        nonFiniteInputSamplesValue = nonFiniteInputSamples
-        compositeClipperLookaheadGainReductionDBValue = compositeClipperLookaheadGainReductionDB
-        preEncodeLimiterGainReductionDBValue = preEncodeAudioLimiterGainReductionDB
-        safetyLimiterGainReductionDBValue = mpxSafetyLimiterGainReductionDB
-        safetyClipDBValue = mpxSafetyClipDB
+        assignIfChanged(\.inputLText, Self.peakMeterString(currentPeak: currentInputLeftPeak, peakHoldDB: inputLPeakHoldDB))
+        assignIfChanged(\.inputRText, Self.peakMeterString(currentPeak: currentInputRightPeak, peakHoldDB: inputRPeakHoldDB))
+        // Input Gain is the chain's first operation, one scalar, so the
+        // post meters are the same live peaks times that gain. Without a
+        // capture the fallback is the output peak, which the gain never
+        // touched, so post equals pre there.
+        let postGain: Float = hasCapture ? powf(10.0, Float(inputGainDB) / 20.0) : 1.0
+        setTelemetry(\.inputPreLeft, ladderPreL.update(peak: liveInputLeftPeak, now: now, interval: dt))
+        setTelemetry(\.inputPreRight, ladderPreR.update(peak: liveInputRightPeak, now: now, interval: dt))
+        setTelemetry(\.inputPostLeft, ladderPostL.update(
+            peak: liveInputLeftPeak * postGain, now: now, interval: dt))
+        setTelemetry(\.inputPostRight, ladderPostR.update(
+            peak: liveInputRightPeak * postGain, now: now, interval: dt))
+        setTelemetry(\.agcLeft, ladderAGCL.update(peak: liveAGCOutputLeftPeak, now: now, interval: dt))
+        setTelemetry(\.agcRight, ladderAGCR.update(peak: liveAGCOutputRightPeak, now: now, interval: dt))
+        if processedAudioOutputActive {
+            setTelemetry(\.outputLeft, ladderOutL.update(peak: liveOutputLeftPeak, now: now, interval: dt))
+            setTelemetry(\.outputRight, ladderOutR.update(peak: liveOutputRightPeak, now: now, interval: dt))
+        } else {
+            setTelemetry(\.outputLeft, ladderOutL.update(peak: liveOutputPeak, now: now, interval: dt))
+            setTelemetry(\.outputRight, .silent)
+        }
+        let deviationLimit = Float(max(1.0, config.mpxDeviationKHz))
+        setTelemetry(\.modulation, ladderModulation.update(
+            peak: liveDeviationKHz / deviationLimit, now: now, interval: dt))
+        assignIfChanged(\.agcOutputLText, Self.peakMeterString(currentPeak: currentAGCOutputLeftPeak, peakHoldDB: agcOutputLPeakHoldDB))
+        assignIfChanged(\.agcOutputRText, Self.peakMeterString(currentPeak: currentAGCOutputRightPeak, peakHoldDB: agcOutputRPeakHoldDB))
+        assignIfChanged(\.outputText, Self.peakMeterString(currentPeak: currentOutputPeak, peakHoldDB: outputPeakHoldDB))
+        assignIfChanged(\.modulationText, String(format: "%5.1f kHz", deviationKHz))
+        assignIfChanged(\.estimatedDeviationPeakKHz, deviationKHz)
+        assignIfChanged(\.pilotInjectionPercentValue, pilotInjectionPercent)
+        assignIfChanged(\.rdsInjectionPercentValue, rdsInjectionPercent)
+        assignIfChanged(\.audioCompositePeakLinear, audioCompositePeak)
+        assignIfChanged(\.compositeBudgetMarginDBValue, compositeBudgetMarginDB)
+        assignIfChanged(\.postInjectionOvershootValue, postInjectionOvershoot)
+        assignIfChanged(\.compositeOverBudget, compositeOverBudget)
+        assignIfChanged(\.compositeClipperGainReductionDBValue, compositeClipperGainReductionDB)
+        assignIfChanged(\.bs412StatusValue, bs412)
+        assignIfChanged(\.nonFiniteInputSamplesValue, nonFiniteInputSamples)
+        assignIfChanged(\.compositeClipperLookaheadGainReductionDBValue, compositeClipperLookaheadGainReductionDB)
+        assignIfChanged(\.preEncodeLimiterGainReductionDBValue, preEncodeAudioLimiterGainReductionDB)
+        assignIfChanged(\.safetyLimiterGainReductionDBValue, mpxSafetyLimiterGainReductionDB)
+        assignIfChanged(\.safetyClipDBValue, mpxSafetyClipDB)
 
         let limiterState =
             config.preEncodeAudioLimiterEnabled
             ? (preEncodeAudioLimiterGainReductionDB >= 0.2 ? "Active" : "Idle") : "Off"
         assignIfChanged(\.limiterStateText, limiterState)
         assignIfChanged(\.limiterDetailText, String(
-            format: "Drive %.1f dB • Pre-Enc GR %.1f dB • Max %.1f dB • Safe %.1f dB • Peak %@",
+            format: "Drive %.1f dB | Pre-Enc GR %.1f dB | Max %.1f dB | Safe %.1f dB | Peak %@",
             config.finalDriveDB,
             preEncodeAudioLimiterGainReductionDB,
             limiterGRPeakHold,
@@ -2358,14 +2660,14 @@ final class MPXPrimeViewModel: ObservableObject {
         }
         assignIfChanged(\.compositeBudgetStateText, compositeBudgetState)
         assignIfChanged(\.compositeCalibrationText, String(
-            format: "Pilot %.1f%% • RDS %.1f%% • Audio %@ • Margin %.1f dB",
+            format: "Pilot %.1f%% | RDS %.1f%% | Audio %@ | Margin %.1f dB",
             pilotInjectionPercent,
             rdsInjectionPercent,
             Self.dbfsString(audioCompositePeak),
             compositeBudgetMarginDB
         ))
         assignIfChanged(\.stereoImageText, String(
-            format: "Corr %@%.2f • Side %.2fx",
+            format: "Corr %@%.2f | Side %.2fx",
             outputStereoCorrelation >= 0 ? "+" : "",
             outputStereoCorrelation,
             outputSideToMidRatio
@@ -2378,17 +2680,17 @@ final class MPXPrimeViewModel: ObservableObject {
         }
         assignIfChanged(\.agcStateText, agcState)
         assignIfChanged(\.agcDetailText, String(
-            format: "Detector %.1f dB • Gain %.1f dB",
+            format: "Detector %.1f dB | Gain %.1f dB",
             agcDetectorDB,
             agcGainDB
-        ) + (agcGateActive ? " • Gate" : ""))
+        ) + (agcGateActive ? " | Gate" : ""))
         assignIfChanged(\.dacPeakText, isRunning && dacPeak > 0.0
             ? String(format: "%.1f dBFS", 20.0 * log10f(dacPeak))
             : "--")
         assignIfChanged(\.advancedDynamicsActive, advDynActive)
         if advDynActive {
             assignIfChanged(\.advancedDynamicsDetailText, String(
-                format: "Density %.1f dB • Gain %.1f/%.1f/%.1f/%.1f/%.1f dB",
+                format: "Density %.1f dB | Gain %.1f/%.1f/%.1f/%.1f/%.1f dB",
                 advDynDensityDB,
                 advDynBandGainsDB.0, advDynBandGainsDB.1, advDynBandGainsDB.2,
                 advDynBandGainsDB.3, advDynBandGainsDB.4
@@ -2401,15 +2703,15 @@ final class MPXPrimeViewModel: ObservableObject {
         updateRDSFields(elapsed: elapsed)
     }
 
-    private func updateEngineAnalysisCapture(engine: AudioOutputEngine) {
-        let scopesVisible = selectedSection == .monitoring || scopesWindowVisible
-        let inputHistoryVisible = scopesVisible || preMPXSpectrumWindowVisible
-        let outputHistoryVisible = scopesVisible || spectrumWindowVisible
+    private func updateEngineAnalysisCapture(
+        engine: AudioOutputEngine, needs: MonitoringRefreshPolicy.Needs? = nil
+    ) {
+        let n = needs ?? analysisNeeds
         engine.setAnalysisCapture(
-            inputScope: inputHistoryVisible,
-            outputHistory: outputHistoryVisible,
-            preMPXHistory: preMPXSpectrumWindowVisible,
-            outputImageMetrics: selectedSection == .monitoring
+            inputScope: n.inputHistory,
+            outputHistory: n.outputHistory,
+            preMPXHistory: n.preMPXHistory,
+            outputImageMetrics: n.stereoImage
         )
     }
 
@@ -2452,9 +2754,7 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private func updateMPXSpectrum(engine: AudioOutputEngine, now: TimeInterval) {
-        let refreshHz =
-            spectrumWindowVisible ? Self.windowMPXSpectrumRefreshHz : Self.inlineMPXSpectrumRefreshHz
-        let refreshInterval = 1.0 / refreshHz
+        let refreshInterval = 1.0 / Self.windowMPXSpectrumRefreshHz
         if let last = lastSpectrumRefreshTime, (now - last) < refreshInterval {
             return
         }
@@ -2466,8 +2766,7 @@ final class MPXPrimeViewModel: ObservableObject {
         let validCount = raw.count
 
         let maxDisplayHz: Double = config.fftWindow96kHz ? 96_000.0 : 60_000.0
-        let displayBins =
-            spectrumWindowVisible ? Self.windowMPXSpectrumBins : Self.inlineMPXSpectrumBins
+        let displayBins = Self.windowMPXSpectrumBins
         let analyzer = spectrumAnalyzer
         let samples = spectrumInputScratch
         spectrumQueue.async { [weak self] in
@@ -2496,11 +2795,17 @@ final class MPXPrimeViewModel: ObservableObject {
         guard !preMPXSpectrumUpdateInFlight else { return }
         lastPreMPXSpectrumRefreshTime = now
         preMPXSpectrumUpdateInFlight = true
-        let raw = engine.inputStereoWindow(
-            intoLeft: &preMPXSpectrumLeftScratch,
-            right: &preMPXSpectrumRightScratch,
-            frameCount: AudioOutputEngine.preMPXSpectrumFrameCount
-        )
+        let processed = audioSpectrumShowsProcessed
+        let raw = processed
+            ? engine.preMPXStereoWindow(
+                intoLeft: &preMPXSpectrumLeftScratch,
+                right: &preMPXSpectrumRightScratch,
+                frameCount: AudioOutputEngine.processedSpectrumFrameCount)
+            : engine.inputStereoWindow(
+                intoLeft: &preMPXSpectrumLeftScratch,
+                right: &preMPXSpectrumRightScratch,
+                frameCount: AudioOutputEngine.preMPXSpectrumFrameCount)
+        let fftCap = processed ? AudioOutputEngine.processedSpectrumFrameCount : 8192
         let sampleRate = raw.sampleRate
         let validCount = raw.count
         let leftSamples = preMPXSpectrumLeftScratch
@@ -2514,14 +2819,16 @@ final class MPXPrimeViewModel: ObservableObject {
                 validCount: validCount,
                 sampleRate: sampleRate,
                 displayBins: displayBins,
-                maxDisplayHz: maxDisplayHz
+                maxDisplayHz: maxDisplayHz,
+                maxFFTSize: fftCap
             )
             let rightSpectrum = analyzer.compute(
                 samples: rightSamples,
                 validCount: validCount,
                 sampleRate: sampleRate,
                 displayBins: displayBins,
-                maxDisplayHz: maxDisplayHz
+                maxDisplayHz: maxDisplayHz,
+                maxFFTSize: fftCap
             )
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -2848,7 +3155,7 @@ final class MPXPrimeViewModel: ObservableObject {
         enqueueConfigSave(snapshot: config)
         if restartRequired && isRunning {
             if !pendingRuntimeApply {
-                statusText = "Restart required for engine, routing, or encoder-structure changes. Use Apply Restart in Monitoring."
+                statusText = "This change needs an engine restart: click Restart to Apply in the status bar."
             }
             pendingRuntimeApply = true
         }
@@ -2891,7 +3198,7 @@ final class MPXPrimeViewModel: ObservableObject {
         // (ConfigPatch, the same one the REST API uses) instead of blanket
         // "restart-required": a load that changes nothing says so, a load
         // that only moves live/live-RDS keys applies live with no restart
-        // nag, and only a genuine restart-class diff arms Apply Restart.
+        // nag, and only a genuine restart-class diff arms Restart to Apply.
         let oldConfig = config
         var planes = ConfigChangePlanes()
         var changedAnything = loadedConfig != oldConfig
@@ -2933,7 +3240,7 @@ final class MPXPrimeViewModel: ObservableObject {
             return .appliedLive
         } else if isRunning {
             pendingRuntimeApply = true
-            statusText = "\(source). Restart-required changes are pending; use Apply Restart in Monitoring."
+            statusText = "\(source). Some changes need a restart: click Restart to Apply in the status bar."
             return .restartPending
         } else {
             pendingRuntimeApply = false
@@ -3130,6 +3437,27 @@ final class MPXPrimeViewModel: ObservableObject {
         return devices.first?.uid ?? ""
     }
 
+    private func resetLadderMeters() {
+        ladderPreL.reset()
+        ladderPreR.reset()
+        ladderPostL.reset()
+        ladderPostR.reset()
+        ladderAGCL.reset()
+        ladderAGCR.reset()
+        ladderOutL.reset()
+        ladderOutR.reset()
+        ladderModulation.reset()
+        telemetry.inputPreLeft = .silent
+        telemetry.inputPreRight = .silent
+        telemetry.inputPostLeft = .silent
+        telemetry.inputPostRight = .silent
+        telemetry.agcLeft = .silent
+        telemetry.agcRight = .silent
+        telemetry.outputLeft = .silent
+        telemetry.outputRight = .silent
+        telemetry.modulation = .silent
+    }
+
     private func clearPeakHolds() {
         peakHoldInputL = AudioPeakHoldState()
         peakHoldInputR = AudioPeakHoldState()
@@ -3293,7 +3621,7 @@ final class MPXPrimeViewModel: ObservableObject {
     }
 
     private static func lufsString(_ value: Float) -> String {
-        guard value.isFinite, value > -119.5 else { return "—" }
+        guard value.isFinite, value > -119.5 else { return "--" }
         return String(format: "%.1f LUFS", value)
     }
 }

@@ -28,7 +28,7 @@ enum RDSGroupDecoder {
     static let offsetA = 0x0FC
     static let offsetB = 0x198
     static let offsetC = 0x168
-    static let offsetCp = 0x1E0
+    static let offsetCp = 0x350  // IEC 62106 Annex A: C' = 1101010000 (was 0x1E0, which receivers reject)
     static let offsetD = 0x1B4
 
     static func crc(word: Int, offset: Int) -> Int {

@@ -11,12 +11,12 @@ import SwiftUI
 //
 // Industry pattern (Stereo Tool / Logic Pro / Final Cut / Apple Music):
 // the always-visible top strip is **transport + hardware health only**
-// — content-level numbers (input dB, GR, modulation %, pilot/RDS
+// -- content-level numbers (input dB, GR, modulation %, pilot/RDS
 // injection) belong in dedicated panels in the relevant section, not
 // multiplexed onto a status strip across every tab. This view holds
-// the line at three small label/value pairs: Transport state,
-// Source, Sample rate. Everything else moved to MonitoringDashboardView
-// as proper Cards (MPX, Headroom, Subcarriers).
+// the line at Transport, Source, Rate and Mode, plus three chips that
+// appear only while they apply: the listening Monitor, Bypassed (red) and
+// Restart to Apply. Levels live on Monitoring and in the Levels window.
 
 struct BroadcastStatusBar: View {
     @ObservedObject var model: MPXPrimeViewModel
@@ -30,6 +30,16 @@ struct BroadcastStatusBar: View {
             sampleRateChip
             divider
             outputModeChip
+            // The listening monitor runs alongside the transmitter feed in
+            // every mode; it is an indicator of its own, never a mode.
+            if model.monitorEnabled {
+                divider
+                monitorChip
+            }
+            if model.processingBypass {
+                divider
+                bypassChip
+            }
             if model.runtimeApplyPending {
                 divider
                 restartPendingChip
@@ -57,7 +67,7 @@ struct BroadcastStatusBar: View {
     /// RDS sits at 57 kHz; the upper RDS sideband at ~59 kHz needs a
     /// sample rate of at least 192 kHz for the chain to represent it
     /// without aliasing. The most common amateur misconfiguration is
-    /// running on built-in Mac audio (96 kHz) with RDS enabled — output
+    /// running on built-in Mac audio (96 kHz) with RDS enabled -- output
     /// looks fine on the meters but the RDS subcarrier folds back into
     /// the audio band, and no receiver will decode it. Surface a chip
     /// the moment we detect that condition, whether the engine is
@@ -68,8 +78,8 @@ struct BroadcastStatusBar: View {
         guard !model.processedAudioOutputActive else { return false }
         guard model.config.enRDS else { return false }
         let effectiveRate: Int
-        if model.streamHealth.isRunning && model.streamHealth.renderHz > 0 {
-            effectiveRate = model.streamHealth.renderHz
+        if model.streamSummary.isRunning && model.streamSummary.renderHz > 0 {
+            effectiveRate = model.streamSummary.renderHz
         } else {
             effectiveRate = Int(model.config.sampleRate)
         }
@@ -82,45 +92,58 @@ struct BroadcastStatusBar: View {
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
             chipLabelledValue(
-                label: "RDS WARNING",
-                value: "RATE < 192 kHz",
+                label: "RDS Warning",
+                value: "Rate < 192 kHz",
                 tint: .orange
             )
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("RDS warning: output sample rate is below 192 kHz; the RDS subcarrier aliases and will not decode")
-        .help("RDS subcarrier at 57 kHz cannot be represented below 192 kHz output sample rate — the upper sideband at ~59 kHz aliases back into the audio band and no receiver will decode RDS. Either raise the output sample rate to 192 kHz (Audio MIDI Setup + the engine's `sample_rate`) or disable RDS for this output configuration.")
+        .help("The 57 kHz RDS subcarrier cannot be represented below a 192 kHz output sample rate: the upper sideband near 59 kHz aliases back into the audio band and no receiver will decode RDS. Raise the sample rate to 192 kHz (Audio I/O > Engine) or turn RDS off.")
     }
 
-    /// Globally visible "Restart pending" indicator. Shows whenever one
-    /// or more restart-required settings have been changed but the engine
-    /// is still running the old values (`runtimeApplyPending`). Single
-    /// always-visible chip is intentionally less invasive than per-card
-    /// badges, but more discoverable than the existing status-text
-    /// approach that operators were missing in dense tabs.
+    /// The one restart signal: a chip-button that says what to do. Shows
+    /// whenever a restart-class setting changed while the engine runs
+    /// (`runtimeApplyPending`); clicking it restarts the engine, like
+    /// Control > Restart to Apply (Shift-Cmd-A).
     private var restartPendingChip: some View {
-        // Actionable: clicking the always-visible chip stops and restarts the
-        // engine to apply the pending restart-required changes — same as the
-        // Control > Apply Restart menu item (Shift-Cmd-A), but reachable
-        // without leaving a dense tab.
         Button {
             model.applyPendingRuntimeChanges()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(BroadcastStyle.tightAmber)
                     .accessibilityHidden(true)
                 chipLabelledValue(
-                    label: "PENDING",
-                    value: "RESTART REQ.",
-                    tint: .yellow
+                    label: "Restart",
+                    value: model.runtimeApplyButtonTitle,
+                    tint: BroadcastStyle.tightAmber
                 )
             }
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Restart pending: one or more changed settings need an engine restart to take effect. Activate to apply now.")
-        .help("One or more restart-required settings have been changed since the engine started. The new values are saved but not on-air — use Apply Restart in Monitoring to stop and restart the engine so they take effect. Sample rate, block size, source mode, monitor routing, device changes, pre-emphasis, sum/diff levels, FIR settings, and dual-rate boundary are restart-required; everything else applies live.")
+        .accessibilityLabel("Restart to apply: a changed setting needs an engine restart. Activate to restart now.")
+        .help("A changed setting takes effect only after an engine restart. The new value is saved but not yet on air. Click to restart the engine now (Shift-Command-A).")
+    }
+
+    /// Red while the whole chain is bypassed: the station is unprocessed.
+    private var bypassChip: some View {
+        Button {
+            model.toggleBypass()
+        } label: {
+            chipLabelledValue(label: "Processing", value: "Bypassed", tint: BroadcastStyle.overRed)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Processing bypassed. Activate to process again.")
+        .help("All processing is bypassed. Click to process again (Command-B).")
+    }
+
+    /// The listening monitor is on (a second output, every mode).
+    private var monitorChip: some View {
+        chipLabelledValue(label: "Monitor", value: "On", tint: .primary)
+            .help("The listening monitor plays alongside the transmitter feed (Audio I/O > Monitor).")
     }
 
     // MARK: - Chips
@@ -131,12 +154,12 @@ struct BroadcastStatusBar: View {
                 for: model.isRunning ? BroadcastStyle.safeGreen : Color.secondary,
                 active: model.isRunning
             )
-            // Decorative — the adjacent value text ("RUNNING"/"STOPPED")
+            // Decorative -- the adjacent value text ("RUNNING"/"STOPPED")
             // already carries transport state to VoiceOver.
             .accessibilityHidden(true)
             chipLabelledValue(
-                label: "TRANSPORT",
-                value: model.isRunning ? "RUNNING" : "STOPPED",
+                label: "Transport",
+                value: model.isRunning ? "Running" : "Stopped",
                 tint: model.isRunning ? BroadcastStyle.safeGreen : Color.secondary
             )
         }
@@ -149,50 +172,50 @@ struct BroadcastStatusBar: View {
     // change and read a stale "-" until the next one.
     private var sourceChip: some View {
         LiveObservationView(telemetry: model.telemetry) { t in
-            let raw = t.streamHealth.inputName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = (t.streamHealth.isRunning && !raw.isEmpty) ? raw : "—"
             chipLabelledValue(
-                label: "SOURCE",
-                value: value,
+                label: "Source",
+                value: Self.sourceText(
+                    inputName: t.streamSummary.inputName,
+                    isRunning: t.streamSummary.isRunning,
+                    sourceMode: model.config.sourceMode),
                 tint: .primary
             )
         }
+    }
+
+    /// What feeds the chain: the test tone while it runs (it REPLACES the
+    /// input, so the device name would be wrong), else the input device.
+    static func sourceText(inputName: String, isRunning: Bool, sourceMode: String) -> String {
+        guard isRunning else { return "-" }
+        if sourceMode.lowercased() == "tone" { return Stage.testTone.label }
+        let raw = inputName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? "-" : raw
     }
 
     private var sampleRateChip: some View {
         LiveObservationView(telemetry: model.telemetry) { t in
-            let rate = t.streamHealth.renderHz
-            let value = rate > 0 ? "\(rate / 1_000) kHz" : "—"
+            let rate = t.streamSummary.renderHz
+            let value = rate > 0 ? "\(rate / 1_000) kHz" : "-"
             chipLabelledValue(
-                label: "RATE",
+                label: "Rate",
                 value: value,
                 tint: .primary
             )
         }
     }
 
-    /// Current output mode: the FM composite (default), the decoded-MPX monitor,
-    /// or processed stereo audio for an external coder. Reflects the selected
-    /// config; restart-required changes show the pending-restart chip alongside.
+    /// The operating mode, spelled exactly as everywhere else
+    /// (`OperatingMode.title`). The configured mode: a change made while
+    /// running shows the restart chip beside it.
     private var outputModeChip: some View {
-        let value: String
-        let tint: Color
-        if model.processedAudioOutputActive {
-            value = "PROC AUDIO"
-            tint = BroadcastStyle.safeGreen
-        } else if model.monitorEnabled {
-            value = "MONITOR"
-            tint = .primary
-        } else {
-            value = "COMPOSITE"
-            tint = .primary
-        }
-        return chipLabelledValue(label: "MODE", value: value, tint: tint)
+        chipLabelledValue(label: "Mode", value: Self.modeText(model.config.operatingMode), tint: .primary)
     }
+
+    static func modeText(_ mode: AppConfig.OperatingMode) -> String { mode.title }
 
     /// Compact label-over-value chip. Single small font for the value;
     /// no aggressive color coding (the only color is the transport LED
-    /// dot — everything else inherits the system foreground). Width
+    /// dot -- everything else inherits the system foreground). Width
     /// floats with content rather than locking to fixed columns; this
     /// header is informational, not a meter strip.
     private func chipLabelledValue(
@@ -201,8 +224,10 @@ struct BroadcastStatusBar: View {
         tint: Color
     ) -> some View {
         VStack(alignment: .leading, spacing: 1) {
+            // Title Case source strings, drawn as small caps.
             Text(label)
                 .font(BroadcastStyle.chipLabel)
+                .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(BroadcastStyle.chipValue)

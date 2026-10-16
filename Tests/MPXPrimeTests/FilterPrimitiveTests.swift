@@ -313,9 +313,11 @@ struct FilterPrimitiveTests {
             let y = dec.push(Float(sin(omega * Double(i))))
             peak = max(peak, abs(y))
         }
-        // Input amplitude is 1.0; -80 dB = 1e-4. Allow some margin.
-        #expect(peak < 1e-3,
-            "Stopband at 200 kHz must be ≥-60 dB; peak \(peak) (~\(20 * log10(max(peak, 1e-9))) dB)")
+        // Input amplitude is 1.0; -80 dB = 1e-4, the bound the comment
+        // above promises (the assertion used to allow -60 dB; finding 15).
+        print(String(format: "[FIR stopband] 200 kHz: %.1f dB", 20 * log10(max(Double(peak), 1e-12))))
+        #expect(peak < 1e-4,
+            "Stopband at 200 kHz must be at least 80 dB down; peak \(peak) (~\(20 * log10(max(peak, 1e-9))) dB)")
     }
 
     @Test func firDecimatorPassbandLeaksMinimallyVsButterworth() {
@@ -360,11 +362,20 @@ struct FilterPrimitiveTests {
         dec.configure(cutoffHz: 53_000.0, sampleRateOS: 1_536_000.0, decimateFactor: 8)
         // Drive non-zero data through.
         for _ in 0..<2_000 { _ = dec.push(0.5) }
+        var control = dec            // same history, never reset
         dec.reset()
-        // Output should drop to ~0 after reset + many zero pushes.
-        var lastOut: Float = 0
-        for _ in 0..<2_000 { lastOut = dec.push(0.0) }
-        #expect(abs(lastOut) < 1e-6,
-            "Reset + zero-fill must drive output to 0; got \(lastOut)")
+        // Every output from the FIRST push after reset must be zero. The old
+        // check pushed 2000 zeros through a 146-tap kernel first, so a no-op
+        // reset passed (finding 15). The un-reset copy is the control: it
+        // still emits its 0.5 history over the same pushes.
+        var worstAfterReset: Float = 0
+        var worstControl: Float = 0
+        for _ in 0..<dec.tapCount {
+            worstAfterReset = max(worstAfterReset, abs(dec.push(0.0)))
+            worstControl = max(worstControl, abs(control.push(0.0)))
+        }
+        #expect(worstControl > 0.1, "fixture problem: the un-reset decimator emitted no history (\(worstControl))")
+        #expect(worstAfterReset < 1e-7,
+            "reset left history in the delay line: output reached \(worstAfterReset) on zero input")
     }
 }

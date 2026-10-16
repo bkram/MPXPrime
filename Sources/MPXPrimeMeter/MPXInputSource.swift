@@ -31,13 +31,25 @@ protocol MPXInputSource: AnyObject {
 }
 
 /// Core Audio AUHAL backend (TN2091), wrapping the shared `InputAUHAL`.
+///
+/// `channels` picks which two device channels feed the stereo frame sink on
+/// a multichannel interface (nil = channels 1, 2). The engine's L / R / Mix
+/// choice then applies to that pair: left is the lower-numbered chosen
+/// channel. A pair the device does not have falls back to 1, 2 and the
+/// reason is in `channelNote` after `start()`.
 final class AUHALInputSource: MPXInputSource {
     private let au = InputAUHAL()
     private let deviceID: AudioDeviceID
+    private let channels: ChannelPair?
     private let maxFramesPerSlice: Int
+    /// The device channels actually mapped, known after `start()`.
+    private(set) var appliedChannels: ChannelPair?
+    /// Why `appliedChannels` differs from the request, or nil.
+    private(set) var channelNote: String?
 
-    init(deviceID: AudioDeviceID, maxFramesPerSlice: Int = 4096) {
+    init(deviceID: AudioDeviceID, channels: ChannelPair? = nil, maxFramesPerSlice: Int = 4096) {
         self.deviceID = deviceID
+        self.channels = channels
         self.maxFramesPerSlice = maxFramesPerSlice
     }
 
@@ -55,7 +67,10 @@ final class AUHALInputSource: MPXInputSource {
 
     @discardableResult
     func start() throws -> (sampleRate: Double, channels: Int) {
-        let fmt = try au.start(deviceID: deviceID, maxFramesPerSlice: maxFramesPerSlice)
+        let fmt = try au.start(
+            deviceID: deviceID, channels: channels, maxFramesPerSlice: maxFramesPerSlice)
+        appliedChannels = fmt.channels
+        channelNote = fmt.channelNote
         return (fmt.deviceSampleRate, fmt.deviceChannelCount)
     }
 

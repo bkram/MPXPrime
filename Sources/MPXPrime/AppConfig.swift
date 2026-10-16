@@ -120,6 +120,17 @@ struct AppConfig: Equatable {
     var inputDeviceUID: String?
     var outputDeviceUID: String?
     var monitorDeviceUID: String?
+    /// Which device channels carry the input, the transmitter feed and the
+    /// monitor (INI: one-based "1,2"; one number = mono on that channel).
+    /// nil is the device's first pair, and so is an explicit 1,2: the two
+    /// serialise identically (an empty key), see `channelsINIValue`. Bound
+    /// to the installation exactly like the `*_device_uid` keys: kept by a
+    /// reset, never carried by a snapshot or a preset. `monitor_channels`
+    /// is live-apply (it rides `MPXGenerator.RuntimeConfig` with the monitor
+    /// device); the other two are restart-class.
+    var inputChannels: ChannelPair?
+    var outputChannels: ChannelPair?
+    var monitorChannels: ChannelPair?
     // Human device names stored alongside the UIDs. Core Audio device UIDs can
     // change when a USB interface is moved to a different port; the name is the
     // stable fallback used to re-match the same device, and to show which device
@@ -367,8 +378,6 @@ struct AppConfig: Equatable {
     var multibandX2Hz: Double = 350.0
     var multibandX3Hz: Double = 1800.0
     var multibandX4Hz: Double = 6800.0
-    var multibandLowHz: Double = 320.0
-    var multibandHighHz: Double = 2550.0
     var multibandLowThresholdDB: Double = -17.5
     var multibandMidThresholdDB: Double = -16.0
     var multibandHighThresholdDB: Double = -14.5
@@ -382,7 +391,9 @@ struct AppConfig: Equatable {
     var multibandMidReleaseMS: Double = 300.0
     var multibandHighReleaseMS: Double = 225.0
     var multibandKneeDB: Double = 3.6
-    var multibandLinkStrength: Double = 0.52
+    /// Multiband stereo link AMOUNT per band: 0 = each channel compressed on
+    /// its own, 1 = fully linked (equal L/R gain reduction, image exact).
+    var multibandLinkStrength: Double = 1.0
     var multibandReleaseProgramDependent: Bool = true
     var multibandTransientAwareAttackEnabled: Bool = false
     var multibandInterBandCouplingEnabled: Bool = false
@@ -391,11 +402,13 @@ struct AppConfig: Equatable {
     // replaces the wideband AGC + multiband compressor when enabled
     // (default off). Target-based configuration: set the sound you want,
     // not attack/release times. Band layout follows multiband_x1..x4_hz.
-    var advancedDynamicsEnabled: Bool = false
-    var advancedDynamicsTargetDB: Double = -16.0
+    var advancedDynamicsEnabled: Bool = true   // the default levelling since 2026-10-15
+    var advancedDynamicsTargetDB: Double = -18.0
     var advancedDynamicsLowOffsetDB: Double = 0.0
-    var advancedDynamicsMidOffsetDB: Double = -3.0
-    var advancedDynamicsHighOffsetDB: Double = -9.0
+    // Tilt relative to the programme's own balance since 2026-10-15
+    // (the leveller keeps each band's long-term share); 0 = neutral.
+    var advancedDynamicsMidOffsetDB: Double = 0.0
+    var advancedDynamicsHighOffsetDB: Double = 0.0
     var advancedDynamicsMaxGainDB: Double = 12.0
     var advancedDynamicsDensity: Double = 0.5
     var advancedDynamicsSpeed: Double = 1.0
@@ -785,6 +798,21 @@ struct AppConfig: Equatable {
         return merged
     }
 
+    /// The INI spelling of a channel choice: `iniValue` ("3,4" / "3"), or ""
+    /// for nil AND for the stereo default, so an installation that never
+    /// chose channels keeps an empty key and "1,2" round-trips to nil.
+    static func channelsINIValue(_ pair: ChannelPair?) -> String {
+        guard let pair, pair != .stereoDefault else { return "" }
+        return pair.iniValue
+    }
+
+    /// `ChannelPair.parse` with the stereo default folded to nil (the
+    /// inverse of `channelsINIValue`); anything unparsable is nil too.
+    static func parseChannels(_ raw: String?) -> ChannelPair? {
+        guard let pair = ChannelPair.parse(raw), pair != .stereoDefault else { return nil }
+        return pair
+    }
+
     static func make(fromParsed parsed: [String: [String: String]]) -> AppConfig {
         let mpx = parsed["MPX"] ?? [:]
         let interfaces = parsed["INTERFACES"] ?? [:]
@@ -798,6 +826,9 @@ struct AppConfig: Equatable {
         cfg.inputDeviceUID = interfaces.optionalString("input_device_uid")
         cfg.outputDeviceUID = interfaces.optionalString("output_device_uid")
         cfg.monitorDeviceUID = interfaces.optionalString("monitor_device_uid")
+        cfg.inputChannels = parseChannels(interfaces.optionalString("input_channels"))
+        cfg.outputChannels = parseChannels(interfaces.optionalString("output_channels"))
+        cfg.monitorChannels = parseChannels(interfaces.optionalString("monitor_channels"))
         cfg.inputDeviceName = interfaces.optionalString("input_device_name")
         cfg.outputDeviceName = interfaces.optionalString("output_device_name")
         cfg.monitorDeviceName = interfaces.optionalString("monitor_device_name")
@@ -959,8 +990,6 @@ struct AppConfig: Equatable {
         cfg.multibandMode = mpx.int("multiband_mode", defaultValue: cfg.multibandMode)
         cfg.multibandPresetID = mpx.string("multiband_preset_id", defaultValue: cfg.multibandPresetID)
         cfg.multibandIntensity = mpx.string("multiband_intensity", defaultValue: cfg.multibandIntensity)
-        cfg.multibandLowHz = mpx.double("multiband_low_hz", defaultValue: cfg.multibandLowHz)
-        cfg.multibandHighHz = mpx.double("multiband_high_hz", defaultValue: cfg.multibandHighHz)
         cfg.multibandX1Hz = mpx.double("multiband_x1_hz", defaultValue: cfg.multibandX1Hz)
         cfg.multibandX2Hz = mpx.double("multiband_x2_hz", defaultValue: cfg.multibandX2Hz)
         cfg.multibandX3Hz = mpx.double("multiband_x3_hz", defaultValue: cfg.multibandX3Hz)
@@ -1306,13 +1335,21 @@ struct AppConfig: Equatable {
             widebandAGCMinGainDB = -12.0
         }
 
-        // PrimeBass
-        primeBassAmount = max(0.0, min(1.0, primeBassAmount))
-        primeBassFreqHz = max(45.0, min(220.0, primeBassFreqHz))
-        primeBassHarmonics = max(0.0, min(1.0, primeBassHarmonics))
-        primeBassDrive = max(0.0, min(2.5, primeBassDrive))
+        // PrimeBass. Ranges measured with --sweep-primebass (2026-10-15):
+        // past these limits a control only feeds the peak guard or the mud.
+        // Amount above 0.5 adds about 0.4 dB of harmonic layer on real music
+        // while peaks grow and the guard pumps the fundamental; Harmonics
+        // above 0.5 puts 3F0 more than 3 dB over 2F0 (the hollow odd-only
+        // tone, and the gate's own limit); Frequency above 120 Hz lifts the
+        // 500-2000 Hz spill from -53 to -36 dB re the bass; Drive above 1.5
+        // only adds spill; Subharmonics above 0.4 gains 2 dB of sub for 6 dB
+        // of lost harmonic series. Density acts only below -20 dBFS bass.
+        primeBassAmount = max(0.0, min(0.5, primeBassAmount))
+        primeBassFreqHz = max(40.0, min(120.0, primeBassFreqHz))
+        primeBassHarmonics = max(0.0, min(0.5, primeBassHarmonics))
+        primeBassDrive = max(0.0, min(1.5, primeBassDrive))
         primeBassDensity = max(0.0, min(1.0, primeBassDensity))
-        primeBassSubharmonicsAmount = max(0.0, min(1.0, primeBassSubharmonicsAmount))
+        primeBassSubharmonicsAmount = max(0.0, min(0.4, primeBassSubharmonicsAmount))
 
         // Mono bass
         monoBassFreqHz = max(60.0, min(250.0, monoBassFreqHz))
@@ -1323,8 +1360,6 @@ struct AppConfig: Equatable {
         multibandX2Hz = max(100.0, min(1_000.0, multibandX2Hz))
         multibandX3Hz = max(500.0, min(5_000.0, multibandX3Hz))
         multibandX4Hz = max(2_000.0, min(16_000.0, multibandX4Hz))
-        multibandLowHz = max(80.0, min(1_000.0, multibandLowHz))
-        multibandHighHz = max(500.0, min(8_000.0, multibandHighHz))
         multibandLowThresholdDB = max(-40.0, min(0.0, multibandLowThresholdDB))
         multibandMidThresholdDB = max(-40.0, min(0.0, multibandMidThresholdDB))
         multibandHighThresholdDB = max(-40.0, min(0.0, multibandHighThresholdDB))
@@ -1343,9 +1378,9 @@ struct AppConfig: Equatable {
 
         // Advanced Dynamics
         advancedDynamicsTargetDB = max(-30.0, min(-6.0, advancedDynamicsTargetDB))
-        advancedDynamicsLowOffsetDB = max(-12.0, min(6.0, advancedDynamicsLowOffsetDB))
-        advancedDynamicsMidOffsetDB = max(-12.0, min(6.0, advancedDynamicsMidOffsetDB))
-        advancedDynamicsHighOffsetDB = max(-12.0, min(6.0, advancedDynamicsHighOffsetDB))
+        advancedDynamicsLowOffsetDB = max(-6.0, min(6.0, advancedDynamicsLowOffsetDB))
+        advancedDynamicsMidOffsetDB = max(-6.0, min(6.0, advancedDynamicsMidOffsetDB))
+        advancedDynamicsHighOffsetDB = max(-6.0, min(6.0, advancedDynamicsHighOffsetDB))
         advancedDynamicsMaxGainDB = max(0.0, min(24.0, advancedDynamicsMaxGainDB))
         advancedDynamicsDensity = max(0.0, min(1.0, advancedDynamicsDensity))
         advancedDynamicsSpeed = max(0.25, min(4.0, advancedDynamicsSpeed))
@@ -1440,6 +1475,10 @@ struct AppConfig: Equatable {
         let upperBank = rdsPSActiveBank.uppercased()
         rdsPSActiveBank = ["A", "B", "C", "D"].contains(upperBank) ? upperBank : "A"
         rdsRTMode = (rdsRTMode.uppercased() == "2B") ? "2B" : "2A"
+        // PS frame dwell: the range the GUI and dashboard offer. Below 0.5 s
+        // a frame cannot finish (four 0A groups take 0.35 s) before the next
+        // replaces it; the coder only floored it at 0.1 s.
+        rdsPSFrameSeconds = max(0.5, min(30.0, rdsPSFrameSeconds))
         rdsRTCycleTime = max(1.0, min(60.0, rdsRTCycleTime))
         rdsRTActiveBuffer = max(0, min(3, rdsRTActiveBuffer))
         rdsRTABCycleCount = max(1, min(99, rdsRTABCycleCount))
@@ -1548,8 +1587,6 @@ struct AppConfig: Equatable {
             "multiband_mode = \(multibandMode)",
             "multiband_preset_id = \(multibandPresetID)",
             "multiband_intensity = \(multibandIntensity)",
-            "multiband_low_hz = \(Self.formatFloat(multibandLowHz))",
-            "multiband_high_hz = \(Self.formatFloat(multibandHighHz))",
             "multiband_x1_hz = \(Self.formatFloat(multibandX1Hz))",
             "multiband_x2_hz = \(Self.formatFloat(multibandX2Hz))",
             "multiband_x3_hz = \(Self.formatFloat(multibandX3Hz))",
@@ -1734,6 +1771,9 @@ struct AppConfig: Equatable {
             "input_device_uid = \(inputDeviceUID ?? "")",
             "output_device_uid = \(outputDeviceUID ?? "")",
             "monitor_device_uid = \(monitorDeviceUID ?? "")",
+            "input_channels = \(Self.channelsINIValue(inputChannels))",
+            "output_channels = \(Self.channelsINIValue(outputChannels))",
+            "monitor_channels = \(Self.channelsINIValue(monitorChannels))",
             "input_device_name = \(inputDeviceName ?? "")",
             "output_device_name = \(outputDeviceName ?? "")",
             "monitor_device_name = \(monitorDeviceName ?? "")"

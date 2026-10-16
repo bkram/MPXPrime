@@ -208,6 +208,14 @@ targets.append(
             // The remote-control web dashboard (served at / by ControlServer).
             .copy("Control/WebUI")
         ],
+        // Release builds skip Swift's DYNAMIC exclusivity checks: every
+        // class-property access in the per-sample chain paid
+        // swift_beginAccess / swift_endAccess plus a TLS lookup, about 13 %
+        // of render time (perf, 2026-10-16; the default chain went from 20.6 %
+        // to 16.3 % of a core on this flag alone, output bit-identical).
+        // Static exclusivity checking still runs at compile time, and debug
+        // builds -- which every test runs -- keep the runtime trap.
+        swiftSettings: [.unsafeFlags(["-enforce-exclusivity=unchecked"], .when(configuration: .release))],
         linkerSettings: infoPlistEmbed("MPXPrime-Info.plist")
     )
 )

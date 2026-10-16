@@ -3,7 +3,7 @@ import Foundation
 @testable import MPXPrime
 
 // Pins for the PrimeBass missing-fundamental enhancer (rewritten 2026-10-10
-// after docs/primebass-review.md; `processPrimeBass` and
+// after the PrimeBass review; `processPrimeBass` and
 // `configurePrimeBassFilters` in MPXGenerator.swift).
 //
 // Intended behaviour: for bass below the cutoff F0 the stage adds a clean,
@@ -50,6 +50,7 @@ struct PrimeBassMaxxBassTests {
         cfg.audioCompositeSoftClipEnabled = false
         cfg.encoderFIREnabled = false
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.phaseRotationEnabled = false
         cfg.parametricEQEnabled = false
         cfg.monoBassEnabled = false

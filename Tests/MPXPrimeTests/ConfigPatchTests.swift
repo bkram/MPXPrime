@@ -111,6 +111,7 @@ struct ConfigPatchTests {
         let (patched, outcomes, planes) = try ConfigPatch.apply([
             "monitor_enabled": "True",
             "monitor_device_uid": "headphones",
+            "monitor_channels": "3,4",
             "monitor_gain_db": "-8.5"
         ], to: cfg)
         for outcome in outcomes {
@@ -120,6 +121,7 @@ struct ConfigPatchTests {
         #expect(!planes.restartRequired, "a monitor change asked for a restart")
         #expect(patched.monitorEnabled)
         #expect(patched.monitorDeviceUID == "headphones")
+        #expect(patched.monitorChannels?.iniValue == "3,4")
         #expect(abs(patched.monitorGainDB + 8.5) < 0.001)
     }
 

@@ -248,4 +248,39 @@ struct BassClipperTests {
         #expect(splatterDB < -56.0,
                 "energy above 15 kHz is \(splatterDB) dB relative to the fundamental (old curve: -55.0)")
     }
+
+    // MARK: - Channel lanes (test-suite review 2026-10 finding 14)
+
+    /// Every other case here feeds `left: x, right: x` and reads the left
+    /// output only, but the batch packs L into lanes 0-3 and R into lanes
+    /// 4-7, so a lane cross-wire passed. Different signals per channel --
+    /// L a hot 60 Hz that clips, R a quiet 90 Hz plus 3 kHz that does not --
+    /// and each output channel must equal that channel run alone through a
+    /// fresh clipper (the stage has no stereo link).
+    @Test("left and right lanes stay separate")
+    func leftAndRightLanesStaySeparate() {
+        let frames = Int(Self.sampleRate * 0.2)
+        func leftIn(_ i: Int) -> Float { 0.95 * sinf(2.0 * .pi * 60.0 * Float(i) / Self.sampleRate) }
+        func rightIn(_ i: Int) -> Float {
+            0.2 * sinf(2.0 * .pi * 90.0 * Float(i) / Self.sampleRate)
+                + 0.1 * sinf(2.0 * .pi * 3_000.0 * Float(i) / Self.sampleRate)
+        }
+        var stereo = Self.shippedClipper()
+        var leftOnly = Self.shippedClipper()
+        var rightOnly = Self.shippedClipper()
+        var worstLeft: Float = 0.0
+        var worstRight: Float = 0.0
+        var leftDiffersFromRight = false
+        for i in 0..<frames {
+            let (l, r) = stereo.process(left: leftIn(i), right: rightIn(i))
+            let (refL, _) = leftOnly.process(left: leftIn(i), right: leftIn(i))
+            let (_, refR) = rightOnly.process(left: rightIn(i), right: rightIn(i))
+            worstLeft = max(worstLeft, fabsf(l - refL))
+            worstRight = max(worstRight, fabsf(r - refR))
+            if fabsf(l - r) > 0.1 { leftDiffersFromRight = true }
+        }
+        #expect(leftDiffersFromRight, "fixture problem: the two channels never differed")
+        #expect(worstLeft < 1e-6, "left output carries right-lane content: worst error \(worstLeft)")
+        #expect(worstRight < 1e-6, "right output carries left-lane content: worst error \(worstRight)")
+    }
 }

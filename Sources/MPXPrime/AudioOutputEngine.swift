@@ -32,8 +32,29 @@ final class AudioOutputEngine {
     private static let scopeSampleCount = 128
     private static let scopeHistorySeconds: Double = 0.25
     static let preMPXSpectrumFrameCount = 4096
-    private static let preMPXHistoryFrameCount = preMPXSpectrumFrameCount * 2
+    /// The processed-audio (Post) spectrum runs at the render rate: 16384
+    /// frames is 85 ms at 192 kHz, the same ~12 Hz resolution the 4096-frame
+    /// input (Pre) window has at 48 kHz.
+    static let processedSpectrumFrameCount = 16_384
+    private static let preMPXHistoryFrameCount = processedSpectrumFrameCount * 2
     private static let meterUpdateIntervalFrames: Int = 512
+    private static let peakReaderSlots = 8
+
+    /// The peak channels the render / capture callbacks publish.
+    private enum PeakChannel: Int, CaseIterable {
+        case input, inputLeft, inputRight, postAGCLeft, postAGCRight, output, outputLeft, outputRight
+    }
+
+    /// One reader's decaying peak hold (reader side only).
+    private struct PeakHold {
+        var input: Float = 0
+        var inputLeft: Float = 0
+        var inputRight: Float = 0
+        var postAGCLeft: Float = 0
+        var postAGCRight: Float = 0
+        var output: Float = 0
+        var lastReadUptime: TimeInterval?
+    }
 
     struct InputTransportSnapshot {
         let overflows: UInt64
@@ -69,6 +90,10 @@ final class AudioOutputEngine {
         var livePostAGCLeftPeak: Float
         var livePostAGCRightPeak: Float
         var liveOutputPeak: Float
+        /// Per-channel output peaks: the processed L / R feed outside MPX
+        /// mode (in MPX both channels carry the same composite).
+        var liveOutputLeftPeak: Float
+        var liveOutputRightPeak: Float
         var liveDeviationKHzPeak: Float
         var agcDetectorDB: Float
         var agcGainDB: Float
@@ -155,7 +180,8 @@ final class AudioOutputEngine {
 
     /// Line output calibration: linear scale applied to the composite at the
     /// DAC write, after every meter/scope capture (those stay in the
-    /// 0 dBFS = 100% modulation domain). Render-thread only after start.
+    /// 0 dBFS = 100% modulation domain). Exactly 1 outside composite mode
+    /// (`OutputWiring.lineOutputScale`). Render-thread only after start.
     private var lineOutputScale: Float
     /// Divides `output_gain_db` back out of the metered composite so the
     /// deviation readout stays in the modulation domain (composite mode; 1.0
@@ -171,6 +197,20 @@ final class AudioOutputEngine {
     private var inputTargetBufferedFrames = 0
     private var inputBufferedDeadbandFrames = 0
     private var routingNote: String?
+    /// The operator's channel choice per device (nil = channels 1, 2).
+    private let requestedInputChannels: ChannelPair?
+    private let requestedOutputChannels: ChannelPair?
+    /// What `start` actually applied (after `ChannelPair.resolve` against
+    /// the real device), for the status line; nil while stopped.
+    private(set) var appliedInputChannels: ChannelPair?
+    private(set) var appliedOutputChannels: ChannelPair?
+    /// Where the RIGHT side of the render lands for a MONO output pair: the
+    /// chain always renders two channels and only the left one reaches the
+    /// device (for the composite both carry the same signal anyway).
+    /// Allocated by `start` on the multichannel path, freed by `stop`, nil
+    /// on the 2-channel path; read on the render thread, never resized.
+    private var outputMonoSink: UnsafeMutablePointer<Float>?
+    private var outputMonoSinkFrames = 0
     private var captureCallbackCount: UInt64 = 0
     private var captureFrameCount: UInt64 = 0
     private var captureFrameCounter: Int = 0
@@ -211,6 +251,8 @@ final class AudioOutputEngine {
         livePostAGCLeftPeak: 0.0,
         livePostAGCRightPeak: 0.0,
         liveOutputPeak: 0.0,
+        liveOutputLeftPeak: 0.0,
+        liveOutputRightPeak: 0.0,
         liveDeviationKHzPeak: 0.0,
         agcDetectorDB: -120.0,
         agcGainDB: 0.0,
@@ -238,13 +280,17 @@ final class AudioOutputEngine {
         outputStereoCorrelation: 1.0,
         outputSideToMidRatio: 0.0
     )
-    private var pendingInputPeak: Float = 0.0
-    private var pendingInputLeftPeak: Float = 0.0
-    private var pendingInputRightPeak: Float = 0.0
-    private var pendingPostAGCLeftPeak: Float = 0.0
-    private var pendingPostAGCRightPeak: Float = 0.0
-    private var pendingOutputPeak: Float = 0.0
-    private var lastMeterReadUptime: TimeInterval?
+    /// Peak-since-last-read per consumer (GUI, each web meter stream, the
+    /// headless status tick): a read by one never clears another's. Written
+    /// lock-free by the render and capture callbacks.
+    private let peakReaders = MultiReaderPeakAccumulator(
+        channels: PeakChannel.allCases.count, slots: AudioOutputEngine.peakReaderSlots)
+    /// Each reader slot's decaying hold, reader side, under `meterLock`.
+    private var peakHolds = [PeakHold](
+        repeating: PeakHold(), count: AudioOutputEngine.peakReaderSlots)
+    /// Control-API telemetry FFT, built once and reused (it was a fresh
+    /// FFT setup per /api/telemetry request).
+    let controlTelemetrySpectrum = ControlTelemetrySpectrum()
     private var inputScopeLeftHistory: [Float] = []
     private var inputScopeRightHistory: [Float] = []
     private var outputScopeHistory: [Float] = []
@@ -304,7 +350,9 @@ final class AudioOutputEngine {
         config: AppConfig,
         inputDeviceID: AudioDeviceID? = nil,
         outputDeviceID: AudioDeviceID? = nil,
-        outputMode: AudioOutputMode = .mpxComposite
+        outputMode: AudioOutputMode = .mpxComposite,
+        inputChannels: ChannelPair? = nil,
+        outputChannels: ChannelPair? = nil
     ) {
         self.generator = generator
         self.startConfig = config
@@ -313,15 +361,15 @@ final class AudioOutputEngine {
         self.requestedBlockSize = config.blockSize
         self.requestedInputDeviceID = inputDeviceID
         self.requestedOutputDeviceID = outputDeviceID
+        self.requestedInputChannels = inputChannels
+        self.requestedOutputChannels = outputChannels
         self.outputMode = outputMode
-        self.lineOutputScale = powf(10.0, Float(config.mpxLineOutputDBFS) / 20.0)
-        // Deviation is a MODULATION-domain readout: the composite is metered
-        // post-`output_gain_db`, so divide the trim back out or the meter
-        // under-reads by exactly that trim (field-measured 30.2 kHz displayed
-        // vs ~75 on air at -7.89 dB). Composite mode only -- processed audio
-        // has no deviation semantics.
-        self.modulationReferenceScale = outputMode == .mpxComposite
-            ? powf(10.0, -Float(config.outputGainDB) / 20.0) : 1.0
+        // Both scales come from OutputWiring, which the Linux engine calls
+        // too and RobustnessOutputWiringTests pins (review finding 10).
+        self.lineOutputScale = OutputWiring.lineOutputScale(
+            lineOutputDBFS: Float(config.mpxLineOutputDBFS), mode: outputMode)
+        self.modulationReferenceScale = OutputWiring.modulationReferenceScale(
+            outputGainDB: Float(config.outputGainDB), mode: outputMode)
         self.encoderFIREnabled = config.encoderFIREnabled
         self.multibandFIREnabled = config.multibandFIREnabled
     }
@@ -333,19 +381,21 @@ final class AudioOutputEngine {
         guard outputMode != .monitorAudio else { return }
         let ring = monitorOutput.prepare(sampleRate: renderRate, blockFrames: requestedBlockSize)
         monitorRing = ring
-        monitorConditioner.configure(
+        // Configures AND publishes the configured level BEFORE anything can
+        // render, or the render thread's first block reads the atomic's unity
+        // default and ramps the monitor away from the level it was just given.
+        OutputWiring.configureMonitor(
+            &monitorConditioner,
             shape: MonitorConditioner.shape(for: startConfig.operatingMode, config: startConfig),
             sampleRate: Float(renderRate),
-            gainDB: startConfig.monitorGainDB)
-        monitorConditioner.reset()
-        // Publish the configured level BEFORE anything can render, or the
-        // render thread's first block reads the atomic's unity default and
-        // ramps the monitor away from the level it was just given.
-        pendingMonitorGain.store(monitorConditioner.publishedGainBitPattern, ordering: .relaxed)
+            gainDB: startConfig.monitorGainDB,
+            pendingGain: pendingMonitorGain)
         monitorOutput.reconcile(
             enabled: startConfig.monitorEnabled,
             monitorUID: startConfig.monitorDeviceUID,
-            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID())
+            monitorChannels: startConfig.monitorChannels,
+            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID(),
+            txChannels: appliedOutputChannels ?? requestedOutputChannels)
         if let note = monitorOutput.note, startConfig.monitorEnabled {
             appendRoutingNote(note)
         }
@@ -359,11 +409,13 @@ final class AudioOutputEngine {
         // and let that thread pick it up at its next block (0.65 audit,
         // P0-5) -- writing into the struct from here raced every block.
         pendingMonitorGain.store(
-            powf(10.0, Float(config.monitorGainDB) / 20.0).bitPattern, ordering: .relaxed)
+            OutputWiring.monitorGainBitPattern(gainDB: config.monitorGainDB), ordering: .relaxed)
         monitorOutput.reconcile(
             enabled: config.monitorEnabled,
             monitorUID: config.monitorDeviceUID,
-            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID())
+            monitorChannels: config.monitorChannels,
+            txDeviceID: requestedOutputDeviceID ?? AudioDevices.defaultOutputDeviceID(),
+            txChannels: appliedOutputChannels ?? requestedOutputChannels)
     }
 
     /// The processed feed (fm / hd / am) is what leaves the output device, so
@@ -413,17 +465,39 @@ final class AudioOutputEngine {
         isShuttingDown = false
         meteringEnabled = true
         try applyOutputDeviceSelection()
-        let outputRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        let hardwareOutputFormat = engine.outputNode.outputFormat(forBus: 0)
+        let outputRate = hardwareOutputFormat.sampleRate
+        // Which device channels carry the feed, resolved against the REAL
+        // device (read after it is set): a pair the device lacks falls back
+        // to 1, 2 with a routing note instead of a silent transmitter.
+        let outputChannelCount = Int(hardwareOutputFormat.channelCount)
+        let resolvedOutput = ChannelPair.resolve(
+            requested: requestedOutputChannels, channelCount: outputChannelCount, role: "Output")
+        appliedOutputChannels = resolvedOutput.pair
+        if let note = resolvedOutput.note {
+            appendRoutingNote(note)
+        }
+        // The multichannel path exists only where it is needed: a device
+        // with more than two channels AND a pair other than 1, 2. Everything
+        // else runs the 2-channel path exactly as it always has.
+        // Any pair other than 1, 2 takes the discrete path, a 2-channel device
+        // included (mono on channel 2). Everything else -- the default pair,
+        // and a 1-channel device, which AVAudioEngine feeds from a stereo
+        // source by downmixing -- keeps the historical 0 / 1 buffers.
+        let wideOutput = outputChannelCount >= 2 && resolvedOutput.pair != .stereoDefault
+        let outLeft = wideOutput ? resolvedOutput.pair.left : 0
+        let outRight = wideOutput ? resolvedOutput.pair.right : 1
         let requestedRate = max(8_000.0, requestedSampleRate)
         let renderRate = (outputMode == .monitorAudio) ? requestedRate : outputRate
         if useInputSource {
             try ensureMicrophoneAuthorization()
             try setupInputCapture(targetSampleRate: renderRate)
         }
-        if outputMode == .mpxComposite, outputRate < 110_000.0 {
-            appendRoutingNote(
-                "Output sample rate is too low for stereo MPX. Use a 192 kHz-capable output device."
-            )
+        // Below 111 kHz the upper stereo sideband folds about Nyquist, and
+        // below 118.8 kHz RDS does: the generator switches those services off
+        // (`MPXGenerator.compositeRateSupport`) and the operator is told why.
+        if outputMode == .mpxComposite, let note = MPXGenerator.compositeRateNote(sampleRate: renderRate) {
+            appendRoutingNote(note)
         }
         if outputMode == .monitorAudio, fabs(outputRate - renderRate) > 1.0 {
             appendRoutingNote(
@@ -460,12 +534,36 @@ final class AudioOutputEngine {
         preAllocateBuffers(maxFrames: Int(max(renderRate, 192000.0) * 0.1))
         startMonitorOutput(renderRate: renderRate)
 
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: renderRate,
-            channels: 2,
-            interleaved: false
-        )
+        let format: AVAudioFormat?
+        var wideOutputFormat: AVAudioFormat?
+        if wideOutput {
+            // The source node speaks the device's full channel count,
+            // discrete and in order, so the mixer passes channels through
+            // 1:1 instead of matrixing by layout (RingBufferPlayer's recipe).
+            guard let layout = AVAudioChannelLayout(
+                layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(outputChannelCount))
+            else {
+                throw AudioEngineError.sourceNodeFormatUnavailable
+            }
+            format = AVAudioFormat(standardFormatWithSampleRate: renderRate, channelLayout: layout)
+            wideOutputFormat = AVAudioFormat(
+                standardFormatWithSampleRate: outputRate > 0 ? outputRate : renderRate,
+                channelLayout: layout)
+            if resolvedOutput.pair.isMono {
+                let sinkFrames = max(512, Int(max(renderRate, 192000.0) * 0.1))
+                let sink = UnsafeMutablePointer<Float>.allocate(capacity: sinkFrames)
+                sink.initialize(repeating: 0, count: sinkFrames)
+                outputMonoSink = sink
+                outputMonoSinkFrames = sinkFrames
+            }
+        } else {
+            format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: renderRate,
+                channels: 2,
+                interleaved: false
+            )
+        }
         guard let sourceFormat = format else {
             throw AudioEngineError.sourceNodeFormatUnavailable
         }
@@ -498,6 +596,20 @@ final class AudioOutputEngine {
             self.applyPendingRDSRuntimeConfigIfNeeded()
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
             let frames = Int(frameCount)
+            var monoSink: UnsafeMutablePointer<Float>?
+            if wideOutput {
+                // Multichannel device: every buffer the pair does not name is
+                // silence, and so is everything when the list is narrower than
+                // the pair (a device format change under a running engine) or
+                // a mono pair has nowhere to put its right side.
+                Self.clearBuffers(audioBufferList, frameCount: frames)
+                guard buffers.count > max(outLeft, outRight) else { return noErr }
+                if outLeft == outRight {
+                    guard let sink = self.outputMonoSink, frames <= self.outputMonoSinkFrames
+                    else { return noErr }
+                    monoSink = sink
+                }
+            }
             self.frameCounter += frames
             let throttled = self.meteringEnabled && ((self.frameCounter % Self.meterUpdateIntervalFrames) < frames)
             let captureInputScope =
@@ -509,9 +621,12 @@ final class AudioOutputEngine {
             let captureOutputImageMetrics =
                 throttled && self.outputImageMetricsEnabled.load(ordering: .relaxed)
             let needsAnalysisBuffers = throttled || capturePreMPXHistory
+            // outLeft / outRight are 0 / 1 on the 2-channel path; on the
+            // multichannel path they are the chosen device channels, and a
+            // mono pair renders its right side into the sink (discarded).
             if buffers.count >= 2,
-                let leftData = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-                let rightData = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
+                let leftData = buffers[outLeft].mData?.assumingMemoryBound(to: Float.self),
+                let rightData = monoSink ?? buffers[outRight].mData?.assumingMemoryBound(to: Float.self) {
                 if self.useInputSource, let ring = self.inputRing {
                     if !self.inputPrimed {
                         if ring.bufferedFrames() < self.inputPrimeThresholdFrames {
@@ -798,9 +913,10 @@ final class AudioOutputEngine {
                 // and for BOTH branches above -- it lived inside the tone
                 // branch until 0.50, so the operator's line trim was silently
                 // inert on air while the DAC Peak readout assumed it applied.
-                // Exact 1.0 (the 0 dBFS default) is skipped, so the historical
+                // Exact 1.0 (the 0 dBFS default, and every mode but composite:
+                // OutputWiring.lineOutputScale) is skipped, so the historical
                 // path stays bit-identical.
-                if self.outputMode == .mpxComposite, self.lineOutputScale != 1.0 {
+                if self.lineOutputScale != 1.0 {
                     Self.applyLineOutput(
                         scale: self.lineOutputScale,
                         left: leftData, right: rightData, frameCount: frames)
@@ -820,6 +936,11 @@ final class AudioOutputEngine {
 
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: sourceFormat)
+        if let wideOutputFormat {
+            // Mixer -> output explicitly in the same discrete layout at the
+            // hardware rate, so no layout matrixing happens on the way out.
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: wideOutputFormat)
+        }
         engine.mainMixerNode.outputVolume = 1.0
 
         do {
@@ -845,6 +966,13 @@ final class AudioOutputEngine {
         inputRing = nil
         engine.stop()
         engine.reset()
+        if let sink = outputMonoSink {
+            sink.deallocate()
+            outputMonoSink = nil
+            outputMonoSinkFrames = 0
+        }
+        appliedInputChannels = nil
+        appliedOutputChannels = nil
         // Restore the output device's prior nominal rate if we forced it.
         if let forced = forcedOutputRate {
             _ = AudioDevices.setNominalSampleRate(deviceID: forced.deviceID, forced.priorRate)
@@ -860,13 +988,8 @@ final class AudioOutputEngine {
         frameCounter = 0
         captureFrameCounter = 0
         meterLock.lock()
-        pendingInputPeak = 0.0
-        pendingInputLeftPeak = 0.0
-        pendingInputRightPeak = 0.0
-        pendingPostAGCLeftPeak = 0.0
-        pendingPostAGCRightPeak = 0.0
-        pendingOutputPeak = 0.0
-        lastMeterReadUptime = nil
+        peakReaders.reset()
+        peakHolds = [PeakHold](repeating: PeakHold(), count: Self.peakReaderSlots)
         runtimeConfigLock.lock()
         pendingRuntimeConfig = nil
         lastQueuedRuntimeConfig = nil
@@ -918,6 +1041,8 @@ final class AudioOutputEngine {
         meterSnapshot.livePostAGCLeftPeak = 0.0
         meterSnapshot.livePostAGCRightPeak = 0.0
         meterSnapshot.liveOutputPeak = 0.0
+        meterSnapshot.liveOutputLeftPeak = 0.0
+        meterSnapshot.liveOutputRightPeak = 0.0
         meterSnapshot.liveDeviationKHzPeak = 0.0
         inputScopeLeftHistory = []
         inputScopeRightHistory = []
@@ -1060,14 +1185,19 @@ final class AudioOutputEngine {
 
         let format: InputAUHAL.Format
         do {
-            format = try inputAU.start(deviceID: deviceID, maxFramesPerSlice: mfps)
+            format = try inputAU.start(
+                deviceID: deviceID, channels: requestedInputChannels, maxFramesPerSlice: mfps)
         } catch {
             captureLog.error("AUHAL input start failed: \(String(describing: error), privacy: .public)")
             throw AudioEngineError.engineStartFailed(
                 "input capture start failed: \(String(describing: error))")
         }
 
-        captureLog.info("AUHAL input running deviceRate=\(format.deviceSampleRate, privacy: .public) deviceChannels=\(format.deviceChannelCount, privacy: .public)")
+        captureLog.info("AUHAL input running deviceRate=\(format.deviceSampleRate, privacy: .public) deviceChannels=\(format.deviceChannelCount, privacy: .public) channels=\(format.channels.iniValue, privacy: .public)")
+        appliedInputChannels = format.channels
+        if let note = format.channelNote {
+            appendRoutingNote(note)
+        }
 
         configuredInputSampleRate = format.deviceSampleRate
         if targetSampleRate > 1.0 {
@@ -1425,90 +1555,79 @@ final class AudioOutputEngine {
         runtimeConfigLock.unlock()
     }
 
-    var meters: MeterSnapshot {
+    /// The shared (anonymous) reader's meters. Consumers that read
+    /// repeatedly pass their own `MeterPeakReader` to `meters(for:)`, so the
+    /// GUI tick and a web meter stream do not take each other's peaks.
+    var meters: MeterSnapshot { meters(for: .shared) }
+
+    func meters(for reader: MeterPeakReader) -> MeterSnapshot {
         meterLock.lock()
+        defer { meterLock.unlock() }
         let nowUptime = ProcessInfo.processInfo.systemUptime
-        // Elapsed time since the last read, so the hold decays by wall clock
-        // whatever the caller's rate. The old 1 s clamp made a client polling
-        // every 15 s see the held peak fall 6.6 dB PER POLL -- a tone that
-        // had stepped from -24 to -60 dBFS read -31, -38, -44 over 45 s on
-        // the Intel box. A long gap now decays the hold to nothing, which is
-        // what a peak hold means after 15 s.
-        let dt = max(0.0, min(60.0, nowUptime - (lastMeterReadUptime ?? (nowUptime - 0.2))))
-        lastMeterReadUptime = nowUptime
-        // Keep peak hold decay stable regardless of UI polling frequency.
+        let take = peakReaders.take(reader, now: nowUptime)
+        var hold = take.claimedNow ? PeakHold() : peakHolds[take.slot]
+        // Elapsed time since this reader's last read, so the hold decays by
+        // wall clock whatever the caller's rate. The old 1 s clamp made a
+        // client polling every 15 s see the held peak fall 6.6 dB PER POLL --
+        // a tone that had stepped from -24 to -60 dBFS read -31, -38, -44
+        // over 45 s on the Intel box. A long gap now decays the hold to
+        // nothing, which is what a peak hold means after 15 s.
+        let dt = max(0.0, min(60.0, nowUptime - (hold.lastReadUptime ?? (nowUptime - 0.2))))
+        hold.lastReadUptime = nowUptime
+        // Keep peak hold decay stable regardless of polling frequency.
         let decayPerSecond: Float = 0.47
         let decayFactor = powf(decayPerSecond, Float(dt))
-        let pendingInput = pendingInputPeak.isFinite ? max(0.0, pendingInputPeak) : 0.0
-        let pendingInputLeft = pendingInputLeftPeak.isFinite ? max(0.0, pendingInputLeftPeak) : 0.0
-        let pendingInputRight =
-            pendingInputRightPeak.isFinite ? max(0.0, pendingInputRightPeak) : 0.0
-        let pendingPostAGCLeft =
-            pendingPostAGCLeftPeak.isFinite ? max(0.0, pendingPostAGCLeftPeak) : 0.0
-        let pendingPostAGCRight =
-            pendingPostAGCRightPeak.isFinite ? max(0.0, pendingPostAGCRightPeak) : 0.0
-        let pendingOutput = pendingOutputPeak.isFinite ? max(0.0, pendingOutputPeak) : 0.0
-        let decayedInput =
-            meterSnapshot.inputPeak.isFinite ? max(0.0, meterSnapshot.inputPeak * decayFactor) : 0.0
-        let decayedInputLeft =
-            meterSnapshot.inputLeftPeak.isFinite
-            ? max(0.0, meterSnapshot.inputLeftPeak * decayFactor) : 0.0
-        let decayedInputRight =
-            meterSnapshot.inputRightPeak.isFinite
-            ? max(0.0, meterSnapshot.inputRightPeak * decayFactor) : 0.0
-        let decayedPostAGCLeft =
-            meterSnapshot.postAGCLeftPeak.isFinite
-            ? max(0.0, meterSnapshot.postAGCLeftPeak * decayFactor) : 0.0
-        let decayedPostAGCRight =
-            meterSnapshot.postAGCRightPeak.isFinite
-            ? max(0.0, meterSnapshot.postAGCRightPeak * decayFactor) : 0.0
-        let decayedOutput =
-            meterSnapshot.outputPeak.isFinite
-            ? max(0.0, meterSnapshot.outputPeak * decayFactor) : 0.0
-        let inputPeak = max(pendingInput, decayedInput)
-        let inputLeftPeak = max(pendingInputLeft, decayedInputLeft)
-        let inputRightPeak = max(pendingInputRight, decayedInputRight)
-        let postAGCLeftPeak = max(pendingPostAGCLeft, decayedPostAGCLeft)
-        let postAGCRightPeak = max(pendingPostAGCRight, decayedPostAGCRight)
-        let outputPeak = max(pendingOutput, decayedOutput)
-        meterSnapshot.inputRMS =
-            meterSnapshot.inputRMS.isFinite ? max(0.0, meterSnapshot.inputRMS) : 0.0
-        meterSnapshot.inputLeftRMS =
-            meterSnapshot.inputLeftRMS.isFinite ? max(0.0, meterSnapshot.inputLeftRMS) : 0.0
-        meterSnapshot.inputRightRMS =
-            meterSnapshot.inputRightRMS.isFinite ? max(0.0, meterSnapshot.inputRightRMS) : 0.0
-        meterSnapshot.postAGCLeftRMS =
-            meterSnapshot.postAGCLeftRMS.isFinite ? max(0.0, meterSnapshot.postAGCLeftRMS) : 0.0
-        meterSnapshot.postAGCRightRMS =
-            meterSnapshot.postAGCRightRMS.isFinite ? max(0.0, meterSnapshot.postAGCRightRMS) : 0.0
-        meterSnapshot.outputRMS =
-            meterSnapshot.outputRMS.isFinite ? max(0.0, meterSnapshot.outputRMS) : 0.0
-        meterSnapshot.inputPeak = inputPeak
-        meterSnapshot.inputLeftPeak = inputLeftPeak
-        meterSnapshot.inputRightPeak = inputRightPeak
-        meterSnapshot.postAGCLeftPeak = postAGCLeftPeak
-        meterSnapshot.postAGCRightPeak = postAGCRightPeak
-        meterSnapshot.outputPeak = outputPeak
-        meterSnapshot.deviationKHzPeak = DeviationReadout.kilohertz(
-            compositePeak: outputPeak, modulationReferenceScale: modulationReferenceScale)
-        meterSnapshot.dacPeak = outputPeak
-            * (outputMode == .mpxComposite ? lineOutputScale : 1.0)
-        meterSnapshot.liveInputPeak = pendingInput
-        meterSnapshot.liveInputLeftPeak = pendingInputLeft
-        meterSnapshot.liveInputRightPeak = pendingInputRight
-        meterSnapshot.livePostAGCLeftPeak = pendingPostAGCLeft
-        meterSnapshot.livePostAGCRightPeak = pendingPostAGCRight
-        meterSnapshot.liveOutputPeak = pendingOutput
-        meterSnapshot.liveDeviationKHzPeak = DeviationReadout.kilohertz(
+        func pending(_ channel: PeakChannel) -> Float {
+            let v = take.peaks[channel.rawValue]
+            return v.isFinite ? max(0.0, v) : 0.0
+        }
+        func held(_ value: Float, _ live: Float) -> Float {
+            let decayed = value.isFinite ? max(0.0, value * decayFactor) : 0.0
+            return max(live, decayed)
+        }
+        let pendingInput = pending(.input)
+        let pendingInputLeft = pending(.inputLeft)
+        let pendingInputRight = pending(.inputRight)
+        let pendingPostAGCLeft = pending(.postAGCLeft)
+        let pendingPostAGCRight = pending(.postAGCRight)
+        let pendingOutput = pending(.output)
+        hold.input = held(hold.input, pendingInput)
+        hold.inputLeft = held(hold.inputLeft, pendingInputLeft)
+        hold.inputRight = held(hold.inputRight, pendingInputRight)
+        hold.postAGCLeft = held(hold.postAGCLeft, pendingPostAGCLeft)
+        hold.postAGCRight = held(hold.postAGCRight, pendingPostAGCRight)
+        hold.output = held(hold.output, pendingOutput)
+        peakHolds[take.slot] = hold
+
+        var snapshot = meterSnapshot
+        snapshot.inputRMS = snapshot.inputRMS.isFinite ? max(0.0, snapshot.inputRMS) : 0.0
+        snapshot.inputLeftRMS = snapshot.inputLeftRMS.isFinite ? max(0.0, snapshot.inputLeftRMS) : 0.0
+        snapshot.inputRightRMS = snapshot.inputRightRMS.isFinite ? max(0.0, snapshot.inputRightRMS) : 0.0
+        snapshot.postAGCLeftRMS =
+            snapshot.postAGCLeftRMS.isFinite ? max(0.0, snapshot.postAGCLeftRMS) : 0.0
+        snapshot.postAGCRightRMS =
+            snapshot.postAGCRightRMS.isFinite ? max(0.0, snapshot.postAGCRightRMS) : 0.0
+        snapshot.outputRMS = snapshot.outputRMS.isFinite ? max(0.0, snapshot.outputRMS) : 0.0
+        snapshot.inputPeak = hold.input
+        snapshot.inputLeftPeak = hold.inputLeft
+        snapshot.inputRightPeak = hold.inputRight
+        snapshot.postAGCLeftPeak = hold.postAGCLeft
+        snapshot.postAGCRightPeak = hold.postAGCRight
+        snapshot.outputPeak = hold.output
+        snapshot.deviationKHzPeak = DeviationReadout.kilohertz(
+            compositePeak: hold.output, modulationReferenceScale: modulationReferenceScale)
+        snapshot.dacPeak = OutputWiring.dacPeak(
+            compositePeak: hold.output, lineOutputScale: lineOutputScale)
+        snapshot.liveInputPeak = pendingInput
+        snapshot.liveInputLeftPeak = pendingInputLeft
+        snapshot.liveInputRightPeak = pendingInputRight
+        snapshot.livePostAGCLeftPeak = pendingPostAGCLeft
+        snapshot.livePostAGCRightPeak = pendingPostAGCRight
+        snapshot.liveOutputPeak = pendingOutput
+        snapshot.liveOutputLeftPeak = pending(.outputLeft)
+        snapshot.liveOutputRightPeak = pending(.outputRight)
+        snapshot.liveDeviationKHzPeak = DeviationReadout.kilohertz(
             compositePeak: pendingOutput, modulationReferenceScale: modulationReferenceScale)
-        pendingInputPeak = 0.0
-        pendingInputLeftPeak = 0.0
-        pendingInputRightPeak = 0.0
-        pendingPostAGCLeftPeak = 0.0
-        pendingPostAGCRightPeak = 0.0
-        pendingOutputPeak = 0.0
-        let snapshot = meterSnapshot
-        meterLock.unlock()
         return snapshot
     }
 
@@ -1650,15 +1769,9 @@ final class AudioOutputEngine {
         let safePeak = inputPeak.isFinite ? max(0.0, inputPeak) : 0.0
         let safeLeftPeak = inputLeftPeak.isFinite ? max(0.0, inputLeftPeak) : 0.0
         let safeRightPeak = inputRightPeak.isFinite ? max(0.0, inputRightPeak) : 0.0
-        if safePeak > pendingInputPeak {
-            pendingInputPeak = safePeak
-        }
-        if safeLeftPeak > pendingInputLeftPeak {
-            pendingInputLeftPeak = safeLeftPeak
-        }
-        if safeRightPeak > pendingInputRightPeak {
-            pendingInputRightPeak = safeRightPeak
-        }
+        peakReaders.record(channel: PeakChannel.input.rawValue, peak: safePeak)
+        peakReaders.record(channel: PeakChannel.inputLeft.rawValue, peak: safeLeftPeak)
+        peakReaders.record(channel: PeakChannel.inputRight.rawValue, peak: safeRightPeak)
     }
 
     private func updatePostAGCMeters(
@@ -1671,12 +1784,8 @@ final class AudioOutputEngine {
         meterSnapshot.postAGCRightRMS = rightRMS.isFinite ? max(0.0, rightRMS) : 0.0
         let safeLeftPeak = leftPeak.isFinite ? max(0.0, leftPeak) : 0.0
         let safeRightPeak = rightPeak.isFinite ? max(0.0, rightPeak) : 0.0
-        if safeLeftPeak > pendingPostAGCLeftPeak {
-            pendingPostAGCLeftPeak = safeLeftPeak
-        }
-        if safeRightPeak > pendingPostAGCRightPeak {
-            pendingPostAGCRightPeak = safeRightPeak
-        }
+        peakReaders.record(channel: PeakChannel.postAGCLeft.rawValue, peak: safeLeftPeak)
+        peakReaders.record(channel: PeakChannel.postAGCRight.rawValue, peak: safeRightPeak)
     }
 
     private func updateThrottledRenderAnalysis(
@@ -1707,7 +1816,9 @@ final class AudioOutputEngine {
                 rightPeak: agcMeter.rightPeak
             )
         }
-        updateOutputMeters(outputRMS: outMeter.rms, outputPeak: outMeter.peak)
+        updateOutputMeters(
+            outputRMS: outMeter.rms, outputPeak: outMeter.peak,
+            leftPeak: outMeter.leftPeak, rightPeak: outMeter.rightPeak)
         if captureOutputImageMetrics {
             let imageMetrics = Self.computeStereoImageMetrics(
                 left: outputLeft,
@@ -1739,7 +1850,9 @@ final class AudioOutputEngine {
         }
     }
 
-    private func updateOutputMeters(outputRMS: Float, outputPeak: Float) {
+    private func updateOutputMeters(
+        outputRMS: Float, outputPeak: Float, leftPeak: Float, rightPeak: Float
+    ) {
         meterSnapshot.outputRMS = outputRMS
         let agc = generator.agcStatus
         let limiter = generator.finalLimiterStatus
@@ -1768,9 +1881,9 @@ final class AudioOutputEngine {
         meterSnapshot.compositeBudgetMarginDB = calibration.budgetMarginDB
         meterSnapshot.postInjectionOvershoot = calibration.postInjectionOvershoot
         meterSnapshot.compositeOverBudget = calibration.overBudget
-        if outputPeak > pendingOutputPeak {
-            pendingOutputPeak = outputPeak
-        }
+        peakReaders.record(channel: PeakChannel.output.rawValue, peak: outputPeak)
+        peakReaders.record(channel: PeakChannel.outputLeft.rawValue, peak: leftPeak)
+        peakReaders.record(channel: PeakChannel.outputRight.rawValue, peak: rightPeak)
     }
 
     private func applyPendingRuntimeConfigIfNeeded() {
@@ -1789,9 +1902,10 @@ final class AudioOutputEngine {
         runtimeConfigLock.unlock()
         if let runtime {
             generator.applyRuntimeConfig(runtime)
-            lineOutputScale = powf(10.0, runtime.mpxLineOutputDBFS / 20.0)
-            modulationReferenceScale = outputMode == .mpxComposite
-                ? powf(10.0, -runtime.outputGainDB / 20.0) : 1.0
+            lineOutputScale = OutputWiring.lineOutputScale(
+                lineOutputDBFS: runtime.mpxLineOutputDBFS, mode: outputMode)
+            modulationReferenceScale = OutputWiring.modulationReferenceScale(
+                outputGainDB: runtime.outputGainDB, mode: outputMode)
             // Flip the source-mode branch live. The render callback
             // reads `useInputSource` at the start of each block; this
             // write lands within ~one block of the toggle on the GUI.
@@ -2223,11 +2337,14 @@ final class AudioOutputEngine {
     ) {
         let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
         guard frameCount > 0 else { return }
-        if buffers.count >= 2,
-            let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-            let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
-            vDSP_vclr(left, 1, vDSP_Length(frameCount))
-            vDSP_vclr(right, 1, vDSP_Length(frameCount))
+        if buffers.count >= 2 {
+            // Every planar buffer: two on the stereo path, the device's full
+            // channel count on the multichannel path.
+            for i in 0..<buffers.count {
+                if let data = buffers[i].mData?.assumingMemoryBound(to: Float.self) {
+                    vDSP_vclr(data, 1, vDSP_Length(frameCount))
+                }
+            }
             return
         }
         if buffers.count == 1,

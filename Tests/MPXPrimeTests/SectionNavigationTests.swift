@@ -103,9 +103,10 @@ struct SectionNavigationTests {
     @Test func compositeOutputShowsAllStages() {
         let model = makeViewModel()
         model.config.processedAudioOutput = false
-        // Every mode-gated stage shows; the one exception is the page of the
-        // levelling engine not in use (the default is AGC + Multiband).
-        for stage in Stage.allCases where stage.levellingEngine != .advanced {
+        // Every mode-gated stage shows; the one exception is the pages of the
+        // levelling engine not in use (the default is Advanced Dynamics
+        // since 2026-10-15).
+        for stage in Stage.allCases where stage.levellingEngine != .regular {
             #expect(model.isStageVisible(stage), "\(stage) should be visible in composite mode")
         }
     }
@@ -121,8 +122,8 @@ struct SectionNavigationTests {
         #expect(!model.isStageVisible(.processingBS412))
         #expect(!model.isStageVisible(.processingFinalStage))
         // Audio-domain stages and the monitor/tools stay visible.
-        for stage: Stage in [.monitoring, .processingOverview, .processingAGC,
-                             .processingMultiband, .processingLimiter, .testTone] {
+        for stage: Stage in [.monitoring, .processingOverview, .processingAdvancedDynamics,
+                             .processingLimiter, .testTone] {
             #expect(model.isStageVisible(stage), "\(stage) should remain visible")
         }
     }
@@ -165,21 +166,23 @@ struct SectionNavigationTests {
     @Test func levellingEngineChoiceHidesTheOtherEnginesPages() {
         let model = makeViewModel()
         let regular: [Stage] = [.processingAGC, .processingMultiband, .processingExpander, .processingMBLimiter]
-        // Defaults: the regular chain, so Advanced Dynamics has no page.
-        #expect(LevellingEngine.current(for: model.config) == .regular)
-        for stage in regular {
-            #expect(model.isStageVisible(stage), "\(stage) belongs to the regular engine and should show")
-        }
-        #expect(!model.isStageVisible(.processingAdvancedDynamics))
-
-        model.config.advancedDynamicsEnabled = true
+        // Defaults (since 2026-10-15): Advanced Dynamics, so the regular
+        // chain's pages are hidden.
+        #expect(LevellingEngine.current(for: model.config) == .advanced)
         for stage in regular {
             #expect(!model.isStageVisible(stage), "\(stage) is replaced by Advanced Dynamics and should hide")
         }
         #expect(model.isStageVisible(.processingAdvancedDynamics))
 
+        model.config.advancedDynamicsEnabled = false
+        for stage in regular {
+            #expect(model.isStageVisible(stage), "\(stage) belongs to the regular engine and should show")
+        }
+        #expect(!model.isStageVisible(.processingAdvancedDynamics))
+
         // A selection the new engine does not own snaps to the overview --
         // the page the picker lives on.
+        model.config.advancedDynamicsEnabled = true
         model.selectedStage = .processingAGC
         model.normalizeSelection()
         #expect(model.selectedStage == .processingOverview)

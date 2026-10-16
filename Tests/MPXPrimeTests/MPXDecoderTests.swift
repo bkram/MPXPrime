@@ -44,9 +44,29 @@ struct MPXDecoderTests {
         return out
     }
 
+    private func rms(_ x: ArraySlice<Float>) -> Double {
+        var acc = 0.0
+        for v in x { acc += Double(v) * Double(v) }
+        return sqrt(acc / Double(max(1, x.count)))
+    }
+
     @Test func recoversAfterNonFiniteBurst() {
-        let frames = Int(0.5 * sampleRate)
+        // 1 s of composite: clean decode for 0.25 s, a 256-sample NaN/Inf
+        // burst, then clean composite again from 0.5 s. Recovery is judged
+        // against a REFERENCE decoder fed the same composite without the
+        // burst, over the last 0.25 s: "some energy" was also met by the
+        // documented 0.50 failure (recovery 8-12 dB down, loss of pilot lock),
+        // see test-suite review 2026-10 finding 13.
+        let frames = Int(1.0 * sampleRate)
         let mpx = renderLOnlyComposite(frames: frames)
+
+        var reference = MPXDecoder()
+        reference.configure(sampleRate: sampleRate, preemphasisUS: 50)
+        var refL = [Float](repeating: 0.0, count: frames)
+        var refR = [Float](repeating: 0.0, count: frames)
+        for i in 0..<frames {
+            (refL[i], refR[i]) = reference.process(mpx[i], programActivity: 0.4, expectedSide: 0.0)
+        }
 
         var decoder = MPXDecoder()
         decoder.configure(sampleRate: sampleRate, preemphasisUS: 50)
@@ -69,15 +89,28 @@ struct MPXDecoderTests {
         }
 
         // Continue with clean composite: output must be finite again and
-        // carry real signal energy (the bug would leave it NaN forever).
-        var postEnergy = 0.0
+        // match the undisturbed decoder.
         let postStart = frames / 2
+        var outL = [Float](repeating: 0.0, count: frames)
+        var outR = [Float](repeating: 0.0, count: frames)
         for i in postStart..<frames {
             let (l, r) = decoder.process(mpx[i], programActivity: 0.4, expectedSide: 0.0)
             #expect(l.isFinite && r.isFinite, "post-burst output non-finite at \(i)")
-            postEnergy += Double(l * l + r * r)
+            outL[i] = l
+            outR[i] = r
         }
-        #expect(postEnergy > 0.0,
-                "decoder did not recover signal after the non-finite burst")
+        let window = (3 * frames / 4)..<frames
+        let refLeft = rms(refL[window])
+        let gotLeft = rms(outL[window])
+        let levelDB = 20.0 * log10(max(gotLeft, 1e-12) / max(refLeft, 1e-12))
+        let sepRef = 20.0 * log10(max(refLeft, 1e-12) / max(rms(refR[window]), 1e-12))
+        let sepGot = 20.0 * log10(max(gotLeft, 1e-12) / max(rms(outR[window]), 1e-12))
+        print(String(format: "[decoder recovery] left %+.2f dB re undisturbed, separation %.1f dB (undisturbed %.1f dB)",
+                     levelDB, sepGot, sepRef))
+        #expect(refLeft > 0.05, "fixture problem: the undisturbed decode carries no signal (\(refLeft))")
+        #expect(abs(levelDB) < 1.0,
+                "after the burst the left channel is \(levelDB) dB off the undisturbed decoder -- the decoder did not recover")
+        #expect(sepGot > 30.0,
+                "after the burst the decode has \(sepGot) dB separation (undisturbed \(sepRef) dB) -- pilot lock not regained")
     }
 }

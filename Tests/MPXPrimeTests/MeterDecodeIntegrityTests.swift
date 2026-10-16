@@ -70,7 +70,10 @@ struct MeterDecodeIntegrityTests {
         // limits separation at all. The old absolute pilot gate (1e-4, i.e.
         // pilot amplitude 0.02) would also have decoded the 0.05-level case
         // as mono: its pilot amplitude is 0.0045.
-        #expect(r.sepDB > 40.0, "\(Int(ppm)) ppm capped separation at \(r.sepDB) dB")
+        // 55 dB sits between the untracked 25 ppm figure (47.7) and the
+        // tracked one (64.4): the old 40 dB bound passed a loop that had
+        // stopped tracking (test-suite review 2026-10 finding 13).
+        #expect(r.sepDB > 55.0, "\(Int(ppm)) ppm capped separation at \(r.sepDB) dB")
     }
 
     @Test func lowLevelCompositeStillDecodesStereo() {

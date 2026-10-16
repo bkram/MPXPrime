@@ -269,5 +269,46 @@ struct MultibandFIRSplitterTests {
         let dominantFraction = Double(dominant) / Double(max(totalEnergy, 1e-12))
         #expect(dominantFraction > 0.8,
             "Dominant band must hold >80% of 1 kHz energy; got \(dominantFraction)")
+        // The claim in the comment above: every other band > 20 dB down.
+        // 80 % of the energy alone allows a neighbour at -7 dB (finding 15).
+        for (band, energy) in sums.enumerated() where band != dominantBand {
+            let downDB = 10.0 * log10(Double(max(dominant, 1e-30)) / Double(max(energy, 1e-30)))
+            #expect(downDB > 20.0, "band \(band + 1) is only \(downDB) dB below band 3 on a 1 kHz tone")
+        }
+    }
+
+    // MARK: - Right channel (test-suite review 2026-10 finding 14)
+
+    /// The sum-to-flat checks above feed the same signal to both channels
+    /// and sum the LEFT outputs only. This drives a different programme on
+    /// R (the same tones time-reversed and scaled) and requires each
+    /// channel's bands to reconstruct THAT channel's delayed input.
+    @Test func fiveBandSplitterReconstructsEachChannelSeparately() {
+        var splitter = makeFiveBand()
+        let delay = splitter.groupDelaySamples
+        let frames = 16384
+        let left = makeProgramSignal(frames: frames)
+        let right = left.reversed().map { -0.7 * $0 }
+        var sumL = [Float](repeating: 0, count: frames)
+        var sumR = [Float](repeating: 0, count: frames)
+        for i in 0..<frames {
+            let b = splitter.process(left: left[i], right: right[i])
+            sumL[i] = b.0.0 + b.1.0 + b.2.0 + b.3.0 + b.4.0
+            sumR[i] = b.0.1 + b.1.1 + b.2.1 + b.3.1 + b.4.1
+        }
+        func errorDB(_ summed: [Float], _ input: [Float]) -> Double {
+            var err = 0.0, ref = 0.0
+            for i in max(delay * 4, 1024)..<(frames - 1) {
+                let r = Double(input[i - delay])
+                err += (Double(summed[i]) - r) * (Double(summed[i]) - r)
+                ref += r * r
+            }
+            return 10.0 * log10(err / max(ref, 1e-30))
+        }
+        let errL = errorDB(sumL, left)
+        let errR = errorDB(sumR, right)
+        print(String(format: "5-band per-channel reconstruction error: L %.1f dB, R %.1f dB", errL, errR))
+        #expect(errL < -60.0, "left bands do not reconstruct the left input: \(errL) dB")
+        #expect(errR < -60.0, "right bands do not reconstruct the right input: \(errR) dB")
     }
 }

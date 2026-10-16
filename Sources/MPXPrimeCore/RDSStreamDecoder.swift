@@ -134,7 +134,7 @@ public final class RDSStreamDecoder {
     @usableFromInline static let offsetA = 0x0FC
     @usableFromInline static let offsetB = 0x198
     @usableFromInline static let offsetC = 0x168
-    @usableFromInline static let offsetCp = 0x1E0
+    @usableFromInline static let offsetCp = 0x350  // IEC 62106 Annex A: C' = 1101010000 (was 0x1E0, which receivers reject)
     @usableFromInline static let offsetD = 0x1B4
 
     /// Block position within a group, identified from the matched offset word.

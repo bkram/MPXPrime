@@ -58,6 +58,7 @@ struct CLIOptions {
     var verifyStereoGuard: Bool = false
     var verifyFinalRide: Bool = false
     var verifyPrimeBass: Bool = false
+    var sweepPrimeBass: Bool = false
     var verifyProgramAB: Bool = false
     var programABPath: String = ""
     var programABProfile: String = "music_clean"
@@ -190,6 +191,10 @@ func parseCLI() -> CLIOptions {
             options.verify = true
             options.verifyPrimeBass = true
             options.gui = false
+        case "--sweep-primebass":
+            options.verify = true
+            options.sweepPrimeBass = true
+            options.gui = false
         case "--verify-program-ab":
             if i + 1 < args.count {
                 options.verify = true
@@ -268,6 +273,7 @@ func printUsage() {
           MPXPrime [--config <path>] --verify-stereo-guard [--seconds 5]
           MPXPrime [--config <path>] --verify-final-ride [--seconds 4]
           MPXPrime [--config <path>] --verify-primebass [--seconds 3]
+          MPXPrime [--config <path>] --sweep-primebass [--seconds 2]
           MPXPrime --verify-program-ab <file-or-dir> [--ab-profile music_clean] [--ab-csv out.csv] [--seconds 30]
           MPXPrime --bench
           MPXPrime --bench-blocks
@@ -304,6 +310,10 @@ func printUsage() {
                      change, energy above 5F0, DC, peak growth, smoothness, level invariance, 1 kHz isolation
                      and IMD, disabled-path identity, each with a PASS/FAIL threshold (exit 1 on any FAIL);
                      real-music rows when $MPXPRIME_MUSIC_DIR exists
+          --sweep-primebass  PrimeBass control-range sweep: each control moved alone from the defaults
+                     (Amount also on Music - Loud), steady 50 Hz and a plucked bass line on vs off:
+                     harmonic series re the fundamental, peak growth, midrange spill, how hard the
+                     peak guard holds back; Amount on real music when $MPXPRIME_MUSIC_DIR exists
           --verify-program-ab <file-or-dir>  Real-music A/B: render each audio file through the shipped
                      Format Profile with AGC+multiband (A) vs Advanced Dynamics (B), measured with the
                      Meter engine (BS.412 power, deviation, exceedance) plus decoded crest / image /
@@ -466,6 +476,7 @@ do {
                 stereoGuardSweep: options.verifyStereoGuard,
                 finalRideIsolation: options.verifyFinalRide,
                 primeBassGate: options.verifyPrimeBass,
+                primeBassSweep: options.sweepPrimeBass,
                 programAB: options.verifyProgramAB,
                 programABPath: options.programABPath,
                 programABProfile: options.programABProfile,
@@ -522,7 +533,9 @@ do {
             config: cfg,
             inputDeviceID: inputID,
             outputDeviceID: outputID,
-            outputMode: cfg.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite
+            outputMode: cfg.operatingMode.isAudioOutput ? .processedAudio : .mpxComposite,
+            inputChannels: cfg.inputChannels,
+            outputChannels: cfg.outputChannels
         )
     }
 

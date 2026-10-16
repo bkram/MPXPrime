@@ -20,15 +20,11 @@ import SwiftUI
 
 struct ProcessingOverviewGrid: View {
     @ObservedObject var model: MPXPrimeViewModel
-    /// When true, the grid renders without its own ScrollView so it can
-    /// be embedded inside another scrolling container (e.g. the
-    /// Monitoring dashboard). Default false preserves the existing
-    /// behaviour for the Processing → Overview stage host.
+    /// When true, the grid renders alone (no Format Profile or levelling
+    /// cards and no per-card switches), for embedding as a read-only chain.
     var embedded: Bool = false
 
-    // 4-up grid. Minimum card width kept tight enough to fit four per row
-    // on the default window width without horizontal scroll; cards grow
-    // to fill when the window expands.
+    // Adaptive grid: cards fill the width, four per row at the default size.
     private let columns: [GridItem] = [
         GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 12, alignment: .top)
     ]
@@ -37,13 +33,50 @@ struct ProcessingOverviewGrid: View {
         if embedded {
             grid
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    levellingCard
-                    recommendedSettingsCard
+            VStack(alignment: .leading, spacing: PageLayout.cardSpacing) {
+                formatProfileCard
+                levellingCard
+                Card(title: "Stages") {
                     grid
                 }
             }
+        }
+    }
+
+    // MARK: - Format Profile
+
+    /// The station's Format Profile: the choice and, beside it, the button
+    /// that re-applies it after per-stage tuning drifted (`applyFormatProfile`
+    /// via `PresetCatalog`). A profile owns stage keys only -- devices,
+    /// levels, the operating mode, the control server and calibration are
+    /// not in it. `custom` is the sentinel for bespoke tuning: nothing to
+    /// re-apply, so the button rests. (The separate Format Profile page and
+    /// "Recommended settings" card are merged into this one.)
+    private var formatProfileCard: some View {
+        let id = model.config.formatProfileID
+        let canReapply = MPXPrimeViewModel.formatProfile(forID: id) != nil && id != "custom"
+        return Card(title: "Format Profile") {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Picker("Format Profile", selection: model.formatProfileBinding()) {
+                    ForEach(MPXPrimeViewModel.formatProfiles) { profile in
+                        Text(profile.title).tag(profile.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                Button("Re-apply Profile") {
+                    model.applyFormatProfile(id)
+                    model.normalizeSelection()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canReapply)
+                .help("Re-applies the profile's stage settings (multiband, final stage, PrimeBass, mono bass, clippers, limiters, AGC). Applies live. Devices, levels and the operating mode are not touched.")
+                Spacer(minLength: 0)
+            }
+            Text(model.currentFormatProfileSummary)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -51,7 +84,7 @@ struct ProcessingOverviewGrid: View {
 
     /// The levelling engine as ONE segmented choice, exactly like the
     /// operating mode on Audio I/O. The setter writes the stored flag through
-    /// the live path (the engine swaps levelers without a restart) and then
+    /// the live path (the engine swaps levellers without a restart) and then
     /// re-checks the selection, because the page the operator was on may
     /// belong to the engine that just went away.
     private var levellingBinding: Binding<LevellingEngine> {
@@ -59,231 +92,107 @@ struct ProcessingOverviewGrid: View {
             get: { LevellingEngine.current(for: model.config) },
             set: { engine in
                 guard engine != LevellingEngine.current(for: model.config) else { return }
-                model.configBinding(\.advancedDynamicsEnabled, runtimeDisposition: .live).wrappedValue
-                    = (engine == .advanced)
+                model.setConfigValue(\.advancedDynamicsEnabled, engine == .advanced, runtimeDisposition: .live)
                 model.normalizeSelection()
             }
         )
     }
 
-    /// Sits above the grid on the Sound overview only (the Monitoring
-    /// dashboard embeds the grid as a read-mostly signal chain, not as the
-    /// place to reconfigure the chain). Follows the Operating Mode card.
     private var levellingCard: some View {
-        Card(title: "Levelling engine") {
-            Picker("Levelling", selection: levellingBinding) {
+        Card(title: "Levelling Engine") {
+            Picker("Levelling Engine", selection: levellingBinding) {
                 ForEach(LevellingEngine.allCases, id: \.self) { engine in
                     Text(engine.title).tag(engine)
                 }
             }
             .pickerStyle(.segmented)
-            .help("AGC + Multiband: the wideband AGC followed by the multiband compressor, with its per-band Expander and Band Limiter. Advanced Dynamics: one fused 5-band leveler that does the work of all four. Applies live; no restart.")
-            Text("One engine levels the programme: the regular AGC + Multiband chain, or Advanced Dynamics in its place. The other engine's pages are hidden.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .labelsHidden()
+            .help("AGC + Multiband: the wideband AGC followed by the multiband compressor, with its per-band Expander and Band Limiter. Advanced Dynamics: one 5-band leveller that does the work of all four. The pages of the engine not in use are hidden. Applies live.")
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
     }
 
-    // MARK: - Recommended settings
+    // MARK: - Stage grid
 
-    /// One click back to the selected Format Profile's recommended stage
-    /// settings: the same full fan-out that picking the profile performs
-    /// (`applyFormatProfile`, via `PresetCatalog`), so per-stage tuning the
-    /// operator drifted away from snaps back in one go. A profile owns stage
-    /// keys only -- devices, levels, the operating mode, the control server
-    /// and calibration are not in it and stay as installed. `custom` is the
-    /// sentinel for bespoke tuning: nothing to re-apply, so the button rests.
-    private var recommendedSettingsCard: some View {
-        let id = model.config.formatProfileID
-        let profile = MPXPrimeViewModel.formatProfile(forID: id)
-        let canApply = profile != nil && id != "custom"
-        let caption: String
-        if let profile, canApply {
-            caption = "Re-applies the \(profile.title) profile's recommended stage settings; "
-                + "devices, levels and the operating mode are untouched."
-        } else {
-            caption = "Custom keeps your manual tuning; pick a Format Profile first"
-        }
-        return Card(title: "Recommended settings") {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Button("Apply recommended") {
-                    model.applyFormatProfile(id)
-                    model.normalizeSelection()
-                }
-                .disabled(!canApply)
-                .help("Re-apply the selected Format Profile's full set of stage settings (multiband, final stage, PrimeBass, mono bass, clippers, limiters, AGC). Applies live; no restart. Installation settings are not touched.")
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    /// The stages in the order the signal meets them, each with its master
+    /// name from the `Stage` table. Only the levelling engine in use has
+    /// cards, and the mode gating reads `ChainFeature` like the sidebar.
+    private var gridStages: [Stage] {
+        Stage.signalChain
+            .flatMap { stage -> [Stage] in
+                // The Expander and Band Limiter run inside the multiband.
+                stage == .processingMultiband
+                    ? [.processingMultiband, .processingExpander, .processingMBLimiter] : [stage]
             }
-        }
-        .padding(.horizontal, 4)
+            .filter { $0 != .processingCore && $0 != .processingFinalStage && model.isStageVisible($0) }
     }
 
     @ViewBuilder
     private var grid: some View {
-            // Only the levelling engine in use has cards: the other engine's
-            // stages are not in the chain, and a card for a stage with
-            // nothing behind it is a control to scan past (0.59 ghosted the
-            // four replaced cards instead of hiding them).
-            let engine = LevellingEngine.current(for: model.config)
-            // Mode gating reads the same `ChainFeature` table as the sidebar,
-            // the dashboard and the engine, so this grid can never show a
-            // stage the mode does not run (or hide one it does).
-            let mode = model.config.operatingMode
-            LazyVGrid(columns: columns, spacing: 12) {
-                stageCard(
-                    .phaseRotator,
-                    title: "Phase Rotator",
-                    subtitle: phaseRotatorSubtitle,
-                    enabledPath: \.phaseRotationEnabled
-                )
-                if engine == .regular {
-                    stageCard(
-                        .agc,
-                        title: "Wideband AGC",
-                        subtitle: agcSubtitle,
-                        enabledPath: \.widebandAGCEnabled,
-                        liveReadout: { $0.agcStateText }
-                    )
-                }
-                stageCard(
-                    .parametricEQ,
-                    title: "Parametric EQ",
-                    subtitle: parametricEQSubtitle,
-                    enabledPath: \.parametricEQEnabled
-                )
-                if engine == .regular {
-                    stageCard(
-                        .multiband,
-                        title: "Multiband",
-                        subtitle: multibandSubtitle,
-                        enabledPath: \.multibandEnabled,
-                        liveReadout: { $0.multibandStateText }
-                    )
-                    stageCard(
-                        .expander,
-                        title: "Downward Expander",
-                        subtitle: expanderSubtitle,
-                        enabledPath: \.downwardExpanderEnabled
-                    )
-                    stageCard(
-                        .mbLimiter,
-                        title: "Multiband Limiter",
-                        subtitle: mbLimiterSubtitle,
-                        enabledPath: \.multibandLimiterEnabled
-                    )
-                } else {
-                    // No Enabled switch: the Levelling picker above is the
-                    // one switch, and a toggle that removes its own card is
-                    // not a control an operator can reason about.
-                    stageCard(
-                        .advancedDynamics,
-                        title: "Advanced Dynamics",
-                        subtitle: advancedDynamicsSubtitle
-                    )
-                }
-                stageCard(
-                    .primeBass,
-                    title: "PrimeBass",
-                    subtitle: primeBassSubtitle,
-                    enabledPath: \.primeBassEnabled,
-                    liveReadout: { $0.primeBassStateText }
-                )
-                stageCard(
-                    .bassClipper,
-                    title: "Bass Clipper",
-                    subtitle: bassClipperSubtitle,
-                    enabledPath: \.bassClipperEnabled
-                )
-                stageCard(
-                    .dcClipper,
-                    title: "DC Clipper",
-                    subtitle: dcClipperSubtitle,
-                    enabledPath: \.dcClipperEnabled
-                )
-                if ChainFeature.hfLimiter.applies(in: mode) {
-                    stageCard(
-                        .hfLimiter,
-                        title: "HF Limiter",
-                        subtitle: hfSubtitle,
-                        enabledPath: \.hfLimiterEnabled
-                    )
-                }
-                stageCard(
-                    .limiter,
-                    title: "Audio Limiter",
-                    subtitle: limiterSubtitle,
-                    enabledPath: \.preEncodeAudioLimiterEnabled,
-                    liveReadout: { String(format: "GR %.1f dB", $0.preEncodeLimiterGainReductionDBValue) }
-                )
-                if ChainFeature.stereoCoder.applies(in: mode) {
-                    stageCard(
-                        .stereoCoder,
-                        title: "Stereo Coder",
-                        subtitle: stereoCoderSubtitle,
-                        enabledPath: \.ssbStereoEnabled
-                    )
-                }
-                if ChainFeature.compositeClipper.applies(in: mode) {
-                    stageCard(
-                        .compositeClipper,
-                        title: "Composite Clipper",
-                        subtitle: compositeClipperSubtitle,
-                        enabledPath: \.compositeClipperEnabled,
-                        liveReadout: { String(format: "GR %.1f dB", $0.compositeClipperGainReductionDBValue) }
-                    )
-                }
-                if ChainFeature.bs412.applies(in: mode) {
-                    stageCard(
-                        .bs412,
-                        title: "BS.412 Power",
-                        subtitle: bs412Subtitle,
-                        enabledPath: \.bs412Enabled
-                    )
-                }
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(gridStages, id: \.self) { stage in
+                stageCard(stage)
+            }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
+    }
+
+    /// The enable flag a card's switch drives, or nil for a stage without
+    /// one. Stereo encoding is always on, so the Stereo Coder card has no
+    /// enable dot; its switch is the SSB option and says so.
+    private func enablePath(_ stage: Stage) -> (path: WritableKeyPath<AppConfig, Bool>, label: String)? {
+        switch stage {
+        case .processingPhaseRotator: return (\.phaseRotationEnabled, "Enabled")
+        case .processingAGC: return (\.widebandAGCEnabled, "Enabled")
+        case .processingParametricEQ: return (\.parametricEQEnabled, "Enabled")
+        case .processingMultiband: return (\.multibandEnabled, "Enabled")
+        case .processingExpander: return (\.downwardExpanderEnabled, "Enabled")
+        case .processingMBLimiter: return (\.multibandLimiterEnabled, "Enabled")
+        case .processingPrimeBass: return (\.primeBassEnabled, "Enabled")
+        case .processingBassClipper: return (\.bassClipperEnabled, "Enabled")
+        case .processingDCClipper: return (\.dcClipperEnabled, "Enabled")
+        case .processingHFLimiter: return (\.hfLimiterEnabled, "Enabled")
+        case .processingLimiter: return (\.preEncodeAudioLimiterEnabled, "Enabled")
+        case .processingStereoCoder: return (\.ssbStereoEnabled, "SSB")
+        case .processingCompositeClipper: return (\.compositeClipperEnabled, "Enabled")
+        case .processingBS412: return (\.bs412Enabled, "Enabled")
+        default: return nil
+        }
+    }
+
+    private func liveReadout(_ stage: Stage) -> ((LiveTelemetry) -> String)? {
+        switch stage {
+        case .processingAGC: return { $0.agcStateText }
+        case .processingMultiband: return { $0.multibandStateText }
+        case .processingPrimeBass: return { $0.primeBassStateText }
+        case .processingLimiter: return { String(format: "Gain Reduction %.1f dB", $0.preEncodeLimiterGainReductionDBValue) }
+        case .processingCompositeClipper: return { String(format: "Gain Reduction %.1f dB", $0.compositeClipperGainReductionDBValue) }
+        default: return nil
+        }
     }
 
     // MARK: - Card builder
 
     @ViewBuilder
-    private func stageCard(
-        _ tab: ProcessingTab,
-        title: String,
-        subtitle: String,
-        enabledPath: WritableKeyPath<AppConfig, Bool>? = nil,
-        heroValue: String? = nil,
-        liveReadout: ((LiveTelemetry) -> String)? = nil
-    ) -> some View {
-        // A stage without an enable flag of its own (Advanced Dynamics: the
-        // Levelling picker switches it) draws as enabled and has no switch.
-        let enabled = enabledPath.map { model.config[keyPath: $0] } ?? true
-        VStack(alignment: .leading, spacing: 6) {
-            // Whole title+hero+subtitle region is one Button so clicking
-            // anywhere on the card (except the Enabled toggle) drills
-            // into the sidebar's detail row for this stage. Mirrors
-            // System Settings / Music navigation cards — the trailing
-            // chevron is the visual affordance, but the entire surface
-            // is the hit target.
+    private func stageCard(_ stage: Stage) -> some View {
+        let enable = enablePath(stage)
+        // A stage without an enable flag of its own draws as enabled. The
+        // dot reads `isStageEnabled`, the sidebar's rule, so the two agree.
+        let enabled = model.isStageEnabled(stage) ?? true
+        let title = stage.label
+        InsetTile(highlighted: enabled) {
+            // The whole title and summary region opens the stage's page.
             Button {
-                model.selectedStage = tab.stage
+                model.selectedStage = stage
             } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        // Leading enabled-state dot (accent on, hairline off)
-                        // matching the sidebar row vocabulary. Reflects the
-                        // config flag (static), not telemetry.
-                        Circle()
-                            .fill(enabled ? BroadcastStyle.accent : BroadcastStyle.panelBorder)
-                            .frame(width: 6, height: 6)
-                            .accessibilityHidden(true)
+                        if model.isStageEnabled(stage) != nil {
+                            Circle()
+                                .fill(enabled ? BroadcastStyle.accent : BroadcastStyle.panelBorder)
+                                .frame(width: 6, height: 6)
+                                .accessibilityHidden(true)
+                        }
                         Text(title)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.headline)
                             .foregroundStyle(enabled ? Color.primary : Color.secondary)
                         Spacer()
                         Image(systemName: "chevron.right")
@@ -291,20 +200,11 @@ struct ProcessingOverviewGrid: View {
                             .foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                     }
-                    if let heroValue {
-                        Text(heroValue)
-                            .font(BroadcastStyle.heroReadout)
-                            .foregroundStyle(enabled ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-                    }
-                    // Live per-stage readout (GR / state). Isolated in a
-                    // LiveTelemetryView leaf with a fixed frame + lineLimit(1)
-                    // so a metering tick repaints only this text and never
-                    // propagates a layout pass out to the card (the
-                    // load-bearing Canvas/LiveTelemetry rule).
-                    if let liveReadout {
+                    // Live per-stage readout in an isolated telemetry leaf
+                    // with one line, so a metering tick repaints only it.
+                    if let readout = liveReadout(stage) {
                         LiveObservationView(telemetry: model.telemetry) { t in
-                            Text(liveReadout(t))
+                            Text(readout(t))
                                 .font(BroadcastStyle.valueReadout)
                                 .monospacedDigit()
                                 .foregroundStyle(enabled ? Color.primary : Color.secondary)
@@ -312,7 +212,7 @@ struct ProcessingOverviewGrid: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    Text(subtitle)
+                    Text(Self.summary(for: stage, config: model.config))
                         .font(BroadcastStyle.valueReadout)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -322,133 +222,68 @@ struct ProcessingOverviewGrid: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Open \(title) settings")
-            .accessibilityLabel("Open \(title) settings")
-            // Embedded cards (Monitoring dashboard's Signal Chain panel)
-            // drop the per-card Enable toggle — the sidebar's stage-row
-            // dot indicator and each stage's detail tab already expose
-            // the same control, so a third copy here is duplication
-            // operators have to scan past. Processing > Overview keeps
-            // its toggles because that surface is the configuration grid.
-            if !embedded, let enabledPath {
-                // Use configBinding so the toggle follows the same
-                // runtime-apply / live-apply semantics as the detail tabs --
-                // no ad-hoc mutation.
-                Toggle("Enabled", isOn: model.configBinding(enabledPath, runtimeDisposition: .live))
+            .help("Open \(title)")
+            .accessibilityLabel("Open \(title)")
+            if !embedded, let enable {
+                // Same live path as the stage page's own enable.
+                Toggle(enable.label, isOn: model.setting(enable.path, .live).binding)
                     .toggleStyle(.switch)
                     .controlSize(.mini)
-                    .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .help(stage == .processingStereoCoder
+                          ? "SSB stereo option. Stereo encoding itself is always on."
+                          : "Turn \(title) on or off.")
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BroadcastStyle.meterSurface.opacity(0.70))
-        .overlay(
-            RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous)
-                .stroke(enabled ? BroadcastStyle.accent.opacity(0.40) : BroadcastStyle.panelBorder, lineWidth: 0.75)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: BroadcastStyle.panelInsetCornerRadius, style: .continuous))
     }
 
-    // MARK: - Subtitle builders
-    //
-    // Each stage picks the parameter an operator most often glances at
-    // from the detail tab. Stored directly in AppConfig; read via
-    // `model.config` so updates here and in the detail tabs stay in
-    // sync automatically.
+    // MARK: - Summaries
 
-    private var phaseRotatorSubtitle: String {
-        String(format: "f %.0f Hz", model.config.phaseRotationFreqHz)
+    /// One line per stage with the values an operator glances at, in full
+    /// words, separated by commas, every number with its unit.
+    static func summary(for stage: Stage, config c: AppConfig) -> String {
+        switch stage {
+        case .processingPhaseRotator:
+            return String(format: "Frequency %.0f Hz", c.phaseRotationFreqHz)
+        case .processingAGC:
+            return String(format: "Target %.1f dB, range %.0f to %+.0f dB",
+                          c.widebandAGCTargetDB, c.widebandAGCMinGainDB, c.widebandAGCMaxGainDB)
+        case .processingParametricEQ:
+            return "4 bands: shelf, peak, peak, shelf"
+        case .processingMultiband:
+            let filter = c.multibandFIREnabled ? "linear phase" : "low latency"
+            return "\(c.multibandMode) bands, \(filter), preset \(c.multibandPresetID)"
+        case .processingAdvancedDynamics:
+            return String(format: "Target %.1f dB, density %.0f%%", c.advancedDynamicsTargetDB, c.advancedDynamicsDensity * 100)
+        case .processingExpander:
+            return String(format: "Threshold %.0f dB, ratio %.1f:1", c.expanderThresholdDB, c.expanderRatio)
+        case .processingMBLimiter:
+            return String(format: "Threshold %.1f dB, attack %.1f ms, release %.0f ms",
+                          c.multibandLimiterThresholdDB, c.multibandLimiterAttackMS, c.multibandLimiterReleaseMS)
+        case .processingPrimeBass:
+            let mono = c.monoBassEnabled ? String(format: "mono below %.0f Hz", c.monoBassFreqHz) : "mono bass off"
+            return String(format: "Amount %.0f%%, %.0f Hz, %@", c.primeBassAmount * 100, c.primeBassFreqHz, mono)
+        case .processingBassClipper:
+            return String(format: "Threshold %.1f dB, crossover %.0f Hz, drive %.0f%%",
+                          c.bassClipperThresholdDB, c.bassClipperCrossoverHz, c.bassClipperDrive * 100)
+        case .processingDCClipper:
+            return String(format: "Ceiling %.1f dB, cancellation %.0f Hz", c.dcClipperCeilingDB, c.dcClipperCancelFreqHz)
+        case .processingHFLimiter:
+            return String(format: "Threshold %.1f dB, top %.1f dB", c.hfLimiterThresholdDB, c.hfLimiterTopThresholdDB)
+        case .processingLimiter:
+            return String(format: "Threshold %.1f dBFS, release %.0f ms",
+                          MPXPrimeViewModel.dBFS(fromLinear: c.preEncodeThreshold), c.preEncodeReleaseMS)
+        case .processingStereoCoder:
+            return String(format: "Pilot %.1f%%, SSB %@", c.pilotLevel * 100, c.ssbStereoEnabled ? "on" : "off")
+        case .processingCompositeClipper:
+            return String(format: "Threshold %.1f dB, ceiling %.1f dB, drive %.1f dB",
+                          c.compositeClipperThresholdDB, c.compositeClipperCeilingDB, c.finalDriveDB)
+        case .processingBS412:
+            return String(format: "Ceiling %.1f dBr over 60 s", c.bs412CeilingDBr)
+        default:
+            return stage.detailSubtitle
+        }
     }
-
-    private var agcSubtitle: String {
-        String(format: "Target %.1f dB · range %.0f/%+0.0f dB",
-            model.config.widebandAGCTargetDB,
-            model.config.widebandAGCMinGainDB,
-            model.config.widebandAGCMaxGainDB)
-    }
-
-    private var parametricEQSubtitle: String {
-        "4 bands · shelf+peak+peak+shelf"
-    }
-
-    private var primeBassSubtitle: String {
-        let bass = model.config.monoBassEnabled
-            ? String(format: "Mono<%.0f", model.config.monoBassFreqHz) : "Mono off"
-        return String(format: "Amt %.2f · f %.0f Hz · %@",
-            model.config.primeBassAmount,
-            model.config.primeBassFreqHz,
-            bass)
-    }
-
-    private var multibandSubtitle: String {
-        "\(model.config.multibandMode)-band · LR4 · \(model.config.multibandPresetID)"
-    }
-
-    private var advancedDynamicsSubtitle: String {
-        String(format: "Target %.1f dB · density %.2f · replaces AGC+MB",
-            model.config.advancedDynamicsTargetDB,
-            model.config.advancedDynamicsDensity)
-    }
-
-    private var mbLimiterSubtitle: String {
-        String(format: "Thr %.1f dB · atk %.1f ms · rel %.0f ms",
-            model.config.multibandLimiterThresholdDB,
-            model.config.multibandLimiterAttackMS,
-            model.config.multibandLimiterReleaseMS)
-    }
-
-    private var expanderSubtitle: String {
-        String(format: "Thr %.0f dB · ratio %.1f:1",
-            model.config.expanderThresholdDB,
-            model.config.expanderRatio)
-    }
-
-    private var bassClipperSubtitle: String {
-        String(format: "X %.0f Hz · thr %.1f dB · drv %.2f",
-            model.config.bassClipperCrossoverHz,
-            model.config.bassClipperThresholdDB,
-            model.config.bassClipperDrive)
-    }
-
-    private var dcClipperSubtitle: String {
-        String(format: "Ceil %.1f dB · cancel %.0f Hz",
-            model.config.dcClipperCeilingDB,
-            model.config.dcClipperCancelFreqHz)
-    }
-
-    private var hfSubtitle: String {
-        String(format: "Thr %.1f dB | top %.1f dB",
-            model.config.hfLimiterThresholdDB,
-            model.config.hfLimiterTopThresholdDB)
-    }
-
-    private var stereoCoderSubtitle: String {
-        String(format: "Pilot %.1f%% | SSB %@",
-            model.config.pilotLevel * 100,
-            model.config.ssbStereoEnabled ? "on" : "off")
-    }
-
-    private var limiterSubtitle: String {
-        let kernel = model.config.preEncodeBandlimitedResidualEnabled ? "residual" : "tanh"
-        return String(format: "Thr %.2f | rel %.0f ms | %@",
-            model.config.preEncodeThreshold,
-            model.config.preEncodeReleaseMS,
-            kernel)
-    }
-
-    private var bs412Subtitle: String {
-        String(format: "Ceiling %.1f dBr · 60 s", model.config.bs412CeilingDBr)
-    }
-
-    private var compositeClipperSubtitle: String {
-        String(format: "Thr %.1f dB · ceil %.1f dB · drive %.1f dB",
-            model.config.compositeClipperThresholdDB,
-            model.config.compositeClipperCeilingDB,
-            model.config.finalDriveDB)
-    }
-
 }
 
 #endif  // os(macOS)

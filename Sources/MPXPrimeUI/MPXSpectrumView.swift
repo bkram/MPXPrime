@@ -223,7 +223,7 @@ public struct MPXSpectrumView: View {
         }
         // Disable SwiftUI implicit animations on dbBins updates. Without this,
         // frame-to-frame interpolation queued accumulated when 30 Hz spectrum
-        // updates were interrupted mid-interpolation — visible as growing lag.
+        // updates were interrupted mid-interpolation -- visible as growing lag.
         .transaction { txn in
             txn.animation = nil
         }

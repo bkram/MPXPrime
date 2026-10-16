@@ -64,7 +64,7 @@ struct AdvancedDynamicsTests {
 
     @Test func runtimeConfigCarriesAdvancedDynamicsFields() {
         var config = AppConfig()
-        #expect(config.advancedDynamicsEnabled == false)
+        #expect(config.advancedDynamicsEnabled == true, "the default levelling since 2026-10-15")
         config.advancedDynamicsEnabled = true
         config.advancedDynamicsTargetDB = -16.0
         config.advancedDynamicsMaxGainDB = 20.0
@@ -91,7 +91,7 @@ struct AdvancedDynamicsTests {
         config.advancedDynamicsTargetDB = -18.5
         config.advancedDynamicsLowOffsetDB = 2.0
         config.advancedDynamicsMidOffsetDB = -1.5
-        config.advancedDynamicsHighOffsetDB = -7.0
+        config.advancedDynamicsHighOffsetDB = -5.0
         config.advancedDynamicsMaxGainDB = 21.0
         config.advancedDynamicsDensity = 0.35
         config.advancedDynamicsSpeed = 1.75
@@ -102,7 +102,7 @@ struct AdvancedDynamicsTests {
         #expect(abs(reloaded.advancedDynamicsTargetDB - -18.5) < 1e-4)
         #expect(abs(reloaded.advancedDynamicsLowOffsetDB - 2.0) < 1e-4)
         #expect(abs(reloaded.advancedDynamicsMidOffsetDB - -1.5) < 1e-4)
-        #expect(abs(reloaded.advancedDynamicsHighOffsetDB - -7.0) < 1e-4)
+        #expect(abs(reloaded.advancedDynamicsHighOffsetDB - -5.0) < 1e-4)
         #expect(abs(reloaded.advancedDynamicsMaxGainDB - 21.0) < 1e-4)
         #expect(abs(reloaded.advancedDynamicsDensity - 0.35) < 1e-4)
         #expect(abs(reloaded.advancedDynamicsSpeed - 1.75) < 1e-4)
@@ -280,6 +280,9 @@ struct AdvancedDynamicsTests {
         // rendered in the same loop can emit different bits on a busy machine
         // (the documented offline-comparison rule in AGENTS.md).
         base.enRDS = false
+        // The stage is ON by default since 2026-10-15; this test is about
+        // the OFF state.
+        base.advancedDynamicsEnabled = false
 
         var tweaked = base
         tweaked.advancedDynamicsEnabled = false

@@ -3,6 +3,12 @@ import Foundation
 import MPXPrimeCore
 @testable import MPXPrime
 
+/// `Float(i)` for each `i` in `range`. Typed, so the ramps below type-check
+/// fast (`Array(range).map(Float.init)` searched every Float initialiser).
+private func ringRamp(_ range: Range<Int>) -> [Float] {
+    range.map { (i: Int) -> Float in Float(i) }
+}
+
 @Suite("StereoInputRingBuffer")
 struct StereoInputRingBufferTests {
     @Test func stereoWriteReadRoundTrip() {
@@ -58,8 +64,8 @@ struct StereoInputRingBufferTests {
 
     @Test func wraparoundReadWrite() {
         let ring = StereoInputRingBuffer(capacityFrames: 512)
-        let firstLeft: [Float] = Array(0..<500).map(Float.init)
-        let firstRight: [Float] = Array(1000..<1500).map(Float.init)
+        let firstLeft: [Float] = ringRamp(0..<500)
+        let firstRight: [Float] = ringRamp(1000..<1500)
         firstLeft.withUnsafeBufferPointer { leftBuffer in
             firstRight.withUnsafeBufferPointer { rightBuffer in
                 ring.write(left: leftBuffer.baseAddress!, right: rightBuffer.baseAddress!, frameCount: firstLeft.count)
@@ -78,8 +84,8 @@ struct StereoInputRingBufferTests {
             }
         }
 
-        let secondLeft: [Float] = Array(500..<532).map(Float.init)
-        let secondRight: [Float] = Array(1500..<1532).map(Float.init)
+        let secondLeft: [Float] = ringRamp(500..<532)
+        let secondRight: [Float] = ringRamp(1500..<1532)
         secondLeft.withUnsafeBufferPointer { leftBuffer in
             secondRight.withUnsafeBufferPointer { rightBuffer in
                 ring.write(left: leftBuffer.baseAddress!, right: rightBuffer.baseAddress!, frameCount: secondLeft.count)
@@ -99,14 +105,14 @@ struct StereoInputRingBufferTests {
         }
 
         #expect(missing == 0)
-        #expect(outLeft == Array(496..<532).map(Float.init))
-        #expect(outRight == Array(1496..<1532).map(Float.init))
+        #expect(outLeft == ringRamp(496..<532))
+        #expect(outRight == ringRamp(1496..<1532))
     }
 
     @Test func overflowKeepsNewestFrames() {
         let ring = StereoInputRingBuffer(capacityFrames: 512)
-        let left: [Float] = Array(0..<520).map(Float.init)
-        let right: [Float] = Array(1000..<1520).map(Float.init)
+        let left: [Float] = ringRamp(0..<520)
+        let right: [Float] = ringRamp(1000..<1520)
         left.withUnsafeBufferPointer { leftBuffer in
             right.withUnsafeBufferPointer { rightBuffer in
                 ring.write(left: leftBuffer.baseAddress!, right: rightBuffer.baseAddress!, frameCount: left.count)
@@ -126,8 +132,8 @@ struct StereoInputRingBufferTests {
         }
 
         #expect(missing == 0)
-        #expect(outLeft == Array(8..<520).map(Float.init))
-        #expect(outRight == Array(1008..<1520).map(Float.init))
+        #expect(outLeft == ringRamp(8..<520))
+        #expect(outRight == ringRamp(1008..<1520))
         #expect(ring.stats().overflows == 8)
     }
 
@@ -141,7 +147,7 @@ struct StereoInputRingBufferTests {
         // tornReads telemetry is wired and reads 0.
         let ring = StereoInputRingBuffer(capacityFrames: 512)
         // Interleave heavy overflowing writes with reads several times.
-        let block: [Float] = Array(0..<700).map(Float.init)
+        let block: [Float] = ringRamp(0..<700)
         var outLeft = [Float](repeating: 0, count: 256)
         var outRight = [Float](repeating: 0, count: 256)
         for _ in 0..<8 {
@@ -237,8 +243,8 @@ struct StereoInputRingBufferTests {
 
     @Test func readAdaptiveFractionalPathMaintainsContinuity() {
         let ring = StereoInputRingBuffer(capacityFrames: 16)
-        let left: [Float] = Array(0..<12).map(Float.init)
-        let right: [Float] = Array(100..<112).map(Float.init)
+        let left: [Float] = ringRamp(0..<12)
+        let right: [Float] = ringRamp(100..<112)
         left.withUnsafeBufferPointer { leftBuffer in
             right.withUnsafeBufferPointer { rightBuffer in
                 ring.write(left: leftBuffer.baseAddress!, right: rightBuffer.baseAddress!, frameCount: 12)
@@ -271,8 +277,8 @@ struct StereoInputRingBufferTests {
 
     @Test func readAdaptiveMatchedRateReportsDirectMode() {
         let ring = StereoInputRingBuffer(capacityFrames: 32)
-        let left: [Float] = Array(0..<16).map(Float.init)
-        let right: [Float] = Array(100..<116).map(Float.init)
+        let left: [Float] = ringRamp(0..<16)
+        let right: [Float] = ringRamp(100..<116)
         left.withUnsafeBufferPointer { leftBuffer in
             right.withUnsafeBufferPointer { rightBuffer in
                 ring.write(left: leftBuffer.baseAddress!, right: rightBuffer.baseAddress!, frameCount: left.count)
@@ -341,13 +347,13 @@ struct StereoInputRingBufferTests {
         let linearError = Self.rmsError(actual: linearReference, expected: expected)
 
         #expect(cubicError < linearError)
-        #expect(ring.transportSnapshot().resampleMode == "adaptive-cubic")
+        #expect(ring.transportSnapshot().resampleMode == "adaptive-sinc")
     }
 
     @Test func largeWriteLargerThanCapacityKeepsNewestTail() {
         let ring = StereoInputRingBuffer(capacityFrames: 512)
-        let left: [Float] = Array(0..<600).map(Float.init)
-        let right: [Float] = Array(200..<800).map(Float.init)
+        let left: [Float] = ringRamp(0..<600)
+        let right: [Float] = ringRamp(200..<800)
         left.withUnsafeBufferPointer { leftBuffer in
             right.withUnsafeBufferPointer { rightBuffer in
                 ring.write(left: leftBuffer.baseAddress!, right: rightBuffer.baseAddress!, frameCount: left.count)
@@ -367,8 +373,8 @@ struct StereoInputRingBufferTests {
         }
 
         #expect(missing == 0)
-        #expect(outLeft == Array(88..<600).map(Float.init))
-        #expect(outRight == Array(288..<800).map(Float.init))
+        #expect(outLeft == ringRamp(88..<600))
+        #expect(outRight == ringRamp(288..<800))
         #expect(ring.stats().overflows == 88)
     }
 

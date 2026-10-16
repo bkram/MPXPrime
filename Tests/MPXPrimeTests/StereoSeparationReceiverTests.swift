@@ -11,19 +11,21 @@ import Foundation
 // recovered L-R amplitude scaled by cos(2Δ·Δφ_19k), a 5-10 dB loss at
 // default config.
 //
-// These tests validate the fix at three levels:
+// These tests validate the fix at two levels:
 // 1. recomputeSubcarrierDelay sizes the delay line to match the total
 //    audio-path delay (algorithmic correctness).
-// 2. With fix engaged, the MPX output is measurably different vs the
-//    pre-fix code path (data-path correctness).
-// 3. With audio silent + fix on, the pilot at the output is the
-//    delay-shifted pilot oscillator value, not the current value
-//    (phase-alignment correctness).
+// 2. The full chain (composite clipper on, 5 ms final look-ahead) decodes
+//    with real stereo separation on a textbook receiver that shares no
+//    code with the encoder: pilot phase from the 19 kHz projection,
+//    38 kHz reference sin(2(theta + phi)), L = M + S. A pilot misaligned
+//    against the subcarrier embedded in the audio composite shows up
+//    directly as lost (or inverted) separation.
 //
-// The full end-to-end receiver-side stereo separation measurement is
-// deferred to the exciter test (a real receiver + spectrum analyzer
-// captures it cleanly without the phase-extraction subtleties that
-// pollute a fully-synthetic Goertzel/Hilbert demod).
+// The old tests 2 and 3 only showed that the output with the delay
+// differed from the output without it, and test 1 reads the same reported
+// latencies that recomputeSubcarrierDelay adds up: with `+ 2` samples
+// (about 142 deg at 38 kHz) added to the delay, all of them stayed green
+// (test-suite review 2026-10 finding 4).
 
 @Suite("Subcarrier delay alignment")
 struct StereoSeparationReceiverTests {
@@ -41,6 +43,7 @@ struct StereoSeparationReceiverTests {
         cfg.limitMPX = true
         cfg.limitLookaheadMS = 5.0
         cfg.widebandAGCEnabled = false
+        cfg.advancedDynamicsEnabled = false  // AD is the default levelling since 2026-10-15
         cfg.multibandEnabled = false
         cfg.multibandLimiterEnabled = false
         cfg.downwardExpanderEnabled = false
@@ -107,12 +110,16 @@ struct StereoSeparationReceiverTests {
         // decimator (~150 Kaiser-windowed taps at 8× OS = ~9 host
         // samples), audio-composite bandwidth FIR (~112 host samples),
         // and 5 ms lookahead (= 960 samples), the total is ~1081 samples.
+        // Since the 2026-10 peak-control review (F3/F8/F9) the clipper adds
+        // a 2x FIR interpolator and a padded decimator (25 samples together)
+        // and its linear-phase guard-band FIR (140 samples with the default
+        // pilot/stereo/RDS guards): ~1237 samples.
         let cfg = makeStereoConfig()
         let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
         let actual = gen.subcarrierDelayActiveCount
-        print("[delay-size] subcarrierDelayLine.count = \(actual) (expected ≈1081)")
-        #expect(actual > 1060 && actual < 1100,
-            "subcarrier delay line size \(actual) outside expected ~1081-sample window (decimator + audio bandwidth FIR + lookahead)")
+        print("[delay-size] subcarrierDelayLine.count = \(actual) (expected ≈1237)")
+        #expect(actual > 1220 && actual < 1255,
+            "subcarrier delay line size \(actual) outside expected ~1237-sample window (clipper + audio bandwidth FIR + lookahead)")
     }
 
     @Test func subcarrierDelayLineRespondsToCompositeClipperFlag() {
@@ -155,95 +162,78 @@ struct StereoSeparationReceiverTests {
         #expect(gen.subcarrierDelayActiveCount - initialActive == Int(round(0.5 / 1000.0 * sampleRate)))
     }
 
-    // MARK: - Test 2: data path correctness
+    // MARK: - Test 2: receiver-side separation on the full chain
 
-    @Test func subcarrierDelayFixChangesMPXOutput() {
-        // Sanity: fix-on and fix-off renders should produce
-        // measurably different MPX samples. If max diff ≈ 0, the fix
-        // isn't in the data path.
-        let amplitude: Float = 0.5
-        let seconds: Double = 0.05
-        let mpxNoFix = renderMPX(amplitude: amplitude, seconds: seconds,
-                                disableSubcarrierDelay: true)
-        let mpxWithFix = renderMPX(amplitude: amplitude, seconds: seconds,
-                                  disableSubcarrierDelay: false)
-        var maxDiff: Float = 0.0
-        var sumSqDiff: Double = 0.0
-        let startIdx = 2000  // past lookahead warmup (969 samples)
-        let countIdx = 100
-        for k in startIdx..<(startIdx + countIdx) {
-            let d = mpxNoFix[k] - mpxWithFix[k]
-            maxDiff = max(maxDiff, fabsf(d))
-            sumSqDiff += Double(d) * Double(d)
+    /// Projection of `samples` (from `start`) onto sin/cos of `hz`.
+    private func project(_ samples: [Float], hz: Double, start: Int) -> (sin: Double, cos: Double) {
+        let omega = 2.0 * Double.pi * hz / sampleRate
+        var s = 0.0, c = 0.0
+        for i in start..<samples.count {
+            let phase = omega * Double(i)
+            s += Double(samples[i]) * sin(phase)
+            c += Double(samples[i]) * cos(phase)
         }
-        let rmsDiff = sqrt(sumSqDiff / Double(countIdx))
-        print(String(format: "[fix-active] max|noFix-withFix|=%.5f, RMS=%.5f over %d samples",
-                     maxDiff, rmsDiff, countIdx))
-        // Pilot amplitude is 0.08; the delay shifts pilot phase by
-        // ~287° (969 samples × 71.25°/sample mod 360°), so the
-        // sample-by-sample pilot delta has amplitude up to 2·sin(287°/2)·0.08
-        // ≈ 0.155, capped by clipping. We require ≥0.01 to confirm the
-        // fix is actually engaging in the data path.
-        #expect(maxDiff > 0.01,
-            "fix-on and fix-off renders produce essentially identical MPX (maxDiff=\(maxDiff)) — fix isn't engaging")
+        let scale = 2.0 / Double(samples.count - start)
+        return (s * scale, c * scale)
     }
 
-    // MARK: - Test 3: phase-alignment correctness via silent-input pilot
-
-    @Test func pilotPhaseIsDelayedWhenFixEnabled() {
-        // With audio = silence, MPX output contains only pilot (and
-        // RDS — which we have disabled). With fix off, pilot at output
-        // sample N = sin(2π·19k·N·δT). With fix on, pilot at output
-        // sample N = sin(2π·19k·(N-Δ)·δT). The two pilots differ in
-        // amplitude at any given sample by a known function of N and Δ.
-        //
-        // Specifically: pilot_noFix(N) - pilot_withFix(N) =
-        //   sin(2π·19k·N·δT) - sin(2π·19k·(N-Δ)·δT)
-        // For Δ=969, 2π·19k·969·δT = 1205 rad = 1.79·2π = 0.79·2π
-        // (after wrapping) = 285.7°. The amplitude of the difference
-        // signal is 2·sin(285.7°/2)·0.08 = 2·sin(142.85°)·0.08 = 2·0.604·0.08
-        // = 0.0966. So with fix on, pilot at output is measurably
-        // different from current pilot at sample 1000+.
-        let seconds: Double = 0.05
-        let mpxNoFix = renderMPX(amplitude: 0.0, seconds: seconds,
-                                disableSubcarrierDelay: true)
-        let mpxWithFix = renderMPX(amplitude: 0.0, seconds: seconds,
-                                  disableSubcarrierDelay: false)
-
-        // Compare in a window past warmup. Audio is silent, so the
-        // chain output is dominated by pilot. Measure pilot amplitude
-        // and pilot phase difference.
-        let warmup = Int(0.03 * sampleRate)  // 30 ms — past lookahead
-        let countSamples = 1024
-        var sumSqNoFix: Double = 0.0
-        var sumSqWithFix: Double = 0.0
-        var sumSqDiff: Double = 0.0
-        for k in warmup..<(warmup + countSamples) {
-            sumSqNoFix += Double(mpxNoFix[k]) * Double(mpxNoFix[k])
-            sumSqWithFix += Double(mpxWithFix[k]) * Double(mpxWithFix[k])
-            let d = mpxNoFix[k] - mpxWithFix[k]
-            sumSqDiff += Double(d) * Double(d)
+    /// Textbook receiver (the oracle of `StereoPolarityTests`): pilot phase
+    /// from the 19 kHz projection of the composite, coherent 38 kHz
+    /// reference at twice that phase, S = 2 * mpx * ref, L = M + S,
+    /// R = M - S. Returns the recovered amplitude of `toneHz` per channel.
+    private func textbookDecode(_ mpx: [Float], toneHz: Double, start: Int) -> (left: Double, right: Double) {
+        let pilot = project(mpx, hz: 19_000.0, start: start)
+        let phi = atan2(pilot.cos, pilot.sin)
+        let pilotOmega = 2.0 * Double.pi * 19_000.0 / sampleRate
+        var demod = [Float](repeating: 0.0, count: mpx.count)
+        for i in start..<mpx.count {
+            let ref = sin(2.0 * ((pilotOmega * Double(i)) + phi))
+            demod[i] = Float(2.0 * Double(mpx[i]) * ref)
         }
-        let rmsNoFix = sqrt(sumSqNoFix / Double(countSamples))
-        let rmsWithFix = sqrt(sumSqWithFix / Double(countSamples))
-        let rmsDiff = sqrt(sumSqDiff / Double(countSamples))
+        let m = project(mpx, hz: toneHz, start: start)
+        let side = project(demod, hz: toneHz, start: start)
+        return (hypot(m.sin + side.sin, m.cos + side.cos), hypot(m.sin - side.sin, m.cos - side.cos))
+    }
 
-        print(String(format: "[silent-pilot] noFix RMS=%.5f, withFix RMS=%.5f, diff RMS=%.5f",
-                     rmsNoFix, rmsWithFix, rmsDiff))
-
-        // Both renders should have similar pilot RMS (≈ 0.08/√2 ≈ 0.057).
-        #expect(rmsNoFix > 0.04 && rmsNoFix < 0.08,
-            "no-fix pilot RMS \(rmsNoFix) outside expected range")
-        #expect(rmsWithFix > 0.04 && rmsWithFix < 0.08,
-            "with-fix pilot RMS \(rmsWithFix) outside expected range")
-        // The DIFFERENCE between the two pilots must have non-trivial
-        // RMS — confirming the fix is shifting the pilot phase, not
-        // just outputting the same pilot. With the current delay
-        // (~1081 samples) the pilot phase wraps to ~343°, so the
-        // sample-by-sample diff amplitude is modest but distinctly
-        // non-zero; a threshold well above noise (~1e-4) is sufficient
-        // to prove the fix engages.
-        #expect(rmsDiff > 0.005,
-            "fix-on and fix-off pilot RMS difference \(rmsDiff) is too small — the delay isn't actually shifting pilot phase")
+    /// Hard-panned L tone through the file's full config (composite clipper
+    /// on, 5 ms final look-ahead, pre-encode limiter on) and decoded on the
+    /// textbook receiver. 1 kHz and 10 kHz: a fixed sample offset between
+    /// pilot and subcarrier costs separation in proportion to frequency
+    /// error at 38 kHz, so both must hold. 0.3 keeps the pre-encode
+    /// limiter (threshold 0.95) idle: the measurement is alignment, not
+    /// limiter IM.
+    @Test(arguments: [1_000.0, 10_000.0])
+    func fullChainDecodesWithRealSeparationOnATextbookReceiver(toneHz: Double) {
+        let cfg = makeStereoConfig()
+        let gen = MPXGenerator(config: cfg, sampleRate: sampleRate)
+        let frames = Int(sampleRate * 0.6)
+        var left = [Float](repeating: 0.0, count: frames)
+        var right = [Float](repeating: 0.0, count: frames)
+        let w = 2.0 * Double.pi * toneHz / sampleRate
+        for i in 0..<frames { left[i] = Float(0.3 * sin(w * Double(i))) }
+        left.withUnsafeMutableBufferPointer { lBuf in
+            right.withUnsafeMutableBufferPointer { rBuf in
+                var offset = 0
+                while offset < frames {
+                    let chunk = min(1024, frames - offset)
+                    gen.renderFromInputInPlace(
+                        frameCount: chunk,
+                        // swiftlint:disable force_unwrapping
+                        left: lBuf.baseAddress!.advanced(by: offset),
+                        right: rBuf.baseAddress!.advanced(by: offset)
+                        // swiftlint:enable force_unwrapping
+                    )
+                    offset += chunk
+                }
+            }
+        }
+        // Past the composite clipper, look-ahead and limiter warm-up.
+        let decoded = textbookDecode(left, toneHz: toneHz, start: Int(0.2 * sampleRate))
+        let sepDB = 20.0 * log10(max(decoded.left, 1e-12) / max(decoded.right, 1e-12))
+        print(String(format: "[separation] %.0f Hz full chain: L %.4f, R %.5f, separation %.1f dB",
+                     toneHz, decoded.left, decoded.right, sepDB))
+        #expect(decoded.left > 0.05, "fixture problem: the tone did not reach the composite (L \(decoded.left))")
+        #expect(sepDB > 30.0,
+            "\(Int(toneHz)) Hz left-only decodes with \(sepDB) dB separation on a textbook receiver -- pilot and subcarrier are misaligned on the full chain")
     }
 }

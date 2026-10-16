@@ -2,8 +2,9 @@ import SwiftUI
 
 // Vertical meter-strip component (shared). Orban Optimod-style: narrow column
 // per signal, scale ticks on the right edge, peak-hold dot, colour-graded fill
-// via BroadcastStyle. Takes plain scalars + a pre-formatted value string, so
-// any app can feed it (the transmit Levels window and the Meter window both do).
+// via BroadcastStyle. Takes plain scalars + a pre-formatted value string.
+// Used by MPX Prime Meter only: Studio's level meters (Monitoring, Levels
+// window, Audio I/O) are all `LadderMeterView`.
 
 public struct VerticalMeterStrip: View {
     public enum Scale: Equatable {

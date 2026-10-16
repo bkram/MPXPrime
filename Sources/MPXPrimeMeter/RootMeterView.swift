@@ -95,15 +95,18 @@ struct RootMeterView: View {
                 Label("Device", systemImage: "waveform")
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(.secondary)
-                Picker("Input", selection: $vm.selectedInputID) {
-                    ForEach(vm.inputDevices) { dev in
-                        Text(dev.name).tag(Optional(dev.id))
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 240)
-                .help("Audio input device carrying the MPX composite.")
+                // Device plus its channel pair on a multichannel interface
+                // ("Inputs 3, 4"); the popover holds the Device menu and the
+                // channel grid. Both are restart-class, so one coalesced
+                // restart covers a device change that also resets the pair.
+                AudioDeviceSelector(
+                    title: "Input", role: .input, devices: vm.inputDevices,
+                    selectedUID: $vm.selectedInputUID, channels: $vm.inputChannels,
+                    allowNone: false,
+                    footnote: "Changing the device or channels restarts capture.")
+                .frame(width: 240)
                 .onChange(of: vm.selectedInputID) { _, _ in vm.restartIfRunning() }
+                .onChange(of: vm.inputChannels) { _, _ in vm.restartIfRunning() }
 
                 Picker("Channel", selection: $vm.channel) {
                     Text("L").tag(MeterChannel.left)
@@ -112,8 +115,16 @@ struct RootMeterView: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
-                .help("Which input channel carries the composite (Mix averages both).")
+                .help("Which of the chosen input channels carries the composite: "
+                    + "L is the lower-numbered channel of the pair, R the higher, "
+                    + "Mix averages both. With a single channel chosen all three "
+                    + "read that channel.")
                 .onChange(of: vm.channel) { _, _ in vm.restartIfRunning() }
+
+                DevicesButton(devices: vm.allDevices, lastScan: vm.lastDeviceScan) {
+                    vm.rescanDevices()
+                }
+                .buttonStyle(.bordered)
 
                 Divider().frame(height: 16)
 
@@ -502,7 +513,7 @@ struct RootMeterView: View {
                     .help("Stereo goniometer of decoded L/R. Vertical line = mono, a tilted "
                         + "line = single channel, a filled field = wide stereo. A horizontal "
                         + "spread warns of out-of-phase (mono-incompatible) audio. The display "
-                        + "gain auto-rides the program level so the figure fills the scope "
+                        + "gain auto-rides the programme level so the figure fills the scope "
                         + "(hardware-goniometer style); points past full scale saturate at "
                         + "the field edge.")
             }
@@ -582,7 +593,7 @@ struct RootMeterView: View {
                             + "statistics derive from it, never from this readout. "
                             + "On test tones an integrating detector genuinely "
                             + "reads below true deviation -- expect agreement on "
-                            + "dense program, not on sines.")
+                            + "dense programme, not on sines.")
                 }
                 Toggle("Monitor ballistics", isOn: $vm.monitorBallistics)
                     .toggleStyle(.checkbox)
@@ -722,7 +733,7 @@ struct RootMeterView: View {
             ? "SDRplay RSP: 0.1-2000 MHz" : "RTL-SDR: 24-1766 MHz"
         return "Tune frequency in MHz, 1 kHz resolution -- the FM broadcast "
             + "band, or any FM-stereo signal in the active tuner's range "
-            + "(audio links / license-exempt transmitters, e.g. 864.540). "
+            + "(audio links / licence-exempt transmitters, e.g. 864.540). "
             + "\(range). Type with '.' or ',' (scroll steps 0.1 MHz). "
             + "Retunes live, no restart."
     }
@@ -748,7 +759,7 @@ struct RootMeterView: View {
 
     private static let dcBlockHelp = "Remove DC offset from the decoded "
         + "audio (default on). A transmitter carrier offset becomes DC after "
-        + "FM demod -- an off-center vectorscope, offset waveforms, and DC in "
+        + "FM demod -- an off-centre vectorscope, offset waveforms, and DC in "
         + "the monitor/recordings; common on wireless audio links. Broadcast "
         + "FM has no legitimate DC, so leave it on. Deviation measurements "
         + "are always DC-tracked separately. Applies live."
@@ -795,16 +806,16 @@ struct RootMeterView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Monitor (decoded audio)").font(.headline)
-                Picker("Monitor output", selection: $vm.selectedOutputID) {
-                    Text("System Default").tag(AudioDeviceID?.none)
-                    ForEach(vm.outputDevices) { dev in
-                        Text(dev.name).tag(Optional(dev.id))
-                    }
-                }
-                .labelsHidden()
+                // Device plus output pair ("Outputs 7, 8" on an 8-out box;
+                // one channel plays L+R summed). nil device = system default.
+                AudioDeviceSelector(
+                    title: "Monitor output", role: .output, devices: vm.outputDevices,
+                    selectedUID: $vm.selectedOutputUID, channels: $vm.monitorChannels,
+                    allowNone: true, noneLabel: "System default",
+                    footnote: "Applies live.")
                 .frame(width: 260)
-                .help("Where the decoded stereo audio plays. Applies live.")
                 .onChange(of: vm.selectedOutputID) { _, _ in vm.applyOutputDeviceChange() }
+                .onChange(of: vm.monitorChannels) { _, _ in vm.applyOutputDeviceChange() }
             }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
@@ -814,22 +825,19 @@ struct RootMeterView: View {
                         + "subcarrier, RDS and all -- to its own output device, "
                         + "in addition to the decoded monitor. Feed a 192 kHz "
                         + "DAC into an exciter (rebroadcast/translator) or a "
-                        + "hardware analyzer.")
+                        + "hardware analyser.")
                     .onChange(of: vm.mpxPassEnabled) { _, _ in vm.applyMPXPassChange() }
-                Picker("MPX output", selection: $vm.selectedMPXOutID) {
-                    Text("System Default").tag(AudioDeviceID?.none)
-                    ForEach(vm.outputDevices) { dev in
-                        Text(dev.name).tag(Optional(dev.id))
-                    }
-                }
-                .labelsHidden()
+                AudioDeviceSelector(
+                    title: "MPX output", role: .output, devices: vm.outputDevices,
+                    selectedUID: $vm.selectedMPXOutUID, channels: $vm.passThroughChannels,
+                    allowNone: true, noneLabel: "System default",
+                    footnote: "Use a genuinely 192 kHz-capable interface: its rate is "
+                        + "forced to the capture rate while the pass-through runs and "
+                        + "restored after. Applies live; remembered by device UID.")
                 .frame(width: 260)
                 .disabled(!vm.mpxPassEnabled)
-                .help("Where the raw composite plays -- use a genuinely "
-                    + "192 kHz-capable interface (its rate is forced to the "
-                    + "capture rate while the pass-through runs, and restored "
-                    + "after). Applies live; remembered by device UID.")
                 .onChange(of: vm.selectedMPXOutID) { _, _ in vm.applyMPXPassChange() }
+                .onChange(of: vm.passThroughChannels) { _, _ in vm.applyMPXPassChange() }
                 HStack(spacing: 4) {
                     Text("Gain").foregroundStyle(.secondary)
                     ScrollableNumericField(value: $vm.mpxPassGainDB,
@@ -843,7 +851,7 @@ struct RootMeterView: View {
                 }
                 .disabled(!vm.mpxPassEnabled)
                 .onChange(of: vm.mpxPassGainDB) { _, _ in vm.applyMPXPassChange() }
-                .help("Output level into the analyzer/exciter. 0 dB = the SDR "
+                .help("Output level into the analyser/exciter. 0 dB = the SDR "
                     + "scaling (0 dBFS = 150 kHz; a 75 kHz station peaks at "
                     + "-6 dBFS). +6 dB puts 75 kHz at digital full scale -- "
                     + "deviation beyond that clips the DAC, so leave ~1 dB "
@@ -888,50 +896,19 @@ struct RootMeterView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Grid(alignment: .topLeading, horizontalSpacing: 20, verticalSpacing: 12) {
                         GridRow {
-                            readout("MPX POWER",
-                                    t.mpxPowerValid
-                                        ? String(format: "%+.1f dBr", t.mpxPowerDBr)
-                                            + (t.mpxPowerMaxValid
-                                                ? String(format: "  max %+.1f", t.mpxPowerMaxDBr)
-                                                : "")
-                                        : "--",
-                                    valueTint: t.mpxPowerValid
-                                        ? limitTint(
-                                            max(t.mpxPowerDBr,
-                                                t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0),
-                                            limit: 0.0, warn: -1.0)
-                                        : BroadcastStyle.readoutPrimary,
-                                    help: "ITU-R BS.412 multiplex power: uniform sliding 60 s "
-                                        + "window, and (max) the worst 60 s window since reset "
-                                        + "-- the number compliance is judged on; it needs a "
-                                        + "full 60 s of signal before it reads. 0 dBr is the "
-                                        + "power of a +/-19 kHz sine; the regulatory limit is "
-                                        + "0 dBr. Needs a calibrated scale (SDR / pilot lock).")
+                            readout("MPX POWER", Self.mpxPowerReadout(t),
+                                    valueTint: mpxPowerTint(t),
+                                    help: Self.mpxPowerHelp)
                             readout("PEAK + / -", "\(t.posPeakText) / \(t.negPeakText) kHz",
-                                    valueTint: t.peakValid
-                                        ? limitTint(max(t.posPeakKHz, -t.negPeakKHz),
-                                                    limit: 75.0, warn: 71.0)
-                                        : BroadcastStyle.readoutPrimary,
-                                    help: "Highest positive / negative deviation in the last "
-                                        + "60 s (50 ms peak-hold slots, measuring-receiver "
-                                        + "style; a single impulse ages out instead of pinning "
-                                        + "the reading). A persistent +/- asymmetry suggests a "
-                                        + "carrier offset or one-sided clipping.")
+                                    valueTint: peakTint(t),
+                                    help: Self.peakHelp)
                         }
                         GridRow {
                             readout("OVER 77 kHz", t.exceedanceText,
-                                    valueTint: t.exceedanceValid
-                                        ? limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
-                                        : BroadcastStyle.readoutPrimary,
-                                    help: "ITU-R SM.1268 deviation compliance: the share of "
-                                        + "measured samples above 77 kHz (75 kHz + 2 kHz "
-                                        + "tolerance) since the last reset. Regulators treat "
-                                        + "more than 0.0001 % as over-deviation; rare single "
-                                        + "peaks are not a violation.")
+                                    valueTint: exceedanceTint(t),
+                                    help: Self.exceedanceHelp)
                             readout("SEPARATION", t.separationText,
-                                    help: "Best stereo separation observed since reset. Truest "
-                                        + "during single-channel / test-tone content; panned "
-                                        + "program reads low.")
+                                    help: Self.separationHelp)
                         }
                         GridRow {
                             // An RDS parameter, but it belongs with the other
@@ -945,13 +922,8 @@ struct RootMeterView: View {
                                     help: Self.rdsPhaseHelp)
                             if vm.inputKind == .sdr {
                                 readout("SIGNAL", t.rssiValid ? t.rssiText : "--",
-                                        valueTint: t.rssiValid ? signalTint(t.rssiNorm)
-                                            : BroadcastStyle.readoutPrimary,
-                                        help: "Relative received signal level (filtered IQ "
-                                            + "channel, dBFS). Higher is stronger; most "
-                                            + "meaningful with Auto Gain off. A valid BS.412 "
-                                            + "MPX-power reading needs a strong, clean signal "
-                                            + "-- see the manual.")
+                                        valueTint: rssiTint(t),
+                                        help: Self.signalHelp)
                             } else {
                                 Color.clear.frame(width: 1, height: 1)
                             }
@@ -963,11 +935,7 @@ struct RootMeterView: View {
                             // telemetry as well as the engine accumulators.
                             Button("Reset Peaks") { vm.resetPeaks() }
                                 .buttonStyle(.bordered)
-                                .help("Clear the held readings: PEAK +/-, MPX POWER max, "
-                                    + "OVER 77 kHz, the deviation distribution, best "
-                                    + "separation, and the SAMPLES DROPPED badge. "
-                                    + "Available while stopped, since that is when held "
-                                    + "values are still on screen.")
+                                .help(Self.resetPeaksHelp)
                                 .gridColumnAlignment(.leading)
                         }
                     }
@@ -1059,6 +1027,74 @@ struct RootMeterView: View {
         if value >= limit { return BroadcastStyle.overRed }
         if value >= warn { return BroadcastStyle.tightAmber }
         return BroadcastStyle.readoutPrimary
+    }
+
+    // The Modulation card's texts, tints and help strings live outside the
+    // view builder: written inline (nested ternaries, `+`-joined literals)
+    // they made `metricsSection` the slowest expression in the package to
+    // type-check (about 1.4 s per compile of this file).
+
+    private static let mpxPowerHelp = "ITU-R BS.412 multiplex power: uniform sliding 60 s "
+        + "window, and (max) the worst 60 s window since reset "
+        + "-- the number compliance is judged on; it needs a "
+        + "full 60 s of signal before it reads. 0 dBr is the "
+        + "power of a +/-19 kHz sine; the regulatory limit is "
+        + "0 dBr. Needs a calibrated scale (SDR / pilot lock)."
+    private static let peakHelp = "Highest positive / negative deviation in the last "
+        + "60 s (50 ms peak-hold slots, measuring-receiver "
+        + "style; a single impulse ages out instead of pinning "
+        + "the reading). A persistent +/- asymmetry suggests a "
+        + "carrier offset or one-sided clipping."
+    private static let exceedanceHelp = "ITU-R SM.1268 deviation compliance: the share of "
+        + "measured samples above 77 kHz (75 kHz + 2 kHz "
+        + "tolerance) since the last reset. Regulators treat "
+        + "more than 0.0001 % as over-deviation; rare single "
+        + "peaks are not a violation."
+    private static let separationHelp = "Best stereo separation observed since reset. Truest "
+        + "during single-channel / test-tone content; panned "
+        + "programme reads low."
+    private static let signalHelp = "Relative received signal level (filtered IQ "
+        + "channel, dBFS). Higher is stronger; most "
+        + "meaningful with Auto Gain off. A valid BS.412 "
+        + "MPX-power reading needs a strong, clean signal "
+        + "-- see the manual."
+    private static let resetPeaksHelp = "Clear the held readings: PEAK +/-, MPX POWER max, "
+        + "OVER 77 kHz, the deviation distribution, best "
+        + "separation, and the SAMPLES DROPPED badge. "
+        + "Available while stopped, since that is when held "
+        + "values are still on screen."
+
+    /// PEAK + / - tint: the larger excursion against the 75 kHz limit.
+    private func peakTint(_ t: MeterTelemetry) -> Color {
+        guard t.peakValid else { return BroadcastStyle.readoutPrimary }
+        return limitTint(max(t.posPeakKHz, -t.negPeakKHz), limit: 75.0, warn: 71.0)
+    }
+
+    /// OVER 77 kHz tint: the SM.1268 share against the 0.0001 % limit.
+    private func exceedanceTint(_ t: MeterTelemetry) -> Color {
+        guard t.exceedanceValid else { return BroadcastStyle.readoutPrimary }
+        return limitTint(t.exceedancePct, limit: 0.0001, warn: 0.00005)
+    }
+
+    /// SIGNAL tint: signal strength once the RSSI reading is valid.
+    private func rssiTint(_ t: MeterTelemetry) -> Color {
+        guard t.rssiValid else { return BroadcastStyle.readoutPrimary }
+        return signalTint(t.rssiNorm)
+    }
+
+    /// MPX POWER readout: the 60 s value, plus the worst window once valid.
+    private static func mpxPowerReadout(_ t: MeterTelemetry) -> String {
+        guard t.mpxPowerValid else { return "--" }
+        let current: String = String(format: "%+.1f dBr", t.mpxPowerDBr)
+        guard t.mpxPowerMaxValid else { return current }
+        return current + String(format: "  max %+.1f", t.mpxPowerMaxDBr)
+    }
+
+    /// MPX POWER tint: judged on the worse of the current and the max reading.
+    private func mpxPowerTint(_ t: MeterTelemetry) -> Color {
+        guard t.mpxPowerValid else { return BroadcastStyle.readoutPrimary }
+        let maxDBr: Double = t.mpxPowerMaxValid ? t.mpxPowerMaxDBr : -120.0
+        return limitTint(max(t.mpxPowerDBr, maxDBr), limit: 0.0, warn: -1.0)
     }
 
     /// Signal-strength tint (higher is better): green strong, amber moderate,
@@ -1258,17 +1294,17 @@ struct RootMeterView: View {
             LiveObservationView(telemetry: vm.telemetry) { t in
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
                     rdsRow("RDS", t.rdsStatusText,
-                           "Decoder status: sync, Program ID (PI), TP/TA/MS flags and live "
+                           "Decoder status: sync, Programme ID (PI), TP/TA/MS flags and live "
                             + "block-error rate. BER under ~5% is a clean link.")
-                    rdsRow("PTY", t.ptyText, "Program Type: the format code and its name (e.g. Pop Music).")
-                    rdsRow("PTYN", t.ptynText, "Program Type Name (group 10A) -- an 8-char free-text refinement of PTY.")
+                    rdsRow("PTY", t.ptyText, "Programme Type: the format code and its name (e.g. Pop Music).")
+                    rdsRow("PTYN", t.ptynText, "Programme Type Name (group 10A) -- an 8-char free-text refinement of PTY.")
                     rdsRow("ECC", t.eccText, "Extended Country Code (group 1A) -- with the PI's top nibble identifies the country.")
-                    rdsRow("PS", t.psText, "Program Service name (8 characters) -- the static station name.")
+                    rdsRow("PS", t.psText, "Programme Service name (8 characters) -- the static station name.")
                     rdsRow("RT", t.rtText, "RadioText (up to 64 characters) -- now-playing / scrolling text.")
                     rdsRow("RT+", t.rtPlusText, "RadioText+ tags marking artist / title inside the RadioText.")
-                    rdsRow("LongPS", t.longPSText, "Long Program Service name (UTF-8, longer than the 8-char PS).")
+                    rdsRow("LongPS", t.longPSText, "Long Programme Service name (UTF-8, longer than the 8-char PS).")
                     rdsRow("CT", t.ctText, "Clock Time + date sent by the station (UTC plus local offset).")
-                    rdsRow("AF", t.afText, "Alternative Frequencies carrying the same program for retuning.")
+                    rdsRow("AF", t.afText, "Alternative Frequencies carrying the same programme for retuning.")
                     rdsRow("Groups", t.groupText,
                            "RDS group types received, with counts and their share of the "
                             + "stream (0A = PS/AF, 2A = RadioText, 4A = CT...).")

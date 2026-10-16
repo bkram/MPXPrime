@@ -163,19 +163,87 @@ struct ModeGatingTests {
         return left
     }
 
+    /// Render the COMPOSITE path of `gen` itself -- the one that calls the RDS
+    /// coder and the stereo encoder -- on a programme with a different signal
+    /// per channel. The audio-only path never reaches either, so comparing
+    /// audio-only renders cannot see whether the gate holds (test-suite
+    /// review 2026-10 finding 7: with the SSB gate removed at
+    /// construction and on live apply, and the RDS live gate removed, all 11
+    /// tests here stayed green). Driving the composite path of a generator
+    /// built for an audio mode is a probe, not a production path: it exposes
+    /// the gated state as output.
+    private func renderCompositePath(_ gen: MPXGenerator, frames: Int = 19_200) -> [Float] {
+        var left = [Float](repeating: 0, count: frames)
+        var right = [Float](repeating: 0, count: frames)
+        for i in 0..<frames {
+            let t = Double(i) / 192_000.0
+            left[i] = Float(0.3 * sin(2.0 * .pi * 1_000.0 * t))
+            right[i] = Float(0.2 * sin(2.0 * .pi * 3_000.0 * t))
+        }
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                // swiftlint:disable:next force_unwrapping
+                gen.renderFromInputInPlace(frameCount: l.count, left: l.baseAddress!, right: r.baseAddress!)
+            }
+        }
+        return left
+    }
+
+    private func gatingConfig(_ mode: AppConfig.OperatingMode) -> AppConfig {
+        var cfg = AppConfig()
+        cfg.sampleRate = 192_000.0
+        cfg.operatingMode = mode
+        cfg.sourceMode = "input"
+        cfg.enRDS = false
+        cfg.ssbStereoEnabled = false
+        return cfg
+    }
+
     @Test func rdsIsInertOutsideMPXEvenWhenTheKeyIsOn() {
         // en_rds stays true in the config (the operator's stored intent), but
-        // an engine built for a mode with no composite must not run the coder.
-        for mode in [AppConfig.OperatingMode.fm, .hd, .am] {
-            var cfg = AppConfig()
-            cfg.operatingMode = mode
-            cfg.enRDS = true
-            let gen = MPXGenerator(config: cfg, sampleRate: 192_000.0)
-            gen.applyRDSRuntimeConfig(MPXGenerator.RDSRuntimeConfig.make(from: cfg))
-            let withRDS = renderComposite(mode: mode, enRDS: true)
-            let withoutRDS = renderComposite(mode: mode, enRDS: false)
-            #expect(withRDS == withoutRDS,
-                    "\(mode.title) output changed with RDS enabled -- the encoder is not gated")
+        // a live RDS apply on an engine built for a mode with no composite
+        // must not switch the coder on. The configured generator is the one
+        // rendered.
+        for mode in AppConfig.OperatingMode.allCases {
+            let plain = gatingConfig(mode)
+            var keyOn = plain
+            keyOn.enRDS = true
+            let reference = renderCompositePath(MPXGenerator(config: plain, sampleRate: 192_000.0))
+            let live = MPXGenerator(config: plain, sampleRate: 192_000.0)
+            live.applyRDSRuntimeConfig(MPXGenerator.RDSRuntimeConfig.make(from: keyOn))
+            let liveOn = renderCompositePath(live)
+            if mode == .mpx {
+                // Negative control: where RDS exists the same probe sees it,
+                // so equality below is the gate and not a blind measurement.
+                #expect(liveOn != reference, "probe cannot see a live RDS enable in MPX Output")
+            } else {
+                #expect(liveOn == reference,
+                        "\(mode.title): a live RDS apply switched the coder on -- applyRDSRuntimeConfig is not gated")
+            }
+        }
+    }
+
+    // Measured 2026-10-15: fails in fm, hd and am. `MPXGenerator.init` hands
+    // the UNGATED config to `BasicRDSCoder(config:)`, so an engine built with
+    // en_rds on has an enabled coder in a mode without a composite (the live
+    // path gates it in `applyRDSRuntimeConfig`). Harmless while only the
+    // composite path calls the coder, but it breaks the "switched off in the
+    // engine" rule. Fix: build the coder from a copy with
+    // `enRDS = config.enRDS && ChainFeature.rds.applies(in: mode)`.
+    @Test
+    func rdsCoderIsBuiltDisabledOutsideMPX() {
+        for mode in AppConfig.OperatingMode.allCases {
+            let plain = gatingConfig(mode)
+            var keyOn = plain
+            keyOn.enRDS = true
+            let reference = renderCompositePath(MPXGenerator(config: plain, sampleRate: 192_000.0))
+            let builtOn = renderCompositePath(MPXGenerator(config: keyOn, sampleRate: 192_000.0))
+            if mode == .mpx {
+                #expect(builtOn != reference, "probe cannot see the RDS coder in MPX Output")
+            } else {
+                #expect(builtOn == reference,
+                        "\(mode.title): an engine built with en_rds on runs the RDS coder -- the construction gate is missing")
+            }
         }
     }
 
@@ -196,17 +264,27 @@ struct ModeGatingTests {
     @Test func ssbStereoIsInertOutsideMPX() {
         // "SSB stereo coder is not correctly gated": there is no stereo
         // encoder to lean outside MPX Output, so the flag must not reach the
-        // chain (nor allocate its Hilbert FIRs).
-        for mode in [AppConfig.OperatingMode.fm, .hd, .am] {
-            var plain = AppConfig()
-            plain.operatingMode = mode
-            plain.sampleRate = 192_000.0
+        // chain (nor allocate its Hilbert FIRs) -- at construction or on a
+        // live apply. 0.1 s covers the 511-tap Hilbert FIR's latency.
+        for mode in AppConfig.OperatingMode.allCases {
+            let plain = gatingConfig(mode)
             var ssb = plain
             ssb.ssbStereoEnabled = true
             ssb.ssbStereoAmount = 1.0
-            let a = renderAudioOnly(cfg: plain)
-            let b = renderAudioOnly(cfg: ssb)
-            #expect(a == b, "\(mode.title) output changed with SSB enabled -- the encoder is not gated")
+            let reference = renderCompositePath(MPXGenerator(config: plain, sampleRate: 192_000.0))
+            let builtOn = renderCompositePath(MPXGenerator(config: ssb, sampleRate: 192_000.0))
+            let live = MPXGenerator(config: plain, sampleRate: 192_000.0)
+            live.applyRuntimeConfig(MPXGenerator.makeRuntimeConfig(from: ssb))
+            let liveOn = renderCompositePath(live)
+            if mode == .mpx {
+                #expect(builtOn != reference, "probe cannot see SSB stereo in MPX Output")
+                #expect(liveOn != reference, "probe cannot see a live SSB enable in MPX Output")
+            } else {
+                #expect(builtOn == reference,
+                        "\(mode.title): an engine built with SSB on runs it -- the construction gate is missing")
+                #expect(liveOn == reference,
+                        "\(mode.title): a live apply switched SSB on -- applyRuntimeConfig is not gated")
+            }
         }
     }
 

@@ -42,6 +42,42 @@ struct AudioIOTab: View {
                 AudioIOEngineCardContent(model: model)
             }
         }
+        .onAppear { model.refreshDeviceLevels() }
+        .onChange(of: model.selectedInputUID) { model.refreshDeviceLevels() }
+        .onChange(of: model.selectedOutputUID) { model.refreshDeviceLevels() }
+    }
+}
+
+/// The device's own level in CoreAudio -- the Mac's counterpart of the Linux
+/// card mixer, read live. It sits between the composite and the exciter, so
+/// a DAC at -5 dB costs 5 dB of deviation that no meter in the app can see.
+/// "Set to 0 dB" puts the device at unity and makes the encoder re-assert it
+/// at start and every 5 s from then on.
+struct DeviceLevelRow: View {
+    let title: String
+    let level: CoreAudioDeviceVolumeMath.Display
+    let tooltip: String
+    let setUnity: () -> Void
+
+    var body: some View {
+        LabeledContent {
+            HStack(spacing: 10) {
+                Text(level.text)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(level.atUnity ? Color.primary : Color.orange)
+                Button("Set to 0 dB", action: setUnity)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!level.settable || level.atUnity)
+                Text(level.deviceName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        } label: {
+            SettingLabel(title: title, restartRequired: false)
+        }
+        .help(tooltip)
     }
 }
 
@@ -226,6 +262,14 @@ struct AudioIOInputCardContent: View {
                     SettingLabel(title: "Input Device", restartRequired: true)
                 }
 
+                if let level = model.deviceInputLevel {
+                    DeviceLevelRow(
+                        title: "Device Input Level",
+                        level: level,
+                        tooltip: "The input device's own level in CoreAudio, read live. Keep it at 0 dB and set the level with Input Gain, which is remembered per device. Set to 0 dB also makes the encoder hold it there.",
+                        setUnity: { model.setDeviceLevelToUnity(.capture) })
+                }
+
                 DoubleSliderRow(title: "Input Gain", value: Binding(
                     get: { model.inputGainDB },
                     set: { model.setInputGainLive($0) }
@@ -290,6 +334,14 @@ struct AudioIOOutputCardContent: View {
                 footnote: "Changing the device or channels restarts the engine.")
         } label: {
             SettingLabel(title: composite ? "MPX Output Device" : "Output Device", restartRequired: true)
+        }
+
+        if let level = model.deviceOutputLevel {
+            DeviceLevelRow(
+                title: "Device Output Level",
+                level: level,
+                tooltip: "The output device's own volume in CoreAudio, read live. It scales the finished composite on its way to the exciter, so anything below 0 dB costs deviation that no meter here can see. Keep it at 0 dB and calibrate with the levels below; Set to 0 dB also makes the encoder hold it there at start and every 5 s.",
+                setUnity: { model.setDeviceLevelToUnity(.playback) })
         }
 
         DoubleSliderRow(

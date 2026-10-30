@@ -165,7 +165,7 @@ struct CompositeClipper {
     private var detPair: [Float] = [0.0, 0.0]
     private var detOSBatch: [Float] = Array(repeating: 0.0, count: defaultFactor)
     // Gain: window-minimum target -> `LookaheadGainRamp` (instant-attack
-    // hold, 80 ms release, two cascaded moving averages spanning the window).
+    // hold, 25 ms release, two cascaded moving averages spanning the window).
     // The ramp arrives at the required gain exactly when the peak reaches the
     // clip kernel. Until 2026-10 an exponential attack (time constant
     // window / 4) followed by a 200 Hz one-pole reached only 81 % of the
@@ -177,11 +177,30 @@ struct CompositeClipper {
     private var lookaheadReleaseCoeff: Float = 0.0
     // Telemetry: minimum look-ahead gain with a 50 ms decay.
     private var lookaheadGainEnv: Float = 1.0
+    // Clip depth (2026-10 gain-structure review, C1). The look-ahead rides
+    // the composite down to `ceiling x depth`, not to the ceiling: only what
+    // exceeds `lookaheadDepthDB` above the ceiling is removed by the gain
+    // ride and the oversampled, guard-band-protected tanh kernel clips the
+    // rest. Until then the target was the ceiling itself, so 100 % of every
+    // overshoot was a gain ride and the kernel bent ceiling-pinned peaks by a
+    // constant 0.16 dB on every scenario: "Enable Composite Clipper" was a
+    // 2 ms look-ahead LIMITER with an 80 ms release and Final Drive was
+    // undone on dense programme (-4 dB RMS). 0 dB restores that behaviour.
+    private var lookaheadDepthLin: Float = 1.0
+    /// Look-ahead release in ms. 80 ms until 2026-10; with the kernel doing
+    /// the clipping the ride only has to catch the depth excess, so a short
+    /// release keeps the loudness the drive paid for.
+    static let defaultLookaheadReleaseMS: Float = 25.0
+    /// Hard range of `mpx_clipper_lookahead_depth_db` (AppConfig clamps the
+    /// same way).
+    static let maxLookaheadDepthDB: Float = 6.0
 
     mutating func configure(sampleRate: Float, thresholdDB: Float, ceilingDB: Float,
                             cancelAudio: Bool = false, stereoGuard: Float = 1.0,
                             cancelPilot: Bool = true, cancelRDS: Bool = true,
                             lookaheadMS: Float = 0.0,
+                            lookaheadDepthDB: Float = 0.0,
+                            lookaheadReleaseMS: Float = CompositeClipper.defaultLookaheadReleaseMS,
                             oversamplingFactor: Int = 16) {
         // Only accept 8 / 16 / 32 (AppConfig.sanitize() clamps the same way).
         let validFactor: Int
@@ -276,13 +295,27 @@ struct CompositeClipper {
         deqTail = 0
         deqSampleCounter = 0
         lookaheadDelayWriteIdx = 0
-        // Release time constant: 80 ms (hardcoded).
-        lookaheadReleaseCoeff = expf(-1.0 / (0.080 * sr))
+        // Release time constant (25 ms by default; 80 ms until 2026-10).
+        let releaseS = max(0.005, lookaheadReleaseMS) / 1000.0
+        lookaheadReleaseCoeff = expf(-1.0 / (releaseS * sr))
         ramp.configure(rampSamples: rampSamples(window: n), holdSamples: n,
                        releaseCoeff: lookaheadReleaseCoeff,
                        capacityRampSamples: rampSamples(window: cap))
         lookaheadGainEnv = 1.0
+        setLookaheadDepthDB(lookaheadDepthDB)
     }
+
+    /// Clip depth in dB above the ceiling that the look-ahead leaves to the
+    /// clip kernel (`mpx_clipper_lookahead_depth_db`, 0...6). A pure scalar
+    /// on the detector target, so it applies live with no state reset.
+    mutating func setLookaheadDepthDB(_ depthDB: Float) {
+        let d = clampf(depthDB, 0.0, Self.maxLookaheadDepthDB)
+        lookaheadDepthLin = powf(10.0, d / 20.0)
+    }
+
+    /// The level the look-ahead rides the composite down to: `ceiling x
+    /// depth`. Exposed for tests.
+    var lookaheadTargetLinear: Float { ceilingLin * lookaheadDepthLin }
 
     /// The longest gain ramp that still arrives in time: the detector sees
     /// the input through its own interpolator (late by its group delay) and
@@ -476,10 +509,13 @@ struct CompositeClipper {
                 deqSampleCounter += 1
             }
 
-            // 2. Required gain over the window, ramped (see `ramp`).
+            // 2. Required gain over the window, ramped (see `ramp`). The
+            //    target is `ceiling x depth`: the ride removes only what
+            //    exceeds the clip depth and leaves the rest to the kernel.
             let peakAhead = (deqHead != deqTail) ? deqValues[deqHead] : 0.0
-            let gTarget: Float = peakAhead > ceilingLin
-                ? ceilingLin / max(1e-6, peakAhead)
+            let rideTo = ceilingLin * lookaheadDepthLin
+            let gTarget: Float = peakAhead > rideTo
+                ? rideTo / max(1e-6, peakAhead)
                 : 1.0
             let g = ramp.push(gTarget)
             lookaheadGainEnv = min(g, 1.0 - (1.0 - lookaheadGainEnv) * peakDecayCoeff)

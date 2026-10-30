@@ -233,7 +233,10 @@ struct StageCoverageTests {
     /// Side gain at 8 kHz through a +12 dB PEQ peak at 8 kHz, for a side
     /// tone of `sideAmp` under a 200 Hz mid tone at 0.2.
     private func sideBoostThroughPEQ(sideAmp: Double) -> Double {
-        let off = Self.quietChain()
+        // The protector is an operator option since 2026-10 (default off);
+        // this test is about the stage, so both renders run it.
+        var off = Self.quietChain()
+        off.stereoImageProtectEnabled = true
         var on = off
         on.parametricEQEnabled = true
         on.peqB3FreqHz = 8_000.0; on.peqB3GainDB = 12.0; on.peqB3Q = 1.0

@@ -28,8 +28,10 @@ struct ControlSchemaTests {
         // Written by the card-mixer API (PATCH /api/mixer records the level
         // the card took), asserted by the engine; a direct config patch of a
         // dB the card cannot represent would be worse than no control.
-        "alsa_playback_volume_db": "set through PATCH /api/mixer, not as a widget",
-        "alsa_capture_volume_db": "set through PATCH /api/mixer, not as a widget",
+        "card_playback_volume_db": "set through PATCH /api/mixer, not as a widget",
+        "card_capture_volume_db": "set through PATCH /api/mixer, not as a widget",
+        "alsa_playback_volume_db": "pre-0.65 alias of card_playback_volume_db",
+        "alsa_capture_volume_db": "pre-0.65 alias of card_capture_volume_db",
         "rds_gaussian_enabled": "GUI hides it too; modulator internal",
         "rds_gaussian_bw_hz": "GUI hides it too; modulator internal",
         "rds_gaussian_taps": "GUI hides it too; modulator internal",
@@ -298,6 +300,8 @@ struct ControlSchemaTests {
             "mono_mode": .stereoProgram,
             "mono_bass_enabled": .stereoProgram,
             "mono_bass_freq_hz": .stereoProgram,
+            "stereo_image_protect_enabled": .stereoImage,
+            "stereo_image_max_side_ratio": .stereoImage,
             "multiband_link_strength": .stereoProgram,
             "hf_limiter_enabled": .hfLimiter,
             "hf_limiter_threshold_db": .hfLimiter,

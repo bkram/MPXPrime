@@ -184,6 +184,25 @@ struct ProcessingPrimeBassTab: View {
                     .disabled(!model.config.monoBassEnabled)
                 }
             }
+            // The stereo-image protector: a side/mid ratio limiter ahead of
+            // pre-emphasis. Always on until 2026-10; an operator option now,
+            // default off, and set-once, so both controls fold into Advanced
+            // (`AdvancedControls.keys`).
+            if ChainFeature.stereoImage.applies(in: model.config.operatingMode) {
+                Card(title: "Stereo Image") {
+                    AdvancedGroup {
+                        SettingToggle(
+                            "Protect Stereo Image", setting: model.setting(\.stereoImageProtectEnabled, .live),
+                            tooltip: "Holds the side (L-R) level under a multiple of the mid (L+R) level so a very wide or anti-phase source cannot over-deviate the stereo subcarrier. Off by default: every dynamics stage is stereo-linked, so on ordinary programme the only width left to limit is the source's own. Enable it where an exciter or studio-transmitter link needs the L-R held down.")
+                        DoubleSliderRow(
+                            title: "Max Side/Mid Ratio", setting: model.setting(\.stereoImageMaxSideRatio, .live),
+                            range: 1.0...3.0, format: "%.2f",
+                            tooltip: "Hard cap on the output side-to-mid level ratio while the protector is on. 1.00 holds the image to ordinary stereo; 1.55 (the former fixed setting) allows a wide image; 3.00 is nearly free. The protector also allows 16 % more than the source's own ratio, so ordinary stereo passes untouched.",
+                            defaultValue: model.resetValue(\.stereoImageMaxSideRatio))
+                        .disabled(!model.config.stereoImageProtectEnabled)
+                    }
+                }
+            }
         }
     }
 }
@@ -385,6 +404,12 @@ struct ProcessingLimiterTab: View {
                 range: 10...200, format: "%.0f ms",
                 tooltip: "Release of the limiter. Faster recovers loudness sooner but may pump; slower is cleaner but holds the gain reduction longer.",
                 defaultValue: model.resetValue(\.preEncodeReleaseMS)
+            ).disabled(disabled)
+            DoubleSliderRow(
+                title: "Stereo Link", setting: model.setting(\.preEncodeStereoLink, .live),
+                range: 0...1, format: "%.2f",
+                tooltip: "1 = both channels take the louder channel's gain. Lower lets the quieter channel keep more of its level while the louder one limits, at the cost of a brief image shift toward the quieter side.",
+                defaultValue: model.resetValue(\.preEncodeStereoLink)
             ).disabled(disabled)
             DoubleSliderRow(
                 title: "Look-Ahead", setting: model.setting(\.preEncodeLookaheadMS, .restart),
@@ -835,6 +860,11 @@ struct ProcessingCompositeClipperTab: View {
                     range: 0...5, format: "%.1f ms",
                     tooltip: "Predictive peak shaving ahead of the clipper. 0 ms is off; 2 ms is the recommended preset. Holds overshoot tighter than soft clipping alone, at the cost of the same added latency.",
                     defaultValue: model.resetValue(\.compositeClipperLookaheadMS)).disabled(disabled)
+                DoubleSliderRow(
+                    title: "Clip Depth", setting: model.setting(\.compositeClipperLookaheadDepthDB, .live),
+                    range: 0...6, format: "%.1f dB",
+                    tooltip: "How far above the ceiling the look-ahead lets the composite run before it rides the gain; the clip kernel clips that excess. 0 dB rides every overshoot away and the kernel never clips. Each Format Profile sets its own figure, measured against the ride and hi-hat distortion gates; deeper clipping costs high-frequency cleanliness and buys little loudness, because the final limiter rides what the guard bands restore.",
+                    defaultValue: model.resetValue(\.compositeClipperLookaheadDepthDB)).disabled(disabled)
                 LabeledContent("Look-Ahead Gain Reduction") {
                     LiveObservationView(telemetry: model.telemetry) { t in
                         Text(String(format: "%5.1f dB", Double(t.compositeClipperLookaheadGainReductionDBValue)))

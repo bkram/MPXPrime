@@ -142,6 +142,7 @@ enum AdvancedControls {
         "mpx_clipper_cancel_audio",
         "mpx_clipper_cancel_pilot",
         "mpx_clipper_cancel_rds",
+        "mpx_clipper_lookahead_depth_db",
         "mpx_clipper_lookahead_ms",
         "mpx_clipper_oversampling",
         "mpx_clipper_stereo_guard",
@@ -168,6 +169,8 @@ enum AdvancedControls {
         "primebass_subharmonics_amount",
         "primebass_subharmonics_enabled",
         "program_lowpass_hz",
+        "stereo_image_max_side_ratio",
+        "stereo_image_protect_enabled",
         "wideband_agc_attack_ms",
         "wideband_agc_bass_desensitize",
         "wideband_agc_k_weighting",
@@ -235,7 +238,9 @@ enum ChainFeature: String, CaseIterable, Sendable {
     case monitorPath
     /// Pre-emphasis as an operator choice (50 / 75 us).
     case preemphasis
-    /// Stereo-image protection ahead of an FM modulator.
+    /// Stereo-image protection ahead of an FM modulator
+    /// (`stereo_image_protect_enabled` / `stereo_image_max_side_ratio`; an
+    /// operator option, default off, since 2026-10).
     case stereoImage
     /// The digital true-peak ceiling.
     case digitalCeiling

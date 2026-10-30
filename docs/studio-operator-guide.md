@@ -123,8 +123,10 @@ reboot) moves it, so you do not need `alsactl store`. The card's capture side
 often carries analogue gain of its own -- the reference USB card showed +6 dB on
 one box and +10 dB on another -- which is why
 an input calibrated on macOS lands at a different level here; set the card
-input to 0 dB and calibrate with `Input Gain`. The controls do not appear on
-macOS, where the system sound settings own this.
+input to 0 dB and calibrate with `Input Gain`. On macOS the same card shows
+the output and input devices' own CoreAudio volume (since 2026-10; see
+"Preparing the audio devices" below), and the app's `Audio I/O` section shows
+them as Device Output Level / Device Input Level.
 
 ### Render load
 
@@ -208,13 +210,13 @@ This is the minimum to hear MPX Prime Studio processing your audio and feeding a
 
 ### Preparing the audio devices (macOS Audio MIDI Setup)
 
-macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime Studio tells the engine what rate it wants, but the device-side format and volume are owned by the OS -- wrong values there silently corrupt the composite before it leaves the Mac.
+macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applications/Utilities/Audio MIDI Setup.app`). MPX Prime Studio sets the output device's sample rate itself and shows and sets the devices' own volume (see item 3 below); the bit depth is the one device-side value that still lives only in Audio MIDI Setup.
 
 **Output device** (feeding your exciter / SDR / RF generator):
 
 1. **Format / sample rate**: set to **192 000 Hz**. Match what the engine is configured to (`sample_rate = 192000` in INI). If the device runs at a different rate Core Audio inserts a sample-rate converter that cannot represent the upper composite band cleanly. **Required for RDS** -- the 57 kHz RDS subcarrier needs at least ~119 kHz Nyquist; 176.4 kHz is the lowest device rate that carries it correctly, 192 kHz is the canonical default. On start MPX Prime Studio now **sets the output device to the configured rate itself** (and restores the device's prior rate on stop); if the device can't run that rate it surfaces a routing note telling you to set it in Audio MIDI Setup, rather than letting Core Audio quietly resample.
 2. **Bit depth**: **24-bit integer or 32-bit float**. Either is fine; 32-bit float is the AVAudioEngine native format. 16-bit also *works* for the composite (96 dB SNR is well above any FM receiver's noise floor and you cannot hear the difference at the listener), but 24/32-bit is best practice -- no extra dither/truncation step at the chain output, and headroom for downstream tools that further process the composite (resamplers, SDR DSPs).
-3. **Volume / output gain**: **100 % (0 dB) on every channel**. This is the critical one. The macOS volume slider is post-mix -- it scales the engine's already-finalised composite. If output volume is at, say, 75 %, the FM exciter receives a signal at 0.75x amplitude and your modulation undershoots by ~2.5 dB; the loudness target the chain just enforced is silently wrong. Audio MIDI Setup -> device -> "Master Stream" or per-channel volume sliders. Lock these at unity for any broadcast use.
+3. **Volume / output gain**: **0 dB (100 %)**. This is the critical one. The device's own volume is post-mix -- it scales the engine's already-finalised composite on its way to the exciter, and no meter in the app can see it. A DAC at -5 dB delivers a composite 5 dB low, so a station that reads 75 kHz on the Deviation meter is on air at 42 kHz. Since 0.65 the app reads this level itself: the `Audio I/O` Output card shows **Device Output Level** (the device's own dB and slider position, read live from CoreAudio) with a **Set to 0 dB** button, and the web dashboard's Sound Card Mixer card shows the same row as Card Output Level. Pressing Set to 0 dB (or moving the dashboard slider) also makes the encoder **hold** that level: it is re-asserted at every engine start and every 5 s, so nothing else on the Mac can quietly take it down again (`card_playback_volume_db` in the INI; blank it to hand the device back to macOS). A new installation leaves the device unmanaged, but when the engine starts with the output below -0.1 dB or muted the status line says so ("DX3 Pro+ output volume is -5.0 dB in CoreAudio; the composite reaches the exciter 5 dB low. Set it to 0 dB here or in Audio MIDI Setup."). A device without a volume control in CoreAudio (BlackHole) shows no row; there is nothing to set.
 
 **Device selection is remembered by UID and name.** Each selected input / output / monitor device is stored by its Core Audio UID *and* its name (`input_device_uid` / `input_device_name`, etc.). At launch the device is matched by UID first, then by name -- so moving a USB interface to a different port (which can change its UID) still re-finds the same device. If a remembered device is simply unplugged, MPX Prime Studio **keeps** your selection (and shows a status note) instead of silently switching to whatever device is first in the list; reconnect it, or pick another.
 
@@ -222,7 +224,7 @@ macOS configures Core Audio device parameters via **Audio MIDI Setup** (`/Applic
 
 1. **Format / sample rate**: **48 000 Hz, 24-bit** is the recommended sweet spot. The reason is the dual-rate audio chain (default-on since 0.30) -- the entire audio domain (multiband, AGC, EQ, image protection, pre-emphasis, pre-encode limiter) runs at 48 kHz internally, then upsamples to the MPX rate at the stereo encoder boundary. Setting the input device to 48 kHz means the source audio passes into the audio domain without any Core Audio upsampling on the way in (no information gain from higher input rates anyway -- audio source material has zero useful content above ~20 kHz). 44.1 kHz also works fine; Core Audio's input-side SRC handles the small upsample to 48 kHz cleanly.
 2. **Bit depth**: **24-bit** is recommended. 16-bit is fine for the audio itself, but the chain runs in 32-bit float internally through many stages and 24-bit input keeps the noise margin below the audible threshold even under hot processing.
-3. **Volume**: per-device -- set whatever produces a sensible input level on the `IN L/R` meter at the top of the app. Aim for peaks around -12 to -6 dBFS on the input meter so the AGC has something to work with.
+3. **Volume**: keep the device's own input level at **0 dB** and set the level with `Input Gain`, which is remembered per device. Where the input device has an input volume in CoreAudio (an audio interface; BlackHole has none) the Input card shows **Device Input Level** with its own Set to 0 dB button, and the dashboard shows it as Card Input Level; the encoder holds a level set there like the output's. Aim for peaks around -12 to -6 dBFS on the Post input meter so the AGC has something to work with.
 
 If your output device is BlackHole or a virtual loopback, the same rules apply -- check both the loopback device's format and the receiving app's input format. Mismatch there is the #1 cause of "the chain looks right but the receiver sounds wrong" reports.
 
@@ -235,11 +237,11 @@ Open `Audio I/O` -> `Operating Mode` and set `Pre-emphasis` to `75 us` if you ar
 
 **3. Launch and Start.** Open MPX Prime Studio, pick your input and output devices in the sidebar's `Audio I/O` section, then press `Start` (Cmd-Return) on the toolbar. The status bar at the top of the window says whether the engine is Running, what the Source and Rate are and which operating Mode is selected. The `Monitoring` page (Go > On Air, Cmd-1) shows the live levels, peak deviation in kHz, modulation as a percentage of the configured Composite Deviation, gain reduction, the composite budget and the pilot / RDS injection -- if those move with your audio, the chain is processing.
 
-**4. Calibrate composite output level.** On `Monitoring`, watch the `Composite Budget` row in the Headroom card (the margin in dB, then its state):
+**4. Calibrate composite output level.** On `Monitoring`, watch the `Composite Budget` row in the Headroom card (the whole-composite margin in dB, then its state). The state reads the headroom between the audio composite and the audio budget -- the part of the composite left after the pilot and RDS reservation -- not the whole-composite margin, which sits within a few hundredths of a dB of zero by design whenever the composite clipper is working:
 
-- **Safe**: nominal modulation, headroom available
-- **Tight**: near 100% modulation, fine for normal broadcast
-- **Risk**: peaks exceeding 100% -- back off `MPX Output Level` on the `Audio I/O` Output card
+- **Safe**: the audio composite has at least 0.5 dB to spare below its budget -- quiet or dynamic programme, or Final Drive set low
+- **Tight**: the audio composite is within 0.5 dB of its budget -- the composite clipper is holding the peaks on the ceiling. This is the normal operating point on dense programme; nothing to correct
+- **Risk**: a fault, not a loud programme -- the final clamp engaged after the pilot and RDS were added (the subcarriers were clipped) or the configuration leaves no audio budget at all (pilot and RDS levels too high for the deviation). Lower the pilot or RDS level
 
 `Final Drive` (on the `Loudness and Output` page) controls perceived loudness; `MPX Output Level` (on the `Audio I/O` Output card, remembered per device) calibrates the final voltage to your exciter / SDR. Use `Final Drive` for loudness and `MPX Output Level` only for hardware calibration.
 
@@ -355,10 +357,12 @@ The sidebar's **Audio I/O** section (on Linux: the web dashboard's **Audio I/O**
 Each device row on the Audio I/O page is a button showing the device and its
 channels, for example `Inputs 3, 4, 48 kHz`. Click it to pick the device
 from a menu that lists each one with its channel count and current rate,
-then tick one or two channel boxes underneath. The lower-numbered channel is
-left, and a single box is mono on that channel. This is how a 4-, 8- or
-16-channel interface is used: feed the exciter from outputs 7 and 8, say,
-and take the programme from inputs 3 and 4. Changing the input or output
+then a pair from the **Channels** menu underneath: 1-2, 3-4, 5-6 and so on.
+Left is the first channel of the pair, right the second. This is how a 4-,
+8- or 16-channel interface is used: feed the exciter from outputs 7-8, say,
+and take the programme from inputs 3-4. A mono channel or a non-adjacent
+pair can still be set in the INI (`3`, or `1,4`); the menu then shows it
+marked "from settings". Changing the input or output
 device or channels restarts the engine. The Monitor's apply live. The keys
 behind them are listed in the [Settings
 Reference](studio-settings-reference.md#device-channels-multichannel-interfaces).
@@ -449,10 +453,11 @@ Don't use the AGC's `Target Level` as a loudness knob. It tunes the chain's work
 **3. Set Final Drive for the loudness you want.** `Sound` -> `Loudness and Output` -> `Final Drive` is the primary loudness lever. It drives the audio composite into the composite clipper -- higher drive = harder clipping = louder, denser, but also harsher. Range 0..12 dB.
 
 - Pick the `Broadcast Preset` matching your content (Balanced Music / CHR-Dance / Punchy / Speech-Talk) -- that sets a sensible Final Drive starting point along with matched AGC tuning.
-- Nudge from there. Watch **Composite Clipper GR** in the Monitoring page's Headroom card:
-  - 0 to 3 dB occasional GR = clean, dynamic. Good for talk and acoustic music.
-  - 3 to 6 dB regular GR = competitive loudness, contemporary radio sound.
-  - Sustained 6+ dB = clipper is the loudness ceiling, you're trading dynamics and HF cleanliness for level.
+- Nudge from there. Watch **Composite Clipper GR** in the Monitoring page's Headroom card: it is the clip kernel's gain reduction. The clipper's 2 ms look-ahead rides the composite down to the ceiling plus the profile's `Clip Depth` (Composite Clipper page, under Advanced) and the kernel clips that depth, so the readout follows the drive up to the depth and the look-ahead readout takes over above it. Read the drive off the signal as well:
+  - `Composite Budget` reads **Safe** most of the time = clean, dynamic. Good for talk and acoustic music.
+  - `Composite Budget` reads **Tight** on the loud passages and **Safe** between them = competitive loudness, contemporary radio sound.
+  - **Tight** all the time with the `Audio Limiter GR` (pre-encode) pulling several dB = the clipper is the loudness ceiling; you are trading dynamics and HF cleanliness for level.
+  - **Composite Clipper GR** near the profile's Clip Depth with the **Look-Ahead Gain Reduction** (Composite Clipper page) also moving = the programme is driven past the depth and the ride is taking the rest; lower Final Drive or raise Clip Depth, measuring the hi-hat distortion gate (`--verify-hf-transients`) before you keep a deeper setting.
 
 Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudness *inside* the chain; MPX Output Level and Line Output adjust the *voltage* leaving the Mac.
 
@@ -461,9 +466,9 @@ Final Drive is not the same thing as MPX Output Level. Final Drive shapes loudne
 - `MPX Output Level` (-18..0 dB, attenuation-only in composite mode) trims the whole composite -- pilot and RDS included -- so it is the **deviation calibration**: with the exciter's own input sensitivity fixed, trim it until the exciter shows exactly 100 % modulation (75 kHz) on peaks. Positive values are deliberately not offered: they would squeeze the audio budget (deeper clipping) and push pilot/RDS above their set injection without adding loudness.
 - `Line Output` (-40..0 dBFS) sets the absolute DAC level of 100 % modulation -- the **input-sensitivity match** to the exciter. Keep the OS/interface volume at 0 dB and calibrate here. 0.0 dBFS is the classic full-scale convention and the maximum a converter can produce; an exciter that is still under-driven with both knobs at 0 needs its own input sensitivity raised (menu/trimmer) -- no software knob can exceed full scale.
 - Watch the **DAC Peak** readout on the same card (the post-both-trims level at the converter) and the `Composite Budget` row on `Monitoring`:
-  - **Safe** -- nominal modulation, headroom available
-  - **Tight** -- near 100 % modulation, fine for normal broadcast
-  - **Risk** -- peaks exceeding 100 %, back off
+  - **Safe** -- the audio composite has at least 0.5 dB in hand below its budget
+  - **Tight** -- the audio composite is on its budget; the normal operating point on dense programme
+  - **Risk** -- the final clamp engaged after pilot / RDS injection, or the configuration leaves no audio budget; lower the pilot or RDS level
 - On the exciter side: aim for **100 % modulation on peaks** on its modulation meter, or match the input-level recommendation in its manual. *Don't* use these knobs to chase loudness -- that's Final Drive's job.
 
 The deviation readout stays put while you calibrate: it reads the modulation domain (the trims divided back out), so trimming exciter drive changes DAC Peak and what the exciter sees, not the displayed kHz.
@@ -487,7 +492,7 @@ For one-click "make this sound right", MPX Prime Studio ships five complete Form
 shown only while the slider is away from its reset value; double-clicking
 the slider's name does the same. A control resets to the value the ACTIVE
 Format Profile gives it, so on a Music - Loud station Final Drive goes back
-to 8 dB, not to Music - Clean's 4 dB. Controls no profile sets reset to the
+to 8 dB, not to Music - Clean's 3.5 dB. Controls no profile sets reset to the
 shipped default: Input Gain, Output Level, Line Output and Monitor Level to
 0 dB, the HD true-peak ceiling to -1 dBTP, the final clipper drive to 6 dB.
 A page's own Reset button (for example `Reset AGC`) uses the same values. The shipped defaults are Music -
@@ -497,14 +502,15 @@ Clean, so on a fresh install the two agree.
 
 | Profile | Character | AGC target | Drive | Extras |
 |---|---|---|---|---|
-| **Music -- Clean** (default) | Transparent levelling, honest peaks, low clipper work | -16 dB | +4 dB | Bass Clipper at the defaults (every vendor structure bass-clips; idle at this drive) |
+| **Music -- Clean** (default) | Transparent levelling, honest peaks, low clipper work | -16 dB | +3.5 dB | Bass Clipper at the defaults (every vendor structure bass-clips; idle at this drive) |
 | **Music -- Loud** | Competitive loudness into the clipper | -15 dB | +8 dB | Bass Clipper, PrimeBass, Band Limiter, presence tilt (+1.5 dB at 80 Hz, +1 dB at 3 kHz), mono bass at 115 Hz |
 | **Music -- Dense** (new 0.65) | The top density tier: dance / urban / CHR-dense | -15 dB | +9 dB | Dance multiband (heavy), Bass Clipper, PrimeBass, Band Limiter, mono bass at 110 Hz |
-| **Speech / Talk** | Voice-optimized: fast, dense multiband that evens out substandard material | -14 dB | +4.5 dB | Phase rotator on |
-| **Classical / Wide Dynamics** | Dynamic-preserving: a gentle 2:1-style ride, at most 6 dB of lift, 3 s release | -18 dB | +3 dB | Light multiband, mono bass at 90 Hz |
+| **Speech / Talk** | Voice-optimized: fast, dense multiband that evens out substandard material | -14 dB | +2.8 dB | Phase rotator on |
+| **Classical / Wide Dynamics** | Dynamic-preserving: a gentle 2:1-style ride, at most 6 dB of lift, 3 s release | -18 dB | +5 dB | Light multiband, mono bass at 90 Hz |
 
-Every profile turns Advanced Dynamics on, with its target 2 dB below the
-profile's AGC target and its density from the profile's multiband intensity;
+Every profile turns Advanced Dynamics on, with its target at the profile's
+AGC target (2 dB lower on Music - Loud and Music - Dense, which run
+PrimeBass) and its density from the profile's multiband intensity;
 the AGC and Multiband settings the profile also carries apply when you switch
 Advanced Dynamics off. Its HF Limiter thresholds sit 0.5 dB above its Audio
 Limiter threshold (the top-band threshold 1 dB tighter). A fresh
@@ -514,13 +520,13 @@ Pick once, tune as needed. The selected profile is stored as `format_profile_id`
 
 ## Loudness and the final stage
 
-The `Sound` -> `Loudness and Output` page has two cards: **Loudness** (Broadcast Preset, Final Drive) and **Safety Limiter** (`Enable Safety Limiter`; `Threshold` in dBFS, `Enable Look-Ahead` and `Look-Ahead` under Advanced -- all restart-class, so `Reset Loudness and Output` restarts a running engine). `Composite Deviation` is on the `Audio I/O` Output card (MPX Output only) and applies live. The `Audio Limiter` page handles the pre-encode peak limiter on its own.
+The `Sound` -> `Loudness and Output` page has two cards: **Loudness** (Broadcast Preset, Final Drive) and **Safety Limiter** (`Enable Safety Limiter`; `Threshold` in dBFS, `Enable Look-Ahead` and `Look-Ahead` under Advanced -- all restart-class, so `Reset Loudness and Output` restarts a running engine). `Composite Deviation` is on the `Audio I/O` Output card (MPX Output only) and applies live. The `Audio Limiter` page handles the pre-encode peak limiter on its own: `Enable Audio Limiter`, `Threshold`, `Release`, `Look-Ahead` and, since the 2026-10 overhaul, `Stereo Link` (`pre_encode_stereo_link`, 0-1, default 1, live). At 1 both channels take the louder channel's gain, so the image never moves while the limiter works; below 1 the quieter channel keeps more of its level while the louder one limits, at the cost of a brief image shift toward the quieter side. At the shipped profiles the Audio Limiter is idle on every verifier scenario (the composite clipper after Final Drive is the peak controller), so the control changes nothing audible there; it is for stations that run the limiter harder.
 
 - `Broadcast Preset`: loads a matched AGC + final-stage starting point
 - `Final Drive`: drives the composite clipper harder or softer
 - `MPX Output Level`: final output calibration, not the main loudness control
 
-**How the final stage controls peaks (0.45).** The composite clipper is the loudness stage; its `Threshold` and `Ceiling` (Composite Clipper page, `mpx_clipper_threshold_db` / `mpx_clipper_ceiling_db`) are read against the *audio-composite budget* -- the part of the composite left after the pilot and RDS reservation -- with the Ceiling landing exactly on that budget, so the composite uses all of it and your calibrated deviation does not move. The reservation is the nominal on-air peak of each service (the pilot level plus the RDS injection), so pilot and RDS fit at every allowed setting; at the defaults the audio sits about 0.3 dB lower than before this rule, more at high pilot or RDS levels. `Composite Deviation` is the peak target of the WHOLE multiplex: at 50 kHz the complete composite, pilot and RDS included, peaks at 50 kHz; above 75 kHz the budget stays at full scale. The `Composite Budget` margin is still measured against 75 kHz, so at 50 kHz it reads about 4 dB with the clipper at work. Behind the clipper, the Safety Limiter (look-ahead) rides down the small in-band overshoot the clipper's pilot / stereo / RDS guard protection leaves (about 1 dB of gain riding on the densest programme is normal), and the always-on safety soft-clips sit idle behind both -- since 0.45 the limiter's detector looks at every sample inside its 5 ms window, so nothing above its threshold reaches the soft-clips and the `Safety Clip` readout stays at 0.0 on dense programme (earlier 0.45 builds leaked up to about 1 dB there while the limiter reported almost no gain reduction). Before 0.45 the soft-clips ran ahead of the clipper at a lower threshold and did all the clipping themselves -- the cause of the hi-hat / cymbal distortion field report; `--verify-hf-transients` measures that this is no longer the case.
+**How the final stage controls peaks (0.45).** The composite clipper is the loudness stage; its `Threshold` and `Ceiling` (Composite Clipper page, `mpx_clipper_threshold_db` / `mpx_clipper_ceiling_db`) are read against the *audio-composite budget* -- the part of the composite left after the pilot and RDS reservation -- with the Ceiling landing exactly on that budget, so the composite uses all of it and your calibrated deviation does not move. The reservation is the nominal on-air peak of each service (the pilot level plus the RDS injection), so pilot and RDS fit at every allowed setting; at the defaults the audio sits about 0.3 dB lower than before this rule, more at high pilot or RDS levels. `Composite Deviation` is the peak target of the WHOLE multiplex: at 50 kHz the complete composite, pilot and RDS included, peaks at 50 kHz; above 75 kHz the budget stays at full scale. The `Composite Budget` margin is still measured against 75 kHz, so at 50 kHz it reads about 4 dB with the clipper at work. Behind the clipper, the Safety Limiter (look-ahead) rides down the small in-band overshoot the clipper's pilot / stereo / RDS guard protection leaves (about 1 dB of gain riding on the densest programme is normal), and the always-on safety soft-clips sit idle behind both -- since 0.45 the limiter's detector looks at every sample inside its 5 ms window, so nothing above its threshold reaches the soft-clips and the `Safety Clip` readout stays at 0.0 on dense programme (earlier 0.45 builds leaked up to about 1 dB there while the limiter reported almost no gain reduction). Since the 2026-10 overhaul the detector reads the 4x true peak, so the peaks between samples -- the ones the exciter sees and an off-air measurement showed 0.35 dB above the sample budget -- are held to the budget as well. The clipper's own look-ahead no longer rides every overshoot away: `Clip Depth` (Composite Clipper page, Advanced; `mpx_clipper_lookahead_depth_db`, 0-6 dB) is how far above the ceiling the programme may run before the ride starts, and the clip kernel clips that part. Every Format Profile sets 1.0 dB, the deepest setting that keeps the hi-hat distortion gate with 2 dB to spare on the music profiles (Classical used 2.0 dB until its drive was raised to 5 dB in the 2026-10 levelling work, where 2.0 dB cost the gate's cleanest scenario 6 dB); 0 dB turns the stage back into a look-ahead limiter, which is what every build before the overhaul was (the kernel read 0.16 dB at any drive and Final Drive was undone on dense programme). Before 0.45 the soft-clips ran ahead of the clipper at a lower threshold and did all the clipping themselves -- the cause of the hi-hat / cymbal distortion field report; `--verify-hf-transients` measures that this is no longer the case.
 
 Included presets:
 
@@ -535,7 +541,7 @@ The Monitoring page's Headroom card shows:
 - `Composite Clipper GR`: live composite clipper gain reduction
 - `Safety Limiter GR`: final safety limiter gain reduction
 - `Safety Clip`: how far the composite reached the 1x safety soft clip (0.0 in normal operation)
-- `Composite Budget`: remaining composite headroom in dB, then `Safe`, `Tight` or `Risk`
+- `Composite Budget`: remaining whole-composite headroom in dB (within a few hundredths of a dB of zero when the clipper is working, by design), then `Safe`, `Tight` or `Risk` read against the AUDIO budget (see step 4 of the Quick Start)
 - `Multiplex Power` and `BS.412 GR`: the BS.412 reading (see below)
 - `Bad Input`: non-finite input samples replaced with silence
 
@@ -555,24 +561,26 @@ In MPX Output, Monitoring also shows the composite calibration:
 
 Both stages are loudness / regulatory tools and both visibly cost stereo image and high-frequency detail when engaged. If you do not need them, leave them off -- the chain still produces a fully compliant FM composite.
 
-- `BS.412` (`Sound` -> `BS.412`): only required if you operate under EU power-limiting rules (a cap on average multiplex power over any 60 seconds). Outside that regulatory context, leave `Enable BS.412` off -- it actively pulls level back over long windows and dulls dynamics. When you do need it, the one control is `Ceiling`, in **dBr**: **0 dBr is the limit the Recommendation sets**, so 0.0 is the setting for compliance and a negative value is a safety margin below it. It measures the whole signal you transmit, pilot and RDS included, and it keeps measuring even when the limiter is switched off, so turning it on acts immediately instead of waiting a minute. Two readouts in the Monitoring page's Headroom card tell you where you are: **Multiplex Power** shows the figure in dBr once a full minute has been observed, and shows `42 / 60 s` while it is still filling. **BS.412 GR** shows how much it is holding the audio down. While the Test Tone is running the limiter steps aside so the tone keeps its calibrated level, and the readout says `Suspended (tone)` -- do not read that as compliant. If it says `Pilot and RDS over budget`, your pilot and RDS injection alone exceed the ceiling and no amount of audio reduction can fix it; lower the injection or raise the ceiling. Before 0.65 this control was labelled `Threshold` and read in a different unit that did not correspond to the standard; an upgraded configuration adopts the standard's 0 dBr ceiling.
+- `BS.412` (`Sound` -> `BS.412`): only required if you operate under EU power-limiting rules (a cap on average multiplex power over any 60 seconds). Outside that regulatory context, leave `Enable BS.412` off -- it holds the average power of the whole multiplex to the ceiling, which on dense programme costs several decibels of loudness. When you do need it, the one control is `Ceiling`, in **dBr**: **0 dBr is the limit the Recommendation sets**, so 0.0 is the setting for compliance and a negative value is a safety margin below it. It measures the whole signal you transmit, pilot and RDS included, and it keeps measuring even when the limiter is switched off, so turning it on acts immediately instead of waiting a minute. Two readouts in the Monitoring page's Headroom card tell you where you are: **Multiplex Power** shows the figure in dBr once a full minute has been observed, and shows `42 / 60 s` while it is still filling. **BS.412 GR** shows how much it is holding the audio down. The limiter rides the whole minute's budget rather than every second: loud seconds pass hotter when quieter ones have left room, so on varied programme **Multiplex Power** settles within a few tenths of a decibel of the ceiling instead of 1 to 3 dB under it, and the GR moves gently with the programme instead of parking at the loudest second's value. After a long quiet passage, a loud passage settles about half a decibel under the ceiling for the rest of that first minute while the limiter repays its first seconds of lag -- that is the minute's integral being held, not a fault. A short loud burst is held while it lasts and the programme after it is back on the ceiling within about three seconds, not held down for the rest of the minute. While the Test Tone is running the limiter steps aside so the tone keeps its calibrated level, and the readout says `Suspended (tone)` -- do not read that as compliant. If it says `Pilot and RDS over budget`, your pilot and RDS injection alone exceed the ceiling and no amount of audio reduction can fix it; lower the injection or raise the ceiling. Before 0.65 this control was labelled `Threshold` and read in a different unit that did not correspond to the standard; an upgraded configuration adopts the standard's 0 dBr ceiling.
 - `Composite Clipper` (`Sound` -> `Composite Clipper`): trades stereo image and HF cleanliness for raw loudness. Leave `Enable Composite Clipper` off when loudness is not the priority. If you do enable it, the **Protection** controls under Advanced let you choose what to keep clean:
   - `Protect Stereo Pilot`, `Protect RDS` -- leave on (defaults). These keep the 19 kHz pilot and 57 kHz RDS regions clean of clip IM.
-  - `Protect Stereo Subcarrier` (shown as 0-100 %, stored as `mpx_clipper_stereo_guard` 0.00-1.00; since 0.45 a share instead of an on/off toggle, the old `mpx_clipper_cancel_stereo = True/False` is read as 1.00/0.00) -- how much of the clipper's distortion is kept out of the 23-53 kHz stereo (L-R) subcarrier. At 100 % the subcarrier passes exactly as it went in, so HF stereo separation is preserved but the clipper only ever removes the mono share of a peak and the Safety Limiter rides whatever overshoot that leaves. At 0 % the clipper clips the whole composite the way Orban, Omnia and Stereo Tool do: the most loudness per dB of drive and the least HF separation on dense programme. Values in between blend. The shipped default (100 %) is picked from the `--verify-stereo-guard` sweep (see Verification), which prints clipper and Final-MPX limiter duty, peak, deviation, 10 / 14 kHz separation, the encoder-side M/S balance at 14 kHz and the hi-hat / ride HF SINAD for every share: on Music - Loud the share makes no measurable difference, and on a hot chain 100 % buys about 3 dB of decoded hi-hat cleanliness for about 5 dB of 14 kHz tone separation. Run the sweep on your own INI before moving the slider.
+  - `Protect Stereo Subcarrier` (shown as 0-100 %, stored as `mpx_clipper_stereo_guard` 0.00-1.00; since 0.45 a share instead of an on/off toggle, the old `mpx_clipper_cancel_stereo = True/False` is read as 1.00/0.00) -- how much of the clipper's distortion is kept out of the 23-53 kHz stereo (L-R) subcarrier. At 100 % the subcarrier passes exactly as it went in, so HF stereo separation is preserved but the clipper only ever removes the mono share of a peak and the Safety Limiter rides whatever overshoot that leaves. At 0 % the clipper clips the whole composite the way Orban, Omnia and Stereo Tool do: the most loudness per dB of drive and the least HF separation on dense programme. Values in between blend, and the blend is not a compromise: the clipper's distortion arrives in short bursts at the crests of the 38 kHz subcarrier, and a receiver decodes about twice as much of such a burst from the stereo subcarrier as from the mono part, so removing HALF of the subcarrier share is what cancels in the quiet channel. The shipped default is therefore **50 %** (since the 2026-10 overhaul; 100 % before): on Music - Loud, programme panned hard left decodes with 60 dB or more of separation in every band that carries programme against 25 dB at 100 % and 27 dB at 0 %, and a left-only 14 kHz tone with 43 dB against 25 dB. The price is about 3 dB of ride-cymbal cleanliness at the same clip depth. The figures come from the `--verify-stereo-guard` sweep (see Verification), which prints clipper and Final-MPX limiter duty, peak, deviation, 10 / 14 kHz separation, the encoder-side M/S balance at 14 kHz, the hi-hat / ride HF SINAD and the programme-crosstalk table for every share. Run the sweep on your own INI before moving the slider.
   - `Protect Audio Highs` -- off by default for maximum loudness. Turn on to recover audible HF detail at the cost of some loudness when the clipper is driven hard.
 
 All of these are exposed in the GUI; no INI editing is required.
 
 ## Bass and stereo image
 
-Mono Bass lives on the `Sound` -> `PrimeBass` page (its own card below the Enhancement card -- both are post-multiband bass-domain controls): it collapses low-frequency side energy below a configurable crossover, protecting deviation and FM mono compatibility. Every shipped Format Profile keeps it on (140 Hz for Clean / Speech / Classical, 115 Hz for Loud). The stereo widener that used to share a tab with it was **removed in 0.50** -- measured on air as adding nothing beneficial; the always-on stereo-image protection stage (which used to scale with the widener's Width) keeps its former default behaviour. An INI that still carries `stereo_widen_*` keys loads fine; they are ignored.
+Mono Bass lives on the `Sound` -> `PrimeBass` page (its own card below the Enhancement card -- both are post-multiband bass-domain controls): it collapses low-frequency side energy below a configurable crossover, protecting deviation and FM mono compatibility. Every shipped Format Profile keeps it on (110 Hz for Clean, Speech and Dense, 115 Hz for Loud, 90 Hz for Classical; Clean and Speech were 140 Hz until 2026-10-30). The stereo widener that used to share a tab with it was **removed in 0.50** -- measured on air as adding nothing beneficial. An INI that still carries `stereo_widen_*` keys loads fine; they are ignored.
 
 Recommended starting point:
 
 - `Enable Mono Bass`: on
-- `Mono Below`: `110-140 Hz`
+- `Mono Below`: `90-115 Hz` (the profiles: 110 Hz on Music -- Clean, Speech and Music -- Dense, 115 Hz on Music -- Loud, 90 Hz on Classical; 140 Hz is the high end of broadcast practice and was the default until 2026-10-30)
 
-This keeps bass more mono-compatible while leaving the upper image open enough for FM. The split is linear-phase and sums flat: side bass is about 33 dB down at 60 Hz with a 140 Hz corner, nothing above the corner is boosted, and it adds about 1070 / corner-Hz milliseconds of latency (8 ms at 140 Hz, 10 ms at 110 Hz).
+This keeps bass more mono-compatible while leaving the upper image open enough for FM. The split is linear-phase and sums flat: side bass is 6 dB down at the corner and about 33 dB down at 60 Hz with a 140 Hz corner (less with a lower corner, which is the point of lowering it), nothing above the corner is boosted, and it adds about 1070 / corner-Hz milliseconds of latency (10 ms at 110 Hz, 8 ms at 140 Hz).
+
+**Stereo-image protection** (the `Stereo Image` card under the Mono Bass card, both controls under Advanced; `stereo_image_protect_enabled`, `stereo_image_max_side_ratio`) is a side/mid level limiter ahead of pre-emphasis: it holds the side (L-R) envelope under `Max Side/Mid Ratio` times the mid (L+R) envelope, or under 1.16 times the source's own ratio where that is higher, so a very wide or anti-phase source cannot over-deviate the stereo subcarrier. It was always on until the 2026-10 overhaul, with the former widener's default baked in, and it is **off by default now**: the widener it guarded is gone, every remaining dynamics stage is stereo-linked, and the only width left for it to limit was the source's own -- the stereo audit measured an anti-phase tone losing 24 dB of level against 1.4 dB for a mono tone at the same level, and very wide material clamped to a 1.55 side/mid ratio whatever the source did. Leave it off unless an exciter or studio-transmitter link needs the L-R held down; when you do enable it, `Max Side/Mid Ratio` sets the cap (1.55 is the former behaviour, 1.00 holds the image to ordinary stereo), pure-side content now passes untouched (the stage has no mid to compare against), and its reference is delay-matched to the processing so the end of a wide passage no longer ducks the side. Both keys apply live. `--verify` gates the width without the stage (`stereo_diff_400hz` within 12 dB of its input level, `wide_bass` keeping 90 % of its width) and `--verify-receiver` prints the stage's cost on panned programme and L-only tones in either direction.
 
 ### PrimeBass and multiband
 
@@ -592,7 +600,7 @@ The current defaults are intentionally moderate and are meant to be tuned upward
 
 `advanced_dynamics_enabled` (default `True` since 2026-10-15; every Format Profile turns it on) replaces the wideband AGC **and** the multiband compressor with one fused 5-band levelling stage. The point of the fusion is that slow levelling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with programme-adaptive speed -- near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
 
-- `advanced_dynamics_target_db` (default `-18.0`) -- the wideband level the programme is brought toward. Every Format Profile sets it 2 dB below its AGC target, which matches the classic chain's loudness into the final stage.
+- `advanced_dynamics_target_db` (default `-16.0`) -- the wideband level the programme is brought toward. Every Format Profile sets it to its AGC target, which matches the classic chain's loudness into the final stage within the 3 dB the A/B gate allows; the two profiles that run PrimeBass (Music - Loud and Music - Dense) set it 2 dB below, which keeps PrimeBass intermodulation under the `--verify-primebass` limit and costs them no peak level. Until 2026-10 every profile was 2 dB below, and the leveller came out 4 dB quieter than the classic chain on dense programme.
 - `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / 0 / 0`, range -6..+6 dB) -- a tonal TILT relative to the programme's own balance; the 5 bands interpolate between them. 0 everywhere leaves the programme's spectrum as it is.
 - `advanced_dynamics_max_gain_db` (default `12.0`) -- maximum lift for quiet programme (the reduction side is fixed at 24 dB). The default was lowered from 18 after field testing: high boost both chases natural fades harder and lowers the silence gate (`target - max_gain - 10 dB`), pumping tails on sparse material. Raise it deliberately for wide-dynamics formats.
 - `advanced_dynamics_density` (`0..1`, default `0.5`) -- denser = tighter hold window and faster levelling. Independently of the knob, the release slows itself on already-dense programme (up to 2.5x at zero fast/slow envelope divergence) and runs at full speed on sparse, dynamic programme; until 0.65 the code had this backwards.
@@ -602,7 +610,7 @@ How it levels (since 2026-10-15). One wideband gain, measured on the whole progr
 
 A built-in **decay guard** distinguishes "programme actively fading" from "programme is quiet": while the programme's envelope sits well below its recent peak (a note or song decaying naturally), the leveller holds instead of lifting, resuming when the level stabilizes or new material arrives. Without it a solo decaying sound (a bell, a fade-out) gets its fade flattened and extended -- heard as added ringing/sustain.
 
-Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics`. A profile carries its levelling character into the stage: the AGC target less 2 dB becomes the leveller target, its multiband intensity the density (light 0.35, normal 0.5, heavy 0.7).
+Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics`. A profile carries its levelling character into the stage: its AGC target becomes the leveller target (2 dB lower with PrimeBass on), its multiband intensity the density (light 0.35, normal 0.5, heavy 0.7).
 
 In both front ends the stage is one of two **Levelling** engines, chosen in the **Levelling Engine** card on the Sound Overview page (GUI and web dashboard alike): **Advanced Dynamics** (the default) or **AGC + Multiband** (the classic chain, with the per-band Expander and Band Limiter that run inside the multiband stage). The choice IS `advanced_dynamics_enabled` and applies live. The pages of the engine not in use are hidden -- sidebar, Overview grid, Monitoring signal chain and pill strip -- so there are no dimmed panes to scan past (until 0.65 they stayed visible, ghosted, behind a "bypassed" banner); if one of them was open, the app shows the Overview instead. The Advanced Dynamics page has no enable toggle of its own; the selector is the switch. Its band layout follows the Multiband page's crossovers; switch to AGC + Multiband to edit them.
 
@@ -779,7 +787,7 @@ limiter a few kHz above the total so it only guards against faults.
 
 The FM-only stages leave the path: the audio keeps its full bandwidth (up to
 the `Programme Lowpass` setting under Basics > Advanced, allowed to 20 kHz here), pre-emphasis is forced
-off, stereo-image protection is skipped because a digital carrier has neither
+off, stereo-image protection (where enabled) is skipped because a digital carrier has neither
 deviation nor multipath to protect, the pre-emphasis-aware HF Limiter page
 is hidden and inactive, and the final loudness clipper is not offered --
 clipping into a codec costs quality. Their saved settings are retained for the
@@ -877,7 +885,7 @@ INI keys: `operating_mode`, `preemphasis_us`,
 
 ## Watching the signal
 
-The Monitoring page's Headroom card shows **Safety Limiter GR**, the final look-ahead MPX limiter's gain reduction (about 1 dB on dense programme is normal: it rides the composite clipper's guard-band overshoot; since 0.45 it reports the true amount it removes). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/meters` and "Safety Clip" on the dashboard.
+The Monitoring page's Headroom card shows **Safety Limiter GR**, the final look-ahead MPX limiter's gain reduction (about 1 dB on dense programme is normal: it rides the composite clipper's guard-band overshoot and, since the 2026-10 overhaul, the peaks between samples that its 4x true-peak detector sees; since 0.45 it reports the true amount it removes). **Safety Clip** next to it is how far, in dB, the composite exceeded the budget and had to be caught by the 1x safety soft clip; it must read 0.0 in normal operation -- anything above zero means the composite clipper and final limiter are not controlling the peaks (both off, or an impossible gain structure) and the distortion class fixed in 0.45 is back. The same value is `safetyClipDB` in `GET /api/meters` and "Safety Clip" on the dashboard.
 
 **Bad Input** in the same card ("Bad Input Samples" on the web dashboard,
 `nonFiniteInputSamples` in `GET /api/meters`) counts input samples that
@@ -1075,7 +1083,7 @@ Disabled by bypass:
 - Advanced Dynamics
 - Bass and audio clippers
 - Audio Limiter (pre-encode)
-- Stereo-image protection
+- Stereo-image protection (where enabled; off by default since 2026-10)
 
 ## The MPX Prime Meter companion
 

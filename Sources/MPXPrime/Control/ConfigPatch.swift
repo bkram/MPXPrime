@@ -71,7 +71,8 @@ enum ConfigPatch {
     /// be derived by diffing the engine's runtime structs -- they are in none
     /// of them -- so this is the one place they are named; a key here must
     /// have a backend that acts on it without a restart.
-    static let backendOwnedKeys: Set<String> = ["alsa_playback_volume_db", "alsa_capture_volume_db"]
+    static let backendOwnedKeys: Set<String> =
+        Set(AppConfig.cardVolumeKeys.keys).union(AppConfig.cardVolumeKeys.values)
 
     /// Apply `patch` (INI key -> raw string value) to `config`. Returns the
     /// patched config plus per-key outcomes. Keys the schema does not read
@@ -145,8 +146,16 @@ enum ConfigPatch {
     private static func resolvedOverlay(
         _ patch: [String: String], base: AppConfig
     ) -> [String: String] {
-        guard patch.keys.contains(where: { operatingModeAliases.contains($0) }) else { return patch }
         var overlay = patch
+        // The sound-card level keys: an `alsa_*` patch (an old client) lands
+        // on the `card_*` key it aliases, and the other way round, so the INI
+        // keeps one value under both spellings. The loader reads `card_*`
+        // whenever it is present, which is why the alias alone is not enough.
+        for (key, legacy) in AppConfig.cardVolumeKeys {
+            if let value = patch[legacy], patch[key] == nil { overlay[key] = value }
+            if let value = patch[key], patch[legacy] == nil { overlay[legacy] = value }
+        }
+        guard patch.keys.contains(where: { operatingModeAliases.contains($0) }) else { return overlay }
         let audioOutput: Bool
         if let raw = patch["processed_audio_output"] {
             audioOutput = ["true", "yes", "1", "on"].contains(

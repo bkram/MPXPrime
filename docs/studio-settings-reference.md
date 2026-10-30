@@ -50,13 +50,16 @@ For typical FM broadcast use (clean / community / LPFM), the recommended set of 
 - **Band Limiter** (per-band limiter, `multiband_limiter_*`) -- per-band peak control (threshold ~ -3 dB, atk 0.5 ms, rel 50 ms)
 - **Audio Clipper** (`dc_clipper_*`) -- distortion-cancelled audio-band clipping: 8x oversampled, it removes its own clipping distortion below the `Cancellation Frequency` (default 2 kHz) with a zero-phase linear-phase cancellation path, so it never adds distortion (until 2026-10 an LR4 error path added up to +4.3 dB around the corner); about 2.6 ms latency at 48 kHz with the 2 kHz corner
 - **HF Limiter** -- pre-emphasis-aware, gain-riding HF control (`Sound` -> `HF Limiter`; `hf_limiter_enabled`, `hf_limiter_threshold_db`, `hf_limiter_top_threshold_db` (Advanced), `hf_limiter_attack_ms` 1.5, `hf_limiter_release_ms` 20, `hf_limiter_max_reduction_db` 12). On by default in every Format Profile (0.45). It rides only the pre-emphasis *boost*: a cymbal or hi-hat that overshoots after pre-emphasis briefly loses part of its boost instead of being clipped or dragging the whole mix down in the Audio Limiter, and it can never cut HF below the flat (un-emphasised) programme level. Since 0.65 it only starts a ride it can finish: a programme gate on two short peak-hold envelopes, one pair per channel, opens the stage only when that channel's own boost covers its excess over the threshold (since 2026-10; one shared gate let a bass peak in one channel duck the other channel's treble), so a kick with a quiet hat is left to the Audio Limiter instead of flooring the HF gain on every crest (the 0.45 guard keyed on 20 % of the peak and did exactly that); once open, the gain law lands exactly on the threshold, never removes more than the excess and never raises a peak. The threshold now sits 0.5 dB ABOVE the Audio Limiter's per profile (Music -- Clean -0.4 dB, Loud -0.9, Speech -0.6, Classical -0.2), Orban's ordering, so the stage sees only HF excess; `hf_limiter_top_threshold_db` (default 1 dB tighter) is the ceiling for the band above 13 kHz -- the detector slides between the two thresholds by the share of boost energy above 13 kHz, one gain on the whole boost, zero latency. The receiver's fixed de-emphasis turns the action into a brief, bounded HF dip -- the trade every broadcast HF limiter makes (Optimod topology). All controls live-apply. `--verify-hf-transients` reports the stage's own HF loss (0.3-0.7 dB on the shipped profiles, bound 1.0 / 1.5) and its gain ripple on a sustained wash (bound 0.3 dB) next to the hat and ride SINAD. A separate, fixed 2 dB "encoder HF guard" ahead of the encoder lowpass stays in the chain: it protects receiver-side HF stereo separation (composite-clipper IM) at levels where this limiter does not engage.
-- **Audio Limiter** -- pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) -- see 0.30 CHANGELOG. `Enable Audio Limiter`; `Threshold` reads -6.0 to -0.0 dBFS and is stored linear as `pre_encode_threshold` (0.5-0.999); `Look-Ahead`; `Look-Ahead on HF Transients Only` under Advanced. Its 4x interpolator is a linear-phase Kaiser FIR (7 samples of extra latency at 48 kHz)
-- **Composite Clipper** -- 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB). Oversampling factor is configurable (`mpx_clipper_oversampling`, default 16; Composite Clipper > Advanced > Oversampling, applies live): 8 for older hardware that needs the CPU back, 32 for Omnia.9-class spec-sheet parity at roughly double this stage's CPU cost. See the comment block in the sample `MPXPrime.ini` for when each value makes sense.
+- **Audio Limiter** -- pre-encode L/R true-peak limiter with default-on Phase 1 + Phase 2 look-ahead (Dolby `US 5,579,404`, HF-subband-aware) -- see 0.30 CHANGELOG. `Enable Audio Limiter`; `Threshold` reads -6.0 to -0.0 dBFS and is stored linear as `pre_encode_threshold` (0.5-0.999); `Look-Ahead`; `Stereo Link` (`pre_encode_stereo_link`, 0-1, default 1 = both channels take the louder channel's gain; lower values let the quieter channel keep more of its level while the louder one limits, at the cost of a momentary image shift; live); `Look-Ahead on HF Transients Only` under Advanced. Its 4x interpolator is a linear-phase Kaiser FIR (7 samples of extra latency at 48 kHz)
+- **Composite Clipper** -- 16x oversampled differential composite clipper (threshold -1.0 dB, ceiling -0.3 dB, drive 6 dB). Oversampling factor is configurable (`mpx_clipper_oversampling`, default 16; Composite Clipper > Advanced > Oversampling, applies live): 8 for older hardware that needs the CPU back, 32 for Omnia.9-class spec-sheet parity at roughly double this stage's CPU cost. See the comment block in the sample `MPXPrime.ini` for when each value makes sense. Two keys changed in the 2026-10 overhaul, both live: `mpx_clipper_lookahead_depth_db` (`Clip Depth`, 0-6 dB, default 1.0 in every Format Profile; Composite Clipper > Advanced) is how far above the ceiling the 2 ms look-ahead lets the composite run before it rides, so the oversampled kernel clips that depth -- 0 restores the pre-overhaul behaviour, where the look-ahead rode every overshoot and the kernel read 0.16 dB at any drive; `mpx_clipper_stereo_guard` (`Protect Stereo Subcarrier`, 0.00-1.00, shown in percent) defaults to 0.5 (was 1.0), the share at which the clipper's distortion cancels in a receiver's quiet channel (60 dB or more of decoded separation on hard-panned programme through Music - Loud against 25 dB at 1.0 and 27 dB at 0.0; `--verify-stereo-guard` prints the table). The legacy `mpx_clipper_cancel_stereo = True/False` still loads as 1.00/0.00.
+- **Safety Limiter** (final MPX limiter; `Sound` -> `Loudness and Output`) -- `limit_mpx` (`Enable Safety Limiter`, default `True`), `limit_threshold` (default `1.0` since the 2026-10 overhaul, was 0.98; accepted 0.5-1.0, read in dBFS on both front ends; it is normalised onto the audio-composite budget per sample, so 1.0 means "the budget" and a lower value is a deliberate bite out of it -- a hand-set value is kept on upgrade), `limit_lookahead_enabled` / `limit_lookahead_ms` (5 ms). All restart-class. Its detector reads the 4x true peak of the audio composite, so nothing above the threshold leaves between samples either; about 0.8 dB of gain reduction on dense programme at the default clip depth is the restored guard-band share of the clipping, not a fault. MPX Output only (`ChainFeature.finalStage`; the processed-audio modes bound their peaks with the true-peak guard instead); `Threshold` sits under Advanced on both front ends.
+- **Mono Bass** (`Sound` -> `PrimeBass`, Mono Bass card) -- `mono_bass_enabled` (default `True`) and `mono_bass_freq_hz` (`Mono Below`, 60-250 Hz, default `110.0`), both live. Per Format Profile: 110 Hz on Music - Clean, Speech / Talk and Music - Dense, 115 Hz on Music - Loud, 90 Hz on Classical / Wide Dynamics. Clean and Speech were 140 Hz until 2026-10-30: 140 Hz is the high end of broadcast practice (80-120 Hz) and that corner alone kept bass-heavy programme from meeting the verifier's width goal. The split is linear-phase and sums flat; latency about 1070 / corner-Hz ms (10 ms at 110 Hz).
 
 Recommended **off** by default (enable only when needed):
 
 - **PrimeBass** -- psychoacoustic bass enhancer (missing-fundamental synthesis): the band below `primebass_freq_hz` (F0) is isolated with 24 dB/oct band-passes, normalised by its own envelope so the harmonic level tracks the fundamental exactly, run through an asymmetric generator that makes a real 2nd + 3rd (+5th) series, band-limited to F0..5 F0 and added to the dry signal; an envelope guard keeps peak growth under +1.5 dB and the Bass Clipper holds the rest. Knobs: `primebass_amount` = series level relative to the fundamental; `primebass_harmonics` = balance from 2nd-dominant (0) to 3rd/5th-dominant (1); `primebass_drive` = hardness of the odd device (soft cubic to hard clip); `primebass_density` = bounded upward compression of the harmonic layer (gain FALLS with level, Big Bottom's law; 0 = exact tracking); `primebass_subharmonics_*` = octave divider, off by default. Ranges, measured with `--sweep-primebass` so the top of each slider is still useful: amount 0..0.5, freq_hz 40..120, harmonics 0..0.5, drive 0..1.5 (the slider starts at 0.2), density 0..1, subharmonics_amount 0..0.4; a saved value outside them is pulled in on load. Rebuilt in 0.65: the old generator was odd-symmetric (no 2nd harmonic at all), fed by a 6 dB/oct one-pole that let the midrange intermodulate, and gated per sample. Gate: `--verify-primebass` (harmonic levels, level invariance, midrange isolation, no DC, no steps, peak growth, bit-identity when off). Useful for thin source material; enable per-format.
 - **Bass Clipper** -- engage only when LF transients are pushing the chain past the downstream limiters; if PrimeBass is off, usually unnecessary. `Threshold` is the ceiling the low band cannot exceed; since 0.65 the curve bends smoothly into it over roughly the last decibel instead of stepping, so peaks that just cross it no longer come out with a notch in the crest. `Drive` and `Threshold` keep their meanings.
+- **Stereo-image protection** -- `stereo_image_protect_enabled` (default `False`) and `stereo_image_max_side_ratio` (1.0-3.0, default 1.55), both live-apply, on the PrimeBass page's `Stereo Image` card under Advanced; FM paths only (`mpx`, `fm`). A side/mid envelope limiter ahead of pre-emphasis: the side (L-R) is held under the ratio times the mid (L+R), or under 1.16 times the source's own ratio where that is higher (floor 1.025), 10 ms attack / 300 ms release, reference delay-matched to the processing latency, idle without a mid reference so anti-phase content passes. Always on until 2026-10 (the removed widener's safety net, with its default baked in); off now because with every dynamics stage stereo-linked the only width left to limit was the source's own -- an anti-phase tone lost 24 dB of level and wide material was clamped to S/M 1.55 (stereo audit A3). Off is bit-identical to a chain without the stage. Enable it only where an exciter or STL needs the L-R held down; `--verify-receiver` prints its cost on panned programme and L-only tones in either direction.
 - **BS.412 MPX Power Limiter** -- required only for regulatory compliance in DE/AT/CH/SE/CZ/SI. NL, US, UK, FR, ES, IT etc. do not enforce BS.412; leaving it off recovers loudness headroom. Two keys: `bs412_enabled` and `bs412_ceiling_dbr`. See "When to leave BS.412 and the Composite Clipper off" below.
 - **Advanced Dynamics** -- the default levelling: a single-stage leveller that REPLACES the AGC and Multiband stages (`advanced_dynamics_enabled`, on by default and in every Format Profile; the **Levelling Engine** card on the Sound Overview page). See "Advanced Dynamics" below. Switch to AGC + Multiband only if you want to tune the classic chain by hand.
 - **SSB Stereo** -- optional SSB-leaning stereo encoder (`mpx_ssb_stereo_enabled` + `mpx_ssb_stereo_amount`: `Enable SSB Stereo` and `SSB Amount` in percent on the dedicated `Stereo Coder` page in both UIs, between Audio Limiter and Composite Clipper -- chain position of the stereo encoder itself). Leans the 38 kHz L-R subcarrier toward single-sideband, always keeping the LOWER sideband (23-38 kHz) like Orban's and Stereo Tool's SSB modes; `amount` 0 is plain DSB, 1 is full SSB, and the two sideband gains always sum to 1 so an ordinary decoder sees the same L-R. The benefit is a narrower RF spectrum with 38-53 kHz freed (multipath and RDS protection), NOT loudness: by construction SSB reclaims no composite headroom and costs up to +3 dB of composite peak on 90-degree L/R programme (+1.6 dB at the default amount 0.7), and a receiver whose 38 kHz reference is 10 degrees off decodes about 21 dB of separation with it on against 42 dB without. Mono-transparent, bit-identical when off. `--verify-ssb-stereo` pins the kept sideband, the phase-error cost and the peak cost. Until 0.65 the stage switched sidebands "opportunistically" between two candidates that have identical envelopes, so the choice was random and the kept sideband wandered. Leave it off unless you field-test it on real receivers.
@@ -67,7 +70,7 @@ This is a sensible amateur-grade starting point. Tune from there based on listen
 
 `advanced_dynamics_enabled` (default `True` since 2026-10-15; every Format Profile turns it on) replaces the wideband AGC **and** the multiband compressor with one fused 5-band levelling stage. The point of the fusion is that slow levelling and per-band density shaping can no longer fight each other (the classic AGC-pulls-down-while-multiband-pushes-up pumping); each band rides toward a target level with programme-adaptive speed -- near-instant on transients, frozen when the band already sits at target, slower on dense material. You configure the sound you want instead of attack/release times:
 
-- `advanced_dynamics_target_db` (default `-18.0`) -- the wideband level the programme is brought toward. Every Format Profile sets it 2 dB below its AGC target, which matches the classic chain's loudness into the final stage.
+- `advanced_dynamics_target_db` (default `-16.0`) -- the wideband level the programme is brought toward. Every Format Profile sets it to its AGC target, which matches the classic chain's loudness into the final stage within the 3 dB the A/B gate allows; the two profiles that run PrimeBass (Music - Loud and Music - Dense) set it 2 dB below, which keeps PrimeBass intermodulation under the `--verify-primebass` limit and costs them no peak level. Until 2026-10 every profile was 2 dB below, and the leveller came out 4 dB quieter than the classic chain on dense programme.
 - `advanced_dynamics_low_offset_db` / `advanced_dynamics_mid_offset_db` / `advanced_dynamics_high_offset_db` (defaults `0 / 0 / 0`, range -6..+6 dB) -- a tonal TILT relative to the programme's own balance; the 5 bands interpolate between them. 0 everywhere leaves the programme's spectrum as it is.
 - `advanced_dynamics_max_gain_db` (default `12.0`) -- maximum lift for quiet programme (the reduction side is fixed at 24 dB). The default was lowered from 18 after field testing: high boost both chases natural fades harder and lowers the silence gate (`target - max_gain - 10 dB`), pumping tails on sparse material. Raise it deliberately for wide-dynamics formats.
 - `advanced_dynamics_density` (`0..1`, default `0.5`) -- denser = tighter hold window and faster levelling. Independently of the knob, the release slows itself on already-dense programme (up to 2.5x at zero fast/slow envelope divergence) and runs at full speed on sparse, dynamic programme; until 0.65 the code had this backwards.
@@ -77,7 +80,7 @@ How it levels (since 2026-10-15). One wideband gain, measured on the whole progr
 
 A built-in **decay guard** distinguishes "programme actively fading" from "programme is quiet": while the programme's envelope sits well below its recent peak (a note or song decaying naturally), the leveller holds instead of lifting, resuming when the level stabilizes or new material arrives. Without it a solo decaying sound (a bell, a fade-out) gets its fade flattened and extended -- heard as added ringing/sustain.
 
-Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics`. A profile carries its levelling character into the stage: the AGC target less 2 dB becomes the leveller target, its multiband intensity the density (light 0.35, normal 0.5, heavy 0.7).
+Band layout follows `multiband_x1_hz..multiband_x4_hz`. All keys are live-apply. When the stage is enabled the AGC and Multiband settings are ignored (those stages are bypassed); when it is disabled the chain is bit-identical to before the stage existed. It is evaluated with `--verify-advanced-dynamics`. A profile carries its levelling character into the stage: its AGC target becomes the leveller target (2 dB lower with PrimeBass on), its multiband intensity the density (light 0.35, normal 0.5, heavy 0.7).
 
 In both front ends the stage is one of two **Levelling** engines, chosen in the **Levelling Engine** card on the Sound Overview page (GUI and web dashboard alike): **Advanced Dynamics** (the default) or **AGC + Multiband** (the classic chain, with the per-band Expander and Band Limiter that run inside the multiband stage). The choice IS `advanced_dynamics_enabled` and applies live. The pages of the engine not in use are hidden -- sidebar, Overview grid, Monitoring signal chain and pill strip -- so there are no dimmed panes to scan past (until 0.65 they stayed visible, ghosted, behind a "bypassed" banner); if one of them was open, the app shows the Overview instead. The Advanced Dynamics page has no enable toggle of its own; the selector is the switch. Its band layout follows the Multiband page's crossovers; switch to AGC + Multiband to edit them.
 
@@ -111,38 +114,62 @@ A pre-0.50 INI carrying `processed_audio_output` / `processed_audio_target` is
 migrated on load and rewritten to `operating_mode` on the next save. The REST
 API still accepts both old keys and resolves them onto the mode, in any order.
 
-### Sound card mixer (Linux, `GET` / `PATCH /api/mixer`, `alsa_*_volume_db`)
+### Sound card level (`GET` / `PATCH /api/mixer`, `card_*_volume_db`)
 
-Not INI keys: these are the CARD's own volume controls, owned by ALSA and
-shared with anything else on the box, so the encoder reads them live and never
-stores them. They exist in the API because on Linux that mixer sits between
-the encoder and the exciter with no GUI to inspect it, and a slider a few
+The live readings are not INI values: they are the DEVICE's own volume
+controls, owned by the OS and shared with anything else on the machine, so the
+encoder reads them live and never stores the readings. They exist in the API
+because that level sits between the encoder and the exciter and a slider a few
 percent under unity costs composite level that no meter in the app can show.
+On Linux the controls are the output card's ALSA simple-mixer elements (the
+rig lost 2 dB to a card knob after a reboot); on macOS they are the output
+device's CoreAudio volume and the input device's input volume (the station's
+DX3 Pro+ DAC sat at -5 dB while the app also applied -5 dBFS line output, and
+nothing in the app could see it). The GUI shows the same two rows on the
+`Audio I/O` tab as Device Output Level / Device Input Level with a Set to 0 dB
+button.
 
-`GET /api/mixer` answers `{available, card, controls[], note}`; each control
-carries `name`, `index`, and, per side, `playbackPercent` / `capturePercent`,
-the card's own `playbackDB` / `captureDB` when it reports them, and the mute
-state. On macOS, and when the output device is the plain ALSA `default` rather
-than a named card, `available` is false with a `note` explaining why -- that is
-a normal `200`, and the dashboard hides its Sound Card Mixer card on it.
+`GET /api/mixer` answers `{available, card, controls[], note, ...}`; each
+control carries `name`, `index`, and, per side, `playbackPercent` /
+`capturePercent` (the slider position), the device's own `playbackDB` /
+`captureDB` when it reports a dB scale, and the mute state. On macOS the
+output device is one control named after the device with `playbackPercent`,
+the input device one with `capturePercent`, and the payload adds
+`playbackDeviceName` / `captureDeviceName`, the dB ranges `playbackRangeDB` /
+`captureRangeDB` (`{minDB, maxDB}`), `playbackSettable` / `captureSettable`
+and `playbackDBEstimated` / `captureDBEstimated` (true when the device has no
+dB scale and the dB is derived from the slider position). A device without a
+volume control (BlackHole) is left out and named in `note`; `note` also
+carries the warning for an output below -0.1 dB or muted. When no device has
+a control, and on Linux when the output device is the plain ALSA `default`
+rather than a named card, `available` is false with a `note` explaining why --
+that is a normal `200`, and the dashboard hides its Sound Card Mixer card on
+it.
 
 `PATCH /api/mixer` takes `{name, index?, playbackPercent?, capturePercent?,
-playbackMuted?, captureMuted?}` and moves only the fields present, then
-answers with a fresh READ so the operator sees the level the card actually
-took. A control the card does not have is a `400`.
+playbackDB?, captureDB?, playbackMuted?, captureMuted?}` and moves only the
+fields present (a dB field wins over the percent for the same side; `name` is
+the control name on Linux and the device name on macOS), then answers with a
+fresh READ so the operator sees the level the device actually took. A control
+the device does not have, or a name that is not the device's, is a `400`.
 
 Keep the output control at 0 dB and calibrate in the encoder with
 `output_gain_db` / `mpx_line_output_dbfs`.
 
-A `PATCH` also RECORDS the level the card took, in dB, on the card's first
-playback (resp. capture) volume control, as `alsa_playback_volume_db` /
-`alsa_capture_volume_db` (`[INTERFACES]`, empty = unmanaged, remembered with
-the installation, never a dashboard widget of their own). The engine then
-ASSERTS those levels at start and on every 5 s reconcile tick, logging a
-correction when something moved them. That is deliberate: the USB card on the
-test rig has a hardware volume knob, and a level that was only stored with
-`alsactl store` came back 2 dB down after a reboot. To hand the card back to
-ALSA, blank the two keys.
+A `PATCH` also RECORDS the level the device took, in dB, as
+`card_playback_volume_db` / `card_capture_volume_db` (`[INTERFACES]`, empty =
+unmanaged, remembered with the installation, never a dashboard widget of their
+own; on Linux the card's first playback or capture control, on macOS the
+output or input device). The engine then ASSERTS those levels at start and
+on every 5 s reconcile tick (the GUI runs the same tick while the engine
+runs), logging a correction when something moved them, and unmutes a managed
+output. That is deliberate: a level that is only stored cannot beat a hardware
+knob or another application; asserting can. To hand the device back to the OS,
+blank the two keys. A new installation leaves both unmanaged; while the output
+device sits below -0.1 dB or muted at engine start, the status notes say so.
+The pre-0.65 names `alsa_playback_volume_db` / `alsa_capture_volume_db` are
+aliases of the same two values: an old INI loads, the INI is written under
+both spellings, and a `PATCH /api/config` of either spelling lands on both.
 
 Related Linux facts: `blocksize` is the ALSA period on this platform (the
 buffer keeps at least 8 periods and 8192 frames); the render thread runs
@@ -481,6 +508,7 @@ section. The endpoints below are what the dashboard itself uses.
 | GET | `/api/config/defaults` | factory defaults, grouped like `/api/config` -- diff against it for "reset to defaults" |
 | GET | `/api/presets` | available preset IDs by kind (primebass / multiband / finalstage / format_profile -- all kinds on BOTH backends since 0.44; the widener kind left with its stage in 0.50) |
 | GET | `/api/telemetry` | live scope waveforms + MPX spectrum (display-decimated, ~6 KB; `?window_ms=` picks the scope timebase); 503 while stopped or on a platform without a scope tap |
+| GET / PATCH | `/api/mixer` | the sound card's own level controls, read live from the device: ALSA simple-mixer elements on Linux, the output / input devices' CoreAudio volume on macOS (since 2026-10). A `PATCH` moves one side (`playbackPercent` / `capturePercent`, or `playbackDB` / `captureDB`, which win), answers with a fresh read and records the level as `card_*_volume_db`, which the engine then asserts at every start and every 5 s. See "Sound card level" above |
 | GET | `/api/devices` | the machine's audio devices (CoreAudio / ALSA) with the selected input, output, AND monitor slots (`selectedMonitor` + `monitorEnabled` since 0.44) |
 | POST | `/api/nowplaying` | push the current track: `{"artist": ..., "title": ..., "display": ...}` -- feeds the RT / PS / RT+ templates (see "Now-playing push" below) |
 | GET | `/api/snapshots` | the 8 operator preset slots (name, saved-at, active/modified) -- shared with the native GUI's Presets sidebar |
@@ -495,8 +523,9 @@ section. The endpoints below are what the dashboard itself uses.
 `liveRDS` (hot-applied to the running engine, no restart), `restartRequired`
 (saved; takes effect at the next start -- e.g. `rds_level`,
 `sample_rate`, devices), `none` (saved and acted on by the backend itself
-without a restart -- the Linux card mixer keys `alsa_playback_volume_db` /
-`alsa_capture_volume_db`, asserted on the card at once), or `unchanged`
+without a restart -- the sound-card level keys `card_playback_volume_db` /
+`card_capture_volume_db` and their `alsa_*` aliases, asserted on the device at
+once), or `unchanged`
 (value identical after clamping/parsing, or unknown key). The classification is derived from the
 same runtime structures the engine hot-applies, so it always matches what
 the engine actually does. Every change is saved to the INI immediately.

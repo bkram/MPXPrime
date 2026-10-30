@@ -51,27 +51,54 @@ struct ControlStatus: Codable, Sendable {
 
 /// GET /api/mixer payload: the SOUND CARD's own volume controls.
 ///
-/// Linux only, and deliberately so: on that platform the card mixer sits
-/// between the encoder and the exciter with no GUI to inspect it, and a
-/// slider a few percent below unity silently costs composite level that no
-/// meter in the app can see (it cost this project 2 dB after a reboot).
-/// macOS answers `available: false`: CoreAudio device volume is a different
-/// animal and is not exposed here.
+/// The card's level sits between the encoder and the exciter, and a slider a
+/// few percent below unity silently costs composite level that no meter in
+/// the app can see (it cost this project 2 dB after a reboot on Linux, and
+/// 5 dB on a DX3 Pro+ DAC on macOS). On Linux the controls are ALSA's
+/// simple-mixer elements of the output device's card; on macOS they are the
+/// output device's CoreAudio volume (playback) and the input device's input
+/// volume (capture), one control per device, named after the device. A
+/// device without a volume control (BlackHole) is reported in `note`, and
+/// `available: false` with a note is a normal 200.
 struct ControlMixer: Codable, Sendable {
     var available: Bool = false
-    /// The ALSA card the controls belong to, derived from the output device.
+    /// The ALSA card the controls belong to, derived from the output device
+    /// (Linux; nil on macOS).
     var card: String?
     var controls: [ALSAMixerMath.Control] = []
-    /// Operator-facing explanation when there is nothing to show.
+    /// Operator-facing explanation when there is nothing to show, or when
+    /// something about the controls needs saying (an output below unity).
     var note: String?
+    /// macOS: the devices the two controls belong to and their dB ranges;
+    /// `*Settable` false when the HAL refuses writes, `*DBEstimated` true
+    /// when the device has no dB scale and the dB is derived from the
+    /// slider position. nil where the platform does not report them.
+    var playbackDeviceName: String?
+    var captureDeviceName: String?
+    var playbackRangeDB: ControlDBRange?
+    var captureRangeDB: ControlDBRange?
+    var playbackSettable: Bool?
+    var captureSettable: Bool?
+    var playbackDBEstimated: Bool?
+    var captureDBEstimated: Bool?
 }
 
-/// PATCH /api/mixer body. Only the fields present move.
+/// A control's dB range as the device reports it.
+struct ControlDBRange: Codable, Sendable, Equatable {
+    var minDB: Double
+    var maxDB: Double
+}
+
+/// PATCH /api/mixer body. Only the fields present move. A side is addressed
+/// by its fields: playback is the output path, capture the input path. A dB
+/// field wins over the percent for the same side.
 struct ControlMixerPatch: Codable, Sendable {
     var name: String
     var index: UInt32?
     var playbackPercent: Double?
     var capturePercent: Double?
+    var playbackDB: Double?
+    var captureDB: Double?
     var playbackMuted: Bool?
     var captureMuted: Bool?
 }
@@ -300,8 +327,9 @@ protocol ControlBackend: Sendable {
     /// Live scopes + spectrum (nil = engine stopped or no tap on platform).
     func telemetry(windowMS: Double) async -> ControlTelemetry?
 
-    /// The sound card's own mixer, on platforms where the operator cannot
-    /// otherwise reach it (Linux). macOS answers "not available".
+    /// The sound card's own level layer: ALSA's mixer on Linux, the output
+    /// and input devices' CoreAudio volume on macOS. `available: false` with
+    /// a note when there is nothing to show.
     func cardMixer() async -> ControlMixer
     /// Move one card mixer control; false when it could not be applied.
     func setCardMixer(_ patch: ControlMixerPatch) async -> Bool

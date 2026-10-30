@@ -1,4 +1,6 @@
-// macOS-only (SwiftUI GUI): the Linux CLI build excludes this file.
+// SwiftUI GUI view model: macOS-only except the platform-free `CompositeBudgetState` tail (Linux tests pin it).
+import Foundation
+
 #if os(macOS)
 
 import Accelerate
@@ -7,7 +9,6 @@ import AVFoundation
 import Combine
 import CoreAudio
 import Darwin
-import Foundation
 import MPXPrimeCore
 import MPXPrimeUI
 import SwiftUI
@@ -434,6 +435,15 @@ final class MPXPrimeViewModel: ObservableObject {
     /// wrote ~10 fresh arrays.
     private var stoppedDisplaysReset = false
     private var controlServerTask: Task<Void, Never>?
+    /// The devices' CoreAudio volume: the macOS counterpart of the Linux card
+    /// mixer, behind `/api/mixer` and the Audio I/O tab's device level rows.
+    /// HAL reads run here on the main actor, never on the render thread.
+    private let deviceVolume: DeviceVolumeService = .platformDefault
+    /// Re-asserts a configured device level every 5 s while the engine runs
+    /// (the headless backend does the same on its reconcile tick).
+    private var deviceVolumeTimer: Timer?
+    @Published var deviceOutputLevel: CoreAudioDeviceVolumeMath.Display?
+    @Published var deviceInputLevel: CoreAudioDeviceVolumeMath.Display?
     private var activeRuntimeSnapshot: RuntimeSnapshot?
     private var monitorTimer: Timer?
     private var lastMonitorRefreshTime: TimeInterval?
@@ -1759,6 +1769,9 @@ final class MPXPrimeViewModel: ObservableObject {
         saveConfig(restartRequired: planes.restartRequired)
         if planes.dspLive { applyLiveRuntimeConfigIfRunning() }
         if planes.rdsLive { applyLiveRDSConfigIfRunning() }
+        // The card level keys are the backend's own: act on them now rather
+        // than at the next 5 s tick (the headless backend does the same).
+        if !ConfigPatch.backendOwnedKeys.isDisjoint(with: patch.keys) { assertDeviceVolumeIfConfigured() }
         updateNowPlayingRunner()
         statusText = "Remote control: applied \(patch.count) setting(s)"
         return ConfigApplyResult(
@@ -1865,6 +1878,93 @@ final class MPXPrimeViewModel: ObservableObject {
             selectedOutputChannels: config.outputChannels?.iniValue ?? "",
             selectedMonitorChannels: config.monitorChannels?.iniValue ?? "",
             note: "")
+    }
+
+    // MARK: - Device volume (the macOS sound-card level layer)
+
+    /// `GET /api/mixer`: the output device's CoreAudio volume as the playback
+    /// control and the input device's input volume as the capture control.
+    func remoteCardMixer() -> ControlMixer {
+        deviceVolume.read(config.outputDeviceUID, config.inputDeviceUID)
+    }
+
+    /// `PATCH /api/mixer` and the Audio I/O "Set to 0 dB" buttons. The dB the
+    /// device took is remembered in the config, so from here on the engine
+    /// asserts it at start and every 5 s -- the same contract as the Linux
+    /// card mixer, and what makes a level survive whatever else touches the
+    /// device.
+    func remoteSetCardMixer(_ patch: ControlMixerPatch) -> Bool {
+        guard let took = deviceVolume.apply(patch, config.outputDeviceUID, config.inputDeviceUID) else {
+            return false
+        }
+        var changed = false
+        if let dB = took.playbackDB, config.alsaPlaybackVolumeDB != dB {
+            publishConfigChange()
+            config.alsaPlaybackVolumeDB = dB
+            changed = true
+        }
+        if let dB = took.captureDB, config.alsaCaptureVolumeDB != dB {
+            publishConfigChange()
+            config.alsaCaptureVolumeDB = dB
+            changed = true
+        }
+        if changed { saveConfig(restartRequired: false) }
+        refreshDeviceLevels()
+        return true
+    }
+
+    /// Re-read both device levels for the Audio I/O rows.
+    func refreshDeviceLevels() {
+        let mixer = remoteCardMixer()
+        let output = CoreAudioDeviceVolumeMath.display(from: mixer, side: .playback)
+        let input = CoreAudioDeviceVolumeMath.display(from: mixer, side: .capture)
+        if output != deviceOutputLevel { deviceOutputLevel = output }
+        if input != deviceInputLevel { deviceInputLevel = input }
+    }
+
+    /// The "Set to 0 dB" button: unity and unmuted on that device, remembered.
+    func setDeviceLevelToUnity(_ side: CoreAudioDeviceVolumeMath.Side) {
+        let name = (side == .playback ? deviceOutputLevel : deviceInputLevel)?.deviceName ?? ""
+        if !remoteSetCardMixer(CoreAudioDeviceVolumeMath.unityPatch(deviceName: name, side: side)) {
+            statusText = "Could not set the device level; set it in Audio MIDI Setup."
+        }
+    }
+
+    /// Put the devices where the config says, when it says. Runs at engine
+    /// start, on every 5 s tick while running, and when a remote patch
+    /// touches the card level keys.
+    func assertDeviceVolumeIfConfigured() {
+        for line in deviceVolume.assertLevels(
+            config.alsaPlaybackVolumeDB, config.alsaCaptureVolumeDB,
+            config.outputDeviceUID, config.inputDeviceUID
+        ) {
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        }
+        refreshDeviceLevels()
+    }
+
+    /// Engine start hook: assert, say so when the output sits below unity or
+    /// muted (an unmanaged device is the new-install default, and a -5 dB
+    /// DAC volume is exactly what nothing else in the app can see), and
+    /// start the 5 s tick.
+    private func deviceVolumeEngineDidStart() {
+        assertDeviceVolumeIfConfigured()
+        if let note = deviceVolume.outputNote(config.outputDeviceUID) {
+            statusText += " (\(note))"
+        }
+        deviceVolumeTimer?.invalidate()
+        let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.assertDeviceVolumeIfConfigured()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        deviceVolumeTimer = timer
+    }
+
+    private func deviceVolumeEngineDidStop() {
+        deviceVolumeTimer?.invalidate()
+        deviceVolumeTimer = nil
     }
 
     func remoteRDS() -> ControlRDS {
@@ -2143,6 +2243,7 @@ final class MPXPrimeViewModel: ObservableObject {
                 line += " (\(note))"
             }
             statusText = line
+            deviceVolumeEngineDidStart()
             refreshMonitoringSnapshot()
         } catch AudioEngineError.inputPermissionDenied {
             statusText =
@@ -2162,6 +2263,7 @@ final class MPXPrimeViewModel: ObservableObject {
         isTransitioning = true
         defer { isTransitioning = false }
         stopEngineIfNeeded()
+        deviceVolumeEngineDidStop()
         isRunning = false
         pendingRuntimeApply = false
         engineStartReference = nil
@@ -2652,16 +2754,22 @@ final class MPXPrimeViewModel: ObservableObject {
             mpxSafetyLimiterGainReductionDB,
             Self.dbfsString(outputPeak)
         ))
-        let compositeBudgetState: String
-        if !isRunning {
-            compositeBudgetState = "Off"
-        } else if compositeBudgetMarginDB >= 3.0 {
-            compositeBudgetState = "Safe"
-        } else if compositeBudgetMarginDB >= 1.0 {
-            compositeBudgetState = "Tight"
-        } else {
-            compositeBudgetState = "Risk"
-        }
+        // The state reads the AUDIO budget, not the whole-composite margin:
+        // that margin is 0.04 dB by design when the clipper holds the audio
+        // on its ceiling and pilot + RDS fill the rest, so the old 3 dB /
+        // 1 dB bands called every correctly driven programme "Risk"
+        // (gain-structure audit B6 / C5).
+        let compositeBudgetState = CompositeBudgetState.text(
+            running: isRunning,
+            audioPeak: audioCompositePeak,
+            audioCeiling: CompositeBudgetState.audioCeiling(
+                limitThreshold: config.limitThreshold,
+                deviationKHz: config.mpxDeviationKHz,
+                outputGainDB: config.outputGainDB,
+                budgetMarginDB: compositeBudgetMarginDB,
+                audioPeak: audioCompositePeak),
+            postInjectionOvershoot: postInjectionOvershoot,
+            overBudget: compositeOverBudget)
         assignIfChanged(\.compositeBudgetStateText, compositeBudgetState)
         assignIfChanged(\.compositeCalibrationText, String(
             format: "Pilot %.1f%% | RDS %.1f%% | Audio %@ | Margin %.1f dB",
@@ -3653,3 +3761,65 @@ extension String {
 }
 
 #endif  // os(macOS)
+
+/// The Monitoring page's "Composite Budget" state. Platform-free (outside the
+/// `os(macOS)` guard) so the Linux test target pins it.
+///
+/// Until 2026-10 the state was read off the whole-composite margin
+/// (`-20 log10(audioPeak + pilot + RDS)`): Safe above 3 dB, Tight above 1 dB,
+/// else Risk. At the designed operating point -- the composite clipper holding
+/// the audio on its budget and the subcarriers filling the rest -- that margin
+/// is 0.04 dB by design, so every correctly driven programme read "Risk" and
+/// the operator guide told the operator to back off. The state now reads the
+/// headroom between the audio-composite peak and the AUDIO ceiling the
+/// clipper, the final limiter and the shaper are normalised onto, and reserves
+/// Risk for the two conditions that are actually faults: the final clamp
+/// engaged after pilot/RDS injection, or a configuration whose subcarrier
+/// reservation leaves no audio budget at all.
+enum CompositeBudgetState {
+    /// Tight below this much headroom to the audio ceiling: 0.5 dB.
+    static let tightHeadroomDB: Float = 0.5
+
+    /// Audio-composite ceiling in the metered (post-`output_gain_db`) domain:
+    /// the same figure `MPXGenerator.makeFinalCompositeThresholds` derives,
+    /// scaled by the output gain like the governor's `audioCeilOut`. The
+    /// subcarrier reservation is recovered from the metered margin
+    /// (`total = 10^(-margin/20)`, `reserved = total - audioPeak`) so the
+    /// state follows the engine's smoothed reservation envelope, and the
+    /// margin constant is the engine's own.
+    static func audioCeiling(
+        limitThreshold: Double,
+        deviationKHz: Double,
+        outputGainDB: Double,
+        budgetMarginDB: Float,
+        audioPeak: Float
+    ) -> Float {
+        let threshold = Float(min(1.0, max(0.5, limitThreshold)))
+        let share = Float(min(1.0, max(0.0, deviationKHz / Double(MPXGenerator.referenceDeviationKHz))))
+        let outputGain = powf(10.0, Float(outputGainDB) / 20.0)
+        let preGainCeilingWithoutReserve =
+            (threshold - MPXGenerator.finalCompositeBudgetSafetyMargin) * share / max(1.0, outputGain)
+        let total = powf(10.0, -budgetMarginDB / 20.0)
+        let reserved = max(0.0, total - max(0.0, audioPeak))
+        return max(0.0, preGainCeilingWithoutReserve * outputGain - reserved)
+    }
+
+    /// "Off" while stopped; "Risk" when the final clamp engaged after
+    /// injection or the configuration is over budget; "Safe" with at least
+    /// `tightHeadroomDB` between the audio peak and the audio ceiling;
+    /// otherwise "Tight" (the clipper is holding the audio on its ceiling,
+    /// which is the designed operating point on dense programme).
+    static func text(
+        running: Bool,
+        audioPeak: Float,
+        audioCeiling: Float,
+        postInjectionOvershoot: Float,
+        overBudget: Bool
+    ) -> String {
+        if !running { return "Off" }
+        if overBudget || postInjectionOvershoot > 0.0 { return "Risk" }
+        let tightRatio = powf(10.0, -tightHeadroomDB / 20.0)
+        if max(0.0, audioPeak) <= max(1e-6, audioCeiling) * tightRatio { return "Safe" }
+        return "Tight"
+    }
+}

@@ -96,8 +96,8 @@ struct RootMeterView: View {
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(.secondary)
                 // Device plus its channel pair on a multichannel interface
-                // ("Inputs 3, 4"); the popover holds the Device menu and the
-                // channel grid. Both are restart-class, so one coalesced
+                // ("Inputs 3, 4"); the popover holds the Device and Channels
+                // menus. Both are restart-class, so one coalesced
                 // restart covers a device change that also resets the pair.
                 AudioDeviceSelector(
                     title: "Input", role: .input, devices: vm.inputDevices,
@@ -907,7 +907,12 @@ struct RootMeterView: View {
                             readout("OVER 77 kHz", t.exceedanceText,
                                     valueTint: exceedanceTint(t),
                                     help: Self.exceedanceHelp)
+                            // Dimmed while the content cannot give a valid
+                            // reading (the view model publishes "--" then).
                             readout("SEPARATION", t.separationText,
+                                    valueTint: t.separationText == "--"
+                                        ? BroadcastStyle.readoutSecondary
+                                        : BroadcastStyle.readoutPrimary,
                                     help: Self.separationHelp)
                         }
                         GridRow {
@@ -1050,9 +1055,12 @@ struct RootMeterView: View {
         + "tolerance) since the last reset. Regulators treat "
         + "more than 0.0001 % as over-deviation; rare single "
         + "peaks are not a violation."
-    private static let separationHelp = "Best stereo separation observed since reset. Truest "
-        + "during single-channel / test-tone content; panned "
-        + "programme reads low."
+    private static let separationHelp = "Stereo separation, read as the level difference "
+        + "between the decoded channels, so it is only measured while the "
+        + "programme is single-channel (side within 10 % of mid): a "
+        + "hard-panned tone or passage. Best value since reset; shows -- "
+        + "while the current content cannot give a valid reading, "
+        + "including panned programme with mono bass."
     private static let signalHelp = "Relative received signal level (filtered IQ "
         + "channel, dBFS). Higher is stronger; most "
         + "meaningful with Auto Gain off. A valid BS.412 "

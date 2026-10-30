@@ -84,7 +84,34 @@ swift build --scratch-path /tmp/mpx-typecheck \
   -Xswiftc -Xfrontend -Xswiftc -warn-long-function-bodies=200
 ```
 
-## Run
+## Install and run the apps
+
+`scripts/build-run.sh` builds MPX Prime Studio and MPX Prime Meter as release
+apps for this Mac, signs them, installs them in `/Applications` and opens the
+Studio. Run the apps from there: one fixed path and one stable signature keep
+the Dock item, Launch Services and the Microphone permission pointing at the
+same app.
+
+```bash
+scripts/make-signing-identity.sh       # once per Mac: the signing identity
+scripts/build-run.sh                   # both apps, then open the Studio
+scripts/build-run.sh --meter           # both apps, then open the Meter
+scripts/build-run.sh --studio-only     # the Studio only (no Homebrew tuner libraries)
+scripts/build-run.sh --no-open         # build and install, open nothing
+scripts/build-run.sh -- --nogui        # arguments after -- go to the opened app
+```
+
+`scripts/make-signing-identity.sh` creates a self-signed "MPX Prime
+Development" certificate in its own keychain, usable over SSH. With it the
+signature stays the same across builds, so macOS asks for the Microphone
+once; without it the apps are signed ad hoc and macOS asks again after every
+build. Never re-create the certificate once apps are signed with it. A running
+app is quit gracefully before it is replaced, never killed; a copy started
+from `.build` by `scripts/run.sh` is left running, and the new app is not
+opened. `scripts/build-release.sh` and `scripts/build-run.sh` assemble the
+bundles with the same functions in `scripts/app-bundle.sh`.
+
+## Run from the build
 
 `scripts/run.sh` builds a release `MPXPrime` and runs it; every argument is
 passed to the binary unchanged (`--debug` and `--no-build` are the only flags

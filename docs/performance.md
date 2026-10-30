@@ -96,6 +96,22 @@ dots and a mono composite bandwidth FIR -1.5, composite clipper idle path
 worst-case block is unchanged). The `--bench` tables in this file predate
 these changes; re-measure a machine before quoting it.
 
+## True-peak final limiter (2026-10-20)
+
+The audio-chain overhaul gave the final MPX limiter a 4x true-peak detector
+(a 9-10 tap per phase Kaiser interpolator feeding the sliding-window
+maximum). Measured on the same Intel Core i7-1355U (Linux, Docker, release
+build) with the overhaul's sweep driver, detector on against off: 0.21 % of
+real time at 192 kHz. The whole chain's `--bench` read 15.6 % with every
+feature on, against the 15.9 % recorded for the pre-overhaul chain on this
+machine (a stored figure, not an interleaved pair; neither run was pinned to
+a P-core, so neither is the 12.8 % of the table above). The composite clipper
+stage itself measured 5.9 % in that run. Nothing else in the overhaul added a per-sample cost: the
+clip depth is a scalar on the existing look-ahead, the stereo guard a share
+the clipper already applied, the BS.412 rider plans per 64-sample block, the
+image protector is off by default (skipped, not run at unity), and the device
+volume runs on the control actor.
+
 ## Composite clipper oversampling (`--bench`, whole chain)
 
 | Machine | 8x | 16x (default) | 32x |

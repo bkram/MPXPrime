@@ -454,6 +454,15 @@ enum PresetCatalog {
         let limitMPX: Bool
         let compositeClipperEnabled: Bool
         let compositeClipperLookaheadMS: Double
+        /// Clip depth (dB above the ceiling left to the clip kernel). Per
+        /// profile: the largest depth that keeps the `--verify-hf-transients`
+        /// SINAD floors (ride >= 30 dB, hat >= 20 dB / 15 dB loud) with 2 dB
+        /// in hand at stereo guard 0.5 (2026-10 sweep: ride SINAD 33.9-34.3
+        /// dB at 1.0 dB on the music profiles, 29.4-29.7 at 1.5). Classical
+        /// was 2.0 until the levelling task raised its drive: at depth 2 its
+        /// ride SINAD fell to 27.3 dB at 4 dB of drive, at depth 1 it reads
+        /// 33.8 dB at 5 dB.
+        let compositeClipperLookaheadDepthDB: Double
         let hfLimiterEnabled: Bool
         // 0.5 dB above `preEncodeThreshold` (US 4,103,243: the HF comparators
         // sit above the broadband limiter so the stage only sees HF excess);
@@ -479,6 +488,11 @@ enum PresetCatalog {
         }
     }
 
+    /// How far below its AGC target a profile that runs PrimeBass sets the
+    /// Advanced Dynamics target (`applyFormatProfile`): keeps PrimeBass IMD on
+    /// Music - Loud under the `--verify-primebass` -70 dB gate.
+    static let primeBassLevellerOffsetDB: Double = 2.0
+
     static let formatProfiles: [FormatProfile] = [
         // "Custom" sentinel: records the label, changes nothing (operators
         // flag bespoke setups; the apply short-circuits on it).
@@ -486,13 +500,14 @@ enum PresetCatalog {
               summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
+              primeBassPresetID: "ac", monoBassFreqHz: 110.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
               finalDriveDB: 6.0,
               agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
               hfLimiterEnabled: true, hfLimiterThresholdDB: -0.6, hfLimiterTopThresholdDB: -1.6,
               bassClipperEnabled: false,
               phaseRotationEnabled: false,
@@ -505,13 +520,19 @@ enum PresetCatalog {
               summary: "The default: transparent levelling, honest peaks, low clipper work, bass clipper idling at the defaults. For stations that value fidelity over loudness.",
               multibandPresetID: "5_ac", multibandIntensity: .normal,
               finalStagePresetID: "balanced", primeBassEnabled: false,
-              primeBassPresetID: "ac", monoBassFreqHz: 140.0,
+              primeBassPresetID: "ac", monoBassFreqHz: 110.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              finalDriveDB: 4.0,
+              // 3.5 dB (was 4.0) with the leveller at the AGC target (-16, was
+              // -18): 1.5 dB more programme into the final stage than before,
+              // the most the hi-hat gate allows with 0.5 dB in hand
+              // (2026-10 levelling sweep: hat SINAD 20.9 dB, program_mix at
+              // 0.93 of the budget; 3.75 dB reads 20.5 / 0.95, 4.0 dB 20.1 / 0.98).
+              finalDriveDB: 3.5,
               agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.90,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
               hfLimiterEnabled: true, hfLimiterThresholdDB: -0.4, hfLimiterTopThresholdDB: -1.4,
               // Every vendor structure bass-clips (Orban, Omnia). At drive 1.5
               // into -3 dB the distortion-cancelled stage idles on AC material
@@ -532,6 +553,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
               hfLimiterEnabled: true, hfLimiterThresholdDB: -0.9, hfLimiterTopThresholdDB: -1.9,
               bassClipperEnabled: true,
               phaseRotationEnabled: false,
@@ -554,6 +576,7 @@ enum PresetCatalog {
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
               hfLimiterEnabled: true, hfLimiterThresholdDB: -0.9, hfLimiterTopThresholdDB: -1.9,
               bassClipperEnabled: true,
               phaseRotationEnabled: false,
@@ -563,18 +586,19 @@ enum PresetCatalog {
               summary: "Voice-optimised: phase rotator for waveform symmetry, fast-release talk multiband for density, speech final stage, conservative drive.",
               multibandPresetID: "5_talk", multibandIntensity: .normal,
               finalStagePresetID: "speech", primeBassEnabled: false,
-              primeBassPresetID: "talk", monoBassFreqHz: 140.0,
+              primeBassPresetID: "talk", monoBassFreqHz: 110.0,
               compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
-              // 4.3 dB (was 4.5): since Advanced Dynamics creeps to its target
-              // inside the hold window instead of resting up to half a window
-              // short of a lift, speech reaches the clipper a little hotter;
-              // at 4.5 dB the hi-hat HF SINAD fell from 20.1 to 20.0 dB, onto
-              // the 20 dB `--verify-hf-transients` gate. 4.3 dB reads 20.4 dB.
-              finalDriveDB: 4.3,
+              // 2.8 dB (was 4.3): the leveller now sits at the AGC target
+              // (-14, was -16), 2 dB hotter into the final stage; 2.8 dB keeps
+              // the hi-hat gate with 0.7 dB in hand (2026-10 levelling sweep:
+              // hat SINAD 20.7 dB, program_mix at 0.99 of the budget; 3.0 dB
+              // reads 20.3, 4.3 dB 18.9 -- under the 20 dB gate).
+              finalDriveDB: 2.8,
               agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
               hfLimiterEnabled: true, hfLimiterThresholdDB: -0.6, hfLimiterTopThresholdDB: -1.6,
               bassClipperEnabled: false,
               phaseRotationEnabled: true,
@@ -586,11 +610,19 @@ enum PresetCatalog {
               finalStagePresetID: "classical", primeBassEnabled: false,
               primeBassPresetID: "ac", monoBassFreqHz: 90.0,
               compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
-              finalDriveDB: 3.0,
+              // 5.0 dB (was 3.0) with clip depth 1.0 (was 2.0): at depth 2 the
+              // kernel clipped the ride multitone as soon as the level rose
+              // (ride SINAD 30.5 dB at the old drive, 27.3 at 4 dB); at depth
+              // 1 it reads 33.8 dB at 5 dB and the hat 22.7 dB (2026-10
+              // levelling sweep), so the profile reaches 0.99 of the budget on
+              // program_mix instead of 0.79. The clipper task measured that
+              // depth buys no loudness, so nothing is lost by the shallower one.
+              finalDriveDB: 5.0,
               agcEnabled: true,
               preEncodeLimiterEnabled: true, preEncodeThreshold: 0.92,
               limitMPX: true, compositeClipperEnabled: true,
               compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
               hfLimiterEnabled: true, hfLimiterThresholdDB: -0.2, hfLimiterTopThresholdDB: -1.2,
               bassClipperEnabled: false,
               phaseRotationEnabled: false,
@@ -641,6 +673,7 @@ enum PresetCatalog {
         config.limitMPX = profile.limitMPX
         config.compositeClipperEnabled = profile.compositeClipperEnabled
         config.compositeClipperLookaheadMS = profile.compositeClipperLookaheadMS
+        config.compositeClipperLookaheadDepthDB = profile.compositeClipperLookaheadDepthDB
         config.hfLimiterEnabled = profile.hfLimiterEnabled
         config.hfLimiterThresholdDB = profile.hfLimiterThresholdDB
         config.hfLimiterTopThresholdDB = profile.hfLimiterTopThresholdDB
@@ -680,11 +713,23 @@ enum PresetCatalog {
         // (InstallationKeys.swift): snapshots and profiles carry it, the way
         // they carry the rest of the sound.
         config.advancedDynamicsEnabled = true
-        // 2 dB below the AGC target: the leveller keeps the programme's
-        // spectrum where the classic multiband compressed it, so at the same
-        // target it fed the final stage about 2 dB hotter (PrimeBass IMD on
-        // Music - Loud -51 dB vs -85 dB on the classic chain; -2 dB restores it).
-        config.advancedDynamicsTargetDB = config.widebandAGCTargetDB - 2.0
+        // AT the AGC target, or 2 dB below it where PrimeBass runs (2026-10
+        // audio-chain overhaul; was 2 dB below everywhere). Two measurements
+        // pull in opposite directions and each decides where it applies:
+        // - Loudness parity (`--verify-advanced-dynamics`, bass_dense against
+        //   the classic AGC + multiband chain, bound 3.0 dB): at the AGC
+        //   target less 2 dB the leveller is 4.0 dB QUIETER than the classic
+        //   chain (the gate failed), at the AGC target 2.1 dB (2026-10
+        //   levelling sweep). The leveller's weighted detector reads dense
+        //   programme hotter than the AGC's, so the same number lands lower.
+        // - PrimeBass IMD (`--verify-primebass`, Music - Loud, 50 Hz + 1 kHz,
+        //   <= -70 dB): at the AGC target -56.2 dB, a FAIL; the 2 dB keeps
+        //   the synthesised harmonics out of the bass clipper (the reason
+        //   the -2 dB was introduced). Music - Loud / Dense reach the budget
+        //   on every verifier programme at either target, so they lose no
+        //   peak level by keeping it.
+        config.advancedDynamicsTargetDB = config.widebandAGCTargetDB
+            - (profile.primeBassEnabled ? Self.primeBassLevellerOffsetDB : 0.0)
         config.advancedDynamicsDensity = profile.multibandIntensity.levelerDensity
         config.advancedDynamicsLowOffsetDB = 0.0
         config.advancedDynamicsMidOffsetDB = 0.0

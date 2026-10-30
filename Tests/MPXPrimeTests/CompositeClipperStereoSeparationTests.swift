@@ -151,7 +151,9 @@ struct CompositeClipperStereoSeparationTests {
                                           sampleRate: sampleRate, frameCount: frames)
         let right = [Float](repeating: 0, count: frames)
         let mpx = encodeComposite(left: left, right: right).map { $0 * 2.0 }
-        let guarded = runClipperMeasuringGR(mpx, stereoGuard: Float(AppConfig().compositeClipperStereoGuard))
+        // Guard 1.0 by name: this pins the MECHANISM (full restoration), not
+        // the shipped share (0.5 since 2026-10, `--verify-stereo-guard`).
+        let guarded = runClipperMeasuringGR(mpx, stereoGuard: 1.0)
         let unguarded = runClipperMeasuringGR(mpx, stereoGuard: 0.0)
         let lowerIn = binDB(mpx, at: lowerHz)
         let upperIn = binDB(mpx, at: upperHz)

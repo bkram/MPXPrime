@@ -32,7 +32,7 @@ enum AudioDeviceText {
 
 /// A bordered button showing the chosen device's name with a subtitle such as
 /// "Inputs 3, 4, 192 kHz" (red when `problem` is set, which then replaces the
-/// subtitle), opening a popover with the Device menu, the channel grid and
+/// subtitle), opening a popover with the Device and Channels menus and
 /// the explanation / footnote lines.
 ///
 /// `selectedUID` is the device UID ("" = none / the default, labelled
@@ -131,7 +131,7 @@ public struct AudioDeviceSelector: View {
     }
 }
 
-/// The popover body: Device menu, problem line, channel grid, footnote.
+/// The popover body: Device menu, problem line, Channels menu, footnote.
 private struct AudioDevicePopover: View {
     let title: String
     let role: AudioDeviceRole
@@ -174,8 +174,10 @@ private struct AudioDevicePopover: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             if let device = selectedDevice, channelCount(device) > 0 {
-                channelGrid(count: channelCount(device))
-                Text("Select one or two. The lower-numbered channel is left.")
+                channelMenu(count: channelCount(device))
+                Text(channelCount(device) == 1
+                     ? "This device has one channel."
+                     : "Left on the first channel of the pair, right on the second.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -223,43 +225,32 @@ private struct AudioDevicePopover: View {
         })
     }
 
-    private var currentIndices: [Int] { (channels ?? .stereoDefault).indices }
-
-    private func channelGrid(count: Int) -> some View {
-        let columns = Array(
-            repeating: GridItem(.flexible(), alignment: .leading),
-            count: count > 8 ? 8 : 4)
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-            ForEach(0..<count, id: \.self) { index in
-                let selected = currentIndices.contains(index)
-                Toggle("\(index + 1)", isOn: Binding(
-                    get: { currentIndices.contains(index) },
-                    set: { _ in toggle(index) }
-                ))
-                .toggleStyle(.checkbox)
-                .disabled(selected ? currentIndices.count <= 1 : currentIndices.count >= 2)
-                .accessibilityLabel("\(sectionNoun) \(index + 1)")
-            }
-        }
+    /// The pair in effect: nil means channels 1, 2 (mono 1 on a one-channel
+    /// device), as `ChannelPair.resolve` applies it.
+    private func currentPair(count: Int) -> ChannelPair {
+        channels ?? (count == 1 ? ChannelPair(left: 0, right: 0) : .stereoDefault)
     }
 
-    /// Prime Mixer's rule: one or two channels stay selected; removing one
-    /// of two leaves mono on the other, adding to one makes a pair with the
-    /// lower number on the left.
-    private func toggle(_ index: Int) {
-        var indices = currentIndices
-        if let at = indices.firstIndex(of: index) {
-            guard indices.count > 1 else { return }
-            indices.remove(at: at)
-        } else {
-            guard indices.count < 2 else { return }
-            indices.append(index)
+    /// One menu of consecutive stereo pairs (1-2, 3-4, ...). A mono or
+    /// non-adjacent pair from the INI is listed as it is, so the menu never
+    /// claims a choice the engine is not using.
+    private func channelMenu(count: Int) -> some View {
+        let offered = ChannelPair.stereoPairs(channelCount: count)
+        let current = currentPair(count: count)
+        return Picker("Channels", selection: Binding(
+            get: { current },
+            set: { channels = $0 }
+        )) {
+            ForEach(offered, id: \.self) { pair in
+                Text(pair.rangeLabel).tag(pair)
+            }
+            if !offered.contains(current) {
+                Divider()
+                Text("\(current.rangeLabel) (from settings)").tag(current)
+            }
         }
-        indices.sort()
-        if indices.count == 1 {
-            channels = ChannelPair(left: indices[0], right: indices[0])
-        } else {
-            channels = ChannelPair(left: indices[0], right: indices[1])
-        }
+        .pickerStyle(.menu)
+        .help("The pair of \(sectionNoun.lowercased()) channels this device uses")
+        .accessibilityLabel("\(sectionNoun) channels")
     }
 }

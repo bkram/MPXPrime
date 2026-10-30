@@ -180,8 +180,9 @@ struct ProcessedAudioOutputTests {
         let out = renderAudioOnly(cfg: cfg, seconds: 1.0) { _, t in
             // Hard-left: carries both mid and side, so any erroneous stereo encode
             // would still produce a 19 kHz pilot + 38 kHz DSB-SC. (A pure-side L=-R
-            // input would be pulled down by the stereo-image protection limiter and
-            // is a poor program-presence probe.)
+            // input would be pulled down by the stereo-image protection limiter
+            // whenever an operator enables it -- off by default since 2026-10 --
+            // and is a poor program-presence probe.)
             let s = Float(Double(amp) * sin(2.0 * .pi * f * t))
             return (s, 0)
         }

@@ -3,7 +3,7 @@ import MPXPrimeCore
 
 // `ChannelPair` is pure Swift (no CoreAudio), so these run on macOS and Linux.
 // It is the one model every multichannel path shares -- INI keys, the channel
-// grid, the AUHAL channel map, the monitor player's buffer indices -- so the
+// menu, the AUHAL channel map, the monitor player's buffer indices -- so the
 // parsing rule and the fallback note are pinned here, not in each consumer.
 @Suite("Channel pair")
 struct ChannelPairTests {
@@ -147,6 +147,29 @@ struct ChannelPairTests {
         let r = ChannelPair.resolve(requested: ChannelPair(left: 4, right: 4), channelCount: 8, role: "Monitor")
         #expect(r.pair == ChannelPair(left: 4, right: 4))
         #expect(r.note == nil)
+    }
+
+    // MARK: Channels menu choices
+
+    @Test func aSixteenChannelDeviceOffersEightConsecutivePairs() {
+        let pairs = ChannelPair.stereoPairs(channelCount: 16)
+        #expect(pairs.count == 8)
+        #expect(pairs.first == .stereoDefault)
+        #expect(pairs.last == ChannelPair(left: 14, right: 15))
+        #expect(pairs.map(\.rangeLabel) == ["1-2", "3-4", "5-6", "7-8", "9-10", "11-12", "13-14", "15-16"])
+    }
+
+    @Test func anOddLastChannelHasNoPair() {
+        #expect(ChannelPair.stereoPairs(channelCount: 3) == [.stereoDefault])
+    }
+
+    @Test func aOneChannelDeviceOffersMonoOnChannelOne() {
+        #expect(ChannelPair.stereoPairs(channelCount: 1) == [ChannelPair(left: 0, right: 0)])
+        #expect(ChannelPair(left: 0, right: 0).rangeLabel == "1")
+    }
+
+    @Test func aDeviceWithoutChannelsOffersNothing() {
+        #expect(ChannelPair.stereoPairs(channelCount: 0).isEmpty)
     }
 
     @Test func theFallbackOnASingleChannelDeviceIsChannelOne() {

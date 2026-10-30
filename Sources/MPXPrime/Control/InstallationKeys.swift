@@ -10,6 +10,14 @@ import Foundation
 // the same role across the legacy-profile migration.
 
 extension AppConfig {
+    /// The sound-card level keys the backends consume themselves (asserted on
+    /// the card / device, never seen by the engine): the platform-neutral
+    /// spelling and its pre-0.65 `alsa_*` alias, same storage.
+    static let cardVolumeKeys: [String: String] = [
+        "card_playback_volume_db": "alsa_playback_volume_db",
+        "card_capture_volume_db": "alsa_capture_volume_db"
+    ]
+
     /// INI keys preserved from the LIVE config on snapshot load, by section.
     /// - devices + engine format: loading a colleague's preset must not
     ///   retarget the transmitter feed or restart-class engine format
@@ -26,6 +34,7 @@ extension AppConfig {
             "input_device_name", "output_device_name", "monitor_device_name",
             "sample_rate", "blocksize",
             "operating_mode", "monitor_enabled", "monitor_gain_db",
+            "card_playback_volume_db", "card_capture_volume_db",
             "alsa_playback_volume_db", "alsa_capture_volume_db"
         ],
         "MPX": [

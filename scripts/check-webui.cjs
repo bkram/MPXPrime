@@ -107,7 +107,8 @@ function makeServer(mode) {
     deviceCalls: 0,
     configReads: 0,
     patches: [],
-    presetPosts: []
+    presetPosts: [],
+    mixerPatches: []
   };
   const devices = {
     inputs: [{ id: "in-a", name: "Input A", canInput: true, canOutput: false },
@@ -119,6 +120,28 @@ function makeServer(mode) {
     selectedMonitor: "out-b",
     monitorEnabled: false,
     note: ""
+  };
+  // The sound-card level layer as macOS reports it (0.65): one playback
+  // control named after the output device (the DX3 Pro+ at the -5 dB the
+  // field found it at) and one capture control for the input device, with
+  // the dB ranges and a note. The dashboard's Sound Card Mixer card renders
+  // from this shape on both platforms; a PATCH answers with a fresh read.
+  const mixer = {
+    available: true,
+    card: null,
+    controls: [
+      { name: "DX3 Pro+", index: 0, playbackPercent: 92.28, playbackDB: -5.0, playbackMuted: false },
+      { name: "Scarlett 2i2", index: 0, capturePercent: 100, captureDB: 0.0, captureMuted: false }
+    ],
+    note: "DX3 Pro+ output volume is -5.0 dB in CoreAudio; the composite reaches the exciter 5 dB low. Set it to 0 dB here or in Audio MIDI Setup.",
+    playbackDeviceName: "DX3 Pro+",
+    captureDeviceName: "Scarlett 2i2",
+    playbackRangeDB: { minDB: -127, maxDB: 0 },
+    captureRangeDB: { minDB: -96, maxDB: 0 },
+    playbackSettable: true,
+    captureSettable: true,
+    playbackDBEstimated: false,
+    captureDBEstimated: false
   };
   const json = (body, status = 200) => ({
     ok: status < 400, status, statusText: "", json: async () => body
@@ -196,6 +219,20 @@ function makeServer(mode) {
       return json({});
     }
     if (path === "/api/rds") return json({ ps: "TEST", rt: "" });
+    if (path === "/api/mixer") {
+      if (method === "PATCH") {
+        const body = JSON.parse(opts.body || "{}");
+        state.mixerPatches.push(body);
+        const ctl = mixer.controls.find(c => c.name === body.name);
+        if (!ctl) return json({ error: { message: "could not set mixer control" } }, 400);
+        // The device takes the slider position; the dB follows (a stand-in
+        // for the HAL's own scale, which maps 100 % to 0 dB).
+        if (body.playbackPercent != null) { ctl.playbackPercent = body.playbackPercent; ctl.playbackDB = body.playbackPercent >= 100 ? 0 : -5.0; }
+        if (body.capturePercent != null) { ctl.capturePercent = body.capturePercent; ctl.captureDB = body.capturePercent >= 100 ? 0 : -5.0; }
+        mixer.note = ctl.playbackDB < -0.1 ? mixer.note : null;
+      }
+      return json(mixer);
+    }
     if (path === "/api/snapshots") return json({ slots: [] });
     if (path.startsWith("/api/transport/")) return json({ ok: true });
     return json({ error: { message: "not found" } }, 404);
@@ -593,6 +630,36 @@ async function runModeUnguarded(mode) {
       await settle();
       drainErrors("clamp");
       if (Number(gain.value) > 0) fail(mode, "clamp", `slider kept ${gain.value} after the server clamped to 0`);
+    }
+  }
+
+  // (7b) the Sound Card Mixer rows render from a macOS-shaped /api/mixer
+  // answer: the output device's level under the output picker, the input
+  // device's under the input picker, in dB, and a slider move PATCHes and
+  // shows what the device took.
+  page.showPage("interfaces");
+  await settle();
+  const mixOut = $("mixOut"), mixIn = $("mixIn");
+  if (!mixOut || !mixIn) {
+    fail(mode, "mixer", "the Audio I/O page has no mixer hosts");
+  } else {
+    const outRow = mixOut.querySelector(".row"), inRow = mixIn.querySelector(".row");
+    if (!outRow) fail(mode, "mixer", "no Card Output Level row for the output device's volume");
+    if (!inRow) fail(mode, "mixer", "no Card Input Level row for the input device's volume");
+    if (outRow && !outRow.textContent.includes("-5.0 dB")) fail(mode, "mixer", `the output row does not show the device's dB (reads "${outRow.textContent}")`);
+    if (outRow && !outRow.querySelector(".rlabel")?.title.includes("DX3 Pro+")) fail(mode, "mixer", "the output row is not labelled with the device");
+    if (inRow && !inRow.textContent.includes("0.0 dB")) fail(mode, "mixer", `the input row does not show the device's dB (reads "${inRow.textContent}")`);
+    const slider = outRow ? outRow.querySelector("input[type=range]") : null;
+    if (slider) {
+      slider.value = "100";
+      slider.dispatchEvent(new win.Event("change", { bubbles: true }));
+      await settle();
+      drainErrors("mixer");
+      const sent = server.state.mixerPatches;
+      if (sent.length !== 1 || sent[0].name !== "DX3 Pro+" || sent[0].playbackPercent !== 100) {
+        fail(mode, "mixer", `the slider did not PATCH the output device to 100 % (sent ${JSON.stringify(sent)})`);
+      }
+      if (!outRow.textContent.includes("0.0 dB")) fail(mode, "mixer", `the row did not take the fresh read after the PATCH (reads "${outRow.textContent}")`);
     }
   }
 

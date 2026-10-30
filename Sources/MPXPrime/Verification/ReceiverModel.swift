@@ -575,6 +575,25 @@ func runEncoderStageIsolationSweep(
     rows.append(measure(label: "encoder FIR OFF") { $0.encoderFIREnabled = false })
     rows.append(measure(label: "pre-encode limiter OFF") { $0.preEncodeAudioLimiterEnabled = false })
     rows.append(measure(label: "pre-emphasis OFF") { $0.preemphasisUS = 0 })
+    // 2026-10-20 stereo audit (C4): the stages that shape the stereo image
+    // were the ones missing from this sweep. Mono bass is already off in
+    // Verification.ini (its row reads zero there and is informative on a
+    // profile config); with Advanced Dynamics off the wideband AGC takes
+    // over the levelling, so that row is "AD off, AGC on", not "no leveller".
+    rows.append(measure(label: "mono bass OFF") { $0.monoBassEnabled = false })
+    rows.append(measure(label: "adv. dynamics OFF (AGC on)") { $0.advancedDynamicsEnabled = false })
+    rows.append(measure(label: "HF limiter OFF") { $0.hfLimiterEnabled = false })
+    // The stereo-image protector is an operator option since 2026-10
+    // (`stereo_image_protect_enabled`, default OFF; audit A3). The row flips
+    // it against the base config, so on the shipped default it reads the
+    // cost of switching the protector ON; on a config that has it on it
+    // reads the gain of switching it off. Idle by design on an L-only tone
+    // (side/mid exactly 1.0, under its 1.16 x relief), so a non-zero figure
+    // here is itself a finding.
+    let protectorOn = baseConfig.stereoImageProtectEnabled
+    rows.append(measure(label: protectorOn ? "image protector OFF" : "image protector ON") {
+        $0.stereoImageProtectEnabled = !protectorOn
+    })
     return rows
 }
 
@@ -1049,7 +1068,10 @@ func runReceiverModelVerification(
     var warnings: [String] = []
     var notes: [String] = []
     for metric in toneMetrics {
-        let minimumSeparation: Float = metric.toneHz >= 14_000.0 ? 16.0 : 18.0
+        // 40 / 30 dB since the 2026-10-20 stereo audit (were 18 / 16: the
+        // stored baseline reads 98 / 98 / 70 and the old floors let a 50 dB
+        // loss pass). Constants in Verification/SeparationGates.swift.
+        let minimumSeparation: Float = metric.toneHz >= 14_000.0 ? separationGate14kDB : separationGateDB
         if metric.separationDB < minimumSeparation {
             warnings.append(
                 "\(Int(metric.toneHz)) Hz separation \(String(format: "%.1f", metric.separationDB)) dB < \(String(format: "%.1f", minimumSeparation)) dB"
@@ -1064,7 +1086,10 @@ func runReceiverModelVerification(
     }
 
     for metric in pllRoundTripMetrics {
-        let minimumSeparation: Float = metric.toneHz >= 14_000.0 ? 16.0 : 18.0
+        // 40 / 30 dB since the 2026-10-20 stereo audit (were 18 / 16: the
+        // stored baseline reads 98 / 98 / 70 and the old floors let a 50 dB
+        // loss pass). Constants in Verification/SeparationGates.swift.
+        let minimumSeparation: Float = metric.toneHz >= 14_000.0 ? separationGate14kDB : separationGateDB
         if metric.separationDB < minimumSeparation {
             warnings.append(
                 "PLL external-style \(Int(metric.toneHz)) Hz separation \(String(format: "%.1f", metric.separationDB)) dB < \(String(format: "%.1f", minimumSeparation)) dB"
@@ -1215,6 +1240,16 @@ func runReceiverModelVerification(
             )
         }
     }
+
+    // Separation gates (2026-10-20 stereo audit): the L-only tone set with
+    // its processed-vs-bypass A/B, and the panned-programme crosstalk table.
+    // Prints its own tables; its warnings are TIGHT like the ones above.
+    let separationGates = runSeparationGateSection(
+        baseConfig: baseConfig,
+        durationSeconds: durationSeconds
+    )
+    warnings.append(contentsOf: separationGates.warnings)
+    notes.append(contentsOf: separationGates.notes)
 
     print("")
     print("Mono Compatibility")

@@ -132,9 +132,12 @@ public struct MeterSnapshot {
     public var mpxPowerMaxValid = false
 
     // Best stereo separation (dB) observed since reset: 20*log10(stronger /
-    // weaker decoded channel) sampled during strongly lateralized content
-    // (a single-channel / test tone gives the truest reading). Peak-held
-    // because panned program reads pessimistically low.
+    // weaker decoded channel), sampled only while the decoded side / mid
+    // ratio is within 10 % of 1.0 -- single-channel content, where that
+    // imbalance IS the separation. Peak-held; `separationValid` is true
+    // only while the CURRENT block is such content, so panned programme
+    // (with mono bass filling the quiet channel) reads `--`, not a low
+    // figure, and the held value stays here for a consumer that wants it.
     public var bestSeparationDB: Float = 0.0
     public var separationValid = false
 
@@ -439,9 +442,16 @@ public final class MeterAnalysis {
     private var heldDevScaleKHz: Float?
     private var devScaleHoldBlocks = 0
 
-    // Best observed stereo separation (dB) since reset.
+    // Best observed stereo separation (dB) since reset; `sepValid` = a value
+    // has been held since reset (the snapshot flag additionally needs the
+    // current block to be single-channel content, see the readout).
     private var bestSepDB: Float = 0.0
     private var sepValid = false
+    // Decoded side / mid window inside which the L/R imbalance IS the
+    // separation: 1.0 for single-channel content, 0.9 / 1.1 at -26 dB of
+    // crosstalk either way.
+    private static let separationSideToMidMin: Float = 0.9
+    private static let separationSideToMidMax: Float = 1.1
     // Trend ring (oldest -> newest), pushed ~2/s (every `trendStride` blocks).
     private static let trendPoints = 120
     private var devHistory = [Float](repeating: 0.0, count: trendPoints)
@@ -1129,19 +1139,37 @@ public final class MeterAnalysis {
             snap.mpxPowerMaxValid = false
         }
 
-        // Best stereo separation (dB): sample 20*log10(stronger/weaker) only on
-        // real, lateralized content (a single-channel / test tone is truest),
-        // and peak-hold it -- panned program reads pessimistically low.
+        // Stereo separation (dB): 20*log10(stronger / weaker decoded channel).
+        // That is an L/R IMBALANCE, and it only means separation on
+        // single-channel content, so it is gated on the decoded side / mid
+        // ratio sitting within 10 % of 1.0 -- what a hard-panned signal gives
+        // (L only: S/M exactly 1; crosstalk at -26 dB already moves it to
+        // 0.9 or 1.1). Panned programme with mono bass (S/M well under 0.9,
+        // the bass is in both channels) and anti-phase-leaning width (S/M
+        // over 1.1, where a 6 dB imbalance is not separation) therefore no
+        // longer publish a figure (2026-10-20 stereo audit). Peak-held over
+        // the gated blocks; the held value stays in the snapshot and
+        // `separationValid` says whether the CURRENT block could read it.
         let lRMS = sqrtf(lSq / n)
         let rRMS = sqrtf(rSq / n)
+        let midRMS = sqrtf(mSq / n)
+        let sideRMS = sqrtf(sSq / n)
         let hi = max(lRMS, rRMS)
         let lo = min(lRMS, rRMS)
-        if !inWarmup, decoder.stereoDecodeActive, hi > 0.05, lo > 1e-4 {
-            let sep = min(60.0, 20.0 * log10f(hi / lo))
-            if sep > bestSepDB { bestSepDB = sep; sepValid = true }
+        let sideToMid = midRMS > 1e-6 ? sideRMS / midRMS : 0.0
+        let lateralised = sideToMid > Self.separationSideToMidMin
+            && sideToMid < Self.separationSideToMidMax
+        var sepBlockValid = false
+        if !inWarmup, decoder.stereoDecodeActive, hi > 0.05, lateralised {
+            // A quiet channel at the numerical floor is the 60 dB cap, not
+            // "no reading" (a perfect decode used to never become valid).
+            let sep = lo > 1e-4 ? min(60.0, 20.0 * log10f(hi / lo)) : 60.0
+            if sep > bestSepDB { bestSepDB = sep }
+            sepValid = true
+            sepBlockValid = true
         }
         snap.bestSeparationDB = bestSepDB
-        snap.separationValid = sepValid
+        snap.separationValid = sepValid && sepBlockValid
 
         // Stereo balance (dB, + = left louder). Smoothed hard (~3 s at 23
         // blocks/s) because real programme pans constantly -- the useful

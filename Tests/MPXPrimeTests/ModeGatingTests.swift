@@ -326,6 +326,35 @@ struct ModeGatingTests {
         #expect(!ChainFeature.hfLimiter.applies(in: .hd))
         #expect(renderAudioOnly(cfg: hfBase, stereo: true) == renderAudioOnly(cfg: hfOn, stereo: true),
                 "HD output moved when the HF limiter was enabled -- it is hidden but not inert")
+
+        // The stereo-image protector (an option since 2026-10) exists in the
+        // FM paths only: a digital carrier has neither deviation nor
+        // multipath to protect, and AM is mono before it. The stereo probe
+        // is anti-phase in the bass (side/mid well over 1.0), so in `fm` the
+        // tightest cap WOULD act -- the test's control that the keys are
+        // live where the feature exists, not inert everywhere.
+        for mode in [AppConfig.OperatingMode.hd, .am] {
+            var imageBase = AppConfig()
+            imageBase.operatingMode = mode
+            imageBase.sampleRate = 192_000.0
+            imageBase.stereoImageProtectEnabled = false
+            var imageOn = imageBase
+            imageOn.stereoImageProtectEnabled = true
+            imageOn.stereoImageMaxSideRatio = 1.0
+            #expect(!ChainFeature.stereoImage.applies(in: mode))
+            #expect(renderAudioOnly(cfg: imageBase, stereo: true) == renderAudioOnly(cfg: imageOn, stereo: true),
+                    "\(mode.title) output moved when the stereo-image protector was enabled -- it is hidden but not inert")
+        }
+        var fmBase = AppConfig()
+        fmBase.operatingMode = .fm
+        fmBase.sampleRate = 192_000.0
+        fmBase.stereoImageProtectEnabled = false
+        var fmOn = fmBase
+        fmOn.stereoImageProtectEnabled = true
+        fmOn.stereoImageMaxSideRatio = 1.0
+        #expect(ChainFeature.stereoImage.applies(in: .fm))
+        #expect(renderAudioOnly(cfg: fmBase, stereo: true) != renderAudioOnly(cfg: fmOn, stereo: true),
+                "FM output did not move when the stereo-image protector was enabled on an anti-phase probe")
     }
 
     private func renderAudioOnly(cfg: AppConfig, stereo: Bool = false) -> [Float] {

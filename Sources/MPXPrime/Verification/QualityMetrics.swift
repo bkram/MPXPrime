@@ -250,6 +250,26 @@ func qualityFindings(
         }
     }
 
+    // D3 per-band decoded crosstalk (2026-10-20): the receiver table's gate
+    // inside `--verify`'s own verdict. A band is gated only where the driven
+    // channel holds programme (`hasProgramme`) and, with mono bass on, only
+    // above 3 x its corner -- the stage fills the quiet channel there by
+    // design (`monoBassCrosstalkExclusionFactor`).
+    if expectations.decodedCrosstalkBands != nil, let crosstalk = metrics.decodedCrosstalk {
+        for band in crosstalk.bands where crosstalk.hasProgramme(band) {
+            if let corner = metrics.decodedCrosstalkMonoBassCornerHz,
+                band.band.lowerHz < corner * monoBassCrosstalkExclusionFactor {
+                continue
+            }
+            if band.crosstalkDB < band.band.gateDB {
+                findings.append(
+                    "\(band.band.label) crosstalk \(String(format: "%.1f", band.crosstalkDB)) dB"
+                        + " < \(String(format: "%.0f", band.band.gateDB)) dB"
+                )
+            }
+        }
+    }
+
     if let maxOccupied999Hz = expectations.maxOccupied999Hz {
         let occupied = metrics.bandwidth.occupied999Hz
         if occupied > (maxOccupied999Hz + 150.0) {

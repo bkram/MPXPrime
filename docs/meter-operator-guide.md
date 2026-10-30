@@ -116,6 +116,16 @@ describing the mono decode, and a stereo recording made in this state will
 have identical channels. Improve reception, or check that the station is
 actually transmitting a pilot.
 
+**SEPARATION** also reads `--` on ordinary stereo programme. The readout is the
+level difference between the decoded channels, which is a separation figure
+only on single-channel content, so since 2026-10 it publishes only while the
+decoded side sits within 10 % of the mid -- a left-only test tone or a
+hard-panned passage -- and dims while it is not valid. Panned programme with
+mono bass does not give a reading, because the bass is in both channels by
+design (it used to read a few dB there and look like a separation fault); use
+PHASE CORR and L / R BALANCE for the image there. The best value since reset is
+held and Reset Peaks clears it.
+
 Capture refuses to start below 128 kHz (0.45): composite measurement needs the
 0-60 kHz band and RDS sits at 57 kHz, so readings at lower rates would silently
 exclude the stereo sidebands and count them as noise. If the Meter reports the
@@ -183,10 +193,12 @@ remembered by device UID):
   leave ~1 dB of headroom (+5 dB covers peaks to ~84 kHz).
 
 - **Audio device** (`Source -> Audio`): click the device button and pick the
-  interface carrying the composite and one or two of its channels (on a
-  multichannel interface, for example inputs 5 and 6). Then pick L / R / Mix:
-  L is the lower-numbered chosen channel, R the higher, and Mix averages
-  them; with a single channel chosen all three read it. The **Devices**
+  interface carrying the composite and a pair from its **Channels** menu (on
+  a multichannel interface, for example inputs 5-6). Then pick L / R / Mix:
+  L is the first channel of the pair, R the second, and Mix averages them. A
+  composite on one channel, say input 5, is read by choosing the pair that
+  holds it (5-6) and then L. A single channel set with `--channels 5` still
+  works; the menu then shows it marked "from settings". The **Devices**
   button next to it lists every interface with its channels, rate and bit
   depth; plugging one in or out refreshes the lists by itself, and Rescan
   does it by hand. The Monitor and MPX pass-through outputs choose their

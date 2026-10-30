@@ -58,6 +58,30 @@ struct StereoLinkedOversampledPeakLimiter {
     private var holdSamples: Int = 0
     private var holdCounter: Int = 0
 
+    // Stereo-link blend (`pre_encode_stereo_link`, 0...1; 2026-10 audio-chain
+    // overhaul, roadmap item 1). 1 = the shared envelope above drives both
+    // channels, the classic linked behaviour, bit-identical to before the key
+    // existed. Below 1 each channel also runs its own envelope from its own
+    // peak (same attack / hold / release) and is driven by the convex
+    // combination `link * shared + (1 - link) * own`. The shared gain is
+    // never above either own gain -- identical ballistics on a target that is
+    // the smaller of the two -- so the blend lies between them: the loud
+    // channel is still held to the threshold, the quiet channel is attenuated
+    // less. The audio composite peak is bounded by max(|L|, |R|) per sample
+    // either way, so the composite budget does not move; what moves is the
+    // quiet channel's level while the loud one limits (a momentary image
+    // shift toward the quiet side). `--verify-receiver`'s L-only tone and
+    // panned-programme gates cannot move with the link (a silent channel
+    // stays silent under any gain); `LevellingDriveCouplingTests` pins the
+    // identity at 1, the bound, and the image cost on wide programme.
+    private var stereoLink: Float = 1.0
+    private var gainL: Float = 1.0
+    private var gainR: Float = 1.0
+    private var holdCounterL: Int = 0
+    private var holdCounterR: Int = 0
+    /// The deeper of the two gains applied on the last step (== `gain` at link 1).
+    private var appliedGain: Float = 1.0
+
     // Per-channel 1:4 interpolator: linear-phase Kaiser FIR (polyphase).
     // Until 2026-10 this was a causal 4-point Lagrange with no image filter:
     // 15 kHz imaged at 33 kHz only 16 dB down and 10 kHz at -29 dB, and the
@@ -109,12 +133,19 @@ struct StereoLinkedOversampledPeakLimiter {
         lookaheadMS: Float = 0.0,
         lookaheadHFOnly: Bool = false,
         lookaheadHFCutoffHz: Float = 4_000.0,
-        passbandHz: Float = 15_000.0
+        passbandHz: Float = 15_000.0,
+        stereoLink: Float = 1.0
     ) {
         let sr = max(8_000.0, sampleRate * 4.0)
         self.threshold = clampf(threshold, 0.75, 0.995)
         self.releaseMS = max(8.0, releaseMS)
         self.bandlimitedResidualEnabled = bandlimitedResidualEnabled
+        self.stereoLink = clampf(stereoLink, 0.0, 1.0)
+        gainL = 1.0
+        gainR = 1.0
+        holdCounterL = 0
+        holdCounterR = 0
+        appliedGain = 1.0
         ceiling = oversampledLimiterCeiling(threshold: self.threshold)
         // The CLAMPED threshold: the argument may lie outside 0.75...0.995
         // (AppConfig accepts 0.5...0.999), and a knee measured from it is
@@ -199,18 +230,22 @@ struct StereoLinkedOversampledPeakLimiter {
         // for bit-identical regression behavior.
         var procL = left
         var procR = right
-        var futurePeak: Float = 0.0
+        // Per-channel future peaks: the shared envelope reads their maximum
+        // (what the single hint used to be), the per-channel envelopes of the
+        // stereo-link blend read their own.
+        var futurePeakL: Float = 0.0
+        var futurePeakR: Float = 0.0
         if lookaheadSamples > 0, !lDelay.isEmpty {
             // Detector input: full-band (Phase 1) or HF-filtered (Phase 2).
             // HF mode high-passes a COPY of the input through a biquad so
             // futurePeak only triggers on HF transients (the band where
             // pre-emphasis concentrates peaks). Audio path stays full-band.
             if lookaheadHFOnly {
-                let hpL = hfDetectorL.process(left)
-                let hpR = hfDetectorR.process(right)
-                futurePeak = max(fabsf(hpL), fabsf(hpR))
+                futurePeakL = fabsf(hfDetectorL.process(left))
+                futurePeakR = fabsf(hfDetectorR.process(right))
             } else {
-                futurePeak = max(fabsf(left), fabsf(right))
+                futurePeakL = fabsf(left)
+                futurePeakR = fabsf(right)
             }
             procL = lDelay[delayWriteIndex]
             procR = rDelay[delayWriteIndex]
@@ -238,20 +273,24 @@ struct StereoLinkedOversampledPeakLimiter {
         // applied to both channels each step. The future-peak hint biases
         // the detector toward an incoming (un-delayed) peak so the
         // attack engages early.
-        let (qL1, qR1) = stereoStep(lOS: l1, rOS: r1, futurePeakHint: futurePeak)
-        let (qL2, qR2) = stereoStep(lOS: l2, rOS: r2, futurePeakHint: futurePeak)
-        let (qL3, qR3) = stereoStep(lOS: l3, rOS: r3, futurePeakHint: futurePeak)
-        let (qL4, qR4) = stereoStep(lOS: l4, rOS: r4, futurePeakHint: futurePeak)
+        let (qL1, qR1) = stereoStep(lOS: l1, rOS: r1, futurePeakL: futurePeakL, futurePeakR: futurePeakR)
+        let (qL2, qR2) = stereoStep(lOS: l2, rOS: r2, futurePeakL: futurePeakL, futurePeakR: futurePeakR)
+        let (qL3, qR3) = stereoStep(lOS: l3, rOS: r3, futurePeakL: futurePeakL, futurePeakR: futurePeakR)
+        let (qL4, qR4) = stereoStep(lOS: l4, rOS: r4, futurePeakL: futurePeakL, futurePeakR: futurePeakR)
 
         let outL = decimate(qL1, qL2, qL3, qL4, ch: .left)
         let outR = decimate(qR1, qR2, qR3, qR4, ch: .right)
         return (outL, outR)
     }
 
+    /// The deeper of the two applied gains, in dB (the shared gain at link 1).
     var gainReductionDB: Float {
-        let safeGain = max(1e-6, gain)
+        let safeGain = max(1e-6, appliedGain)
         return max(0.0, -20.0 * log10f(safeGain))
     }
+
+    /// The configured stereo-link share (1 = fully linked).
+    var stereoLinkShare: Float { stereoLink }
 
     /// Host-rate samples of delay this stage adds to the L/R path: the
     /// look-ahead delay line, the interpolator's and the decimator's group
@@ -269,33 +308,70 @@ struct StereoLinkedOversampledPeakLimiter {
         return lookaheadSamples + Int((Float(osDelay) / 4.0).rounded())
     }
 
+    /// The gain a peak asks for: unity below the threshold, `threshold / peak`
+    /// above it.
     @inline(__always)
-    private mutating func stereoStep(lOS: Float, rOS: Float, futurePeakHint: Float = 0.0) -> (Float, Float) {
-        // Stereo-linked detector: peak of either channel drives the
-        // shared gain envelope. This is the core of the stereo-link
-        // discipline — both channels see the same multiplicative gain.
-        // `futurePeakHint` (look-ahead path) is the un-delayed input
-        // peak; using max() ensures we never under-detect when a peak
-        // is incoming but not yet at the gain stage.
-        let osPeak = max(fabsf(lOS), fabsf(rOS))
-        let peak = max(osPeak, futurePeakHint)
+    private func requiredGain(peak: Float) -> Float {
         var targetGain: Float = 1.0
         if peak > threshold {
             targetGain = threshold / max(1e-9, peak)
         }
-        targetGain = clampf(targetGain, 0.0, 1.0)
+        return clampf(targetGain, 0.0, 1.0)
+    }
 
-        if targetGain < gain {
-            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * targetGain)
-            holdCounter = holdSamples
-        } else if holdCounter > 0 {
-            holdCounter -= 1
+    /// One attack / hold / release step of a gain envelope toward `target`.
+    /// Static with the coefficients passed in, so the three envelopes (shared,
+    /// left, right) share one formula without an overlapping access to `self`.
+    @inline(__always)
+    private static func follow(
+        _ gain: inout Float, hold: inout Int, target: Float,
+        attackCoeff: Float, releaseCoeff: Float, holdSamples: Int
+    ) {
+        if target < gain {
+            gain = (attackCoeff * gain) + ((1.0 - attackCoeff) * target)
+            hold = holdSamples
+        } else if hold > 0 {
+            hold -= 1
         } else {
-            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * targetGain)
+            gain = (releaseCoeff * gain) + ((1.0 - releaseCoeff) * target)
         }
+    }
 
-        let yL = lOS * gain
-        let yR = rOS * gain
+    @inline(__always)
+    private mutating func stereoStep(
+        lOS: Float, rOS: Float, futurePeakL: Float = 0.0, futurePeakR: Float = 0.0
+    ) -> (Float, Float) {
+        // Stereo-linked detector: peak of either channel drives the
+        // shared gain envelope. This is the core of the stereo-link
+        // discipline -- both channels see the same multiplicative gain.
+        // The future peaks (look-ahead path) are the un-delayed input
+        // peaks; using max() ensures we never under-detect when a peak
+        // is incoming but not yet at the gain stage.
+        let peakL = max(fabsf(lOS), futurePeakL)
+        let peakR = max(fabsf(rOS), futurePeakR)
+        let peak = max(peakL, peakR)
+        Self.follow(&gain, hold: &holdCounter, target: requiredGain(peak: peak),
+                    attackCoeff: attackCoeff, releaseCoeff: releaseCoeff, holdSamples: holdSamples)
+
+        var gL = gain
+        var gR = gain
+        if stereoLink < 1.0 {
+            // Stereo-link blend: each channel's own envelope, then the convex
+            // combination with the shared one. The shared gain is <= both own
+            // gains (same ballistics, the smaller target), so gL and gR lie
+            // between the shared gain and the channel's own.
+            Self.follow(&gainL, hold: &holdCounterL, target: requiredGain(peak: peakL),
+                        attackCoeff: attackCoeff, releaseCoeff: releaseCoeff, holdSamples: holdSamples)
+            Self.follow(&gainR, hold: &holdCounterR, target: requiredGain(peak: peakR),
+                        attackCoeff: attackCoeff, releaseCoeff: releaseCoeff, holdSamples: holdSamples)
+            let own = 1.0 - stereoLink
+            gL = (stereoLink * gain) + (own * gainL)
+            gR = (stereoLink * gain) + (own * gainR)
+        }
+        appliedGain = min(gL, gR)
+
+        let yL = lOS * gL
+        let yR = rOS * gR
         return (clipToCeiling(yL, ch: .left), clipToCeiling(yR, ch: .right))
     }
 
@@ -364,7 +440,8 @@ struct PreEncodeAudioLimiter {
         lookaheadMS: Float = 0.0,
         lookaheadHFOnly: Bool = false,
         lookaheadHFCutoffHz: Float = 4_000.0,
-        passbandHz: Float = 15_000.0
+        passbandHz: Float = 15_000.0,
+        stereoLink: Float = 1.0
     ) {
         limiter.configure(
             sampleRate: sampleRate,
@@ -376,7 +453,8 @@ struct PreEncodeAudioLimiter {
             lookaheadMS: lookaheadMS,
             lookaheadHFOnly: lookaheadHFOnly,
             lookaheadHFCutoffHz: lookaheadHFCutoffHz,
-            passbandHz: passbandHz
+            passbandHz: passbandHz,
+            stereoLink: stereoLink
         )
         gainReduction = 0.0
     }
@@ -547,6 +625,21 @@ struct LookaheadGainRamp {
 /// Music - Loud reported 0.02 dB of GR while 0.87 dB of dense program reached
 /// the 1x safety shaper (2.7 dB on a hot chain riding 5.8 dB) --
 /// `--verify-final-ride`.
+///
+/// **True-peak detector (2026-10 audio-chain overhaul).** The sliding window
+/// is fed the largest of the sample and its four 4x-interpolated estimates
+/// (a short linear-phase Kaiser FIR, the `StereoTruePeakGuard` pattern), so
+/// an inter-sample peak of the 55 kHz-limited composite counts the way the
+/// exciter will see it. On air the programme's negative peaks sat 0.35 dB
+/// above a full-scale tone's at the same sample budget: inter-sample peaks
+/// the 1x sample detector could not see, plus the clipper's guard-band
+/// restoration. The interpolator's estimate for a sample enters the window
+/// `detectorDelaySamples` after the sample entered the delay line, so the
+/// ramp is shortened by that delay plus two samples (the longest ramp that is
+/// still a bound, see `StereoTruePeakGuard`). The detector needs a look-ahead
+/// of at least that many samples; below it (a sub-0.05 ms look-ahead) the
+/// stage falls back to the sample-peak detector. The audio path is untouched:
+/// no interpolation, no clipping, the same delay as before.
 struct LookaheadLimiter {
     var enabled: Bool = false
     var threshold: Float = 0.98
@@ -555,6 +648,12 @@ struct LookaheadLimiter {
     var writeIndex: Int = 0
     private var ramp = LookaheadGainRamp()
     private var windowMax = SlidingWindowMax()
+    // 4x reconstruction detector.
+    private var detector = TruePeakDetector4x()
+    /// Host samples the interpolated estimate lags the sample it describes.
+    private(set) var detectorDelaySamples: Int = 0
+    /// True when the window is fed the 4x estimates (look-ahead long enough).
+    private(set) var truePeakDetectorActive: Bool = false
 
     /// Gain applied to the last sample (1 = no reduction).
     var gain: Float { ramp.gain }
@@ -567,7 +666,7 @@ struct LookaheadLimiter {
 
     mutating func configure(sampleRate: Float, lookaheadMS: Float, threshold: Float, enabled: Bool) {
         self.enabled = enabled
-        self.threshold = clampf(threshold, 0.5, 0.999)
+        self.threshold = clampf(threshold, 0.5, 1.0)
 
         let sr = max(8_000.0, sampleRate)
         let laMS = clampf(lookaheadMS, 0.0, 20.0)
@@ -581,13 +680,32 @@ struct LookaheadLimiter {
         // still inside it (lookaheadSamples + 1 values).
         windowMax.configure(windowLength: lookaheadSamples + 1)
 
-        // The ramp spans the whole look-ahead (the longest span that is still
-        // a bound, see `LookaheadGainRamp`). Without look-ahead it degenerates
-        // to an instant gain on the current sample. Short hold after the last
+        // 4x reconstruction detector: the composite is band-limited to
+        // 55 kHz by the FIR ahead of this stage, so the passband ends at
+        // 60 kHz (0.45 fs at low rates) and the first image (fs - 60 kHz)
+        // starts the 60 dB stopband: 9-10 taps per phase at 192 kHz, a
+        // 0.03 ms group delay. The same 4x factor as the verifier's
+        // `truePeak4x`, so the gate and the detector read the same peak.
+        let passband = min(60_000.0, 0.45 * sr)
+        let transition = max(0.1 * sr, sr - (2.0 * passband))
+        detector.configure(cutoffHz: passband, sampleRate: sr, stopBandDB: 60.0, transitionHz: transition)
+        detectorDelaySamples = detector.groupDelayInputSamples
+        truePeakDetectorActive = lookaheadSamples >= detectorDelaySamples + 2
+
+        // The ramp spans the look-ahead less the detector delay (the longest
+        // span that is still a bound, see `LookaheadGainRamp` and
+        // `StereoTruePeakGuard`). Without look-ahead it degenerates to an
+        // instant gain on the current sample. Short hold after the last
         // attack so successive peaks do not release between them; ~95 ms
-        // release.
+        // release. Measured 2026-10 (clipper task): 50 and 30 ms change
+        // neither the dense-programme RMS nor the duty by more than 0.1 dB
+        // at any clip depth -- the overshoot this stage rides is a property
+        // of the clipper's guard restoration, not of this release.
         let releaseS = 0.095 as Float
-        ramp.configure(rampSamples: lookaheadSamples,
+        let rampSamples = truePeakDetectorActive
+            ? max(0, lookaheadSamples - detectorDelaySamples - 2)
+            : lookaheadSamples
+        ramp.configure(rampSamples: rampSamples,
                        holdSamples: Int((0.004 * sr).rounded()),
                        releaseCoeff: expf(-1.0 / (releaseS * sr)))
     }
@@ -604,8 +722,16 @@ struct LookaheadLimiter {
                 writeIndex = 0
             }
         }
-        // Largest peak among the sample leaving now and all samples queued.
-        let peakAhead = windowMax.push(fabsf(x))
+        // Largest peak among the sample leaving now and all samples queued,
+        // on the 4x reconstruction: the sample itself plus its four
+        // interpolated estimates (which describe the input of
+        // `detectorDelaySamples` ago and are still inside the window when
+        // that sample leaves the line).
+        var estimate = fabsf(x)
+        if truePeakDetectorActive {
+            estimate = max(estimate, detector.push(x))
+        }
+        let peakAhead = windowMax.push(estimate)
 
         var targetGain: Float = 1.0
         if peakAhead > threshold {
@@ -624,5 +750,78 @@ struct LookaheadLimiter {
     var gainReductionDB: Float {
         let safeGain = max(1e-6, gain)
         return max(0.0, -20.0 * log10f(safeGain))
+    }
+}
+
+/// 4x true-peak DETECTOR: one host sample in, the largest magnitude of its
+/// four Kaiser-sinc interpolated estimates out. Nothing else -- no output
+/// stream, no decimation. The four polyphase branches share one pass over
+/// the delay window as a `SIMD4` accumulator (one multiply-add per tap for
+/// all four phases), which is what keeps it affordable on the 192 kHz
+/// composite path: the general `LinearPhaseFIRInterpolator` costs four vDSP
+/// dot products plus their call overhead per sample for the same answer
+/// (measured 0.74 % of real time against 0.2 % here, `--bench` 15 % for the
+/// whole chain). Same kernel design and phase decomposition as that
+/// interpolator, so the estimates agree.
+struct TruePeakDetector4x {
+    /// Phase-interleaved, time-reversed taps: `taps[k][p]` multiplies the
+    /// k-th oldest sample of the window for output phase p.
+    private var taps: [SIMD4<Float>] = []
+    private var delay: [Float] = []
+    private var writeIndex: Int = 0
+    private var tapsPerPhase: Int = 0
+    private var totalTaps: Int = 0
+
+    var tapCount: Int { totalTaps }
+    /// Group delay in OS samples (kernel midpoint).
+    var groupDelayOSSamples: Int { max(0, (totalTaps - 1) / 2) }
+    /// Group delay in input samples, rounded to the nearest sample.
+    var groupDelayInputSamples: Int { (groupDelayOSSamples + 2) / 4 }
+
+    mutating func configure(cutoffHz: Float, sampleRate: Float, stopBandDB: Float, transitionHz: Float) {
+        let kernel = kaiserSincLowpassCoefficients(
+            cutoffHz: cutoffHz, sampleRate: 4.0 * sampleRate, stopBandDB: stopBandDB, transitionHz: transitionHz)
+        let n = kernel.count
+        let t = (n + 3) / 4
+        var table = [SIMD4<Float>](repeating: .zero, count: t)
+        for i in 0..<n {
+            let p = i % 4
+            let k = i / 4
+            // Unity DC gain per phase: each branch sees a quarter of the kernel.
+            table[t - 1 - k][p] = kernel[i] * 4.0
+        }
+        taps = table
+        tapsPerPhase = t
+        totalTaps = n
+        delay = [Float](repeating: 0.0, count: max(1, t) * 2)
+        writeIndex = 0
+    }
+
+    mutating func reset() {
+        for i in 0..<delay.count { delay[i] = 0.0 }
+        writeIndex = 0
+    }
+
+    /// Push one sample; returns the largest |estimate| among its four
+    /// interpolated values (the sample itself is not included).
+    @inline(__always)
+    mutating func push(_ x: Float) -> Float {
+        let t = tapsPerPhase
+        guard t > 0 else { return fabsf(x) }
+        delay[writeIndex] = x
+        delay[writeIndex + t] = x
+        writeIndex += 1
+        if writeIndex >= t { writeIndex = 0 }
+        var acc = SIMD4<Float>.zero
+        let start = writeIndex
+        taps.withUnsafeBufferPointer { c in
+            delay.withUnsafeBufferPointer { d in
+                for k in 0..<t {
+                    acc += c[k] * d[start + k]
+                }
+            }
+        }
+        let magnitudes = acc.replacing(with: -acc, where: acc .< 0)
+        return magnitudes.max()
     }
 }

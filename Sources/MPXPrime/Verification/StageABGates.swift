@@ -927,10 +927,83 @@ private func bassPolarityFailures(label: String, metrics: BassPolarityMetrics) -
     return failures
 }
 
+// MARK: - Programme crosstalk (2026-10 audio-chain overhaul, stereo audit C2 / D3)
+//
+// The tone sweep above cannot see what the stereo guard does to PROGRAMME:
+// a steady tone is ridden by the look-ahead and barely clipped. The clipper
+// restores `guard` of the 22-54 kHz (S) share of its clipping residual and
+// removes the baseband (M) share in full, so for a signal in ONE channel the
+// silent channel carries whatever the two shares do not cancel. The
+// residual is a train of short pulses at the 38 kHz crests, whose
+// demodulated S share is about TWICE its baseband share (a narrow pulse
+// train's fundamental is twice its mean), so the shares cancel at a guard of
+// about 0.5 -- not at 0 (full-composite clipping) and not at 1 (M-only
+// clipping); the sweep below measures it. The measurement is the
+// `SeparationGates.swift` one `--verify-receiver` gates: `panned_program`
+// (program_mix into LEFT only) decoded coherently, L - R per octave band,
+// gated where the driven channel holds programme and outside the mono-bass
+// corner.
+
+struct StereoGuardCrosstalk {
+    let decoded: DecodedCrosstalkResult
+    /// Mono-bass corner when the stage is on (its bands are not gated).
+    let monoBassCornerHz: Double?
+    /// Composite clipper kernel GR (dB) over the same programme.
+    let clipperGRDB: Float
+    /// Final-MPX limiter duty (dB) over the same programme.
+    let finalGRDB: Float
+    /// Composite sample peak (dBFS) over the same programme.
+    let peakDBFS: Float
+
+    func isGated(_ band: DecodedBandCrosstalk) -> Bool {
+        let outsideMonoBass = monoBassCornerHz.map { band.band.lowerHz >= $0 * monoBassCrosstalkExclusionFactor } ?? true
+        return outsideMonoBass && decoded.hasProgramme(band)
+    }
+    var gatedBands: [DecodedBandCrosstalk] { decoded.bands.filter(isGated) }
+    /// Smallest (crosstalk - gate) over the gated bands; >= 0 passes.
+    var worstMarginDB: Float {
+        gatedBands.map { $0.crosstalkDB - $0.band.gateDB }.min() ?? 0.0
+    }
+    var passes: Bool { worstMarginDB >= 0.0 }
+}
+
+/// `panned_program` through `config`: the decoded per-band crosstalk from
+/// `decodedBandCrosstalk` plus the clipper / limiter duty on the same
+/// programme (a second render through `verifyScenario`; RDS off in both so
+/// the renders are deterministic).
+func stereoGuardCrosstalk(config: AppConfig, durationSeconds: Double) -> StereoGuardCrosstalk? {
+    guard let scenario = verificationScenarios().first(where: { $0.name == "panned_program" }) else { return nil }
+    var cfg = config
+    cfg.monoMode = false
+    cfg.enRDS = false
+    let decoded = decodedBandCrosstalk(config: cfg, durationSeconds: durationSeconds, source: scenario.sample)
+    // Fresh scenario table: the noise generators carry state.
+    guard let fresh = verificationScenarios().first(where: { $0.name == "panned_program" }) else { return nil }
+    let duty = verifyScenario(config: cfg, durationSeconds: durationSeconds, scenario: fresh)
+    return StereoGuardCrosstalk(
+        decoded: decoded,
+        monoBassCornerHz: cfg.monoBassEnabled ? cfg.monoBassFreqHz : nil,
+        clipperGRDB: duty.maxLimiterGRDB,
+        finalGRDB: duty.maxSafetyGRDB,
+        peakDBFS: dbfsValue(duty.peakAbs))
+}
+
 private struct StereoGuardPoint {
     let guardShare: Double
     let finalGR: Float
     let sep14: Float
+    let crosstalk: StereoGuardCrosstalk?
+}
+
+private func crosstalkCells(_ x: StereoGuardCrosstalk, marks: Bool) -> String {
+    x.decoded.bands.map { band in
+        var mark = ""
+        if marks && !x.isGated(band) {
+            let outsideMonoBass = x.monoBassCornerHz.map { band.band.lowerHz >= $0 * monoBassCrosstalkExclusionFactor } ?? true
+            mark = outsideMonoBass ? "nc" : "mb"
+        }
+        return String(format: "%7.1f%-2@", band.crosstalkDB, mark as NSString)
+    }.joined(separator: " ")
 }
 
 private func printStereoGuardTable(label: String, config: AppConfig, durationSeconds duration: Double)
@@ -962,7 +1035,8 @@ private func printStereoGuardTable(label: String, config: AppConfig, durationSec
         let bass = bassPolarityMetrics(config: cfg, durationSeconds: duration)
         failures += bassPolarityFailures(label: "\(label), guard \(String(format: "%.2f", share))", metrics: bass)
         let deviationKHz = DeviationReadout.kilohertz(compositePeak: d.peakAbs, modulationReferenceScale: 1.0)
-        points.append(StereoGuardPoint(guardShare: share, finalGR: d.maxSafetyGRDB, sep14: sep14))
+        let crosstalk = stereoGuardCrosstalk(config: cfg, durationSeconds: duration)
+        points.append(StereoGuardPoint(guardShare: share, finalGR: d.maxSafetyGRDB, sep14: sep14, crosstalk: crosstalk))
         print(
             "\(String(format: "%5.2f", share))  "
                 + "\(String(format: "%6.2f", d.maxLimiterGRDB))"
@@ -978,6 +1052,43 @@ private func printStereoGuardTable(label: String, config: AppConfig, durationSec
                 + " \(String(format: "%+8.2f", bass.lossDB))\(bass.lossPasses ? "" : "!")"
         )
     }
+    // Programme crosstalk per guard share (2026-10, stereo audit C2 / D3):
+    // panned_program (program_mix into L only), coherent decode, L - R band
+    // level; `mb` = under 3 x the mono-bass corner (the stage fills the quiet
+    // channel by design), `nc` = no programme in the driven band (noise and
+    // IM only); neither is gated.
+    print("")
+    print("Programme crosstalk (panned_program: program_mix into L only; decoded L - R per band, dB; higher is cleaner)")
+    print("Guard  200-400   400-800   800-1k6   1k6-3k2   3k2-6k4   6k4-10k   10k-15k   ClipGR  FinalGR  Peak dBFS  Margin  Verdict")
+    print("-----  --------  --------  --------  --------  --------  --------  --------  ------  -------  ---------  ------  -------")
+    for point in points {
+        guard let x = point.crosstalk else { continue }
+        print(
+            "\(String(format: "%5.2f", point.guardShare))  \(crosstalkCells(x, marks: true))"
+                + "  \(String(format: "%6.2f", x.clipperGRDB))"
+                + "  \(String(format: "%7.2f", x.finalGRDB))"
+                + "  \(String(format: "%9.2f", x.peakDBFS))"
+                + "  \(String(format: "%+6.1f", x.worstMarginDB))"
+                + "  \(x.passes ? "OK" : "FAIL")"
+        )
+    }
+    var reference = config
+    reference.compositeClipperEnabled = false
+    if let referenceCrosstalk = stereoGuardCrosstalk(config: reference, durationSeconds: duration) {
+        print(" off   \(crosstalkCells(referenceCrosstalk, marks: false))       -  \(String(format: "%7.2f", referenceCrosstalk.finalGRDB))  \(String(format: "%9.2f", referenceCrosstalk.peakDBFS))       -  (clipper off reference)")
+    }
+    print(
+        "Acceptance: >= \(String(format: "%.0f", pannedProgramCrosstalkGateDB)) dB in every gated band to 10 kHz and "
+            + ">= \(String(format: "%.0f", pannedProgramCrosstalkGateHFDB)) dB in 10-15 kHz with the clipper engaged "
+            + "(SeparationGates.swift floors); Margin = worst gated band minus its floor.")
+    if let shipped = points.first(where: { abs($0.guardShare - config.compositeClipperStereoGuard) < 0.001 }),
+       let x = shipped.crosstalk, !x.passes {
+        failures.append(
+            "\(label), guard \(String(format: "%.2f", config.compositeClipperStereoGuard)): programme crosstalk "
+                + "\(String(format: "%.1f", x.worstMarginDB)) dB under its floor in the worst gated band "
+                + "with clipper GR \(String(format: "%.2f", x.clipperGRDB)) dB")
+    }
+
     let configured = bassPolarityMetrics(config: config, durationSeconds: duration)
     failures += bassPolarityFailures(
         label: "\(label), bass scenario at guard \(String(format: "%.2f", config.compositeClipperStereoGuard))",
@@ -1028,22 +1139,27 @@ func runStereoGuardSweep(
 
     print("Assessment")
     print("Shipped default: mpx_clipper_stereo_guard = \(String(format: "%.2f", AppConfig().compositeClipperStereoGuard))")
-    let acceptable = loudPoints.filter { $0.finalGR <= 0.5 && $0.sep14 >= 20.0 }
-    if let best = acceptable.max(by: { $0.sep14 < $1.sep14 }) {
-        print("Music - Loud: guard shares with final-limiter duty <= 0.5 dB and 14 kHz separation >= 20 dB: "
+    // Acceptance (2026-10): final-limiter duty <= 1.0 dB (the clip depth hands the final limiter its restored guard share, 0.7-0.9 dB at depth 1.0), 14 kHz tone
+    // separation >= 20 dB AND the programme-crosstalk floors with the
+    // clipper engaged. The tone criterion alone chose 1.0 in 2026-08; the
+    // programme criterion is what the operator hears (stereo audit A1).
+    let acceptable = loudPoints.filter { $0.finalGR <= 1.0 && $0.sep14 >= 20.0 && ($0.crosstalk?.passes ?? false) }
+    if let best = acceptable.max(by: { ($0.crosstalk?.worstMarginDB ?? 0) < ($1.crosstalk?.worstMarginDB ?? 0) }) {
+        print("Music - Loud: guard shares with final-limiter duty <= 1.0 dB, 14 kHz separation >= 20 dB and the "
+            + "programme-crosstalk floors: "
             + acceptable.map { String(format: "%.2f", $0.guardShare) }.joined(separator: ", ")
-            + "; best separation among them at \(String(format: "%.2f", best.guardShare)).")
+            + "; cleanest programme crosstalk among them at \(String(format: "%.2f", best.guardShare)).")
     } else {
-        print("Music - Loud: no guard share meets final-limiter duty <= 0.5 dB with 14 kHz separation >= 20 dB.")
+        print("Music - Loud: no guard share meets final-limiter duty <= 1.0 dB, 14 kHz separation >= 20 dB and the programme-crosstalk floors.")
     }
     if failures.isEmpty {
-        print("Result: OK - sweep printed; the shipped default is chosen from this table (docs/studio-settings-reference.md, Composite Clipper); bass polarity and bass level hold on every point.")
+        print("Result: OK - sweep printed; the shipped default is chosen from this table (docs/studio-settings-reference.md, Composite Clipper); programme crosstalk, bass polarity and bass level hold at the shipped share.")
         return 0
     }
-    print("Bass protection findings:")
+    print("Findings:")
     for failure in failures {
         print("- \(failure)")
     }
-    print("Result: FAIL - a bass-protection stage inverted, smeared or dropped the bass.")
+    print("Result: FAIL - the shipped guard share fails the programme-crosstalk floors, or a bass-protection stage inverted, smeared or dropped the bass.")
     return 1
 }

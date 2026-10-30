@@ -199,8 +199,10 @@ struct FormatProfileTests {
             #expect(model.config.compositeClipperLookaheadMS > 1.0, "\(id): clipper look-ahead expected")
             #expect(model.config.advancedDynamicsEnabled,
                 "\(id): every profile levels with Advanced Dynamics")
-            #expect(model.config.advancedDynamicsTargetDB == model.config.widebandAGCTargetDB - 2.0,
-                "\(id): the leveller target is the profile's AGC target less 2 dB (loudness parity with the classic chain)")
+            let expectedTarget = model.config.widebandAGCTargetDB
+                - (profile.primeBassEnabled ? PresetCatalog.primeBassLevellerOffsetDB : 0.0)
+            #expect(model.config.advancedDynamicsTargetDB == expectedTarget,
+                "\(id): the leveller target is the profile's AGC target, 2 dB below it with PrimeBass (2026-10 levelling task: loudness parity vs PrimeBass IMD)")
             #expect(model.config.advancedDynamicsDensity == profile.multibandIntensity.levelerDensity,
                 "\(id): the leveller density follows the profile's intensity")
 
@@ -239,7 +241,10 @@ struct FormatProfileTests {
         #expect(model.config.finalStagePresetID == "classical")
         #expect(model.config.primeBassEnabled == false)
         #expect(abs(model.config.widebandAGCTargetDB - (-18.0)) < 1e-6)
-        #expect(abs(model.config.finalDriveDB - 3.0) < 1e-6)
+        // 5 dB at clip depth 1 since the 2026-10 levelling task (was 3 dB at
+        // depth 2): the shallower depth keeps the ride SINAD at 33.8 dB.
+        #expect(abs(model.config.finalDriveDB - 5.0) < 1e-6)
+        #expect(abs(model.config.compositeClipperLookaheadDepthDB - 1.0) < 1e-6)
         // 2026-10 review, finding 3: orchestral LF space is not folded to
         // mono above 90 Hz on the purist profile.
         #expect(abs(model.config.monoBassFreqHz - 90.0) < 1e-6)
@@ -281,8 +286,10 @@ struct FormatProfileTests {
         #expect(abs(model.config.widebandAGCTargetDB - (-14.0)) < 1e-6)
         #expect(model.config.primeBassEnabled == false,
             "speech profile must disable PrimeBass")
-        #expect(abs(model.config.monoBassFreqHz - 140.0) < 1e-6)  // speech: mono below 140 Hz
-        #expect(abs(model.config.finalDriveDB - 4.3) < 1e-6)
+        #expect(abs(model.config.monoBassFreqHz - 110.0) < 1e-6)  // speech: mono below 110 Hz
+        // 2.8 dB since the 2026-10 levelling task (was 4.3): the leveller
+        // sits at the AGC target, 2 dB hotter into the final stage.
+        #expect(abs(model.config.finalDriveDB - 2.8) < 1e-6)
     }
 
     @Test func speechMultibandIsFastAndDense() {

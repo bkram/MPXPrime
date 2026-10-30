@@ -64,7 +64,12 @@ struct LiveApplyRateDomainTests {
     /// tone exercises a bass-band crossover and an all-pass corner, the
     /// step exercises envelope time constants, and the pair makes a
     /// waveform whose samples move when any of the three is misconfigured.
-    private func probe(frames: Int) -> (left: [Float], right: [Float]) {
+    /// `rightScale` is the right channel as a multiple of the left: 0.85
+    /// (default) is ordinary near-mono programme; a negative value makes an
+    /// anti-phase-leaning pair whose side/mid ratio is over 1.0, which the
+    /// stereo-image protector (a stage that acts on the ratio) needs to
+    /// have anything to do.
+    private func probe(frames: Int, rightScale: Double = 0.85) -> (left: [Float], right: [Float]) {
         var left = [Float](repeating: 0.0, count: frames)
         var right = [Float](repeating: 0.0, count: frames)
         let wLow = 2.0 * Double.pi * 80.0 / sampleRate
@@ -75,13 +80,13 @@ struct LiveApplyRateDomainTests {
             left[i] = Float(v)
             // A little channel asymmetry so a stereo-linked stage cannot
             // hide a fault behind a perfectly correlated pair.
-            right[i] = Float(v * 0.85)
+            right[i] = Float(v * rightScale)
         }
         return (left, right)
     }
 
-    private func render(_ generator: MPXGenerator, frames: Int) -> [Float] {
-        var (left, right) = probe(frames: frames)
+    private func render(_ generator: MPXGenerator, frames: Int, rightScale: Double = 0.85) -> [Float] {
+        var (left, right) = probe(frames: frames, rightScale: rightScale)
         left.withUnsafeMutableBufferPointer { lBuf in
             right.withUnsafeMutableBufferPointer { rBuf in
                 let blockSize = 1024
@@ -108,16 +113,17 @@ struct LiveApplyRateDomainTests {
         stage: String,
         from configA: AppConfig,
         to configB: AppConfig,
-        seconds: Double = 0.25
+        seconds: Double = 0.25,
+        rightScale: Double = 0.85
     ) {
         let frames = Int(sampleRate * seconds)
 
         let restarted = MPXGenerator(config: configB, sampleRate: sampleRate)
-        let expected = render(restarted, frames: frames)
+        let expected = render(restarted, frames: frames, rightScale: rightScale)
 
         let live = MPXGenerator(config: configA, sampleRate: sampleRate)
         live.applyRuntimeConfig(MPXGenerator.makeRuntimeConfig(from: configB))
-        let actual = render(live, frames: frames)
+        let actual = render(live, frames: frames, rightScale: rightScale)
 
         var worst: Float = 0.0
         var worstIndex = -1
@@ -140,11 +146,12 @@ struct LiveApplyRateDomainTests {
         stage: String,
         from configA: AppConfig,
         to configB: AppConfig,
-        seconds: Double = 0.25
+        seconds: Double = 0.25,
+        rightScale: Double = 0.85
     ) {
         let frames = Int(sampleRate * seconds)
-        let a = render(MPXGenerator(config: configA, sampleRate: sampleRate), frames: frames)
-        let b = render(MPXGenerator(config: configB, sampleRate: sampleRate), frames: frames)
+        let a = render(MPXGenerator(config: configA, sampleRate: sampleRate), frames: frames, rightScale: rightScale)
+        let b = render(MPXGenerator(config: configB, sampleRate: sampleRate), frames: frames, rightScale: rightScale)
         var worst: Float = 0.0
         for i in 0..<frames {
             worst = max(worst, fabsf(a[i] - b[i]))
@@ -219,6 +226,32 @@ struct LiveApplyRateDomainTests {
         b.preEncodeReleaseMS = 250.0
         expectTheEditIsAudible(stage: "Pre-encode limiter", from: a, to: b)
         expectRestartEqualsLive(stage: "Pre-encode limiter", from: a, to: b)
+    }
+
+    // MARK: - Stereo-image protector (an option since 2026-10)
+
+    /// The protector's 10 ms / 300 ms envelopes are audio-domain time
+    /// constants and its reference delay follows the audio-domain latency of
+    /// the stages between its taps, so both the enable (which resets the
+    /// stage) and the ratio cap (adopted without a reset) must survive a live
+    /// edit. The probe is anti-phase-leaning (R = -0.6 L, side/mid about 4)
+    /// so the stage has something to limit; mono bass is on so the reference
+    /// delay is non-zero.
+    @Test func stereoImageProtectorSurvivesALiveEdit() {
+        var a = baseConfig()
+        a.monoBassEnabled = true
+        a.monoBassFreqHz = 140.0
+        a.stereoImageProtectEnabled = false
+        var b = a
+        b.stereoImageProtectEnabled = true
+        b.stereoImageMaxSideRatio = 1.2
+        expectTheEditIsAudible(stage: "Stereo-image protector (enable)", from: a, to: b, rightScale: -0.6)
+        expectRestartEqualsLive(stage: "Stereo-image protector (enable)", from: a, to: b, rightScale: -0.6)
+
+        var c = b
+        c.stereoImageMaxSideRatio = 2.5
+        expectTheEditIsAudible(stage: "Stereo-image protector (ratio)", from: b, to: c, rightScale: -0.6)
+        expectRestartEqualsLive(stage: "Stereo-image protector (ratio)", from: b, to: c, rightScale: -0.6)
     }
 
     // MARK: - The boundary itself

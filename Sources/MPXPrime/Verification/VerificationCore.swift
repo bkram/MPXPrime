@@ -49,6 +49,13 @@ struct VerificationMetrics {
     var outputSignal = StereoSignalMetrics()
     var outputBands = AudioBandRMSMetrics()
     var bandwidth = MPXBandwidthMetrics()
+    /// Coherent-decode per-band crosstalk, filled only for a scenario whose
+    /// expectations carry `decodedCrosstalkBands` (D3, `panned_program`).
+    var decodedCrosstalk: DecodedCrosstalkResult?
+    /// The mono-bass corner of the rendered config, so the gate can leave
+    /// the bands the stage legitimately fills alone (as the receiver table's
+    /// `mb` mark does); nil when mono bass is off.
+    var decodedCrosstalkMonoBassCornerHz: Double?
 
     mutating func ingest(
         sample: Float,
@@ -102,6 +109,11 @@ struct QualityExpectations {
     let maxOccupied999Hz: Float?
     let maxAbove60kRatioDB: Float?
     let maxAbove67kRatioDB: Float?
+    /// Per-band decoded crosstalk gates (D3): when set, `verifyScenario`
+    /// renders the scenario once more through the coherent receiver decode
+    /// and `qualityFindings` reports every band under its gate. Defaulted so
+    /// the memberwise initialisers elsewhere stay as they are.
+    var decodedCrosstalkBands: [CrosstalkBand]?
 
     static let none = QualityExpectations(
         maxCorrelationDelta: nil,
@@ -254,6 +266,12 @@ struct DeterministicNoise {
 func verificationScenarios() -> [VerificationScenario] {
     var programNoiseL = DeterministicNoise(seed: 0x1234_5678_ABCD_EF01)
     var programNoiseR = DeterministicNoise(seed: 0x0FED_CBA9_8765_4321)
+    // Own generators for the two program_mix derivatives, so adding them
+    // leaves program_mix's noise stream (and its stored baseline) untouched.
+    var pannedNoiseL = DeterministicNoise(seed: 0x9A77_ED00_0000_0001)
+    var pannedNoiseR = DeterministicNoise(seed: 0x9A77_ED00_0000_0002)
+    var wideNoiseL = DeterministicNoise(seed: 0x51DE_0000_0000_0001)
+    var wideNoiseR = DeterministicNoise(seed: 0x51DE_0000_0000_0002)
     var brightNoiseL = DeterministicNoise(seed: 0xCAFE_BABE_F00D_0001)
     var brightNoiseR = DeterministicNoise(seed: 0xCAFE_BABE_F00D_0002)
     var vocalNoiseL = DeterministicNoise(seed: 0x5150_CAFE_0000_0001)
@@ -262,6 +280,38 @@ func verificationScenarios() -> [VerificationScenario] {
     var transientNoiseR = DeterministicNoise(seed: 0xA11C_E123_0000_0002)
     var bassStressL = DeterministicNoise(seed: 0x0BAD_F00D_1000_0001)
     var bassStressR = DeterministicNoise(seed: 0x0BAD_F00D_1000_0002)
+
+    /// The `program_mix` source, shared with `panned_program` (driven into
+    /// the left channel only) and `wide_program` (M/S re-balanced) so the
+    /// three scenarios are the same programme and only the image differs.
+    /// Moved here verbatim from the program_mix closure: same operations in
+    /// the same order, so program_mix renders bit-identically.
+    func programMixSample(
+        _ t: Double,
+        _ noiseL: inout DeterministicNoise,
+        _ noiseR: inout DeterministicNoise
+    ) -> (Float, Float) {
+        let envelope =
+            0.42
+            + (0.18 * (0.5 + 0.5 * sin(2.0 * Double.pi * 0.37 * t)))
+            + (0.08 * (0.5 + 0.5 * sin(2.0 * Double.pi * 0.071 * t)))
+
+        let bass = sin(2.0 * Double.pi * 55.0 * t)
+        let lowMid = sin(2.0 * Double.pi * 220.0 * t)
+        let mid = sin(2.0 * Double.pi * 880.0 * t)
+        let high = sin(2.0 * Double.pi * 3200.0 * t)
+
+        let left =
+            Float(envelope)
+            * Float((0.42 * bass) + (0.24 * lowMid) + (0.16 * mid) + (0.08 * high))
+            + (noiseL.next() * 0.025)
+        let right =
+            Float(envelope)
+            * Float((0.39 * bass) + (0.21 * lowMid) - (0.12 * mid) + (0.10 * high))
+            + (noiseR.next() * 0.025)
+
+        return (left, right)
+    }
 
     return [
         VerificationScenario(
@@ -284,11 +334,16 @@ func verificationScenarios() -> [VerificationScenario] {
         VerificationScenario(
             name: "stereo_diff_400hz",
             description: "Out-of-phase stereo stress tone",
+            // 12 dB (was 30): pure-side content at 0.5 loses about 24 dB of
+            // RMS to the always-on stereo-image protector (A3 in the
+            // 2026-10-20 stereo audit) while mono_1khz at the same level
+            // loses 1.4 dB, and 30 dB let that pass. Expected red until the
+            // protector task lands; the limiters alone cost well under 12 dB.
             quality: QualityExpectations(
                 maxCorrelationDelta: 0.08,
                 maxOutputCorrelation: nil,
                 minSideRetention: nil,
-                maxAbsRMSDeltaDB: 30.0,
+                maxAbsRMSDeltaDB: 12.0,
                 maxOccupied999Hz: nil,
                 maxAbove60kRatioDB: nil,
                 maxAbove67kRatioDB: nil
@@ -312,26 +367,68 @@ func verificationScenarios() -> [VerificationScenario] {
             )
         ) { frame, sampleRate in
             let t = Double(frame) / sampleRate
-            let envelope =
-                0.42
-                + (0.18 * (0.5 + 0.5 * sin(2.0 * Double.pi * 0.37 * t)))
-                + (0.08 * (0.5 + 0.5 * sin(2.0 * Double.pi * 0.071 * t)))
-
-            let bass = sin(2.0 * Double.pi * 55.0 * t)
-            let lowMid = sin(2.0 * Double.pi * 220.0 * t)
-            let mid = sin(2.0 * Double.pi * 880.0 * t)
-            let high = sin(2.0 * Double.pi * 3200.0 * t)
-
-            let left =
-                Float(envelope)
-                * Float((0.42 * bass) + (0.24 * lowMid) + (0.16 * mid) + (0.08 * high))
-                + (programNoiseL.next() * 0.025)
-            let right =
-                Float(envelope)
-                * Float((0.39 * bass) + (0.21 * lowMid) - (0.12 * mid) + (0.10 * high))
-                + (programNoiseR.next() * 0.025)
-
-            return (left, right)
+            return programMixSample(t, &programNoiseL, &programNoiseR)
+        },
+        VerificationScenario(
+            name: "panned_program",
+            description: "program_mix driven into the left channel only -- the operator's panned-programme complaint",
+            // 2026-10-20 stereo audit (C4 / D3). Input S/M is exactly 1.0, so
+            // `minSideRetention` here is the wideband decoded-crosstalk gate:
+            // output S/M = (1 - e) / (1 + e) for crosstalk e, and 0.95 is
+            // e <= 2.6 % (about -32 dB). The per-octave-band table with the
+            // 40 / 30 dB gates (`pannedProgramCrosstalkGateDB`) is rendered
+            // from this same source by `--verify-receiver`
+            // (Verification/SeparationGates.swift). Mono bass is off in
+            // Verification.ini, so nothing legitimately feeds the right
+            // channel: whatever lands there is clipper / limiter crosstalk.
+            // `decodedCrosstalkBands` (2026-10-20, protector task) puts the
+            // same per-band gate into `--verify`'s own verdict: one extra
+            // coherent-decode render, bands under 3 x a mono-bass corner and
+            // bands without programme left alone, as the receiver table does.
+            quality: QualityExpectations(
+                maxCorrelationDelta: nil,
+                maxOutputCorrelation: nil,
+                minSideRetention: 0.95,
+                maxAbsRMSDeltaDB: 4.0,
+                maxOccupied999Hz: 58_500.0,
+                maxAbove60kRatioDB: -50.0,
+                maxAbove67kRatioDB: -60.0,
+                decodedCrosstalkBands: pannedProgramCrosstalkBands
+            )
+        ) { frame, sampleRate in
+            let t = Double(frame) / sampleRate
+            let (left, _) = programMixSample(t, &pannedNoiseL, &pannedNoiseR)
+            return (left, 0.0)
+        },
+        VerificationScenario(
+            name: "wide_program",
+            description: "program_mix re-balanced to S/M about 1.3 (correlation about -0.3): wide but ordinary stereo",
+            // 2026-10-20 stereo audit (C4). Wide but ordinary stereo: under
+            // the image protector's 1.55 cap and under 1.16 x its own input
+            // ratio, so the protector is idle and the scenario reads 0.99
+            // retention today. It is the guard for anything that narrows
+            // ordinary width from here on -- a protector threshold set too
+            // low once it becomes an option, a clipper or limiter change --
+            // where wide_bass (1.79, on the cap) guards the extreme. M/S gain
+            // 4.25 on program_mix's 0.305 gives 1.30; 0.6 keeps the
+            // re-balanced peaks under full scale.
+            quality: QualityExpectations(
+                maxCorrelationDelta: 0.10,
+                maxOutputCorrelation: nil,
+                minSideRetention: 0.95,
+                maxAbsRMSDeltaDB: 4.0,
+                maxOccupied999Hz: 58_500.0,
+                maxAbove60kRatioDB: -50.0,
+                maxAbove67kRatioDB: -60.0
+            )
+        ) { frame, sampleRate in
+            let t = Double(frame) / sampleRate
+            let (left, right) = programMixSample(t, &wideNoiseL, &wideNoiseR)
+            let mid = 0.5 * (left + right)
+            let side = 0.5 * (left - right)
+            let sideGain: Float = 4.25
+            let trim: Float = 0.6
+            return (trim * (mid + (sideGain * side)), trim * (mid - (sideGain * side)))
         },
         VerificationScenario(
             name: "bright_dense",
@@ -374,7 +471,11 @@ func verificationScenarios() -> [VerificationScenario] {
                 maxCorrelationDelta: 0.20,
                 maxOutputCorrelation: 0.92,
                 minSideRetention: 0.68,
-                maxAbsRMSDeltaDB: 2.5,
+                // 3.5 (was 2.5): a runaway bound, re-derived when the 2026-10
+                // levelling task moved the leveller to the AGC target (-16, was -18)
+                // and Final Drive to 3.5 dB: this programme now leaves the chain
+                // +3.0 (presets +2.7) dB above its input RMS (was +2.0); measured + >= 0.5 dB.
+                maxAbsRMSDeltaDB: 3.5,
                 maxOccupied999Hz: 58_500.0,
                 maxAbove60kRatioDB: -41.0,
                 maxAbove67kRatioDB: -52.0
@@ -438,7 +539,11 @@ func verificationScenarios() -> [VerificationScenario] {
                 maxCorrelationDelta: 0.15,
                 maxOutputCorrelation: 0.88,
                 minSideRetention: 0.70,
-                maxAbsRMSDeltaDB: 3.0,
+                // 4.0 (was 3.0): a runaway bound, re-derived when the 2026-10
+                // levelling task moved the leveller to the AGC target (-16, was -18)
+                // and Final Drive to 3.5 dB: this programme now leaves the chain
+                // +3.3 dB above its input RMS (was +2.3); measured + >= 0.5 dB.
+                maxAbsRMSDeltaDB: 4.0,
                 maxOccupied999Hz: 58_500.0,
                 maxAbove60kRatioDB: -45.0,
                 maxAbove67kRatioDB: -53.0
@@ -466,11 +571,19 @@ func verificationScenarios() -> [VerificationScenario] {
         VerificationScenario(
             name: "wide_bass",
             description: "Wide low-end stereo stress for mono bass and image protection",
+            // 0.90 (was 0.30): the stored baseline measures 0.86 (input S/M
+            // 1.79 -> output 1.54, the protector's 1.55 cap), and 0.30
+            // tolerated a 10 dB side loss. Expected red until the protector
+            // task lands (2026-10-20 stereo audit, A3 / C4).
             quality: QualityExpectations(
                 maxCorrelationDelta: nil,
                 maxOutputCorrelation: 0.60,
-                minSideRetention: 0.30,
-                maxAbsRMSDeltaDB: 2.5,
+                minSideRetention: 0.90,
+                // 4.0 (was 2.5): a runaway bound, re-derived when the 2026-10
+                // levelling task moved the leveller to the AGC target (-16, was -18)
+                // and Final Drive to 3.5 dB: this programme now leaves the chain
+                // +3.1 dB above its input RMS (was +0.8); measured + >= 0.5 dB.
+                maxAbsRMSDeltaDB: 4.0,
                 maxOccupied999Hz: 58_500.0,
                 maxAbove60kRatioDB: -50.0,
                 maxAbove67kRatioDB: -60.0
@@ -624,6 +737,24 @@ func verifyScenario(
     }
     metrics.bandwidth = computeMPXBandwidthMetrics(samples: mpxSamples, sampleRate: sampleRate)
     metrics.truePeakAbs = truePeak4x(mpxSamples).truePeak
+
+    // D3 per-band crosstalk through the coherent receiver decode, only where
+    // the scenario asks for it and only on a composite (the decode means
+    // nothing on a processed-audio mode). The scenario's noise generators
+    // are shared state inside its closure and the renders above consumed
+    // them, so the decode render takes a fresh scenario table of the same
+    // name: identical noise streams, as `pannedProgramCrosstalkRows` does.
+    if let bands = scenario.quality.decodedCrosstalkBands,
+        config.operatingMode == .mpx,
+        let fresh = verificationScenarios().first(where: { $0.name == scenario.name }) {
+        metrics.decodedCrosstalk = decodedBandCrosstalk(
+            config: config,
+            durationSeconds: durationSeconds,
+            bands: bands,
+            source: fresh.sample
+        )
+        metrics.decodedCrosstalkMonoBassCornerHz = config.monoBassEnabled ? config.monoBassFreqHz : nil
+    }
 
     return metrics
 }

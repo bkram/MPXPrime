@@ -37,7 +37,7 @@ public struct ChannelPair: Equatable, Hashable, Sendable, Codable {
     /// is mono on channel 3. Whitespace around the numbers is tolerated.
     /// The order in the text does not matter: "2,1" and "1,2" both give left
     /// 0, right 1, because the model is "the lower-numbered channel is left"
-    /// (the channel grid in the UI cannot express anything else). "3,3" is
+    /// (the channel menu in the UI cannot express anything else). "3,3" is
     /// mono on channel 3. nil for nil, empty, non-numeric, a number below 1,
     /// or more than two numbers.
     public static func parse(_ text: String?) -> ChannelPair? {
@@ -71,6 +71,22 @@ public struct ChannelPair: Equatable, Hashable, Sendable, Codable {
     /// One-based numbers only: "3, 4" or "3".
     public var numbers: String {
         indices.map { String($0 + 1) }.joined(separator: ", ")
+    }
+
+    /// "3-4" for a pair or "3" for mono (one-based): the Channels menu entry.
+    public var rangeLabel: String {
+        isMono ? "\(left + 1)" : "\(left + 1)-\(right + 1)"
+    }
+
+    /// The choices the Channels menu offers on a device with `channelCount`
+    /// channels: consecutive stereo pairs starting on an odd channel (1-2,
+    /// 3-4, ...), so a pair never straddles two. A one-channel device offers
+    /// mono on channel 1, its only possible choice. An odd last channel has
+    /// no partner and is left out; a mono or non-adjacent pair set in the INI
+    /// still works, the menu just does not offer to create one.
+    public static func stereoPairs(channelCount: Int) -> [ChannelPair] {
+        if channelCount == 1 { return [ChannelPair(left: 0, right: 0)] }
+        return stride(from: 0, to: channelCount - 1, by: 2).map { ChannelPair(left: $0, right: $0 + 1) }
     }
 
     /// True when every index exists on a device with `channelCount` channels.

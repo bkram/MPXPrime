@@ -225,7 +225,9 @@ struct TestToneGeneratorTests {
     /// The shipped default chain -- AGC, multiband, HF limiter, pre-encode
     /// limiter, composite clipper at 6 dB drive, final limiter -- all ON.
     /// Pilot and RDS are switched off so the composite is the audio alone
-    /// and the budget is exactly 0.98 - 0.02 = 0.96.
+    /// and the budget is exactly `limit_threshold` 1.0 - 0.005 margin = 0.995
+    /// (0.98 - 0.02 = 0.96 until the 2026-10 budget overhaul removed the
+    /// duplicated static headroom).
     private func makeFullChainToneConfig(levelDB: Double, toneFreq: Double = 1_000.0,
                                          mode: String = "mono", type: String = "sine") -> AppConfig {
         var cfg = AppConfig()
@@ -251,10 +253,10 @@ struct TestToneGeneratorTests {
         return 20.0 * log10f(max(peak, 1e-9))
     }
 
-    /// 0 dBFS = the audio-composite budget (0.96 here, -0.35 dBFS), and the
-    /// scale is linear in dB: -20 dBFS lands at -20.35 dBFS on the composite.
+    /// 0 dBFS = the audio-composite budget (0.995 here, -0.04 dBFS), and the
+    /// scale is linear in dB: -20 dBFS lands at -20.04 dBFS on the composite.
     @Test func fullChainToneLevelIsCalibratedToTheBudget() {
-        let budgetDB = 20.0 * log10f(0.96)
+        let budgetDB = 20.0 * log10f(0.995)
         for levelDB in [0.0, -6.0, -20.0, -40.0] {
             let peakDB = steadyStatePeakDB(makeFullChainToneConfig(levelDB: levelDB))
             let expected = budgetDB + Float(levelDB)

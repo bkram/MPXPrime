@@ -36,6 +36,13 @@ actor HeadlessControlBackend: ControlBackend {
     /// rule as the GUI's deviceLister). Production default is the real one.
     private let enumerateDevices:
         @Sendable () -> (inputs: [ControlDevice], outputs: [ControlDevice], note: String)
+    /// The device-volume layer behind `/api/mixer` on macOS (CoreAudio);
+    /// injected like the device enumerator so a test can keep the HAL out.
+    /// Linux reads ALSA directly and never calls it.
+    private let deviceVolume: DeviceVolumeService
+    /// The routing note for an output device below unity or muted, refreshed
+    /// on every assert while the engine runs; surfaced in `status()`.
+    private var deviceVolumeNote: String?
 
     init(
         config: AppConfig,
@@ -46,7 +53,8 @@ actor HeadlessControlBackend: ControlBackend {
         onNowPlaying: (@Sendable (String, String, String) -> Void)? = nil,
         deviceEnumerator: @escaping @Sendable ()
             -> (inputs: [ControlDevice], outputs: [ControlDevice], note: String)
-            = { AudioDeviceListing.enumerate() }
+            = { AudioDeviceListing.enumerate() },
+        deviceVolume: DeviceVolumeService = .platformDefault
     ) {
         self.config = config
         self.configPath = configPath
@@ -55,6 +63,7 @@ actor HeadlessControlBackend: ControlBackend {
         self.onConfigChange = onConfigChange
         self.onNowPlaying = onNowPlaying
         self.enumerateDevices = deviceEnumerator
+        self.deviceVolume = deviceVolume
         self.startedAt = engine != nil ? Date() : nil
     }
 
@@ -64,6 +73,9 @@ actor HeadlessControlBackend: ControlBackend {
         let actualRate = engine?.renderSampleRateForControl ?? config.sampleRate
         var allNotes = notes
         if let note = Self.rateMismatchNote(configured: config.sampleRate, actual: actualRate) {
+            allNotes.append(note)
+        }
+        if let note = deviceVolumeNote {
             allNotes.append(note)
         }
         return ControlStatus(
@@ -102,9 +114,10 @@ actor HeadlessControlBackend: ControlBackend {
         engine?.controlTelemetry(windowMS: windowMS)
     }
 
-    /// The sound card's own mixer. Linux only: it is read live from ALSA and
-    /// never stored by us, because it is hardware state shared with whatever
-    /// else is on the box.
+    /// The sound card's own level layer, read live and never stored by us,
+    /// because it is hardware state shared with whatever else is on the box:
+    /// ALSA's mixer of the output card on Linux, the output and input
+    /// devices' CoreAudio volume on macOS.
     func cardMixer() -> ControlMixer {
         #if os(Linux)
         guard let uid = config.outputDeviceUID,
@@ -119,9 +132,7 @@ actor HeadlessControlBackend: ControlBackend {
             available: !controls.isEmpty, card: card, controls: controls,
             note: controls.isEmpty ? "Card '\(card)' exposes no volume controls." : nil)
         #else
-        return ControlMixer(
-            available: false, card: nil, controls: [],
-            note: "The card mixer is a Linux feature; on macOS use the system sound settings.")
+        return deviceVolume.read(config.outputDeviceUID, config.inputDeviceUID)
         #endif
     }
 
@@ -130,35 +141,54 @@ actor HeadlessControlBackend: ControlBackend {
         guard let uid = config.outputDeviceUID,
               let card = ALSAMixerMath.cardName(fromDeviceUID: uid)
         else { return false }
-        let applied = ALSAMixer.set(
+        var applied = ALSAMixer.set(
             card: card, name: patch.name, index: patch.index ?? 0,
             playbackPercent: patch.playbackPercent, capturePercent: patch.capturePercent,
             playbackMuted: patch.playbackMuted, captureMuted: patch.captureMuted)
+        // A dB request (the platform-neutral form the GUI's "Set to 0 dB"
+        // sends) goes through the card's own dB scale.
+        if applied, patch.playbackDB != nil || patch.captureDB != nil {
+            applied = ALSAMixer.setDB(
+                card: card, name: patch.name, index: patch.index ?? 0,
+                playbackDB: patch.playbackDB, captureDB: patch.captureDB)
+        }
         guard applied else { return false }
         // Remember the level the card actually took, as dB, on the control
         // the encoder uses -- from here on the engine ASSERTS it, which is
         // what beats the card's own knob (see AppConfig.alsaPlaybackVolumeDB).
         let primary = ALSAMixer.primaryControls(card: card)
         var changed = false
-        if patch.playbackPercent != nil, let pb = primary.playback,
+        if patch.playbackPercent != nil || patch.playbackDB != nil, let pb = primary.playback,
            pb.name == patch.name, pb.index == (patch.index ?? 0), let dB = pb.playbackDB {
             config.alsaPlaybackVolumeDB = dB; changed = true
         }
-        if patch.capturePercent != nil, let cp = primary.capture,
+        if patch.capturePercent != nil || patch.captureDB != nil, let cp = primary.capture,
            cp.name == patch.name, cp.index == (patch.index ?? 0), let dB = cp.captureDB {
             config.alsaCaptureVolumeDB = dB; changed = true
         }
         if changed { persist() }
         return true
         #else
-        return false
+        // macOS: the device took the level; remember the dB it reads now so
+        // the engine asserts it from here on (the same contract as ALSA).
+        guard let took = deviceVolume.apply(patch, config.outputDeviceUID, config.inputDeviceUID) else {
+            return false
+        }
+        var changed = false
+        if let dB = took.playbackDB { config.alsaPlaybackVolumeDB = dB; changed = true }
+        if let dB = took.captureDB { config.alsaCaptureVolumeDB = dB; changed = true }
+        if changed { persist() }
+        deviceVolumeNote = engine == nil ? nil : deviceVolume.outputNote(config.outputDeviceUID)
+        return true
         #endif
     }
 
     /// Put the card's primary controls where the config says, when it says.
     /// Runs on the actor (never the render thread) at engine start and from
     /// the 5 s reconcile tick: the rig's USB card has a hardware knob, and a
-    /// level that is merely STORED comes back 2 dB down after a reboot.
+    /// level that is merely STORED comes back 2 dB down after a reboot. On
+    /// macOS the same for the devices' CoreAudio volume, plus the routing
+    /// note for an unmanaged output that sits below unity or muted.
     func assertCardMixerIfConfigured() {
         #if os(Linux)
         guard config.alsaPlaybackVolumeDB != nil || config.alsaCaptureVolumeDB != nil,
@@ -180,6 +210,14 @@ actor HeadlessControlBackend: ControlBackend {
                     "[ALSA] card mixer '\(cp.name)' capture was \(have) dB, re-asserted \(want) dB\n".utf8))
             }
         }
+        #else
+        for line in deviceVolume.assertLevels(
+            config.alsaPlaybackVolumeDB, config.alsaCaptureVolumeDB,
+            config.outputDeviceUID, config.inputDeviceUID
+        ) {
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        }
+        deviceVolumeNote = engine == nil ? nil : deviceVolume.outputNote(config.outputDeviceUID)
         #endif
     }
 

@@ -609,7 +609,9 @@
           "primebass_subharmonics_enabled",
           "primebass_subharmonics_amount",
           "mono_bass_enabled",
-          "mono_bass_freq_hz"
+          "mono_bass_freq_hz",
+          "stereo_image_protect_enabled",
+          "stereo_image_max_side_ratio"
         ],
         "pill": "PrimeBass",
         "presetKind": "primebass",
@@ -701,6 +703,7 @@
           "pre_encode_limiter_enabled",
           "pre_encode_threshold",
           "pre_encode_release_ms",
+          "pre_encode_stereo_link",
           "pre_encode_lookahead_ms",
           "pre_encode_lookahead_hf_only",
           "pre_encode_lookahead_hf_cutoff_hz",
@@ -748,6 +751,7 @@
           "mpx_clipper_ceiling_db",
           "mpx_clipper_oversampling",
           "mpx_clipper_lookahead_ms",
+          "mpx_clipper_lookahead_depth_db",
           "mpx_clipper_cancel_audio",
           "mpx_clipper_cancel_pilot",
           "mpx_clipper_stereo_guard",
@@ -1430,7 +1434,7 @@
       "decimals": 1,
       "kind": "slider",
       "label": "Threshold",
-      "max": 0.999,
+      "max": 1.0,
       "min": 0.5,
       "step": 0.1,
       "unit": " dBFS",
@@ -1517,6 +1521,16 @@
     "mpx_clipper_enabled": {
       "kind": "toggle",
       "label": "Enable Composite Clipper"
+    },
+    "mpx_clipper_lookahead_depth_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Clip Depth",
+      "max": 6.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
     },
     "mpx_clipper_lookahead_ms": {
       "decimals": 1,
@@ -2140,6 +2154,14 @@
       "step": 1,
       "unit": " ms"
     },
+    "pre_encode_stereo_link": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Stereo Link",
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.05
+    },
     "pre_encode_threshold": {
       "decimals": 1,
       "kind": "slider",
@@ -2548,6 +2570,29 @@
           "Tone"
         ]
       ]
+    },
+    "stereo_image_max_side_ratio": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Max Side/Mid Ratio",
+      "max": 3.0,
+      "min": 1.0,
+      "modes": [
+        "mpx",
+        "fm"
+      ],
+      "step": 0.05,
+      "unit": "",
+      "advanced": true
+    },
+    "stereo_image_protect_enabled": {
+      "kind": "toggle",
+      "label": "Protect Stereo Image",
+      "modes": [
+        "mpx",
+        "fm"
+      ],
+      "advanced": true
     },
     "sum_level": {
       "decimals": 2,

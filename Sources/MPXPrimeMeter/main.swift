@@ -242,8 +242,11 @@ private func dashboard(
                    ? String(format: "%+.1f kHz", s.carrierOffsetKHz) : "--",
                s.stereoBalanceValid
                    ? String(format: "%+.1f dB", s.stereoBalanceDB) : "--"),
-        String(format: "STEREO L %6.1f  R %6.1f dBFS   corr %+.2f",
-               s.leftRMSDBFS, s.rightRMSDBFS, s.stereoCorrelation),
+        // Separation is an L/R imbalance figure, valid only on single-channel
+        // content (MeterAnalysis gates it on side/mid); "--" otherwise.
+        String(format: "STEREO L %6.1f  R %6.1f dBFS   corr %+.2f   sep %@",
+               s.leftRMSDBFS, s.rightRMSDBFS, s.stereoCorrelation,
+               s.separationValid ? String(format: "%.0f dB", s.bestSeparationDB) : "--"),
         String(format: "RDS    %@  PI %@  PTY %@ (%@)  TP%@ TA%@ MS%@  BER %.1f%%",
                sync, pi, ptyLabel(s.rds.pty), ptyName(s.rds.pty),
                boolField(s.rds.tp), boolField(s.rds.ta), boolField(s.rds.ms),

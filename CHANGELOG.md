@@ -11,6 +11,177 @@ combination test suite. Newest first.
 
 ## Unreleased
 
+- **Audio-chain overhaul (2026-10-20 to 2026-10-30).** One pass over the
+  gain structure, the stereo image and the level controls, driven by three
+  measured audits and an off-air round against the exciter. What an operator
+  notices, stage by stage; every figure is from the verifier or the air log.
+  **Every stored baseline was recaptured in this change** (`default`,
+  `presets`, `long`, `receiver` on macOS and `default-linux-x86_64` in the
+  Linux container): the budget alone moves every hot scenario by about
+  +0.35 dB / +2.5 kHz, and two new scenarios (`panned_program`,
+  `wide_program`) have records for the first time.
+  - **Composite budget.** `limit_threshold` defaults to 1.0 (was 0.98; 1.0
+    is accepted now, a hand-set value is kept) and the budget safety margin is
+    0.5 % instead of 2 %. The two were duplicated static headroom that capped
+    the multiplex at 72 kHz and measured 69-70.6 kHz on dense programme. The
+    audio budget is now 0.888 of full scale (66.6 kHz) with pilot 8 % and RDS
+    2 kHz, the worst-case multiplex 74.6 kHz, and dense programme measures
+    about 72 kHz; the 4x true peak stays below 0 dBFS on every verifier
+    scenario. A station that calibrated its exciter on peaks sees about
+    0.35 dB more deviation after upgrading: re-check `MPX Output Level`.
+    The **Composite Budget** state on the Monitoring page now reads the
+    headroom between the audio composite and its budget, not the
+    whole-composite margin (which is within a few hundredths of a dB of zero
+    whenever the clipper works, by design): **Tight** is the normal reading on
+    dense programme, **Safe** means at least 0.5 dB in hand, **Risk** means a
+    fault (the final clamp engaged after pilot and RDS were added, or the
+    pilot / RDS levels leave no audio budget). The operator guide no longer
+    says to back off `MPX Output Level` on Risk, and no longer promises
+    3 to 6 dB of regular Composite Clipper GR: the readout reads the clip
+    depth.
+  - **Composite clipper and Safety Limiter.** New `Clip Depth`
+    (`mpx_clipper_lookahead_depth_db`, 0-6 dB, live, Composite Clipper page
+    under Advanced). The 2 ms look-ahead now rides the composite down to the
+    ceiling plus the depth and the oversampled, guard-protected clip kernel
+    clips the depth; until now the look-ahead rode every overshoot to the
+    ceiling and the kernel only bent peaks already sitting there (a constant
+    0.16 dB of Composite Clipper GR at every drive), so "Enable Composite
+    Clipper" was a 2 ms look-ahead limiter with an 80 ms release. The ride's
+    release is 25 ms. Every Format Profile sets 1.0 dB, the largest value that
+    keeps the ride and hi-hat distortion gates (`--verify-hf-transients`,
+    ride >= 30 dB, hat >= 20 / 15 dB) with 2 dB in hand (ride SINAD
+    33.4-34.3 dB on the music and speech profiles; Classical never clips the
+    ride). Measured plainly: the depth buys little loudness (0.0 dB RMS on
+    bright dense programme through Music - Clean, 0.2 dB through Loud /
+    Dense) because most of the clipped share returns as the stereo and
+    pilot / RDS guard bands restore it and filter overshoot follows, and the
+    Safety Limiter rides that; expect about 0.8 dB of **Safety Limiter GR** on
+    dense programme at the default depth, which is not a fault. 0 dB restores
+    the previous behaviour. The Safety Limiter's detector now reads the 4x
+    true peak of the audio composite (a short linear-phase interpolator into
+    the sliding-window maximum; the audio path is untouched), so the peaks
+    between samples of the 55 kHz-limited composite are held to the budget as
+    the exciter sees them: on air the programme's negative peaks sat 0.35 dB
+    above a full-scale tone's at the same sample budget (air log 2026-10-20)
+    and the sample detector could not see them. Its release stays at 95 ms
+    (50 and 30 ms measured identical). Cost: 0.21 % of real time at 192 kHz.
+  - **Stereo guard.** `Protect Stereo Subcarrier` (`mpx_clipper_stereo_guard`)
+    defaults to 50 % (was 100 %). The clipper's distortion arrives in short
+    bursts at the crests of the 38 kHz subcarrier and a receiver decodes about
+    twice as much of such a burst from the stereo subcarrier as from the mono
+    part, so removing half of the subcarrier share is what cancels in the
+    quiet channel. Programme panned hard left through Music - Loud decodes
+    with 60 dB or more of separation in every band that carries programme
+    (25 dB at 100 %, 27 dB at 0 %), a left-only 14 kHz tone with 43 dB (25 dB
+    at 100 %). Costs about 3 dB of ride-cymbal SINAD at equal clip depth. `--verify-stereo-guard` prints the programme-crosstalk table per
+    share (the same measurement `--verify-receiver` gates) and fails when the
+    shipped share misses the 40 / 30 dB floors; its acceptance is
+    final-limiter duty <= 1.0 dB, 14 kHz separation >= 20 dB and the
+    crosstalk floors. An INI with a hand-set share keeps it.
+  - **Stereo-image protection is an option, off by default**
+    (`stereo_image_protect_enabled`, `stereo_image_max_side_ratio` 1.0-3.0,
+    default 1.55; the `Stereo Image` card under Mono Bass on the PrimeBass
+    page, both under Advanced, live, FM paths only). The stage had been always
+    on since the widener's removal in 0.50, with the widener's default baked
+    in, and the stereo audit found it limiting the source's own width: an
+    anti-phase tone lost 24 dB of level against 1.4 dB for a mono tone, and
+    very wide material was clamped to a 1.55 side/mid ratio whatever the
+    source did. With the widener gone and every dynamics stage stereo-linked,
+    nothing in the chain can widen the image, so off is the honest default;
+    enable it only where an exciter or STL needs the L-R held down. When on,
+    the stage no longer crushes pure-side content (its absolute side floor is
+    gone) and its reference is delay-matched to the processing latency, so
+    the end of a wide passage no longer ducks the side. Off is bit-identical
+    to a chain without the stage. `wide_bass` keeps 0.99 of its width (0.86
+    before) and the anti-phase tone 3.7 dB of level drift (24.3 dB before).
+  - **Separation gates in the verifier and the Meter.** `--verify` gains
+    `panned_program` (programme panned hard left; decoded side retention
+    >= 0.95 and a per-octave-band crosstalk gate, 40 dB to 10 kHz and 30 dB
+    above, in its own verdict) and `wide_program` (ordinary wide stereo at
+    S/M 1.3, retention >= 0.95); `stereo_diff_400hz` tolerates 12 dB of RMS
+    loss instead of 30 and `wide_bass` demands 0.90 side retention instead of
+    0.30. `--verify-receiver` raises its separation floors from 18 / 16 dB to
+    40 dB at 1 / 10 kHz and 30 dB at 14 kHz, adds mono bass, Advanced
+    Dynamics, HF limiter and image-protector rows to the stage-isolation
+    sweep, and prints two new tables: a left-only tone set (1 / 5 / 10 /
+    14 kHz at 0.1 / 0.3 / 0.5 FS on Music - Clean and Music - Loud, processed
+    against bypass, gated at >= 40 / 30 dB processed and <= 6 dB loss at
+    1 / 10 kHz) and the panned-programme crosstalk table (left-minus-right
+    RMS per octave band from 200 Hz to 15 kHz, processed / bypass /
+    encoder-only, plus the protector toggled). Music - Loud failed those
+    gates at 25-33 dB with the old stereo guard and passes with the new one
+    (its left-only 10 / 14 kHz tones read 71-72 dB, 25.5 before); the
+    default profile reads 70 dB or more in every programme band. The Meter's
+    SEPARATION readout is the level difference between the decoded channels,
+    which is a separation figure only on single-channel content: it now
+    publishes only while the decoded side sits within 10 % of the mid (a
+    hard-panned tone or passage) and shows `--` otherwise, including on
+    panned programme with mono bass, which used to read a few dB and look
+    like a fault; the best value since reset is still held, dimmed while
+    invalid. The CLI's STEREO line carries the same figure.
+  - **BS.412 rides the whole minute, not every second.** The multiplex power
+    limiter holds the 60-second integral the Recommendation bounds instead
+    of holding every 1-second window at the ceiling. Loud seconds pass hotter
+    when quieter ones have left room, so on varied programme **Multiplex
+    Power** settles within a few tenths of a decibel of the ceiling instead
+    of 1 to 3 dB under it (test programme: -0.10 dBr against -1.74 dBr
+    before). A short loud burst no longer holds the programme down for the
+    following minute: it is back on the ceiling within about three seconds.
+    Every 60-second window is still held at or under the ceiling and the
+    compliance guard stays idle on normal programme (0.00 % of samples on the
+    varied-programme fixture, 0.62 % before on a -6 to +6 dBr step). **BS.412
+    GR** now moves with the programme instead of parking at the loudest
+    second's value.
+  - **Levelling, Final Drive and the Stereo Link.** Advanced Dynamics levels
+    to the Format Profile's AGC target (it was 2 dB below), except on Music -
+    Loud and Music - Dense, which run PrimeBass and keep the 2 dB to hold its
+    intermodulation under the `--verify-primebass` limit (-56 dB at the AGC
+    target against the -70 dB gate). Final Drive was re-set per profile
+    against the hi-hat distortion gate: Music - Clean 3.5 dB (was 4), Speech /
+    Talk 2.8 dB (was 4.3), Classical / Wide Dynamics 5 dB at a 1 dB clip
+    depth (was 3 dB at 2 dB); Loud 8 and Dense 9 unchanged. Classical now
+    uses its modulation on programme peaks (0.79 -> 0.99 of the audio
+    budget); Music - Clean gains about 1.5 dB of level into the final stage
+    and bright programme is 0.8 dB louder. The leveller matches the classic
+    AGC + multiband chain within the A/B gate's 3 dB (parity -2.3 dB; it was
+    4 dB quieter and the gate failed). The loudness goal on Music - Clean is
+    not met (program_mix 0.925 of budget against 0.97): the 20 dB hi-hat
+    SINAD floor caps the net level, see the roadmap. New `Stereo Link` on the
+    Audio Limiter page (`pre_encode_stereo_link`, 0-1, default 1, live):
+    below 1 the quieter channel keeps more of its level while the louder one
+    limits, at the cost of a brief image shift. At the shipped settings the
+    Audio Limiter is idle on every verifier scenario, so the control changes
+    nothing measurable there (identical to two decimals at every setting);
+    it is for stations that run the limiter harder.
+  - **Mac device volume.** `Audio I/O` shows **Device Output Level** and
+    **Device Input Level** (the devices' own CoreAudio volume in dB, read
+    live) next to the device pickers, each with **Set to 0 dB**; the web
+    dashboard's Sound Card Mixer card shows the same two rows on macOS as it
+    does for the ALSA mixer on Linux. Setting a level there makes the encoder
+    hold it at every start and every 5 s, so a DAC quietly at -5 dB (the
+    station's DX3 Pro+ was, while the app also applied -5 dBFS line output)
+    cannot cost deviation again. A new installation leaves the devices
+    unmanaged and says so in the status line when the output starts below
+    -0.1 dB or muted. The INI keys are `card_playback_volume_db` /
+    `card_capture_volume_db`; the `alsa_*` names load and patch as aliases
+    and the INI is written under both. `GET /api/mixer` on macOS answers
+    `available: true` with one control per device plus the device names, dB
+    ranges and settable flags; `PATCH` accepts `playbackDB` / `captureDB`.
+  - **Mono bass corner.** Music - Clean and Speech / Talk (and the shipped
+    default) move from 140 Hz to 110 Hz; Loud 115, Dense 110 and Classical 90
+    are unchanged. 140 Hz was the high end of broadcast practice (80-120 Hz)
+    and on its own kept bass-heavy programme from meeting the width goal
+    (`wide_bass` loses its 72 Hz anti-phase component to mono bass on the
+    music profiles). Latency 10 ms at 110 Hz instead of 8 ms at 140 Hz.
+- **Channels are chosen as a stereo pair from one menu.** The device
+  popover in Studio (input, MPX output, monitor) and the Meter (input,
+  monitor, MPX pass-through) replaces the grid of channel checkboxes with a
+  **Channels** menu of consecutive pairs: 1-2, 3-4, ... 15-16 on a 16-channel
+  interface. Left is the first channel of the pair. A one-channel device
+  offers mono on channel 1. The INI keys are unchanged: a mono channel or a
+  non-adjacent pair set there (`3`, `1,4`) still works and shows in the menu
+  marked "from settings". `ChannelPair.stereoPairs(channelCount:)` and
+  `rangeLabel` build the menu and are pinned by `ChannelPairTests`.
 - **The app no longer burns CPU on things nobody is looking at.** The GUI
   refreshes at 4 Hz while the engine is stopped or nothing showing live values
   is on screen; at full rate (30 Hz, 20 Hz on Intel) only while the app is in

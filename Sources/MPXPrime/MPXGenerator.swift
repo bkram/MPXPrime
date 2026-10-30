@@ -108,11 +108,16 @@ final class MPXGenerator {
     /// computed as `effectiveThreshold - reserved - safetyMargin`, where
     /// `effectiveThreshold = threshold x min(1, deviation / 75 kHz) /
     /// outputGain`, `reserved` is the pilot+RDS peak reservation and the
-    /// margin is scaled exactly like the threshold. This leaves ~2% of the
+    /// margin is scaled exactly like the threshold. This leaves 0.5 % of the
     /// budget unallocated as headroom against numerical jitter and the
-    /// limiter's Float rounding. The final post-injection clamp is the
-    /// last-resort numeric guard; it should never engage for valid configs.
-    private static let finalCompositeBudgetSafetyMargin: Float = 0.02
+    /// limiter's Float rounding (it was 2 % until 2026-10, stacked on a
+    /// `limit_threshold` of 0.98: 3 kHz of static headroom that capped the
+    /// multiplex at 72 kHz; gain-structure audit C2). The final
+    /// post-injection clamp is the last-resort numeric guard; it should
+    /// never engage for valid configs. Internal (not private) so the
+    /// Monitoring page's Composite Budget state can derive the audio
+    /// ceiling from the metered margin with the same constant.
+    static let finalCompositeBudgetSafetyMargin: Float = 0.005
 
     private struct EncoderComplianceConfig {
         let programLowpassHz: Float
@@ -156,6 +161,7 @@ final class MPXGenerator {
         let preEncodeBandlimitedResidualEnabled: Bool
         let preEncodeBandlimitedResidualTapCount: Int
         let preEncodeBandlimitedResidualCutoffFraction: Float
+        let preEncodeStereoLink: Float
         let mpxDeviationKHz: Float
         let primeBassEnabled: Bool
         let primeBassAmount: Float
@@ -167,6 +173,10 @@ final class MPXGenerator {
         let primeBassFreqHz: Float
         let monoBassEnabled: Bool
         let monoBassFreqHz: Float
+        // Stereo-image protector (`protectStereoImage`): an operator option
+        // since 2026-10 (always-on before; stereo audit A3 / C1).
+        let stereoImageProtectEnabled: Bool
+        let stereoImageMaxSideRatio: Float
         let multibandEnabled: Bool
         let multibandMode: Int
         let multibandMakeupDB: Float
@@ -251,6 +261,7 @@ final class MPXGenerator {
         let compositeClipperCancelPilot: Bool
         let compositeClipperCancelRDS: Bool
         let compositeClipperLookaheadMS: Float
+        let compositeClipperLookaheadDepthDB: Float
         let compositeClipperOversampling: Int
         // SSB Stereo encoder (SSB-leaning stereo encoding) (experimental, default off).
         let ssbStereoEnabled: Bool
@@ -295,6 +306,7 @@ final class MPXGenerator {
             preEncodeBandlimitedResidualEnabled: config.preEncodeBandlimitedResidualEnabled,
             preEncodeBandlimitedResidualTapCount: config.preEncodeBandlimitedResidualTapCount,
             preEncodeBandlimitedResidualCutoffFraction: Float(config.preEncodeBandlimitedResidualCutoffFraction),
+            preEncodeStereoLink: Float(config.preEncodeStereoLink),
             mpxDeviationKHz: Float(config.mpxDeviationKHz),
             primeBassEnabled: config.primeBassEnabled,
             primeBassAmount: Float(config.primeBassAmount),
@@ -306,6 +318,8 @@ final class MPXGenerator {
             primeBassFreqHz: Float(config.primeBassFreqHz),
             monoBassEnabled: config.monoBassEnabled,
             monoBassFreqHz: Float(config.monoBassFreqHz),
+            stereoImageProtectEnabled: config.stereoImageProtectEnabled,
+            stereoImageMaxSideRatio: Float(config.stereoImageMaxSideRatio),
             multibandEnabled: config.multibandEnabled,
             multibandMode: config.multibandMode,
             multibandMakeupDB: Float(config.multibandMakeupDB),
@@ -387,6 +401,7 @@ final class MPXGenerator {
             compositeClipperCancelPilot: config.compositeClipperCancelPilot,
             compositeClipperCancelRDS: config.compositeClipperCancelRDS,
             compositeClipperLookaheadMS: Float(config.compositeClipperLookaheadMS),
+            compositeClipperLookaheadDepthDB: Float(config.compositeClipperLookaheadDepthDB),
             compositeClipperOversampling: config.compositeClipperOversampling,
             ssbStereoEnabled: config.ssbStereoEnabled,
             ssbStereoAmount: Float(config.ssbStereoAmount),
@@ -924,6 +939,7 @@ final class MPXGenerator {
     private var compositeClipperCancelPilot: Bool = true
     private var compositeClipperCancelRDS: Bool = true
     private var compositeClipperLookaheadMS: Float = 0.0
+    private var compositeClipperLookaheadDepthDB: Float = 0.0
     private var compositeClipperOversampling: Int = 16
     // SSB Stereo: experimental SSB-leaning stereo encoder ahead of the
     // composite clipper (default off; Hilbert FIR allocated lazily so a
@@ -1023,6 +1039,31 @@ final class MPXGenerator {
     private var stereoProtectGain: Float = 1.0
     private var stereoProtectAttackCoeff: Float = 0.0
     private var stereoProtectReleaseCoeff: Float = 0.0
+    /// `stereo_image_protect_enabled`, gated by `ChainFeature.stereoImage`
+    /// for the operating mode. Default OFF since 2026-10: the stage was the
+    /// removed widener's safety net and, always on, it capped the SOURCE's
+    /// own width (stereo audit A3). OFF skips the call entirely, so the
+    /// chain is bit-identical to one without the stage.
+    private var stereoImageProtectEnabled: Bool
+    /// `stereo_image_max_side_ratio`: the hard cap on the output side/mid
+    /// envelope ratio when the stage is on (1.0 ... 3.0, 1.55 = the former
+    /// fixed constant).
+    private var stereoImageMaxSideRatio: Float
+    /// The input (reference) envelopes are read through this delay so they
+    /// line up with the output envelopes: the two taps are separated by the
+    /// audio-domain latency of mono bass, the leveller's FIR split, the
+    /// distortion-cancelled clipper and the encoder FIR (about 20 ms at the
+    /// defaults, against a 10 ms attack -- the mismatch ducked the side at
+    /// the end of every wide event, audit A3). Sized on first use and
+    /// whenever a stage's latency changes.
+    private var stereoProtectRefMidDelay: [Float] = []
+    private var stereoProtectRefSideDelay: [Float] = []
+    private var stereoProtectRefDelayIdx: Int = 0
+    private var stereoProtectRefDelaySamples: Int = 0
+    /// Test hook: skips the protector call whatever the config says, so a
+    /// test can prove that `stereo_image_protect_enabled = false` renders
+    /// bit-identically to a chain in which the call does not exist.
+    var omitStereoImageProtectorForTest = false
     private let rdsCoder: BasicRDSCoder?
 
     private var preEncodeAudioLimiterEnabled: Bool
@@ -1031,6 +1072,8 @@ final class MPXGenerator {
     /// decimator group delay). Test hook for the live-apply rate contract.
     var preEncodeLimiterLatencySamples: Int { preEncodeAudioLimiter.latencySamples }
     private var preEncodeThreshold: Float = 0.85
+    /// `pre_encode_stereo_link` (0...1, live): 1 = fully linked pre-encode limiter.
+    private var preEncodeStereoLink: Float = 1.0
     private var preEncodeReleaseMS: Float = 50.0
     private var preEncodeBandlimitedResidualEnabled: Bool = false
     private var preEncodeBandlimitedResidualTapCount: Int = 33
@@ -1265,7 +1308,7 @@ final class MPXGenerator {
         self.outputGain = powf(10.0, Float(config.outputGainDB) / 20.0)
         self.finalDrive = powf(10.0, Float(config.finalDriveDB) / 20.0)
         self.limitEnabled = config.limitMPX
-        self.threshold = clampf(Float(config.limitThreshold), 0.5, 0.999)
+        self.threshold = clampf(Float(config.limitThreshold), 0.5, 1.0)
         self.deviationScale = Float(config.mpxDeviationKHz / Double(Self.referenceDeviationKHz))
         // AM narrows the program band to its own bandwidth key (NRSC-1 is
         // 10 kHz; narrower is common). Everything downstream reads this one
@@ -1406,6 +1449,7 @@ final class MPXGenerator {
         self.compositeClipperCancelPilot = config.compositeClipperCancelPilot
         self.compositeClipperCancelRDS = config.compositeClipperCancelRDS
         self.compositeClipperLookaheadMS = clampf(Float(config.compositeClipperLookaheadMS), 0.0, 5.0)
+        self.compositeClipperLookaheadDepthDB = clampf(Float(config.compositeClipperLookaheadDepthDB), 0.0, 6.0)
         self.compositeClipperOversampling = config.compositeClipperOversampling
         // SSB leaning is a property of the stereo ENCODER; there is no
         // encoder outside MPX Output, so the flag never reaches the chain in
@@ -1440,6 +1484,9 @@ final class MPXGenerator {
         self.monoBassEnabled = config.monoBassEnabled
             && ChainFeature.stereoProgram.applies(in: mode)
         self.monoBassFreqHz = clampf(Float(config.monoBassFreqHz), 60.0, 250.0)
+        self.stereoImageProtectEnabled = config.stereoImageProtectEnabled
+            && ChainFeature.stereoImage.applies(in: mode)
+        self.stereoImageMaxSideRatio = clampf(Float(config.stereoImageMaxSideRatio), 1.0, 3.0)
         // The coder is built from the mode-gated config, as the live path
         // (applyRDSRuntimeConfig) gates it: RDS exists only where a
         // composite does, so an engine built in FM / HD / AM Output with
@@ -1527,6 +1574,7 @@ final class MPXGenerator {
         preEncodeLookaheadMS = clampf(Float(config.preEncodeLookaheadMS), 0.0, 5.0)
         preEncodeLookaheadHFOnly = config.preEncodeLookaheadHFOnly
         preEncodeLookaheadHFCutoffHz = clampf(Float(config.preEncodeLookaheadHFCutoffHz), 1_000.0, 12_000.0)
+        preEncodeStereoLink = clampf(Float(config.preEncodeStereoLink), 0.0, 1.0)
         preEncodeAudioLimiter.configure(
             sampleRate: audioRate,
             threshold: preEncodeThreshold,
@@ -1537,7 +1585,8 @@ final class MPXGenerator {
             lookaheadMS: preEncodeLookaheadMS,
             lookaheadHFOnly: preEncodeLookaheadHFOnly,
             lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
-            passbandHz: preEncodeLimiterPassbandHz
+            passbandHz: preEncodeLimiterPassbandHz,
+            stereoLink: preEncodeStereoLink
         )
         configureTruePeakGuard(sampleRate: audioRate)
         bs412Meter.configure(sampleRate: self.sampleRate)
@@ -1553,6 +1602,7 @@ final class MPXGenerator {
             cancelPilot: compositeClipperCancelPilot,
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS,
+            lookaheadDepthDB: compositeClipperLookaheadDepthDB,
             oversamplingFactor: compositeClipperOversampling
         )
         configureDualRateBoundary()
@@ -1978,7 +2028,8 @@ final class MPXGenerator {
             lookaheadMS: preEncodeLookaheadMS,
             lookaheadHFOnly: preEncodeLookaheadHFOnly,
             lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
-            passbandHz: preEncodeLimiterPassbandHz
+            passbandHz: preEncodeLimiterPassbandHz,
+            stereoLink: preEncodeStereoLink
         )
         configureTruePeakGuard(sampleRate: audioRate)
         bs412Meter.configure(sampleRate: sampleRate)
@@ -1994,6 +2045,7 @@ final class MPXGenerator {
             cancelPilot: compositeClipperCancelPilot,
             cancelRDS: compositeClipperCancelRDS,
             lookaheadMS: compositeClipperLookaheadMS,
+            lookaheadDepthDB: compositeClipperLookaheadDepthDB,
             oversamplingFactor: compositeClipperOversampling
         )
         recomputeSubcarrierDelay()
@@ -2029,7 +2081,9 @@ final class MPXGenerator {
             || preEncodeBandlimitedResidualEnabled != config.preEncodeBandlimitedResidualEnabled
             || preEncodeBandlimitedResidualTapCount != config.preEncodeBandlimitedResidualTapCount
             || fabsf(preEncodeBandlimitedResidualCutoffFraction - config.preEncodeBandlimitedResidualCutoffFraction) > 0.0001
+            || fabsf(preEncodeStereoLink - config.preEncodeStereoLink) > 0.0001
         preEncodeAudioLimiterEnabled = config.preEncodeAudioLimiterEnabled
+        preEncodeStereoLink = clampf(config.preEncodeStereoLink, 0.0, 1.0)
         preEncodeThreshold = clampf(config.preEncodeThreshold, 0.5, 0.999)
         preEncodeReleaseMS = clampf(config.preEncodeReleaseMS, 10.0, 200.0)
         preEncodeBandlimitedResidualEnabled = config.preEncodeBandlimitedResidualEnabled
@@ -2055,7 +2109,8 @@ final class MPXGenerator {
                 lookaheadMS: preEncodeLookaheadMS,
                 lookaheadHFOnly: preEncodeLookaheadHFOnly,
                 lookaheadHFCutoffHz: preEncodeLookaheadHFCutoffHz,
-                passbandHz: preEncodeLimiterPassbandHz
+                passbandHz: preEncodeLimiterPassbandHz,
+                stereoLink: preEncodeStereoLink
             )
             configureTruePeakGuard(sampleRate: audioRate)
         }
@@ -2118,11 +2173,20 @@ final class MPXGenerator {
 
         let effectiveMonoBassEnabled = config.monoBassEnabled
             && ChainFeature.stereoProgram.applies(in: operatingMode)
+        let effectiveProtectEnabled = config.stereoImageProtectEnabled
+            && ChainFeature.stereoImage.applies(in: operatingMode)
+        // The protector's enable resets its envelopes with the rest of the
+        // stage (it starts from gain 1.0 like a restart); the ratio cap is a
+        // scalar on the allowed side and is adopted without a reset so a
+        // slider drag cannot clack.
         let stereoImageChanged =
             monoBassEnabled != effectiveMonoBassEnabled
             || fabsf(monoBassFreqHz - config.monoBassFreqHz) > 0.0001
+            || stereoImageProtectEnabled != effectiveProtectEnabled
         monoBassEnabled = effectiveMonoBassEnabled
         monoBassFreqHz = clampf(config.monoBassFreqHz, 60.0, 250.0)
+        stereoImageProtectEnabled = effectiveProtectEnabled
+        stereoImageMaxSideRatio = clampf(config.stereoImageMaxSideRatio, 1.0, 3.0)
         if stereoImageChanged {
             configureStereoImage()
         }
@@ -2384,6 +2448,8 @@ final class MPXGenerator {
             || compositeClipperOversampling != config.compositeClipperOversampling
         let compClipLookaheadChanged =
             fabsf(compositeClipperLookaheadMS - config.compositeClipperLookaheadMS) > 0.0001
+        let compClipDepthChanged =
+            fabsf(compositeClipperLookaheadDepthDB - config.compositeClipperLookaheadDepthDB) > 0.0001
         compositeClipperEnabled = config.compositeClipperEnabled
         compositeClipperThresholdDB = clampf(config.compositeClipperThresholdDB, -12.0, 0.0)
         compositeClipperCeilingDB = clampf(config.compositeClipperCeilingDB, -6.0, 0.0)
@@ -2392,6 +2458,7 @@ final class MPXGenerator {
         compositeClipperCancelPilot = config.compositeClipperCancelPilot
         compositeClipperCancelRDS = config.compositeClipperCancelRDS
         compositeClipperLookaheadMS = clampf(config.compositeClipperLookaheadMS, 0.0, 5.0)
+        compositeClipperLookaheadDepthDB = clampf(config.compositeClipperLookaheadDepthDB, 0.0, 6.0)
         compositeClipperOversampling = config.compositeClipperOversampling
         if compClipStructuralChanged {
             compositeClipper.configure(
@@ -2403,6 +2470,7 @@ final class MPXGenerator {
                 cancelPilot: compositeClipperCancelPilot,
                 cancelRDS: compositeClipperCancelRDS,
                 lookaheadMS: compositeClipperLookaheadMS,
+                lookaheadDepthDB: compositeClipperLookaheadDepthDB,
                 oversamplingFactor: compositeClipperOversampling
             )
             recomputeSubcarrierDelay()
@@ -2412,6 +2480,11 @@ final class MPXGenerator {
                 sampleRate: mpxRate
             )
             recomputeSubcarrierDelay()
+        }
+        if compClipDepthChanged && !compClipStructuralChanged {
+            // A scalar on the detector target: applied live with no state
+            // reset (a slider drag must not clack).
+            compositeClipper.setLookaheadDepthDB(compositeClipperLookaheadDepthDB)
         }
 
         // SSB Stereo encoder (SSB-leaning stereo encoding). The Hilbert FIR
@@ -2699,6 +2772,30 @@ final class MPXGenerator {
         truePeakGuard.reset()
         stereoProtectAttackCoeff = expf(-1.0 / (0.010 * sr))
         stereoProtectReleaseCoeff = expf(-1.0 / (0.300 * sr))
+        // The reference delay is re-derived on the next protected sample
+        // (the stages it depends on may be configured after this call).
+        stereoProtectRefDelaySamples = 0
+        stereoProtectRefMidDelay = []
+        stereoProtectRefSideDelay = []
+        stereoProtectRefDelayIdx = 0
+    }
+
+    /// Audio-domain samples between the protector's two taps: the reference
+    /// is taken after the programme lowpass, the output after the encoder
+    /// FIR, and only the linear-phase stages in between delay the signal.
+    /// `hfTrim`, the parametric EQ, PrimeBass, the bass clipper (IIR LR4)
+    /// and the encoder HF guard are minimum-phase or zero-delay.
+    var stereoImageProtectorReferenceDelaySamples: Int {
+        var delay = 0
+        if monoBassEnabled { delay += monoBassFilter.groupDelaySamples }
+        if advancedDynamicsEnabled {
+            delay += advancedDynamics.groupDelaySamples
+        } else if multibandEnabled {
+            delay += multibandFIRGroupDelaySamples
+        }
+        if dcClipperEnabled { delay += dcClipper.latencySamples }
+        if useEncoderFIR { delay += encoderProgramFIR.groupDelaySamples }
+        return delay
     }
 
     private func configureMonitorDemod() {
@@ -3718,7 +3815,10 @@ final class MPXGenerator {
 
         // Stereo-image protection is an FM deviation / multipath guard: a
         // digital carrier has neither, so the full image goes to the encoder.
-        if !audioStagesBypassed && !digitalDelivery && !amDelivery {
+        // An operator option since 2026-10 (default off): OFF skips the call,
+        // so the chain is the one without the stage, bit for bit.
+        if stereoImageProtectEnabled && !omitStereoImageProtectorForTest
+            && !audioStagesBypassed && !digitalDelivery && !amDelivery {
             let protected = protectStereoImage(
                 inputL: stereo.referenceLeft,
                 inputR: stereo.referenceRight,
@@ -4511,8 +4611,28 @@ final class MPXGenerator {
         let outputMid = (outputL + outputR) * 0.5
         let outputSide = (outputL - outputR) * 0.5
 
-        let inputMidAbs = fabsf(inputMid)
-        let inputSideAbs = fabsf(inputSide)
+        // Delay-match the reference to the output tap (see the delay-line
+        // declaration). The delay follows the stages that are on, so a live
+        // edit that changes a latency re-sizes it here, once.
+        let wantedDelay = stereoImageProtectorReferenceDelaySamples
+        if wantedDelay != stereoProtectRefDelaySamples || stereoProtectRefMidDelay.count != max(1, wantedDelay) {
+            stereoProtectRefDelaySamples = wantedDelay
+            stereoProtectRefMidDelay = [Float](repeating: 0.0, count: max(1, wantedDelay))
+            stereoProtectRefSideDelay = [Float](repeating: 0.0, count: max(1, wantedDelay))
+            stereoProtectRefDelayIdx = 0
+        }
+        var inputMidAbs = fabsf(inputMid)
+        var inputSideAbs = fabsf(inputSide)
+        if stereoProtectRefDelaySamples > 0 {
+            let delayedMid = stereoProtectRefMidDelay[stereoProtectRefDelayIdx]
+            let delayedSide = stereoProtectRefSideDelay[stereoProtectRefDelayIdx]
+            stereoProtectRefMidDelay[stereoProtectRefDelayIdx] = inputMidAbs
+            stereoProtectRefSideDelay[stereoProtectRefDelayIdx] = inputSideAbs
+            stereoProtectRefDelayIdx += 1
+            if stereoProtectRefDelayIdx >= stereoProtectRefDelaySamples { stereoProtectRefDelayIdx = 0 }
+            inputMidAbs = delayedMid
+            inputSideAbs = delayedSide
+        }
         let outputMidAbs = fabsf(outputMid)
         let outputSideAbs = fabsf(outputSide)
 
@@ -4541,14 +4661,23 @@ final class MPXGenerator {
             releaseCoeff: stereoProtectReleaseCoeff
         )
 
-        let inputRatio = stereoProtectInputSideEnv / max(0.02, stereoProtectInputMidEnv)
         let configuredRatio = 0.70 + (Self.stereoProtectWidthReference * 0.65)
-        let allowedRatio = min(1.55, max(configuredRatio, inputRatio * 1.16))
-        let allowedSide = max(0.008, stereoProtectMidEnv * allowedRatio)
-
         var targetGain: Float = 1.0
-        if stereoProtectSideEnv > allowedSide {
-            targetGain = clampf(allowedSide / max(1e-5, stereoProtectSideEnv), 0.0, 1.0)
+        // Without a mid reference there is no ratio to hold: pure-side
+        // (anti-phase) content and silence pass untouched. Until 2026-10 an
+        // absolute 0.008 side floor took over here and crushed anti-phase
+        // material to -42 dBFS (stereo_diff_400hz lost 24 dB of RMS against
+        // 1.4 dB for the mono tone at the same level; audit A3). The 0.02
+        // threshold is the old divisor floor, now a gate instead of a bias
+        // that narrowed quiet wide passages to 1.025 while loud ones kept
+        // their 1.16 x relief.
+        if stereoProtectInputMidEnv >= Self.stereoProtectMidReferenceFloor {
+            let inputRatio = stereoProtectInputSideEnv / stereoProtectInputMidEnv
+            let allowedRatio = min(stereoImageMaxSideRatio, max(configuredRatio, inputRatio * 1.16))
+            let allowedSide = stereoProtectMidEnv * allowedRatio
+            if stereoProtectSideEnv > allowedSide {
+                targetGain = clampf(allowedSide / max(1e-5, stereoProtectSideEnv), 0.0, 1.0)
+            }
         }
 
         stereoProtectGain = Self.smoothTowardTarget(
@@ -4564,10 +4693,13 @@ final class MPXGenerator {
 
     /// The stereo-image protection's allowed side/mid ratio used to scale
     /// with the (removed) widener's Width; 0.5 was its default, so keeping
-    /// the identical runtime expression leaves every widener-off chain --
-    /// all strict baselines -- bit-identical. Music - Loud (Width 0.46 via
-    /// the old wide_chr preset) moves from a 0.999 to a 1.025 ratio.
+    /// the identical runtime expression left every widener-off chain
+    /// bit-identical while the stage was always on (until 2026-10). It gives
+    /// the 1.025 floor of the allowed ratio when the stage is enabled.
     private static let stereoProtectWidthReference: Float = 0.5
+    /// Input mid envelope under which the protector has no reference and
+    /// stays idle (the former `max(0.02, inputMidEnv)` divisor floor).
+    private static let stereoProtectMidReferenceFloor: Float = 0.02
 
     private func processMonoBass(left: Float, right: Float) -> (Float, Float) {
         monoBassFilter.process(left: left, right: right)
@@ -4915,7 +5047,7 @@ final class MPXGenerator {
     /// whenever the shaper engaged (peak-control review F11). With the
     /// limiter holding the budget, the knee touches limited crests by at most
     /// 0.02 dB; the shaper's job is the impossible configurations.
-    static let softClipSafetyKneeStart: Float = 0.99
+    static let softClipSafetyKneeStart: Float = 0.995
 
     static func softClipSafety(_ x: Float, threshold: Float) -> Float {
         let thr = clampf(threshold, 0.001, 0.999)

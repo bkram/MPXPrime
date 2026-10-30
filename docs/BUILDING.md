@@ -11,7 +11,7 @@ the [Download](../README.md#download) section of the README.
 - For running the **test suite**: a full Xcode install (the Command Line Tools
   do not ship `Testing.framework`)
 
-The package is a Swift Package Manager project rooted at `macOS/`. Its SwiftPM
+The package is a Swift Package Manager project rooted at the repository root (`Package.swift`). Its SwiftPM
 dependencies are `swift-atomics` and `hummingbird` (2.x, pulling in SwiftNIO --
 the embedded remote-control REST server, compiled into `MPXPrime` on both
 platforms). Building the **`MPXPrime`** encoder needs nothing else. Building the **`MPXPrimeMeter`** analyzer additionally requires the
@@ -24,16 +24,21 @@ release slice with `--product MPXPrime` to skip the Meter and its `CMPXTuner`.
 
 ## Build
 
-Debug build:
+The one-step way (works from any directory; sets `DEVELOPER_DIR`, the
+Homebrew `PATH` and a shared module cache, see `scripts/build-env.sh`):
 
 ```bash
-swift build --package-path macOS
+scripts/build.sh                        # release, Studio + Meter
+scripts/build.sh debug                  # debug build
+scripts/build.sh --product MPXPrime     # the encoder only (no SDR libs needed)
+scripts/build.sh --clean                # wipe .build first
 ```
 
-Release build:
+Or the plain SwiftPM commands it wraps, from the repository root:
 
 ```bash
-swift build --package-path macOS -c release
+swift build                # debug
+swift build -c release     # release
 ```
 
 > **Debug builds are not real-time capable.** `swift build` (no `-c release`)
@@ -44,18 +49,90 @@ swift build --package-path macOS -c release
 > underruns, or input-ring overflows. Debug builds are fine for development,
 > unit testing, and `--verify` runs (which do not touch real audio devices), but
 > **for actual on-air or monitor playback always use a release build**: either
-> `swift build --package-path macOS -c release` followed by running
-> `macOS/.build/release/MPXPrime`, or use the DMG produced by `./build-release.sh`.
+> `swift build -c release` followed by running
+> `.build/release/MPXPrime`, or use the DMG produced by `scripts/build-release.sh`.
 
-## Run
+### Fast rebuilds
 
-From the repository root:
+On an M1 Pro an incremental `swift build --build-tests` after editing one
+encoder file takes about 10 s, and very little of that is compiling the file
+(`MPXGenerator.swift` compiles in 1.1 s in a debug build). About 2 s is SwiftPM
+loading the package -- more on the first build in a new shell, when it
+re-evaluates every dependency manifest, so build from a long-lived terminal --
+and the rest is emitting module interfaces and building the encoder target a
+second time for the tests. Build the tests only when you are about to run them;
+`swift build` is enough while iterating on the app. A release build is bound by
+one serial whole-module optimisation job of about 45 s.
+
+Keep type-checking cheap:
+
+- Give a stored property an explicit type when its initialiser is not a
+  literal (`let telemetry: LiveTelemetry = LiveTelemetry()`); otherwise every
+  file that uses the type re-checks the expression. That one line cost 4 s of
+  CPU per build across 14 jobs.
+- In SwiftUI, move long ternaries, `String(format:)` chains and `+`-joined
+  help strings out of the view builder into small typed helpers or
+  `static let` constants (the Meter's `metricsSection` went from 2.8 s to under
+  0.1 s this way).
+
+To find slow spots, build into a separate scratch path (the flags force a full
+rebuild) and fix anything reported in our sources:
 
 ```bash
-swift run --package-path macOS MPXPrime                       # GUI
-swift run --package-path macOS MPXPrime --nogui               # headless
-swift run --package-path macOS MPXPrime --seconds 10          # fixed runtime
-swift run --package-path macOS MPXPrime --config "/path/to/MPX Prime Studio.ini"
+swift build --scratch-path /tmp/mpx-typecheck \
+  -Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=200 \
+  -Xswiftc -Xfrontend -Xswiftc -warn-long-function-bodies=200
+```
+
+## Install and run the apps
+
+`scripts/build-run.sh` builds MPX Prime Studio and MPX Prime Meter as release
+apps for this Mac, signs them, installs them in `/Applications` and opens the
+Studio. Run the apps from there: one fixed path and one stable signature keep
+the Dock item, Launch Services and the Microphone permission pointing at the
+same app.
+
+```bash
+scripts/make-signing-identity.sh       # once per Mac: the signing identity
+scripts/build-run.sh                   # both apps, then open the Studio
+scripts/build-run.sh --meter           # both apps, then open the Meter
+scripts/build-run.sh --studio-only     # the Studio only (no Homebrew tuner libraries)
+scripts/build-run.sh --no-open         # build and install, open nothing
+scripts/build-run.sh -- --nogui        # arguments after -- go to the opened app
+```
+
+`scripts/make-signing-identity.sh` creates a self-signed "MPX Prime
+Development" certificate in its own keychain, usable over SSH. With it the
+signature stays the same across builds, so macOS asks for the Microphone
+once; without it the apps are signed ad hoc and macOS asks again after every
+build. Never re-create the certificate once apps are signed with it. A running
+app is quit gracefully before it is replaced, never killed; a copy started
+from `.build` by `scripts/run.sh` is left running, and the new app is not
+opened. `scripts/build-release.sh` and `scripts/build-run.sh` assemble the
+bundles with the same functions in `scripts/app-bundle.sh`.
+
+## Run from the build
+
+`scripts/run.sh` builds a release `MPXPrime` and runs it; every argument is
+passed to the binary unchanged (`--debug` and `--no-build` are the only flags
+the script itself consumes):
+
+```bash
+scripts/run.sh                                     # GUI
+scripts/run.sh --nogui                             # headless
+scripts/run.sh --nogui --seconds 10                # fixed runtime
+scripts/run.sh --config "/path/to/MPX Prime Studio.ini"
+scripts/run.sh --verify --seconds 5                # offline verification gate
+scripts/run.sh --debug --verify --seconds 5        # the same on a debug build
+scripts/run.sh --no-build --nogui                  # run the existing binary
+```
+
+The equivalent plain commands, from the repository root (debug build, see the
+warning above):
+
+```bash
+swift run MPXPrime                       # GUI
+swift run MPXPrime --nogui               # headless
 ```
 
 The default user config lives at
@@ -112,10 +189,10 @@ Build, verify, and test exactly as on macOS, except no `DEVELOPER_DIR`
 override is needed (the Linux toolchain ships Testing.framework):
 
 ```bash
-swift build --package-path macOS -c release
-swift test --package-path macOS
-macOS/.build/release/MPXPrime --verify --seconds 5
-macOS/.build/release/MPXPrime --nogui --config /path/to/config.ini
+swift build -c release
+swift test
+.build/release/MPXPrime --verify --seconds 5
+.build/release/MPXPrime --nogui --config /path/to/config.ini
 ```
 
 Linux specifics:
@@ -138,7 +215,7 @@ Linux specifics:
   Xrun counts are printed at stop.
 - **Per-platform strict baseline.** Apple and Glibc libm (and vvtanhf vs the
   scalar tanh shim) differ at rounding level, so Linux pins its own
-  `--baseline-strict` file, `macOS/verifier_baselines/default-linux-x86_64.json`
+  `--baseline-strict` file, `Tests/Verification/baselines/default-linux-x86_64.json`
   (`default.json` stays macOS-only). The physical `--verify` thresholds are
   identical on both platforms. A deliberate chain change that recaptured the
   macOS baselines must recapture this one on x86_64 Linux too, or the CI
@@ -149,7 +226,7 @@ Linux specifics:
   `gh workflow run linux-baseline.yml --ref <branch>` (or, on an integration
   branch that has not shipped to `main` yet, push a commit whose message
   contains `[linux-baseline]`) and download its `linux-x86_64-baseline`
-  artifact into `macOS/verifier_baselines/`
+  artifact into `Tests/Verification/baselines/`
   (`.github/workflows/linux-baseline.yml`: physical thresholds first, then
   capture, then a strict round-trip).
 - **Loopback smoke test** without audio hardware: `sudo modprobe snd-aloop`,
@@ -159,12 +236,35 @@ Linux specifics:
   The pilot (19 kHz, 8 percent) and RDS sidebands (around a suppressed 57 kHz
   carrier) should be visible in any spectrum tool.
 
+### Checking the Linux build from a Mac (Docker)
+
+Without a Linux box, the official Swift images build and test the Linux
+target in minutes; this is also how the Linux baseline
+(`Tests/Verification/baselines/default-linux-x86_64.json`) is recaptured after a
+DSP change moves it. From a checkout with no `.build/` inside it:
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src swift:6.4-noble bash -c '
+  apt-get update -qq >/dev/null && apt-get install -y -qq libasound2-dev >/dev/null
+  swift build -c release --product MPXPrime
+  swift test
+  .build/release/MPXPrime --verify --seconds 5
+  .build/release/MPXPrime --verify --baseline-strict
+  .build/release/MPXPrime --verify --capture-baseline --seconds 5   # only to recapture the Linux baseline
+'
+```
+
+`swift:6.2-noble` is the oldest image worth testing (the CI runner installs
+`swiftly install latest`, 6.4 at the time of writing). The container's
+`.build/` is owned by root; delete it with the container (`docker run --rm
+... rm -rf .build`) rather than from the host.
+
 ### Debian/Ubuntu package
 
-`./build-deb.sh <version> [distro-label]` builds `mpxprime_<ver>_amd64.deb`
+`scripts/build-deb.sh <version> [distro-label]` builds `mpxprime_<ver>_amd64.deb`
 (`mpxprime_<ver>-<label>_amd64.deb` with the distro label, which the release
 workflow always passes)
-from a release build (`swift build --package-path macOS -c release
+from a release build (`swift build -c release
 --product MPXPrime --static-swift-stdlib` first -- the Swift runtime is
 linked statically; remaining system deps are computed by dpkg-shlibdeps).
 The package installs `/usr/bin/mpxprime` (+ the web-dashboard resource
@@ -203,7 +303,7 @@ would not fit a low-end core at all). The shim is pinned
 against real Accelerate by a golden
 fixture plus SIMD accuracy tests (`AccelerateShimTests`; regenerate the
 fixture on macOS with `MPXPRIME_CAPTURE_GOLDEN=1`). The ALSA engine lives
-in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
+in `Sources/MPXPrime/ALSAAudioEngine.swift`.
 
 ## Remote control server
 
@@ -211,7 +311,8 @@ in `macOS/Sources/MPXPrime/ALSAAudioEngine.swift`.
 headless run (or set `[CONTROL] control_enabled = True`). See the user
 manual's "Remote control" section for endpoints and the security model. `scripts/run-build-web.sh`
 (repo root, macOS + Linux) builds the release binary and runs it headless
-with the dashboard in one step.
+with the dashboard in one step; it prints the dashboard URL and API key
+first and refuses to start a second instance on a port that is in use.
 
 ## Offline verification
 
@@ -219,18 +320,18 @@ The verification harness renders deterministic test scenarios without opening
 any audio devices, so it runs safely on a debug build:
 
 ```bash
-swift run --package-path macOS MPXPrime --verify --seconds 5                  # scenario sweep
-swift run --package-path macOS MPXPrime --verify-presets --seconds 5          # 5-band preset sweep
-swift run --package-path macOS MPXPrime --verify-long --seconds 30            # long-run regression
-swift run --package-path macOS MPXPrime --verify-receiver --seconds 5         # receiver-model decode
-swift run --package-path macOS MPXPrime --verify-multiband-coupling --seconds 2    # A/B inter-band coupling
-swift run --package-path macOS MPXPrime --verify-advanced-dynamics --seconds 4     # A/B single-stage leveler
-swift run --package-path macOS MPXPrime --verify-ssb-stereo --seconds 4            # A/B SSB stereo encoder
-swift run --package-path macOS MPXPrime --verify-hf-transients --seconds 5         # hi-hat / cymbal distortion gate (per chain variant)
-swift run --package-path macOS MPXPrime --verify-stereo-guard --seconds 4          # composite clipper stereo-guard share sweep (duty / separation / SINAD table)
-swift run --package-path macOS MPXPrime --verify-final-ride --seconds 3            # Final-MPX limiter duty attribution (one clipper candidate off per row)
-macOS/.build/release/MPXPrime --verify-program-ab <file-or-dir> --seconds 30        # real-music A/B: AGC+multiband vs Advanced Dynamics on captured audio (macOS only; --ab-profile, --ab-csv; corpus via scripts/capture-program.sh)
-macOS/.build/release/MPXPrime --bench-blocks                                        # block (buffer) size sweep: worst-block cost, latency, bit-identity, device HAL range
+swift run MPXPrime --verify --seconds 5                  # scenario sweep
+swift run MPXPrime --verify-presets --seconds 5          # 5-band preset sweep
+swift run MPXPrime --verify-long --seconds 30            # long-run regression
+swift run MPXPrime --verify-receiver --seconds 5         # receiver-model decode
+swift run MPXPrime --verify-multiband-coupling --seconds 2    # A/B inter-band coupling
+swift run MPXPrime --verify-advanced-dynamics --seconds 4     # A/B single-stage leveler
+swift run MPXPrime --verify-ssb-stereo --seconds 4            # A/B SSB stereo encoder
+swift run MPXPrime --verify-hf-transients --seconds 5         # hi-hat / cymbal distortion gate (per chain variant)
+swift run MPXPrime --verify-stereo-guard --seconds 4          # composite clipper stereo-guard share sweep (duty / separation / SINAD table)
+swift run MPXPrime --verify-final-ride --seconds 3            # Final-MPX limiter duty attribution (one clipper candidate off per row)
+.build/release/MPXPrime --verify-program-ab <file-or-dir> --seconds 30        # real-music A/B: AGC+multiband vs Advanced Dynamics on captured audio (macOS only; --ab-profile, --ab-csv; corpus via scripts/capture-program.sh)
+.build/release/MPXPrime --bench-blocks                                        # block (buffer) size sweep: worst-block cost, latency, bit-identity, device HAL range
 scripts/capture-program.sh --seconds 60 --name <label>                             # record program audio from BlackHole 2ch into $MPXPRIME_MUSIC_DIR (the --verify-program-ab corpus)
 scripts/ab-music-live.sh --cycles 4 --window 30 [--soak <hours>]                          # LIVE real-music A/B + soak on two BlackHole devices while you play music (xruns / safety clip / budget / deviation gates)
 scripts/smoke-live.sh [--ini <path>]                                                      # LIVE engine smoke on a virtual output (BlackHole 2ch): device start, tone deviation vs expected, pilot, Safety Clip, xruns, live-apply + restart via REST
@@ -239,13 +340,15 @@ scripts/smoke-live.sh [--ini <path>]                                            
 Baseline capture + strict compare:
 
 ```bash
-swift run --package-path macOS MPXPrime --capture-baseline    # writes macOS/verifier_baselines/default.json
-swift run --package-path macOS MPXPrime --verify --baseline-strict
+swift run MPXPrime --capture-baseline    # writes Tests/Verification/baselines/default.json
+swift run MPXPrime --verify --baseline-strict
 ```
 
 Exit codes: `0` = PASS, `1` = TIGHT (near limits, review), `2` = WARN, `3` =
-FAIL (post-injection composite overshoot; checked first so a TIGHT finding can
-never mask it), `64` = usage error -- most often `macOS/Verification.ini` not
+FAIL (post-injection composite overshoot). The exit code is the strongest of all
+findings, so a TIGHT can never mask a WARN or FAIL; a worst 4x true peak above
+0 dBFS is TIGHT and above +0.25 dBFS WARN; `--baseline-strict` with a missing,
+undecodable or other-schema baseline exits 2. `64` = usage error -- most often `Tests/Verification/Verification.ini` not
 findable because the gate was not run from the repo root.
 
 ### What the report contains
@@ -262,7 +365,7 @@ quality metrics after them:
 
 The deterministic scenarios are `mono_1khz`, `stereo_diff_400hz`,
 `program_mix`, `bright_dense`, `vocal_sibilant`, `hf_edge_12k`,
-`transient_push`, `hard_panned_hf` and `wide_bass`. `--verify-presets` runs
+`transient_push`, `hard_panned_hf`, `wide_bass` and `bass_kick` (0.65: the one scenario that drives the Bass Clipper hard enough for the strict baseline to see it). `--verify-presets` runs
 the same measurements across the shipped 5-band presets (`5B AC/Pop`,
 `5B CHR/EDM`, `5B Rock`, `5B Talk`, `5B News`, `5B Urban`, `5B Dance`), and
 each `--verify-*` A/B mode prints its own comparison table (the one-line
@@ -275,11 +378,14 @@ XCTest. Running them requires a full Xcode install, so `DEVELOPER_DIR` must poin
 at Xcode (the Command Line Tools ship no `Testing.framework`):
 
 ```bash
-# Full default suite (~40 s)
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS
+# Full default suite (~40 s); scripts/test.sh sets DEVELOPER_DIR for you
+scripts/test.sh
 
 # Single suite / filter
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path macOS --filter BassClipperTests
+scripts/test.sh --filter BassClipperTests
+
+# The plain command the script wraps
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
 Optional deep DSP combination suite (~3 min; opt-in, catches stage-interaction
@@ -287,7 +393,7 @@ regressions -- run before a release or when touching multiple stages):
 
 ```bash
 MPXPRIME_DEEP=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  swift test --package-path macOS --filter Deep
+  swift test --filter Deep
 ```
 
 ## Accessibility lint
@@ -306,19 +412,27 @@ disabled. CI runs it with `--strict`.
 
 ## Scripts layout
 
-- Repo root: only the two release entry points the workflows call,
-  `build-release.sh` (universal binary + DMG) and `build-deb.sh` (Debian
-  package). Run them from the root.
-- `scripts/`: developer and maintainer tools -- `run-build-web.sh`,
-  `run-meter.sh`, `smoke-live.sh`, `ab-music-live.sh`, `calibrate-tx.sh`,
-  `capture-program.sh` (+ `CaptureToWav.swift`), the docs checks
-  (`check-doc-anchors.py`, `check-english.sh`, `lt-report-filter.py`,
-  `extract-ui-strings.py`, `english-dictionary.txt`). Every shell script
-  changes to the repo root itself, so `scripts/smoke-live.sh` works from any
-  directory.
-- `dist-scripts/`: the operator-facing helpers that SHIP with the app --
+- Repo root: no scripts. Everything lives in `scripts/`, and every shell
+  script there changes to the repo root itself, so `scripts/run.sh` works
+  from any directory.
+- `scripts/`, the everyday entry points: `build.sh` (swift build with the
+  right environment), `run.sh` (release build + run the Studio),
+  `test.sh` (swift test with `DEVELOPER_DIR` set), `run-meter.sh` (the
+  Meter), `run-build-web.sh` (headless + dashboard). They all source
+  `build-env.sh`, which is the one place the Xcode path, Homebrew `PATH`,
+  module cache and job count are set.
+- `scripts/`, the release entry points the workflows call:
+  `build-release.sh <version>` (universal binary + DMG under `dist/`)
+  and `build-deb.sh <version> [label]` (Debian package, written to the repo
+  root).
+- `scripts/`, maintainer tools: `smoke-live.sh`, `ab-music-live.sh`,
+  `calibrate-tx.sh`, `capture-program.sh` (+ `CaptureToWav.swift`), the docs
+  checks (`check-doc-anchors.py`, `check-english.sh`, `lt-report-filter.py`,
+  `extract-ui-strings.py`, `english-dictionary.txt`) and the dashboard render
+  check (`check-webui.sh` + `check-webui.cjs`).
+- `scripts/dist/`: the operator-facing helpers that SHIP with the app --
   `nowplaying.sh` and `push-nowplaying.sh` (Now Playing metadata for RDS).
-  `build-release.sh` copies them into `MPX Prime Studio.app/Contents/Resources/Scripts/`
+  `scripts/build-release.sh` copies them into `MPX Prime Studio.app/Contents/Resources/Scripts/`
   and into the DMG's `Now Playing Scripts/` folder; the manual documents them
   from the operator's side. Put a script here only if an end user runs it.
 
@@ -352,19 +466,165 @@ term, never to hide a typo. The two Claude Code skills in `.claude/skills/`
 (`markdown-lint`, `proofread-english`) carry the rules and the fix workflow;
 they are checked in so every contributor and agent gets the same checks.
 
+## Dependencies
+
+### Pulling them in
+
+Nothing to do by hand. The first `scripts/build.sh` (or `swift build`)
+resolves the SwiftPM dependencies from `Package.resolved`, clones them
+into `.build/checkouts/` and builds them; later builds reuse the
+checkouts. To fetch without building, or to re-fetch after a pull that
+changed the pins:
+
+```bash
+swift package resolve      # fetch exactly the pinned versions
+swift package show-dependencies   # the resolved tree
+```
+
+Resolution needs network access to github.com the first time and after a pin
+changes; after that a build is fully offline. When SwiftPM refuses to resolve
+("dependency graph could not be resolved", a stale checkout after a force
+push, a corrupt clone), wipe its state and start again:
+
+```bash
+swift package reset         # drops .build/checkouts and the pins cache
+swift package resolve
+```
+
+`scripts/build.sh --clean` does the heavier version of this (it removes all
+of `.build`, so the next build also recompiles everything).
+
+The Meter's native libraries are not SwiftPM packages: install them once with
+`brew install librtlsdr liquid-dsp` (Apple Silicon; see Requirements above).
+Without them, build the encoder only with `scripts/build.sh --product
+MPXPrime`.
+
+### Adding a new package
+
+1. Declare it in `Package.swift`: add
+   `.package(url: ..., from: "<lowest version you tested>")` to the
+   `dependencies:` array, and add
+   `.product(name: "<Product>", package: "<package-name>")` to the
+   `dependencies:` of every target that imports it. The package name is the
+   repository name without `.git` (`hummingbird` for
+   `hummingbird-project/hummingbird.git`).
+2. Resolve: `swift package resolve`. SwiftPM picks the
+   newest version the range allows and appends the pin (and any transitive
+   pins) to `Package.resolved`.
+3. Build and test both platforms. A package that imports Foundation-only
+   APIs is fine; anything touching AppKit, Accelerate or CoreAudio must sit
+   behind `#if os(macOS)` or in a macOS-only target, because the same
+   manifest builds the Linux encoder (`buildingForLinux` in `Package.swift`
+   shows how the platform split is done).
+4. Commit `Package.swift` and `Package.resolved` together, with the version
+   in the message, and add the package to the pinned list below.
+
+### Updating
+
+What is pinned, and where:
+
+- **SwiftPM**: `Package.swift` declares `swift-atomics` and
+  `hummingbird` with `from:` minimums; `Package.resolved` (tracked)
+  pins the exact versions of those two and of everything Hummingbird pulls
+  in (SwiftNIO, swift-log, swift-crypto, ...). Every build and every CI job
+  uses the committed pins, so a bump is a deliberate commit, never a side
+  effect of a build.
+- **Toolchains**: macOS builds with the Xcode the machine has (the
+  Requirements above state the floor); Linux installs `swiftly install
+  latest` (`ci.yml`, `release.yml`, `linux-baseline.yml`), so the Linux
+  compiler moves on its own and a toolchain regression shows up in CI first.
+- **GitHub Actions**: `actions/checkout`, `actions/upload-artifact`,
+  `actions/setup-node`, `softprops/action-gh-release` are pinned by major
+  (`@vN`) in `.github/workflows/*.yml`.
+- **Node**: only the dashboard render check, `scripts/check-webui.sh`,
+  which installs `jsdom@<major>` into the gitignored `.webui-check/` cache
+  on first run. There is no `package.json`.
+- **Homebrew**: `swiftlint` (CI installs whatever brew ships and runs it
+  `--strict`), `librtlsdr` and `liquid-dsp` for the Meter.
+
+The procedure, when a bump is wanted (a security fix, a feature we need, or
+a quarterly sweep). `. scripts/build-env.sh` puts the shell in the repo root
+with `DEVELOPER_DIR` and the Homebrew `PATH` set, the same environment the
+scripts use:
+
+```bash
+. scripts/build-env.sh
+
+# 1. See what is behind: the pins vs each repo's newest tag.
+swift package show-dependencies | head -30
+git ls-remote --tags https://github.com/hummingbird-project/hummingbird | tail -5
+
+# 2. Bump. `update` moves every pin to the newest version the `from:` ranges
+#    allow and rewrites Package.resolved; name one package to bump only it.
+#    To go PAST a `from:` floor (a new major), raise the floor in
+#    Package.swift first, then update.
+swift package update                 # everything
+swift package update hummingbird     # one package
+git diff Package.resolved                           # review what moved
+
+# 3. Re-run the gates. A dependency bump is a code change.
+scripts/build.sh
+scripts/test.sh
+.build/release/MPXPrime --verify --seconds 5
+.build/release/MPXPrime --verify --baseline-strict
+swiftlint --strict
+scripts/check-webui.sh
+scripts/build-release.sh <version>                       # the universal slice still links
+
+# 4. Linux leg (Ubuntu 24.04 box or let CI do it on the push):
+#    swift build ... --static-swift-stdlib, swift test, the two --verify gates.
+
+# 5. Commit Package.resolved (and Package.swift if a `from:` floor moved)
+#    with a message that names the packages and versions.
+```
+
+Rules of thumb:
+
+- Read the release notes of a MINOR bump of Hummingbird before taking it: it
+  raises its Swift floor inside a major (2.27 needs Swift 6.2), and when it
+  does, raise the Requirements line above and the `from:` in `Package.swift`
+  in the same commit, so a fresh clone cannot resolve below the tested set.
+- A transitive major (for example swift-crypto 4 -> 5) only lands if
+  Hummingbird's own ranges allow it; `git diff Package.resolved` shows it.
+- Bump the Actions majors together, in every workflow, so the four files
+  stay on one line; read the action's release note for runner or Node
+  requirements first.
+- Bump `jsdom` in `check-webui.sh`, delete `.webui-check/`, re-run the check.
+- Never pin by commit hash to work around a bug; pin the last good release
+  and record the reason in the CHANGELOG.
+
+## Versioning
+
+The version lives in exactly one place, `Sources/MPXPrimeCore/Version.swift`
+(`MPXPrimeVersion.string`). Studio (`--version`, the About box, the REST
+`/api/status`) and the Meter read it, so an unbundled binary reports the same
+number as the DMG. For shell, `scripts/version.sh` prints it: the packagers
+use it when called without a version argument, the dashboard render check
+reads it, and the release workflow fails when the pushed tag disagrees with
+it. To bump: change that one line, rename the integration branch to
+`develop/v.NNN`, and note the change in the CHANGELOG. Nothing else carries
+a copy.
+
 ## Release build and DMG
 
 Build a universal release app bundle and DMG:
 
 ```bash
-./build-release.sh 0.41
+scripts/build-release.sh          # version from scripts/version.sh
+scripts/build-release.sh 0.65-rc1 # or an explicit one
 ```
 
-Artifacts are written to `macOS/dist/`.
+Artifacts are written to `dist/`. The script builds the arm64 products,
+copies them aside, builds the x86_64 encoder, and only then runs `lipo`: with
+the Swift Build backend (the default in Swift 6.4) every architecture lands in
+the same `.build/out/Products/Release`, so the second build overwrites the
+first. Each slice is checked with `lipo -info` before it is used. After
+packaging, `.build/release` holds the x86_64 encoder; `scripts/build.sh`
+restores the native one.
 
 Releases ship by merging the integration branch (`develop/v.NNN`) into `main`,
 tagging `v<version>` from `main`, and pushing the tag -- which triggers
-`.github/workflows/release.yml`, runs `./build-release.sh <version>`, and
+`.github/workflows/release.yml`, runs `scripts/build-release.sh <version>`, and
 publishes the resulting DMG as a GitHub Release.
 
 ## See also

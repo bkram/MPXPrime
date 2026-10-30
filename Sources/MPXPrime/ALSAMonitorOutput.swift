@@ -1,0 +1,321 @@
+// Platform split: on Linux the MPXPrimeAcceleration shim provides the
+// OSAllocatedUnfairLock polyfill; on macOS this file compiles to nothing.
+#if canImport(Accelerate)
+import Accelerate
+#else
+import MPXPrimeAcceleration
+#endif
+import Atomics
+import Foundation
+import MPXPrimeCore
+
+/// The monitor's start/stop rules on Linux, where devices are ALSA PCM names
+/// rather than CoreAudio ids. Kept platform-independent so the rules are
+/// tested on the machine this is developed on; the player below is Linux-only.
+///
+/// Same intent as `MonitorOutput.decide` on macOS: every rule protects the
+/// AIR feed. An empty selection is off, never "default" (the default PCM may
+/// be the transmitter); the monitor refuses the transmitter's own device.
+enum LinuxMonitorRules {
+    enum Decision: Equatable {
+        case run(device: String)
+        case off(note: String?)
+    }
+
+    static func decide(enabled: Bool, monitorDevice: String?, outputDevice: String) -> Decision {
+        guard enabled else { return .off(note: nil) }
+        guard let dev = monitorDevice?.trimmingCharacters(in: .whitespaces), !dev.isEmpty else {
+            return .off(note: "Monitor is on but no monitor device is selected.")
+        }
+        if dev == outputDevice || (dev == "default" && outputDevice == "default") {
+            return .off(note: "The monitor device is the transmitter output; pick a different ALSA device.")
+        }
+        return .run(device: dev)
+    }
+}
+
+/// Float -> integer PCM for the ALSA integer formats (both engines' output
+/// and the monitor). Platform-independent so it is tested on macOS.
+///
+/// S16 is rounded to nearest with TPDF dither (two uniform draws of +/-0.5
+/// LSB, triangular over +/-1 LSB): until 2026-10 `Int16(x * 32767)`
+/// TRUNCATED toward zero, a 1 LSB dead zone around zero (crossover
+/// distortion near -96 dBFS) with no dither (review 2026-10 finding 11).
+/// S32 is rounded; at 32 bits the Float source carries no information that
+/// dither could preserve. Inputs are already clamped to [-1, 1].
+struct PCMSampleConverter {
+    /// xorshift32 state; any non-zero seed. Real-time safe (no allocation).
+    private var state: UInt32
+
+    init(seed: UInt32 = 0x9E37_79B9) {
+        state = seed == 0 ? 0x9E37_79B9 : seed
+    }
+
+    static let s16Scale = 32_767.0
+    static let s32Scale = 2_147_483_520.0
+
+    @inline(__always)
+    private mutating func uniform() -> Double {
+        state ^= state << 13
+        state ^= state >> 17
+        state ^= state << 5
+        // [-0.5, 0.5)
+        return Double(state) / 4_294_967_296.0 - 0.5
+    }
+
+    /// TPDF-dithered, rounded S16.
+    @inline(__always)
+    mutating func s16(_ x: Float) -> Int16 {
+        Self.s16(x, dither: uniform() + uniform())
+    }
+
+    /// Rounded S16 with an explicit dither offset in LSB (0 = plain rounding).
+    @inline(__always)
+    static func s16(_ x: Float, dither: Double) -> Int16 {
+        let v = (Double(x) * s16Scale + dither).rounded()
+        return Int16(max(-32_768.0, min(32_767.0, v)))
+    }
+
+    @inline(__always)
+    static func s32(_ x: Float) -> Int32 {
+        let v = (Double(x) * s32Scale).rounded()
+        return Int32(max(-2_147_483_648.0, min(2_147_483_647.0, v)))
+    }
+}
+
+#if os(Linux)
+import Atomics
+import CAlsa
+import MPXPrimeNative
+
+/// The second output on Linux: plays the conditioned monitor feed from a ring
+/// on its own ALSA device and its own thread, alongside the transmitter feed
+/// -- the counterpart of the macOS `MonitorOutput` + `RingBufferPlayer`.
+///
+/// Producer is the render thread (one `write` per period); consumer is this
+/// thread, draining with `readAdaptive` because the two PCMs run on different
+/// clocks (a USB card and the onboard codec, or snd-aloop). Underflow pads
+/// silence; the transmitter engine never learns the monitor exists.
+///
+/// Unlike the macOS engine, ALL monitor DSP runs HERE, not on the render
+/// thread: the render thread copies the raw feed into the ring and nothing
+/// else. Measured on a low-end x86 box (192 kHz, full chain): the render
+/// thread already took 95% of its core; decoding the composite alongside it
+/// cost 34 xruns per 20 s, moving the decode here cost none. So the composite
+/// is demodulated by a standalone `MPXDecoder` on its own PLL (the receiver
+/// model the verifier uses) and the audio modes are de-emphasised by the
+/// same `MonitorConditioner` the macOS monitor uses.
+final class ALSAMonitorOutput: @unchecked Sendable {
+    private var pcm: ALSAPCM?
+    /// S16 dither state; monitor thread only.
+    private var pcmConverter = PCMSampleConverter(seed: 0x51ED_270B)
+    private var thread: Thread?
+    private let running = ManagedAtomic<Bool>(false)
+    private var ring: StereoInputRingBuffer?
+    private var sampleRate = 48_000
+    private var targetFrames = 12_288
+    private var deadbandFrames = 3_072
+    private var left: [Float] = []
+    private var right: [Float] = []
+    private var conditioner = MonitorConditioner()
+    /// Monitor level published by the control side, consumed by the monitor
+    /// thread. Float bit pattern; the conditioner ramps to it.
+    private let pendingGain = ManagedAtomic<UInt32>(Float(1.0).bitPattern)
+    private var decoder = MPXDecoder()
+    private var decodeComposite = false
+    private var preemphasisUS = 50
+
+    /// Read by the render thread once per period to decide whether to write.
+    let active = ManagedAtomic<Bool>(false)
+    /// Written by the control thread AND by the monitor thread when the
+    /// device is lost, read by the headless backend's actor -- a String is
+    /// refcounted, so an unsynchronised read of one being replaced can
+    /// crash (0.65 audit, P0-5). The monitor thread takes this lock only on
+    /// the failure path, one line before it stops.
+    private let noteState = OSAllocatedUnfairLock<String?>(initialState: nil)
+    var note: String? { noteState.withLock { $0 } }
+    private func setNote(_ value: String?) { noteState.withLock { $0 = value } }
+    private(set) var runningDevice: String?
+
+    var isRunning: Bool { active.load(ordering: .relaxed) }
+
+    /// Allocate the ring for a run, sized against the PRODUCER's period, and
+    /// set up what this thread does to the feed: `.decodedComposite` means
+    /// the ring carries the composite and the decoder runs here.
+    func prepare(
+        sampleRate: Int, periodFrames: Int,
+        shape: MonitorConditioner.Shape, preemphasisUS: Int, gainDB: Double
+    ) -> StereoInputRingBuffer {
+        let target = max(4 * periodFrames, Int(Double(sampleRate) * 0.04))
+        let capacity = 1 << Int(ceil(log2(Double(max(1024, 4 * target)))))
+        let ring = StereoInputRingBuffer(capacityFrames: capacity)
+        self.ring = ring
+        self.sampleRate = sampleRate
+        self.targetFrames = target
+        self.deadbandFrames = max(64, periodFrames)
+        self.preemphasisUS = preemphasisUS
+        decodeComposite = shape == .decodedComposite
+        // Configures AND publishes the configured level BEFORE the monitor
+        // thread starts, or its first period reads the atomic's unity default
+        // and ramps away from the level just configured.
+        OutputWiring.configureMonitor(
+            &conditioner, shape: shape, sampleRate: Float(sampleRate), gainDB: gainDB,
+            pendingGain: pendingGain)
+        return ring
+    }
+
+    /// Level only. The conditioner belongs to the monitor thread, so publish
+    /// the value and let that thread adopt it at the top of its next period.
+    func setGain(dB: Double) {
+        pendingGain.store(OutputWiring.monitorGainBitPattern(gainDB: dB), ordering: .relaxed)
+    }
+
+    /// Bring the monitor in line with the selection. Never throws into the
+    /// caller: a monitor that cannot run is a note.
+    func reconcile(enabled: Bool, monitorDevice: String?, outputDevice: String) {
+        switch LinuxMonitorRules.decide(enabled: enabled, monitorDevice: monitorDevice, outputDevice: outputDevice) {
+        case .off(let why):
+            setNote(why)
+            stop()
+        case .run(let device):
+            setNote(nil)
+            if isRunning, runningDevice == device { return }
+            stop()
+            start(device: device)
+        }
+    }
+
+    private func start(device: String) {
+        guard let ring else {
+            setNote("The monitor could not start: the engine is not running.")
+            return
+        }
+        do {
+            let out = try ALSAPCM(
+                device: device, stream: SND_PCM_STREAM_PLAYBACK, rate: sampleRate,
+                wantChannels: 2, wantPeriod: max(256, deadbandFrames), wantPeriods: 8)
+            pcm = out
+            left = [Float](repeating: 0, count: out.periodFrames)
+            right = [Float](repeating: 0, count: out.periodFrames)
+        } catch {
+            setNote("The monitor device could not be opened: \(String(describing: error))")
+            pcm = nil
+            return
+        }
+        ring.dropToTargetBufferedFrames(0)
+        // Fresh decoder state per run: the PLL re-acquires in well under a
+        // second, and stale lock from a previous device would decode garbage.
+        decoder.configure(sampleRate: Float(sampleRate), preemphasisUS: preemphasisUS)
+        conditioner.reset()
+        runningDevice = device
+        running.store(true, ordering: .releasing)
+        active.store(true, ordering: .relaxed)
+        let t = Thread { [weak self] in self?.loop() }
+        t.name = "alsa-monitor"
+        t.stackSize = 1 << 20
+        thread = t
+        t.start()
+        FileHandle.standardError.write(Data("[ALSA] monitor '\(device)' playing\n".utf8))
+    }
+
+    func stop() {
+        active.store(false, ordering: .relaxed)
+        running.store(false, ordering: .releasing)
+        let deadline = Date().addingTimeInterval(2.0)
+        while thread?.isFinished == false, Date() < deadline { usleep(10_000) }
+        // `ALSAPCM.close()` is idempotent and its deinit calls it too; closing
+        // the raw handle here as well was a double close (SIGABRT, measured).
+        pcm?.close()
+        pcm = nil
+        thread = nil
+        runningDevice = nil
+    }
+
+    func shutdown() {
+        stop()
+        ring = nil
+        setNote(nil)
+    }
+
+    private func loop() {
+        guard let out = pcm, let ring else { return }
+        // The decoder and de-emphasis are IIR: denormals on x86 without FTZ/DAZ.
+        mpx_enable_flush_to_zero()
+        let frames = out.periodFrames
+        let ch = out.channels
+        while running.load(ordering: .acquiring) {
+            left.withUnsafeMutableBufferPointer { lb in
+                right.withUnsafeMutableBufferPointer { rb in
+                    guard let l = lb.baseAddress, let r = rb.baseAddress else { return }
+                    _ = ring.readAdaptive(
+                        intoLeft: l, outRight: r, frameCount: frames,
+                        nominalConsume: frames,
+                        targetBuffered: max(frames * 2, targetFrames),
+                        deadband: max(frames / 2, deadbandFrames))
+                    if decodeComposite {
+                        // Composite in (both channels carry it), stereo out.
+                        // The activity hint is the composite's own envelope;
+                        // no side-channel expectation without the encoder.
+                        for i in 0..<frames {
+                            let mpx = l[i]
+                            let decoded = decoder.process(
+                                mpx, referenceSubcarrier: nil,
+                                programActivity: fabsf(mpx), expectedSide: 0.0)
+                            l[i] = decoded.0
+                            r[i] = decoded.1
+                        }
+                    }
+                    conditioner.setTargetGain(
+                        Float(bitPattern: pendingGain.load(ordering: .relaxed)))
+                    conditioner.process(left: l, right: r, frameCount: frames)
+                }
+            }
+            @inline(__always) func clamp(_ v: Float) -> Float { max(-1.0, min(1.0, v)) }
+            switch out.format {
+            case SND_PCM_FORMAT_FLOAT_LE:
+                for i in 0..<frames {
+                    out.floatBuf[ch * i] = clamp(left[i])
+                    if ch == 2 { out.floatBuf[2 * i + 1] = clamp(right[i]) }
+                }
+                if !write(out, out.floatBuf, frames) { return }
+            case SND_PCM_FORMAT_S32_LE:
+                for i in 0..<frames {
+                    out.int32Buf[ch * i] = PCMSampleConverter.s32(clamp(left[i]))
+                    if ch == 2 { out.int32Buf[2 * i + 1] = PCMSampleConverter.s32(clamp(right[i])) }
+                }
+                if !write(out, out.int32Buf, frames) { return }
+            default:
+                for i in 0..<frames {
+                    out.int16Buf[ch * i] = pcmConverter.s16(clamp(left[i]))
+                    if ch == 2 { out.int16Buf[2 * i + 1] = pcmConverter.s16(clamp(right[i])) }
+                }
+                if !write(out, out.int16Buf, frames) { return }
+            }
+        }
+    }
+
+    private func write<T>(_ out: ALSAPCM, _ buf: [T], _ frames: Int) -> Bool {
+        var remaining = frames
+        var offset = 0
+        while remaining > 0, running.load(ordering: .relaxed) {
+            let rc = buf.withUnsafeBytes { raw -> snd_pcm_sframes_t in
+                // swiftlint:disable:next force_unwrapping
+                let base = raw.baseAddress!.advanced(by: offset * out.channels * MemoryLayout<T>.stride)
+                return snd_pcm_writei(out.pcm, base, snd_pcm_uframes_t(remaining))
+            }
+            if rc < 0 {
+                if snd_pcm_recover(out.pcm, Int32(rc), 1) < 0 {
+                    setNote("The monitor device was lost: \(alsaErrorString(Int32(rc)))")
+                    active.store(false, ordering: .relaxed)
+                    running.store(false, ordering: .releasing)
+                    return false
+                }
+                continue
+            }
+            remaining -= Int(rc)
+            offset += Int(rc)
+        }
+        return true
+    }
+}
+#endif

@@ -26,7 +26,7 @@ set -u
 cd "$(dirname "$0")/.."  # repo root
 
 INI_DEFAULT="$HOME/Library/Application Support/MPX Prime Studio/MPX Prime Studio.ini"
-INI="$INI_DEFAULT"; [ -f "$INI" ] || INI="macOS/Verification.ini"
+INI="$INI_DEFAULT"; [ -f "$INI" ] || INI="Tests/Verification/Verification.ini"
 INPUT_UID="BlackHole2ch_UID"
 OUTPUT_UID="BlackHole16ch_UID"
 PORT=8799
@@ -57,10 +57,10 @@ if pgrep -f "MPX Prime Studio.app|MPXPrime --gui" >/dev/null; then
   exit 3
 fi
 
-BIN=macOS/.build/release/MPXPrime
+BIN=.build/release/MPXPrime
 if [ ! -x "$BIN" ]; then
   echo "[ab] building release binary..."
-  swift build --package-path macOS -c release --product MPXPrime >/dev/null 2>&1 || { echo "FAIL: build"; exit 3; }
+  swift build -c release --product MPXPrime >/dev/null 2>&1 || { echo "FAIL: build"; exit 3; }
 fi
 
 WORK=$(mktemp -d /tmp/mpxprime-abmusic.XXXXXX)

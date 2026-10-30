@@ -1,0 +1,739 @@
+import Foundation
+
+// Sub-effect preset catalog: PrimeBass / multiband / final-stage / format-profile tables
+// and their pure apply-to-config logic. Extracted from the GUI view model
+// (SwiftUIControlApp.swift) so the remote-control API can apply presets on
+// the headless runtimes (macOS --nogui and the Linux CLI) with the exact
+// same parameter sets the GUI uses. The GUI's apply* methods are thin
+// wrappers over these functions (save/live-apply/status stay in the VM).
+//
+// Format profiles remain GUI-side: they chain final-stage presets and other
+// profile state that has not been extracted yet.
+
+struct PrimeBassPreset {
+    let id: String
+    let title: String
+    let enabled: Bool
+    let amount: Double
+    let freqHz: Double
+    let harmonics: Double
+    let drive: Double
+    let density: Double
+    let subharmonicsEnabled: Bool
+    let subharmonicsAmount: Double
+}
+
+struct MultibandPreset {
+    let id: String
+    let title: String
+    let mode: Int
+    let lowHz: Double?
+    let highHz: Double?
+    let x1Hz: Double?
+    let x2Hz: Double?
+    let x3Hz: Double?
+    let x4Hz: Double?
+    let lowThresholdDB: Double
+    let lowRatio: Double
+    let lowAttackMS: Double
+    let lowReleaseMS: Double
+    let midThresholdDB: Double
+    let midRatio: Double
+    let midAttackMS: Double
+    let midReleaseMS: Double
+    let highThresholdDB: Double
+    let highRatio: Double
+    let highAttackMS: Double
+    let highReleaseMS: Double
+    let kneeDB: Double
+    let linkStrength: Double
+    let releaseProgramDependent: Bool
+}
+
+enum MultibandPresetIntensity: String, CaseIterable, Identifiable {
+    case light
+    case normal
+    case heavy
+
+    var id: String { rawValue }
+
+    /// The Advanced Dynamics density a profile at this intensity uses.
+    var levelerDensity: Double {
+        switch self {
+        case .light: return 0.35
+        case .normal: return 0.5
+        case .heavy: return 0.7
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .light: return "Light"
+        case .normal: return "Normal"
+        case .heavy: return "Heavy"
+        }
+    }
+
+    var thresholdDbOffset: Double {
+        switch self {
+        case .light: return 1.5
+        case .normal: return 0.0
+        case .heavy: return -1.5
+        }
+    }
+
+    var ratioMul: Double {
+        switch self {
+        case .light: return 0.9
+        case .normal: return 1.0
+        case .heavy: return 1.12
+        }
+    }
+
+    var attackMul: Double {
+        switch self {
+        case .light: return 1.2
+        case .normal: return 1.0
+        case .heavy: return 0.88
+        }
+    }
+
+    var releaseMul: Double {
+        switch self {
+        case .light: return 1.15
+        case .normal: return 1.0
+        case .heavy: return 0.9
+        }
+    }
+}
+
+enum PresetCatalog {
+    static let primeBassPresets: [PrimeBassPreset] = [
+        .init(
+            id: "chr", title: "CHR/EDM", enabled: true, amount: 0.34, freqHz: 78, harmonics: 0.28,
+            drive: 0.92, density: 0.56, subharmonicsEnabled: true, subharmonicsAmount: 0.16),
+        .init(
+            id: "urban", title: "Urban", enabled: true, amount: 0.32, freqHz: 74, harmonics: 0.24,
+            drive: 0.88, density: 0.54, subharmonicsEnabled: true, subharmonicsAmount: 0.14),
+        .init(
+            id: "rock", title: "Rock", enabled: true, amount: 0.24, freqHz: 90, harmonics: 0.16,
+            drive: 0.76, density: 0.44, subharmonicsEnabled: false, subharmonicsAmount: 0.08),
+        .init(
+            id: "ac", title: "AC/Pop", enabled: true, amount: 0.18, freqHz: 100, harmonics: 0.10,
+            drive: 0.68, density: 0.36, subharmonicsEnabled: false, subharmonicsAmount: 0.06),
+        .init(
+            id: "talk", title: "Talk", enabled: true, amount: 0.08, freqHz: 120, harmonics: 0.04,
+            drive: 0.48, density: 0.22, subharmonicsEnabled: false, subharmonicsAmount: 0.0)
+    ]
+
+    static let multibandPresets: [MultibandPreset] = [
+        .init(
+            id: "3_chr", title: "3B CHR/EDM", mode: 3, lowHz: 290, highHz: 2500, x1Hz: nil,
+            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 20,
+            lowReleaseMS: 310, midThresholdDB: -21, midRatio: 2.0, midAttackMS: 14,
+            midReleaseMS: 235, highThresholdDB: -19, highRatio: 1.6, highAttackMS: 8,
+            highReleaseMS: 165, kneeDB: 2.4, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_rock", title: "3B Rock", mode: 3, lowHz: 310, highHz: 2550, x1Hz: nil, x2Hz: nil,
+            x3Hz: nil, x4Hz: nil, lowThresholdDB: -21, lowRatio: 2.1, lowAttackMS: 22,
+            lowReleaseMS: 325, midThresholdDB: -19, midRatio: 1.9, midAttackMS: 14,
+            midReleaseMS: 245, highThresholdDB: -18, highRatio: 1.55, highAttackMS: 9,
+            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_ac", title: "3B AC/Pop", mode: 3, lowHz: 320, highHz: 2650, x1Hz: nil, x2Hz: nil,
+            x3Hz: nil, x4Hz: nil, lowThresholdDB: -19, lowRatio: 1.9, lowAttackMS: 24,
+            lowReleaseMS: 340, midThresholdDB: -17, midRatio: 1.7, midAttackMS: 16,
+            midReleaseMS: 260, highThresholdDB: -16, highRatio: 1.4, highAttackMS: 10,
+            highReleaseMS: 190, kneeDB: 3.0, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_country", title: "3B Country", mode: 3, lowHz: 300, highHz: 2450, x1Hz: nil,
+            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -21, lowRatio: 2.2, lowAttackMS: 22,
+            lowReleaseMS: 320, midThresholdDB: -19, midRatio: 1.9, midAttackMS: 15,
+            midReleaseMS: 250, highThresholdDB: -17, highRatio: 1.5, highAttackMS: 10,
+            highReleaseMS: 185, kneeDB: 2.6, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_talk", title: "3B Talk", mode: 3, lowHz: 360, highHz: 3200, x1Hz: nil, x2Hz: nil,
+            x3Hz: nil, x4Hz: nil, lowThresholdDB: -15, lowRatio: 1.5, lowAttackMS: 36,
+            lowReleaseMS: 440, midThresholdDB: -14, midRatio: 1.4, midAttackMS: 30,
+            midReleaseMS: 360, highThresholdDB: -13, highRatio: 1.22, highAttackMS: 20,
+            highReleaseMS: 290, kneeDB: 4.0, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_urban", title: "3B Urban", mode: 3, lowHz: 250, highHz: 2200, x1Hz: nil,
+            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -24, lowRatio: 2.7, lowAttackMS: 16,
+            lowReleaseMS: 280, midThresholdDB: -22, midRatio: 2.4, midAttackMS: 11,
+            midReleaseMS: 210, highThresholdDB: -20, highRatio: 1.9, highAttackMS: 6,
+            highReleaseMS: 145, kneeDB: 2.1, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_dance", title: "3B Dance", mode: 3, lowHz: 240, highHz: 2100, x1Hz: nil,
+            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -26, lowRatio: 2.9, lowAttackMS: 14,
+            lowReleaseMS: 260, midThresholdDB: -24, midRatio: 2.6, midAttackMS: 10,
+            midReleaseMS: 200, highThresholdDB: -22, highRatio: 2.0, highAttackMS: 5,
+            highReleaseMS: 135, kneeDB: 1.9, linkStrength: 1.0, releaseProgramDependent: true),
+        // Italo / disco / synthwave pump. Tempo-synced low-band release
+        // (~60 ms = 12% of a 120-BPM quarter note) gives audible kick-driven
+        // ducking; bright high band stays glossy.
+        .init(
+            id: "3_italo", title: "3B Italo / Pump", mode: 3, lowHz: 240, highHz: 2100,
+            x1Hz: nil, x2Hz: nil, x3Hz: nil, x4Hz: nil,
+            lowThresholdDB: -28, lowRatio: 3.6, lowAttackMS: 6,
+            lowReleaseMS: 60,
+            midThresholdDB: -23, midRatio: 2.2, midAttackMS: 10,
+            midReleaseMS: 130,
+            highThresholdDB: -18, highRatio: 1.3, highAttackMS: 4,
+            highReleaseMS: 100,
+            kneeDB: 1.5, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_news", title: "3B News", mode: 3, lowHz: 360, highHz: 3200, x1Hz: nil, x2Hz: nil,
+            x3Hz: nil, x4Hz: nil, lowThresholdDB: -15, lowRatio: 1.4, lowAttackMS: 38,
+            lowReleaseMS: 480, midThresholdDB: -14, midRatio: 1.35, midAttackMS: 30,
+            midReleaseMS: 390, highThresholdDB: -13, highRatio: 1.25, highAttackMS: 22,
+            highReleaseMS: 320, kneeDB: 4.0, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_jazz", title: "3B Jazz", mode: 3, lowHz: 330, highHz: 2800, x1Hz: nil, x2Hz: nil,
+            x3Hz: nil, x4Hz: nil, lowThresholdDB: -18, lowRatio: 1.7, lowAttackMS: 30,
+            lowReleaseMS: 420, midThresholdDB: -17, midRatio: 1.55, midAttackMS: 24,
+            midReleaseMS: 330, highThresholdDB: -16, highRatio: 1.35, highAttackMS: 16,
+            highReleaseMS: 250, kneeDB: 3.2, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "3_classic", title: "3B Classical", mode: 3, lowHz: 360, highHz: 3400, x1Hz: nil,
+            x2Hz: nil, x3Hz: nil, x4Hz: nil, lowThresholdDB: -14, lowRatio: 1.35, lowAttackMS: 42,
+            lowReleaseMS: 520, midThresholdDB: -13, midRatio: 1.3, midAttackMS: 36,
+            midReleaseMS: 430, highThresholdDB: -12, highRatio: 1.2, highAttackMS: 26,
+            highReleaseMS: 340, kneeDB: 4.6, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_chr", title: "5B CHR/EDM", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 320,
+            x3Hz: 1600, x4Hz: 6200, lowThresholdDB: -23, lowRatio: 2.25, lowAttackMS: 20,
+            lowReleaseMS: 320, midThresholdDB: -21, midRatio: 1.9, midAttackMS: 13,
+            midReleaseMS: 240, highThresholdDB: -19, highRatio: 1.6, highAttackMS: 8,
+            highReleaseMS: 180, kneeDB: 2.6, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_rock", title: "5B Rock", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 340,
+            x3Hz: 1550, x4Hz: 6100, lowThresholdDB: -21, lowRatio: 2.1, lowAttackMS: 20,
+            lowReleaseMS: 320, midThresholdDB: -19, midRatio: 1.85, midAttackMS: 13,
+            midReleaseMS: 240, highThresholdDB: -18, highRatio: 1.55, highAttackMS: 8,
+            highReleaseMS: 175, kneeDB: 2.5, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_ac", title: "5B AC/Pop", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90, x2Hz: 350,
+            x3Hz: 1800, x4Hz: 6800, lowThresholdDB: -17.5, lowRatio: 1.75, lowAttackMS: 28,
+            lowReleaseMS: 375, midThresholdDB: -16.0, midRatio: 1.55, midAttackMS: 19,
+            midReleaseMS: 300, highThresholdDB: -14.5, highRatio: 1.28, highAttackMS: 13,
+            highReleaseMS: 225, kneeDB: 3.6, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_classic", title: "5B Classical/Jazz", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90,
+            x2Hz: 360, x3Hz: 1700, x4Hz: 6500, lowThresholdDB: -17, lowRatio: 1.5, lowAttackMS: 36,
+            lowReleaseMS: 450, midThresholdDB: -16, midRatio: 1.4, midAttackMS: 30,
+            midReleaseMS: 360, highThresholdDB: -15, highRatio: 1.25, highAttackMS: 20,
+            highReleaseMS: 280, kneeDB: 4.5, linkStrength: 1.0, releaseProgramDependent: true),
+        // Talk density (2026-10 format-profile review, finding 1): real
+        // ratios and a fast release, the way Orban NEWS-TALK and Omnia Talk
+        // run it. The old 1.24 / 1.18 / 1.08 at 360-560 ms was the slowest
+        // and weakest row in the catalogue, and at light intensity the high
+        // band clamped to bypass.
+        .init(
+            id: "5_talk", title: "5B Talk", mode: 5, lowHz: nil, highHz: nil, x1Hz: 110, x2Hz: 420,
+            x3Hz: 2200, x4Hz: 7600, lowThresholdDB: -14, lowRatio: 1.8, lowAttackMS: 25,
+            lowReleaseMS: 220, midThresholdDB: -13, midRatio: 1.7, midAttackMS: 18,
+            midReleaseMS: 180, highThresholdDB: -12, highRatio: 1.5, highAttackMS: 12,
+            highReleaseMS: 140, kneeDB: 5.2, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_urban", title: "5B Urban", mode: 5, lowHz: nil, highHz: nil, x1Hz: 85, x2Hz: 300,
+            x3Hz: 1300, x4Hz: 5400, lowThresholdDB: -23, lowRatio: 2.3, lowAttackMS: 18,
+            lowReleaseMS: 295, midThresholdDB: -21, midRatio: 2.0, midAttackMS: 12,
+            midReleaseMS: 220, highThresholdDB: -19, highRatio: 1.7, highAttackMS: 7,
+            highReleaseMS: 155, kneeDB: 2.2, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_dance", title: "5B Dance", mode: 5, lowHz: nil, highHz: nil, x1Hz: 80, x2Hz: 290,
+            x3Hz: 1200, x4Hz: 5000, lowThresholdDB: -24, lowRatio: 2.5, lowAttackMS: 16,
+            lowReleaseMS: 285, midThresholdDB: -22, midRatio: 2.1, midAttackMS: 11,
+            midReleaseMS: 215, highThresholdDB: -20, highRatio: 1.75, highAttackMS: 6,
+            highReleaseMS: 150, kneeDB: 2.0, linkStrength: 1.0, releaseProgramDependent: true),
+        // Italo / disco / synthwave pump. The 5-band variant linearly
+        // interpolates band 2 from low+mid, so the low values are pushed
+        // hard to make band 2 (the kick band, 80–280 Hz) aggressive enough
+        // for audible pump. Resulting band 2: ~-26.5 dB, 3.1:1, 8 ms / 90 ms
+        // — at 120 BPM that release is ~18% of a quarter note, plenty of
+        // ducking. High band stays light (1.3:1) so cymbals/synths sparkle.
+        .init(
+            id: "5_italo", title: "5B Italo / Pump", mode: 5, lowHz: nil, highHz: nil,
+            x1Hz: 80, x2Hz: 280, x3Hz: 1200, x4Hz: 5000,
+            lowThresholdDB: -30, lowRatio: 4.0, lowAttackMS: 5,
+            lowReleaseMS: 50,
+            midThresholdDB: -23, midRatio: 2.2, midAttackMS: 10,
+            midReleaseMS: 130,
+            highThresholdDB: -18, highRatio: 1.3, highAttackMS: 4,
+            highReleaseMS: 100,
+            kneeDB: 1.5, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_news", title: "5B News", mode: 5, lowHz: nil, highHz: nil, x1Hz: 110, x2Hz: 450,
+            x3Hz: 2100, x4Hz: 7600, lowThresholdDB: -15, lowRatio: 1.4, lowAttackMS: 40,
+            lowReleaseMS: 500, midThresholdDB: -14, midRatio: 1.35, midAttackMS: 34,
+            midReleaseMS: 400, highThresholdDB: -13, highRatio: 1.25, highAttackMS: 24,
+            highReleaseMS: 320, kneeDB: 4.3, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_jazz", title: "5B Jazz", mode: 5, lowHz: nil, highHz: nil, x1Hz: 95, x2Hz: 360,
+            x3Hz: 1600, x4Hz: 6200, lowThresholdDB: -18, lowRatio: 1.65, lowAttackMS: 32,
+            lowReleaseMS: 430, midThresholdDB: -17, midRatio: 1.5, midAttackMS: 26,
+            midReleaseMS: 340, highThresholdDB: -16, highRatio: 1.35, highAttackMS: 17,
+            highReleaseMS: 260, kneeDB: 3.4, linkStrength: 1.0, releaseProgramDependent: true),
+        .init(
+            id: "5_oldies", title: "5B Oldies", mode: 5, lowHz: nil, highHz: nil, x1Hz: 90,
+            x2Hz: 340, x3Hz: 1450, x4Hz: 5600, lowThresholdDB: -20, lowRatio: 1.8, lowAttackMS: 26,
+            lowReleaseMS: 360, midThresholdDB: -18, midRatio: 1.7, midAttackMS: 18,
+            midReleaseMS: 280, highThresholdDB: -17, highRatio: 1.45, highAttackMS: 11,
+            highReleaseMS: 210, kneeDB: 3.0, linkStrength: 1.0, releaseProgramDependent: true)
+    ]
+
+    private static func clamp(_ v: Double, min lo: Double, max hi: Double) -> Double {
+        Swift.min(hi, Swift.max(lo, v))
+    }
+
+    static func approxEqual(_ a: Double, _ b: Double, tolerance: Double = 0.0001) -> Bool {
+        abs(a - b) <= tolerance
+    }
+
+    /// Apply the PrimeBass preset `id`; returns its title, or nil for an
+    /// unknown id (config untouched).
+    @discardableResult
+    static func applyPrimeBass(id: String, to config: inout AppConfig) -> String? {
+        guard let preset = primeBassPresets.first(where: { $0.id == id }) else { return nil }
+        config.primeBassEnabled = preset.enabled
+        config.primeBassPresetID = id
+        config.primeBassAmount = preset.amount
+        config.primeBassFreqHz = preset.freqHz
+        config.primeBassHarmonics = preset.harmonics
+        config.primeBassDrive = preset.drive
+        config.primeBassDensity = preset.density
+        config.primeBassSubharmonicsEnabled = preset.subharmonicsEnabled
+        config.primeBassSubharmonicsAmount = preset.subharmonicsAmount
+        return preset.title
+    }
+
+    @discardableResult
+    static func applyMultiband(
+        id: String, intensity: MultibandPresetIntensity, to config: inout AppConfig
+    ) -> String? {
+        guard let preset = multibandPresets.first(where: { $0.id == id }) else { return nil }
+
+        config.multibandEnabled = true
+        config.multibandMode = preset.mode
+        config.multibandPresetID = id
+        config.multibandIntensity = intensity.rawValue
+
+        if let lowHz = preset.lowHz { config.multibandX1Hz = lowHz }
+        if let highHz = preset.highHz { config.multibandX2Hz = highHz }
+        if let x1Hz = preset.x1Hz { config.multibandX1Hz = x1Hz }
+        if let x2Hz = preset.x2Hz { config.multibandX2Hz = x2Hz }
+        if let x3Hz = preset.x3Hz { config.multibandX3Hz = x3Hz }
+        if let x4Hz = preset.x4Hz { config.multibandX4Hz = x4Hz }
+
+        config.multibandLowThresholdDB = clamp(
+            preset.lowThresholdDB + intensity.thresholdDbOffset, min: -36.0, max: -6.0)
+        config.multibandMidThresholdDB = clamp(
+            preset.midThresholdDB + intensity.thresholdDbOffset, min: -36.0, max: -6.0)
+        config.multibandHighThresholdDB = clamp(
+            preset.highThresholdDB + intensity.thresholdDbOffset, min: -36.0, max: -6.0)
+
+        config.multibandLowRatio = clamp(preset.lowRatio * intensity.ratioMul, min: 1.0, max: 4.0)
+        config.multibandMidRatio = clamp(preset.midRatio * intensity.ratioMul, min: 1.0, max: 4.0)
+        config.multibandHighRatio = clamp(preset.highRatio * intensity.ratioMul, min: 1.0, max: 4.0)
+
+        config.multibandLowAttackMS = clamp(
+            preset.lowAttackMS * intensity.attackMul, min: 1.0, max: 200.0)
+        config.multibandMidAttackMS = clamp(
+            preset.midAttackMS * intensity.attackMul, min: 1.0, max: 200.0)
+        config.multibandHighAttackMS = clamp(
+            preset.highAttackMS * intensity.attackMul, min: 1.0, max: 200.0)
+
+        config.multibandLowReleaseMS = clamp(
+            preset.lowReleaseMS * intensity.releaseMul, min: 50.0, max: 1000.0)
+        config.multibandMidReleaseMS = clamp(
+            preset.midReleaseMS * intensity.releaseMul, min: 50.0, max: 1000.0)
+        config.multibandHighReleaseMS = clamp(
+            preset.highReleaseMS * intensity.releaseMul, min: 50.0, max: 1000.0)
+
+        config.multibandKneeDB = preset.kneeDB
+        config.multibandLinkStrength = preset.linkStrength
+        config.multibandReleaseProgramDependent = preset.releaseProgramDependent
+        return preset.title
+    }
+
+    // MARK: - Final-stage presets (Broadcast Preset picker)
+
+    /// AGC + drive + pre-encode-limiter bundle. Moved here from the view
+    /// model so the headless backend can apply it (preset kind "finalstage")
+    /// -- the GUI's picker wraps this the same way the other kinds do.
+    struct FinalStagePreset: Identifiable {
+        let id: String
+        let title: String
+        let agcEnabled: Bool
+        let agcTargetDB: Double
+        let agcAttackMS: Double
+        let agcReleaseMS: Double
+        let agcMaxGainDB: Double
+        let agcMinGainDB: Double
+        let finalDriveDB: Double
+        let preEncodeAudioLimiterEnabled: Bool
+    }
+
+    // AGC attack 100-200 ms (0.45, chain review B1): the wideband AGC is a
+    // gain rider; peaks belong to the limiter. The 45-80 ms values it had
+    // ducked whole-program level on drum hits (Orban WP "hole punching").
+    static let finalStagePresets: [FinalStagePreset] = [
+        .init(id: "balanced", title: "Balanced Music",
+              agcEnabled: true, agcTargetDB: -16.0, agcAttackMS: 200.0,
+              agcReleaseMS: 1200.0, agcMaxGainDB: 12.0, agcMinGainDB: -12.0,
+              finalDriveDB: 6.0, preEncodeAudioLimiterEnabled: true),
+        .init(id: "chr", title: "CHR / Dance",
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 150.0,
+              agcReleaseMS: 900.0, agcMaxGainDB: 10.0, agcMinGainDB: -9.0,
+              finalDriveDB: 8.0, preEncodeAudioLimiterEnabled: true),
+        .init(id: "punchy", title: "Punchy Music",
+              agcEnabled: true, agcTargetDB: -15.0, agcAttackMS: 150.0,
+              agcReleaseMS: 1000.0, agcMaxGainDB: 11.0, agcMinGainDB: -10.0,
+              finalDriveDB: 7.5, preEncodeAudioLimiterEnabled: true),
+        .init(id: "speech", title: "Speech / Talk",
+              agcEnabled: true, agcTargetDB: -14.0, agcAttackMS: 100.0,
+              agcReleaseMS: 750.0, agcMaxGainDB: 10.0, agcMinGainDB: -8.0,
+              finalDriveDB: 4.3, preEncodeAudioLimiterEnabled: true),
+        // Classical (2026-10 review, finding 3): a gentle 2:1-style ride with
+        // no pianissimo lift. Orban CLASSICAL runs its AGC near 0 dB gain
+        // reduction and BBC classical distribution keeps an LRA of 15 LU;
+        // "balanced"'s 12 dB of lift at 1.2 s chased every quiet passage.
+        .init(id: "classical", title: "Classical / Wide",
+              agcEnabled: true, agcTargetDB: -18.0, agcAttackMS: 200.0,
+              agcReleaseMS: 3000.0, agcMaxGainDB: 6.0, agcMinGainDB: -12.0,
+              finalDriveDB: 3.0, preEncodeAudioLimiterEnabled: true)
+    ]
+
+    static func applyFinalStage(id: String, to config: inout AppConfig) -> String? {
+        guard let preset = finalStagePresets.first(where: { $0.id == id }) else { return nil }
+        config.finalStagePresetID = id
+        config.widebandAGCEnabled = preset.agcEnabled
+        config.widebandAGCTargetDB = preset.agcTargetDB
+        config.widebandAGCAttackMS = preset.agcAttackMS
+        config.widebandAGCReleaseMS = preset.agcReleaseMS
+        config.widebandAGCMaxGainDB = preset.agcMaxGainDB
+        config.widebandAGCMinGainDB = preset.agcMinGainDB
+        config.finalDriveDB = preset.finalDriveDB
+        config.preEncodeAudioLimiterEnabled = preset.preEncodeAudioLimiterEnabled
+        return preset.title
+    }
+
+    // MARK: - Format profiles (top-level "Station Format" bundle)
+
+    /// Atomically wires multiband / final-stage / PrimeBass / mono bass /
+    /// composite-clipper settings to one programming format, as a wrapper
+    /// over the per-stage preset tables above. Moved here from the view
+    /// model so BOTH backends serve preset kind "format_profile" -- before
+    /// this a headless (Linux) box could not apply a station format at all.
+    struct FormatProfile: Identifiable {
+        let id: String
+        let title: String
+        let summary: String
+        let multibandPresetID: String
+        let multibandIntensity: MultibandPresetIntensity
+        let finalStagePresetID: String
+        let primeBassEnabled: Bool
+        let primeBassPresetID: String      // recorded even when disabled
+        /// Mono-bass crossover for the profile's image policy. Mono bass is
+        /// on in every shipped profile; the stereo widener was removed in 0.50.
+        let monoBassFreqHz: Double
+        let compositeClipperThresholdDB: Double
+        let compositeClipperCeilingDB: Double
+        let finalDriveDB: Double
+        // Gain structure -- a profile owns the FULL chain state so one click
+        // is a guaranteed-sane sound (2026-08 rework: the old 8 profiles only
+        // set the "color" and left broken level structures broken).
+        /// The AGC target, speed and range come from the final-stage preset
+        /// (2026-10 review, finding 2: the profile used to override the
+        /// target, so the stored preset id no longer described the AGC).
+        /// `agcEnabled` restates the preset's flag for the gain-structure test.
+        let agcEnabled: Bool
+        let preEncodeLimiterEnabled: Bool
+        let preEncodeThreshold: Double
+        let limitMPX: Bool
+        let compositeClipperEnabled: Bool
+        let compositeClipperLookaheadMS: Double
+        /// Clip depth (dB above the ceiling left to the clip kernel). Per
+        /// profile: the largest depth that keeps the `--verify-hf-transients`
+        /// SINAD floors (ride >= 30 dB, hat >= 20 dB / 15 dB loud) with 2 dB
+        /// in hand at stereo guard 0.5 (2026-10 sweep: ride SINAD 33.9-34.3
+        /// dB at 1.0 dB on the music profiles, 29.4-29.7 at 1.5). Classical
+        /// was 2.0 until the levelling task raised its drive: at depth 2 its
+        /// ride SINAD fell to 27.3 dB at 4 dB of drive, at depth 1 it reads
+        /// 33.8 dB at 5 dB.
+        let compositeClipperLookaheadDepthDB: Double
+        let hfLimiterEnabled: Bool
+        // 0.5 dB above `preEncodeThreshold` (US 4,103,243: the HF comparators
+        // sit above the broadband limiter so the stage only sees HF excess);
+        // the top-octave ceiling is 1 dB under that.
+        let hfLimiterThresholdDB: Double
+        let hfLimiterTopThresholdDB: Double
+        let bassClipperEnabled: Bool
+        let phaseRotationEnabled: Bool
+        // Spectral shaping and density (2026-10 review): the parametric EQ
+        // (band 1 low shelf at 80 Hz, band 3 presence at 3 kHz Q 1; bands 2
+        // and 4 flat) and the per-band limiter (-3 dB, 0.5 / 50 ms) belong
+        // to the profile too, so every stage has ONE defined state after a
+        // profile pick. Advanced Dynamics is switched off by every profile
+        // (finding 6): a profile defines the regular AGC + Multiband chain.
+        let parametricEQEnabled: Bool
+        let peqLowShelfGainDB: Double
+        let peqPresenceGainDB: Double
+        let bandLimiterEnabled: Bool
+
+        /// The AGC target the profile lands on, read from its final-stage preset.
+        var agcTargetDB: Double {
+            PresetCatalog.finalStagePresets.first(where: { $0.id == finalStagePresetID })?.agcTargetDB ?? .nan
+        }
+    }
+
+    /// How far below its AGC target a profile that runs PrimeBass sets the
+    /// Advanced Dynamics target (`applyFormatProfile`): keeps PrimeBass IMD on
+    /// Music - Loud under the `--verify-primebass` -70 dB gate.
+    static let primeBassLevellerOffsetDB: Double = 2.0
+
+    static let formatProfiles: [FormatProfile] = [
+        // "Custom" sentinel: records the label, changes nothing (operators
+        // flag bespoke setups; the apply short-circuits on it).
+        .init(id: "custom", title: "Custom",
+              summary: "Your manually-tuned settings — picking this leaves everything as you set it.",
+              multibandPresetID: "5_ac", multibandIntensity: .normal,
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", monoBassFreqHz: 110.0,
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              finalDriveDB: 6.0,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.6, hfLimiterTopThresholdDB: -1.6,
+              bassClipperEnabled: false,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false),
+        // Music -- Clean is also what `AppConfig()` ships: the drift test
+        // (`FormatProfileTests.defaultProfileMatchesShippingDefaults`) holds
+        // the two equal key for key.
+        .init(id: "music_clean", title: "Music — Clean",
+              summary: "The default: transparent levelling, honest peaks, low clipper work, bass clipper idling at the defaults. For stations that value fidelity over loudness.",
+              multibandPresetID: "5_ac", multibandIntensity: .normal,
+              finalStagePresetID: "balanced", primeBassEnabled: false,
+              primeBassPresetID: "ac", monoBassFreqHz: 110.0,
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              // 3.5 dB (was 4.0) with the leveller at the AGC target (-16, was
+              // -18): 1.5 dB more programme into the final stage than before,
+              // the most the hi-hat gate allows with 0.5 dB in hand
+              // (2026-10 levelling sweep: hat SINAD 20.9 dB, program_mix at
+              // 0.93 of the budget; 3.75 dB reads 20.5 / 0.95, 4.0 dB 20.1 / 0.98).
+              finalDriveDB: 3.5,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.90,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.4, hfLimiterTopThresholdDB: -1.4,
+              // Every vendor structure bass-clips (Orban, Omnia). At drive 1.5
+              // into -3 dB the distortion-cancelled stage idles on AC material
+              // and catches the LF peaks that would otherwise spend composite
+              // budget (2026-10 review, finding 5).
+              bassClipperEnabled: true,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false),
+        .init(id: "music_loud", title: "Music — Loud",
+              summary: "Competitive loudness: hot drive into the composite clipper, HF limiter + bass clipper + band limiter on, PrimeBass, a touch of low-shelf and presence EQ, mono bass at 115 Hz.",
+              multibandPresetID: "5_chr", multibandIntensity: .normal,
+              finalStagePresetID: "chr", primeBassEnabled: true,
+              primeBassPresetID: "chr", monoBassFreqHz: 115.0,
+              compositeClipperThresholdDB: -0.8, compositeClipperCeilingDB: -0.2,
+              finalDriveDB: 8.0,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.9, hfLimiterTopThresholdDB: -1.9,
+              bassClipperEnabled: true,
+              phaseRotationEnabled: false,
+              // Orban GREGG "<100 Hz lift" and IMPACT presence (2026-10 review,
+              // listening-gated); the band limiter buys density before more
+              // clipping (roadmap B4).
+              parametricEQEnabled: true, peqLowShelfGainDB: 1.5, peqPresenceGainDB: 1.0,
+              bandLimiterEnabled: true),
+        // The top density tier 0.45 folded into Loud (its EDM profile was
+        // dance heavy at +9 dB). Orban ships Open / Medium / Dense per format;
+        // the most shared Stereo Tool presets are "CHR Dense" / "Loud Dense".
+        .init(id: "music_dense", title: "Music — Dense",
+              summary: "Maximum density: dance multiband at heavy intensity, 9 dB of drive into a tight composite clipper, PrimeBass, every peak stage on, mono bass at 110 Hz. For CHR / EDM / urban stations that compete on loudness.",
+              multibandPresetID: "5_dance", multibandIntensity: .heavy,
+              finalStagePresetID: "chr", primeBassEnabled: true,
+              primeBassPresetID: "chr", monoBassFreqHz: 110.0,
+              compositeClipperThresholdDB: -0.6, compositeClipperCeilingDB: -0.2,
+              finalDriveDB: 9.0,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.85,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.9, hfLimiterTopThresholdDB: -1.9,
+              bassClipperEnabled: true,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: true),
+        .init(id: "speech", title: "Speech / Talk",
+              summary: "Voice-optimised: phase rotator for waveform symmetry, fast-release talk multiband for density, speech final stage, conservative drive.",
+              multibandPresetID: "5_talk", multibandIntensity: .normal,
+              finalStagePresetID: "speech", primeBassEnabled: false,
+              primeBassPresetID: "talk", monoBassFreqHz: 110.0,
+              compositeClipperThresholdDB: -1.0, compositeClipperCeilingDB: -0.3,
+              // 2.8 dB (was 4.3): the leveller now sits at the AGC target
+              // (-14, was -16), 2 dB hotter into the final stage; 2.8 dB keeps
+              // the hi-hat gate with 0.7 dB in hand (2026-10 levelling sweep:
+              // hat SINAD 20.7 dB, program_mix at 0.99 of the budget; 3.0 dB
+              // reads 20.3, 4.3 dB 18.9 -- under the 20 dB gate).
+              finalDriveDB: 2.8,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.88,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.6, hfLimiterTopThresholdDB: -1.6,
+              bassClipperEnabled: false,
+              phaseRotationEnabled: true,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false),
+        .init(id: "classical_wide", title: "Classical / Wide Dynamics",
+              summary: "Dynamic-preserving: a slow 6 dB AGC ride with no pianissimo lift, light multiband, minimal clipper work, mono bass only below 90 Hz, no enhancement.",
+              multibandPresetID: "5_classic", multibandIntensity: .light,
+              finalStagePresetID: "classical", primeBassEnabled: false,
+              primeBassPresetID: "ac", monoBassFreqHz: 90.0,
+              compositeClipperThresholdDB: -1.2, compositeClipperCeilingDB: -0.4,
+              // 5.0 dB (was 3.0) with clip depth 1.0 (was 2.0): at depth 2 the
+              // kernel clipped the ride multitone as soon as the level rose
+              // (ride SINAD 30.5 dB at the old drive, 27.3 at 4 dB); at depth
+              // 1 it reads 33.8 dB at 5 dB and the hat 22.7 dB (2026-10
+              // levelling sweep), so the profile reaches 0.99 of the budget on
+              // program_mix instead of 0.79. The clipper task measured that
+              // depth buys no loudness, so nothing is lost by the shallower one.
+              finalDriveDB: 5.0,
+              agcEnabled: true,
+              preEncodeLimiterEnabled: true, preEncodeThreshold: 0.92,
+              limitMPX: true, compositeClipperEnabled: true,
+              compositeClipperLookaheadMS: 2.0,
+              compositeClipperLookaheadDepthDB: 1.0,
+              hfLimiterEnabled: true, hfLimiterThresholdDB: -0.2, hfLimiterTopThresholdDB: -1.2,
+              bassClipperEnabled: false,
+              phaseRotationEnabled: false,
+              parametricEQEnabled: false, peqLowShelfGainDB: 0.0, peqPresenceGainDB: 0.0,
+              bandLimiterEnabled: false)
+    ]
+
+    static func formatProfile(forID id: String) -> FormatProfile? {
+        formatProfiles.first(where: { $0.id == id })
+    }
+
+    /// Apply a format profile's full fan-out to `config`. ORDER MATTERS and
+    /// mirrors the GUI's historical sequence: the final-stage preset sets
+    /// `finalDriveDB`, then the profile's own drive overrides it.
+    static func applyFormatProfile(id: String, to config: inout AppConfig) -> String? {
+        guard let profile = formatProfile(forID: id) else { return nil }
+        config.formatProfileID = id
+        if id == "custom" { return profile.title }  // sentinel: label only
+
+        _ = applyMultiband(
+            id: profile.multibandPresetID,
+            intensity: profile.multibandIntensity, to: &config)
+        _ = applyFinalStage(id: profile.finalStagePresetID, to: &config)
+
+        config.primeBassEnabled = profile.primeBassEnabled
+        if profile.primeBassEnabled {
+            _ = applyPrimeBass(id: profile.primeBassPresetID, to: &config)
+        } else {
+            // Record the flavour so toggling PrimeBass back on uses the
+            // format-appropriate preset.
+            config.primeBassPresetID = profile.primeBassPresetID
+        }
+
+        config.monoBassEnabled = true
+        config.monoBassFreqHz = profile.monoBassFreqHz
+
+        config.compositeClipperThresholdDB = profile.compositeClipperThresholdDB
+        config.compositeClipperCeilingDB = profile.compositeClipperCeilingDB
+        config.finalDriveDB = profile.finalDriveDB
+        // Gain structure (2026-08 rework): the profile owns the full chain
+        // state so a profile pick can never leave the safety soft-clips as
+        // the de-facto peak controller.
+        // The AGC target, speed and range stay as the final-stage preset set
+        // them (2026-10 review, finding 2); only the flag is restated.
+        config.widebandAGCEnabled = profile.agcEnabled
+        config.preEncodeAudioLimiterEnabled = profile.preEncodeLimiterEnabled
+        config.preEncodeThreshold = profile.preEncodeThreshold
+        config.limitMPX = profile.limitMPX
+        config.compositeClipperEnabled = profile.compositeClipperEnabled
+        config.compositeClipperLookaheadMS = profile.compositeClipperLookaheadMS
+        config.compositeClipperLookaheadDepthDB = profile.compositeClipperLookaheadDepthDB
+        config.hfLimiterEnabled = profile.hfLimiterEnabled
+        config.hfLimiterThresholdDB = profile.hfLimiterThresholdDB
+        config.hfLimiterTopThresholdDB = profile.hfLimiterTopThresholdDB
+        // The bass clipper runs at the shipped defaults wherever a profile
+        // turns it on: -3 dB, 150 Hz, drive 1.5 (idle on AC material).
+        config.bassClipperEnabled = profile.bassClipperEnabled
+        config.bassClipperThresholdDB = -3.0
+        config.bassClipperCrossoverHz = 150.0
+        config.bassClipperDrive = 1.5
+        config.phaseRotationEnabled = profile.phaseRotationEnabled
+        // Spectral shaping: band 1 low shelf at 80 Hz, band 3 presence at
+        // 3 kHz Q 1; bands 2 and 4 flat at their default centres.
+        config.parametricEQEnabled = profile.parametricEQEnabled
+        config.peqB1FreqHz = 80.0
+        config.peqB1GainDB = profile.peqLowShelfGainDB
+        config.peqB2FreqHz = 500.0
+        config.peqB2GainDB = 0.0
+        config.peqB2Q = 1.0
+        config.peqB3FreqHz = 3000.0
+        config.peqB3GainDB = profile.peqPresenceGainDB
+        config.peqB3Q = 1.0
+        config.peqB4FreqHz = 8000.0
+        config.peqB4GainDB = 0.0
+        // Per-band limiter inside the multiband stage: -3 dB, 0.5 / 50 ms.
+        config.multibandLimiterEnabled = profile.bandLimiterEnabled
+        config.multibandLimiterThresholdDB = -3.0
+        config.multibandLimiterAttackMS = 0.5
+        config.multibandLimiterReleaseMS = 50.0
+        // Levelling (2026-10-15): every profile runs Advanced Dynamics, the
+        // one-stage leveller, so the operator has one set of levelling
+        // controls. The profile carries its levelling character into it:
+        // the AGC target its final-stage preset names becomes the leveller
+        // target, its multiband intensity the leveller density, with a
+        // neutral tilt. The AGC + multiband settings written above stay in
+        // the config for the classic chain (Advanced Dynamics off). It is
+        // deliberately NOT an installation-preserved key
+        // (InstallationKeys.swift): snapshots and profiles carry it, the way
+        // they carry the rest of the sound.
+        config.advancedDynamicsEnabled = true
+        // AT the AGC target, or 2 dB below it where PrimeBass runs (2026-10
+        // audio-chain overhaul; was 2 dB below everywhere). Two measurements
+        // pull in opposite directions and each decides where it applies:
+        // - Loudness parity (`--verify-advanced-dynamics`, bass_dense against
+        //   the classic AGC + multiband chain, bound 3.0 dB): at the AGC
+        //   target less 2 dB the leveller is 4.0 dB QUIETER than the classic
+        //   chain (the gate failed), at the AGC target 2.1 dB (2026-10
+        //   levelling sweep). The leveller's weighted detector reads dense
+        //   programme hotter than the AGC's, so the same number lands lower.
+        // - PrimeBass IMD (`--verify-primebass`, Music - Loud, 50 Hz + 1 kHz,
+        //   <= -70 dB): at the AGC target -56.2 dB, a FAIL; the 2 dB keeps
+        //   the synthesised harmonics out of the bass clipper (the reason
+        //   the -2 dB was introduced). Music - Loud / Dense reach the budget
+        //   on every verifier programme at either target, so they lose no
+        //   peak level by keeping it.
+        config.advancedDynamicsTargetDB = config.widebandAGCTargetDB
+            - (profile.primeBassEnabled ? Self.primeBassLevellerOffsetDB : 0.0)
+        config.advancedDynamicsDensity = profile.multibandIntensity.levelerDensity
+        config.advancedDynamicsLowOffsetDB = 0.0
+        config.advancedDynamicsMidOffsetDB = 0.0
+        config.advancedDynamicsHighOffsetDB = 0.0
+        return profile.title
+    }
+}

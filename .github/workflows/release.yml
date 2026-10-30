@@ -12,7 +12,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -24,16 +24,23 @@ jobs:
       - name: Install SDR build deps
         run: brew install librtlsdr liquid-dsp
 
-      - name: Build Release (Universal Binary)
+      # The tag is the version, and so is Sources/MPXPrimeCore/Version.swift;
+      # a release whose binary reports a different number than its tag is
+      # refused here rather than shipped.
+      - name: Check the tag matches the source version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          ./build-release.sh "$VERSION"
+          TAG="${GITHUB_REF#refs/tags/v}"
+          SRC="$(scripts/version.sh)"
+          [ "$TAG" = "$SRC" ] || { echo "tag v$TAG but Sources/MPXPrimeCore/Version.swift says $SRC"; exit 1; }
+
+      - name: Build Release (Universal Binary)
+        run: scripts/build-release.sh "${GITHUB_REF#refs/tags/v}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            macOS/dist/MPX_Prime-*.dmg
+            dist/MPX_Prime-*.dmg
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
         env:
@@ -56,7 +63,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install build deps
         run: |
@@ -75,13 +82,14 @@ jobs:
 
       - name: Build (release, static Swift stdlib)
         run: |
-          swift build --package-path macOS -c release --product MPXPrime             --static-swift-stdlib
-          macOS/.build/release/MPXPrime --verify --seconds 5
+          swift build -c release --product MPXPrime             --static-swift-stdlib
+          .build/release/MPXPrime --verify --seconds 5
 
       - name: Build .deb package
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          ./build-deb.sh "$VERSION" "${{ matrix.label }}"
+          [ "$VERSION" = "$(scripts/version.sh)" ] || { echo "tag v$VERSION but the source says $(scripts/version.sh)"; exit 1; }
+          scripts/build-deb.sh "$VERSION" "${{ matrix.label }}"
           sha256sum mpxprime_*_amd64.deb > "mpxprime_${VERSION}-${{ matrix.label }}.sha256"
 
       - name: Smoke-install the package

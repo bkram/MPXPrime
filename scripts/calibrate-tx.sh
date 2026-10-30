@@ -18,7 +18,7 @@
 #     the GUI with the API enabled), transmitting on the target frequency.
 #   - An RTL-SDR dongle attached, antenna receiving the TX.
 #   - Homebrew rtl-sdr (rtl_sdr), python3, curl, jq.
-#   - Release builds: macOS/.build/release/MPXPrimeMeter (swift build -c
+#   - Release builds: .build/release/MPXPrimeMeter (swift build -c
 #     release) and tuner mpx-offline (built automatically if cmake is there).
 #
 # Usage:
@@ -83,8 +83,8 @@ for tool in rtl_sdr python3 curl jq; do
 done
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-METER="$REPO_DIR/macOS/.build/release/MPXPrimeMeter"
-[ -x "$METER" ] || { echo "calibrate-tx: $METER missing -- run: swift build --package-path macOS -c release" >&2; exit 2; }
+METER="$REPO_DIR/.build/release/MPXPrimeMeter"
+[ -x "$METER" ] || { echo "calibrate-tx: $METER missing -- run: swift build -c release" >&2; exit 2; }
 
 # mpx-offline: the device-free demod harness (applies the explicit 200 kHz
 # channel filter the live factor-1 path lacks). Build it on first use.

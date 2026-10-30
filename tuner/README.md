@@ -8,7 +8,7 @@ FM-demodulates, and produces the raw MPX composite (pilot + L-R + RDS) at
 Two consumers share these sources:
 
 - **`CMPXTuner`** (the primary path) -- the same C++ compiled as a **library
-  with a pure-C ABI** (`capi-include`... see `macOS/Sources/CMPXTuner/include/mpx_tuner_capi.h`)
+  with a pure-C ABI** (`capi-include`... see `Sources/CMPXTuner/include/mpx_tuner_capi.h`)
   and **linked directly into MPX Prime Meter**. The Meter opens the device with
   `mpxtuner_open(...)` and receives float MPX blocks (1.0 == 150 kHz) on a
   callback from the library's capture thread -- no subprocess, no FIFO. Live
@@ -68,7 +68,7 @@ cmake --build tuner/build
 
 Requires `librtlsdr` and `liquid-dsp` (e.g. `brew install librtlsdr liquid-dsp`).
 This CMake build produces the standalone `mpx-tuner` debug CLI only. The shipped
-app links these sources via the `CMPXTuner` SPM target instead; `build-release.sh`
+app links these sources via the `CMPXTuner` SPM target instead; `scripts/build-release.sh`
 bundles the librtlsdr / liquid-dsp / libusb / fftw dylibs (relocated to `@rpath`)
 inside `MPX Prime Meter.app`, so end users need neither Homebrew nor a
 separately-placed binary.

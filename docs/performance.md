@@ -12,7 +12,7 @@ build, on an idle machine:
 
 | | `--bench` chain cost | Live render load to expect | Examples measured |
 | --- | ---: | ---: | --- |
-| **Recommended** | under 30 % | 30-45 % | Apple M1 Pro (17 %), Intel i7-9750H (22 %), AMD Ryzen 5 PRO 2400GE with AVX2 (26 %) |
+| **Recommended** | under 30 % | 30-45 % | Apple M1 Pro (17 %), Intel i7-9750H (22 %), AMD Ryzen 5 PRO 2400GE with AVX2 (27 %) |
 | **Minimum** | under 40 % | 50-60 % | the Ryzen above on the SSE2 kernels (37 %) -- what a CPU without AVX2 gets |
 | Does not fit | over 40 % | dropouts with programme | older low-power x86 parts without AVX2 |
 
@@ -58,14 +58,59 @@ past two buys nothing; per-core speed buys everything.
 
 | Machine | Chain cost | Composite clipper (16x) | Multiband (5-band FIR) | Pre-encode limiter | DC clipper | Bass clipper | RDS encoder |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| M1 Pro | **17.2 %** | 4.4 % | 4.3 % | 1.3 % | 1.3 % | 1.3 % | 0.6 % |
+| M1 Pro | **17.8 %** | 4.4 % | 4.3 % | 1.3 % | 1.3 % | 1.3 % | 0.6 % |
 | i7-9750H | **22.4 %** | 4.6 % | 5.1 % | 1.1 % | 1.3 % | 0.7 % | 1.2 % |
-| Ryzen 2400GE, AVX2 | **26.3 %** | 5.8 % | 6.0 % | -- | 1.7 % | 1.2 % | -- |
+| Ryzen 2400GE, AVX2 | **27.0 %** | 5.8 % | 6.2 % | 1.3 % | 1.9 % | 1.2 % | 1.0 % |
 | Ryzen 2400GE, SSE2 | **36.6 %** | 12.7 % | 6.5 % | -- | 3.2 % | 1.7 % | -- |
+
+0.65 runs the BS.412 multiplex-power METER on every composite sample whether
+or not the limiter is enabled, so that switching it on acts on a full
+60-second window instead of waiting a minute. On the M1 Pro that added about
+0.5 points. On the Ryzen it did not: the 0.50 and 0.65 binaries were benched
+alternately on the same box on 2026-09-12 (28.3 / 28.3 % against 27.3 /
+27.5 %), so the 0.65 chain is about a point CHEAPER there, and the BS.412
+stage's own A/B delta fell from 0.3-0.6 % to 0.03 % because the meter no
+longer comes and goes with the switch. The i7 row is an older figure and is
+not adjusted by hand.
 
 The AVX2 kernels take 10 points off the Ryzen's chain, the composite clipper
 alone halving from 12.7 % to 5.8 % -- and they compute bit-identical results
 to the SSE2 variant, so the Linux strict baseline is one file for every CPU.
+
+## Render-path optimisation (2026-10-16)
+
+Four bit-identical changes cut the render thread's own cost (CHANGELOG,
+Unreleased). Measured with an interleaved A/B harness, median of five runs,
+192 kHz, default configuration (Advanced Dynamics on), RDS off for the hash
+comparison:
+
+| Machine | Before | After | Music -- Loud before / after |
+| --- | ---: | ---: | ---: |
+| Intel Core i7-1355U, Linux (Docker), P-core | 20.6 % | 12.8 % | 22.8 % / 14.3 % |
+| Apple M1 Pro, macOS (machine under load) | 23.7 % | 16.1 % | 22.7 % / 16.3 % |
+
+Each change alone on the i7-1355U: no runtime exclusivity checks -4.3 points,
+no per-sample copy of the Advanced Dynamics state -1.3, trimmed FIR splitter
+dots and a mono composite bandwidth FIR -1.5, composite clipper idle path
+-0.8 (more on quiet programme, nothing under constant clipping; the
+worst-case block is unchanged). The `--bench` tables in this file predate
+these changes; re-measure a machine before quoting it.
+
+## True-peak final limiter (2026-10-20)
+
+The audio-chain overhaul gave the final MPX limiter a 4x true-peak detector
+(a 9-10 tap per phase Kaiser interpolator feeding the sliding-window
+maximum). Measured on the same Intel Core i7-1355U (Linux, Docker, release
+build) with the overhaul's sweep driver, detector on against off: 0.21 % of
+real time at 192 kHz. The whole chain's `--bench` read 15.6 % with every
+feature on, against the 15.9 % recorded for the pre-overhaul chain on this
+machine (a stored figure, not an interleaved pair; neither run was pinned to
+a P-core, so neither is the 12.8 % of the table above). The composite clipper
+stage itself measured 5.9 % in that run. Nothing else in the overhaul added a per-sample cost: the
+clip depth is a scalar on the existing look-ahead, the stereo guard a share
+the clipper already applied, the BS.412 rider plans per 64-sample block, the
+image protector is off by default (skipped, not run at unity), and the device
+volume runs on the control actor.
 
 ## Composite clipper oversampling (`--bench`, whole chain)
 
@@ -73,7 +118,7 @@ to the SSE2 variant, so the Linux strict baseline is one file for every CPU.
 | --- | ---: | ---: | ---: |
 | M1 Pro | 15.2 % | 17.2 % | 21.2 % |
 | i7-9750H | 20.1 % | 21.9 % | 25.4 % |
-| Ryzen 2400GE, AVX2 | 24.3 % | 26.4 % | 30.5 % |
+| Ryzen 2400GE, AVX2 | 24.8 % | 26.9 % | 30.9 % |
 | Ryzen 2400GE, SSE2 | 31.4 % | 36.5 % | 46.2 % |
 
 ## Block size (`--bench-blocks`: worst single block as a share of its duration)
@@ -82,7 +127,7 @@ to the SSE2 variant, so the Linux strict baseline is one file for every CPU.
 | --- | ---: | ---: |
 | M1 Pro | 20.7 % | 18.1 % |
 | i7-9750H | 36.1 % | 25.8 % |
-| Ryzen 2400GE, AVX2 | 33.4 % | 27.4 % |
+| Ryzen 2400GE, AVX2 | 33.3 % | 27.6 % |
 | Ryzen 2400GE, SSE2 | 42.5 % | 37.7 % |
 
 The DSP is block-invariant (every size renders bit-identical output); a
@@ -95,6 +140,14 @@ was the difference between occasional dropouts and none with the Monitor on.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Ryzen 2400GE, AVX2 | **29 %** (the Mac's own configuration incl. SSB) | -- | -- | -- | -- | -- |
 | Ryzen 2400GE, SSE2 | 43 % | 45 % | 37 % | 42 % | 54 % | 38 % |
+
+A live-apply change that rebuilds state on the render thread shows up here as
+one high period: on the Ryzen (AVX2, blocksize 4096, quiet input, median
+31 %) moving a multiband crossover cost a single period at 50.5 %, toggling
+BS.412 42 %, toggling the bass clipper 38 %, with zero xruns over twelve such
+PATCHes in 20 s (2026-09-12). About 4 ms of rebuild: fine in a 21 ms period,
+not in a 2.7 ms one, which is one more reason 4096 is the Linux
+recommendation.
 
 Every row ran with zero dropouts. The chain that fits comfortably here is the
 same chain that overran a low-end x86 core without AVX2 -- the point of the

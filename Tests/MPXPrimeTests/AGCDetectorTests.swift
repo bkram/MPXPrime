@@ -1,0 +1,383 @@
+import Testing
+import Foundation
+@testable import MPXPrime
+
+// Characterisation tests for the broadcast-grade upgrade to
+// WidebandAGCRider — K-weighting on the detector sidechain and
+// program-dependent release. These don't assert exact coefficients;
+// they verify the behavioural contract: K-weighted detection changes
+// how bass vs mids are perceived, program-dependent release moves
+// with program activity, gate + gain clamps still hold.
+
+@Suite("Wideband AGC detector")
+struct AGCDetectorTests {
+
+    private let sampleRate: Float = 48_000.0
+
+    // MARK: - Helpers
+
+    private func makeAGC(
+        kWeighting: Bool,
+        programDependentRelease: Bool = false,
+        targetDB: Float = -16.0,
+        attackMS: Float = 80.0,
+        releaseMS: Float = 1_000.0,
+        minGainDB: Float = -12.0,
+        maxGainDB: Float = 12.0
+    ) -> WidebandAGCRider {
+        var agc = WidebandAGCRider()
+        agc.configure(
+            sampleRate: sampleRate,
+            targetDB: targetDB,
+            attackMS: attackMS,
+            releaseMS: releaseMS,
+            minGainDB: minGainDB,
+            maxGainDB: maxGainDB,
+            kWeightingEnabled: kWeighting,
+            programDependentRelease: programDependentRelease
+        )
+        return agc
+    }
+
+    /// Pump a stereo sine through the AGC for `seconds` seconds,
+    /// return the detector level and gain at the end of the run.
+    private func runSine(
+        _ agc: inout WidebandAGCRider,
+        freq: Float,
+        amplitude: Float,
+        seconds: Double
+    ) -> (detectorDB: Float, gainDB: Float, gateActive: Bool) {
+        let frames = Int(Double(sampleRate) * seconds)
+        let omega = 2.0 * Double.pi * Double(freq) / Double(sampleRate)
+        for i in 0..<frames {
+            let s = Float(Double(amplitude) * sin(omega * Double(i)))
+            _ = agc.process(left: s, right: s)
+        }
+        return agc.telemetry
+    }
+
+    // MARK: - Attack: a gain rider, not a peak controller (0.45, chain review B1)
+
+    /// Gain dip during a 30 ms, +10 dB burst on settled program. The AGC must
+    /// leave transients to the limiter (Omnia.11 manual; Orban WP "hole
+    /// punching"): at the 150 ms default the dip is under 1.5 dB, while the
+    /// pre-0.45 6 ms default dug several dB and held them for the release.
+    private func burstDipDB(attackMS: Float) -> Float {
+        var agc = makeAGC(kWeighting: true, attackMS: attackMS, releaseMS: 1_000.0)
+        let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+        let settle = Int(Double(sampleRate) * 4.0)
+        let burstStart = settle
+        let burstEnd = settle + Int(Double(sampleRate) * 0.030)
+        var gainBefore: Float = 0.0
+        var minGainDuring: Float = 100.0
+        for i in 0..<(burstEnd + 4_800) {
+            let amp: Double = (i >= burstStart && i < burstEnd) ? 0.1 * 3.162 : 0.1  // -20 dBFS, +10 dB burst
+            let s = Float(amp * sin(omega * Double(i)))
+            _ = agc.process(left: s, right: s)
+            if i == burstStart - 1 { gainBefore = agc.telemetry.gainDB }
+            if i >= burstStart, i < burstEnd + 4_800 { minGainDuring = min(minGainDuring, agc.telemetry.gainDB) }
+        }
+        return gainBefore - minGainDuring
+    }
+
+    @Test func burstDoesNotDuckTheProgram() {
+        let slow = burstDipDB(attackMS: 150.0)
+        let fast = burstDipDB(attackMS: 6.0)
+        print(String(format: "AGC 30 ms +10 dB burst: gain dip %.2f dB at 150 ms attack, %.2f dB at 6 ms", slow, fast))
+        #expect(slow < 1.5, "150 ms attack ducked the program by \(slow) dB on a 30 ms burst")
+        #expect(fast > slow + 1.0, "the test must be sensitive: 6 ms attack should dip clearly more (\(fast) vs \(slow) dB)")
+    }
+
+    @Test func sustainedStepStillLevels() {
+        // A genuine +10 dB level change must still be levelled: the slower
+        // attack changes how fast the rider gets there, not how far. After 2 s
+        // the 150 ms and 6 ms attacks must have reached the same depth
+        // (window + clamps decide it), and that depth must be real.
+        func levelled(attackMS: Float) -> Float {
+            var agc = makeAGC(kWeighting: true, attackMS: attackMS, releaseMS: 1_000.0)
+            let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+            let settle = Int(Double(sampleRate) * 4.0)
+            for i in 0..<settle { let s = Float(0.05 * sin(omega * Double(i))); _ = agc.process(left: s, right: s) }
+            let gainBefore = agc.telemetry.gainDB
+            let stepFrames = Int(Double(sampleRate) * 2.0)
+            for i in 0..<stepFrames { let s = Float(0.05 * 3.162 * sin(omega * Double(i))); _ = agc.process(left: s, right: s) }
+            return gainBefore - agc.telemetry.gainDB
+        }
+        let slow = levelled(attackMS: 150.0)
+        let fast = levelled(attackMS: 6.0)
+        print(String(format: "AGC sustained +10 dB step after 2 s: levelled %.2f dB at 150 ms attack, %.2f dB at 6 ms", slow, fast))
+        #expect(slow > 3.0, "a sustained +10 dB step must be levelled by a real amount; moved \(slow) dB")
+        #expect(abs(slow - fast) < 0.5, "attack must change speed, not depth: \(slow) vs \(fast) dB")
+    }
+
+    @Test func everyFormatProfileUsesARiderAttack() {
+        for preset in PresetCatalog.finalStagePresets {
+            #expect(preset.agcAttackMS >= 100.0, "final-stage preset \(preset.id) has a limiter-fast AGC attack (\(preset.agcAttackMS) ms)")
+        }
+        #expect(AppConfig().widebandAGCAttackMS >= 100.0)
+    }
+
+    // MARK: - K-weighting
+
+    @Test func kWeightingBoostsMidsOverLows() {
+        // Same amplitude, different frequencies. With K-weighting the
+        // ~1.5 kHz shelf lifts the detector's view of the mids signal
+        // while the HPF slightly attenuates the bass.
+        let amplitude: Float = 0.3
+        var bass = makeAGC(kWeighting: true)
+        var mids = makeAGC(kWeighting: true)
+        let bassResult = runSine(&bass, freq: 80.0, amplitude: amplitude, seconds: 3.0)
+        let midsResult = runSine(&mids, freq: 3_000.0, amplitude: amplitude, seconds: 3.0)
+
+        // Mids should read hotter than bass under K-weighting.
+        #expect(midsResult.detectorDB > bassResult.detectorDB + 2.0,
+            "K-weighted detector should see 3 kHz (\(midsResult.detectorDB) dB) clearly hotter than 80 Hz (\(bassResult.detectorDB) dB); delta \(midsResult.detectorDB - bassResult.detectorDB)")
+    }
+
+    @Test func kWeightingDisabledTreatsBassAndMidsEqually() {
+        // Without K-weighting, the detector sees equal power at any
+        // frequency for the same amplitude sinusoid.
+        let amplitude: Float = 0.3
+        var bass = makeAGC(kWeighting: false)
+        var mids = makeAGC(kWeighting: false)
+        let bassResult = runSine(&bass, freq: 80.0, amplitude: amplitude, seconds: 3.0)
+        let midsResult = runSine(&mids, freq: 3_000.0, amplitude: amplitude, seconds: 3.0)
+
+        // Should be within 1 dB of each other (only detector smoothing
+        // noise remains).
+        let delta = abs(midsResult.detectorDB - bassResult.detectorDB)
+        #expect(delta < 1.0,
+            "Unweighted detector should treat 80 Hz and 3 kHz equally; delta \(delta) dB")
+    }
+
+    @Test func kWeightedAGCGainsUpMoreOnBassOnlyProgram() {
+        // Identical bass sinusoid fed to two AGCs. The K-weighted AGC
+        // sees the bass as QUIETER than its raw amplitude (HPF + shelf
+        // attenuate it perceptually) so its detector tracks below
+        // target and pushes MORE gain up to compensate. The unweighted
+        // AGC sees full power and adds less gain. This mirrors how
+        // pros avoid over-lifting quiet sub-bass content.
+        let amplitude: Float = 0.12  // 0.05 asked both AGCs for more than the 12 dB max once the detector read true power  // below target
+        var weighted = makeAGC(kWeighting: true)
+        var unweighted = makeAGC(kWeighting: false)
+        let w = runSine(&weighted, freq: 80.0, amplitude: amplitude, seconds: 5.0)
+        let u = runSine(&unweighted, freq: 80.0, amplitude: amplitude, seconds: 5.0)
+
+        #expect(w.gainDB > u.gainDB,
+            "K-weighted AGC (gain \(w.gainDB) dB) should add MORE gain on perceived-quiet bass than the unweighted (\(u.gainDB) dB)")
+    }
+
+    // MARK: - Program-dependent release
+
+    @Test func programDependentReleaseSlowsOnBusyProgram() {
+        // Construct a deliberately busy signal (quickly oscillating
+        // envelope from modulated noise) vs a flat continuous sine.
+        // Both ring the AGC at the same average level. After a loud
+        // passage + silence gap, busy program should release more
+        // slowly back to unity than flat program.
+        let burst = Int(Double(sampleRate) * 0.25)
+        let silenceGap = Int(Double(sampleRate) * 2.0)
+
+        func runMode(busy: Bool, programDependentRelease: Bool) -> Float {
+            var agc = makeAGC(
+                kWeighting: false,  // isolate release behaviour
+                programDependentRelease: programDependentRelease
+            )
+            let omega = 2.0 * Double.pi * 2_000.0 / Double(sampleRate)
+            // Loud burst drives gain down below 0 dB.
+            for i in 0..<burst {
+                let s = Float(0.5 * sin(omega * Double(i)))
+                _ = agc.process(left: s, right: s)
+            }
+            // Busy program: amplitude modulated at 5 Hz so envelope
+            // wobbles. Flat program: steady amplitude.
+            let ramp = Int(Double(sampleRate) * 1.5)
+            for i in 0..<ramp {
+                let t = Double(i) / Double(sampleRate)
+                let envelope: Float
+                if busy {
+                    envelope = 0.20 + 0.15 * Float(sin(2.0 * .pi * 5.0 * t))
+                } else {
+                    envelope = 0.20
+                }
+                let s = envelope * Float(sin(omega * Double(i + burst)))
+                _ = agc.process(left: s, right: s)
+            }
+            // Silence gap lets AGC gain decay.
+            for _ in 0..<silenceGap {
+                _ = agc.process(left: 0.0, right: 0.0)
+            }
+            return agc.telemetry.gainDB
+        }
+
+        // With program-dependent release on, busy program should end up
+        // with a LOWER gain than flat program: after the burst pulls the
+        // gain down, the quieter ramp is a RELEASE (gain rising back
+        // toward target), and a slower release on busy program has not
+        // finished restoring, while flat program raced through it. (The
+        // comment here used to say "HIGHER", contradicting its own
+        // "hasn't finished restoring"; measured 2026-10-15: busy -1.83 dB,
+        // flat +6.31 dB.)
+        let busyDependent = runMode(busy: true, programDependentRelease: true)
+        let flatDependent = runMode(busy: false, programDependentRelease: true)
+
+        // At least 0.5 dB, and IN THAT DIRECTION: `abs(diff) > 0.5` also
+        // passed an inverted release law (test-suite review 2026-10
+        // finding 14).
+        print(String(format: "[AGC PDR] busy %+.2f dB, flat %+.2f dB", busyDependent, flatDependent))
+        #expect(flatDependent > busyDependent + 0.5,
+            "Program-dependent release must leave busy program LOWER (slower release) than flat: busy \(busyDependent) dB, flat \(flatDependent) dB")
+        // The busy/flat gap is mostly programme content, so it cannot by
+        // itself show WHICH way the feature acts (an inverted law kept it,
+        // mutation-checked 2026-10-16). Against the same programme with the
+        // feature off: busy program must restore more slowly, and by more
+        // than flat program does (measured 2026-10-16: busy 4.74 dB slower,
+        // flat 2.64 dB -- the burst-to-ramp transition reads as some density
+        // on flat program too).
+        let busyPlain = runMode(busy: true, programDependentRelease: false)
+        let flatPlain = runMode(busy: false, programDependentRelease: false)
+        print(String(format: "[AGC PDR] busy on %+.2f / off %+.2f dB, flat on %+.2f / off %+.2f dB",
+                     busyDependent, busyPlain, flatDependent, flatPlain))
+        #expect(busyPlain > busyDependent + 0.5,
+            "PDR must slow the release on busy program: on \(busyDependent) dB, off \(busyPlain) dB")
+        #expect(busyPlain - busyDependent > flatPlain - flatDependent + 0.5,
+            "PDR must slow busy program more than flat: busy \(busyPlain - busyDependent) dB, flat \(flatPlain - flatDependent) dB")
+    }
+
+    @Test func programDependentReleaseActuallyAffectsGainTrajectory() {
+        // Inverse of the previous test: feed the SAME busy program
+        // through two AGCs differing only in the PDR flag. If the
+        // flag is wired and meaningful, the ending gain must differ.
+        let burst = Int(Double(sampleRate) * 0.25)
+        let silenceGap = Int(Double(sampleRate) * 2.0)
+
+        func runBusy(programDependentRelease: Bool) -> Float {
+            var agc = makeAGC(
+                kWeighting: false,
+                programDependentRelease: programDependentRelease
+            )
+            let omega = 2.0 * Double.pi * 2_000.0 / Double(sampleRate)
+            for i in 0..<burst {
+                let s = Float(0.5 * sin(omega * Double(i)))
+                _ = agc.process(left: s, right: s)
+            }
+            let ramp = Int(Double(sampleRate) * 1.5)
+            for i in 0..<ramp {
+                let t = Double(i) / Double(sampleRate)
+                let envelope: Float = 0.20 + 0.15 * Float(sin(2.0 * .pi * 5.0 * t))
+                let s = envelope * Float(sin(omega * Double(i + burst)))
+                _ = agc.process(left: s, right: s)
+            }
+            for _ in 0..<silenceGap {
+                _ = agc.process(left: 0.0, right: 0.0)
+            }
+            return agc.telemetry.gainDB
+        }
+
+        let on = runBusy(programDependentRelease: true)
+        let off = runBusy(programDependentRelease: false)
+        print(String(format: "[AGC PDR toggle] on %+.2f dB, off %+.2f dB", on, off))
+        // Direction: PDR SLOWS the release on busy program, so with it on
+        // the gain has restored less (measured on -1.83, off +2.91 dB).
+        #expect(off > on + 0.5,
+            "PDR on must restore busy program more slowly: on \(on) dB, off \(off) dB")
+        #expect(abs(on - off) > 0.5,
+            "Toggling program-dependent release on the SAME busy program should change the ending gain; on=\(on), off=\(off), diff=\(abs(on - off))")
+    }
+
+    // MARK: - Gate and clamps still work
+
+    @Test func gateEngagesOnSilence() {
+        // Extended silence must activate the gate; gain should drift
+        // toward 0 dB (unity) rather than max-gain noise-lifting.
+        var agc = makeAGC(kWeighting: true, programDependentRelease: true, maxGainDB: 12.0)
+        // Run silence for 5 s.
+        for _ in 0..<Int(Double(sampleRate) * 5.0) {
+            _ = agc.process(left: 0.0, right: 0.0)
+        }
+        let t = agc.telemetry
+        #expect(t.gateActive, "Gate should be active on extended silence")
+        #expect(abs(t.gainDB) < 1.0,
+            "Gated AGC should drift toward unity gain; ended at \(t.gainDB) dB")
+    }
+
+    @Test func gainStaysWithinClamps() {
+        // Hammer the AGC with a very loud signal; gain should pin at
+        // minGainDB, never go below.
+        var agc = makeAGC(kWeighting: true, minGainDB: -8.0, maxGainDB: 8.0)
+        let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+        for i in 0..<Int(Double(sampleRate) * 2.0) {
+            let s = Float(0.95 * sin(omega * Double(i)))
+            _ = agc.process(left: s, right: s)
+        }
+        let t = agc.telemetry
+        #expect(t.gainDB >= -8.0 - 0.1 && t.gainDB <= 8.0 + 0.1,
+            "AGC gain \(t.gainDB) dB escaped clamps [-8, 8]")
+        // It also moved: an AGC stuck at 0 dB passes the clamp check alone
+        // (test-suite review 2026-10 finding 15). The full floor is
+        // `gainRidesToItsFloorOnAHotSine`.
+        #expect(t.gainDB < -3.0,
+            "2 s of a -0.4 dBFS sine left the AGC at \(t.gainDB) dB: it did not ride down at all")
+    }
+
+    // The sine is 12.6 dB over the -16 dB target, so the desired gain clamps
+    // to the -8 dB floor. Until 2026-10-16 the AGC froze once inside its 3 dB
+    // window and stayed at -5.00 dB for good (levelling review
+    // 2026-10 finding 4). Now the attack brings it inside the window
+    // quickly and the gain then creeps the rest of the way at 10x the release
+    // time (Optimod-style window), so it reaches the floor within ~30 s.
+    @Test
+    func gainRidesToItsFloorOnAHotSine() {
+        var agc = makeAGC(kWeighting: true, minGainDB: -8.0, maxGainDB: 8.0)
+        let omega = 2.0 * Double.pi * 1_000.0 / Double(sampleRate)
+        var gainAt2s: Float = 0.0
+        for i in 0..<Int(Double(sampleRate) * 30.0) {
+            let s = Float(0.95 * sin(omega * Double(i)))
+            _ = agc.process(left: s, right: s)
+            if i == Int(Double(sampleRate) * 2.0) { gainAt2s = agc.telemetry.gainDB }
+        }
+        let gainDB = agc.telemetry.gainDB
+        #expect(gainAt2s <= -4.9,
+            "after 2 s the attack must have brought the gain inside its window (\(gainAt2s) dB)")
+        #expect(gainDB < -7.5,
+            "30 s of a sine 12.6 dB over target left the AGC at \(gainDB) dB instead of at its -8 dB floor: it froze inside its window")
+    }
+
+    // MARK: - KWeightingFilter unit characterisation
+
+    @Test func kWeightingFilterAttenuatesSubHz() {
+        var k = KWeightingFilter()
+        k.configure(sampleRate: sampleRate)
+        // Feed 10 Hz sine. HPF at 38 Hz with Q 0.5 should attenuate
+        // it substantially.
+        let omega = 2.0 * Double.pi * 10.0 / Double(sampleRate)
+        var lastMax: Float = 0
+        // Prime filter for a bit.
+        for i in 0..<Int(Double(sampleRate) * 1.0) {
+            let y = k.process(Float(sin(omega * Double(i))))
+            if i > Int(Double(sampleRate) * 0.5) {
+                lastMax = max(lastMax, abs(y))
+            }
+        }
+        #expect(lastMax < 0.5,
+            "K-weighting HPF should attenuate 10 Hz below 0.5; measured peak \(lastMax)")
+    }
+
+    @Test func kWeightingFilterBoostsHighMids() {
+        var k = KWeightingFilter()
+        k.configure(sampleRate: sampleRate)
+        // 4 kHz sine should come out with at least a few dB of boost
+        // from the high-shelf.
+        let omega = 2.0 * Double.pi * 4_000.0 / Double(sampleRate)
+        var lastMax: Float = 0
+        for i in 0..<Int(Double(sampleRate) * 1.0) {
+            let y = k.process(Float(sin(omega * Double(i))))
+            if i > Int(Double(sampleRate) * 0.5) {
+                lastMax = max(lastMax, abs(y))
+            }
+        }
+        // Unity input peak = 1.0; boost means peak > ~1.15 (roughly +1.2 dB).
+        #expect(lastMax > 1.05,
+            "K-weighting high-shelf should boost 4 kHz peak above 1.05; measured \(lastMax)")
+    }
+}

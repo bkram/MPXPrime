@@ -1,0 +1,359 @@
+import Foundation
+import MPXPrimeCore
+
+// Shared contract between the control server (REST routes) and whatever owns
+// the engine: the headless runtime (macOS + Linux) or the macOS GUI view
+// model. Routes never touch engines or configs directly -- they speak this
+// protocol, so the HTTP layer is testable against a mock and identical
+// across run modes.
+
+enum TransportAction: String, Codable, Sendable {
+    case start
+    case stop
+    case restart
+}
+
+enum ControlError: Error, CustomStringConvertible {
+    case engineFailure(String)
+    case invalidRequest(String)
+
+    var description: String {
+        switch self {
+        case .engineFailure(let why): return "engine failure: \(why)"
+        case .invalidRequest(let why): return "invalid request: \(why)"
+        }
+    }
+}
+
+/// GET /api/status payload.
+struct ControlStatus: Codable, Sendable {
+    var running: Bool
+    var platform: String
+    var version: String
+    var sampleRateHz: Double
+    var uptimeSeconds: Double?
+    /// True when live-applied changes are queued behind a restart. Only
+    /// meaningful while `running` -- a stopped engine always starts from the
+    /// current config, so nothing is ever "pending" while stopped (both
+    /// backends agree on this).
+    var restartPending: Bool
+    var sourceMode: String
+    var outputMode: String
+    /// Is the operator's listening output playing? Defaulted so an older
+    /// client (or the Linux build, which has no monitor) decodes fine.
+    var monitorActive: Bool = false
+    /// Operator-facing lines. Semantics differ by backend BY DESIGN: the
+    /// headless backend reports engine-fault reasons (start failures, retry
+    /// state); the GUI backend mirrors its human status line. Treat as
+    /// display text, never parse.
+    var notes: [String]
+}
+
+/// GET /api/mixer payload: the SOUND CARD's own volume controls.
+///
+/// The card's level sits between the encoder and the exciter, and a slider a
+/// few percent below unity silently costs composite level that no meter in
+/// the app can see (it cost this project 2 dB after a reboot on Linux, and
+/// 5 dB on a DX3 Pro+ DAC on macOS). On Linux the controls are ALSA's
+/// simple-mixer elements of the output device's card; on macOS they are the
+/// output device's CoreAudio volume (playback) and the input device's input
+/// volume (capture), one control per device, named after the device. A
+/// device without a volume control (BlackHole) is reported in `note`, and
+/// `available: false` with a note is a normal 200.
+struct ControlMixer: Codable, Sendable {
+    var available: Bool = false
+    /// The ALSA card the controls belong to, derived from the output device
+    /// (Linux; nil on macOS).
+    var card: String?
+    var controls: [ALSAMixerMath.Control] = []
+    /// Operator-facing explanation when there is nothing to show, or when
+    /// something about the controls needs saying (an output below unity).
+    var note: String?
+    /// macOS: the devices the two controls belong to and their dB ranges;
+    /// `*Settable` false when the HAL refuses writes, `*DBEstimated` true
+    /// when the device has no dB scale and the dB is derived from the
+    /// slider position. nil where the platform does not report them.
+    var playbackDeviceName: String?
+    var captureDeviceName: String?
+    var playbackRangeDB: ControlDBRange?
+    var captureRangeDB: ControlDBRange?
+    var playbackSettable: Bool?
+    var captureSettable: Bool?
+    var playbackDBEstimated: Bool?
+    var captureDBEstimated: Bool?
+}
+
+/// A control's dB range as the device reports it.
+struct ControlDBRange: Codable, Sendable, Equatable {
+    var minDB: Double
+    var maxDB: Double
+}
+
+/// PATCH /api/mixer body. Only the fields present move. A side is addressed
+/// by its fields: playback is the output path, capture the input path. A dB
+/// field wins over the percent for the same side.
+struct ControlMixerPatch: Codable, Sendable {
+    var name: String
+    var index: UInt32?
+    var playbackPercent: Double?
+    var capturePercent: Double?
+    var playbackDB: Double?
+    var captureDB: Double?
+    var playbackMuted: Bool?
+    var captureMuted: Bool?
+}
+
+/// GET /api/meters payload. All fields optional: platforms report what they
+/// measure (full MeterSnapshot on macOS; peaks + xruns on the Linux ALSA
+/// engine in this milestone). Levels are linear 0..1 unless suffixed.
+struct ControlMeters: Codable, Sendable {
+    var inputLeftPeak: Float?
+    var inputRightPeak: Float?
+    var outputPeak: Float?
+    var deviationKHzPeak: Float?
+    /// Peak actually presented to the converter in dBFS: post `output_gain_db`
+    /// and post `mpx_line_output_dbfs` (composite mode). The electrical
+    /// headroom readout; `deviationKHzPeak` is the modulation-domain one
+    /// (output/line trims divided back out).
+    var dacPeakDBFS: Float?
+    var agcGainDB: Float?
+    /// Advanced Dynamics leveler telemetry. All nil while the stage is off
+    /// (agcGainDB is the dynamics readout then); when active, agcGainDB
+    /// reads 0 because the leveler REPLACES the AGC.
+    var advancedDynamicsActive: Bool?
+    /// Per-band leveler gains in dB, low to high (5 bands).
+    var advancedDynamicsBandGainsDB: [Float]?
+    var advancedDynamicsDensityDB: Float?
+    var compositeClipperGainReductionDB: Float?
+    /// ITU-R BS.412-9 complete-multiplex power over the rolling 60 s window,
+    /// dBr (0 dBr is the Recommendation's limit). `bs412PowerValid` is false
+    /// until a full window has been observed and while Test Tone suspends
+    /// control -- show `--`, never a compliance claim, when it is false.
+    /// Input samples the DSP ingress guard has replaced with silence since
+    /// the engine started. Non-zero means something upstream handed the
+    /// encoder NaN or Inf; the chain is protected, but the source is broken.
+    var nonFiniteInputSamples: Int?
+    var bs412PowerDBr: Float?
+    var bs412PowerValid: Bool?
+    var bs412SecondsObserved: Float?
+    var bs412GainReductionDB: Float?
+    var bs412OverCeiling: Bool?
+    /// Pilot and RDS alone exceed the ceiling: no audio gain can meet it.
+    var bs412Unachievable: Bool?
+    /// The hard energy guard intervened. Normal programme never should.
+    var bs412GuardActive: Bool?
+    /// Measurement continues, control is suspended (Test Tone).
+    var bs412ControlSuspended: Bool?
+    var preEncodeLimiterGainReductionDB: Float?
+    var safetyLimiterGainReductionDB: Float?
+    /// dB the safety soft clip absorbed (decaying peak). 0 = idle, as designed; > 0 means the
+    /// clipper/limiter are not controlling peaks (profile or gain structure needs attention).
+    var safetyClipDB: Float?
+    var pilotInjectionPercent: Float?
+    var rdsInjectionPercent: Float?
+    var compositeBudgetMarginDB: Float?
+    var compositeOverBudget: Bool?
+    var stereoCorrelation: Float?
+    var renderXruns: Int?
+    var captureXruns: Int?
+    /// Worst render-thread busy share of one period in the last ~43 ms, in
+    /// percent of the period (Linux ALSA engine). 100 means a period took as
+    /// long to render as it lasts -- xruns follow. Nil where not measured.
+    var renderLoadPercent: Float?
+    // Input capture->render ring transport diagnostics (macOS input source).
+    // The definitive signal for clock-drift faults between a virtual input
+    // (e.g. BlackHole) and a hardware output: `overflows` climbs when the
+    // input clock runs faster than render (ring fills), `underflows` when
+    // slower (ring drains), `tornReads` on lock-free read collisions.
+    // `bufferedFrames` should hover near the engine's target; a monotonic
+    // drift toward 0 or capacity is what precedes audible dropout/static.
+    // All nil in headless/ALSA and when no input source is running.
+    var inputRingBufferedFrames: Int?
+    var inputRingOverflows: Int?
+    var inputRingUnderflows: Int?
+    var inputRingTornReads: Int?
+    var inputResampleMode: String?
+    var inputRatioTrim: Double?
+}
+
+/// GET /api/rds payload: the live on-air snapshot plus the operational
+/// config fields an automation system cares about.
+struct ControlRDS: Codable, Sendable {
+    var enabled: Bool
+    var pi: String
+    var pty: Int
+    var ta: Bool
+    var tp: Bool
+    /// On-air text as the encoder is actually transmitting it right now
+    /// (from BasicRDSCoder's snapshot; nil when the engine is stopped).
+    var livePS: String?
+    var liveRT: String?
+    var livePTYN: String?
+    var liveLongPS: String?
+    /// Configured text sources (what live text is generated from).
+    var configuredRT: String
+    var configuredPSActiveBank: String
+}
+
+/// PATCH /api/config response.
+struct ConfigApplyResult: Codable, Sendable {
+    var outcomes: [ConfigKeyOutcome]
+    var appliedLive: Bool
+    var restartPending: Bool
+}
+
+/// One selectable audio device. `id` is what goes into the INI's
+/// `*_device_uid` key -- a CoreAudio UID on macOS, an ALSA PCM name on
+/// Linux (`hw:0,0`, `plughw:...`, `default`).
+struct ControlDevice: Codable, Sendable {
+    var id: String
+    var name: String
+    var canInput: Bool
+    var canOutput: Bool
+    /// Device channel counts per direction, so a picker can say
+    /// "Scarlett 18i8 (8 out)" and the channel fields have a range to
+    /// validate against. 0 = unknown (Linux ALSA PCMs do not say).
+    var inputChannels: Int = 0
+    var outputChannels: Int = 0
+}
+
+/// GET /api/devices payload: the pickable input/output lists plus which id
+/// each `*_device_uid` currently names (empty = system default). Selecting a
+/// device is a restart-class change (PATCH the uid key, then restart).
+struct ControlDevices: Codable, Sendable {
+    var inputs: [ControlDevice]
+    var outputs: [ControlDevice]
+    var selectedInput: String
+    var selectedOutput: String
+    /// Decoded-audio monitor output (monitor_device_uid) + its enable --
+    /// previously the one device slot the API could not see. Defaults keep
+    /// old payloads decodable.
+    var selectedMonitor: String = ""
+    var monitorEnabled: Bool = false
+    /// The `*_channels` keys as the INI spells them (one-based "3,4", "3"
+    /// for mono, "" for the device's first pair).
+    var selectedInputChannels: String = ""
+    var selectedOutputChannels: String = ""
+    var selectedMonitorChannels: String = ""
+    /// Platform note the UI shows next to the pickers (e.g. Linux PCM-name
+    /// convention). Empty on macOS.
+    var note: String
+}
+
+/// GET /api/telemetry payload: scope waveforms + MPX spectrum for the
+/// dashboard's live views. Arrays are display-decimated server-side (scopes
+/// <= 160 points, spectrum <= 256 bins) so a 4-7 Hz browser poll stays a few
+/// kilobytes. Nil from a backend/engine that has no scope tap (ALSA today).
+struct ControlTelemetry: Codable, Sendable {
+    var windowMS: Double
+    var inputLeft: [Float]
+    var inputRight: [Float]
+    var output: [Float]
+    var spectrumDB: [Float]
+    var spectrumMaxHz: Double
+    var spectrumNyquistHz: Double
+}
+
+/// One row of GET /api/snapshots: the operator preset slots.
+struct ControlSnapshotSlot: Codable, Sendable {
+    var slot: Int              // 0-based
+    var name: String?          // nil = empty slot
+    var savedAt: Date?
+    var active: Bool           // this slot's config is the live one
+    var modified: Bool         // ...but the operator changed things since
+}
+
+struct ControlSnapshots: Codable, Sendable {
+    var slots: [ControlSnapshotSlot]
+}
+
+/// The engine surface the headless backend drives. AudioOutputEngine (macOS)
+/// and ALSAAudioEngine (Linux) both conform; both `apply*` entry points are
+/// thread-safe producers consumed by the render thread.
+protocol ControlledEngine: AnyObject {
+    func start() throws
+    func stop()
+    func applyRuntimeConfig(_ config: AppConfig)
+    func applyRDSRuntimeConfig(_ config: AppConfig)
+    var controlMeters: ControlMeters? { get }
+    /// The meters as one consumer sees them: its own peaks since its own
+    /// previous read (`MeterPeakReader`), so the GUI, each meter stream and
+    /// the status tick never take each other's peaks. Default: the shared
+    /// reader, i.e. `controlMeters`.
+    func controlMeters(reader: MeterPeakReader) -> ControlMeters?
+    var rdsLiveSnapshotForControl: BasicRDSCoder.LiveSnapshot? { get }
+    /// Live scope/spectrum snapshot for /api/telemetry. Default nil: an
+    /// engine without a scope tap (ALSA today) simply reports no telemetry
+    /// and the route answers 503, same as /api/meters.
+    func controlTelemetry(windowMS: Double) -> ControlTelemetry?
+    /// Is the second (listening) output running? Default false: an engine
+    /// without a monitor path -- ALSA today -- simply never reports one.
+    var monitorActiveForControl: Bool { get }
+    /// Why the render thread is NOT real-time, when it is not (Linux); nil
+    /// when it is or when the platform's audio engine owns scheduling itself.
+    var schedulingNoteForControl: String? { get }
+    /// The rate the engine ACTUALLY renders at, when it can differ from the
+    /// configured one: CoreAudio follows the device (a built-in output that
+    /// tops out at 96 kHz renders at 96 kHz whatever `sample_rate` says).
+    /// Nil where the engine opens the configured rate exactly (ALSA).
+    var renderSampleRateForControl: Double? { get }
+}
+
+extension ControlledEngine {
+    var renderSampleRateForControl: Double? { nil }
+    var monitorActiveForControl: Bool { false }
+    var schedulingNoteForControl: String? { nil }
+}
+
+extension ControlledEngine {
+    func controlTelemetry(windowMS: Double) -> ControlTelemetry? { nil }
+    func controlMeters(reader: MeterPeakReader) -> ControlMeters? { controlMeters }
+}
+
+/// What the REST routes need from the run mode that owns the engine.
+protocol ControlBackend: Sendable {
+    func status() async -> ControlStatus
+    func meters() async -> ControlMeters?
+    /// `meters()` for one identified consumer (a meter stream): its peaks
+    /// are its own. Default: the shared reader, i.e. `meters()`.
+    func meters(reader: MeterPeakReader) async -> ControlMeters?
+    func rds() async -> ControlRDS
+    func devices() async -> ControlDevices
+    func configSections() async throws -> [String: [String: String]]
+    /// Apply an INI-key patch: classify, hot-apply live planes, persist,
+    /// flag restart-required leftovers.
+    func applyConfigPatch(_ patch: [String: String]) async throws -> ConfigApplyResult
+    func transport(_ action: TransportAction) async throws -> ControlStatus
+    /// Live scopes + spectrum (nil = engine stopped or no tap on platform).
+    func telemetry(windowMS: Double) async -> ControlTelemetry?
+
+    /// The sound card's own level layer: ALSA's mixer on Linux, the output
+    /// and input devices' CoreAudio volume on macOS. `available: false` with
+    /// a note when there is nothing to show.
+    func cardMixer() async -> ControlMixer
+    /// Move one card mixer control; false when it could not be applied.
+    func setCardMixer(_ patch: ControlMixerPatch) async -> Bool
+    // Operator preset slots (shared SnapshotStore; <config>.snapshots.json).
+    func snapshots() async -> ControlSnapshots
+    func snapshotSave(slot: Int, name: String) async throws -> ControlSnapshots
+    func snapshotLoad(slot: Int) async throws -> ConfigApplyResult
+    func snapshotRename(slot: Int, name: String) async throws -> ControlSnapshots
+    func snapshotClear(slot: Int) async throws -> ControlSnapshots
+    /// The slot's full INI text (nil = empty slot).
+    func snapshotExport(slot: Int) async -> String?
+    /// Validate + normalize + store INI text into the slot (does not load it).
+    func snapshotImport(slot: Int, name: String?, iniText: String) async throws -> ControlSnapshots
+    /// Available preset ids by kind (primebass / multiband / finalstage /
+    /// format_profile) -- and application thereof.
+    func presets() async -> [String: [String]]
+    func applyPreset(kind: String, id: String, intensity: Double?) async throws -> ConfigApplyResult
+    /// Push now-playing metadata into the shared NowPlayingState (the same
+    /// sink the local script poller feeds). Returns whether now-playing
+    /// rendering is currently enabled, so the client can warn if pushes will
+    /// not appear. artist/title drive the RT / PS / RT+ templates.
+    func setNowPlaying(artist: String, title: String, display: String) async -> Bool
+}
+
+extension ControlBackend {
+    func meters(reader: MeterPeakReader) async -> ControlMeters? { await meters() }
+}

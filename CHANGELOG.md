@@ -9,7 +9,918 @@ PrimeBass with MaxxBass / Aphex / Werrbach patent-grade harmonic
 synthesis, adaptive on-screen FPS, and an optional deep DSP
 combination test suite. Newest first.
 
-## 0.50 -- 2026-09-10
+## Unreleased
+
+- **Audio-chain overhaul (2026-10-20 to 2026-10-30).** One pass over the
+  gain structure, the stereo image and the level controls, driven by three
+  measured audits and an off-air round against the exciter. What an operator
+  notices, stage by stage; every figure is from the verifier or the air log.
+  **Every stored baseline was recaptured in this change** (`default`,
+  `presets`, `long`, `receiver` on macOS and `default-linux-x86_64` in the
+  Linux container): the budget alone moves every hot scenario by about
+  +0.35 dB / +2.5 kHz, and two new scenarios (`panned_program`,
+  `wide_program`) have records for the first time.
+  - **Composite budget.** `limit_threshold` defaults to 1.0 (was 0.98; 1.0
+    is accepted now, a hand-set value is kept) and the budget safety margin is
+    0.5 % instead of 2 %. The two were duplicated static headroom that capped
+    the multiplex at 72 kHz and measured 69-70.6 kHz on dense programme. The
+    audio budget is now 0.888 of full scale (66.6 kHz) with pilot 8 % and RDS
+    2 kHz, the worst-case multiplex 74.6 kHz, and dense programme measures
+    about 72 kHz; the 4x true peak stays below 0 dBFS on every verifier
+    scenario. A station that calibrated its exciter on peaks sees about
+    0.35 dB more deviation after upgrading: re-check `MPX Output Level`.
+    The **Composite Budget** state on the Monitoring page now reads the
+    headroom between the audio composite and its budget, not the
+    whole-composite margin (which is within a few hundredths of a dB of zero
+    whenever the clipper works, by design): **Tight** is the normal reading on
+    dense programme, **Safe** means at least 0.5 dB in hand, **Risk** means a
+    fault (the final clamp engaged after pilot and RDS were added, or the
+    pilot / RDS levels leave no audio budget). The operator guide no longer
+    says to back off `MPX Output Level` on Risk, and no longer promises
+    3 to 6 dB of regular Composite Clipper GR: the readout reads the clip
+    depth.
+  - **Composite clipper and Safety Limiter.** New `Clip Depth`
+    (`mpx_clipper_lookahead_depth_db`, 0-6 dB, live, Composite Clipper page
+    under Advanced). The 2 ms look-ahead now rides the composite down to the
+    ceiling plus the depth and the oversampled, guard-protected clip kernel
+    clips the depth; until now the look-ahead rode every overshoot to the
+    ceiling and the kernel only bent peaks already sitting there (a constant
+    0.16 dB of Composite Clipper GR at every drive), so "Enable Composite
+    Clipper" was a 2 ms look-ahead limiter with an 80 ms release. The ride's
+    release is 25 ms. Every Format Profile sets 1.0 dB, the largest value that
+    keeps the ride and hi-hat distortion gates (`--verify-hf-transients`,
+    ride >= 30 dB, hat >= 20 / 15 dB) with 2 dB in hand (ride SINAD
+    33.4-34.3 dB on the music and speech profiles; Classical never clips the
+    ride). Measured plainly: the depth buys little loudness (0.0 dB RMS on
+    bright dense programme through Music - Clean, 0.2 dB through Loud /
+    Dense) because most of the clipped share returns as the stereo and
+    pilot / RDS guard bands restore it and filter overshoot follows, and the
+    Safety Limiter rides that; expect about 0.8 dB of **Safety Limiter GR** on
+    dense programme at the default depth, which is not a fault. 0 dB restores
+    the previous behaviour. The Safety Limiter's detector now reads the 4x
+    true peak of the audio composite (a short linear-phase interpolator into
+    the sliding-window maximum; the audio path is untouched), so the peaks
+    between samples of the 55 kHz-limited composite are held to the budget as
+    the exciter sees them: on air the programme's negative peaks sat 0.35 dB
+    above a full-scale tone's at the same sample budget (air log 2026-10-20)
+    and the sample detector could not see them. Its release stays at 95 ms
+    (50 and 30 ms measured identical). Cost: 0.21 % of real time at 192 kHz.
+  - **Stereo guard.** `Protect Stereo Subcarrier` (`mpx_clipper_stereo_guard`)
+    defaults to 50 % (was 100 %). The clipper's distortion arrives in short
+    bursts at the crests of the 38 kHz subcarrier and a receiver decodes about
+    twice as much of such a burst from the stereo subcarrier as from the mono
+    part, so removing half of the subcarrier share is what cancels in the
+    quiet channel. Programme panned hard left through Music - Loud decodes
+    with 60 dB or more of separation in every band that carries programme
+    (25 dB at 100 %, 27 dB at 0 %), a left-only 14 kHz tone with 43 dB (25 dB
+    at 100 %). Costs about 3 dB of ride-cymbal SINAD at equal clip depth. `--verify-stereo-guard` prints the programme-crosstalk table per
+    share (the same measurement `--verify-receiver` gates) and fails when the
+    shipped share misses the 40 / 30 dB floors; its acceptance is
+    final-limiter duty <= 1.0 dB, 14 kHz separation >= 20 dB and the
+    crosstalk floors. An INI with a hand-set share keeps it.
+  - **Stereo-image protection is an option, off by default**
+    (`stereo_image_protect_enabled`, `stereo_image_max_side_ratio` 1.0-3.0,
+    default 1.55; the `Stereo Image` card under Mono Bass on the PrimeBass
+    page, both under Advanced, live, FM paths only). The stage had been always
+    on since the widener's removal in 0.50, with the widener's default baked
+    in, and the stereo audit found it limiting the source's own width: an
+    anti-phase tone lost 24 dB of level against 1.4 dB for a mono tone, and
+    very wide material was clamped to a 1.55 side/mid ratio whatever the
+    source did. With the widener gone and every dynamics stage stereo-linked,
+    nothing in the chain can widen the image, so off is the honest default;
+    enable it only where an exciter or STL needs the L-R held down. When on,
+    the stage no longer crushes pure-side content (its absolute side floor is
+    gone) and its reference is delay-matched to the processing latency, so
+    the end of a wide passage no longer ducks the side. Off is bit-identical
+    to a chain without the stage. `wide_bass` keeps 0.99 of its width (0.86
+    before) and the anti-phase tone 3.7 dB of level drift (24.3 dB before).
+  - **Separation gates in the verifier and the Meter.** `--verify` gains
+    `panned_program` (programme panned hard left; decoded side retention
+    >= 0.95 and a per-octave-band crosstalk gate, 40 dB to 10 kHz and 30 dB
+    above, in its own verdict) and `wide_program` (ordinary wide stereo at
+    S/M 1.3, retention >= 0.95); `stereo_diff_400hz` tolerates 12 dB of RMS
+    loss instead of 30 and `wide_bass` demands 0.90 side retention instead of
+    0.30. `--verify-receiver` raises its separation floors from 18 / 16 dB to
+    40 dB at 1 / 10 kHz and 30 dB at 14 kHz, adds mono bass, Advanced
+    Dynamics, HF limiter and image-protector rows to the stage-isolation
+    sweep, and prints two new tables: a left-only tone set (1 / 5 / 10 /
+    14 kHz at 0.1 / 0.3 / 0.5 FS on Music - Clean and Music - Loud, processed
+    against bypass, gated at >= 40 / 30 dB processed and <= 6 dB loss at
+    1 / 10 kHz) and the panned-programme crosstalk table (left-minus-right
+    RMS per octave band from 200 Hz to 15 kHz, processed / bypass /
+    encoder-only, plus the protector toggled). Music - Loud failed those
+    gates at 25-33 dB with the old stereo guard and passes with the new one
+    (its left-only 10 / 14 kHz tones read 71-72 dB, 25.5 before); the
+    default profile reads 70 dB or more in every programme band. The Meter's
+    SEPARATION readout is the level difference between the decoded channels,
+    which is a separation figure only on single-channel content: it now
+    publishes only while the decoded side sits within 10 % of the mid (a
+    hard-panned tone or passage) and shows `--` otherwise, including on
+    panned programme with mono bass, which used to read a few dB and look
+    like a fault; the best value since reset is still held, dimmed while
+    invalid. The CLI's STEREO line carries the same figure.
+  - **BS.412 rides the whole minute, not every second.** The multiplex power
+    limiter holds the 60-second integral the Recommendation bounds instead
+    of holding every 1-second window at the ceiling. Loud seconds pass hotter
+    when quieter ones have left room, so on varied programme **Multiplex
+    Power** settles within a few tenths of a decibel of the ceiling instead
+    of 1 to 3 dB under it (test programme: -0.10 dBr against -1.74 dBr
+    before). A short loud burst no longer holds the programme down for the
+    following minute: it is back on the ceiling within about three seconds.
+    Every 60-second window is still held at or under the ceiling and the
+    compliance guard stays idle on normal programme (0.00 % of samples on the
+    varied-programme fixture, 0.62 % before on a -6 to +6 dBr step). **BS.412
+    GR** now moves with the programme instead of parking at the loudest
+    second's value.
+  - **Levelling, Final Drive and the Stereo Link.** Advanced Dynamics levels
+    to the Format Profile's AGC target (it was 2 dB below), except on Music -
+    Loud and Music - Dense, which run PrimeBass and keep the 2 dB to hold its
+    intermodulation under the `--verify-primebass` limit (-56 dB at the AGC
+    target against the -70 dB gate). Final Drive was re-set per profile
+    against the hi-hat distortion gate: Music - Clean 3.5 dB (was 4), Speech /
+    Talk 2.8 dB (was 4.3), Classical / Wide Dynamics 5 dB at a 1 dB clip
+    depth (was 3 dB at 2 dB); Loud 8 and Dense 9 unchanged. Classical now
+    uses its modulation on programme peaks (0.79 -> 0.99 of the audio
+    budget); Music - Clean gains about 1.5 dB of level into the final stage
+    and bright programme is 0.8 dB louder. The leveller matches the classic
+    AGC + multiband chain within the A/B gate's 3 dB (parity -2.3 dB; it was
+    4 dB quieter and the gate failed). The loudness goal on Music - Clean is
+    not met (program_mix 0.925 of budget against 0.97): the 20 dB hi-hat
+    SINAD floor caps the net level, see the roadmap. New `Stereo Link` on the
+    Audio Limiter page (`pre_encode_stereo_link`, 0-1, default 1, live):
+    below 1 the quieter channel keeps more of its level while the louder one
+    limits, at the cost of a brief image shift. At the shipped settings the
+    Audio Limiter is idle on every verifier scenario, so the control changes
+    nothing measurable there (identical to two decimals at every setting);
+    it is for stations that run the limiter harder.
+  - **Mac device volume.** `Audio I/O` shows **Device Output Level** and
+    **Device Input Level** (the devices' own CoreAudio volume in dB, read
+    live) next to the device pickers, each with **Set to 0 dB**; the web
+    dashboard's Sound Card Mixer card shows the same two rows on macOS as it
+    does for the ALSA mixer on Linux. Setting a level there makes the encoder
+    hold it at every start and every 5 s, so a DAC quietly at -5 dB (the
+    station's DX3 Pro+ was, while the app also applied -5 dBFS line output)
+    cannot cost deviation again. A new installation leaves the devices
+    unmanaged and says so in the status line when the output starts below
+    -0.1 dB or muted. The INI keys are `card_playback_volume_db` /
+    `card_capture_volume_db`; the `alsa_*` names load and patch as aliases
+    and the INI is written under both. `GET /api/mixer` on macOS answers
+    `available: true` with one control per device plus the device names, dB
+    ranges and settable flags; `PATCH` accepts `playbackDB` / `captureDB`.
+  - **Mono bass corner.** Music - Clean and Speech / Talk (and the shipped
+    default) move from 140 Hz to 110 Hz; Loud 115, Dense 110 and Classical 90
+    are unchanged. 140 Hz was the high end of broadcast practice (80-120 Hz)
+    and on its own kept bass-heavy programme from meeting the width goal
+    (`wide_bass` loses its 72 Hz anti-phase component to mono bass on the
+    music profiles). Latency 10 ms at 110 Hz instead of 8 ms at 140 Hz.
+- **Channels are chosen as a stereo pair from one menu.** The device
+  popover in Studio (input, MPX output, monitor) and the Meter (input,
+  monitor, MPX pass-through) replaces the grid of channel checkboxes with a
+  **Channels** menu of consecutive pairs: 1-2, 3-4, ... 15-16 on a 16-channel
+  interface. Left is the first channel of the pair. A one-channel device
+  offers mono on channel 1. The INI keys are unchanged: a mono channel or a
+  non-adjacent pair set there (`3`, `1,4`) still works and shows in the menu
+  marked "from settings". `ChannelPair.stereoPairs(channelCount:)` and
+  `rangeLabel` build the menu and are pinned by `ChannelPairTests`.
+- **The app no longer burns CPU on things nobody is looking at.** The GUI
+  refreshes at 4 Hz while the engine is stopped or nothing showing live values
+  is on screen; at full rate (30 Hz, 20 Hz on Intel) only while the app is in
+  front with a live view visible, and at 20 Hz (12 Hz) while a live view is
+  visible behind another app. Detached monitoring windows count only while
+  they are actually on screen. Scopes and the MPX / audio spectrum FFTs run
+  only while their window is visible (the Monitoring page draws neither, but
+  computed both), and the audio spectrum converts only the bins it displays.
+  Unchanged telemetry values no longer re-render the views. Measured on an
+  M1 Pro, release build: engine stopped 20-24 % of a core -> 0-4 %, engine
+  running 32 % -> 28 %. The web dashboard's meter stream drops to 2 frames a
+  second while the engine is stopped, the dashboard pauses its stream and
+  polling while its tab is hidden, and `/api/telemetry` reuses one FFT setup.
+- **Peak meters no longer lose peaks.** On macOS the GUI, every
+  `/api/meters/stream` client and the headless status tick reset one shared
+  set of pending peaks, so each stole peaks from the others; each now reads
+  its own (`MultiReaderPeakAccumulator`, lock-free on the audio thread).
+  On Linux the published peak was overwritten every period instead of held
+  until read, and dropped when the try-lock was contended.
+- **The render thread uses about 38 % less CPU, output bit-identical.** On
+  an Intel i7-1355U (Linux, 192 kHz, default chain) the chain went from
+  20.6 % to 12.8 % of one core; on an M1 Pro from about 23.7 % to 16.1 %
+  (measured under load). Every benchmark configuration hashes identical and
+  `--verify --baseline-strict` passes on both platforms. Four changes:
+  release builds skip Swift's dynamic exclusivity checks (about 13 % of
+  render time went to `swift_beginAccess` / `swift_endAccess`; static checks
+  and debug builds keep them); Advanced Dynamics no longer copies its state
+  arrays on every 48 kHz sample, and the RDS coder reference is a `let`; the
+  multiband FIR splitters skip their zero-padded kernel ends and the
+  composite bandwidth FIR runs one channel instead of two; the composite
+  clipper skips its tanh batch and guard FIR while nothing is over the
+  threshold.
+- docs: removed the documents whose work is done -- the five stage reviews
+  (Advanced Dynamics, Format Profiles, HF Limiter, PrimeBass, SSB Stereo),
+  the 0.65 audit handoff, the September branch review and a research note.
+  Their fixes are in this changelog and `docs/ARCHITECTURE.md`, the open
+  items in `docs/project-roadmap.md`, the testing traps in `AGENTS.md`, and
+  the AES67 / Dante input note in the operator guide. The files remain in git
+  history.
+- The listening monitor's player state is locked: unplugging the monitor
+  device stopped the player from the main thread while the engine could be
+  reconfiguring it on its own thread. This was also the last Swift 6
+  concurrency warning in the build.
+- **BS.412 no longer mutes the audio when it is switched on.** The guard
+  inherited the minute it had only been watching; on dense programme (Advanced
+  Dynamics, the default) that minute was over the ceiling, and the only way to
+  pay it back was silence until it aged out: the composite fell to the pilot
+  alone for up to 60 s. The same happened when the ceiling was lowered live.
+  The guard now forgives history it did not control and the rider takes the
+  audio straight to the ceiling; every window wholly after the switch is still
+  held at or below it.
+- docs: the five October 2026 audit documents (`review-*-2026-10.md`) are
+  removed now that their findings are fixed; the UI rules they proposed live
+  in `docs/ui-style-guide.md` and the open remainder in
+  `docs/project-roadmap.md` ("Audit remainders").
+- **All strict baselines recaptured (2026-10-16)** after this round's
+  deliberate chain changes: `default`, `presets`, `long`, `receiver` on macOS
+  and `default-linux-x86_64` in the `swift:6.4-noble` container. Before the
+  recapture every physical gate passed on its own thresholds except
+  `--verify-advanced-dynamics` on bass_dense (a classic-chain bound); each strict round-trip passes.
+- **Multiband Stereo Link is a real link amount** (`multiband_link_strength`):
+  0 compresses each channel on its own, 1 links them fully (image exact).
+  Before, any value above 0 linked fully and nothing was shared across bands
+  as the tooltip claimed. The default and every multiband preset are 1.0
+  (was 0.52, which already behaved as fully linked).
+- The low-latency (IIR) multiband crossovers are allpass-compensated and sum
+  flat (-0.81 dB at 116 Hz before); the classic band limiters hold one period
+  of their band's lower crossover, re-derived on a crossover change.
+- With the dual-rate domain off, the FIR band splitters (multiband and
+  Advanced Dynamics) may use up to 4097 taps above 96 kHz so the lowest
+  crossover keeps its designed transition (band 1 at 160 Hz: -19.7 to
+  -44.6 dB). Cost on hikari at 192 kHz: 75 % to 96 % of real time in that
+  non-default configuration; the default dual-rate path is unchanged.
+- Advanced Dynamics creeps to target inside its hold window, so its steady
+  state no longer depends on history (7.5 vs 10.5 dB before, 9.0 vs 9.1 now).
+- Speech / Talk final drive is 4.3 dB (was 4.5) to keep the hi-hat SINAD gate
+  with the leveller now reaching its target.
+- The receiver gate measures the composite clipper's guard depth with the
+  look-ahead off (it took all the overdrive and left nothing to cancel):
+  pilot 30 dB, RDS 31 dB. `setSampleRate` re-derives the dual-rate factor.
+- **Two real-time bugs in the input ring, found behind a flaky test.** On
+  overflow the producer could move the read cursor backwards and the render
+  thread played up to a ring's worth of frames twice; and the sample arrays,
+  written from two threads through copy-on-write buffers, could be
+  reallocated under the reader (a crash under load, 4 of 30 stress runs).
+  The ring now uses raw storage allocated once, a forward-only trim, and a
+  write claim so torn reads are always counted. The same class carries the
+  monitor rings, `RingBufferPlayer` and the Meter. Stress: 40 of 40 runs pass
+  at load 16 (7 of 30 failed before).
+- The wall-clock performance test measures thread CPU time, and the output
+  wiring (deviation scale, line trim, DAC peak, monitor seed) lives in pure
+  functions both engines call, so their tests can fail. `HeadroomReadout`'s
+  `bs412Budget` is `compositeBudget` internally.
+- **FM, HD and AM Output follow their curves at any device rate.** The 15.3 kHz
+  programme Butterworth drooped more the higher the rate it ran at: FM Output
+  was 0.47 dB low at 14 kHz at 48 kHz and 1.24 dB low at 192 kHz, AM Output
+  0.76 dB low at 9 kHz. In the processed-audio modes the linear-phase encoder
+  FIR (1 kHz transition) is now the only band-limit: within 0.01 dB of the
+  pre-emphasis curve, NRSC-1 or flat up to 14 kHz (9 kHz for AM), the 15 kHz
+  limit unchanged, about 0.9 ms more latency. With the dual-rate boundary off,
+  the composite runs the 48 kHz lowpass design at the full rate, so it now
+  matches the boundary-on composite exactly.
+- **Levelling fixes**:
+  - The downward expander ratio is a true 1:r (2.0 acted as 1:3; 1.0 still
+    expanded). Existing settings are half as strong as before.
+  - The wideband AGC reads true power: a sine read 2.3 dB hot and noise
+    4.7 dB hot, so tonal programme landed louder than noise-like programme at
+    the same target. Tonal or dense programme now lands up to 2 dB louder
+    than before; lower `wideband_agc_target_db` by about 2 dB to keep the old
+    loudness on the classic chain. Inside its 3 dB window the gain now creeps
+    to target (10x the release time) instead of freezing anywhere within it,
+    so the same input no longer ends 4.5 dB apart depending on history.
+  - The band limiters (classic and Advanced Dynamics) hold one period of the
+    band's lowest frequency: 3rd harmonic on a limited 60 Hz band -35 dB to
+    below -140 dB, and no 0.27 dB overshoot.
+  - Advanced Dynamics: zero-mean tone correction, partial (0.3) pre-emphasis
+    weighting with a 100 ms level smoother; every `--verify` level bound now
+    passes with 58-66 dB of 10 kHz separation. `--verify-advanced-dynamics`
+    still exceeds its classic-chain bound on bass_dense (7.1 dB vs 6.0); see `docs/project-roadmap.md` ("Audit remainders").
+  - New flat-summing IIR monitor crossovers and an honest L/R link helper are
+    in place; their wiring into the generator follows.
+- **Tests that could not fail now can**:
+  every strengthened test was shown to fail under a mutation of the bug it
+  guards (35 of 38 mutations caught). BS.412 enforcement through the generator,
+  the composite clipper's stereo guard above its knee, pilot alignment in the
+  separation tests, the dual-rate HF response below the limiters, mode gating
+  of RDS and SSB, the pre-encode look-ahead (stored goldens; recapture them on a
+  deliberate limiter change), the denormal guard, the ring buffer under two
+  threads and the PLL recovery are now real tests. New coverage for the
+  parametric EQ, input HPF, HF trim, stereo-image protection, encoder HF guard,
+  mono bass and the expander. The engine now builds the RDS coder disabled
+  outside MPX Output, as the live path already did.
+- **Verifier verdicts:** the exit code is the strongest finding (a TIGHT no
+  longer masks a WARN), the worst 4x true peak counts (above 0 dBFS TIGHT,
+  above +0.25 dBFS WARN), `--baseline-strict` fails when the baseline is
+  missing or unreadable, and the multiband-coupling gate's wall-time cost ratio
+  is a note, not a TIGHT. Benchmarks and the HF response report are opt-in
+  (`MPXPRIME_BENCH`, `MPXPRIME_HF_RESPONSE`); `DSPThroughputTests` runs
+  serialised.
+- **Encoder, input path and RDS**:
+  the input ring resamples with a 32-tap windowed sinc instead of a cubic
+  that clamped taps at every block edge (-45 dBc products) and lost 1.2 dB at
+  15 kHz on a 48 kHz input; the transport field reads `adaptive-sinc`.
+  Stereo and the pilot switch off below a 111 kHz render rate and RDS below
+  118.8 kHz, with a routing note on macOS and Linux (at 96 kHz stereo folded
+  back into a false tone). `rds_level` is true kHz at any deviation and
+  referenced to the all-zeros stream (it read 1.33 kHz at 50 kHz deviation);
+  the RDS shaping filters scale with the rate (384 kHz was 37 dB dirtier), and
+  an overlap-add tap no longer arrives a buffer late. ALSA 16-bit output is
+  rounded with TPDF dither. `ps_frame_seconds` is clamped to 0.5-30 s.
+- **Mono bass is a real highpass on the side.** It was `side - LP2(side)`:
+  side bass only 4 dB down at 60 Hz and boosted 1.8 dB at 140 Hz. It is now a
+  linear-phase complementary split (side -33 dB at 60 Hz, flat sum, mid
+  polarity intact), at about 8 ms of latency with a 140 Hz corner.
+- The `multiband_low_hz` / `multiband_high_hz` keys are removed: no DSP read
+  them (the crossovers are `multiband_x1..x4_hz`). An INI that still carries
+  them loads as before; unknown keys are ignored and dropped on the next save.
+- **Peak control and the final stage, reviewed and fixed** (F1-F14):
+  - Composite Deviation now caps the whole multiplex peak: at 50 kHz the
+    worst verifier peak is 47 kHz (it was 71 kHz).
+  - The pilot / RDS reservation is the nominal peak of each service on air,
+    so the total stays inside the budget at every allowed pilot and RDS
+    setting (pilot 12 % with RDS 7.5 kHz overshot to 75 kHz and clipped
+    pilot and RDS). Audio is about 0.3 dB lower at the defaults.
+  - The composite clipper's guard bands are one coherent linear-phase FIR
+    (audio, pilot, stereo, RDS); they no longer amplify products next to
+    the bands (+1.9 dB before) and 10 kHz separation reads 98 dB. Its
+    upsampling is a 2x Kaiser FIR then Lagrange (image -21 to -44 dB), the
+    bypass is delay-exact, and the look-ahead reaches full depth.
+  - The distortion-cancelled clipper never adds distortion (it added up to
+    +4.3 dB at 1.6 kHz); the final limiter and the HD / AM true-peak guard
+    ramp their gain over the look-ahead instead of stepping (1.5 dB in one
+    sample before); FM Output maps the limiter ceiling to full scale and
+    runs the true-peak guard, so dense programme no longer hard-clips; the
+    HF limiter gates each channel on its own, so bass in one channel no
+    longer ducks the other channel's treble; the pre-encode limiter uses a
+    4x Kaiser interpolator (flat to 0.001 dB); the bass clipper's split runs
+    in Double precision. Out-of-band energy above 67 kHz is 5-18 dB lower on
+    every verifier scenario.
+- **The verification config runs the shipped clipper look-ahead (2 ms).**
+  With the guards now coherent, a 0 ms look-ahead left all stereo overshoot
+  to the final limiter (5.6 dB), which is not what ships.
+- **Layout and naming** (`docs/ui-style-guide.md`): one name table
+  for every page, card and flow-strip chip (app and web dashboard); British
+  English throughout; Sound groups in signal order (Input, Levelling, EQ,
+  Dynamics, Bass, Peak Control, Transmission); the Format Profile page and
+  the Long PS page are merged into Overview and Identity; the status bar
+  shows the operating mode by name with separate Monitor and Bypassed chips
+  and a clickable "Restart to Apply"; restart badges are derived from the
+  engine on every control (several were wrong or missing); one meter
+  family; thresholds in dBFS and amounts in percent; 2-band multiband is
+  gone (3 or 5 bands); the Inspector pane is removed (clipper oversampling
+  is under Composite Clipper > Advanced); RDS page resets apply live except
+  Subcarrier. No INI key changed.
+- **RDS version-B groups are now standard.** The C' offset word was 0x1E0 in
+  the encoder, the Meter's decoder and the test helper; IEC 62106 Annex A
+  gives 0x350. All three agreed, so every round trip passed while real
+  receivers rejected block 3 of every 0B / 2B group. A new test checks an
+  encoded 0B group against the standard's literal offsets, not the code's
+  own constants.
+- **Advanced Dynamics is the default levelling, with a new gain law.** One
+  wideband gain carries the loudness; each band adds a slow correction of
+  at most +3 / -3 dB (-6 dB, 5 ms on the two top bands) for a short-term
+  departure from its own long-term share of the programme. The old law
+  levelled every band to an absolute target, re-equalising programme (+10
+  dB on one band) and narrowing dense-bass stereo (correlation 0.90 to
+  0.74); now band gains stay within 0.5 dB on steady programme and the image
+  is unchanged. Also fixed: an asymmetric power average that read steady
+  tones 1.8 dB hot, a peak blend in the loudness reading, and a hold window
+  that stopped lifts a full window short (hysteresis now). The Bass / Mid /
+  Treble balance is a tilt relative to the programme (default 0 / 0 / 0,
+  range +/-6 dB). Every Format Profile turns it on with its AGC target less
+  2 dB and a density from its multiband intensity. The loudness reading is
+  weighted with the station's pre-emphasis, so treble-heavy programme is not
+  lifted into the composite clipper (unweighted, 10 kHz separation fell from
+  41 to 22 dB; weighted it reads 62-96 dB). Four level-change bounds set on
+  the classic chain are exceeded;
+  the strict baselines were recaptured at the end of this round (below).
+- **FM Output feeds a stereo coder at its reference level.** The Output
+  Level reset arrow gives -9 dB in FM Output (the PROFline SFY's -9 dBFS
+  AES/EBU reference, +6 dBu on a +15 dBu interface); the Output card and the
+  operator guide explain the alignment, the dBFS table per interface
+  standard, and the coder settings (its pre-emphasis off, its limiter above
+  the target).
+- **Audio Spectrum has a Pre / Post switch** (input as it arrives, or the
+  processed audio), both at about 12 Hz resolution, and opens at a size that
+  fits its two spectra (900 x 640). The **Levels** window shows only what
+  levels are set by -- input, output and deviation -- and opens at 400 x 500;
+  both windows use new frame-autosave names so an old cramped frame is not
+  restored. The Monitoring card, the Scopes window and the Levels output
+  meter are titled with the operating mode ("FM Output", not "Output" or
+  "MPX").
+- **Every slider resets to a sane value.** A reset arrow beside the readout
+  (visible only away from the reset value) or a double-click on the name
+  restores the value the active Format Profile sets: Final Drive goes back
+  to 8 dB on Music - Loud, 4 dB on Music - Clean. Controls no profile sets,
+  including the calibration levels (Input Gain, Output Level, Line Output,
+  Monitor Level, all 0 dB), the HD true-peak ceiling (-1 dBTP) and the final
+  clipper drive (6 dB), reset to the shipped default. A stage tab's Reset now
+  uses the same profile values instead of the shipped ones. An audit of all
+  99 sliders found every default inside its range; the shipped defaults are
+  exactly Music - Clean, pinned by `ControlResetValueTests`.
+- **The Levels window uses the ladder meters.** Input (Pre / Post, shared
+  with the Audio I/O Input card), AGC output and output are Prime Mixer
+  ladders with a held-peak readout. The output is a left / right pair in
+  FM, HD and AM Output (it was one bar showing the louder channel); MPX
+  Output keeps one composite bar and gets a deviation ladder (0-100 kHz,
+  red at `mpx_deviation_khz`, over-deviation latch 2 % above it so a
+  clipper holding exactly at the limit does not light it). The engine now
+  publishes the output's left and right peaks separately.
+- **Pre / Post input meters on the Audio I/O Input card.** The two meters
+  are now Prime Mixer's ladder meter (60 dB LED scale, 24 dB/s fall-back,
+  1.5 s peak hold, 2 s clip latch), drawn in one Canvas, with a Pre / Post
+  switch: Pre is the device's own level, Post the level after Input Gain,
+  which the -12 to -6 dBFS aim refers to. Post is the default; the choice is
+  remembered per user. Input Gain is the chain's first operation, so Post is
+  computed exactly from the same capture peaks. `LadderMeterBallistics`
+  (MPXPrimeCore) carries the ballistics, pinned by `LadderMeterBallisticsTests`.
+- **PrimeBass sliders end where the stage stops helping.** A new
+  `--sweep-primebass` measures each control alone (steady tone, plucked bass
+  line, real music through Music - Loud). Amount is now 0..0.5 (from 0..1:
+  above 0.5 real music gained 0.4 dB of harmonic layer while the peak guard
+  pumped the fundamental), Harmonics 0..0.5 (above it the 3rd harmonic
+  dominates, the hollow tone), Frequency 40..120 Hz (from 180: above 120 Hz
+  midrange spill rises 17 dB), Drive up to 1.5 (from 2.0: only spill above
+  it), Subharmonics 0..0.4 (from 1: the sub gained 2 dB while the series
+  lost 6). Density is unchanged. Studio sliders, the dashboard schema and the
+  config clamp agree; a saved value outside the range is pulled in on load.
+  Every preset was already inside, so no baseline moves.
+- **Interfaces with more than two channels are usable.** Studio's input,
+  transmitter output and Monitor, and the Meter's capture, Monitor and MPX
+  pass-through, each pick one or two device channels instead of always
+  channels 1 and 2: feed the exciter from outputs 7 and 8 of an 8-out box,
+  take the programme from inputs 3 and 4. New `[INTERFACES]` keys
+  `input_channels`, `output_channels` (restart-class) and `monitor_channels`
+  (live), one-based, empty = 1,2; the Meter takes `--channels` and
+  `--monitor-channels`. A pair the device lacks falls back to 1, 2 with a
+  status note. The Monitor may now share the transmitter's interface on
+  other channels; overlapping channels are still refused. The device
+  pickers are replaced by Prime Mixer's selector (device menu with channel
+  counts and rate, channel checkbox grid), and a **Devices** button lists
+  every interface with transport, channels, rate, bit depth and buffer, with
+  a Rescan. Both apps refresh their device lists on hot-plug. The web
+  dashboard shows channel counts and has the three channel fields. The
+  1, 2 render path is unchanged, so the strict baselines do not move.
+  Linux reads the keys and ignores them (use an ALSA `route` PCM).
+- **The next release is 0.65, not 0.60** (renamed 2026-10-11, before anything
+  shipped; "0.60" in older commit messages means this release). **One
+  version string**: `Sources/MPXPrimeCore/Version.swift` is the only copy.
+  `AppConfig.appVersion` (which still said 0.50) and the Meter's About box
+  read it, `scripts/version.sh` prints it for the packagers (their version
+  argument is now optional) and the dashboard render check, and
+  `release.yml` refuses a tag that does not match it.
+- **The SwiftPM package moves from `macOS/` to the repo root, and the root
+  is bare.** The name stopped describing the package once the Linux
+  encoder, the deb and the Linux baseline built from it. `Package.swift`,
+  `Sources/`, `Tests/` and `Resources/` now sit at the root, `.build/` and
+  `dist/` follow, every `--package-path macOS` is gone, and the `CMPXTuner`
+  shims include `tuner/` one level up instead of two. The loose files went
+  to their own places: `dist-scripts/` is `scripts/dist/`, the sample INI
+  and the entitlements live in `Resources/`, and `Verification.ini` with
+  its baselines in `Tests/Verification/` (`--verify` finds both under the
+  current directory, so the gates still run from the repo root).
+- **`scripts/build-release.sh` no longer trusts hard-coded per-architecture
+  build paths.** With the Swift Build backend (Swift 6.4) both `--arch`
+  builds land in one `.build/out/Products/Release`, so the old
+  `.build/arm64-apple-macosx/release` path was either missing (fresh
+  checkout: `lipo` found nothing) or a stale binary from an older toolchain
+  (a September arm64 encoder went into the October DMG). The script now
+  asks SwiftPM for the output path after each build, copies the slice
+  aside, and refuses a slice whose architecture is not what its name says.
+- **Build scripts: all under `scripts/`, anchored to the repo root.** The
+  root `build-release.sh` / `build-deb.sh` moved to `scripts/` (the
+  workflows and BUILDING follow); the copies that were only moved still changed
+  to their own directory and built into `scripts/.build` and
+  `macOS/macOS`. New everyday entry points: `scripts/build.sh` (release by
+  default, `debug`, `--product`, `--clean`), `scripts/run.sh` (release build +
+  run, arguments passed through, `--debug` / `--no-build`) and
+  `scripts/test.sh`; they share `scripts/build-env.sh`, the one place
+  `DEVELOPER_DIR`, the Homebrew `PATH`, the module cache and `BUILD_JOBS` are
+  set, and all work from any directory.
+- CI: the four workflows move to `actions/checkout@v7`, `actions/upload-artifact@v7`
+  (one was still on v4) and `actions/setup-node@v7`; the runner had started
+  forcing the Node 20 actions onto Node 24 and annotating every run. No
+  `pull_request_target` or fork-PR flows here, so checkout v7's new
+  restriction does not apply.
+- **Format Profiles retuned against the published Orban, Omnia and Stereo
+  Tool structures**. Speech had the
+  slowest, weakest multiband in the catalogue (light intensity clamped its
+  high band to 1:1 with 400-640 ms releases) where every vendor's talk
+  preset is the fastest: now -14 / -13 / -12 dB at 1.8 / 1.7 / 1.5 with
+  140-220 ms releases, AGC -14. Classical rode with pop AGC range: a new
+  `classical` final-stage preset gives a gentle ride with at most 6 dB of
+  lift and a 3 s release, mono bass down to 90 Hz. Clean bass-clips at the
+  defaults like every vendor structure. Loud gains a presence tilt (+1.5 dB
+  at 80 Hz, +1.0 dB at 3 kHz) and the band limiter. New **Music -- Dense**:
+  the top density tier that 0.45 folded away (dance multiband heavy, drive
+  9, PrimeBass, band limiter); the legacy `edm_dance` id migrates to it.
+  Every profile switches Advanced Dynamics off when applied; the AGC target
+  lives in the final-stage preset instead of being overridden; a fresh
+  install's defaults now equal Music -- Clean (drive 4, pre-encode 0.90,
+  AGC -16, composite look-ahead 2 ms). Baselines `default`, `presets` and
+  `long` recaptured (+0.24 dB composite GR from the pre-encode default on
+  the harness config); the Linux default baseline follows.
+- **"Apply recommended" on the Sound Overview, both front ends.** One click
+  re-applies the selected Format Profile's recommended stage settings through
+  the same path as loading the profile; devices, levels, operating mode,
+  control server and calibration stay untouched. With `Custom` selected the
+  button is disabled and says so. The dashboard posts the existing
+  `/api/presets` format-profile apply and re-reads the config; the render
+  check clicks it and asserts the one POST and the re-read; a GUI test pins
+  that drifted stage keys come back and installation keys do not move.
+- **`--verify-stereo-guard` proves the bass is never inverted or dropped.**
+  Two new columns on every guard-share row, plus a dedicated bass scenario
+  (50 + 80 Hz L/R pair, a 2 kHz left-only reference with a timing dip):
+  `BassPol`, the polarity of the decoded mono bass against the same chain
+  with the bass clipper off (+1.000 everywhere; a negated composite reads
+  -1.0 in the test's control), with the input-referenced `InPol` gated at
+  +0.5 because an IIR crossover rotates bass by 50-90 degrees and no
+  input-referenced bound near 1 is reachable; and `BassLoss`, the clipper's
+  own bass cost against the 2 kHz reference (0.02 dB; the -2.9 dB raw tilt
+  on Music -- Loud is the multiband's band balance, printed separately).
+  Stereo Tool once shipped a bass-protection stage that inverted the bass;
+  this is the Clipper campaign's proof we do not. Four unit tests.
+- **Advanced Dynamics: the attack law, the density law and band coupling
+  are fixed.** The reduce-side time constant was blended in the COEFFICIENT
+  domain between 30 ms and 30 us, so any jump more than about 14 dB past the
+  hold window slewed every band -- the 60 Hz band included -- within one
+  cycle (modulation splatter; no gate measured distortion so nobody saw it).
+  It is now blended in time with a floor of two band periods per band.
+  "Density" worked backwards: dense programme got the FASTEST release; it
+  now releases up to 2.5x slower on dense programme, as the manual said.
+  Each band is bounded to within 6 dB of its active neighbours (an empty
+  band constrains nobody); five per-band limiters run on the bands before
+  the sum, so leveled peaks no longer reach the clippers raw; a live
+  crossover change no longer snaps every band gain to unity; detector
+  windows scale with the band and the rest-state instantaneous term is gone. Eleven new tests pin all of it;
+  `--verify-advanced-dynamics` and `--verify-hf-transients` stay OK; the hat
+  cost versus AGC + Multiband is unchanged, so the default flip stays
+  blocked. AD is off in every baseline; none moved.
+- **PrimeBass rebuilt as a real missing-fundamental enhancer.** The old
+  stage could not do what it claimed: both waveshapers were odd-symmetric
+  (`x * |x|` included), so it never made a 2nd harmonic; a 6 dB/oct one-pole
+  let vocals and snare intermodulate with the bass; a per-sample input gate,
+  an allpass and an instantaneous delta limiter added buzz and smeared the
+  kick. Now: 24 dB/oct band-pass below F0,
+  envelope normalisation (the harmonic-to-fundamental ratio is level-invariant,
+  0.04 dB over 20 dB), an asymmetric device (`2 x^2` even plus a tanh odd
+  device with its linear term removed, so no fundamental leaks), 24 dB/oct
+  band-pass F0..5 F0, an envelope peak guard (+1.5 dB max) and a DC blocker;
+  the Werrbach transient burst stays, the octave divider is band-limited and
+  phase-held. Knobs keep their names: `amount` = series level, `harmonics` =
+  2nd-vs-odd balance, `drive` = odd hardness, `density` = Big Bottom's
+  inverse law on the harmonic layer. New gate `--verify-primebass` (in CI)
+  prints eleven metrics per profile with thresholds -- harmonic levels,
+  fundamental change, energy above 5 F0, DC, steps, peak growth, level
+  invariance, midrange intermodulation, 1 kHz pass-through, disabled
+  bit-identity -- and twelve unit tests pin the same. No baseline moved: no
+  shipped baseline enables PrimeBass.
+- **SSB Stereo keeps the lower sideband, always; the "opportunistic"
+  selector is gone.** It compared two candidates, `base + dsb - quad` and
+  `base + dsb + quad`, that are time-mirror images with identical envelopes,
+  so its 5 ms peak trackers chased sample-grid noise, the choice was random,
+  the composite-peak reclaim measured 0.00 dB, and the kept sideband wandered
+  between 23-38 kHz and 38-53 kHz with every 5 ms crossfade -- forfeiting
+  the narrower-spectrum benefit that is the point of SSB.
+  Now it is a fixed lower-sideband SSB/VSB encoder like Orban's and Stereo
+  Tool's. `--verify-ssb-stereo` pins the kept sideband (upper >= 40 dB
+  down), a decoder 38 kHz reference-error sweep (0 / 5 / 10 degrees: SSB on
+  decodes 27.2 / 21.2 dB at 1 kHz against 54 / 42 dB for DSB, on theory),
+  the 90-degree L/R composite-peak cost against tone-pair theory (+2.97 dB
+  measured, +3.01 theory at amount 1), and prints the reclaim as
+  informational instead of exiting TIGHT; the unit tests pin the sideband at
+  every frequency (raised from 15 to 40 dB), the gain sum and the constant
+  selection. Off path bit-identical.
+- **Linux: the INI serialiser compiles again under Swift 6.2.** The one-line
+  `mpxLines + [""] + rdsLines + ...` chain in `AppConfig.serialisedINI` made
+  the 6.2.4 Linux compiler give up ("unable to type-check this expression in
+  reasonable time") while Xcode's compiler accepted it; found by building the
+  tree in a `swift:6.2-noble` container. It is now built up in a loop. No
+  behaviour change.
+- **Levelling is a choice, not a toggle with ghosted leftovers.** The Sound
+  Overview page in both front ends now opens with one segmented choice,
+  `Levelling`: **AGC + Multiband** (the regular chain, with the per-band
+  Expander and Band Limiter inside the multiband stage) or **Advanced
+  Dynamics**. It is the same `advanced_dynamics_enabled` key, live-apply. The
+  pages of the engine not in use are hidden outright -- sidebar, Overview
+  grid, Monitoring signal chain, pill strip, settings search -- where they
+  used to stay on screen dimmed, behind a "bypassed" banner, four panes the
+  operator scanned past on every visit. The Advanced Dynamics page loses its
+  own enable toggle (the selector is the switch); the AdvDyn pill joins the
+  dashboard's chain strip. `LevellingEngine` in `StageApplicability.swift`
+  is the one table; `schema.json` `model.levelling` mirrors it and
+  `ControlSchemaTests` holds the two together; `check-webui.cjs` switches
+  engines from the page and asserts the sidebar and grid follow.
+- **Chain review, both front ends.** The Expander moves from the Input group
+  to Dynamics, next to the Band Limiter: both run per band inside the
+  multiband stage, and the groups are meant to read in signal order. The
+  GUI's Sound Overview grid gains the cards the dashboard already had -- HF
+  Limiter and Stereo Coder -- and gates its composite cards by the
+  `ChainFeature` table instead of a separate processed-audio flag. The
+  Advanced Dynamics card carries no enable switch in either front end; the
+  Levelling choice is the switch. Mode gating itself checked out: every key
+  the table gates is hidden by both front ends and inert in the engine, now
+  including the HF Clipper.
+- **The HF Clipper is gone.** A waveshaper on the pre-emphasised cymbal band,
+  off in every profile since 0.45 because it distorts the band it controls,
+  it cost a page in both front ends, four INI keys, schema entries, tests and
+  an engine stage for a documented last resort. Removed from the engine, the
+  config, the Levelling-independent `ChainFeature` table, both front ends,
+  the presets, the verifiers and the tests; the GUI page and the dashboard
+  page are now plainly "HF Limiter". Old INIs that still carry `hf_clipper_*`
+  keys load fine (unknown keys are ignored) and lose them on the next save; a
+  REST PATCH of one reports `unchanged`, like any unknown key (pinned by a
+  test). The engine now also forces Mono Bass and the multiband stereo Link
+  off wherever the programme is mono instead of relying on the mono chain
+  making them identities, and changing the operating mode in the GUI snaps a
+  now-hidden page back to the Processing overview.
+- **The HF Limiter no longer flutters the highs on a kick, and sits where
+  Orban puts it.** Its bass-immunity guard keyed on 20 % of the PEAK rather
+  than on the excess, so a loud kick with a quiet hat drove the gain to the
+  12 dB floor on every crest -- at 60 Hz the release never completed between
+  crests -- the exact "kick flutters the highs" the manual said could not
+  happen; and its -2 dB threshold sat below the Audio Limiter's, so it acted
+  as a general HF compressor. Now a programme
+  gate on two 15 ms peak-hold envelopes opens the stage only when the boost
+  covers the excess ("only start a ride you can finish"); the gain law uses
+  the signed boost projection, lands exactly on the threshold, never removes
+  more than the excess and never raises a peak; the threshold sits 0.5 dB
+  ABOVE each profile's Audio Limiter threshold (Music -- Clean -0.4 dB, Loud
+  -0.9, Speech -0.6, Classical -0.2); and a new `hf_limiter_top_threshold_db`
+  (Advanced, default 1 dB tighter) gives the band above 13 kHz its own
+  ceiling through a detector-side slide, one gain on the whole boost, zero
+  latency. Eighteen tests pin it; `--verify-hf-transients` gains the stage's
+  own HF loss (0.3-0.7 dB on the shipped profiles, bound 1.0 / 1.5 dB), its
+  gain ripple on a sustained wash (bound 0.3 dB) and its average GR, and
+  hat / ride SINAD are unchanged to 0.1 dB. All four macOS baselines
+  recaptured: the hard-panned HF scenario keeps 0.2 dB more side energy
+  (less HF ducking), 0.1 dB of peak work moves to the Audio Limiter and the
+  safety stage, receiver decode unchanged; the Linux default baseline must be
+  recaptured on a Linux box.
+- `scripts/run-build-web.sh` prints what you need to log in before it runs:
+  the dashboard URL, the config path and the API key the dashboard will ask
+  for (from that config's `[CONTROL]` section, or a note that the loopback
+  bind needs none). It also refuses to build or start when something already
+  listens on the control port, naming the process. And it selects the full
+  Xcode toolchain on macOS (`DEVELOPER_DIR`, default `/Applications/Xcode.app`),
+  failing with a clear message when it is missing: the Command Line Tools
+  `swift` cannot load the SwiftUI macro plugin, so every `@State` property
+  failed to compile.
+- Two GUI help texts (the restart badge and the restart-required list) no
+  longer name the pilot level among the restart-required settings; it has
+  been live-apply since it joined `RuntimeConfig`. Sum / diff levels, mono
+  mode, pre-emphasis and program lowpass stay restart-class.
+- **Advanced Dynamics' transient hold decays by time, not by sample.** The
+  leveler kept a flat 0.94 per sample after the multiband compressor got its
+  time constant: 0.34 ms at the 48 kHz audio domain, 0.08 ms with the
+  dual-rate boundary off. The coefficient is now derived per rate and is
+  exactly 0.94 at 48 kHz, so the armed corpus gates see the same numbers.
+- **The Meter treats a repaired input sample as a hole, and says so.** The
+  0.65 ingress guard replaced NaN / Inf with silence but every readout kept
+  reading as valid across the gap. Now the repaired block stays out of the
+  exceedance and histogram statistics, the deviation peaks read `--` while
+  the hole is inside their window and MPX power (and its compliance max)
+  while it is inside the BS.412 window, and a red **BAD INPUT** badge with
+  the count stays up until Reset Peaks, like SAMPLES DROPPED.
+- **The Mac dashboard shows Bad Input in every operating mode.** The 0.65
+  counter had been added to the Headroom card's composite rows only, so FM,
+  HD and AM operators could not see a fault the ingress guard counts in
+  every mode (the web dashboard already showed it everywhere). The card's
+  rows now come from one per-mode table shared with a test.
+- **A migration that could not be saved says so.** Both runtimes announced
+  "Saved." before writing the migrated INI and discarded the write's error;
+  an unwritable file left the station on the migrated settings while the
+  operator was told the file matched. One helper now writes once and words
+  success and failure, with the failure path under test.
+- **The band waveshaper's vector path is tested for real.** The batched test
+  compared the scalar curve with itself; it now runs the platform's
+  `vvtanhf` on eight distinct mixed-sign lanes, as the clippers do, against
+  the curve written out independently in Double.
+- **BS.412 wiring tests that actually fail when the wiring goes.** A review
+  removed the live reserve refresh from the generator and every BS.412 test
+  stayed green: the tests written for that fix called the guard directly.
+  Two generator-level tests now read the guard's reserve and the rider's and
+  guard's history through the generator, and each was shown to fail with
+  its wiring removed. The first of them found one more: a freshly built
+  generator reserved nothing for the subcarriers until its first live edit,
+  because the guard was configured before the pilot and RDS support flags
+  were set. Both engines re-apply the runtime config right after start, so
+  the air chain was right; offline renders with the limiter enabled were
+  not. The reserve now follows the flags.
+- **The deviation readout is right at every deviation setting.** The
+  composite is built so that amplitude 1.0 is 75 kHz whatever
+  `mpx_deviation_khz` says (that is what keeps pilot injection at 9 % of the
+  chosen deviation), but both engines multiplied the metered peak by the
+  configured deviation instead of 75. Exact at the default, so nobody saw it;
+  at a 50 kHz setting full modulation read 33 kHz and the MOD percentage
+  67 %. One shared formula (`DeviationReadout`) now feeds the GUI meter,
+  `/api/meters`, the dashboard and the verifier's kHz columns and baseline
+  records (which carried the same multiply; Verification.ini says 75, so no
+  stored number moves), pinned through the generator at 50 and 75 kHz. The
+  Test Tone card's prediction and `scripts/smoke-live.sh` were
+  already in the physical convention and now agree with the meter at any
+  setting.
+- **The 0.65 BS.412 key migration is saved and announced.** An INI still
+  carrying `bs412_threshold_db` / `bs412_window_seconds` was read onto the
+  standard's 0.0 dBr ceiling but the file kept the old keys and nothing said
+  so (found on the Linux rig's first 0.65 deploy). Both runtimes now report
+  the migration once and rewrite the INI, so the file matches what runs.
+- **Now Playing scripts launch on Linux.** The poller hard-coded `/bin/zsh`,
+  which stock Ubuntu does not ship, so every script failed to launch there.
+  An executable script now runs directly (its `#!` line decides), a plain
+  file runs through the first of zsh / bash / sh present, a missing path is
+  reported as `script not found: <path>`, and a poll result is logged when it
+  changes rather than every poll (the rig's journal had 186 identical
+  "launch failed" lines in 25 minutes).
+- **The sidebar is organised by what you are doing, not by how the engine is
+  built (phase 1 of the taxonomy plan).** Five sections in both front ends --
+  **On Air**, **Setup** (Audio I/O and Test Tone moved here from "Tools"),
+  **Sound** (the stages grouped Input / Levelling / Tone / Dynamics / Peak
+  control / Transmission, in signal order, foldable), **RDS**, **Presets and
+  System** -- from one Swift table that the dashboard's `schema.json` mirrors
+  and a test holds equal. Dashboard sections collapse and remember it, every
+  page shows its breadcrumb, the GUI's Go menu is Cmd-1..5 in sidebar order.
+  No setting moved.
+- **Three engine names left the labels (phase 2 of the taxonomy plan).**
+  `Core` is **Basics** (bypass, mono, gains, filters, pre-emphasis), `MB
+  Limiter` is **Band Limiter**, `Final Stage` is **Loudness and Output** --
+  in the GUI, the dashboard, the signal-chain strip and the manuals. INI keys
+  are unchanged; established broadcast terms (AGC, Parametric EQ, BS.412,
+  Composite Clipper, Pre-emphasis) stay.
+- **Every stage page folds its set-once controls away (phase 3 of the
+  taxonomy plan).** Time constants, topology choices and subcarrier
+  protections sit in a collapsed **Advanced** card on the dashboard and an
+  "Advanced" group in the GUI -- the same 51 controls on both, named once in
+  `AdvancedControls` and pinned by a test. What stays in view is what you move
+  while listening: enables, thresholds, ratios, ceilings, drives, targets.
+  Multiband goes from 20 visible controls to 9; AGC from 9 to 2.
+- **Finding things (phase 4 of the taxonomy plan).** A **Search settings**
+  box in the dashboard sidebar finds any control by label or setting name in
+  the current mode and jumps to it -- page, Advanced card opened, control
+  highlighted. The landing page offers task shortcuts (set my levels, change
+  the station text, load a preset, switch operating mode), the Sound
+  overview carries the clickable signal-chain strip, and on a phone the
+  sidebar becomes a drawer behind a menu button while every slider gains a
+  numeric field for exact values. `check-webui` drives all of it. The GUI
+  sidebar gains a search field that filters pages by label, group or section.
+- **Fixed: three stages ran four times off after a live edit.** The chain is
+  dual-rate -- the audio stages run at 48 kHz inside a 192 kHz composite
+  engine -- and the wideband AGC, the phase rotator and the bass clipper were
+  reconfigured at the composite rate when a setting changed on a running
+  encoder. Their attack and release times came out four times too slow and
+  their corner frequencies four times too low, and stayed that way until the
+  transport was restarted. Starting the engine was always correct, which is
+  why no offline gate saw it. Every call site now names its rate domain, and
+  a new test renders a live-edited engine against a restarted one and demands
+  identical samples. Found by an external audit of the 0.50 chain; the
+  composite output of a settled configuration does not move (strict baselines
+  unchanged).
+
+- **Fixed: one bad input sample could take the station 8 dB quiet for good.**
+  A NaN or infinity reaching the encoder -- from a misbehaving plug-in, a
+  driver glitch or a corrupt file -- lodged in the chain's filters and
+  envelope detectors, which have no way to flush one. Measured on the full
+  chain: a 64-sample burst left the composite 8.2 dB down and the processed
+  audio 12 dB down, still exactly that far down eight seconds later, with no
+  error anywhere and the output otherwise looking normal. Only restarting
+  the transport cleared it. The encoder and the Meter now replace a
+  non-finite input sample with silence at every point where samples they did
+  not generate enter the processing, count what they replaced, and pass
+  every finite value through untouched, hot ones included. Costs nothing
+  measurable (chain cost unchanged at 17.2 % on the reference machine).
+
+- **Fixed: the multiband's transient-aware attack was stuck at maximum.**
+  The detector holds a "how percussive was that" value for 10 ms after a
+  transient so the attack stays stretched across it, but the value it held
+  was the largest one ever seen rather than the one belonging to the
+  transient in hand -- and because the loudness detector starts from zero,
+  that maximum saturates within a few samples of the engine starting,
+  whatever is playing. Every hold since then opened at the ceiling, so the
+  stage stopped following the music. The hold now decays, like the one in
+  Advanced Dynamics always has, and is expressed as a time constant so it
+  behaves the same at every engine rate. Affects
+  `multiband_transient_aware_attack_enabled`, which is off by default, so
+  nothing on air changes unless you had turned it on.
+
+- **Fixed: moving the monitor level was a data race, and now it fades.** The
+  monitor's level was written straight into the conditioner from the control
+  side while the audio thread was using it for every block. The level now
+  travels as an atomic that the audio thread picks up at its next block, and
+  it ramps over 10 ms instead of stepping, so dragging the monitor fader no
+  longer clicks. Engine start still comes up at the configured level at once.
+  The metering on/off flag became an atomic for the same reason, and the
+  monitor's status message is now behind a lock -- it was written by the
+  device watcher and read by the web dashboard's status endpoint, and an
+  unsynchronised read of a string being replaced can crash rather than merely
+  read something stale. None of this touches the transmitter feed.
+
+- **Fixed: AM Output used the FM pre-emphasis curve, not the AM one.** The
+  two standards are both named for 75 microseconds, so the wrong one looked
+  right everywhere: NRSC-1 for AM levels off above about 8.7 kHz, while the
+  FM curve keeps rising. AM was going out 3.7 dB too bright at 10 kHz and
+  worse above that, the Monitor took the wrong curve back out, and the
+  calibration tone was compensated with it too. Which standard a stage is on
+  is now named in the code rather than inferred from a number, so AM cannot
+  silently ride the FM network again. The test that was meant to cover this
+  asserted the FM figures and called them NRSC; it now checks the standard's
+  own table and fails if the curves are ever confused. FM is untouched, bit
+  for bit.
+
+- **Fixed: the BS.412 power limiter did not implement BS.412.** The
+  Recommendation caps the average power of the *whole* transmitted multiplex,
+  pilot and RDS included, over any 60 seconds, measured against a defined
+  reference. The old stage measured the audio alone before the pilot and RDS
+  were added, used a threshold scale that was not the standard's (its shipped
+  default sat about 5 dB *above* the legal limit), let the window be set
+  anywhere from 30 to 90 seconds, stopped measuring whenever it was switched
+  off, and threw away its accumulated history whenever a setting changed.
+  Stations relying on it for compliance were not getting it. It now measures
+  the finished signal, in the standard's own units, over a fixed 60 seconds,
+  continuously. The single control is a **Ceiling in dBr**, where 0 dBr is
+  the legal limit; the limiter reduces the audio only and reports a
+  configuration it cannot meet rather than quietly attenuating the pilot.
+  Settling now takes a few minutes by design, because the quantity is a
+  one-minute average. Existing configurations adopt the standard's ceiling on
+  upgrade. The stage remains off by default.
+- **Fixed: a monitor set to a non-default level could fade to full level at
+  startup.** Introduced by the monitor-level change above and caught in
+  review: the level published to the audio thread started at unity instead of
+  the configured value, so the first block ramped away from it. On the
+  headless Mac encoder, which does not re-apply settings after starting, it
+  then stayed there.
+
+- **BS.412 now holds every minute, not just the settled ones.** The 0.65
+  rebuild measured the right thing but its limiter only got there eventually:
+  from a cold start a steady signal 6 dB over spent most of its first minute
+  above the ceiling, then dipped below and came back across it while settling.
+  Since the rule is about *any* 60 seconds, that was still not compliance.
+  There are now two stages. A transparent gain ride looks at the audio as it
+  arrives rather than at a measurement that already includes its own
+  correction, so it reacts in the right direction immediately and cannot
+  hunt. Behind it sits an exact energy budget that simply cannot let any
+  60-second window exceed the ceiling, including the first one and the ones
+  spanning a change of programme. In normal use the ride does the work and
+  the budget never intervenes.
+- **The encoder now shows when its input is broken.** A new **Bad Input**
+  readout on the Monitoring page of both the Mac app and the dashboard counts
+  the NaN or infinity samples the chain has had to replace with silence. It
+  reads `none` in normal operation. Anything else means whatever is feeding
+  the encoder is faulty, even though the processing itself carries on
+  unharmed.
+- **Fixed three BS.412 edge cases found in review.** Raising the pilot level
+  while the encoder was running left the limiter working from the old figure,
+  which allowed a completed minute to drift about half a dB over the ceiling.
+  Switching the limiter on after running with it off started it cold rather
+  than using the history it had been collecting, so it took a minute to
+  reach the right gain. And an isolated intervention was flagged for only
+  42 microseconds, far too briefly for the meters to ever show it.
+- **BS.412 tells you where it is.** New Monitoring readouts in both the Mac
+  app and the dashboard: **MPX Power** in dBr, showing `42 / 60 s` while the
+  first minute fills rather than a number nobody should trust yet, and
+  **BS.412 GR** for how hard the audio is being held down. It also says when
+  the pilot and RDS alone exceed the ceiling, which no amount of audio
+  reduction can fix.
+- **Fixed: the Test Tone used to vanish from the power measurement.** A
+  transmitted calibration tone is part of the signal you radiate, so it now
+  counts. The limiter still steps aside so the tone keeps its calibrated
+  level, and both front ends say `suspended (tone)` instead of showing a
+  compliant-looking reading.
+
+- **Fixed: the Bass Clipper and HF Clipper put a notch in every peak they
+  caught.** Their soft-clip curve had a step exactly at the threshold: a
+  peak that crossed it came out 24 percent lower at the crossing point than a
+  slightly smaller peak that did not, so louder in could mean quieter out,
+  and every kick landing a little over the threshold carried a notch in its
+  crest. Oversampling hid some of the damage but cannot fix a discontinuous
+  curve. Both clippers now bend smoothly into the ceiling over roughly the
+  last decibel. Measured through the real stage at the shipped settings,
+  distortion on a kick just over the threshold drops from -19.6 dB to
+  -34.4 dB, and the new curve is never worse than the old one at any level.
+  `Threshold` and `Drive` mean exactly what they did. Affects the Music -
+  Loud profile and installations still on the factory default; the other
+  profiles have the Bass Clipper off. The strict verification gates all
+  passed unchanged, but that is because every movement stayed inside their
+  tolerances -- the transient scenario's peak deviation shifted by a quarter
+  of a kilohertz -- so all four baselines were recaptured with it, as a
+  deliberate chain change requires.
+
+- **The verifier now watches the Bass Clipper.** None of the existing
+  verification scenarios pushed the low end hard enough for that stage to
+  register, which is how its transfer-curve fix above could change the
+  stage's behaviour without moving a single stored baseline. A new
+  `bass_kick` scenario -- a kick drum landing a little over the clipper's
+  threshold every half second -- drives it properly: the curve fix moves
+  this scenario's composite peak by about 1 dB against a 0.1 dB tolerance,
+  so any future change to the stage now fails the strict gate. Baselines
+  gain one record for it on macOS and Linux; nothing else was recaptured.
+
+## 0.50 -- 2026-09-11
 
 - **One operating mode with four values, and every stage gated on it.**
   `operating_mode` (`[INTERFACES]`, default `mpx`, restart-class) replaces the
@@ -3062,23 +3973,23 @@ All three exceed plan.md "Next up -- HF separation" targets (>=35 / >=30 / >=25-
 
 ### DSP -- anti-aliased clipping (US 6,937,912) groundwork
 
-- **`BandLimitedStep` primitive landed** ([`macOS/Sources/MPXPrime/BandLimitedStep.swift`](macOS/Sources/MPXPrime/BandLimitedStep.swift), Phase A of the US 6,937,912 work). Allocation-free helper that detects fractional threshold crossings (`crossingFraction(previous:current:threshold:)`) and schedules normalized finite band-limited correction windows. Three correction shapes supported -- impulse (area-normalized), step (BLEP, for value discontinuities), and ramp (BLAMP, for slope discontinuities -- the shape the current `tanh` soft knee actually needs since it is value-continuous). 13 deterministic tests in `BandLimitedStepTests` cover kernel normalization, crossing detection, DC balance, overlap, reset, and finiteness of both step and ramp correction outputs.
-- **Spectral gate landed** ([`AntiAliasedClipperProbeTests`](macOS/Tests/MPXPrimeTests/AntiAliasedClipperProbeTests.swift), Phase B). A 5.111 kHz mono-tone probe at 48 kHz compares four kernels against the alias-bin energy budget: hard knee (-31.06 dBFS), current `tanh` knee (-30.76 dBFS), naive normalized BLAMP-only correction (-30.87 dBFS -- stable but no improvement yet), and the patent-style residual-bandlimiting candidate (-44.90 dBFS -- 13.84 dB cleaner than hard, fundamental preserved within 0.00 dB at -3.17 dBFS). Gate asserts the patent-residual candidate is >=6 dB cleaner than hard and preserves the wanted fundamental within 1 dB.
-- **`AcceleratedBandlimitedResidualClipper` landed** ([`macOS/Sources/MPXPrime/AcceleratedBandlimitedResidualClipper.swift`](macOS/Sources/MPXPrime/AcceleratedBandlimitedResidualClipper.swift)). Patent-style candidate: hard clip -> residual = clipped - input -> band-limit residual through a Kaiser-windowed-sinc lowpass via `vDSP_dotpr` polyphase -> reconstruct as `delayedCleanInput + filteredResidual`. The clean signal rides a group-delay-matched bypass; only the broadband clipping error is filtered. Kept off the production hot path; available via the new `pre_encode_bandlimited_residual_enabled` opt-in.
+- **`BandLimitedStep` primitive landed** ([`macOS/Sources/MPXPrime/BandLimitedStep.swift`](Sources/MPXPrime/BandLimitedStep.swift), Phase A of the US 6,937,912 work). Allocation-free helper that detects fractional threshold crossings (`crossingFraction(previous:current:threshold:)`) and schedules normalized finite band-limited correction windows. Three correction shapes supported -- impulse (area-normalized), step (BLEP, for value discontinuities), and ramp (BLAMP, for slope discontinuities -- the shape the current `tanh` soft knee actually needs since it is value-continuous). 13 deterministic tests in `BandLimitedStepTests` cover kernel normalization, crossing detection, DC balance, overlap, reset, and finiteness of both step and ramp correction outputs.
+- **Spectral gate landed** ([`AntiAliasedClipperProbeTests`](Tests/MPXPrimeTests/AntiAliasedClipperProbeTests.swift), Phase B). A 5.111 kHz mono-tone probe at 48 kHz compares four kernels against the alias-bin energy budget: hard knee (-31.06 dBFS), current `tanh` knee (-30.76 dBFS), naive normalized BLAMP-only correction (-30.87 dBFS -- stable but no improvement yet), and the patent-style residual-bandlimiting candidate (-44.90 dBFS -- 13.84 dB cleaner than hard, fundamental preserved within 0.00 dB at -3.17 dBFS). Gate asserts the patent-residual candidate is >=6 dB cleaner than hard and preserves the wanted fundamental within 1 dB.
+- **`AcceleratedBandlimitedResidualClipper` landed** ([`macOS/Sources/MPXPrime/AcceleratedBandlimitedResidualClipper.swift`](Sources/MPXPrime/AcceleratedBandlimitedResidualClipper.swift)). Patent-style candidate: hard clip -> residual = clipped - input -> band-limit residual through a Kaiser-windowed-sinc lowpass via `vDSP_dotpr` polyphase -> reconstruct as `delayedCleanInput + filteredResidual`. The clean signal rides a group-delay-matched bypass; only the broadband clipping error is filtered. Kept off the production hot path; available via the new `pre_encode_bandlimited_residual_enabled` opt-in.
 - **`OversampledPeakLimiter` / `StereoLinkedOversampledPeakLimiter` gain an opt-in band-limited residual ceiling.** New `bandlimitedResidualEnabled` parameter on both `configure(...)` paths wires the residual clipper as the inner kernel. Stereo-linked path keeps the `max(|L|, |R|)` detector intact; only the per-channel ceiling kernel changes. New `pre_encode_bandlimited_residual_enabled` INI key (default false) + `RuntimeConfig` plumbing + live-apply via `applyRuntimeConfig` change detection + GUI toggle on the Audio Limiter card (clearly labelled "Use New Band-limited Limiter Ceiling"). 4 integration tests in `PreEncodeBandlimitedResidualLimiterTests` cover the runtime-config flag, single-channel ceiling holding under 1.02, stereo-link gain shared across channels at L/R asymmetry, and a 2-tone IM gate.
-- **Residual ceiling kernel is now tunable** ([`AppConfig.swift`](macOS/Sources/MPXPrime/AppConfig.swift), [`MPXGenerator.swift`](macOS/Sources/MPXPrime/MPXGenerator.swift)). Two new live-apply INI keys: `pre_encode_bandlimited_residual_taps` (5-129, forced odd, default **33**) and `pre_encode_bandlimited_residual_cutoff_fraction` (0.05-0.49, default **0.25**). Plumbed through `PreEncodeAudioLimiter` / `StereoLinkedOversampledPeakLimiter` / `OversampledPeakLimiter` `configure(...)`. Default kernel changed from the previous hardcoded (65, 0.20) to (33, 0.25) after a 12-candidate parameter sweep against the isolated ceiling stress signal -- the new sweep test `residualKernelParameterSweepFindsCleanerIsolatedCeilingCandidates` asserts the best usable kernel beats classic tanh by >=6 dB on alias/IM energy while keeping isolated peak <= 1.02. Toggle still ships off, so default users see no change.
+- **Residual ceiling kernel is now tunable** ([`AppConfig.swift`](Sources/MPXPrime/AppConfig.swift), [`MPXGenerator.swift`](Sources/MPXPrime/MPXGenerator.swift)). Two new live-apply INI keys: `pre_encode_bandlimited_residual_taps` (5-129, forced odd, default **33**) and `pre_encode_bandlimited_residual_cutoff_fraction` (0.05-0.49, default **0.25**). Plumbed through `PreEncodeAudioLimiter` / `StereoLinkedOversampledPeakLimiter` / `OversampledPeakLimiter` `configure(...)`. Default kernel changed from the previous hardcoded (65, 0.20) to (33, 0.25) after a 12-candidate parameter sweep against the isolated ceiling stress signal -- the new sweep test `residualKernelParameterSweepFindsCleanerIsolatedCeilingCandidates` asserts the best usable kernel beats classic tanh by >=6 dB on alias/IM energy while keeping isolated peak <= 1.02. Toggle still ships off, so default users see no change.
 - **Full-chain A/B regression coverage for the residual ceiling.** New `fullMPXChainResidualCeilingDoesNotRegressMeasuredCompositeMetrics` renders the full MPX chain at 192 kHz, classic-tanh vs residual, and bounds the deltas on composite peak (<= +0.03), 10-20 kHz non-program "upper-band grain" (<= +3 dB), 60-90 kHz alias/IM (<= +4 dB), pilot level (+/-0.75 dB), and RDS-band level (+/-1.5 dB). `fullMPXChainDefaultKernelMatchesBoundedSweepCandidate` pins the new (33, 0.25) default against the prior (65, 0.20) candidate on the same chain. `newLimiterDoesNotRaiseUpperBandHissAgainstClassicCeiling` covers HF-grain isolation on the limiter alone.
 - **CPU-cost guard for the residual ceiling** (`DSPThroughputTests.bandlimitedResidualPreEncodeLimiterCostStaysBounded`). Bounds the residual-FIR path at < 2.5x the classic tanh ceiling on the same heavy-program render -- locks in vDSP acceleration as a prerequisite for ever defaulting the residual path on.
 
 ### DSP -- monitor path refactor + receiver model
 
-- **`MPXDecoder` extracted as a reusable struct** ([`macOS/Sources/MPXPrime/MPXDecoder.swift`](macOS/Sources/MPXPrimeCore/MPXDecoder.swift)). Pilot-PLL-locked or externally-referenced 38 kHz subcarrier demod, L+R / L-R recovery, pilot/RDS notches, deemphasis, smoothed noise gate, and stereo-collapse cooldown logic. Replaces ~200 lines of inline monitor-demod code in `MPXGenerator`. `MPXGenerator` now owns a `monitorDecoder: MPXDecoder` and feeds it the existing delay-aligned reference subcarrier + program-activity envelope on each render sample.
+- **`MPXDecoder` extracted as a reusable struct** ([`macOS/Sources/MPXPrime/MPXDecoder.swift`](Sources/MPXPrimeCore/MPXDecoder.swift)). Pilot-PLL-locked or externally-referenced 38 kHz subcarrier demod, L+R / L-R recovery, pilot/RDS notches, deemphasis, smoothed noise gate, and stereo-collapse cooldown logic. Replaces ~200 lines of inline monitor-demod code in `MPXGenerator`. `MPXGenerator` now owns a `monitorDecoder: MPXDecoder` and feeds it the existing delay-aligned reference subcarrier + program-activity envelope on each render sample.
 - **Stereo-subcarrier delay alignment for the monitor path.** New `stereoSubcarrierDelayLine` ring buffer mirrors the existing 0.26 `subcarrierDelayLine` but carries the 38 kHz stereo reference instead of pilot+RDS. The monitor decoder now reads the delay-aligned reference, so the monitor demod stays phase-coherent with the audio composite even with the composite clipper, audio bandwidth FIR, and look-ahead all engaged.
-- **`--verify-receiver` CLI mode** ([`main.swift`](macOS/Sources/MPXPrime/main.swift), [`VerificationHarness.swift`](macOS/Sources/MPXPrime/VerificationHarness.swift)). Offline receiver-model verifier reports stereo separation at 1 / 10 / 14 kHz, mono compatibility (mid / side / side-rejection in dB), and subcarrier health (pilot percent + phase, RDS lower / upper / center sideband levels). Result `OK` when separations exceed 18 / 18 / 16 dB respectively, side rejection >= 26 dB, pilot 6.5-9.5 %, RDS sideband >= -60 dBFS, RDS center >= 8 dB below sidebands; otherwise `TIGHT` with a per-metric warning list.
+- **`--verify-receiver` CLI mode** ([`main.swift`](Sources/MPXPrime/main.swift), [`VerificationHarness.swift`](Sources/MPXPrime/VerificationHarness.swift)). Offline receiver-model verifier reports stereo separation at 1 / 10 / 14 kHz, mono compatibility (mid / side / side-rejection in dB), and subcarrier health (pilot percent + phase, RDS lower / upper / center sideband levels). Result `OK` when separations exceed 18 / 18 / 16 dB respectively, side rejection >= 26 dB, pilot 6.5-9.5 %, RDS sideband >= -60 dBFS, RDS center >= 8 dB below sidebands; otherwise `TIGHT` with a per-metric warning list.
 
 ### DSP -- silent live-resize of composite clipper look-ahead
 
-- **`CompositeClipper.setLookaheadMS` is now allocation-free** ([`MPXGenerator.swift`](macOS/Sources/MPXPrime/MPXGenerator.swift)). `configure()` preallocates `lookaheadDelay`, a `lookaheadResizeScratch` workspace, and the OS-rate Lemire monotonic deque (`deqValues` / `deqIndices`) to the 5 ms maximum capacity at engine start. `setLookaheadMS` then only changes the active logical length (`lookaheadHostSamples`), preserves time-ordered audio content via the preallocated scratch, and resets the deque without touching storage. New `maxTotalDelayHostSamples` getter exposes the preallocated capacity so the subcarrier-delay recompute can size against it instead of the active length. Fixes audible clicks when dragging the look-ahead slider on a live audio path.
+- **`CompositeClipper.setLookaheadMS` is now allocation-free** ([`MPXGenerator.swift`](Sources/MPXPrime/MPXGenerator.swift)). `configure()` preallocates `lookaheadDelay`, a `lookaheadResizeScratch` workspace, and the OS-rate Lemire monotonic deque (`deqValues` / `deqIndices`) to the 5 ms maximum capacity at engine start. `setLookaheadMS` then only changes the active logical length (`lookaheadHostSamples`), preserves time-ordered audio content via the preallocated scratch, and resets the deque without touching storage. New `maxTotalDelayHostSamples` getter exposes the preallocated capacity so the subcarrier-delay recompute can size against it instead of the active length. Fixes audible clicks when dragging the look-ahead slider on a live audio path.
 - **Subcarrier delay line gains a separate active-count.** New `subcarrierDelayActiveCount` tracks the logical length while `subcarrierDelayLine.count` is the preallocated worst-case capacity. New `resizeDelayPreservingContentsInPlace` helper mutates in place when the required capacity is already available, falling back to the old allocating path only on structural growth. Render-callback read site now uses the active-count so logical resizes don't change the per-sample math. New regression test `liveCompositeLookaheadResizeChangesActiveDelayWithoutGrowingStorage` asserts the allocation-free contract directly: `subcarrierDelayLine.count` (capacity) stays fixed across slider moves, only `subcarrierDelayActiveCount` shifts. `liveLookaheadResizePreservesProcessingPath` (in `CompositeClipperLookaheadTests`) exercises the 0.5 -> 3.0 -> 0.0 ms transition under signal and asserts the reported `totalDelayHostSamples` tracks and peak stays bounded.
 
 ### Configuration + UI

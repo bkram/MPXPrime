@@ -1,0 +1,3168 @@
+{
+  "model": {
+    "sections": [
+      {
+        "id": "onAir",
+        "title": "On Air",
+        "pages": [
+          "monitoring"
+        ]
+      },
+      {
+        "id": "setup",
+        "title": "Setup",
+        "pages": [
+          "interfaces",
+          "testTone"
+        ]
+      },
+      {
+        "id": "sound",
+        "title": "Sound",
+        "pages": [
+          "overview"
+        ],
+        "groups": [
+          {
+            "id": "input",
+            "title": "Input",
+            "pages": [
+              "core",
+              "phaseRotator"
+            ]
+          },
+          {
+            "id": "levelling",
+            "title": "Levelling",
+            "pages": [
+              "agc",
+              "advanced_dynamics"
+            ]
+          },
+          {
+            "id": "eq",
+            "title": "EQ",
+            "pages": [
+              "parametricEQ"
+            ]
+          },
+          {
+            "id": "dynamics",
+            "title": "Dynamics",
+            "pages": [
+              "multiband",
+              "expander",
+              "mbLimiter"
+            ]
+          },
+          {
+            "id": "bass",
+            "title": "Bass",
+            "pages": [
+              "primeBass",
+              "bassClipper"
+            ]
+          },
+          {
+            "id": "peakControl",
+            "title": "Peak Control",
+            "pages": [
+              "dcClipper",
+              "hfLimiter",
+              "limiter"
+            ]
+          },
+          {
+            "id": "transmission",
+            "title": "Transmission",
+            "pages": [
+              "stereoCoder",
+              "compositeClipper",
+              "bs412",
+              "finalStage"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "rds",
+        "title": "RDS",
+        "pages": [
+          "rdsStatus",
+          "rdsIdentity",
+          "rdsRadiotext",
+          "rdsAF",
+          "rdsSchedule",
+          "rdsSubcarrier"
+        ]
+      },
+      {
+        "id": "system",
+        "title": "Presets and System",
+        "pages": [
+          "presets",
+          "advanced",
+          "about"
+        ]
+      }
+    ],
+    "compositeModes": [
+      "mpx"
+    ],
+    "levelling": {
+      "key": "advanced_dynamics_enabled",
+      "title": "Levelling",
+      "help": "One levelling engine runs at a time: the regular AGC + Multiband chain (with the per-band Expander and Band Limiter inside the multiband stage) or Advanced Dynamics, which replaces all four. The pages of the engine not in use are hidden.",
+      "engines": [
+        {
+          "id": "regular",
+          "title": "AGC + Multiband",
+          "value": "False",
+          "pages": [
+            "agc",
+            "multiband",
+            "expander",
+            "mbLimiter"
+          ]
+        },
+        {
+          "id": "advanced",
+          "title": "Advanced Dynamics",
+          "value": "True",
+          "pages": [
+            "advanced_dynamics"
+          ]
+        }
+      ]
+    },
+    "monitorModes": [
+      "mpx",
+      "fm",
+      "hd",
+      "am"
+    ],
+    "overviewHelp": "Pick the station's Format Profile and the levelling engine, then check every stage at a glance. Click a card to open its page; the switch on a card turns the stage on or off.",
+    "pills": [
+      [
+        "IN",
+        null
+      ],
+      [
+        "Basics",
+        "core"
+      ],
+      [
+        "Phase",
+        "phaseRotator"
+      ],
+      [
+        "AGC",
+        "agc"
+      ],
+      [
+        "EQ",
+        "parametricEQ"
+      ],
+      [
+        "Multiband",
+        "multiband"
+      ],
+      [
+        "Adv Dyn",
+        "advanced_dynamics"
+      ],
+      [
+        "PrimeBass",
+        "primeBass"
+      ],
+      [
+        "Bass Clip",
+        "bassClipper"
+      ],
+      [
+        "Audio Clip",
+        "dcClipper"
+      ],
+      [
+        "HF Lim",
+        "hfLimiter"
+      ],
+      [
+        "Audio Lim",
+        "limiter"
+      ],
+      [
+        "Coder",
+        "stereoCoder"
+      ],
+      [
+        "Comp Clip",
+        "compositeClipper"
+      ],
+      [
+        "BS.412",
+        "bs412"
+      ],
+      [
+        "Output",
+        "finalStage"
+      ],
+      [
+        "OUT",
+        null
+      ]
+    ],
+    "rds": [
+      {
+        "id": "rdsStatus",
+        "special": "rdsStatus",
+        "sub": "Turn RDS on and see what is on air.",
+        "title": "Status",
+        "help": "Turns the RDS subcarrier on or off and shows what is on air now. TA, TP and MS are the switches an operator changes during the day. Every RDS setting applies live.",
+        "cards": [
+          {
+            "t": "Switches",
+            "keys": [
+              "en_rds",
+              "ta",
+              "tp",
+              "ms"
+            ]
+          }
+        ]
+      },
+      {
+        "cards": [
+          {
+            "t": "Station",
+            "keys": [
+              "pi",
+              "ecc",
+              "pty",
+              "pty_rbds"
+            ]
+          },
+          {
+            "t": "Station Name (PS)",
+            "keys": [
+              "ps_active_bank",
+              "ps_a",
+              "ps_b",
+              "ps_c",
+              "ps_d",
+              "ps_centered",
+              "ps_dynamic",
+              "ps_frame_seconds"
+            ]
+          },
+          {
+            "t": "Long PS",
+            "keys": [
+              "en_lps",
+              "ps_long_32",
+              "lps_centered",
+              "lps_cr"
+            ]
+          },
+          {
+            "t": "Advanced",
+            "advanced": true,
+            "keys": [
+              "lic",
+              "en_ptyn",
+              "ptyn",
+              "ptyn_centered",
+              "pin_enabled",
+              "pin_day",
+              "pin_hour",
+              "pin_minute",
+              "di_stereo",
+              "di_head",
+              "di_comp",
+              "di_dyn",
+              "en_id"
+            ]
+          }
+        ],
+        "id": "rdsIdentity",
+        "sub": "Station code, programme type and station name.",
+        "title": "Identity",
+        "help": "Who the station is: the PI code from your broadcasting authority, the programme type (PTY), the extended country code (ECC), four 8-character station names (PS) and the 32-character Long PS. Language, PIN, PTYN and decoder information are under Advanced. Everything applies live."
+      },
+      {
+        "cards": [
+          {
+            "t": "Text",
+            "keys": [
+              "rt_text",
+              "rt_centered",
+              "rt_cr",
+              "rt_mode"
+            ]
+          },
+          {
+            "t": "Rotation",
+            "keys": [
+              "rt_cycle",
+              "rt_cycle_time",
+              "rt_cycle_ab",
+              "rt_ab_cycle_count"
+            ]
+          },
+          {
+            "t": "Messages",
+            "keys": [
+              "rt_manual_buffers",
+              "rt_active_buffer",
+              "rt_a",
+              "rt_a_enabled",
+              "rt_b",
+              "rt_b_enabled",
+              "rt_c",
+              "rt_c_enabled",
+              "rt_d",
+              "rt_d_enabled"
+            ]
+          },
+          {
+            "t": "RT+",
+            "keys": [
+              "en_rt_plus",
+              "rt_plus_format_a",
+              "rt_plus_format_b"
+            ]
+          },
+          {
+            "t": "Now Playing",
+            "keys": [
+              "now_playing_enabled",
+              "now_playing_script",
+              "now_playing_poll_seconds",
+              "now_playing_timeout_seconds"
+            ]
+          }
+        ],
+        "id": "rdsRadiotext",
+        "sub": "Radiotext messages, RT+ and now playing.",
+        "title": "Radiotext",
+        "help": "Up to 64 characters of Radiotext, with RT+ tags so receivers can show artist and title. Manual messages rotate on a timer; the now-playing script fills the {artist} and {title} macros."
+      },
+      {
+        "cards": [
+          {
+            "keys": [
+              "en_af",
+              "af_method",
+              "af_list"
+            ],
+            "t": ""
+          }
+        ],
+        "id": "rdsAF",
+        "sub": "Other frequencies that carry this programme.",
+        "title": "Alt. Frequencies",
+        "help": "Alternative frequencies let a receiver move to a stronger transmitter carrying the same programme. Method A lists every frequency in the network (up to 25); Method B pairs each alternative with the tuned frequency (up to 12 pairs)."
+      },
+      {
+        "cards": [
+          {
+            "t": "Group Sequence",
+            "keys": [
+              "group_sequence",
+              "scheduler_auto",
+              "scheduler_standard",
+              "scheduler_standard_lps"
+            ]
+          },
+          {
+            "t": "Clock Time",
+            "keys": [
+              "en_ct",
+              "tz_offset"
+            ]
+          }
+        ],
+        "id": "rdsSchedule",
+        "sub": "Group sequence and clock time.",
+        "title": "Schedule",
+        "help": "Which RDS groups go on air and how often, and the clock time (CT) with its time zone. Automatic scheduling follows the standard group rates for the features you enable."
+      },
+      {
+        "cards": [
+          {
+            "keys": [
+              "rds_level"
+            ],
+            "t": ""
+          }
+        ],
+        "id": "rdsSubcarrier",
+        "sub": "RDS injection level.",
+        "title": "Subcarrier",
+        "help": "How much deviation the 57 kHz RDS subcarrier takes. 2.0 kHz is typical; the subcarrier is locked to three times the pilot. A change applies after an engine restart."
+      }
+    ],
+    "rdsModes": [
+      "mpx"
+    ],
+    "stages": [
+      {
+        "help": "Basic programme conditioning ahead of the dynamics: mono mode, the input high-pass filter, the programme lowpass and an HF trim shelf. Bypass is in the toolbar; pre-emphasis is on Audio I/O.",
+        "id": "core",
+        "keys": [
+          "mono_mode",
+          "hpf_hz",
+          "hf_trim_db",
+          "hf_trim_hz",
+          "program_lowpass_hz"
+        ],
+        "pill": "Basics",
+        "sub": "Mono, input filters and HF trim.",
+        "title": "Basics"
+      },
+      {
+        "enable": "phase_rotation_enabled",
+        "help": "An all-pass phase rotator that makes asymmetrical waveforms, voice especially, more symmetrical without changing the tonal balance. That frees 3 to 4 dB of headroom for the dynamics stages that follow.",
+        "id": "phaseRotator",
+        "keys": [
+          "phase_rotation_enabled",
+          "phase_rotation_freq_hz"
+        ],
+        "pill": "Phase",
+        "sub": "Makes voice waveforms more symmetrical.",
+        "summary": [
+          [
+            "f {phase_rotation_freq_hz} Hz"
+          ]
+        ],
+        "title": "Phase Rotator"
+      },
+      {
+        "enable": "wideband_agc_enabled",
+        "help": "Wideband automatic gain control: rides the long-term level so quiet and loud sources reach the multiband at a similar loudness. It sets the platform; it is not the final loudness stage.",
+        "id": "agc",
+        "keys": [
+          "wideband_agc_enabled",
+          "wideband_agc_target_db",
+          "wideband_agc_attack_ms",
+          "wideband_agc_release_ms",
+          "wideband_agc_max_gain_db",
+          "wideband_agc_min_gain_db",
+          "wideband_agc_k_weighting",
+          "wideband_agc_release_program_dependent",
+          "wideband_agc_bass_desensitize"
+        ],
+        "pill": "AGC",
+        "sub": "Slow wideband levelling ahead of the multiband.",
+        "summary": [
+          [
+            "Target {wideband_agc_target_db} dB"
+          ],
+          [
+            "range {wideband_agc_min_gain_db}/+{wideband_agc_max_gain_db} dB"
+          ]
+        ],
+        "title": "AGC"
+      },
+      {
+        "enable": "parametric_eq_enabled",
+        "help": "Four-band parametric EQ (low shelf, two peaking bands, high shelf) on left and right, ahead of the multiband. Use it for station-wide tonal shaping.",
+        "id": "parametricEQ",
+        "keys": [
+          "parametric_eq_enabled",
+          "peq_b1_freq_hz",
+          "peq_b1_gain_db",
+          "peq_b2_freq_hz",
+          "peq_b2_gain_db",
+          "peq_b2_q",
+          "peq_b3_freq_hz",
+          "peq_b3_gain_db",
+          "peq_b3_q",
+          "peq_b4_freq_hz",
+          "peq_b4_gain_db"
+        ],
+        "pill": "EQ",
+        "sub": "Four-band tone shaping ahead of the dynamics.",
+        "summary": [
+          [
+            "4 bands - shelf+peak+peak+shelf"
+          ]
+        ],
+        "title": "Parametric EQ"
+      },
+      {
+        "enable": "multiband_enabled",
+        "help": "Multiband compressor that splits the programme into 3 or 5 bands, each with its own gain ride. It is the main control for loudness and tonal density.",
+        "id": "multiband",
+        "keys": [
+          "multiband_enabled",
+          "multiband_mode",
+          "multiband_low_threshold_db",
+          "multiband_low_ratio",
+          "multiband_low_attack_ms",
+          "multiband_low_release_ms",
+          "multiband_mid_threshold_db",
+          "multiband_mid_ratio",
+          "multiband_mid_attack_ms",
+          "multiband_mid_release_ms",
+          "multiband_high_threshold_db",
+          "multiband_high_ratio",
+          "multiband_high_attack_ms",
+          "multiband_high_release_ms",
+          "multiband_makeup_db",
+          "multiband_knee_db",
+          "multiband_link_strength",
+          "multiband_release_program_dependent",
+          "multiband_transient_aware_attack_enabled",
+          "multiband_inter_band_coupling_enabled"
+        ],
+        "keys2": {
+          "keys": [
+            "multiband_x1_hz",
+            "multiband_x2_hz",
+            "multiband_x3_hz",
+            "multiband_x4_hz"
+          ],
+          "title": "Crossovers"
+        },
+        "pill": "Multiband",
+        "presetKind": "multiband",
+        "sub": "3-band or 5-band compressor.",
+        "summary": [
+          [
+            "{multiband_mode}-band - {multiband_preset_id}"
+          ]
+        ],
+        "title": "Multiband"
+      },
+      {
+        "help": "A single-stage leveller that replaces both the AGC and the multiband compressor with one 5-band stage, so levelling and density shaping never fight. Set the sound you want (target, balance, density); the stage adapts its own speed to the programme.",
+        "id": "advanced_dynamics",
+        "keys": [
+          "advanced_dynamics_target_db",
+          "advanced_dynamics_density",
+          "advanced_dynamics_speed",
+          "advanced_dynamics_max_gain_db",
+          "advanced_dynamics_low_offset_db",
+          "advanced_dynamics_mid_offset_db",
+          "advanced_dynamics_high_offset_db"
+        ],
+        "pill": "Adv Dyn",
+        "sub": "Single-stage leveller that replaces AGC and Multiband.",
+        "summary": [
+          [
+            "Target {advanced_dynamics_target_db} dB - density {advanced_dynamics_density}"
+          ]
+        ],
+        "title": "Advanced Dynamics"
+      },
+      {
+        "enable": "downward_expander_enabled",
+        "help": "Per-band downward expander: lowers the gain when a band falls below the threshold, so background noise is not lifted while programme material passes untouched.",
+        "id": "expander",
+        "keys": [
+          "downward_expander_enabled",
+          "expander_threshold_db",
+          "expander_ratio",
+          "expander_attack_ms",
+          "expander_release_ms"
+        ],
+        "pill": null,
+        "sub": "Per-band downward expander.",
+        "summary": [
+          [
+            "Thr {expander_threshold_db} dB - ratio {expander_ratio}:1"
+          ]
+        ],
+        "title": "Expander"
+      },
+      {
+        "enable": "multiband_limiter_enabled",
+        "help": "Fast per-band peak limiter after the multiband compressor. It catches peaks inside each band before the bands are recombined, so the multiband can be driven harder without overshoot.",
+        "id": "mbLimiter",
+        "keys": [
+          "multiband_limiter_enabled",
+          "multiband_limiter_threshold_db",
+          "multiband_limiter_attack_ms",
+          "multiband_limiter_release_ms"
+        ],
+        "pill": null,
+        "sub": "Per-band peak limiter after the multiband.",
+        "summary": [
+          [
+            "Thr {multiband_limiter_threshold_db} dB - atk {multiband_limiter_attack_ms} ms"
+          ]
+        ],
+        "title": "Band Limiter"
+      },
+      {
+        "enable": "primebass_enabled",
+        "help": "PrimeBass adds perceived bass through harmonic synthesis while lowering the true low-frequency peak, which saves headroom downstream. Mono Bass sums left and right below a chosen frequency so sub-bass side energy cannot waste deviation or upset mono compatibility.",
+        "id": "primeBass",
+        "keys": [
+          "primebass_enabled",
+          "primebass_amount",
+          "primebass_freq_hz",
+          "primebass_harmonics",
+          "primebass_drive",
+          "primebass_density",
+          "primebass_subharmonics_enabled",
+          "primebass_subharmonics_amount",
+          "mono_bass_enabled",
+          "mono_bass_freq_hz",
+          "stereo_image_protect_enabled",
+          "stereo_image_max_side_ratio"
+        ],
+        "pill": "PrimeBass",
+        "presetKind": "primebass",
+        "sub": "Bass enhancement and mono bass.",
+        "summary": [
+          [
+            "Amt {primebass_amount} - f {primebass_freq_hz} Hz"
+          ],
+          [
+            "drv {primebass_drive}"
+          ],
+          [
+            "Mono<{mono_bass_freq_hz}"
+          ]
+        ],
+        "title": "PrimeBass"
+      },
+      {
+        "enable": "bass_clipper_enabled",
+        "help": "Oversampled clipper on the low band, after PrimeBass. Use it when kick drums and bass lines still push into the limiters that follow.",
+        "id": "bassClipper",
+        "keys": [
+          "bass_clipper_enabled",
+          "bass_clipper_crossover_hz",
+          "bass_clipper_threshold_db",
+          "bass_clipper_drive"
+        ],
+        "pill": "Bass Clip",
+        "sub": "Clips low-frequency peaks.",
+        "summary": [
+          [
+            "X {bass_clipper_crossover_hz} Hz - thr {bass_clipper_threshold_db} dB"
+          ],
+          [
+            "drv {bass_clipper_drive}"
+          ]
+        ],
+        "title": "Bass Clipper"
+      },
+      {
+        "enable": "dc_clipper_enabled",
+        "help": "Oversampled audio-band clipper with distortion cancellation. It cleans up audio peaks before pre-emphasis adds its high-frequency boost.",
+        "id": "dcClipper",
+        "keys": [
+          "dc_clipper_enabled",
+          "dc_clipper_ceiling_db",
+          "dc_clipper_cancel_freq_hz"
+        ],
+        "pill": "Audio Clip",
+        "sub": "Clips audio-band peaks before pre-emphasis.",
+        "summary": [
+          [
+            "Ceil {dc_clipper_ceiling_db} dB"
+          ]
+        ],
+        "title": "Audio Clipper"
+      },
+      {
+        "enable": "hf_limiter_enabled",
+        "help": "Rides only the pre-emphasis boost: when a cymbal or hi-hat overshoots after pre-emphasis, it briefly loses part of its boost instead of the Audio Limiter pulling the whole mix down. Gain-riding, so it adds no clipping distortion. The top octave above 13 kHz has its own, tighter threshold.",
+        "id": "hfLimiter",
+        "keys": [
+          "hf_limiter_enabled",
+          "hf_limiter_threshold_db",
+          "hf_limiter_top_threshold_db",
+          "hf_limiter_attack_ms",
+          "hf_limiter_release_ms",
+          "hf_limiter_max_reduction_db"
+        ],
+        "modes": [
+          "mpx",
+          "fm",
+          "am"
+        ],
+        "pill": "HF Lim",
+        "sub": "Controls high frequencies after pre-emphasis.",
+        "summary": [
+          [
+            "thr {hf_limiter_threshold_db} dB - top {hf_limiter_top_threshold_db} dB - max {hf_limiter_max_reduction_db} dB"
+          ]
+        ],
+        "title": "HF Limiter"
+      },
+      {
+        "enable": "pre_encode_limiter_enabled",
+        "help": "Oversampled true-peak limiter on left and right, linked, with look-ahead and a high-frequency transient detector. It catches the peaks that get past every stage upstream before the audio is encoded.",
+        "id": "limiter",
+        "keys": [
+          "pre_encode_limiter_enabled",
+          "pre_encode_threshold",
+          "pre_encode_release_ms",
+          "pre_encode_stereo_link",
+          "pre_encode_lookahead_ms",
+          "pre_encode_lookahead_hf_only",
+          "pre_encode_lookahead_hf_cutoff_hz",
+          "pre_encode_bandlimited_residual_enabled"
+        ],
+        "keys2": {
+          "keys": [
+            "pre_encode_bandlimited_residual_taps",
+            "pre_encode_bandlimited_residual_cutoff_fraction"
+          ],
+          "title": "Clipping Distortion Kernel"
+        },
+        "pill": "Audio Lim",
+        "sub": "True-peak limiter ahead of the stereo coder.",
+        "summary": [
+          [
+            "Thr {pre_encode_threshold} - rel {pre_encode_release_ms} ms"
+          ]
+        ],
+        "title": "Audio Limiter"
+      },
+      {
+        "enable": "mpx_ssb_stereo_enabled",
+        "help": "The stereo encoder: L+R plus L-R on the 38 kHz subcarrier, with the pilot and RDS added after all peak control. Stereo encoding is always on; the optional SSB mode leans the subcarrier towards single sideband to reclaim composite headroom ahead of the clipper.",
+        "id": "stereoCoder",
+        "keys": [
+          "pilot_level",
+          "mpx_ssb_stereo_enabled",
+          "mpx_ssb_stereo_amount"
+        ],
+        "modes": [
+          "mpx"
+        ],
+        "pill": "Coder",
+        "sub": "Pilot-locked stereo encoder with an SSB option.",
+        "title": "Stereo Coder"
+      },
+      {
+        "enable": "mpx_clipper_enabled",
+        "help": "Oversampled clipper on the assembled composite and the main loudness control in MPX Output. It keeps clipping distortion out of the pilot, the stereo subcarrier and the RDS band so receivers decode cleanly.",
+        "id": "compositeClipper",
+        "keys": [
+          "mpx_clipper_enabled",
+          "mpx_clipper_threshold_db",
+          "mpx_clipper_ceiling_db",
+          "mpx_clipper_oversampling",
+          "mpx_clipper_lookahead_ms",
+          "mpx_clipper_lookahead_depth_db",
+          "mpx_clipper_cancel_audio",
+          "mpx_clipper_cancel_pilot",
+          "mpx_clipper_stereo_guard",
+          "mpx_clipper_cancel_rds"
+        ],
+        "modes": [
+          "mpx"
+        ],
+        "pill": "Comp Clip",
+        "sub": "Clips the composite while protecting pilot, stereo and RDS.",
+        "summary": [
+          [
+            "Thr {mpx_clipper_threshold_db} dB - ceil {mpx_clipper_ceiling_db} dB"
+          ]
+        ],
+        "title": "Composite Clipper"
+      },
+      {
+        "enable": "bs412_enabled",
+        "help": "Holds the average multiplex power over any 60 seconds at or below the ITU-R BS.412 limit. A standards implementation for regulators that enforce BS.412; leave it off where it does not apply.",
+        "id": "bs412",
+        "keys": [
+          "bs412_enabled",
+          "bs412_ceiling_dbr"
+        ],
+        "modes": [
+          "mpx"
+        ],
+        "pill": "BS.412",
+        "sub": "ITU-R BS.412 multiplex power limiter.",
+        "summary": [
+          [
+            "Ceiling {bs412_ceiling_dbr} dBr - 60 s"
+          ]
+        ],
+        "title": "BS.412"
+      },
+      {
+        "help": "Final Drive sets how hard the audio hits the composite clipper: the primary loudness control. The Broadcast Preset sets the AGC target and Final Drive together. The safety limiter on the final multiplex catches what remains while pilot and RDS stay at a constant level. Deviation and output level are on Audio I/O.",
+        "id": "finalStage",
+        "keys": [
+          "final_drive_db",
+          "limit_mpx",
+          "limit_threshold",
+          "limit_lookahead_enabled",
+          "limit_lookahead_ms"
+        ],
+        "keys2": {
+          "keys": [
+            "sum_level",
+            "diff_level",
+            "audio_composite_softclip_enabled"
+          ],
+          "title": "Composite Internals"
+        },
+        "modes": [
+          "mpx"
+        ],
+        "pill": "Output",
+        "sub": "Final drive, broadcast preset and safety limiter.",
+        "title": "Loudness and Output"
+      }
+    ],
+    "tools": [
+      {
+        "cards": [
+          {
+            "keys": [
+              "source_mode",
+              "test_tone_type",
+              "test_tone_mode",
+              "test_tone_freq",
+              "test_tone_level_db"
+            ],
+            "t": "Generator"
+          }
+        ],
+        "id": "testTone",
+        "reset": true,
+        "sub": "Line-up tone that replaces the input.",
+        "title": "Test Tone",
+        "help": "A line-up generator for calibrating levels and deviation. While it is on, the tone replaces the input and bypasses the processing chain, so its level arrives at the output unchanged."
+      },
+      {
+        "id": "interfaces",
+        "special": "interfaces",
+        "sub": "Operating mode, devices and level calibration.",
+        "title": "Audio I/O",
+        "help": "Choose the operating mode, the input and output devices and the listening monitor, then calibrate the levels. Input Gain, Output Level and Line Output are rig calibration, remembered per device: profiles, presets and page resets never change them. Device, channel, sample-rate and block-size changes restart the engine.",
+        "cards": [
+          {
+            "id": "mode",
+            "t": "Operating Mode",
+            "keys": [
+              "operating_mode",
+              "preemphasis_us",
+              "am_preemphasis_us",
+              "am_lowpass_hz",
+              "am_positive_peak_pct",
+              "processed_audio_coder_has_clipper",
+              "processed_audio_final_clip_drive_db",
+              "processed_audio_ceiling_dbtp"
+            ]
+          },
+          {
+            "id": "input",
+            "t": "Input",
+            "keys": [
+              "input_gain_db"
+            ]
+          },
+          {
+            "id": "output",
+            "t": "Output",
+            "keys": [
+              "output_gain_db",
+              "mpx_line_output_dbfs",
+              "mpx_deviation_khz"
+            ]
+          },
+          {
+            "id": "engine",
+            "t": "Engine",
+            "keys": [
+              "sample_rate",
+              "blocksize",
+              "auto_start"
+            ]
+          },
+          {
+            "id": "engineAdvanced",
+            "t": "Advanced",
+            "advanced": true,
+            "keys": [
+              "encoder_fir_enabled",
+              "multiband_fir_enabled",
+              "fft_window_92khz"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "presets",
+        "special": "presets",
+        "sub": "Eight slots that save and recall the whole sound.",
+        "title": "Presets",
+        "help": "Save the current settings to one of eight slots and load them back later. Devices, level calibration and the operating mode stay as installed."
+      },
+      {
+        "id": "advanced",
+        "special": "advanced",
+        "sub": "Raw configuration",
+        "title": "Advanced"
+      },
+      {
+        "id": "about",
+        "special": "about",
+        "sub": "Version, links and terms",
+        "title": "About"
+      }
+    ],
+    "overviewPresetKind": "format_profile",
+    "overviewTitle": "Overview",
+    "overviewSub": "Format profile, levelling engine and every stage at a glance.",
+    "monitoringTitle": "Monitoring",
+    "monitoringSub": "Live levels, headroom and stream health.",
+    "monitoringHelp": "Everything on air at a glance: levels, modulation, gain reduction, subcarriers and stream health. The Levels, Spectrum and Scopes windows show the same signals larger."
+  },
+  "schema": {
+    "advanced_dynamics_density": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Density",
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.05,
+      "unit": "%",
+      "scale": 100
+    },
+    "advanced_dynamics_enabled": {
+      "kind": "toggle",
+      "label": "Advanced Dynamics"
+    },
+    "advanced_dynamics_high_offset_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Treble Balance",
+      "max": 6.0,
+      "min": -12.0,
+      "step": 0.5,
+      "unit": " dB"
+    },
+    "advanced_dynamics_low_offset_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Bass Balance",
+      "max": 6.0,
+      "min": -12.0,
+      "step": 0.5,
+      "unit": " dB"
+    },
+    "advanced_dynamics_max_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Max Boost",
+      "max": 24.0,
+      "min": 0.0,
+      "step": 0.5,
+      "unit": " dB",
+      "advanced": true
+    },
+    "advanced_dynamics_mid_offset_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Mid Balance",
+      "max": 6.0,
+      "min": -12.0,
+      "step": 0.5,
+      "unit": " dB"
+    },
+    "advanced_dynamics_speed": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Speed",
+      "max": 4.0,
+      "min": 0.25,
+      "step": 0.05,
+      "unit": "x",
+      "advanced": true
+    },
+    "advanced_dynamics_target_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Target Level",
+      "max": -6.0,
+      "min": -30.0,
+      "step": 0.5,
+      "unit": " dB"
+    },
+    "af_list": {
+      "kind": "text",
+      "label": "Frequencies"
+    },
+    "af_method": {
+      "kind": "seg",
+      "label": "Method",
+      "options": [
+        [
+          "A",
+          "Method A"
+        ],
+        [
+          "B",
+          "Method B"
+        ]
+      ]
+    },
+    "am_lowpass_hz": {
+      "kind": "slider",
+      "label": "AM Bandwidth",
+      "max": 10000,
+      "min": 3000,
+      "modes": [
+        "am"
+      ],
+      "step": 100,
+      "unit": " Hz"
+    },
+    "am_positive_peak_pct": {
+      "kind": "slider",
+      "label": "Positive Peak Headroom",
+      "max": 125,
+      "min": 100,
+      "modes": [
+        "am"
+      ],
+      "step": 1,
+      "unit": "%"
+    },
+    "am_preemphasis_us": {
+      "kind": "seg",
+      "label": "AM Pre-emphasis",
+      "modes": [
+        "am"
+      ],
+      "options": [
+        [
+          "0",
+          "Off (flat)"
+        ],
+        [
+          "75",
+          "75 us (NRSC)"
+        ]
+      ]
+    },
+    "audio_composite_softclip_enabled": {
+      "kind": "toggle",
+      "label": "Audio-Composite Soft Clip"
+    },
+    "auto_start": {
+      "kind": "toggle",
+      "label": "Start Engine at Launch"
+    },
+    "bass_clipper_crossover_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Crossover",
+      "max": 300.0,
+      "min": 60.0,
+      "step": 1,
+      "unit": " Hz",
+      "advanced": true
+    },
+    "bass_clipper_drive": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Drive",
+      "max": 3.0,
+      "min": 0.5,
+      "step": 0.01,
+      "unit": "%",
+      "scale": 100
+    },
+    "bass_clipper_enabled": {
+      "kind": "toggle",
+      "label": "Enable Bass Clipper"
+    },
+    "bass_clipper_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": 0.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "blocksize": {
+      "kind": "seg",
+      "label": "Block Size",
+      "options": [
+        [
+          "256",
+          "256"
+        ],
+        [
+          "512",
+          "512"
+        ],
+        [
+          "1024",
+          "1024"
+        ],
+        [
+          "2048",
+          "2048"
+        ],
+        [
+          "4096",
+          "4096"
+        ],
+        [
+          "8192",
+          "8192"
+        ]
+      ]
+    },
+    "bs412_enabled": {
+      "kind": "toggle",
+      "label": "Enable BS.412"
+    },
+    "bs412_ceiling_dbr": {
+      "decimals": 1,
+      "help": "Average power of the complete multiplex, pilot and RDS included, over any 60 seconds. 0 dBr IS the ITU-R BS.412 limit (the power of a sine at 19 kHz deviation); lower values keep a margin below it.",
+      "kind": "slider",
+      "label": "Ceiling",
+      "max": 0.0,
+      "min": -10.0,
+      "step": 0.1,
+      "unit": " dBr"
+    },
+    "dc_clipper_cancel_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Cancellation Frequency",
+      "max": 4000.0,
+      "min": 500.0,
+      "step": 1,
+      "unit": " Hz",
+      "advanced": true
+    },
+    "dc_clipper_ceiling_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Ceiling",
+      "max": 0.0,
+      "min": -6.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "dc_clipper_enabled": {
+      "kind": "toggle",
+      "label": "Enable Audio Clipper"
+    },
+    "di_comp": {
+      "kind": "toggle",
+      "label": "Compressed (DI)"
+    },
+    "di_dyn": {
+      "kind": "toggle",
+      "label": "Dynamic PTY (DI)"
+    },
+    "di_head": {
+      "kind": "toggle",
+      "label": "Artificial Head (DI)"
+    },
+    "di_stereo": {
+      "kind": "toggle",
+      "label": "Stereo (DI)"
+    },
+    "diff_level": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Difference (L-R) Level",
+      "max": 2.0,
+      "min": 0.0,
+      "step": 0.01,
+      "unit": ""
+    },
+    "downward_expander_enabled": {
+      "kind": "toggle",
+      "label": "Enable Expander"
+    },
+    "ecc": {
+      "kind": "text",
+      "label": "Extended Country Code (ECC)"
+    },
+    "en_af": {
+      "kind": "toggle",
+      "label": "Enable AF"
+    },
+    "en_ct": {
+      "kind": "toggle",
+      "label": "Enable Clock Time"
+    },
+    "en_id": {
+      "kind": "toggle",
+      "label": "Enable ID"
+    },
+    "en_lps": {
+      "kind": "toggle",
+      "label": "Enable Long PS"
+    },
+    "en_ptyn": {
+      "kind": "toggle",
+      "label": "Enable PTYN"
+    },
+    "en_rds": {
+      "kind": "toggle",
+      "label": "Enable RDS"
+    },
+    "en_rt_plus": {
+      "kind": "toggle",
+      "label": "Enable RT+"
+    },
+    "encoder_fir_enabled": {
+      "kind": "seg",
+      "label": "Encoder Lowpass",
+      "options": [
+        [
+          "True",
+          "Linear Phase"
+        ],
+        [
+          "False",
+          "Low Latency"
+        ]
+      ]
+    },
+    "expander_attack_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Attack",
+      "max": 100.0,
+      "min": 0.1,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "expander_ratio": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Ratio",
+      "max": 8.0,
+      "min": 1.0,
+      "step": 0.1,
+      "unit": ":1"
+    },
+    "expander_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Release",
+      "max": 2000.0,
+      "min": 10.0,
+      "step": 1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "expander_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": -20.0,
+      "min": -60.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "fft_window_92khz": {
+      "kind": "toggle",
+      "label": "96 kHz Spectrum"
+    },
+    "final_drive_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Final Drive",
+      "max": 12.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "group_sequence": {
+      "kind": "text",
+      "label": "Group Sequence"
+    },
+    "hf_limiter_attack_ms": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Attack",
+      "max": 20.0,
+      "min": 0.2,
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ],
+      "step": 0.05,
+      "unit": " ms",
+      "advanced": true
+    },
+    "hf_limiter_enabled": {
+      "kind": "toggle",
+      "label": "Enable HF Limiter",
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ]
+    },
+    "hf_limiter_max_reduction_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Max Reduction",
+      "max": 24.0,
+      "min": 1.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ],
+      "step": 0.5,
+      "unit": " dB",
+      "advanced": true
+    },
+    "hf_limiter_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Release",
+      "max": 500.0,
+      "min": 5.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ],
+      "step": 1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "hf_limiter_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": 0.0,
+      "min": -12.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ],
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "hf_limiter_top_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Top Threshold",
+      "max": 0.0,
+      "min": -12.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "am"
+      ],
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
+    },
+    "hf_trim_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "HF Trim",
+      "max": 12.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
+    },
+    "hf_trim_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "HF Trim Frequency",
+      "max": 12000.0,
+      "min": 1000.0,
+      "step": 1,
+      "unit": " Hz",
+      "advanced": true
+    },
+    "hpf_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "High-Pass Filter",
+      "max": 180.0,
+      "min": 10.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "input_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Input Gain",
+      "max": 24.0,
+      "min": -24.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "lic": {
+      "kind": "text",
+      "label": "Language Code (LIC)"
+    },
+    "limit_lookahead_enabled": {
+      "kind": "toggle",
+      "label": "Enable Look-Ahead",
+      "advanced": true
+    },
+    "limit_lookahead_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Look-Ahead",
+      "max": 20.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "limit_mpx": {
+      "kind": "toggle",
+      "label": "Enable Safety Limiter"
+    },
+    "limit_threshold": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": 1.0,
+      "min": 0.5,
+      "step": 0.1,
+      "unit": " dBFS",
+      "advanced": true,
+      "transform": "db20"
+    },
+    "lps_centered": {
+      "kind": "toggle",
+      "label": "Centre Long PS"
+    },
+    "lps_cr": {
+      "kind": "toggle",
+      "label": "Append Carriage Return"
+    },
+    "monitor_enabled": {
+      "kind": "toggle",
+      "label": "Enable Monitor"
+    },
+    "monitor_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Monitor Level",
+      "max": 6.0,
+      "min": -40.0,
+      "step": 0.5,
+      "unit": " dB"
+    },
+    "mono_bass_enabled": {
+      "kind": "toggle",
+      "label": "Enable Mono Bass",
+      "modes": [
+        "mpx",
+        "fm",
+        "hd"
+      ]
+    },
+    "mono_bass_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Mono Below",
+      "max": 250.0,
+      "min": 60.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "hd"
+      ],
+      "step": 1,
+      "unit": " Hz"
+    },
+    "mono_mode": {
+      "kind": "toggle",
+      "label": "Mono Mode",
+      "modes": [
+        "mpx",
+        "fm",
+        "hd"
+      ]
+    },
+    "mpx_clipper_cancel_audio": {
+      "kind": "toggle",
+      "label": "Protect Audio Highs",
+      "advanced": true
+    },
+    "mpx_clipper_cancel_pilot": {
+      "kind": "toggle",
+      "label": "Protect Stereo Pilot",
+      "advanced": true
+    },
+    "mpx_clipper_cancel_rds": {
+      "kind": "toggle",
+      "label": "Protect RDS",
+      "advanced": true
+    },
+    "mpx_clipper_ceiling_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Ceiling",
+      "max": 0.0,
+      "min": -6.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "mpx_clipper_enabled": {
+      "kind": "toggle",
+      "label": "Enable Composite Clipper"
+    },
+    "mpx_clipper_lookahead_depth_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Clip Depth",
+      "max": 6.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
+    },
+    "mpx_clipper_lookahead_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Look-Ahead",
+      "max": 5.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "mpx_clipper_oversampling": {
+      "kind": "seg",
+      "label": "Oversampling",
+      "options": [
+        [
+          "8",
+          "8x"
+        ],
+        [
+          "16",
+          "16x"
+        ],
+        [
+          "32",
+          "32x"
+        ]
+      ],
+      "advanced": true
+    },
+    "mpx_clipper_stereo_guard": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Protect Stereo Subcarrier",
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.05,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "mpx_clipper_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": 0.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "mpx_deviation_khz": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Composite Deviation",
+      "max": 90.0,
+      "min": 40.0,
+      "step": 0.1,
+      "unit": " kHz",
+      "modes": [
+        "mpx"
+      ]
+    },
+    "mpx_line_output_dbfs": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Line Output",
+      "max": 0.0,
+      "min": -40.0,
+      "step": 0.1,
+      "unit": " dBFS"
+    },
+    "mpx_ssb_stereo_amount": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "SSB Amount",
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.05,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "mpx_ssb_stereo_enabled": {
+      "kind": "toggle",
+      "label": "Enable SSB Stereo"
+    },
+    "ms": {
+      "kind": "toggle",
+      "label": "Music (MS)"
+    },
+    "multiband_enabled": {
+      "kind": "toggle",
+      "label": "Enable Multiband"
+    },
+    "multiband_fir_enabled": {
+      "kind": "seg",
+      "label": "Multiband Crossovers",
+      "options": [
+        [
+          "True",
+          "Linear Phase"
+        ],
+        [
+          "False",
+          "Low Latency"
+        ]
+      ]
+    },
+    "multiband_high_attack_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "High Attack",
+      "max": 120.0,
+      "min": 1.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_high_ratio": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "High Ratio",
+      "max": 8.0,
+      "min": 1.0,
+      "step": 0.01,
+      "unit": ""
+    },
+    "multiband_high_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "High Release",
+      "max": 1200.0,
+      "min": 40.0,
+      "step": 1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_high_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "High Threshold",
+      "max": -6.0,
+      "min": -40.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "multiband_inter_band_coupling_enabled": {
+      "kind": "toggle",
+      "label": "Inter-Band Coupling",
+      "advanced": true
+    },
+    "multiband_knee_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Knee",
+      "max": 12.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
+    },
+    "multiband_limiter_attack_ms": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Attack",
+      "max": 10.0,
+      "min": 0.01,
+      "step": 0.01,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_limiter_enabled": {
+      "kind": "toggle",
+      "label": "Enable Band Limiter"
+    },
+    "multiband_limiter_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Release",
+      "max": 500.0,
+      "min": 10.0,
+      "step": 1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_limiter_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": 0.0,
+      "min": -20.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "multiband_link_strength": {
+      "decimals": 0,
+      "help": "How much the left and right channels share one gain reduction in each band. 0 = each channel compressed on its own, 1 = fully linked (stereo image held exactly).",
+      "kind": "slider",
+      "label": "Stereo Link",
+      "max": 1.0,
+      "min": 0.0,
+      "modes": [
+        "mpx",
+        "fm",
+        "hd"
+      ],
+      "step": 0.01,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "multiband_low_attack_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Low Attack",
+      "max": 120.0,
+      "min": 1.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_low_ratio": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Low Ratio",
+      "max": 8.0,
+      "min": 1.0,
+      "step": 0.01,
+      "unit": ""
+    },
+    "multiband_low_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Low Release",
+      "max": 1200.0,
+      "min": 40.0,
+      "step": 1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_low_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Low Threshold",
+      "max": -6.0,
+      "min": -40.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "multiband_makeup_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Makeup",
+      "max": 18.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "multiband_mid_attack_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Mid Attack",
+      "max": 120.0,
+      "min": 1.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_mid_ratio": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Mid Ratio",
+      "max": 8.0,
+      "min": 1.0,
+      "step": 0.01,
+      "unit": ""
+    },
+    "multiband_mid_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Mid Release",
+      "max": 1200.0,
+      "min": 40.0,
+      "step": 1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "multiband_mid_threshold_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Mid Threshold",
+      "max": -6.0,
+      "min": -40.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "multiband_mode": {
+      "kind": "seg",
+      "label": "Bands",
+      "options": [
+        [
+          "3",
+          "3 Bands"
+        ],
+        [
+          "5",
+          "5 Bands"
+        ]
+      ]
+    },
+    "multiband_release_program_dependent": {
+      "kind": "toggle",
+      "label": "Programme-Dependent Release",
+      "advanced": true
+    },
+    "multiband_transient_aware_attack_enabled": {
+      "kind": "toggle",
+      "label": "Transient-Aware Attack",
+      "advanced": true
+    },
+    "multiband_x1_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "X1 (Low / Low-Mid)",
+      "max": 300.0,
+      "min": 30.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "multiband_x2_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "X2 (Low-Mid / Mid)",
+      "max": 1200.0,
+      "min": 120.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "multiband_x3_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "X3 (Mid / High-Mid)",
+      "max": 4000.0,
+      "min": 600.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "multiband_x4_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "X4 (High-Mid / High)",
+      "max": 12000.0,
+      "min": 2500.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "now_playing_enabled": {
+      "kind": "toggle",
+      "label": "Enable Now Playing Script"
+    },
+    "now_playing_poll_seconds": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Poll Interval",
+      "max": 300.0,
+      "min": 1.0,
+      "step": 1,
+      "unit": " s"
+    },
+    "now_playing_script": {
+      "kind": "text",
+      "label": "Script Path"
+    },
+    "now_playing_timeout_seconds": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Script Timeout",
+      "max": 30.0,
+      "min": 0.2,
+      "step": 0.1,
+      "unit": " s"
+    },
+    "operating_mode": {
+      "kind": "seg",
+      "label": "Operating Mode",
+      "options": [
+        [
+          "mpx",
+          "MPX Output"
+        ],
+        [
+          "fm",
+          "FM Output"
+        ],
+        [
+          "hd",
+          "HD Output"
+        ],
+        [
+          "am",
+          "AM Output"
+        ]
+      ]
+    },
+    "output_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Output Level",
+      "max": 18.0,
+      "min": -18.0,
+      "step": 0.1,
+      "unit": " dB",
+      "variants": [
+        {
+          "modes": [
+            "mpx"
+          ],
+          "label": "MPX Output Level",
+          "min": -18.0,
+          "max": 0.0
+        }
+      ]
+    },
+    "parametric_eq_enabled": {
+      "kind": "toggle",
+      "label": "Enable Parametric EQ"
+    },
+    "peq_b1_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Low Shelf Frequency",
+      "max": 500.0,
+      "min": 20.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "peq_b1_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Low Shelf Gain",
+      "max": 12.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "peq_b2_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Band 2 Frequency",
+      "max": 5000.0,
+      "min": 100.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "peq_b2_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Band 2 Gain",
+      "max": 12.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "peq_b2_q": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Band 2 Q",
+      "max": 10.0,
+      "min": 0.1,
+      "step": 0.01,
+      "unit": ""
+    },
+    "peq_b3_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Band 3 Frequency",
+      "max": 12000.0,
+      "min": 500.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "peq_b3_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Band 3 Gain",
+      "max": 12.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "peq_b3_q": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Band 3 Q",
+      "max": 10.0,
+      "min": 0.1,
+      "step": 0.01,
+      "unit": ""
+    },
+    "peq_b4_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "High Shelf Frequency",
+      "max": 16000.0,
+      "min": 1000.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "peq_b4_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "High Shelf Gain",
+      "max": 12.0,
+      "min": -12.0,
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "phase_rotation_enabled": {
+      "kind": "toggle",
+      "label": "Enable Phase Rotator"
+    },
+    "phase_rotation_freq_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Frequency",
+      "max": 500.0,
+      "min": 50.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "pi": {
+      "kind": "text",
+      "label": "PI Code"
+    },
+    "pilot_level": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Pilot Level",
+      "max": 0.12,
+      "min": 0.0,
+      "scale": 100,
+      "step": 0.005,
+      "unit": "%"
+    },
+    "pin_day": {
+      "kind": "number",
+      "label": "PIN Day",
+      "max": 31,
+      "min": 0
+    },
+    "pin_enabled": {
+      "kind": "toggle",
+      "label": "Enable PIN"
+    },
+    "pin_hour": {
+      "kind": "number",
+      "label": "PIN Hour",
+      "max": 23,
+      "min": 0
+    },
+    "pin_minute": {
+      "kind": "number",
+      "label": "PIN Minute",
+      "max": 59,
+      "min": 0
+    },
+    "pre_encode_bandlimited_residual_cutoff_fraction": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Kernel Cutoff",
+      "max": 0.49,
+      "min": 0.05,
+      "step": 0.01,
+      "unit": ""
+    },
+    "pre_encode_bandlimited_residual_enabled": {
+      "kind": "toggle",
+      "label": "Reduce Clipping Distortion",
+      "advanced": true
+    },
+    "pre_encode_bandlimited_residual_taps": {
+      "kind": "number",
+      "label": "Kernel Length (Odd Taps)",
+      "max": 129,
+      "min": 5
+    },
+    "pre_encode_limiter_enabled": {
+      "kind": "toggle",
+      "label": "Enable Audio Limiter"
+    },
+    "pre_encode_lookahead_hf_cutoff_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "HF Detector Cutoff",
+      "max": 12000.0,
+      "min": 1000.0,
+      "step": 100,
+      "unit": " Hz",
+      "advanced": true
+    },
+    "pre_encode_lookahead_hf_only": {
+      "kind": "toggle",
+      "label": "Look-Ahead on HF Transients Only",
+      "advanced": true
+    },
+    "pre_encode_lookahead_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Look-Ahead",
+      "max": 5.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " ms"
+    },
+    "pre_encode_release_ms": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Release",
+      "max": 200.0,
+      "min": 10.0,
+      "step": 1,
+      "unit": " ms"
+    },
+    "pre_encode_stereo_link": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Stereo Link",
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.05
+    },
+    "pre_encode_threshold": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Threshold",
+      "max": 0.999,
+      "min": 0.5,
+      "step": 0.1,
+      "unit": " dBFS",
+      "transform": "db20"
+    },
+    "preemphasis_us": {
+      "kind": "seg",
+      "label": "Pre-emphasis",
+      "modes": [
+        "mpx",
+        "fm"
+      ],
+      "options": [
+        [
+          "0",
+          "Off"
+        ],
+        [
+          "50",
+          "50 us"
+        ],
+        [
+          "75",
+          "75 us"
+        ]
+      ]
+    },
+    "primebass_amount": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Amount",
+      "max": 0.5,
+      "min": 0.0,
+      "step": 0.01,
+      "unit": "%",
+      "scale": 100
+    },
+    "primebass_density": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Density",
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.01,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "primebass_drive": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Drive",
+      "max": 1.5,
+      "min": 0.2,
+      "step": 0.01,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "primebass_enabled": {
+      "kind": "toggle",
+      "label": "Enable PrimeBass"
+    },
+    "primebass_freq_hz": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Frequency",
+      "max": 120.0,
+      "min": 40.0,
+      "step": 0.1,
+      "unit": " Hz"
+    },
+    "primebass_harmonics": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Harmonics",
+      "max": 0.5,
+      "min": 0.0,
+      "step": 0.01,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "primebass_subharmonics_amount": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Subharmonic Amount",
+      "max": 0.4,
+      "min": 0.0,
+      "step": 0.01,
+      "unit": "%",
+      "advanced": true,
+      "scale": 100
+    },
+    "primebass_subharmonics_enabled": {
+      "kind": "toggle",
+      "label": "Enable Subharmonics",
+      "advanced": true
+    },
+    "processed_audio_ceiling_dbtp": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "True-Peak Ceiling",
+      "max": 0.0,
+      "min": -6.0,
+      "modes": [
+        "hd"
+      ],
+      "step": 0.1,
+      "unit": " dBTP"
+    },
+    "processed_audio_coder_has_clipper": {
+      "kind": "toggle",
+      "label": "External Coder Has Its Own Clipper",
+      "modes": [
+        "fm"
+      ]
+    },
+    "processed_audio_final_clip_drive_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Final Clip Drive",
+      "max": 12.0,
+      "min": 0.0,
+      "modes": [
+        "fm"
+      ],
+      "step": 0.1,
+      "unit": " dB"
+    },
+    "processing_bypass": {
+      "kind": "toggle",
+      "label": "Bypass Processing"
+    },
+    "program_lowpass_hz": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Programme Lowpass",
+      "max": 20000.0,
+      "min": 8000.0,
+      "step": 1,
+      "unit": " Hz",
+      "advanced": true
+    },
+    "ps_a": {
+      "kind": "text",
+      "label": "PS Bank A"
+    },
+    "ps_active_bank": {
+      "kind": "seg",
+      "label": "Active PS Bank",
+      "options": [
+        [
+          "A",
+          "A"
+        ],
+        [
+          "B",
+          "B"
+        ],
+        [
+          "C",
+          "C"
+        ],
+        [
+          "D",
+          "D"
+        ]
+      ]
+    },
+    "ps_b": {
+      "kind": "text",
+      "label": "PS Bank B"
+    },
+    "ps_c": {
+      "kind": "text",
+      "label": "PS Bank C"
+    },
+    "ps_centered": {
+      "kind": "toggle",
+      "label": "Centre PS"
+    },
+    "ps_d": {
+      "kind": "text",
+      "label": "PS Bank D"
+    },
+    "ps_dynamic": {
+      "kind": "toggle",
+      "label": "Dynamic PS"
+    },
+    "ps_frame_seconds": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "PS Frame Time",
+      "max": 30.0,
+      "min": 0.5,
+      "step": 0.1,
+      "unit": " s"
+    },
+    "ps_long_32": {
+      "kind": "text",
+      "label": "Long PS"
+    },
+    "pty": {
+      "kind": "number",
+      "label": "Programme Type (PTY)",
+      "max": 31,
+      "min": 0
+    },
+    "pty_rbds": {
+      "kind": "seg",
+      "label": "PTY Names",
+      "options": [
+        [
+          "False",
+          "Europe (RDS)"
+        ],
+        [
+          "True",
+          "North America (RBDS)"
+        ]
+      ]
+    },
+    "ptyn": {
+      "kind": "text",
+      "label": "Programme Type Name (PTYN)"
+    },
+    "ptyn_centered": {
+      "kind": "toggle",
+      "label": "Centre PTYN"
+    },
+    "rds_level": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Injection",
+      "max": 7.5,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " kHz",
+      "readout2": {
+        "scale": 1.3333333333333333,
+        "decimals": 1,
+        "unit": "%"
+      }
+    },
+    "rt_a": {
+      "kind": "text",
+      "label": "Message A"
+    },
+    "rt_a_enabled": {
+      "kind": "toggle",
+      "label": "Use Message A"
+    },
+    "rt_ab_cycle_count": {
+      "kind": "number",
+      "label": "A/B Cycle Count",
+      "max": 99,
+      "min": 1
+    },
+    "rt_active_buffer": {
+      "kind": "seg",
+      "label": "Active Message",
+      "options": [
+        [
+          "0",
+          "A"
+        ],
+        [
+          "1",
+          "B"
+        ],
+        [
+          "2",
+          "C"
+        ],
+        [
+          "3",
+          "D"
+        ]
+      ]
+    },
+    "rt_b": {
+      "kind": "text",
+      "label": "Message B"
+    },
+    "rt_b_enabled": {
+      "kind": "toggle",
+      "label": "Use Message B"
+    },
+    "rt_c": {
+      "kind": "text",
+      "label": "Message C"
+    },
+    "rt_c_enabled": {
+      "kind": "toggle",
+      "label": "Use Message C"
+    },
+    "rt_centered": {
+      "kind": "toggle",
+      "label": "Centre Radiotext"
+    },
+    "rt_cr": {
+      "kind": "toggle",
+      "label": "Append Carriage Return"
+    },
+    "rt_cycle": {
+      "kind": "toggle",
+      "label": "Rotate Messages"
+    },
+    "rt_cycle_ab": {
+      "kind": "toggle",
+      "label": "Cycle A/B Flag"
+    },
+    "rt_cycle_time": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Cycle Time",
+      "max": 60.0,
+      "min": 1.0,
+      "step": 0.5,
+      "unit": " s"
+    },
+    "rt_d": {
+      "kind": "text",
+      "label": "Message D"
+    },
+    "rt_d_enabled": {
+      "kind": "toggle",
+      "label": "Use Message D"
+    },
+    "rt_manual_buffers": {
+      "kind": "toggle",
+      "label": "Use Messages"
+    },
+    "rt_mode": {
+      "kind": "seg",
+      "label": "Radiotext Length",
+      "options": [
+        [
+          "2A",
+          "64 Characters (2A)"
+        ],
+        [
+          "2B",
+          "32 Characters (2B)"
+        ]
+      ]
+    },
+    "rt_plus_format_a": {
+      "kind": "text",
+      "label": "RT+ Format A"
+    },
+    "rt_plus_format_b": {
+      "kind": "text",
+      "label": "RT+ Format B"
+    },
+    "rt_text": {
+      "kind": "text",
+      "label": "Default Radiotext"
+    },
+    "sample_rate": {
+      "kind": "seg",
+      "label": "Sample Rate",
+      "options": [
+        [
+          "192000",
+          "192 kHz"
+        ],
+        [
+          "96000",
+          "96 kHz"
+        ],
+        [
+          "48000",
+          "48 kHz"
+        ]
+      ]
+    },
+    "scheduler_auto": {
+      "kind": "toggle",
+      "label": "Automatic Scheduler"
+    },
+    "scheduler_standard": {
+      "kind": "toggle",
+      "label": "Standard Scheduler"
+    },
+    "scheduler_standard_lps": {
+      "kind": "toggle",
+      "label": "Standard Scheduler: Long PS"
+    },
+    "source_mode": {
+      "kind": "seg",
+      "label": "Source",
+      "options": [
+        [
+          "input",
+          "Input"
+        ],
+        [
+          "tone",
+          "Tone"
+        ]
+      ]
+    },
+    "stereo_image_max_side_ratio": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Max Side/Mid Ratio",
+      "max": 3.0,
+      "min": 1.0,
+      "modes": [
+        "mpx",
+        "fm"
+      ],
+      "step": 0.05,
+      "unit": "",
+      "advanced": true
+    },
+    "stereo_image_protect_enabled": {
+      "kind": "toggle",
+      "label": "Protect Stereo Image",
+      "modes": [
+        "mpx",
+        "fm"
+      ],
+      "advanced": true
+    },
+    "sum_level": {
+      "decimals": 2,
+      "kind": "slider",
+      "label": "Sum (L+R) Level",
+      "max": 2.0,
+      "min": 0.0,
+      "step": 0.01,
+      "unit": ""
+    },
+    "ta": {
+      "kind": "toggle",
+      "label": "Traffic Announcement (TA)"
+    },
+    "test_tone_freq": {
+      "decimals": 0,
+      "kind": "slider",
+      "label": "Frequency",
+      "max": 20000.0,
+      "min": 20.0,
+      "step": 1,
+      "unit": " Hz"
+    },
+    "test_tone_level_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Tone Level",
+      "max": 0.0,
+      "min": -60.0,
+      "step": 0.5,
+      "unit": " dBFS"
+    },
+    "test_tone_mode": {
+      "kind": "seg",
+      "label": "Stereo Mode",
+      "options": [
+        [
+          "mono",
+          "Mono"
+        ],
+        [
+          "stereo",
+          "L=-R"
+        ],
+        [
+          "left",
+          "Left"
+        ],
+        [
+          "right",
+          "Right"
+        ]
+      ]
+    },
+    "test_tone_type": {
+      "kind": "seg",
+      "label": "Type",
+      "options": [
+        [
+          "sine",
+          "Sine"
+        ],
+        [
+          "pink",
+          "Pink"
+        ],
+        [
+          "white",
+          "White"
+        ]
+      ]
+    },
+    "tp": {
+      "kind": "toggle",
+      "label": "Traffic Programme (TP)"
+    },
+    "tz_offset": {
+      "kind": "seg",
+      "style": "menu",
+      "label": "Time Zone",
+      "options": [
+        [
+          "-12",
+          "UTC-12:00"
+        ],
+        [
+          "-11.75",
+          "UTC-11:45"
+        ],
+        [
+          "-11.5",
+          "UTC-11:30"
+        ],
+        [
+          "-11.25",
+          "UTC-11:15"
+        ],
+        [
+          "-11",
+          "UTC-11:00"
+        ],
+        [
+          "-10.75",
+          "UTC-10:45"
+        ],
+        [
+          "-10.5",
+          "UTC-10:30"
+        ],
+        [
+          "-10.25",
+          "UTC-10:15"
+        ],
+        [
+          "-10",
+          "UTC-10:00"
+        ],
+        [
+          "-9.75",
+          "UTC-09:45"
+        ],
+        [
+          "-9.5",
+          "UTC-09:30"
+        ],
+        [
+          "-9.25",
+          "UTC-09:15"
+        ],
+        [
+          "-9",
+          "UTC-09:00"
+        ],
+        [
+          "-8.75",
+          "UTC-08:45"
+        ],
+        [
+          "-8.5",
+          "UTC-08:30"
+        ],
+        [
+          "-8.25",
+          "UTC-08:15"
+        ],
+        [
+          "-8",
+          "UTC-08:00"
+        ],
+        [
+          "-7.75",
+          "UTC-07:45"
+        ],
+        [
+          "-7.5",
+          "UTC-07:30"
+        ],
+        [
+          "-7.25",
+          "UTC-07:15"
+        ],
+        [
+          "-7",
+          "UTC-07:00"
+        ],
+        [
+          "-6.75",
+          "UTC-06:45"
+        ],
+        [
+          "-6.5",
+          "UTC-06:30"
+        ],
+        [
+          "-6.25",
+          "UTC-06:15"
+        ],
+        [
+          "-6",
+          "UTC-06:00"
+        ],
+        [
+          "-5.75",
+          "UTC-05:45"
+        ],
+        [
+          "-5.5",
+          "UTC-05:30"
+        ],
+        [
+          "-5.25",
+          "UTC-05:15"
+        ],
+        [
+          "-5",
+          "UTC-05:00"
+        ],
+        [
+          "-4.75",
+          "UTC-04:45"
+        ],
+        [
+          "-4.5",
+          "UTC-04:30"
+        ],
+        [
+          "-4.25",
+          "UTC-04:15"
+        ],
+        [
+          "-4",
+          "UTC-04:00"
+        ],
+        [
+          "-3.75",
+          "UTC-03:45"
+        ],
+        [
+          "-3.5",
+          "UTC-03:30"
+        ],
+        [
+          "-3.25",
+          "UTC-03:15"
+        ],
+        [
+          "-3",
+          "UTC-03:00"
+        ],
+        [
+          "-2.75",
+          "UTC-02:45"
+        ],
+        [
+          "-2.5",
+          "UTC-02:30"
+        ],
+        [
+          "-2.25",
+          "UTC-02:15"
+        ],
+        [
+          "-2",
+          "UTC-02:00"
+        ],
+        [
+          "-1.75",
+          "UTC-01:45"
+        ],
+        [
+          "-1.5",
+          "UTC-01:30"
+        ],
+        [
+          "-1.25",
+          "UTC-01:15"
+        ],
+        [
+          "-1",
+          "UTC-01:00"
+        ],
+        [
+          "-0.75",
+          "UTC-00:45"
+        ],
+        [
+          "-0.5",
+          "UTC-00:30"
+        ],
+        [
+          "-0.25",
+          "UTC-00:15"
+        ],
+        [
+          "0",
+          "UTC+00:00"
+        ],
+        [
+          "0.25",
+          "UTC+00:15"
+        ],
+        [
+          "0.5",
+          "UTC+00:30"
+        ],
+        [
+          "0.75",
+          "UTC+00:45"
+        ],
+        [
+          "1",
+          "UTC+01:00"
+        ],
+        [
+          "1.25",
+          "UTC+01:15"
+        ],
+        [
+          "1.5",
+          "UTC+01:30"
+        ],
+        [
+          "1.75",
+          "UTC+01:45"
+        ],
+        [
+          "2",
+          "UTC+02:00"
+        ],
+        [
+          "2.25",
+          "UTC+02:15"
+        ],
+        [
+          "2.5",
+          "UTC+02:30"
+        ],
+        [
+          "2.75",
+          "UTC+02:45"
+        ],
+        [
+          "3",
+          "UTC+03:00"
+        ],
+        [
+          "3.25",
+          "UTC+03:15"
+        ],
+        [
+          "3.5",
+          "UTC+03:30"
+        ],
+        [
+          "3.75",
+          "UTC+03:45"
+        ],
+        [
+          "4",
+          "UTC+04:00"
+        ],
+        [
+          "4.25",
+          "UTC+04:15"
+        ],
+        [
+          "4.5",
+          "UTC+04:30"
+        ],
+        [
+          "4.75",
+          "UTC+04:45"
+        ],
+        [
+          "5",
+          "UTC+05:00"
+        ],
+        [
+          "5.25",
+          "UTC+05:15"
+        ],
+        [
+          "5.5",
+          "UTC+05:30"
+        ],
+        [
+          "5.75",
+          "UTC+05:45"
+        ],
+        [
+          "6",
+          "UTC+06:00"
+        ],
+        [
+          "6.25",
+          "UTC+06:15"
+        ],
+        [
+          "6.5",
+          "UTC+06:30"
+        ],
+        [
+          "6.75",
+          "UTC+06:45"
+        ],
+        [
+          "7",
+          "UTC+07:00"
+        ],
+        [
+          "7.25",
+          "UTC+07:15"
+        ],
+        [
+          "7.5",
+          "UTC+07:30"
+        ],
+        [
+          "7.75",
+          "UTC+07:45"
+        ],
+        [
+          "8",
+          "UTC+08:00"
+        ],
+        [
+          "8.25",
+          "UTC+08:15"
+        ],
+        [
+          "8.5",
+          "UTC+08:30"
+        ],
+        [
+          "8.75",
+          "UTC+08:45"
+        ],
+        [
+          "9",
+          "UTC+09:00"
+        ],
+        [
+          "9.25",
+          "UTC+09:15"
+        ],
+        [
+          "9.5",
+          "UTC+09:30"
+        ],
+        [
+          "9.75",
+          "UTC+09:45"
+        ],
+        [
+          "10",
+          "UTC+10:00"
+        ],
+        [
+          "10.25",
+          "UTC+10:15"
+        ],
+        [
+          "10.5",
+          "UTC+10:30"
+        ],
+        [
+          "10.75",
+          "UTC+10:45"
+        ],
+        [
+          "11",
+          "UTC+11:00"
+        ],
+        [
+          "11.25",
+          "UTC+11:15"
+        ],
+        [
+          "11.5",
+          "UTC+11:30"
+        ],
+        [
+          "11.75",
+          "UTC+11:45"
+        ],
+        [
+          "12",
+          "UTC+12:00"
+        ],
+        [
+          "12.25",
+          "UTC+12:15"
+        ],
+        [
+          "12.5",
+          "UTC+12:30"
+        ],
+        [
+          "12.75",
+          "UTC+12:45"
+        ],
+        [
+          "13",
+          "UTC+13:00"
+        ],
+        [
+          "13.25",
+          "UTC+13:15"
+        ],
+        [
+          "13.5",
+          "UTC+13:30"
+        ],
+        [
+          "13.75",
+          "UTC+13:45"
+        ],
+        [
+          "14",
+          "UTC+14:00"
+        ]
+      ]
+    },
+    "wideband_agc_attack_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Attack",
+      "max": 500.0,
+      "min": 1.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "wideband_agc_bass_desensitize": {
+      "kind": "toggle",
+      "label": "Ignore Bass in Detector",
+      "advanced": true
+    },
+    "wideband_agc_enabled": {
+      "kind": "toggle",
+      "label": "Enable AGC"
+    },
+    "wideband_agc_k_weighting": {
+      "kind": "toggle",
+      "label": "K-Weighted Detector",
+      "advanced": true
+    },
+    "wideband_agc_max_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Max Gain",
+      "max": 24.0,
+      "min": 0.0,
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
+    },
+    "wideband_agc_min_gain_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Min Gain",
+      "max": 0.0,
+      "min": -24.0,
+      "step": 0.1,
+      "unit": " dB",
+      "advanced": true
+    },
+    "wideband_agc_release_ms": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Release",
+      "max": 5000.0,
+      "min": 40.0,
+      "step": 0.1,
+      "unit": " ms",
+      "advanced": true
+    },
+    "wideband_agc_release_program_dependent": {
+      "kind": "toggle",
+      "label": "Programme-Dependent Release",
+      "advanced": true
+    },
+    "wideband_agc_target_db": {
+      "decimals": 1,
+      "kind": "slider",
+      "label": "Target Level",
+      "max": -6.0,
+      "min": -36.0,
+      "step": 0.1,
+      "unit": " dB"
+    }
+  }
+}

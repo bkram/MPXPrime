@@ -23,7 +23,18 @@
  *   7. a server-side clamp snaps the control back instead of throwing;
  *   8. changing a device re-reads the device list;
  *   9. a mode change made elsewhere reaches a page that is sitting on
- *      Monitoring.
+ *      Monitoring;
+ *  10. the levelling engine selector on the Overview WORKS: only the engine in
+ *      use has its pages listed (sidebar, overview grid), nothing is ghosted,
+ *      and switching engines flips them both ways;
+ *  11. "Re-apply Profile" on the Overview WORKS: with a Format Profile
+ *      selected one click POSTs that profile to /api/presets and re-reads the
+ *      config; with `custom` selected the button is disabled and says why;
+ *  12. the target layout (UI layout review 2026-10): the Overview carries
+ *      the Format Profile picker, Identity carries Long PS, Loudness and
+ *      Output carries neither pilot nor RDS injection, Bands offers no
+ *      2-band choice, both limiter thresholds read in dBFS, and the status
+ *      strip names the mode as the app does ("MPX Output").
  *
  * Usage: scripts/check-webui.sh   (installs jsdom into .webui-check/ once)
  */
@@ -32,7 +43,9 @@ const { resolve } = require("node:path");
 const { JSDOM } = require("jsdom");
 
 const root = resolve(__dirname, "..");
-const webui = resolve(root, "macOS/Sources/MPXPrime/Control/WebUI");
+// The source version (Sources/MPXPrimeCore/Version.swift), so the mock says what the binary says.
+const version = readFileSync(resolve(root, "Sources/MPXPrimeCore/Version.swift"), "utf8").match(/string = "([^"]+)"/)[1];
+const webui = resolve(root, "Sources/MPXPrime/Control/WebUI");
 const html = readFileSync(resolve(webui, "index.html"), "utf8");
 const schema = JSON.parse(readFileSync(resolve(webui, "schema.json"), "utf8"));
 
@@ -75,6 +88,7 @@ function configFor(mode) {
   }
   cfg.processed_audio_ceiling_dbtp = "-1.0";
   cfg.am_positive_peak_pct = "125";
+  cfg.format_profile_id = "music_clean";   // not a widget: the loop misses it
   cfg.output_gain_db = RECALLED_OUTPUT_GAIN[mode];
   cfg.operating_mode = mode;   // last: it is itself a widget key the loop seeds
   return cfg;
@@ -91,7 +105,10 @@ function makeServer(mode) {
     restartPending: false,
     running: false,
     deviceCalls: 0,
-    patches: []
+    configReads: 0,
+    patches: [],
+    presetPosts: [],
+    mixerPatches: []
   };
   const devices = {
     inputs: [{ id: "in-a", name: "Input A", canInput: true, canOutput: false },
@@ -104,6 +121,28 @@ function makeServer(mode) {
     monitorEnabled: false,
     note: ""
   };
+  // The sound-card level layer as macOS reports it (0.65): one playback
+  // control named after the output device (the DX3 Pro+ at the -5 dB the
+  // field found it at) and one capture control for the input device, with
+  // the dB ranges and a note. The dashboard's Sound Card Mixer card renders
+  // from this shape on both platforms; a PATCH answers with a fresh read.
+  const mixer = {
+    available: true,
+    card: null,
+    controls: [
+      { name: "DX3 Pro+", index: 0, playbackPercent: 92.28, playbackDB: -5.0, playbackMuted: false },
+      { name: "Scarlett 2i2", index: 0, capturePercent: 100, captureDB: 0.0, captureMuted: false }
+    ],
+    note: "DX3 Pro+ output volume is -5.0 dB in CoreAudio; the composite reaches the exciter 5 dB low. Set it to 0 dB here or in Audio MIDI Setup.",
+    playbackDeviceName: "DX3 Pro+",
+    captureDeviceName: "Scarlett 2i2",
+    playbackRangeDB: { minDB: -127, maxDB: 0 },
+    captureRangeDB: { minDB: -96, maxDB: 0 },
+    playbackSettable: true,
+    captureSettable: true,
+    playbackDBEstimated: false,
+    captureDBEstimated: false
+  };
   const json = (body, status = 200) => ({
     ok: status < 400, status, statusText: "", json: async () => body
   });
@@ -113,6 +152,7 @@ function makeServer(mode) {
     const method = (opts.method || "GET").toUpperCase();
     if (path === "/api/schema") return json(schema);
     if (path === "/api/config") {
+      if (method === "GET") state.configReads += 1;
       if (method === "PATCH") {
         const patch = JSON.parse(opts.body);
         const outcomes = [];
@@ -150,7 +190,7 @@ function makeServer(mode) {
     if (path === "/api/devices") { state.deviceCalls += 1; return json(devices); }
     if (path === "/api/status") {
       return json({
-        running: state.running, platform: "macOS", version: "0.50",
+        running: state.running, platform: "macOS", version,
         sampleRateHz: Number(state.cfg.sample_rate || 192000),
         restartPending: state.restartPending,
         sourceMode: state.cfg.source_mode || "input",
@@ -170,8 +210,29 @@ function makeServer(mode) {
       state.streamReads = (state.streamReads || 0) + 1;
       return { ok: true, status: 200, statusText: "", body, json: async () => ({}) };
     }
-    if (path === "/api/presets") return json({});
+    if (path === "/api/presets") {
+      if (method === "POST") {
+        const body = JSON.parse(opts.body);
+        state.presetPosts.push(body);
+        if (body.kind === "format_profile") state.cfg.format_profile_id = body.id;
+      }
+      return json({});
+    }
     if (path === "/api/rds") return json({ ps: "TEST", rt: "" });
+    if (path === "/api/mixer") {
+      if (method === "PATCH") {
+        const body = JSON.parse(opts.body || "{}");
+        state.mixerPatches.push(body);
+        const ctl = mixer.controls.find(c => c.name === body.name);
+        if (!ctl) return json({ error: { message: "could not set mixer control" } }, 400);
+        // The device takes the slider position; the dB follows (a stand-in
+        // for the HAL's own scale, which maps 100 % to 0 dB).
+        if (body.playbackPercent != null) { ctl.playbackPercent = body.playbackPercent; ctl.playbackDB = body.playbackPercent >= 100 ? 0 : -5.0; }
+        if (body.capturePercent != null) { ctl.capturePercent = body.capturePercent; ctl.captureDB = body.capturePercent >= 100 ? 0 : -5.0; }
+        mixer.note = ctl.playbackDB < -0.1 ? mixer.note : null;
+      }
+      return json(mixer);
+    }
     if (path === "/api/snapshots") return json({ slots: [] });
     if (path.startsWith("/api/transport/")) return json({ ok: true });
     return json({ error: { message: "not found" } }, 404);
@@ -232,6 +293,66 @@ async function runModeUnguarded(mode) {
   if (!outText.includes("-8.0")) fail(mode, "meters stream", `streamed meters did not reach the bars (Output reads "${outText}")`);
 
   if (!page.configKeyCount()) fail(mode, "boot", "config was never loaded");
+
+  // (1c) the taxonomy: every page the model knows sits in exactly one section
+  // or group, and the sidebar never shows a section or group header with
+  // nothing under it; the current page carries its breadcrumb.
+  {
+    const placed = new Map();
+    for (const sec of schema.model.sections) {
+      for (const id of sec.pages || []) placed.set(id, (placed.get(id) || 0) + 1);
+      for (const g of sec.groups || []) for (const id of g.pages) placed.set(id, (placed.get(id) || 0) + 1);
+    }
+    const allPages = ["monitoring", "overview"]
+      .concat(schema.model.stages.map(s => s.id), schema.model.rds.map(p => p.id), schema.model.tools.map(p => p.id));
+    for (const id of allPages) {
+      if ((placed.get(id) || 0) !== 1) fail(mode, "taxonomy", `page "${id}" is in ${placed.get(id) || 0} sections/groups (must be exactly 1)`);
+    }
+    for (const id of placed.keys()) if (!allPages.includes(id)) fail(mode, "taxonomy", `sections name an unknown page "${id}"`);
+    for (const sec of win.document.querySelectorAll("#sidebar .ssec")) {
+      if (!sec.querySelectorAll(".nav").length) fail(mode, "taxonomy", `section "${sec.dataset.section}" is drawn empty`);
+    }
+    for (const gh of win.document.querySelectorAll("#sidebar .sgroup")) {
+      const next = gh.nextElementSibling;
+      if (!next || !next.classList.contains("nav")) fail(mode, "taxonomy", `group "${gh.dataset.group}" is drawn with no page under it`);
+    }
+    if (!content().querySelector(".crumb")) fail(mode, "taxonomy", "the landing page has no breadcrumb");
+  }
+
+  // (1d) the aids: task shortcuts lead only to pages this mode has; the
+  // settings search finds a control, jumps to its page, opens the Advanced
+  // card it sits in and highlights it; the phone layout's hooks exist.
+  {
+    const scs = [...content().querySelectorAll(".shortcuts .sc")];
+    if (scs.length < 2) fail(mode, "aids", `landing page shows ${scs.length} task shortcuts`);
+    for (const b of scs) if (page.pageHiddenInMode(b.dataset.page)) fail(mode, "aids", `shortcut "${b.textContent}" leads to a page hidden in this mode`);
+    const search = $("navSearch");
+    if (!search) fail(mode, "aids", "no settings search box");
+    else {
+      const probe = mode === "mpx" ? "pilot" : "hpf";
+      search.value = probe;
+      search.dispatchEvent(new win.Event("input", { bubbles: true }));
+      const hits = [...win.document.querySelectorAll("#navResults .nav")];
+      if (!hits.length) fail(mode, "aids", `search for "${probe}" found nothing`);
+      else {
+        hits[0].click();
+        await settle();
+        const key = hits[0].dataset.hit;
+        const el = content().querySelector(`[data-key="${key}"]`);
+        if (!el) fail(mode, "aids", `search hit "${key}" did not land on a page showing it`);
+        else if (!el.classList.contains("hit")) fail(mode, "aids", `search hit "${key}" is not highlighted`);
+        const det = el && el.closest("details.advcard");
+        if (det && !det.open) fail(mode, "aids", `search hit "${key}" sits in a closed Advanced card`);
+      }
+      search.value = "";
+      search.dispatchEvent(new win.Event("input", { bubbles: true }));
+      if (win.document.querySelectorAll("#sidebar .ssec[hidden]").length) fail(mode, "aids", "sections stay hidden after the search is cleared");
+    }
+    if (!$("navToggle")) fail(mode, "aids", "no menu button for the phone drawer");
+    if (!/@media \(max-width: 720px\)/.test(html)) fail(mode, "aids", "no phone media query in the stylesheet");
+    page.showPage("limiter"); await settle();
+    if (!content().querySelector(".row .numin")) fail(mode, "aids", "slider rows carry no numeric field for phones");
+  }
   if (page.currentMode() !== mode) {
     fail(mode, "boot", `page thinks the mode is ${page.currentMode()}`);
   }
@@ -269,12 +390,185 @@ async function runModeUnguarded(mode) {
       if (seen.has(key)) fail(mode, id, `control "${key}" is rendered twice on one page`);
       seen.add(key);
     }
+    for (const el of content().querySelectorAll("[data-key]")) {
+      const def = schema.schema[el.dataset.key];
+      const inAdv = !!el.closest("details.advcard");
+      if (def && !!def.advanced !== inAdv && schema.model.stages.some(s => s.id === id)) {
+        fail(mode, id, `control "${el.dataset.key}" is ${inAdv ? "inside" : "outside"} the Advanced card but the schema says advanced=${!!def.advanced}`);
+      }
+    }
+    for (const det of content().querySelectorAll("details.advcard")) {
+      if (det.open) fail(mode, id, "the Advanced card renders open");
+      if (!det.querySelectorAll("[data-key]").length) fail(mode, id, "an Advanced card renders with no controls");
+    }
     for (const fc of content().querySelectorAll(".fcard")) {
       const body = fc.querySelector(".card");
       if (body && body.children.length === 0) {
         fail(mode, id, `card "${fc.querySelector("h2")?.textContent}" renders empty`);
       }
     }
+  }
+
+  // (10) the levelling engine. configFor() seeds every toggle "True", so the
+  // page boots on the Advanced Dynamics engine; the AGC + Multiband pages
+  // must be gone (not ghosted), and the selector must flip them both ways.
+  {
+    const lv = schema.model.levelling;
+    if (!lv || !Array.isArray(lv.engines) || lv.engines.length < 2) {
+      fail(mode, "levelling", "schema.json has no model.levelling with two engines");
+    } else {
+      const engineFor = (on) => lv.engines.find(e => /^(true|yes|1|on)$/i.test(e.value) === on) || lv.engines[0];
+      const cardIds = () => [...content().querySelectorAll(".ovgrid .ovcard")].map(n => n.dataset.page);
+      // Every page an engine owns is a stage; the overview draws a card for
+      // each one its engine has in use, switch or no switch (Advanced
+      // Dynamics has none: the selector IS its switch).
+      const expect = async (where, cur) => {
+        const sel = content().querySelector("#levelling .seg button.sel");
+        if (!sel || sel.dataset.engine !== cur.id) fail(mode, where, `the selector shows "${sel ? sel.dataset.engine : "none"}", not "${cur.id}"`);
+        for (const e of lv.engines) {
+          for (const id of e.pages || []) {
+            const hidden = page.pageHiddenInMode(id);
+            const listed = navIds().includes(id);
+            const carded = cardIds().includes(id);
+            if (e === cur) {
+              if (hidden) fail(mode, where, `"${id}" belongs to the engine in use but pageHiddenInMode says hidden`);
+              if (!listed) fail(mode, where, `sidebar does not list "${id}" though its engine is in use`);
+              if (!carded) fail(mode, where, `overview shows no card for "${id}" though its engine is in use`);
+            } else {
+              if (!hidden) fail(mode, where, `"${id}" belongs to the other engine but pageHiddenInMode says shown`);
+              if (listed) fail(mode, where, `sidebar still lists "${id}" of the engine not in use`);
+              if (carded) fail(mode, where, `overview still shows a card for "${id}" of the engine not in use`);
+            }
+          }
+        }
+        if (win.document.querySelector("#sidebar [data-bypasswhen]")) fail(mode, where, "a sidebar entry is still marked as bypassed");
+        for (const c of content().querySelectorAll(".ovgrid .ovcard")) {
+          const st = schema.model.stages.find(s => s.id === c.dataset.page);
+          if (c.style.opacity && Number(c.style.opacity) < 1) fail(mode, where, `overview card "${c.dataset.page}" is dimmed`);
+          if (c.querySelector("input:disabled")) fail(mode, where, `overview card "${c.dataset.page}" has a disabled switch`);
+          if (st && !st.enable && c.querySelector(".switch")) fail(mode, where, `overview card "${c.dataset.page}" has a switch but the stage has no enable key`);
+          if (st && st.enable && !c.querySelector(".switch")) fail(mode, where, `overview card "${c.dataset.page}" has no switch`);
+        }
+        // The Monitoring signal chain (the pill strip) follows the same choice.
+        page.showPage("monitoring");
+        await settle();
+        const chain = [...content().querySelectorAll("#pills .pill[data-page]")].map(n => n.dataset.page);
+        if (content().querySelector(".ovgrid")) fail(mode, where, "Monitoring still repeats the stage card grid");
+        for (const e of lv.engines) {
+          for (const id of e.pages || []) {
+            const pilled = schema.model.pills.some(([, pid]) => pid === id);
+            if (e === cur && pilled && !chain.includes(id)) fail(mode, where, `signal chain shows no pill for "${id}" though its engine is in use`);
+            if (e !== cur && chain.includes(id)) fail(mode, where, `signal chain still shows "${id}" of the engine not in use`);
+          }
+        }
+        page.showPage("overview");
+        await settle();
+        drainErrors(where);
+      };
+      page.showPage("overview");
+      await settle();
+      const buttons = content().querySelectorAll("#levelling .seg button");
+      if (buttons.length !== lv.engines.length) {
+        fail(mode, "levelling", `the Overview shows ${buttons.length} engine buttons, not ${lv.engines.length}`);
+      } else {
+        const start = engineFor(/^(true|yes|1|on)$/i.test(server.state.cfg[lv.key]));
+        const other = lv.engines.find(e => e !== start);
+        await expect("levelling", start);
+        const patchesBefore = server.state.patches.length;
+        content().querySelector(`#levelling .seg button[data-engine="${other.id}"]`).dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+        await settle();
+        drainErrors(`levelling ${start.id}->${other.id}`);
+        if (!server.state.patches.slice(patchesBefore).includes(lv.key)) fail(mode, `levelling ${start.id}->${other.id}`, `no PATCH carried ${lv.key}`);
+        if (server.state.cfg[lv.key] !== other.value) fail(mode, `levelling ${start.id}->${other.id}`, `server holds ${lv.key}=${server.state.cfg[lv.key]}`);
+        await expect(`levelling ${start.id}->${other.id}`, other);
+        const back = content().querySelector(`#levelling .seg button[data-engine="${start.id}"]`);
+        if (!back) fail(mode, `levelling ${other.id}->${start.id}`, "the Overview no longer offers the selector");
+        else {
+          back.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+          await settle();
+          drainErrors(`levelling ${other.id}->${start.id}`);
+          if (server.state.cfg[lv.key] !== start.value) fail(mode, `levelling ${other.id}->${start.id}`, "did not switch back");
+          await expect(`levelling ${other.id}->${start.id}`, start);
+        }
+      }
+    }
+  }
+
+  // (11) "Apply recommended": the Overview offers it next to the levelling
+  // selector; with a profile selected a click POSTs exactly that profile and
+  // re-reads the config; with `custom` it is disabled and says why.
+  {
+    const profileId = server.state.cfg.format_profile_id;
+    page.showPage("overview");
+    await settle();
+    const button = content().querySelector("#recommended #applyRecommended");
+    if (!button) fail(mode, "recommended", "the Overview shows no Re-apply Profile button");
+    else if (button.textContent !== "Re-apply Profile") fail(mode, "recommended", `the button reads "${button.textContent}"`);
+    if (!content().querySelector("#recommended #profileSelect")) fail(mode, "recommended", "the Overview shows no Format Profile picker");
+    else {
+      if (button.disabled) fail(mode, "recommended", `the button is disabled though "${profileId}" is selected`);
+      const caption = content().querySelector("#recommended .subtitle");
+      if (!caption || !caption.textContent.includes(profileId)) fail(mode, "recommended", "the caption does not name the selected profile");
+      const postsBefore = server.state.presetPosts.length;
+      const readsBefore = server.state.configReads;
+      button.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      await settle();
+      drainErrors("recommended");
+      const posts = server.state.presetPosts.slice(postsBefore);
+      if (posts.length !== 1) fail(mode, "recommended", `the click made ${posts.length} POSTs to /api/presets, not 1`);
+      else if (posts[0].kind !== "format_profile" || posts[0].id !== profileId || "intensity" in posts[0]) {
+        fail(mode, "recommended", `the POST body was ${JSON.stringify(posts[0])}`);
+      }
+      if (server.state.configReads <= readsBefore) fail(mode, "recommended", "the config was not re-read after the apply");
+      // Custom: nothing to re-apply, so the button rests and the caption says so.
+      server.state.cfg.format_profile_id = "custom";
+      await page.loadConfig();
+      page.showPage("overview");
+      await settle();
+      drainErrors("recommended custom");
+      const rest = content().querySelector("#recommended #applyRecommended");
+      if (!rest) fail(mode, "recommended custom", "the button is gone instead of disabled");
+      else if (!rest.disabled) fail(mode, "recommended custom", "the button is enabled with the custom profile");
+      const restCaption = content().querySelector("#recommended .subtitle");
+      if (!restCaption || !/Custom keeps your manual tuning/.test(restCaption.textContent)) fail(mode, "recommended custom", "the caption does not explain the disabled button");
+      server.state.cfg.format_profile_id = profileId;
+      await page.loadConfig();
+      page.syncAll();
+      await settle();
+    }
+  }
+
+  // (12) the target layout.
+  {
+    const keysOn = (id) => { page.showPage(id); return [...content().querySelectorAll("[data-key]")].map(e => e.dataset.key); };
+    if (inMode(["mpx"])) {
+      const fin = keysOn("finalStage");
+      for (const k of ["pilot_level", "rds_level", "mpx_deviation_khz", "processing_bypass"]) {
+        if (fin.includes(k)) fail(mode, "layout", `Loudness and Output still shows ${k}`);
+      }
+      if (!keysOn("rdsIdentity").includes("ps_long_32")) fail(mode, "layout", "Identity does not carry the Long PS");
+      if (!keysOn("interfaces").includes("mpx_deviation_khz")) fail(mode, "layout", "Audio I/O does not carry Composite Deviation in MPX Output");
+    } else if (keysOn("interfaces").includes("mpx_deviation_khz")) {
+      fail(mode, "layout", "Audio I/O shows Composite Deviation outside MPX Output");
+    }
+    const core = keysOn("core");
+    for (const k of ["processing_bypass", "preemphasis_us"]) if (core.includes(k)) fail(mode, "layout", `Basics still shows ${k}`);
+    if (inMode(["mpx", "fm"]) && !keysOn("interfaces").includes("preemphasis_us")) fail(mode, "layout", "Audio I/O does not carry Pre-emphasis");
+    page.showPage("limiter");
+    await settle();
+    const thr = content().querySelector('[data-key="pre_encode_threshold"] .rvalue');
+    if (!thr || !/dBFS/.test(thr.textContent)) fail(mode, "layout", `Audio Limiter threshold reads "${thr ? thr.textContent : "nothing"}", not dBFS`);
+    // Bands: 3 or 5, never 2 (the user dropped 2-band).
+    if (!page.pageHiddenInMode("multiband")) {
+      page.showPage("multiband");
+      await settle();
+      const bands = [...content().querySelectorAll('[data-key="multiband_mode"] button')].map(b => b.dataset.v);
+      if (bands.join(",") !== "3,5") fail(mode, "layout", `Bands offers ${bands.join(",")}`);
+    }
+    await page.loadConfig();
+    page.syncAll();
+    if ($("cMode").textContent.indexOf(" Output") < 0) fail(mode, "layout", `status MODE reads "${$("cMode").textContent}"`);
+    drainErrors("layout");
   }
 
   // (5-6) switch the operating mode from the Audio I/O page, to every other
@@ -336,6 +630,36 @@ async function runModeUnguarded(mode) {
       await settle();
       drainErrors("clamp");
       if (Number(gain.value) > 0) fail(mode, "clamp", `slider kept ${gain.value} after the server clamped to 0`);
+    }
+  }
+
+  // (7b) the Sound Card Mixer rows render from a macOS-shaped /api/mixer
+  // answer: the output device's level under the output picker, the input
+  // device's under the input picker, in dB, and a slider move PATCHes and
+  // shows what the device took.
+  page.showPage("interfaces");
+  await settle();
+  const mixOut = $("mixOut"), mixIn = $("mixIn");
+  if (!mixOut || !mixIn) {
+    fail(mode, "mixer", "the Audio I/O page has no mixer hosts");
+  } else {
+    const outRow = mixOut.querySelector(".row"), inRow = mixIn.querySelector(".row");
+    if (!outRow) fail(mode, "mixer", "no Card Output Level row for the output device's volume");
+    if (!inRow) fail(mode, "mixer", "no Card Input Level row for the input device's volume");
+    if (outRow && !outRow.textContent.includes("-5.0 dB")) fail(mode, "mixer", `the output row does not show the device's dB (reads "${outRow.textContent}")`);
+    if (outRow && !outRow.querySelector(".rlabel")?.title.includes("DX3 Pro+")) fail(mode, "mixer", "the output row is not labelled with the device");
+    if (inRow && !inRow.textContent.includes("0.0 dB")) fail(mode, "mixer", `the input row does not show the device's dB (reads "${inRow.textContent}")`);
+    const slider = outRow ? outRow.querySelector("input[type=range]") : null;
+    if (slider) {
+      slider.value = "100";
+      slider.dispatchEvent(new win.Event("change", { bubbles: true }));
+      await settle();
+      drainErrors("mixer");
+      const sent = server.state.mixerPatches;
+      if (sent.length !== 1 || sent[0].name !== "DX3 Pro+" || sent[0].playbackPercent !== 100) {
+        fail(mode, "mixer", `the slider did not PATCH the output device to 100 % (sent ${JSON.stringify(sent)})`);
+      }
+      if (!outRow.textContent.includes("0.0 dB")) fail(mode, "mixer", `the row did not take the fresh read after the PATCH (reads "${outRow.textContent}")`);
     }
   }
 

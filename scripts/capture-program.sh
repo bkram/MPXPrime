@@ -5,7 +5,7 @@
 # Workflow: route your player's output to BlackHole 2ch (or pass another
 # input device UID), start playback, run this script once per track/section.
 # Collect the WAVs in one directory (e.g. $MPXPRIME_MUSIC_DIR) and feed it to:
-#   macOS/.build/release/MPXPrime --verify-program-ab "$MPXPRIME_MUSIC_DIR"
+#   .build/release/MPXPrime --verify-program-ab "$MPXPRIME_MUSIC_DIR"
 #
 # Usage:
 #   scripts/capture-program.sh [--seconds 60] [--out <path.wav>]

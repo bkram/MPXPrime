@@ -37,17 +37,22 @@ that the Meter decodes are in the Studio manual's appendices
 
 ## Starting the Meter
 
-- Double-click `MPX Prime Meter.app`, or run `macOS/.build/release/MPXPrimeMeter --gui`.
+- Double-click `MPX Prime Meter.app`, or run `.build/release/MPXPrimeMeter --gui`.
 - Headless terminal dashboard: `scripts/run-meter.sh --device <spec>` (audio-device
   input) or `scripts/run-meter.sh --stdin` (a composite piped on stdin). The in-process
   SDR is GUI-only; with no arguments `scripts/run-meter.sh` opens the window and
   auto-detects a dongle. Use `--sdr-freq <MHz>` to open the GUI pre-tuned.
 
 Headless flags beyond the ones used below (`--help` lists them all):
-`--list-devices`; `--device <spec>` (list index, UID or name substring);
-`--channel left|right|mix` (the CLI defaults to left, the GUI to right);
+`--list-devices` (with channel counts, transport, rate and UID);
+`--device <spec>` (list index, UID or name substring); `--channels <l,r>`
+(which device channels to capture, counted from 1: `3,4`, or `3` alone for
+mono; default `1,2`); `--channel left|right|mix` (which of those carries the
+composite; the CLI defaults to left, the GUI to right);
 `--sample-rate <Hz>` for `--stdin`; `--wav <path>` to record the decoded
 stereo to a 24-bit WAV; `--monitor-device <spec>` / `--monitor-gain <dB>`;
+`--monitor-channels <l,r>` (the monitor device's output channels; one number
+plays left and right summed on that channel);
 `--selftest` (synthesized composite, no hardware).
 
 The Meter **remembers your last-used settings** (frequency, input source, every SDR
@@ -73,7 +78,18 @@ reading.
 
 **Reset Peaks** works with capture stopped as well as running -- that is
 exactly when held values are still on screen -- and it also clears the
-SAMPLES DROPPED badge.
+SAMPLES DROPPED and BAD INPUT badges.
+
+A red **BAD INPUT** badge means the source handed the Meter samples that
+were not numbers (NaN or Inf); the badge carries the count. The Meter
+replaced them with silence and carried on, but a replaced sample is a hole,
+not a measurement: the deviation peaks read `--` until the hole has left
+their window, MPX POWER until it has left the 60 s window, the block it sat
+in is left out of the exceedance statistic and the histogram, and the
+readings accumulated since the last reset carry the gap until Reset Peaks.
+A capture path that produces this is broken upstream of the Meter -- a
+failing interface, a bad driver, a corrupt file -- and the badge is the
+signal to look there.
 
 Any readout can show `--`, and that is deliberate: it means the Meter does
 not currently have what it needs to measure that quantity (no deviation scale,
@@ -99,6 +115,16 @@ and MPX power stay valid; the readings that describe the stereo image
 describing the mono decode, and a stereo recording made in this state will
 have identical channels. Improve reception, or check that the station is
 actually transmitting a pilot.
+
+**SEPARATION** also reads `--` on ordinary stereo programme. The readout is the
+level difference between the decoded channels, which is a separation figure
+only on single-channel content, so since 2026-10 it publishes only while the
+decoded side sits within 10 % of the mid -- a left-only test tone or a
+hard-panned passage -- and dims while it is not valid. Panned programme with
+mono bass does not give a reading, because the bass is in both channels by
+design (it used to read a few dB there and look like a separation fault); use
+PHASE CORR and L / R BALANCE for the image there. The best value since reset is
+held and Reset Peaks clears it.
 
 Capture refuses to start below 128 kHz (0.45): composite measurement needs the
 0-60 kHz band and RDS sits at 57 kHz, so readings at lower rates would silently
@@ -166,8 +192,17 @@ remembered by device UID):
   digital full scale, but deviation beyond that then clips the DAC --
   leave ~1 dB of headroom (+5 dB covers peaks to ~84 kHz).
 
-- **Audio device** (`Source -> Audio`): pick the input carrying the composite
-  and the channel (L / R / Mix). The Meter raises the device to 192 kHz on
+- **Audio device** (`Source -> Audio`): click the device button and pick the
+  interface carrying the composite and a pair from its **Channels** menu (on
+  a multichannel interface, for example inputs 5-6). Then pick L / R / Mix:
+  L is the first channel of the pair, R the second, and Mix averages them. A
+  composite on one channel, say input 5, is read by choosing the pair that
+  holds it (5-6) and then L. A single channel set with `--channels 5` still
+  works; the menu then shows it marked "from settings". The **Devices**
+  button next to it lists every interface with its channels, rate and bit
+  depth; plugging one in or out refreshes the lists by itself, and Rescan
+  does it by hand. The Monitor and MPX pass-through outputs choose their
+  device and channels the same way. The Meter raises the device to 192 kHz on
   start and restores the prior rate on exit. RDS at 57 kHz needs a capture rate
   >= 128 kHz, so the default input prefers a 192 kHz-capable device.
 - **RTL-SDR** (`Source -> SDR`): set the frequency and Start. The frequency
@@ -449,7 +484,7 @@ back through the analyzer headlessly. The Meter's own **MPX** recordings are
 the rate from that flag, not from the WAV header:
 
 ```bash
-macOS/.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
+.build/release/MPXPrimeMeter --stdin --full-scale-khz 150 \
     --no-monitor --seconds 200 < capture.wav
 ```
 

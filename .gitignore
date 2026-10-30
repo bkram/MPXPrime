@@ -6,6 +6,15 @@ __pycache__/
 # C extensions
 *.so
 
+# SwiftPM build output (the package is the repo root)
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+# Audit captures (env-gated MPXPRIME_AUDIT_CAPTURE=1 driver output; kept locally)
+.audit-out/
+
 # Distribution / packaging
 .Python
 build/
@@ -250,6 +259,8 @@ standards/IEC-62106-6-2023.pdf
 standards/R-REC-BS.450-4-201910-I!!PDF-E.pdf
 standards/trev_307-radiotext.pdf
 standards/rds-docs-unlocked.pdf
+standards/nrsc-1-c-2024.pdf
+standards/R-REC-BS.412-9-199812-I!!PDF-E.pdf
 captures/**
 
 # Third-party FM-SDR-Tuner binary (build artifact, not ours) -- see bin/README.md
@@ -260,3 +271,7 @@ tuner/build*/
 
 # jsdom cache for scripts/check-webui.sh
 .webui-check/
+
+# Implementation handoff notes (kept locally, not redistributed)
+sol-high.md
+code_review.md
